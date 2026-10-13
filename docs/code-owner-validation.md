@@ -3,8 +3,9 @@
 Checkpoint de 2026-10-13. `odh_vm` distingue recursos privados e semiglobais
 por proprietário do código. Isso remove a colisão de IDs entre avatar e cadeira
 na biblioteca e permite uma chamada explícita entre esses recursos, preservando
-o frame que receberá seu resultado. A queue/AllowPush e a retomada do Main do
-avatar no probe Linux ainda não estão integradas.
+o frame que receberá seu resultado. A queue/AllowPush limitada avançou em
+[interaction-validation.md](interaction-validation.md); sua integração à
+retomada do Main do avatar no probe Linux ainda está pendente.
 
 ## Contrato e API
 
@@ -65,7 +66,9 @@ resolvers de animação, tuning ou outros serviços que o host deve fornecer.
 - Cada chamada conserva os limites existentes:64 frames por padrão, até4096
   variáveis em cada banco do frame; chamadas ordinárias continuam limitadas
   ao mapeamento de20 temps. Não há afirmação de orçamento real de New3DS/RSS.
-- `call` exige payload de filho e proíbe escrita simultânea em banco do pai;
+- No checkpoint inicial, `call` exigia payload de filho e proibia escrita
+  simultânea. O avanço [interaction-validation.md](interaction-validation.md)
+  permite escrita validada atômica para o decremento de IdleForInput;
   outros resultados não aceitam payload de chamada. Contexto/rotina/argumentos
   e limites são validados antes de inserir um frame.
 - Uma chamada inválida mantém o pai e seus argumentos, mas gera fault após o

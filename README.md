@@ -84,6 +84,8 @@ com `--global ARCHIVE.far ENTRY.iff`; não há busca nem precedência automátic
 Pascal do code owner, com validação do nome e dos scopes. O JSON registra o
 vínculo. O [contrato de Main/idle do avatar](docs/person-lifecycle-validation.md)
 descreve os caminhos nativos encontrados e os limites da execução atual.
+A biblioteca possui [fila limitada e retorno ao Main](docs/interaction-validation.md)
+com gate do wrapper global281 nativo; o preview ainda usa o host anterior.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

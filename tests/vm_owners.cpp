@@ -97,7 +97,7 @@ int main() {
             odh::Vm bad(root,{},{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
                 auto o=invoke(f,i,t,d);
                 if(variant==0)o.call.reset();
-                if(variant==1)o.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,0,77};
+                if(variant==1)o.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,4,77};
                 if(variant==2)o.disposition=odh::PrimitiveDisposition::goto_true;
                 if(variant==3)o.call->context.code_owner=99;
                 if(variant==4)o.call->arguments.resize(5);

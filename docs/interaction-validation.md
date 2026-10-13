@@ -1,0 +1,135 @@
+# AllowPush, fila limitada e retorno ao Main
+
+Checkpoint de 2026-10-13. A biblioteca agora executa o limite de interação entre
+Main preservado e ação de outro proprietário, com retomada na mesma instrução
+no tick seguinte. A fila suporta ações explicitamente fornecidas como
+executáveis. A integração do Main completo do avatar e das ações de cadeira
+com o host Linux continua pendente; o preview existente não usa esta fila.
+
+## Regra de referência
+
+Na revisão FreeSO `4c6b3e8f5835b228723caea3c9f683c62f244f73`, MPL2,
+[VMThread.Pop/HandleResult](https://github.com/riperiperi/FreeSO/blob/4c6b3e8f5835b228723caea3c9f683c62f244f73/TSOClient/tso.simantics/Engine/VMThread.cs)
+remove o frame especial Interaction, conserva o resultado para diagnóstico,
+encerra a ação da queue e substitui o retorno por CONTINUE_NEXT_TICK.
+HandleResult agenda +1 tick e não muda o instruction pointer do pai.
+Assim, true/false do filho não escolhe uma branch do Main: ele reexecuta
+IdleForInput. RunImmediately é uma exceção da referência, não implementada aqui.
+
+[VMIdleForInput](https://github.com/riperiperi/FreeSO/blob/4c6b3e8f5835b228723caea3c9f683c62f244f73/TSOClient/tso.simantics/Primitives/VMIdleForInput.cs)
+primeiro decrementa o argumento indicado por um índice LE16 assinado. Quando
+AllowPush=1 e uma ação pode ser empilhada, entrega o controle sem mudar o PC.
+Sem ação empilhada, uma queue pendente pode notificar o caller; interrupt ou
+argumento negativo retorna true. Caso contrário, AllowPush1 agenda o próximo
+tick e AllowPush0 pode esperar até o deadline. ScheduleIdleStart=0 tem o
+sentinela da referência: nesse caso o decremento é1, mesmo quando o relógio
+avançou mais de1. O arithmetic wrap de16 bits permanece explícito.
+
+A notificação usa `NotifiedByIdleForInput = 1 << 6` em Flags/ObjectData8,
+conforme [VMEntity](https://github.com/riperiperi/FreeSO/blob/4c6b3e8f5835b228723caea3c9f683c62f244f73/TSOClient/tso.simantics/Entities/VMEntity.cs).
+O wrapper nativo global281 confirma scope3/index8/flag7, com teste e limpeza
+na primitiva Expression (índice de flag contado a partir de1).
+
+## Kernel
+
+`VmCallReturnMode::interaction_next_tick` distingue uma chamada de ação da
+chamada ordinária. O frame guarda modo e ticket de invocação. Ao devolver
+FE/FF, o kernel remove o frame da ação, publica `VmInteractionReturn` com
+resultado/ticket/owner/generation, e fica em `VmStatus::yielded`. O PC e o
+contexto do pai permanecem iguais; run não avança enquanto estiver yielded.
+
+`resume_interaction(ticket)` aceita só a fronteira atual e restaura running.
+O kernel não possui relógio: o adapter é responsável por permitir esse resume
+apenas no próximo tick. Reset de start invalida a fronteira; tickets stale ou
+duplicados não a consomem. Interações aninhadas são recusadas; chamadas
+ordinárias dentro da ação continuam permitidas.
+
+`retry_pending(ticket, optional_write)` reativa a mesma instrução de uma espera,
+sem percorrer sua branch. Isso permite reavaliar IdleForInput quando chega uma
+ação ou vence seu deadline. Reentry, tickets e índices inválidos são rejeitados.
+
+Calls agora podem publicar uma escrita validada no frame do pai: IdleForInput
+precisa decrementar o argumento antes de instalar a ação. O kernel valida a
+escrita e o filho antes de publicar ambos. Usa o índice do pai depois de push,
+sem manter um ponteiro que a realocação da stack poderia invalidar. Esse avanço
+substitui a restrição inicial de call sem write no checkpoint de code owners.
+
+## Adapter InteractionQueue
+
+`odh_interaction` depende de World e VM, sem APIs de plataforma. Cada controller
+liga um avatar/generation a uma VM estável; recebe uma FIFO de VmCall com
+caller, callee, StackObject, code owner e argumentos explícitos. A capacidade
+padrão32 inclui a ação ativa na frente. Não há descoberta ou seleção automática
+de TTAB. UID/tickets são monotônicos; resultado recente é um registro limitado,
+sem histórico crescente.
+
+`enqueue` captura a geração do alvo e rejeita caller/alvo ausente, identidade
+fora do perfil, excesso de argumentos/capacidade e Main terminal. No dispatch
+17, AllowPush1 entrega a frente ao kernel com modo interaction_next_tick.
+AllowPush0 com queue pendente seta o bit de notificação em Flags8 conhecido e
+retorna true; não inventa o banco quando ele não existe.
+
+O host deve chamar `observe()` antes de cada run ou continuação de orçamento e
+depois de execução/conclusão de serviço, e deve respeitar false antes de executar
+mais instruções. Isso valida o avatar e o alvo ativo por geração, incluindo
+remoção/recriação com o mesmo ID. Após um retorno válido, observe remove a
+frente no mesmo tick do host, registra o resultado e prepara resume para +1.
+Sem esse gate, chamar run diretamente após mutação de World pode acessar uma
+entidade substituta: o kernel resolve código, não governa a vida de entidades.
+
+`tick` exige passos consecutivos dentro de uint32, sem duplicação/pulos. Ele
+retoma a fronteira de interação na data correta e reativa o ticket de idle ao
+vencer o deadline, chegar uma ação ou ocorrer interrupt. Pause do host não deve
+chamar tick. Reset da VM limpa queue/ativo/wait/fronteira; caller reciclado
+invalida o controller. Falha ao instalar ação mantém a solicitação e o fault
+para diagnóstico, sem registrar completion falsa.
+
+Ações com espera usam os serviços normais da VM. O controller não executa ação
+diretamente nem interpreta animação/postura. A remoção da queue ocorre no host
+após observar o resultado; não instala standing-loop no retorno.
+
+## Gates
+
+- `vm_interaction_return`:54 checks sintéticos de PC/contexto preservado,
+  resultado true/false ignorado pelo pai, chamadas ordinárias dentro da ação,
+  orçamento, espera, eventos/generation/tickets, reentry e call+write atômico.
+- `interaction_queue`:47 checks sintéticos de FIFO/capacidade, próximo tick,
+  duas ações com resultados diferentes, countdown, deadline/sentinela, chegada
+  durante espera, interrupt, Flags, reset/rebind, reciclagem de caller/alvo
+  antes e durante ação, e faults sem falsa completion.
+- A revisão independente identificou a lacuna de geração do alvo ativo. Ela foi
+  corrigida no gate de validação e coberta pelo teste que suspende antes do
+  primeiro dispatch da ação, remove/recria o alvo e recusa mais execução.
+- Leitura externa opcional executa o BHAV281 real de Global.iff, entre um Main
+  fixture e ação fixture owner22. São6 checks: entrega por AllowPush1, retorno
+  yielded com wrapper281/PC4 preservado, resume no tick1, retorno pela própria
+  lógica de flags do wrapper e preservação de bits não relacionados. Passou
+  em Debug e ASan/UBSan; não é execução do interpretador/executável original.
+
+```sh
+./build/odh-interaction-tests --native-global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
+```
+
+O teste nativo usa os recursos externos explicitamente; nenhum BHAV comercial
+é versionado. Hash do Global.iff: `bdfd8456abceaa3e44f0a9754815248ea1e80c7b0df4fbaff53843fae3731478`.
+A execução normal de CTest só usa fixtures sintéticas.
+
+Debug e ASan/UBSan:40 testes passam, um teste X11 é skipped por acesso ao display
+no sandbox. LSan desligado (`detect_leaks=0`), sem validação de vazamentos.
+O probe nativo de cadeira anterior continua94 dispatches/662 ticks/Comfort3;
+todos os campos JSON da simulação permanecem iguais à baseline.
+
+## Cobertura ainda aberta
+
+Essa FIFO é um perfil de ações já fornecidas para execução, não a queue completa
+da referência. Prioridades/autonomia/condições TTAB, modes/flags especiais,
+RunImmediately, nested interactions, cancelamento, eventos NotifyIdle da ação,
+limpeza administrativa completa (NonInterruptable, motive changes e flags de
+cancelamento), eligibility/routing, callback de conclusão e persistência seguem
+pendentes. Interrupt desta API só acorda Main idle, não cancela ação ativa.
+
+O host Linux deve passar a registrar os bancos por owner e usar esse fluxo em
+vez de iniciar cada ação com start. As dependências alcançadas pelo Main real
+(Sleep, RNG, scopes, MiscSTR156 e resources do avatar) ainda precisam de gates.
+O idle em pé, o lote mínimo funcional e a fidelidade visual continuam não
+validados. Não há evidência de consoles ou comparação com execução original.

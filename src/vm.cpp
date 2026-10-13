@@ -44,6 +44,7 @@ const char* vm_status_name(VmStatus status) {
     case VmStatus::returned_true: return "returned_true";
     case VmStatus::returned_false: return "returned_false";
     case VmStatus::fault: return "fault";
+    case VmStatus::yielded: return "yielded";
     }
     return "invalid_status";
 }
@@ -72,7 +73,14 @@ const Bhav& Vm::current_routine(const VmFrame& frame) const {
     return *routine;
 }
 
-void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
+void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args,
+              VmCallReturnMode mode, std::uint64_t ticket) {
+    if (mode != VmCallReturnMode::ordinary && mode != VmCallReturnMode::interaction_next_tick)
+        throw VmError("invalid child return mode");
+    if (mode == VmCallReturnMode::interaction_next_tick &&
+        std::any_of(stack_.begin(), stack_.end(), [](const auto& frame) {
+            return frame.return_mode == VmCallReturnMode::interaction_next_tick;
+        })) throw VmError("nested interaction invocation unsupported");
     if(context.code_owner!=0 && owners_.find(context.code_owner)==owners_.end())
         throw VmError("code owner not supplied: " + std::to_string(context.code_owner));
     const auto* found = resolve(key,context.code_owner);
@@ -91,7 +99,7 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
     if (arg_count > limits_.frame_variables || local_count > limits_.frame_variables || args.size() > arg_count)
         throw VmError("frame variable limit or too many arguments");
     VmFrame frame{key, 0, context, std::vector<std::int16_t>(arg_count),
-                  std::vector<std::int16_t>(local_count)};
+                  std::vector<std::int16_t>(local_count), mode, ticket};
     std::copy(args.begin(), args.end(), frame.arguments.begin());
     stack_.push_back(std::move(frame));
 }
@@ -102,6 +110,7 @@ VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int
     ++run_generation_;
     stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
     pending_.reset();
+    interaction_return_.reset();
     status_ = VmStatus::running;
     try { push(key, context, args); }
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
@@ -200,6 +209,13 @@ void Vm::branch(bool result) {
             frame.pc = target; return;
         }
         result = target == 0xFE;
+        if (frame.return_mode == VmCallReturnMode::interaction_next_tick) {
+            interaction_return_ = VmInteractionReturn{frame.invocation_ticket, result,
+                                                       frame.context.code_owner, run_generation_};
+            stack_.pop_back();
+            status_ = VmStatus::yielded;
+            return;
+        }
         stack_.pop_back();
     }
     status_ = result ? VmStatus::returned_true : VmStatus::returned_false;
@@ -255,8 +271,15 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
                 case PrimitiveDisposition::call:
-                    if(!outcome.call || outcome.write)throw VmError("primitive call requires child and forbids frame output");
-                    push(outcome.call->key,outcome.call->context,outcome.call->arguments);
+                    if(!outcome.call)throw VmError("primitive call requires child");
+                    if(outcome.write && !frame_output(stack_.back(),*outcome.write))
+                        throw VmError("primitive call output outside parent frame");
+                    {
+                    const auto parent_index=stack_.size()-1;
+                    push(outcome.call->key,outcome.call->context,outcome.call->arguments,
+                         outcome.call->return_mode, dispatch.ticket);
+                    if(outcome.write)*frame_output(stack_[parent_index],*outcome.write)=outcome.write->value;
+                    }
                     break;
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
@@ -305,6 +328,27 @@ bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite>
     status_ = VmStatus::running;
     try { branch(result); }
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
+    return true;
+}
+bool Vm::retry_pending(std::uint64_t ticket, std::optional<VmFrameWrite> output) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter pending retry");
+    if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
+    if (output) {
+        auto* destination = frame_output(stack_.back(), *output);
+        if (!destination) return false;
+        *destination = output->value;
+    }
+    pending_.reset();
+    status_ = VmStatus::running;
+    return true;
+}
+bool Vm::resume_interaction(std::uint64_t ticket) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter interaction resume");
+    if (status_ != VmStatus::yielded || !interaction_return_ ||
+        interaction_return_->ticket != ticket ||
+        interaction_return_->run_generation != run_generation_) return false;
+    interaction_return_.reset();
+    status_ = VmStatus::running;
     return true;
 }
 } // namespace odh
