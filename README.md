@@ -94,6 +94,8 @@ e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
 Inicialização completa e carregamento da casa como simulação seguem pendentes.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita; o Init nativo chega à escrita de traits.
+Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
+retorna true no probe; Load/BodySTR e a sequência do construtor seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

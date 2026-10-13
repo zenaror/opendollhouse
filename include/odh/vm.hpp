@@ -53,6 +53,12 @@ struct VmMemory {
     std::function<std::optional<std::int16_t>(const VmFrame&, std::uint8_t, std::int16_t)> read;
     std::function<bool(const VmFrame&, std::uint8_t, std::int16_t, std::int16_t)> write;
 };
+struct VmMemoryAddress {std::uint8_t scope;std::int16_t index;};
+// Scopes30/31 select My/StackObject PersonData using temps[index]. The temp
+// selector is checked here; the entity memory backend checks the resulting
+// PersonData index. Other addresses pass through unchanged.
+std::optional<VmMemoryAddress> resolve_person_data_address(std::uint8_t scope,
+    std::int16_t index,const std::array<std::int16_t,20>& temps);
 struct VmLimits {
     std::size_t stack_depth = 64;
     std::size_t frame_variables = 4096;

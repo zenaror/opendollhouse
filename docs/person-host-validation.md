@@ -6,6 +6,8 @@ ou uma rotina privada selecionada explicitamente e preserva o primeiro fault.
 O avanço posterior de scope26 está em [tuning-validation.md](tuning-validation.md).
 O gate posterior de SIMI/current lot/zoning está em [lot-validation.md](lot-validation.md).
 O gate posterior com RNG compartilhado está em [random-validation.md](random-validation.md).
+A conclusão do Init privado com scopes30/31 está em
+[person-indirect-validation.md](person-indirect-validation.md).
 É um host de diagnóstico sem janela; não substitui o preview e não representa
 um avatar/lote completamente inicializado.
 

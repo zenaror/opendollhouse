@@ -116,6 +116,12 @@ VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
     return status_;
 }
+std::optional<VmMemoryAddress> resolve_person_data_address(std::uint8_t scope,
+    std::int16_t index,const std::array<std::int16_t,20>& temps) {
+    if(scope!=30&&scope!=31)return VmMemoryAddress{scope,index};
+    if(index<0||static_cast<std::size_t>(index)>=temps.size())return {};
+    return VmMemoryAddress{static_cast<std::uint8_t>(scope==30?18:19),temps[static_cast<std::size_t>(index)]};
+}
 std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
     auto& frame = stack_.back();
     switch (scope) {
@@ -127,8 +133,8 @@ std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
     case 10: return frame.context.stack_object;
     case 25: return indexed(frame.locals, data);
     default:
-        if (memory_.read) {
-            const auto value = memory_.read(frame, scope, data);
+        if (const auto address=resolve_person_data_address(scope,data,temps_);address&&memory_.read) {
+            const auto value = memory_.read(frame, address->scope, address->index);
             if (value) return *value;
         }
         throw VmError("unsupported read scope " + std::to_string(scope) + " index " + std::to_string(data));
@@ -145,7 +151,8 @@ void Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
     case 10: frame.context.stack_object = truncated; return;
     case 25: indexed(frame.locals, data) = truncated; return;
     default:
-        if (memory_.write && memory_.write(frame, scope, data, truncated)) return;
+        if (const auto address=resolve_person_data_address(scope,data,temps_);address&&memory_.write&&
+            memory_.write(frame,address->scope,address->index,truncated)) return;
         throw VmError("unsupported write scope " + std::to_string(scope) + " index " + std::to_string(data));
     }
 }

@@ -59,6 +59,9 @@ são tratadas como estado aleatório salvo pelo original. Sua recuperação exig
 um contrato de persistência separado. Zero e uint64 máximo são aceitos;
 overflow, sinal, texto extra e repetição da opção são recusados.
 
+Gate posterior: [PersonData por temp](person-indirect-validation.md) liga
+scopes30/31 também ao range/destino de Random Number e conclui o Init privado.
+
 Sleep chama o mesmo `RandomState::next(1)` que alimenta opcode8. O JSON conserva
 seed inicial/final, origem da seed, quantidade de ciclos de Sleep e cada chamada
 opcode8 com owner, range, resultado, destino e seed antes/depois. Logs têm

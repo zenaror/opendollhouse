@@ -29,7 +29,10 @@ std::optional<std::int16_t> read(const VmFrame& frame, const std::array<std::int
     case 9: return in_bank(index, frame.arguments.size()) ? std::optional<std::int16_t>{frame.arguments[static_cast<std::size_t>(index)]} : std::nullopt;
     case 10: return frame.context.stack_object;
     case 25: return in_bank(index, frame.locals.size()) ? std::optional<std::int16_t>{frame.locals[static_cast<std::size_t>(index)]} : std::nullopt;
-    default: return memory.read ? memory.read(frame, scope, index) : std::nullopt;
+    default:
+        if(const auto address=resolve_person_data_address(scope,index,temps);address&&memory.read)
+            return memory.read(frame,address->scope,address->index);
+        return std::nullopt;
     }
 }
 PrimitiveOutcome reject(const char* reason) { return {PrimitiveDisposition::unsupported, reason}; }
@@ -46,6 +49,8 @@ VmPrimitive random_primitive(RandomState& state, VmMemory memory, RandomObserver
         const auto destination_scope = static_cast<std::uint8_t>(destination_scope_word);
         const auto range_scope = static_cast<std::uint8_t>(range_scope_word);
         const auto destination_data = signed_word(word(instruction, 0));
+        const auto destination_address=resolve_person_data_address(destination_scope,destination_data,temps);
+        if(!destination_address)return reject("Random Number indirect destination temp index outside bank");
         const auto range_data = signed_word(word(instruction, 4));
         const auto range_value = read(frame, temps, memory, range_scope, range_data);
         if (!range_value) return reject("Random Number range is unavailable or outside its bank");
@@ -73,7 +78,7 @@ VmPrimitive random_primitive(RandomState& state, VmMemory memory, RandomObserver
         case 9: outcome.write = VmFrameWrite{VmFrameBank::arguments, static_cast<std::size_t>(destination_data), result}; break;
         case 25: outcome.write = VmFrameWrite{VmFrameBank::locals, static_cast<std::size_t>(destination_data), result}; break;
         default:
-            if (!memory.write(frame, destination_scope, destination_data, result))
+            if (!memory.write(frame, destination_address->scope, destination_address->index, result))
                 return reject("Random Number external destination rejected write");
         }
         state = candidate;

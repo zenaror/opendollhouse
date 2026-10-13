@@ -50,6 +50,25 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  for value in ['-1','18446744073709551616','1garbage','0x','+1','']:
   setup();r=run(['--seed',value]);assert r.returncode==2 and not r.stdout
  setup();r=run(['--seed','0','--seed','1']);assert r.returncode==2 and not r.stdout
+ # PersonDataByTemp uses the value in the selected register, not its index.
+ setup(main=[expr(0,58,1),(2,2,255,[0,0,27,0,0,5,30,7]),(2,3,255,[1,0,0,0,0,5,8,30]),check_temp(1,27)])
+ r=run();d=json.loads(r.stdout)
+ assert r.returncode==0 and d['steps']==4 and d['actor_state']['person_data'][58]==27 and d['actor_state']['age']==27
+ assert len(d['actor_state']['person_data'])==101 and len(d['actor_state']['motives'])==16
+ # Random reads an indirect range and writes an indirect destination.
+ _,expected=next_random(1,27)
+ setup(main=[expr(0,58,1),random_row(1,8,0,30,t=2),check_temp(1,expected)])
+ r=run(['--age','27']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['random_reads'][0]['range']==27 and d['actor_state']['person_data'][58]==27
+ _,indirect_result=next_random(1,100)
+ setup(main=[expr(0,58,1),random_row(0,30,100,t=2),(2,3,255,[1,0,0,0,0,5,8,30]),check_temp(1,indirect_result)])
+ r=run();d=json.loads(r.stdout)
+ assert r.returncode==0 and d['random_reads'][0]['destination_scope']==30 and d['actor_state']['age']==indirect_result
+ for selector_value,index in [(0,101),(0,65535),(20,58),(65535,58)]:
+  setup(main=[(2,1,255,[0,0,index&255,index>>8,0,5,8,7]),(2,254,255,[selector_value&255,selector_value>>8,27,0,0,5,30,7])]);r=run();d=json.loads(r.stdout)
+  assert r.returncode==3 and d['status']=='fault' and d['actor_state']['person_data']==[0]*101
+ setup(main=[expr(0,101,1),random_row(0,30,100,t=254)]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['rng_seed_final']==1 and d['random_reads']==[] and d['actor_state']['person_data']==[0]*101
  setup();r=run(action_args);d=json.loads(r.stdout)
  assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['ticks']==1 and d['steps']==7
  assert d['completion']['result'] is False and d['queue_size']==0 and not d['queue_active']
