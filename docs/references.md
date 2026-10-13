@@ -30,6 +30,15 @@ de `TSOClient/tso.files/Formats/IFF/Chunks/` no FreeSO, revisão fixa
 limites próprios, diagnóstico de truncamento e estados para layouts não lidos.
 Ler campos conforme essa referência não comprova o tratamento do original.
 
+O núcleo inicial da VM consultou, na mesma revisão fixa FreeSO, `VMThread.cs`,
+`VMStackFrame.cs`, `VMMemory.cs`, `Scopes/VMVariableScope.cs` em
+`TSOClient/tso.simantics/Engine/`, e `VMExpression.cs`/`VMSubRoutine.cs` em
+`TSOClient/tso.simantics/Primitives/`. O layout 8002 usa também `BHAV.cs`.
+Retornos, FD e convenção de argumentos são um perfil de referência que ainda
+requer comparação com o original. Diferenças e falhas explícitas estão em
+`vm-validation.md`; não se reproduzem silenciosamente fallback de primitivas
+ausentes ou hacks de mundo da referência.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

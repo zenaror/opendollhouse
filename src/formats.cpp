@@ -139,7 +139,11 @@ Bhav read_bhav(const View& payload) {
     const auto count = payload.le16(2);
     if (payload.size() != 12 + static_cast<std::uint64_t>(count) * 12)
         throw FormatError("BHAV payload length does not match instruction count");
-    Bhav routine{version, {}};
+    Bhav routine{version, {}, {}, std::nullopt};
+    payload.read(4, routine.header.data(), routine.header.size());
+    if (version == 0x8002)
+        routine.metadata = Bhav::Metadata{payload.u8(4), payload.u8(5),
+                                        payload.le16(6), payload.le16(8)};
     routine.instructions.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint64_t offset = 12 + i * 12;

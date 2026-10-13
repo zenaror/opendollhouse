@@ -31,7 +31,8 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
 2. **Interação controlada:** resolver TTAB comprimida e dependências da cadeira
    `DiningChairs.iff`, GUID `0x26BFBB29`. Antes da execução, determinar o significado
    dos operandos, contexts e retomadas usados pelo cenário.
-3. **VM:** traces de instruções, chamadas e estados com fixtures sintéticas e
+3. **VM:** núcleo inicial de chamadas/expressões com traces implementado;
+   faltam entidades e serviços. Traces de instruções, chamadas e estados com fixtures sintéticas e
    cenários originais identificados. Comparação com FreeSO serve de referência
    auxiliar; decisões de fidelidade precisam de evidência do original.
 4. **Composição gráfica Linux cedo:** sprites com profundidade, personagens

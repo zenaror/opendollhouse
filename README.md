@@ -4,8 +4,9 @@ Reimplementação independente de The Sims 1 para PC, com suporte progressivo à
 sete expansões e ao conteúdo personalizado clássico. FreeSO e Simitone são
 referências técnicas e inspiração; a referência de comportamento é o jogo original.
 
-Estado: primeiro protótipo de inspeção de recursos em C++17. Ainda não há jogo
-executável, VM funcional, renderizador ou validação em consoles.
+Estado: leitores de recursos e primeiro núcleo de execução BHAV em C++17,
+com testes sem janela e traces. Ainda não há jogo executável, serviços completos
+de simulação, renderizador ou validação em consoles.
 
 Plataformas pretendidas: New Nintendo 3DS, PlayStation Vita, Android e Linux.
 O primeiro alvo funcional é Linux, para permitir testes, depuração e comparação
@@ -58,6 +59,20 @@ rejeita seleção ambígua. Saída 0 indica tabela decodificada ou contagem vazi
 3 indica payload ausente ou versão legada não suportada, 2 indica erro.
 O JSON preserva bits restantes e não executa os BHAVs indicados pela tabela.
 
+Para inspecionar um BHAV ou fazer uma execução limitada sem serviços do mundo:
+
+```sh
+./build/odh-bhav '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1002
+./build/odh-bhav '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run
+```
+
+O modo `--run` emite trace e status JSON. Sem entidades, a cadeira para com
+diagnóstico de scope não suportado, saída 3. Saída 0 indica retorno true/false
+da rotina; 2 indica erro de uso/recurso. Há um orçamento de 10.000 instruções,
+distinto de ticks do jogo. A biblioteca preserva o estado para retomada ao
+esgotar o orçamento. Recursos globais opcionais são fornecidos explicitamente
+com `--global ARCHIVE.far ENTRY.iff`; não há busca nem precedência automática.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -67,6 +82,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Perfil dos formatos suportados e lacunas](docs/formats.md)
 - [Validação do primeiro protótipo](docs/validation.md)
 - [Validação das tabelas de interação](docs/ttab-validation.md)
+- [Núcleo da VM e limites de validação](docs/vm-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

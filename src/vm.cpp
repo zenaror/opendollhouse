@@ -1,0 +1,215 @@
+#include "odh/vm.hpp"
+
+#include <algorithm>
+#include <limits>
+
+namespace odh {
+namespace {
+class VmError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
+std::int16_t word(std::uint32_t value) {
+    const auto low = value & 65535;
+    return static_cast<std::int16_t>(low < 32768 ? static_cast<std::int32_t>(low)
+                                              : static_cast<std::int32_t>(low) - 65536);
+}
+std::int16_t operand_word(const Instruction& i, std::size_t offset) {
+    return word(static_cast<std::uint32_t>(i.operands[offset]) |
+                (static_cast<std::uint32_t>(i.operands[offset + 1]) << 8));
+}
+std::int16_t& indexed(std::vector<std::int16_t>& values, std::int16_t index) {
+    if (index < 0 || static_cast<std::size_t>(index) >= values.size())
+        throw VmError("variable index outside frame");
+    return values[static_cast<std::size_t>(index)];
+}
+} // namespace
+
+RoutineKey routine_key(std::uint16_t id) {
+    return {id >= 8192 ? RoutineScope::semiglobal :
+            id >= 4096 ? RoutineScope::private_object : RoutineScope::global, id};
+}
+const char* vm_status_name(VmStatus status) {
+    switch (status) {
+    case VmStatus::ready: return "ready";
+    case VmStatus::running: return "running";
+    case VmStatus::budget_exhausted: return "budget_exhausted";
+    case VmStatus::returned_true: return "returned_true";
+    case VmStatus::returned_false: return "returned_false";
+    case VmStatus::fault: return "fault";
+    }
+    return "invalid_status";
+}
+Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits)
+    : routines_(std::move(routines)), memory_(std::move(memory)), limits_(limits) {}
+
+void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
+    const auto found = routines_.find(key);
+    if (found == routines_.end()) throw VmError("routine not supplied: " + std::to_string(key.id));
+    const auto& routine = found->second;
+    if (routine.version != 0x8002 || !routine.metadata)
+        throw VmError("execution requires BHAV 8002 metadata");
+    if (routine.instructions.empty()) throw VmError("empty routine has no entry instruction");
+    for (const auto& instruction : routine.instructions)
+        for (const auto target : {instruction.on_true, instruction.on_false})
+            if (target < 0xFD && target >= routine.instructions.size())
+                throw VmError("branch outside routine");
+    if (stack_.size() >= limits_.stack_depth) throw VmError("stack depth limit");
+    const auto arg_count = std::max<std::size_t>(4, routine.metadata->arguments);
+    const auto local_count = std::max<std::size_t>(routine.metadata->locals, routine.metadata->arguments);
+    if (arg_count > limits_.frame_variables || local_count > limits_.frame_variables || args.size() > arg_count)
+        throw VmError("frame variable limit or too many arguments");
+    VmFrame frame{key, 0, context, std::vector<std::int16_t>(arg_count),
+                  std::vector<std::int16_t>(local_count)};
+    std::copy(args.begin(), args.end(), frame.arguments.begin());
+    stack_.push_back(std::move(frame));
+}
+VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
+    stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
+    status_ = VmStatus::running;
+    try { push(key, context, args); }
+    catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
+    return status_;
+}
+std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
+    auto& frame = stack_.back();
+    switch (scope) {
+    case 7: return data;
+    case 8:
+        if (data < 0 || static_cast<std::size_t>(data) >= temps_.size()) throw VmError("temp index outside registers");
+        return temps_[static_cast<std::size_t>(data)];
+    case 9: return indexed(frame.arguments, data);
+    case 10: return frame.context.stack_object;
+    case 25: return indexed(frame.locals, data);
+    default:
+        if (memory_.read) {
+            const auto value = memory_.read(frame, scope, data);
+            if (value) return *value;
+        }
+        throw VmError("unsupported read scope " + std::to_string(scope) + " index " + std::to_string(data));
+    }
+}
+void Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
+    auto& frame = stack_.back();
+    const auto truncated = word(static_cast<std::uint32_t>(value));
+    switch (scope) {
+    case 8:
+        if (data < 0 || static_cast<std::size_t>(data) >= temps_.size()) throw VmError("temp index outside registers");
+        temps_[static_cast<std::size_t>(data)] = truncated; return;
+    case 9: indexed(frame.arguments, data) = truncated; return;
+    case 10: frame.context.stack_object = truncated; return;
+    case 25: indexed(frame.locals, data) = truncated; return;
+    default:
+        if (memory_.write && memory_.write(frame, scope, data, truncated)) return;
+        throw VmError("unsupported write scope " + std::to_string(scope) + " index " + std::to_string(data));
+    }
+}
+bool Vm::expression(const Instruction& i) {
+    const auto lhs_data = operand_word(i, 0), rhs_data = operand_word(i, 2);
+    const auto op = i.operands[5], lhs_scope = i.operands[6], rhs_scope = i.operands[7];
+    // Byte4 is preserved in traces. The reference TS1 handler does not use it.
+    if (op > 19) throw VmError("unsupported expression operator " + std::to_string(op));
+    if (op == 5) { write(lhs_scope, lhs_data, read(rhs_scope, rhs_data)); return true; }
+    std::int32_t lhs = read(lhs_scope, lhs_data);
+    if (op == 11 || op == 17) {
+        lhs += op == 11 ? 1 : -1;
+        write(lhs_scope, lhs_data, lhs);
+        const auto rhs = read(rhs_scope, rhs_data); // Read after mutation, including aliases.
+        return op == 11 ? lhs < rhs : lhs > rhs;
+    }
+    const std::int32_t rhs = read(rhs_scope, rhs_data);
+    switch (op) {
+    case 0: return lhs > rhs;
+    case 1: return lhs < rhs;
+    case 2: return lhs == rhs;
+    case 3: lhs += rhs; break;
+    case 4: lhs -= rhs; break;
+    case 6: lhs *= rhs; break;
+    case 7:
+        if (rhs == 0) throw VmError("division by zero: original semantics unverified");
+        lhs /= rhs; break;
+    case 8: case 9: case 10: {
+        if (rhs < 1 || rhs > 16) throw VmError("flag index outside supported 16-bit range");
+        const auto mask = std::uint32_t{1} << (rhs - 1);
+        const auto bits = static_cast<std::uint32_t>(lhs) & 65535;
+        if (op == 8) return (bits & mask) != 0;
+        lhs = word(op == 9 ? bits | mask : bits & ~mask); break;
+    }
+    case 12:
+        if (rhs == 0) throw VmError("modulo by zero: original semantics unverified");
+        lhs = (lhs % rhs + rhs) % rhs; break;
+    case 13: lhs &= rhs; break;
+    case 14: return lhs >= rhs;
+    case 15: return lhs <= rhs;
+    case 16: return lhs != rhs;
+    case 18: lhs |= rhs; break; // TS1 OR, not the TSO list operation.
+    case 19: lhs ^= rhs; break;
+    default: throw VmError("unsupported expression operator");
+    }
+    write(lhs_scope, lhs_data, lhs);
+    return true;
+}
+void Vm::branch(bool result) {
+    // Iteratively unwind returning children; parent stays on its call instruction.
+    while (!stack_.empty()) {
+        auto& frame = stack_.back();
+        const auto& instruction = routines_.at(frame.key).instructions.at(frame.pc);
+        auto target = result ? instruction.on_true : instruction.on_false;
+        if (target == 0xFD) {
+            target = instruction.on_true != 0xFD ? instruction.on_true : instruction.on_false;
+            if (target == 0xFD) throw VmError("both branches are FD error destinations");
+        }
+        if (target < 0xFD) {
+            if (target >= routines_.at(frame.key).instructions.size()) throw VmError("branch outside routine");
+            frame.pc = target; return;
+        }
+        result = target == 0xFE;
+        stack_.pop_back();
+    }
+    status_ = result ? VmStatus::returned_true : VmStatus::returned_false;
+}
+VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>& trace) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
+    if (status_ != VmStatus::running && status_ != VmStatus::budget_exhausted) return status_;
+    struct Guard {
+        bool& value;
+        explicit Guard(bool& flag) : value(flag) { value = true; }
+        ~Guard() { value = false; }
+    } guard(executing_);
+    status_ = VmStatus::running;
+    for (std::uint64_t used = 0; used < budget && status_ == VmStatus::running; ++used) {
+        try {
+            const auto& frame = stack_.back();
+            const auto& routine = routines_.at(frame.key);
+            if (frame.pc >= routine.instructions.size()) throw VmError("instruction pointer outside routine");
+            const auto instruction = routine.instructions[frame.pc];
+            if (steps_ == std::numeric_limits<std::uint64_t>::max()) throw VmError("step counter overflow");
+            if (trace) trace(VmTrace{steps_, stack_.size(), frame.key, frame.pc, instruction});
+            ++steps_;
+            if (instruction.opcode >= 256) {
+                const auto key = routine_key(instruction.opcode);
+                const auto found = routines_.find(key);
+                if (found == routines_.end() || !found->second.metadata) {
+                    push(key, frame.context, {}); // Produce the specific missing/metadata diagnostic.
+                    continue;
+                }
+                const auto count = std::max<std::size_t>(4, found->second.metadata->arguments);
+                if (count > temps_.size()) throw VmError("call argument count exceeds supported temp mapping");
+                std::vector<std::int16_t> args(count);
+                const bool substitute = operand_word(instruction, 2) != 0 ||
+                    operand_word(instruction, 4) != 0 || operand_word(instruction, 6) != 0;
+                for (std::size_t n = 0; n < count; ++n) {
+                    auto value = n < 4 ? operand_word(instruction, n * 2) : static_cast<std::int16_t>(-1);
+                    if (value == -1 && substitute) value = temps_[n];
+                    args[n] = value;
+                }
+                const auto context = frame.context;
+                push(key, context, args);
+            } else if (instruction.opcode == 2) {
+                const auto result = expression(instruction);
+                branch(result);
+            } else throw VmError("unsupported primitive " + std::to_string(instruction.opcode));
+        } catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
+    }
+    if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
+    return status_;
+}
+} // namespace odh

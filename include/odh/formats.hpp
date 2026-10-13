@@ -77,6 +77,14 @@ struct Instruction {
 struct Bhav {
     std::uint16_t version;
     std::vector<Instruction> instructions;
+    std::array<std::uint8_t, 8> header{}; // Preserve legacy/unknown metadata.
+    struct Metadata {
+        std::uint8_t type;
+        std::uint8_t arguments;
+        std::uint16_t locals;
+        std::uint16_t tree_version;
+    };
+    std::optional<Metadata> metadata; // Defined only for the current 8002 profile.
 };
 
 // Decode the structure only. No instruction execution or operand semantics.
