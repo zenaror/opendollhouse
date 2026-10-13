@@ -265,6 +265,13 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("service ticket overflow");
                 const VmDispatch dispatch{this,++ticket_sequence_};
                 const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
+                if (outcome.temp_write) {
+                    if (outcome.disposition != PrimitiveDisposition::goto_true &&
+                        outcome.disposition != PrimitiveDisposition::goto_false)
+                        throw VmError("primitive temp output requires synchronous branch disposition");
+                    if (outcome.temp_write->index >= temps_.size())
+                        throw VmError("primitive temp output index outside registers");
+                }
                 if(outcome.call && outcome.disposition!=PrimitiveDisposition::call)
                     throw VmError("primitive call payload requires call disposition");
                 if (outcome.write && outcome.disposition == PrimitiveDisposition::unsupported)
@@ -283,11 +290,15 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     break;
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
+                    // Validate both outputs before publishing either.
+                    if (outcome.write && !frame_output(stack_.back(), *outcome.write))
+                        throw VmError("primitive frame output bank/index outside frame");
                     if (outcome.write) {
                         auto* destination = frame_output(stack_.back(), *outcome.write);
-                        if (!destination) throw VmError("primitive frame output bank/index outside frame");
                         *destination = outcome.write->value;
                     }
+                    if (outcome.temp_write)
+                        temps_[outcome.temp_write->index] = outcome.temp_write->value;
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
                     if (outcome.write) {

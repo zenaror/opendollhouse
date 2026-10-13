@@ -4,6 +4,7 @@ Checkpoint de 2026-10-13. `odh-person` liga um avatar e seu semiglobal a uma VM
 permanente, com Sleep e InteractionQueue no mesmo relógio. Executa o Main real
 ou uma rotina privada selecionada explicitamente e preserva o primeiro fault.
 O avanço posterior de scope26 está em [tuning-validation.md](tuning-validation.md).
+O gate posterior de SIMI/current lot/zoning está em [lot-validation.md](lot-validation.md).
 É um host de diagnóstico sem janela; não substitui o preview e não representa
 um avatar/lote completamente inicializado.
 

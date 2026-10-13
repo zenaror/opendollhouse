@@ -89,7 +89,9 @@ com gate do wrapper global281 nativo; o preview ainda usa o host anterior.
 `odh-person` executa o Main ou uma rotina explícita do avatar com owners,
 Sleep e fila no mesmo relógio. O [gate do host de pessoa](docs/person-host-validation.md)
 registra execução nativa parcial. O [tuning por owner](docs/tuning-validation.md)
-carrega BCON explícitos; contexto de lote e inicialização completa seguem pendentes.
+carrega BCON explícitos. O [contexto de lote](docs/lot-validation.md) carrega SIMI
+e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
+Inicialização completa e carregamento da casa como simulação seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

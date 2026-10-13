@@ -60,6 +60,10 @@ amostras float32; não implica que esses sejam limites do original.
 
 ## Lacunas relevantes encontradas no corpus
 
+SIMI de casas externas preserva32/64 globais, campos fixos, seis registros de
+orçamento e extensão desconhecida. Versões e cobertura estão em
+[lot-validation.md](lot-validation.md); isso não carrega arquitetura ou entidades.
+
 - TTAB versão 9 comprimida aparece em 1.398 ocorrências internas aos FAR,
   incluindo cadeiras comuns; seus campos agora são lidos. O codec usa bits MSB-first,
   campo zero ou seletor de largura com payload assinado. Truncamento causa erro;

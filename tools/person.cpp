@@ -1,6 +1,8 @@
 #include "odh/interaction.hpp"
 #include "odh/sleep.hpp"
 #include "odh/tuning.hpp"
+#include "odh/lot.hpp"
+#include "odh/lot_context.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -48,6 +50,8 @@ std::int16_t signed_word(std::uint16_t v){return static_cast<std::int16_t>(v<327
 int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
+    std::optional<std::string> lot_path,zoning_path;
+    std::optional<std::uint16_t> lot_id;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::uint16_t ticks_limit=256;bool ticks_set=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
@@ -59,10 +63,27 @@ int main(int argc,char** argv) {
         else if(option=="--flags"&&!flags&&n+1<argc)flags=selector(argv[++n]);
         else if(option=="--age"&&!age&&n+1<argc)age=selector(argv[++n]);
         else if(option=="--routine"&&!routine&&n+1<argc)routine=selector(argv[++n]);
+        else if(option=="--lot"&&!lot_path&&n+2<argc){lot_path=argv[n+1];lot_id=selector(argv[n+2]);n+=2;}
+        else if(option=="--zoning"&&!zoning_path&&n+1<argc)zoning_path=argv[++n];
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767))
-        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--routine ID] [--action FAR ENTRY OBJD ROUTINE] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path))
+        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+    std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
+    if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type!="SIMI"||chunk.id!=1)return;
+        if(simi)throw odh::FormatError("ambiguous SIMI1");simi=odh::read_simi(chunk.payload);
+    });});
+    if(lot_path&&!simi)throw odh::FormatError("SIMI1 absent in selected house");
+    if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type!="STR#"||chunk.id!=1)return;
+        if(zoning)throw odh::FormatError("ambiguous zoning STR#1");zoning=odh::read_lot_zoning(odh::read_strings(chunk.payload));
+    });});
+    if(zoning_path&&!zoning)throw odh::FormatError("zoning STR#1 absent");
+    std::optional<odh::LotContext> lot;
+    if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
+    std::vector<std::pair<std::int16_t,std::int16_t>> global_reads;
+    std::vector<odh::LotZoneResult> zoning_reads;
     auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def);
     if(person.binding->version!=138||person.object_type!=2)throw odh::FormatError("person constructor profile requires OBJD138 ObjectType2");
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
@@ -98,11 +119,17 @@ int main(int argc,char** argv) {
     std::vector<odh::TuningValue> tuning_reads;
     const auto world_memory=world.vm_memory();auto memory=world_memory;
     memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
+        if(scope==6){const auto value=lot?lot->read(index):std::nullopt;
+            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.emplace_back(index,*value);}return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
         const auto value=tuning.read(frame.context.code_owner,index);
         if(!value)return {};
         if(tuning_reads.size()>=20000)throw odh::FormatError("tuning read log exceeds bounded host profile");
         tuning_reads.push_back(*value);return value->value;
+    };
+    memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value){
+        if(scope==6)return lot&&lot->write(index,value);
+        return world_memory.write(frame,scope,index,value);
     };
     odh::RoutineOwners owners{{1,std::move(person.routines)}};
     if(action){owners.emplace(2,std::move(action_data->routines));
@@ -110,9 +137,13 @@ int main(int argc,char** argv) {
     std::uint64_t rng_requests=0;
     odh::Sleep sleep(world,[&]{++rng_requests;});odh::InteractionQueue queue(world,1);
     const auto sleep_handler=sleep.primitive(),queue_handler=queue.primitive();
+    const auto lot_handler=lot?lot->primitive([&](const auto& value){
+        if(zoning_reads.size()>=10000)throw odh::FormatError("zoning read log exceeds bounded host profile");zoning_reads.push_back(value);
+    }):odh::VmPrimitive{};
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
+        if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -157,6 +188,16 @@ int main(int argc,char** argv) {
         std::cout<<"{\"owner\":"<<v.owner<<",\"scope\":"<<json_bytes(scope)<<",\"table\":"<<v.address.table<<",\"index\":"<<static_cast<unsigned>(v.address.index)
             <<",\"value\":"<<v.value<<",\"semiglobal_fallback\":"<<(v.semiglobal_fallback?"true":"false")<<'}';
     }
+    std::cout<<"],\"lot\":";
+    if(lot)std::cout<<"{\"house\":"<<json_bytes(*lot_path)<<",\"selected_id\":"<<*lot_id<<",\"serialized_id\":"<<simi->global_data[10]
+        <<",\"simi_version\":"<<simi->version<<",\"serialized_globals\":"<<simi->global_data.size()<<",\"remaining_bytes\":"<<simi->remaining_bytes
+        <<",\"profile\":\"SIMI static globals; selected lot overrides10; clock/entity/runtime initialization fields unsupported\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"global_reads\":[";
+    for(std::size_t n=0;n<global_reads.size();++n){if(n)std::cout<<',';std::cout<<"{\"index\":"<<global_reads[n].first<<",\"value\":"<<global_reads[n].second<<'}';}
+    std::cout<<"],\"zoning_reads\":[";
+    for(std::size_t n=0;n<zoning_reads.size();++n){if(n)std::cout<<',';const auto& value=zoning_reads[n];
+        std::cout<<"{\"input\":"<<value.input<<",\"value\":"<<value.value<<",\"fallback\":"<<(value.fallback?"true":"false")<<'}';}
     std::cout<<']';
     const auto* actor=world.find(1);
     std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)

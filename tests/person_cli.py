@@ -90,4 +90,39 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'GLOB128' in r.stderr
  setup();archive(action,'Chair.iff',[('OBJD',128,objd(2)),('GLOB',128,b'\x04Semi'),('BHAV',4096,routine([expr(0,1)]))]);r=run(action_args)
  assert r.returncode==2 and not r.stdout and 'action semiglobal' in r.stderr
+ # Explicit house selection and native-style zoning input, separate from FARs.
+ house=root/'House.iff';zone=root/'LotZoning.iff'
+ def plain_iff(path,chunks):
+  data=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
+  for kind,rid,payload in chunks:data+=kind.encode()+struct.pack('>IHH',76+len(payload),rid,0)+bytes(64)+payload
+  path.write_bytes(data)
+ saved=[0]*32;saved[10]=99;saved[23]=56
+ simi=struct.pack('<II4s',0,0x3e,b'IMIS')+struct.pack('<32h',*saved)+bytes(34+24)
+ zoning=struct.pack('<hH',-3,3)+b'\x011, residential\0road\0\x0158, community\0road\0\x021, malformed translation\0road\0'
+ plain_iff(house,[('SIMI',1,simi)]);plain_iff(zone,[('STR#',1,zoning)])
+ def lot_args(number=1):return ['--lot',str(house),str(number),'--zoning',str(zone)]
+ read_lot=(2,1,255,[0,0,10,0,0,5,8,6]);zone_call=(1,2,255,[28,99,0,0,0,0,0,0])
+ for number,expected,fallback in [(1,0,False),(58,1,False),(81,2,True),(89,2,True),(80,1,True),(90,1,True)]:
+  setup(main=[read_lot,zone_call,(2,254,255,[0,0,expected,0,0,2,8,7])]);r=run(lot_args(number));d=json.loads(r.stdout)
+  assert r.returncode==0 and d['status']=='returned_true' and d['steps']==3 and d['ticks']==0
+  assert d['global_reads']==[dict(index=10,value=number)]
+  assert d['zoning_reads']==[dict(input=number,value=expected,fallback=fallback)]
+  assert d['lot']['selected_id']==number and d['lot']['serialized_id']==99 and d['lot']['serialized_globals']==32
+ setup(main=[read_lot,zone_call,(2,254,255,[0,0,0,0,0,2,8,7])]);r=run(['--lot',str(house),'1']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='lot zoning resource unavailable' and d['zoning_reads']==[]
+ r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported read scope 6 index 10'
+ for index in [0,1,3,4,5,6,7,8,9,17,20,25,32,33]:
+  setup(main=[(2,254,255,[0,0,index,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
+  assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
+ setup(main=[(2,254,255,[0,0,23,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
+ assert r.returncode==0 and d['global_reads']==[dict(index=23,value=56)]
+ for extra in [['--zoning',str(zone)],['--lot',str(house),'0'],['--lot',str(house),'32768'],lot_args()+['--lot',str(house),'2']]:
+  r=run(extra);assert r.returncode==2 and not r.stdout
+ plain_iff(house,[('SIMI',1,simi),('SIMI',1,simi)]);r=run(lot_args());assert r.returncode==2 and 'ambiguous SIMI1' in r.stderr
+ plain_iff(house,[('SIMI',2,simi)]);r=run(lot_args());assert r.returncode==2 and 'SIMI1 absent' in r.stderr
+ plain_iff(house,[('SIMI',1,simi)])
+ plain_iff(zone,[('STR#',1,zoning),('STR#',1,zoning)]);r=run(lot_args());assert r.returncode==2 and 'ambiguous zoning' in r.stderr
+ plain_iff(zone,[('STR#',2,zoning)]);r=run(lot_args());assert r.returncode==2 and 'STR#1 absent' in r.stderr
+ plain_iff(zone,[('STR#',1,struct.pack('<hH',-3,1)+b'\x011, unknown\0\0')]);r=run(lot_args())
+ assert r.returncode==2 and 'unsupported lot zoning label' in r.stderr
 print('person host CLI checks passed (synthetic fixtures only)')
