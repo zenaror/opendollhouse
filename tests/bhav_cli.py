@@ -11,7 +11,7 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
-def archive(rows,slots=None,slot_id=100,objd=None):
+def archive(rows,slots=None,slot_id=100,objd=None,strings=()):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
         asset += b'BHAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
@@ -19,6 +19,8 @@ def archive(rows,slots=None,slot_id=100,objd=None):
         asset += b'SLOT'+struct.pack('>IHH',76+len(slots),slot_id,0)+bytes(64)+slots
     if objd is not None:
         asset += b'OBJD'+struct.pack('>IHH',76+len(objd),16808,0)+bytes(64)+objd
+    for identifier,payload in strings:
+        asset += b'STR#'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     name=b'test.iff'
     return (b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+
             struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
@@ -73,6 +75,83 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     result=subprocess.run(args,capture_output=True,text=True);d=json.loads(result.stdout)
     assert result.returncode==0 and d['container']==2 and d['container_slot']==0 and d['final_position']==[64,64,1,0]
     assert d['object_binding']=={'objd_id':16808,'guid':0x12345678,'slot_table':128,'animation_table':129}
+    # Explicit synthetic animation resources; no transforms or skeleton are supplied.
+    def u(n): return struct.pack('<I',n)
+    def pas(s): return bytes([len(s)])+s
+    def clip(name,event=b'100'):
+        return (pas(name)+pas(b'absent.cfp')+
+                b''.join(u(n) for n in [0,0,0,0,0,1])+pas(b'ROOT')+
+                b''.join(u(n) for n in [4,0,0,0,0,0,0,1,1,40,1])+
+                pas(b'xevt')+pas(event))
+    bcf_path=Path(folder)/'animation.far'
+    def write_bcf(clips):
+        payload=u(0)+u(0)+u(len(clips))+b''.join(clips)
+        name=b'test.bcf'
+        bcf_path.write_bytes(b'FAR!byAZ'+u(1)+u(16+len(payload))+payload+u(1)+
+                             struct.pack('<IIII',len(payload),len(payload),16,len(name))+name)
+    write_bcf([clip(b'Adult'),clip(b'Child',b'101')])
+    def table(values):
+        return struct.pack('<hH',-3,len(values))+b''.join(b'\x01'+v+b'\0\0' for v in values)
+    animation_args=args+['--animation-probe',str(bcf_path),'test.bcf']
+    def animated(strings=((129,table([b'',b'aDuLt'])),(130,table([b'',b'CHILD']))),
+                 operands=bytes([1,0,0,0,0,0,0,0]),no=0,extra=()):
+        path.write_bytes(archive([(4096,routine(44,operands,no=no))],
+                         struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix,strings))
+        return subprocess.run(animation_args+list(extra),capture_output=True,text=True)
+    r=animated();d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['age']==21
+    assert d['evidence']=='ODH_VM_constructed_route_snap_silent_animation_world'
+    assert d['animation_events']==[{'tick':1,'actor':1,'time_id':40,'properties':[['xevt','100']]}]
+    assert d['animation_progress'] is None and d['simulation_ticks']==d['route_ticks']==5
+    assert len(d['trace'])==2 and d['movements']==[]
+    r=animated(extra=('--age','17'));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['age']==17 and d['animation_events'][0]['properties']==[['xevt','101']]
+    r=animated(extra=('--age','18'));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['animation_events'][0]['properties']==[['xevt','100']]
+    r=animated(no=255);d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_false' and d['simulation_ticks']==2
+    assert d['animation_progress']['name']=='Adult' and d['animation_progress']['frame']>0
+    # IDFromParam maps Object to StackObject65536. Explicit autonomous argument0=1
+    # supplies the same selected animation identity.
+    r=animated(operands=bytes([0,0,0,0,0,4,0,0]),no=255,extra=('--autonomous',));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['animation_events'][0]['properties']==[['xevt','100']]
+    assert not d['animation_events_truncated']
+    for strings,message in [(((129,table([b''])),(130,table([b'',b'Adult']))),'index missing'),
+                            (((129,table([b'',b'Missing'])),),'clip missing'),
+                            ((),'table absent')]:
+        r=animated(strings=strings);d=json.loads(r.stdout)
+        assert r.returncode==3 and d['status']=='fault' and not d['animation_events']
+        assert message in d['animation_diagnostic']
+    alternate=bytearray(prefix);struct.pack_into('<H',alternate,26,200)
+    original=prefix;prefix=alternate
+    r=animated();assert r.returncode==0 # Absent selected table uses129.
+    r=animated(strings=((200,table([b''])),(129,table([b'',b'Adult']))));d=json.loads(r.stdout)
+    assert r.returncode==3 and 'index missing' in d['animation_diagnostic']
+    prefix=original
+    wrapped=bytearray(prefix);struct.pack_into('<H',wrapped,26,65535);prefix=wrapped
+    r=animated(strings=((0,table([b'',b'Child'])),),extra=('--age','17'));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['animation_events'][0]['properties']==[['xevt','101']]
+    prefix=original
+    r=animated(strings=((129,struct.pack('<hH',-3,2)+b'\x02\0\0\x02Adult\0\0'),));d=json.loads(r.stdout)
+    assert r.returncode==3 and 'language 1' in d['animation_diagnostic']
+    r=animated(operands=bytes([1,0,0,0,3,0,0,0]));d=json.loads(r.stdout)
+    assert r.returncode==3 and 'scope not supplied' in d['animation_diagnostic']
+    for options in [('--age','32768'),('--age','1','--age','2'),('--animation-probe',str(bcf_path))]:
+        r=animated(extra=options);assert r.returncode==2 and not r.stdout
+    many_events=(pas(b'Adult')+pas(b'absent.cfp')+
+                 b''.join(u(n) for n in [0,0,0,0,0,1])+pas(b'ROOT')+
+                 b''.join(u(n) for n in [4,0,0,0,0,0,0,1,4096])+
+                 (u(40)+u(1)+pas(b'xevt')+pas(b'100'))*4096)
+    write_bcf([many_events])
+    r=animated();d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='waiting' and d['simulation_ticks']==1
+    assert len(d['animation_events'])==4096 and d['animation_event_limit_reached']
+    assert not d['animation_events_truncated']
+    write_bcf([clip(b'Adult'),clip(b'ADULT')])
+    r=animated();assert r.returncode==2 and 'casefold' in r.stderr and not r.stdout
+    for options in [('--age','21'),('--animation-probe',str(bcf_path),'test.bcf')]:
+        result=run([(4096,routine())],*options)
+        assert result.returncode==2 and not result.stdout
     args[args.index('16808')]='16809'
     result=subprocess.run(args,capture_output=True,text=True)
     assert result.returncode==2 and not result.stdout

@@ -20,6 +20,15 @@ std::int16_t& indexed(std::vector<std::int16_t>& values, std::int16_t index) {
         throw VmError("variable index outside frame");
     return values[static_cast<std::size_t>(index)];
 }
+std::int16_t* frame_output(VmFrame& frame, const VmFrameWrite& output) {
+    std::vector<std::int16_t>* bank = nullptr;
+    switch (output.bank) {
+    case VmFrameBank::arguments: bank = &frame.arguments; break;
+    case VmFrameBank::locals: bank = &frame.locals; break;
+    default: return nullptr;
+    }
+    return output.index < bank->size() ? &(*bank)[output.index] : nullptr;
+}
 } // namespace
 
 RoutineKey routine_key(std::uint16_t id) {
@@ -64,6 +73,9 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
 }
 VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
+    if (run_generation_ == std::numeric_limits<std::uint64_t>::max())
+        throw std::logic_error("VM run generation overflow");
+    ++run_generation_;
     stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
     pending_.reset();
     status_ = VmStatus::running;
@@ -213,9 +225,18 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("service ticket overflow");
                 const VmDispatch dispatch{this,++ticket_sequence_};
                 const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
+                if (outcome.write && (outcome.disposition == PrimitiveDisposition::wait ||
+                                      outcome.disposition == PrimitiveDisposition::unsupported))
+                    throw VmError("wait/unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
-                case PrimitiveDisposition::goto_true: branch(true); break;
-                case PrimitiveDisposition::goto_false: branch(false); break;
+                case PrimitiveDisposition::goto_true:
+                case PrimitiveDisposition::goto_false:
+                    if (outcome.write) {
+                        auto* destination = frame_output(stack_.back(), *outcome.write);
+                        if (!destination) throw VmError("primitive frame output bank/index outside frame");
+                        *destination = outcome.write->value;
+                    }
+                    branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
                     pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
                     status_ = VmStatus::waiting; break;
@@ -230,9 +251,14 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
     if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
     return status_;
 }
-bool Vm::complete(std::uint64_t ticket, bool result) {
+bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> output) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter completion");
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
+    if (output) {
+        auto* destination = frame_output(stack_.back(), *output);
+        if (!destination) return false;
+        *destination = output->value;
+    }
     pending_.reset();
     status_ = VmStatus::running;
     try { branch(result); }

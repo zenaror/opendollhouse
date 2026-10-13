@@ -1,5 +1,10 @@
 # Suspensão da VM para serviços — 2026-10-13
 
+Extensão posterior: completion agora admite output validado em argumentos/locais,
+e `run_generation()` identifica reinícios. O contrato e os74 checks atuais de
+serviço estão em [playback-validation.md](playback-validation.md); abaixo está
+o checkpoint inicial do mecanismo de suspensão.
+
 O kernel agora permite que uma primitiva externa devolva true, false,
 unsupported ou wait. Isso prepara a ligação ao roteamento/animação, mas não
 implementa essas primitivas, um scheduler ou passagem de tempo do jogo.

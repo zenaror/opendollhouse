@@ -1,5 +1,9 @@
 # Recursos de animação — 2026-10-13
 
+O checkpoint seguinte ligou frames/eventos silenciosos à VM; consultar
+[playback-validation.md](playback-validation.md). Abaixo está a evidência da
+etapa de leitura de recursos, anterior a essa ligação.
+
 Esta etapa identifica o clipe da cadeira e lê seus dados. Não executa a
 primitiva 44, não renderiza ossos e não comprova comportamento do original.
 O probe publicado anterior continua parando em 44, BHAV 0x1003 PC8.

@@ -49,9 +49,16 @@ struct VmLimits {
     std::size_t frame_variables = 4096;
 };
 enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported };
+enum class VmFrameBank { arguments, locals };
+struct VmFrameWrite {
+    VmFrameBank bank;
+    std::size_t index;
+    std::int16_t value;
+};
 struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
+    std::optional<VmFrameWrite> write = {}; // Only immediate branch outcomes may write.
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
@@ -81,10 +88,12 @@ public:
     std::array<std::int16_t, 20>& temps() { return temps_; }
     const std::array<std::int16_t, 20>& temps() const { return temps_; }
     std::uint64_t steps() const { return steps_; }
+    std::uint64_t run_generation() const { return run_generation_; } // Every start attempt, including faults.
     const std::optional<VmPending>& pending() const { return pending_; }
     // Accept one matching service completion. Stale/duplicate tickets do nothing.
+    // An invalid frame output rejects the entire completion without consuming its ticket.
     // Completion follows the saved instruction's branch; it does not dispatch again.
-    bool complete(std::uint64_t ticket, bool result);
+    bool complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> write = {});
 private:
     void push(RoutineKey, VmContext, const std::vector<std::int16_t>&);
     void branch(bool);
@@ -103,5 +112,6 @@ private:
     VmPrimitive primitive_;
     std::optional<VmPending> pending_;
     std::uint64_t ticket_sequence_ = 0; // Never reset by start().
+    std::uint64_t run_generation_ = 0;
 };
 } // namespace odh

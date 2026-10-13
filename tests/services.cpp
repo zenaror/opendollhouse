@@ -57,6 +57,91 @@ int main() {
             });
         ptr=&reentry;reentry.start(key);
         require(reentry.run(1)==odh::VmStatus::returned_false && guarded,"service cannot complete while dispatching");
+        for (const auto bank : {odh::VmFrameBank::arguments,odh::VmFrameBank::locals}) {
+            const std::uint8_t scope=bank==odh::VmFrameBank::arguments ? 9 : 25;
+            const auto program=routine({{44,1,2,{}},
+                {2,254,255,{0,0,42,0,0,2,scope,7}},
+                {2,254,255,{0,0,42,0,0,2,scope,7}}});
+            for (const bool result : {true,false}) {
+                odh::Vm event({{key,program}}, {}, {},
+                    [](const auto&,const auto&,const auto&,const auto&) {
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                    });
+                require(event.run_generation()==0,"new VM has no start generation");
+                event.start(key,{}, {7});
+                const auto generation=event.run_generation();
+                event.run(1);
+                const auto ticket=event.pending()->ticket;
+                const auto original=event.stack().back();
+                const auto steps=event.steps();
+                auto unchanged=[&] {
+                    return event.status()==odh::VmStatus::waiting && event.pending() &&
+                        event.pending()->ticket==ticket && event.stack().size()==1 &&
+                        event.stack().back().pc==original.pc &&
+                        event.stack().back().arguments==original.arguments &&
+                        event.stack().back().locals==original.locals &&
+                        event.steps()==steps && event.diagnostic().empty() &&
+                        event.run_generation()==generation;
+                };
+                require(!event.complete(ticket+1,result,odh::VmFrameWrite{bank,0,42}) && unchanged(),
+                        "wrong ticket output leaves waiting frame unchanged");
+                const auto size=bank==odh::VmFrameBank::arguments ? original.arguments.size() : original.locals.size();
+                require(!event.complete(ticket,result,odh::VmFrameWrite{bank,size,42}) && unchanged(),
+                        "out of range output atomically rejects completion");
+                require(!event.complete(ticket,result,odh::VmFrameWrite{static_cast<odh::VmFrameBank>(99),0,42}) && unchanged(),
+                        "invalid output bank atomically rejects completion");
+                require(event.complete(ticket,result,odh::VmFrameWrite{bank,0,42}) &&
+                        event.stack().back().pc==(result ? 1 : 2) && event.run_generation()==generation,
+                        "matching event writes frame and follows selected branch without restarting");
+                const auto& values=bank==odh::VmFrameBank::arguments ? event.stack().back().arguments : event.stack().back().locals;
+                require(values[0]==42 && !event.complete(ticket,!result,odh::VmFrameWrite{bank,0,99}) && values[0]==42,
+                        "duplicate event cannot overwrite delivered value");
+                require(event.run(1)==odh::VmStatus::returned_true,"next expression sees delivered argument/local event");
+                event.start(key,{}, {7});event.run(1);
+                const auto canceled_ticket=event.pending()->ticket;
+                event.start(key,{}, {8});
+                require(event.run_generation()==generation+2 &&
+                        !event.complete(canceled_ticket,true,odh::VmFrameWrite{bank,0,99}) &&
+                        event.stack().back().arguments[0]==8 && event.stack().back().locals[0]==0,
+                        "restart invalidates event output and identifies new run");
+                const auto fresh_generation=event.run_generation();
+                require(event.start(child)==odh::VmStatus::fault && event.run_generation()==fresh_generation+1,
+                        "failed start still identifies a new run");
+                odh::Vm immediate({{key,program}}, {}, {},
+                    [=](const auto&,const auto&,const auto&,const auto&) {
+                        return odh::PrimitiveOutcome{result ? odh::PrimitiveDisposition::goto_true : odh::PrimitiveDisposition::goto_false,
+                                                     {},odh::VmFrameWrite{bank,0,42}};
+                    });
+                immediate.start(key);
+                require(immediate.run(2)==odh::VmStatus::returned_true,"immediate argument/local output visible on either branch");
+            }
+            for (const auto disposition : {odh::PrimitiveDisposition::goto_true,odh::PrimitiveDisposition::goto_false,
+                                          odh::PrimitiveDisposition::wait,odh::PrimitiveDisposition::unsupported}) {
+                odh::Vm invalid({{key,routine({{44,1,1,{}},{44,254,255,{}}})}}, {}, {},
+                    [=](const auto&,const auto&,const auto&,const auto&) {
+                        return odh::PrimitiveOutcome{disposition,{},odh::VmFrameWrite{bank,4,42}};
+                    });
+                invalid.start(key,{}, {7});
+                require(invalid.run(1)==odh::VmStatus::fault && !invalid.pending() &&
+                        invalid.stack().back().pc==0 && invalid.stack().back().arguments[0]==7 &&
+                        invalid.stack().back().locals[0]==0 && invalid.diagnostic().find("frame output")!=std::string::npos,
+                        "invalid or forbidden immediate output faults without mutation or branch");
+            }
+        }
+        for (const auto disposition : {odh::PrimitiveDisposition::wait,odh::PrimitiveDisposition::unsupported,
+                                      odh::PrimitiveDisposition::goto_true}) {
+            odh::Vm invalid({{key,routine({{44,1,1,{}},{44,254,255,{}}})}}, {}, {},
+                [=](const auto&,const auto&,const auto&,const auto&) {
+                    const auto bank=disposition==odh::PrimitiveDisposition::goto_true ? static_cast<odh::VmFrameBank>(99)
+                                                                                    : odh::VmFrameBank::arguments;
+                    return odh::PrimitiveOutcome{disposition,{},odh::VmFrameWrite{bank,0,42}};
+                });
+            invalid.start(key,{}, {7});
+            require(invalid.run(1)==odh::VmStatus::fault && !invalid.pending() &&
+                    invalid.stack().back().pc==0 && invalid.stack().back().arguments[0]==7 &&
+                    invalid.diagnostic().find("frame output")!=std::string::npos,
+                    "forbidden valid write or invalid bank never mutates frame");
+        }
         std::cout<<checks<<" service checks passed (synthetic fixtures only)\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Service test failed: "<<e.what()<<'\n';return 1;}
 }

@@ -107,8 +107,16 @@ suporta o SLOT selecionado, com política de percurso e velocidade provisórias.
 A ação ainda para em `snap`, saída 3; não é sentar/levantar completo.
 
 Adicione `--snap-probe --object-def 16808` para usar o OBJD explícito da
-cadeira selecionada. Esse perfil liga a ocupação ao SLOT privado; a ação chega
-até a animação 44 ainda não implementada. Não mostra uma animação de sentar.
+cadeira selecionada. Esse perfil liga a ocupação ao SLOT privado; sem a opção
+de animação abaixo, a ação para na44. Não mostra uma animação de sentar.
+
+Adicione `--animation-probe '../referencias/The Sims/GameData/Animation/Animation.far'
+adult-chair-sit-new.cmx.bcf --age 21` para avançar frames e eventos silenciosamente.
+O probe adulto entrega `xevt100` e para na criação32 ainda ausente, saída3.
+O relatório distingue eventos observados, progresso e ticks da simulação;
+`route_ticks` nesse modo também conta o tempo das animações. Ainda não há ossos,
+som ou renderização de personagem. A idade explícita evita selecionar criança
+a partir do zero inicial do probe antigo.
 
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
@@ -140,6 +148,7 @@ suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 e
 - [Percurso ligado à VM e ao World](docs/routing-validation.md)
 - [Snap, definição do objeto e ocupação](docs/snap-validation.md)
 - [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
+- [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

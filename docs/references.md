@@ -70,6 +70,10 @@ primitiva44 consultou também `VMAnimateSim.cs`, `VMAvatar.cs`, `VMAnimationStat
 e `Animator.cs`. As identidades dos recursos e o contrato ainda não implementado
 estão em [animation-validation.md](animation-validation.md), com links fixos.
 
+O controlador silencioso de animação consulta também `VMAnimationScope.cs`, na
+mesma revisão: StackObject é65536, distinto de Misc3. Limites, scheduler parcial,
+eventos e cancelamento ODH estão em [playback-validation.md](playback-validation.md).
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

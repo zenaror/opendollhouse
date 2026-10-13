@@ -1,5 +1,7 @@
 #include "odh/routing.hpp"
 #include "odh/snap.hpp"
+#include "odh/playback.hpp"
+#include "resource.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -13,6 +15,10 @@ struct DefinitionSelection {
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::SlotTable> slots;
 };
+std::string fold(std::string value) {
+    for(auto& c:value) if(c>='A' && c<='Z') c=static_cast<char>(c-'A'+'a');
+    return value;
+}
 std::string quote(const std::string& value) {
     std::ostringstream out;
     out << '"';
@@ -91,6 +97,7 @@ int main(int argc, char** argv) {
                      "  [--world-probe [--occupant 0|1|3] [--posture 0..32767] [--autonomous]]\n"
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
+                     "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
         return 2;
     }
@@ -100,7 +107,8 @@ int main(int argc, char** argv) {
         bool route_probe=false;
         bool snap_probe=false;
         std::optional<std::uint16_t> object_def;
-        std::optional<std::uint16_t> occupant, posture;
+        std::optional<std::uint16_t> occupant, posture, age;
+        std::optional<std::pair<std::string,std::string>> animation;
         std::optional<std::pair<std::string, std::string>> global;
         for (int n = 4; n < argc; ++n) {
             const std::string option = argv[n];
@@ -112,6 +120,10 @@ int main(int argc, char** argv) {
             else if (option == "--autonomous" && !autonomous) autonomous = true;
             else if (option == "--occupant" && !occupant && n + 1 < argc) occupant = identifier(argv[++n]);
             else if (option == "--posture" && !posture && n + 1 < argc) posture = identifier(argv[++n]);
+            else if (option == "--age" && !age && n+1<argc) age=identifier(argv[++n]);
+            else if (option == "--animation-probe" && !animation && n+2<argc) {
+                animation=std::make_pair(argv[n+1],argv[n+2]);n+=2;
+            }
             else if (option == "--global" && !global && n + 2 < argc) {
                 global = std::make_pair(argv[n + 1], argv[n + 2]); n += 2;
             } else throw odh::FormatError("invalid or repeated option");
@@ -120,7 +132,8 @@ int main(int argc, char** argv) {
             (route_probe && (!world_probe || !global || occupant.value_or(0)!=0)) ||
             (snap_probe && (!route_probe || !object_def)) || (!snap_probe && object_def) ||
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
-            (posture && *posture > 32767)) throw odh::FormatError("invalid constructed-world options");
+            (posture && *posture > 32767) || (animation && !snap_probe) ||
+            (age && (!animation || *age>32767))) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         std::optional<odh::SlotTable> routing_slots;
@@ -128,6 +141,26 @@ int main(int argc, char** argv) {
         load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr);
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
+        std::map<std::string,std::shared_ptr<const odh::AnimationHeader>> clips;
+        std::map<std::uint16_t,odh::StringTable> animation_tables;
+        if(animation) {
+            with_far_entry(animation->first,animation->second,[&](const auto& view) {
+                auto collection=odh::read_bcf_animations(view);
+                for(auto& clip:collection.animations) {
+                    const auto name=fold(clip.name);
+                    if(!clips.emplace(name,std::make_shared<const odh::AnimationHeader>(std::move(clip))).second)
+                        throw odh::FormatError("ambiguous ASCII casefold animation name");
+                }
+            });
+            with_far_entry(argv[1],argv[2],[&](const auto& view) {
+                odh::iff_chunks(view,[&](const odh::Chunk& c) {
+                    const auto base=static_cast<std::uint32_t>(definition.binding->animation_table);
+                    if(c.type!="STR#" || (c.id!=129 && c.id!=130 && c.id!=base && c.id!=static_cast<std::uint16_t>(base+1)))return;
+                    if(!animation_tables.emplace(c.id,odh::read_strings(c.payload)).second)
+                        throw odh::FormatError("ambiguous STR# animation table");
+                });
+            });
+        }
         const auto found = routines.find(key);
         if (found == routines.end()) throw odh::FormatError("routine not found in supplied resources");
         if (!run) {
@@ -159,6 +192,8 @@ int main(int argc, char** argv) {
                 !world.create(2,odh::EntityKind::object,{0,0,storage_slots}) ||
                 !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
                 !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
+                (animation && (!world.set_person_data(1,58,static_cast<std::int16_t>(age.value_or(21))) ||
+                               !world.declare_object_word(1,17,0))) ||
                 (occupant.value_or(0) && !world.attach(2,0,static_cast<std::int16_t>(*occupant))))
                 throw odh::FormatError("cannot construct probe world");
         }
@@ -173,23 +208,51 @@ int main(int argc, char** argv) {
         odh::Routing routing(world,grid,routing_slots?*routing_slots:empty_slots);
         std::optional<odh::Snap> snap;
         if(snap_probe) snap.emplace(world,2,*definition.binding,*definition.slots,definition.binding->slot_table);
+        std::optional<odh::Playback> playback;
+        std::string resolution_diagnostic;
+        if(animation) playback.emplace(world,[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id)
+            -> std::shared_ptr<const odh::AnimationHeader> {
+            resolution_diagnostic.clear();
+            const auto fail=[&](const std::string& text)->std::shared_ptr<const odh::AnimationHeader> {
+                resolution_diagnostic=text;return {};
+            };
+            if(source!=0 && source!=65536)return fail("animation scope not supplied by explicit code owner");
+            if(source==65536 && frame.context.stack_object!=2)
+                return fail("animation StackObject does not match loaded definition");
+            const auto* actor=world.find(frame.context.caller);
+            if(!actor || actor->person_data.size()<=58)return fail("animation actor age unavailable");
+            const std::uint32_t child=actor->person_data[58]<18?1:0;
+            const auto table_id=static_cast<std::uint16_t>(definition.binding->animation_table+child);
+            auto table=animation_tables.find(table_id);
+            if(table==animation_tables.end())table=animation_tables.find(static_cast<std::uint16_t>(129+child));
+            if(table==animation_tables.end())return fail("animation STR# table absent including fallback");
+            const auto* entry=odh::string_in_language(table->second,1,id);
+            if(!entry)return fail("animation STR# index missing in explicit language 1");
+            const auto clip=clips.find(fold(entry->value));
+            if(clip==clips.end())return fail("animation clip missing from supplied BCF");
+            return clip->second;
+        });
+        const auto animation_handler=animation?playback->primitive():odh::VmPrimitive{};
         const auto route_handler=routing.primitive();
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
         odh::VmPrimitive handler;
         if(route_probe) handler=[&](const auto& f,const auto& i,const auto& t,const auto& d) {
+            if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
         odh::Vm vm(std::move(routines),world_probe ? world.vm_memory() : odh::VmMemory{}, {},
                    handler);
         routing.bind(vm);
         if(snap_probe) snap->bind(vm);
+        if(animation && !playback->bind(vm))throw odh::FormatError("cannot bind animation probe");
         vm.start(key,world_probe ? odh::VmContext{1,2,2} : odh::VmContext{},
                  {static_cast<std::int16_t>(autonomous ? 1 : 0)});
-        std::cout << "{\"evidence\":" << quote(snap_probe?"ODH_VM_constructed_route_snap_world":
+        std::cout << "{\"evidence\":" << quote(animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
                                                        route_probe?"ODH_VM_constructed_route_world":
                                                        world_probe ? "ODH_VM_constructed_world" : "ODH_VM_probe_without_world");
         if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
             << occupant.value_or(0) << ",\"posture\":" << posture.value_or(0)
+            << ",\"age\":" << (animation?age.value_or(21):0)
             << ",\"autonomous\":" << (autonomous ? "true" : "false") << '}';
         std::cout << ",\"trace\":[";
         bool first = true;
@@ -204,8 +267,15 @@ int main(int argc, char** argv) {
         auto status=vm.run(10000,trace);
         std::uint64_t ticks=0;
         std::vector<odh::RouteMovement> movements;
-        while(route_probe && status==odh::VmStatus::waiting && ticks<4096) {
+        std::vector<odh::PlaybackEvent> animation_events;
+        bool animation_events_truncated=false, animation_event_limit_reached=false;
+        while(route_probe && status==odh::VmStatus::waiting && ticks<4096 && !animation_event_limit_reached) {
             routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
+            if(animation)playback->tick(ticks,[&](const auto& event){
+                if(animation_events.size()<4096)animation_events.push_back(event);
+                else animation_events_truncated=true;
+            });
+            if(animation_events.size()==4096)animation_event_limit_reached=true;
             status=vm.run(vm.steps()<10000?10000-vm.steps():0,trace);
         }
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
@@ -231,6 +301,30 @@ int main(int argc, char** argv) {
                 <<"},\"container\":"<<(actor.attachment?actor.attachment->container:0)
                 <<",\"container_slot\":"<<(actor.attachment?static_cast<std::int64_t>(actor.attachment->slot):-1)
                 <<",\"posture\":"<<actor.person_data[0];
+        }
+        if(animation) {
+            std::cout<<",\"simulation_ticks\":"<<ticks<<",\"age\":"<<age.value_or(21)
+                <<",\"animation_code_owner\":{\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<",\"language\":1}"
+                <<",\"animation_diagnostic\":"<<quote(resolution_diagnostic.empty()?playback->diagnostic():resolution_diagnostic)
+                <<",\"animation_event_limit_reached\":"<<(animation_event_limit_reached?"true":"false")
+                <<",\"animation_events_truncated\":"<<(animation_events_truncated?"true":"false")
+                <<",\"animation_events\":[";
+            for(std::size_t n=0;n<animation_events.size();++n) {
+                if(n)std::cout<<',';
+                const auto& e=animation_events[n];
+                std::cout<<"{\"tick\":"<<e.tick<<",\"actor\":"<<e.actor<<",\"time_id\":"<<e.time_id<<",\"properties\":[";
+                for(std::size_t j=0;j<e.properties.size();++j) {
+                    if(j)std::cout<<',';
+                    std::cout<<'['<<quote(e.properties[j].first)<<','<<quote(e.properties[j].second)<<']';
+                }
+                std::cout<<"]}";
+            }
+            std::cout<<"],\"animation_progress\":";
+            const auto progress=playback->progress();
+            if(progress)std::cout<<"{\"name\":"<<quote(progress->name)<<",\"frame\":"<<std::setprecision(9)<<progress->frame
+                <<",\"frames\":"<<std::setprecision(9)<<progress->frames<<",\"queued_events\":"<<progress->queued_events
+                <<",\"end\":"<<(progress->end?"true":"false")<<'}';
+            else std::cout<<"null";
         }
         std::cout<<"}\n";
         return status == odh::VmStatus::returned_true || status == odh::VmStatus::returned_false ? 0 : 3;
