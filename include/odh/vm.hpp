@@ -53,8 +53,10 @@ struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
 };
+class Vm;
+struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
 using VmPrimitive = std::function<PrimitiveOutcome(const VmFrame&, const Instruction&,
-                                                 const std::array<std::int16_t,20>&)>;
+                                                 const std::array<std::int16_t,20>&, const VmDispatch&)>;
 struct VmPending {
     std::uint64_t ticket;
     VmTrace instruction;

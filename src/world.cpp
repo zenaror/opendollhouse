@@ -1,4 +1,5 @@
 #include "odh/world.hpp"
+#include <limits>
 
 namespace odh {
 namespace {
@@ -12,7 +13,8 @@ std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
 }
 }
 bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
-    if (id <= 0 || (kind != EntityKind::object && kind != EntityKind::avatar) ||
+    if (id <= 0 || generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
+        (kind != EntityKind::object && kind != EntityKind::avatar) ||
         entities_.count(id) || entities_.size() >= limits_.entities ||
         layout.attributes > limits_.bank_words || layout.person_data > limits_.bank_words ||
         layout.slots > limits_.bank_words || layout.attributes > 32768 ||
@@ -26,7 +28,8 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     }
     const auto count = layout.attributes + layout.person_data + layout.slots;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
-        std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},std::nullopt});
+        std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
+        std::nullopt,std::nullopt,++generation_sequence_});
     words_ += count;
     return true;
 }
@@ -49,6 +52,12 @@ bool World::set_person_data(std::int16_t id, std::int16_t index, std::int16_t va
     if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
         !valid_index(index,found->second.person_data.size())) return false;
     found->second.person_data[static_cast<std::size_t>(index)] = value; return true;
+}
+bool World::set_position(std::int16_t id,EntityPosition position) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end() || found->second.attachment || position.x<0 || position.y<0 ||
+       position.x>32767 || position.y>32767 || position.level<1 || position.direction>7) return false;
+    found->second.position=position;return true;
 }
 bool World::attach(std::int16_t container, std::size_t slot, std::int16_t occupant) {
     const auto c = entities_.find(container), o = entities_.find(occupant);

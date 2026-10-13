@@ -10,12 +10,22 @@ struct EntityLayout {
     std::size_t slots = 0;
 };
 struct Attachment { std::int16_t container; std::size_t slot; };
+struct EntityPosition {
+    std::int32_t x,y; // Adapter uses 1/16 tile, not pixels.
+    std::int16_t level;
+    std::uint8_t direction; // Eight notches, north=0, clockwise.
+    bool operator==(const EntityPosition& p) const {
+        return x==p.x && y==p.y && level==p.level && direction==p.direction;
+    }
+};
 struct Entity {
     std::int16_t id;
     EntityKind kind;
     std::vector<std::int16_t> attributes, person_data, slots;
     std::map<std::int16_t, std::int16_t> object_words;
     std::optional<Attachment> attachment;
+    std::optional<EntityPosition> position;
+    std::uint64_t generation;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -36,6 +46,7 @@ public:
     const Entity* find(std::int16_t id) const;
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
+    bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool detach(std::int16_t container, std::size_t slot);
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
@@ -47,5 +58,6 @@ private:
     std::map<std::int16_t, Entity> entities_;
     WorldLimits limits_;
     std::size_t words_ = 0;
+    std::uint64_t generation_sequence_ = 0;
 };
 } // namespace odh

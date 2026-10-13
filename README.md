@@ -96,6 +96,16 @@ Os últimos seletores significam tipo 3 e índice 1 dentro desse tipo. Sem eles,
 a ferramenta lista todos os registros. Os valores são brutos; floats são bits
 uint32 e campos ausentes da versão são `null`. Saída 0 indica leitura, 2 erro.
 
+Para investigar a ação com percurso e ticks no cenário construído:
+
+```sh
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run --world-probe --route-probe --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
+```
+
+O JSON inclui movimentos e posição final. O perfil inicial de roteamento
+suporta o SLOT selecionado, com política de percurso e velocidade provisórias.
+A ação ainda para em `snap`, saída 3; não é sentar/levantar completo.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -110,6 +120,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Dados SLOT e recurso de roteamento](docs/slot-validation.md)
 - [Suspensão da VM para serviços](docs/services-validation.md)
 - [Cálculo de percurso na malha](docs/route-validation.md)
+- [Percurso ligado à VM e ao World](docs/routing-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

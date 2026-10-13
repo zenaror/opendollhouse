@@ -53,6 +53,11 @@ sem aplicar defaults ou escalas do runtime. `Engine/VMSlotParser.cs` foi consult
 para identificar a próxima etapa de geração/validação de destinos; sua política
 de colisões, scoring e rotação ainda não está implementada no ODH.
 
+Para a ligação inicial de roteamento foram também consultados `VMRoutingFrame.cs`
+(`Engine/`) e `VMSnap.cs` (`Primitives/`) no mesmo FreeSO fixo. A referência
+escreve person data RouteEntryFlags na chegada; snap Mode3 é Literal. O backend
+ODH ainda tem regras provisórias descritas em `routing-validation.md`.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

@@ -14,7 +14,7 @@ int main() {
         int dispatches=0;
         odh::Vm vm({{key,routine({{4097,254,255,{}}})},
                     {child,routine({{45,1,255,{1,0,2,0,0,0,0,0}},{44,254,255,{}}})}}, {}, {},
-            [&](const auto& f,const auto& i,const auto& temps) {
+            [&](const auto& f,const auto& i,const auto& temps,const auto&) {
                 ++dispatches;
                 require(f.context.caller==1 && f.context.stack_object==2,"service sees saved entity context");
                 require(temps[0]==17,"service sees thread registers");
@@ -41,17 +41,17 @@ int main() {
         odh::Vm absent({{key,routine({{45,254,255,{}}})}});absent.start(key);
         require(absent.run(1)==odh::VmStatus::fault && !absent.pending(),"absent service still faults");
         odh::Vm unsupported({{key,routine({{45,254,255,{}}})}}, {}, {},
-            [](const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"routing geometry not supplied"};});
+            [](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"routing geometry not supplied"};});
         unsupported.start(key);
         require(unsupported.run(1)==odh::VmStatus::fault && unsupported.diagnostic()=="routing geometry not supplied","service diagnostic retained");
         odh::Vm error_return({{key,routine({{45,253,253,{}}})}}, {}, {},
-            [](const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};});
+            [](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};});
         error_return.start(key);error_return.run(1);
         require(error_return.complete(error_return.pending()->ticket,true) && error_return.status()==odh::VmStatus::fault,"FD fault on completion remains explicit");
         bool guarded=false;
         odh::Vm* ptr=nullptr;
         odh::Vm reentry({{key,routine({{45,254,255,{}}})}}, {}, {},
-            [&](const auto&,const auto&,const auto&){
+            [&](const auto&,const auto&,const auto&,const auto&){
                 try{ptr->complete(1,true);}catch(const std::logic_error&){guarded=true;}
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_false,{}};
             });

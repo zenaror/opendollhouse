@@ -20,6 +20,9 @@ respostas antigas/duplicadas não mudam a nova execução. Tickets são locais �
 instância, não IDs globais. VM tem endereço estável e não pode ser copiada ou
 movida. O backend deve cancelar seu próprio trabalho e conferir o pedido antes
 de aplicar mudanças ao mundo; invalidar um ticket não reverte efeitos externos.
+O callback agora recebe `VmDispatch` com identidade da VM e ticket reservado
+antes de despachar; isso permite associar um job à origem sem aceitar pedidos
+de outra VM ou concluir um trabalho antigo.
 Callbacks não podem reentrar em start/run/complete. O contrato é de um thread;
 não há sincronização para concluir pedidos de outro thread diretamente.
 

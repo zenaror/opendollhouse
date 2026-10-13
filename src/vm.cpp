@@ -209,14 +209,15 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                 const auto result = expression(instruction);
                 branch(result);
             } else {
-                const auto outcome = primitive_ ? primitive_(frame,instruction,temps_) : PrimitiveOutcome{};
+                if (ticket_sequence_ == std::numeric_limits<std::uint64_t>::max())
+                    throw VmError("service ticket overflow");
+                const VmDispatch dispatch{this,++ticket_sequence_};
+                const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
                 switch (outcome.disposition) {
                 case PrimitiveDisposition::goto_true: branch(true); break;
                 case PrimitiveDisposition::goto_false: branch(false); break;
                 case PrimitiveDisposition::wait:
-                    if (ticket_sequence_ == std::numeric_limits<std::uint64_t>::max())
-                        throw VmError("service ticket overflow");
-                    pending_ = VmPending{++ticket_sequence_,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
+                    pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
                     status_ = VmStatus::waiting; break;
                 case PrimitiveDisposition::unsupported:
                     throw VmError(outcome.diagnostic.empty() ? "unsupported primitive " + std::to_string(instruction.opcode)
