@@ -131,6 +131,13 @@ com avatar no slot e alinhado à direção da cadeira. A notificação final é
 `no_thread`: o mundo construído ainda não tem scheduler/thread principal do objeto.
 Personagens carregando objetos e gestos das mãos ainda exigem implementação.
 
+`--stand-after --animation-extra adult-chair-stand-new.cmx.bcf` executa depois
+a função Stand do OBJD legado selecionado, preservando o mesmo World.
+O probe barato retorna true nas duas fases, esvazia o slot e termina com postura0.
+O despacho é do host de teste; ainda não é o scheduler/queue completo do jogo.
+As fases e o orçamento global aparecem no JSON. O loop após Stand é registrado
+conforme a ordem efetiva do BHAV, sem forçar uma pose visual de pé.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -165,6 +172,7 @@ suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 e
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
+- [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

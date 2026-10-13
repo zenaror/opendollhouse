@@ -22,6 +22,10 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 SubIndex assinado. Não valida
 o restante do OBJD nem implementa uma fábrica completa de objetos.
 
+`read_objd_functions` estende a leitura estável até68 bytes para Main/Sit/Stand
+e UsesFnTable. Preserva a seleção legada versus OBJf; não interpreta a tabela
+OBJf nem implementa despacho funcional genérico.
+
 O leitor FAR deste perfil exige dados antes do manifesto e que o manifesto termine
 no fim do arquivo. Uma variante diferente produz diagnóstico explícito, sem
 supor automaticamente que todo arquivo comercial com outro layout está corrompido.

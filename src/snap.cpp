@@ -1,9 +1,32 @@
 #include "odh/snap.hpp"
 #include <array>
 #include <stdexcept>
+#include <utility>
 namespace odh {
-Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id)
-    :world_(world),object_(object),generation_(0),binding_(binding),slots_(slots) {
+namespace {
+struct FloorExit {std::int32_t x,y;std::uint8_t direction;};
+std::optional<FloorExit> floor_exit(const SlotRecord& route) {
+    if(route.snap_target_slot!=-1 || route.standing || route.sitting || route.ground ||
+       route.height!=0 || route.facing!=-2 || route.resolution!=16 || route.max_size!=0 ||
+       route.unknown_i10!=0 || route.gradient_bits!=0x3E400000 || !route.proximity ||
+       *route.proximity!=std::array<std::int32_t,3>{16,16,16}) return {};
+    // Exact finite IEEE-754 +/-16 values only. No rounding or float conversion
+    // is needed for the four native chair offsets in 1/16-tile World units.
+    constexpr std::uint32_t positive=0x41800000,negative=0xC1800000;
+    if(route.flags==4097 && route.offset_bits==std::array<std::uint32_t,3>{0,negative,0}) return FloorExit{0,-16,0};
+    if(route.flags==4100 && route.offset_bits==std::array<std::uint32_t,3>{positive,0,0}) return FloorExit{16,0,2};
+    if(route.flags==4112 && route.offset_bits==std::array<std::uint32_t,3>{0,positive,0}) return FloorExit{0,16,4};
+    if(route.flags==4160 && route.offset_bits==std::array<std::uint32_t,3>{negative,0,0}) return FloorExit{-16,0,6};
+    return {};
+}
+bool same_attachment(const std::optional<Attachment>& a,const std::optional<Attachment>& b) {
+    return bool(a)==bool(b) && (!a || (a->container==b->container && a->slot==b->slot && a->positioned==b->positioned));
+}
+}
+Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id,
+           PlacementValidator placement_validator)
+    :world_(world),object_(object),generation_(0),binding_(binding),slots_(slots),
+     placement_validator_(std::move(placement_validator)) {
     const auto* entity=world_.find(object);
     if(!entity || entity->kind!=EntityKind::object || !slot_id || binding.slot_table!=slot_id)
         throw std::invalid_argument("snap owner or SLOT binding mismatch");
@@ -14,6 +37,7 @@ VmPrimitive Snap::primitive() {
     return [this](const VmFrame& frame,const Instruction& i,const auto&,const VmDispatch& dispatch) -> PrimitiveOutcome {
         if(i.opcode!=46) return {};
         const auto fail=[](const char* why){return PrimitiveOutcome{PrimitiveDisposition::unsupported,why};};
+        if(executing_) return fail("snap placement callback cannot reenter controller");
         if(!vm_ || dispatch.origin!=vm_) return fail("snap controller bound to another VM");
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
         const auto mode=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
@@ -25,6 +49,38 @@ VmPrimitive Snap::primitive() {
             return fail("snap context or positioned entity binding missing");
         const auto* route=slot_of_type(slots_,3,index);
         if(!route) return {PrimitiveDisposition::goto_false,{}};
+        if(route->snap_target_slot==-1) {
+            const auto exit=floor_exit(*route);
+            if(slots_.version!=10 || !exit) return fail("snap floor SLOT profile not implemented");
+            if(!placement_validator_) return fail("snap floor placement validator missing");
+            if(object->position->direction&1) return fail("snap floor diagonal object geometry not implemented");
+            if(actor->position->level!=object->position->level) return fail("snap floor level unsupported");
+            if(actor->attachment && actor->attachment->container!=object_)
+                return {PrimitiveDisposition::goto_false,{}};
+            auto dx=exit->x,dy=exit->y;
+            // Clockwise rotation is exact for cardinal object directions.
+            for(std::uint8_t turn=0;turn<object->position->direction/2;++turn) {
+                const auto old_x=dx;dx=-dy;dy=old_x;
+            }
+            const auto object_position=*object->position,actor_position=*actor->position;
+            auto destination=object_position;destination.x+=dx;destination.y+=dy;
+            destination.direction=static_cast<std::uint8_t>((object_position.direction+exit->direction)%8);
+            if(destination.x<0 || destination.y<0 || destination.x>32767 || destination.y>32767)
+                return {PrimitiveDisposition::goto_false,{}};
+            const auto actor_id=actor->id;const auto actor_generation=actor->generation;
+            const auto attachment=actor->attachment;
+            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            // Observers run before any state mutation. Reacquire entities and
+            // check identity/position afterwards so a callback cannot leave us
+            // using dangling pointers or place against a changed binding.
+            if(!placement_validator_(actor_id,destination)) return {PrimitiveDisposition::goto_false,{}};
+            object=world_.find(object_);actor=world_.find(actor_id);
+            if(!object || object->generation!=generation_ || !object->position || object->attachment ||
+               !(*object->position==object_position) || !actor || actor->generation!=actor_generation ||
+               !actor->position || !(*actor->position==actor_position) || !same_attachment(actor->attachment,attachment))
+                return {PrimitiveDisposition::goto_false,{}};
+            return {world_.place_on_floor(actor_id,destination) ? PrimitiveDisposition::goto_true : PrimitiveDisposition::goto_false,{}};
+        }
         if(slots_.version!=10 || route->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
            (route->flags!=0 && route->flags!=4096) || route->standing || route->sitting || route->ground || route->snap_target_slot<0)
             return fail("snap route SLOT profile not implemented");

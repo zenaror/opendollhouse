@@ -17,6 +17,8 @@ struct DefinitionSelection {
     std::uint16_t id;
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::SlotTable> slots;
+    bool load_functions=false;
+    std::optional<odh::ObjdFunctions> functions;
 };
 std::string fold(std::string value) {
     for(auto& c:value) if(c>='A' && c<='Z') c=static_cast<char>(c-'A'+'a');
@@ -60,6 +62,7 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
         if(definition && c.type=="OBJD" && c.id==definition->id) {
             if(definition->binding) throw odh::FormatError("ambiguous selected OBJD");
             definition->binding=odh::read_objd_binding(c.payload);
+            if(definition->load_functions)definition->functions=odh::read_objd_functions(c.payload);
         }
         if(slots && c.type=="SLOT" && c.id==100) {
             if(*slots) throw odh::FormatError("ambiguous global SLOT100");
@@ -108,6 +111,8 @@ int main(int argc, char** argv) {
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
                      "  [--reset-probe ENTRY.bcf [--post-ticks 0..4096]] requires --animation-probe; explicit global posture loops.\n"
+                     "  [--stand-after] requires reset, sound, animation and snap probes; legacy selected OBJD Stand.\n"
+                     "  [--animation-extra ENTRY.bcf] repeat up to 16; explicit same-FAR collections.\n"
                      "  [--sound-probe] requires --animation-probe; silent FWAV requests, no audio backend.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
         return 2;
@@ -116,7 +121,8 @@ int main(int argc, char** argv) {
         bool run = false;
         bool world_probe = false, autonomous = false;
         bool route_probe=false;
-        bool snap_probe=false, sound_probe=false;
+        bool snap_probe=false, sound_probe=false, stand_after=false;
+        std::vector<std::string> animation_extra;
         std::optional<std::uint16_t> object_def;
         std::optional<std::uint16_t> occupant, posture, age, post_ticks;
         std::optional<std::string> reset_entry;
@@ -128,6 +134,8 @@ int main(int argc, char** argv) {
             else if (option == "--world-probe" && !world_probe) world_probe = true;
             else if (option == "--route-probe" && !route_probe) route_probe=true;
             else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
+            else if (option == "--stand-after" && !stand_after) stand_after=true;
+            else if (option == "--animation-extra" && n+1<argc && animation_extra.size()<16) animation_extra.emplace_back(argv[++n]);
             else if (option == "--snap-probe" && !snap_probe) snap_probe=true;
             else if (option == "--object-def" && !object_def && n+1<argc) object_def=identifier(argv[++n]);
             else if (option == "--autonomous" && !autonomous) autonomous = true;
@@ -149,15 +157,24 @@ int main(int argc, char** argv) {
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
             (posture && *posture > 32767) || (animation && !snap_probe) ||
             (age && (!animation || *age>32767)) || (sound_probe && !animation) || (reset_entry && !animation) ||
-            (post_ticks && (!reset_entry || *post_ticks>4096))) throw odh::FormatError("invalid constructed-world options");
+            (post_ticks && (!reset_entry || *post_ticks>4096)) ||
+            (!animation_extra.empty() && !animation) || (stand_after && (!reset_entry || !sound_probe || !snap_probe || !animation))) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         std::optional<odh::SlotTable> routing_slots;
-        DefinitionSelection definition{object_def.value_or(0),{}, {}};
+        DefinitionSelection definition{object_def.value_or(0),{}, {},stand_after,{}};
         std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
         load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr);
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
+        if(stand_after) {
+            const auto& f=*definition.functions;
+            if(f.uses_function_table!=0)throw odh::FormatError("OBJD function table dispatch unsupported");
+            if(f.stand==0)throw odh::FormatError("selected OBJD legacy Stand is absent");
+            const auto stand=odh::routine_key(f.stand);
+            if(stand.scope!=odh::RoutineScope::private_object || routines.find(stand)==routines.end())
+                throw odh::FormatError("selected OBJD Stand is absent from private code-owner routines");
+        }
         std::map<std::string,std::shared_ptr<const odh::AnimationHeader>> clips;
         std::map<std::uint16_t,odh::StringTable> animation_tables, reset_tables;
         if(animation) {
@@ -171,8 +188,18 @@ int main(int argc, char** argv) {
                 }
             });
             };
-            load_clips(animation->second);
-            if(reset_entry && *reset_entry!=animation->second)load_clips(*reset_entry);
+            std::vector<std::string> clip_entries{animation->second};
+            if(reset_entry && *reset_entry!=animation->second) {
+                if(fold(*reset_entry)==fold(animation->second))
+                    throw odh::FormatError("duplicate ASCII casefold animation entry selector");
+                clip_entries.push_back(*reset_entry);
+            }
+            for(const auto& entry:animation_extra) {
+                for(const auto& prior:clip_entries)if(fold(prior)==fold(entry))
+                    throw odh::FormatError("duplicate ASCII casefold animation entry selector");
+                clip_entries.push_back(entry);
+            }
+            for(const auto& entry:clip_entries)load_clips(entry);
             if(reset_entry)with_far_entry(global->first,global->second,[&](const auto& view) {
                 odh::iff_chunks(view,[&](const odh::Chunk& c) {
                     if(c.type!="STR#" || (c.id!=150 && c.id!=151))return;
@@ -235,7 +262,10 @@ int main(int argc, char** argv) {
         const odh::SlotTable empty_slots{0,10,{},0};
         odh::Routing routing(world,grid,routing_slots?*routing_slots:empty_slots);
         std::optional<odh::Snap> snap;
-        if(snap_probe) snap.emplace(world,2,*definition.binding,*definition.slots,definition.binding->slot_table);
+        if(snap_probe) snap.emplace(world,2,*definition.binding,*definition.slots,definition.binding->slot_table,
+            [&](std::int16_t,const odh::EntityPosition& position) {
+                return position.level==1 && position.direction<8 && grid.walkable({position.x,position.y});
+            });
         std::optional<odh::Playback> playback;
         std::string resolution_diagnostic;
         odh::AnimationResetResolver reset_resolver;
@@ -329,34 +359,56 @@ int main(int argc, char** argv) {
             << ",\"autonomous\":" << (autonomous ? "true" : "false") << '}';
         std::cout << ",\"trace\":[";
         bool first = true;
+        std::size_t phase=0, previous_steps=0;
         const auto trace=[&](const odh::VmTrace& event) {
             if (!first) std::cout << ',';
             first = false;
-            std::cout << "{\"step\":" << event.step << ",\"depth\":" << event.depth
+            std::cout << "{\"step\":" << event.step << ",\"phase\":" << phase << ",\"total_step\":" << previous_steps+event.step << ",\"depth\":" << event.depth
                       << ",\"routine\":" << event.key.id << ",\"instruction\":";
             instruction(event.instruction, event.pc);
             std::cout << '}';
         };
         const auto run_probe=[&]() {
-            if(!sound_probe)return vm.run(vm.steps()<10000?10000-vm.steps():0,trace);
+            if(!sound_probe)return vm.run(previous_steps+vm.steps()<10000?10000-previous_steps-vm.steps():0,trace);
             auto state=vm.status();
+            if(previous_steps+vm.steps()>=10000 && (state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted))
+                return vm.run(0,trace);
             while((state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted) &&
-                  vm.steps()<10000 && !sound_event_limit_reached)state=vm.run(1,trace);
+                  previous_steps+vm.steps()<10000 && !sound_event_limit_reached)state=vm.run(1,trace);
             return state;
         };
-        auto status=run_probe();
+        auto status=vm.status();
         std::uint64_t ticks=0;
         std::vector<odh::RouteMovement> movements;
         std::vector<odh::PlaybackEvent> animation_events;
         bool animation_events_truncated=false, animation_event_limit_reached=false;
-        while(route_probe && status==odh::VmStatus::waiting && ticks<4096 && !animation_event_limit_reached && !sound_event_limit_reached) {
-            routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
-            if(animation)playback->tick(ticks,[&](const auto& event){
-                if(animation_events.size()<4096)animation_events.push_back(event);
-                else animation_events_truncated=true;
-            });
-            if(animation_events.size()==4096)animation_event_limit_reached=true;
+        struct Phase {std::uint16_t routine;odh::VmStatus status;std::size_t steps;std::uint64_t ticks;
+                      odh::EntityPosition position;std::int16_t container,posture;};
+        std::vector<Phase> phases;
+        const auto execute_phase=[&](std::uint16_t routine) {
+            const auto begin_tick=ticks;
             status=run_probe();
+            while(route_probe && status==odh::VmStatus::waiting && ticks<4096 &&
+                  previous_steps+vm.steps()<10000 && !animation_event_limit_reached && !sound_event_limit_reached) {
+                routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
+                if(animation)playback->tick(ticks,[&](const auto& event){
+                    if(animation_events.size()<4096)animation_events.push_back(event);
+                    else animation_events_truncated=true;
+                });
+                if(animation_events.size()==4096)animation_event_limit_reached=true;
+                status=run_probe();
+            }
+            if(stand_after) {
+                const auto& actor=*world.find(1);
+                phases.push_back({routine,status,vm.steps(),ticks-begin_tick,*actor.position,
+                                  static_cast<std::int16_t>(actor.attachment?actor.attachment->container:0),actor.person_data[0]});
+            }
+        };
+        execute_phase(key.id);
+        if(stand_after && status==odh::VmStatus::returned_true) {
+            previous_steps+=vm.steps();++phase;
+            vm.start(odh::routine_key(definition.functions->stand),{1,2,2},{0,0,0,0});
+            execute_phase(definition.functions->stand);
         }
         const auto execution_ticks=ticks;
         std::uint16_t post_ticks_run=0;
@@ -371,10 +423,26 @@ int main(int argc, char** argv) {
             if(animation_events.size()==4096)animation_event_limit_reached=true;
         }
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
-                  << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps()
+                  << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps() << ",\"total_steps\":" << previous_steps+vm.steps()
                   << ",\"stack_depth\":" << vm.stack().size();
+        if(stand_after) {
+            const auto& functions=*definition.functions;
+            std::cout<<",\"stand_selection\":{\"objd_id\":"<<definition.id<<",\"version\":"<<functions.version
+                <<",\"main\":"<<functions.main<<",\"sit\":"<<functions.sit<<",\"stand\":"<<functions.stand
+                <<",\"uses_function_table\":"<<functions.uses_function_table
+                <<",\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<"},\"phases\":[";
+            for(std::size_t n=0;n<phases.size();++n) {
+                if(n)std::cout<<',';
+                const auto& p=phases[n];
+                std::cout<<"{\"routine\":"<<p.routine<<",\"status\":"<<quote(odh::vm_status_name(p.status))
+                    <<",\"steps\":"<<p.steps<<",\"ticks\":"<<p.ticks<<",\"position\":["<<p.position.x<<','
+                    <<p.position.y<<','<<p.position.level<<','<<static_cast<unsigned>(p.position.direction)
+                    <<"],\"container\":"<<p.container<<",\"posture\":"<<p.posture<<'}';
+            }
+            std::cout<<']';
+        }
         if(route_probe) {
-            std::cout<<",\"route_ticks\":"<<ticks<<",\"route_diagnostic\":"<<quote(routing.diagnostic())
+            std::cout<<",\"placement_validation\":\"constructed raw grid walkability and floor bounds; no dynamic avatar clearance\",\"route_ticks\":"<<ticks<<",\"route_diagnostic\":"<<quote(routing.diagnostic())
                      <<",\"movements\":[";
             for(std::size_t n=0;n<movements.size();++n) {
                 if(n) std::cout<<',';
@@ -400,6 +468,13 @@ int main(int argc, char** argv) {
                 <<",\"posture\":"<<actor.person_data[0];
         }
         if(animation) {
+            std::cout<<",\"animation_resources\":[";
+            std::vector<std::string> entries{animation->second};
+            if(reset_entry && *reset_entry!=animation->second)entries.push_back(*reset_entry);
+            entries.insert(entries.end(),animation_extra.begin(),animation_extra.end());
+            for(std::size_t n=0;n<entries.size();++n){if(n)std::cout<<',';
+                std::cout<<"{\"archive\":"<<quote(animation->first)<<",\"entry\":"<<quote(entries[n])<<'}';}
+            std::cout<<']';
             if(reset_entry)std::cout<<",\"reset_resource\":{\"archive\":"<<quote(animation->first)
                 <<",\"entry\":"<<quote(*reset_entry)<<",\"global_archive\":"<<quote(global->first)
                 <<",\"global_entry\":"<<quote(global->second)<<",\"walk_table_id\":"<<(age.value_or(21)<18?151:150)

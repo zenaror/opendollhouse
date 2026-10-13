@@ -53,6 +53,9 @@ public:
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
                        std::optional<std::uint8_t> direction={});
+    // Validate and allocate the positioned descendant list before detaching.
+    // Preserves child orientations and leaves invalid placements unchanged.
+    bool place_on_floor(std::int16_t id,EntityPosition);
     bool detach(std::int16_t container, std::size_t slot);
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
     bool write(const VmFrame&, std::uint8_t scope, std::int16_t index, std::int16_t value);

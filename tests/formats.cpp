@@ -138,6 +138,14 @@ int main() {
         use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 header crosses payload"); });
         bad = sprite; put(bad, 4, 0xFFFFFFFF, 4);
         use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 enormous frame count"); });
+        std::string functions(68,'\0');put(functions,0,138,4);
+        put(functions,10,4096,2);put(functions,64,4100,2);put(functions,66,4102,2);put(functions,44,0,2);
+        use(functions,[](const odh::View& v){const auto f=odh::read_objd_functions(v);
+            require(f.main==4096&&f.sit==4100&&f.stand==4102&&f.uses_function_table==0,"legacy OBJD functional bindings");});
+        bad=functions;put(bad,44,1,2);
+        use(bad,[](const odh::View& v){require(odh::read_objd_functions(v).uses_function_table==1,"OBJf selection preserved explicitly");});
+        for(std::size_t n=0;n<functions.size();++n)
+            use(functions.substr(0,n),[](const odh::View& v){rejects([&]{odh::read_objd_functions(v);},"truncated functional OBJD prefix");});
         // Every truncation point of independent valid fixtures must be rejected.
         for (std::size_t n = 0; n < routine.size(); ++n)
             use(routine.substr(0, n), [](const odh::View& v) { rejects([&] { odh::read_bhav(v); }, "truncated BHAV"); });

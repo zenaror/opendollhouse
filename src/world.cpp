@@ -7,6 +7,10 @@ bool valid_index(std::int16_t index, std::size_t size) {
     return index >= 0 && static_cast<std::size_t>(index) < size;
 }
 bool derived(std::int16_t index) { return index == 2 || index == 3 || index == 11 || index == 67; }
+bool valid_position(EntityPosition position) {
+    return position.x>=0 && position.y>=0 && position.x<=32767 && position.y<=32767 &&
+           position.level>=1 && position.direction<=7;
+}
 std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
     return scope == 0 || scope == 3 || scope == 18 || scope == 20
         ? frame.context.caller : frame.context.stack_object;
@@ -75,9 +79,24 @@ void World::apply_position(const std::vector<std::int16_t>& descendants,EntityPo
 }
 bool World::set_position(std::int16_t id,EntityPosition position) {
     const auto found=entities_.find(id);
-    if(found==entities_.end() || found->second.attachment || position.x<0 || position.y<0 ||
-       position.x>32767 || position.y>32767 || position.level<1 || position.direction>7) return false;
+    if(found==entities_.end() || found->second.attachment || !valid_position(position)) return false;
     const auto descendants=position_tree(id); // Allocation happens before any mutation.
+    apply_position(descendants,position);return true;
+}
+bool World::place_on_floor(std::int16_t id,EntityPosition position) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end() || !valid_position(position)) return false;
+    const auto old=found->second.attachment;
+    if(old) {
+        const auto parent=entities_.find(old->container);
+        if(parent==entities_.end() || old->slot>=parent->second.slots.size() ||
+           parent->second.slots[old->slot]!=id) return false;
+    }
+    const auto descendants=position_tree(id); // No allocation after changing either relation end.
+    if(old) {
+        entities_.at(old->container).slots[old->slot]=0;
+        found->second.attachment.reset();
+    }
     apply_position(descendants,position);return true;
 }
 bool World::place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,

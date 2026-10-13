@@ -160,5 +160,8 @@ struct ObjdBinding {
 };
 // Only the stable prefix through SlotID. Does not validate the complete OBJD.
 ObjdBinding read_objd_binding(const View&);
+struct ObjdFunctions {std::uint32_t version;std::uint16_t main,sit,stand,uses_function_table;};
+// Stable prefix through StandID, not a complete object definition or OBJf.
+ObjdFunctions read_objd_functions(const View&);
 
 } // namespace odh

@@ -77,6 +77,9 @@ Reset de postura e loops, incluindo STR150/151 global e HeadSeekState42, estão
 em [reset-validation.md](reset-validation.md), com limites de carry/gestos.
 SnapToDirection e a notificação49 foram conferidos em VMSnap/VMSlotParser/SLOT
 e `VMNotifyOutOfIdle.cs`; ver [facing-validation.md](facing-validation.md).
+Função Stand/saídas no chão e o host de duas fases estão em
+[stand-validation.md](stand-validation.md); OBJf/dispatcher/scheduler completo
+ainda não são inferidos a partir dos testes legados.
 
 O registro `VMContext.cs` foi conferido para distinguir opcodes decimais de
 hexadecimais. TestObjectType32 e PlaySound23 consultam seus handlers e `FWAV.cs`;

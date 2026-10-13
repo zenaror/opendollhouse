@@ -9,8 +9,20 @@ odh::SlotTable table() {
     odh::SlotRecord route{};route.type=3;route.snap_target_slot=0;
     return {0,10,{storage,route},0};
 }
-odh::RoutineSet routine(unsigned mode=3) {
-    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{46,254,255,{0,0,static_cast<std::uint8_t>(mode),0,4,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+odh::RoutineSet routine(unsigned mode=3,unsigned index=0) {
+    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{46,254,255,{static_cast<std::uint8_t>(index),static_cast<std::uint8_t>(index>>8),static_cast<std::uint8_t>(mode),0,4,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+}
+odh::SlotTable floor_table() {
+    auto slots=table();slots.records.push_back(slots.records.back());
+    for(const auto compass:{0,4,6,2}) {
+        odh::SlotRecord route{};route.type=3;route.snap_target_slot=-1;
+        route.proximity=std::array<std::int32_t,3>{16,16,16};route.max_size=0;route.unknown_i10=0;
+        route.gradient_bits=0x3E400000;route.height=0;route.facing=-2;route.resolution=16;
+        route.flags=4096U|(1U<<compass);
+        route.offset_bits[compass==0 || compass==4 ? 1 : 0]=compass==0 || compass==6 ? 0xC1800000 : 0x41800000;
+        slots.records.push_back(route);
+    }
+    return slots;
 }
 struct Fixture {
     odh::World world;odh::SlotTable slots=table();
@@ -21,6 +33,15 @@ struct Fixture {
         snap.emplace(world,2,odh::ObjdBinding{138,0x12345678,129,128},slots,128);
     }
 };
+struct FloorFixture : Fixture {
+    explicit FloorFixture(odh::Snap::PlacementValidator validator=[](auto,const auto&){return true;}) {
+        slots=floor_table();snap.reset();snap.emplace(world,2,odh::ObjdBinding{138,0x12345678,129,128},slots,128,std::move(validator));
+    }
+};
+void seat(Fixture& f) {
+    require(f.world.place_in_slot(2,0,1),"floor test starts with positioned actor in chair");
+    require(f.world.set_person_data(1,0,1),"floor test sitting posture");
+}
 }
 int main(){try{
     std::string b(42,'\0');b[0]=static_cast<char>(138);b[26]=static_cast<char>(129);
@@ -84,5 +105,75 @@ int main(){try{
              f.world.find(3)->position->x==45 && f.world.find(3)->position->direction==6,"nested propagation without recursion");
      const auto pose=*f.world.find(2)->position;
      require(!f.world.place_in_slot(3,0,2) && *f.world.find(2)->position==pose,"cycle/invalid slot leaves positions untouched");}
+    for(const auto direction:{0,2,4,6}) for(unsigned index=2;index<6;++index) {
+        FloorFixture f;f.world.set_position(2,{100,100,1,static_cast<std::uint8_t>(direction)});seat(f);
+        f.world.create(3,odh::EntityKind::object,{0,0,1});f.world.set_position(3,{0,0,1,7});f.world.place_in_slot(1,0,3);
+        f.world.create(4,odh::EntityKind::object);f.world.set_position(4,{0,0,1,5});f.world.place_in_slot(3,0,4);
+        const auto generation=f.world.find(1)->generation;const auto words=f.world.word_count();
+        const std::array<int,4> compass{0,4,6,2};const std::array<int,8> dx{0,16,16,16,0,-16,-16,-16},dy{-16,-16,0,16,16,16,0,-16};
+        const auto absolute=(direction+compass[index-2])%8;
+        const odh::EntityPosition expected{100+dx[absolute],100+dy[absolute],1,static_cast<std::uint8_t>(absolute)};
+        auto routines=routine(3,index);routines.begin()->second.instructions[0].operands[4]=static_cast<std::uint8_t>(direction==2 ? 0 : 4);
+        odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(1)==odh::VmStatus::returned_true,"all four native exits rotate for every cardinal object direction");
+        require(*f.world.find(1)->position==expected && !f.world.find(1)->attachment && f.world.find(2)->slots[0]==0,"floor exit updates position/direction and detaches both ends");
+        require(f.world.find(3)->position->x==expected.x && f.world.find(3)->position->y==expected.y && f.world.find(3)->position->direction==7 &&
+                f.world.find(4)->position->x==expected.x && f.world.find(4)->position->y==expected.y && f.world.find(4)->position->direction==5,
+                "floor exit propagates descendants and retains their own orientation");
+        require(f.world.find(1)->slots[0]==3 && f.world.find(3)->attachment->container==1 && f.world.find(3)->slots[0]==4 &&
+                f.world.find(4)->attachment->container==3,"floor exit retains descendant relationships");
+        require(f.world.find(1)->person_data[0]==1 && f.world.find(1)->generation==generation && f.world.word_count()==words,"floor snap leaves posture, identity and word budget unchanged");
+        vm.start(odh::routine_key(4096),{1,2,2});require(vm.run(1)==odh::VmStatus::returned_true && *f.world.find(1)->position==expected,"free actor floor snap is idempotent");
+    }
+    {FloorFixture f([](auto,const auto&){return false;});seat(f);
+     const auto pose=*f.world.find(1)->position;
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false && *f.world.find(1)->position==pose && f.world.find(1)->attachment->container==2 &&
+             f.world.find(1)->attachment->positioned && f.world.find(2)->slots[0]==1 && f.world.find(1)->person_data[0]==1,"blocked floor exit leaves complete seated state unchanged");}
+    {FloorFixture f(odh::Snap::PlacementValidator{});seat(f);
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault && f.world.find(1)->attachment && f.world.find(2)->slots[0]==1,"missing validator is unsupported without detaching");}
+    for(const auto direction:{1,3,5,7}) {FloorFixture f;f.world.set_position(2,{30,20,1,static_cast<std::uint8_t>(direction)});seat(f);
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault && f.world.find(1)->attachment && f.world.find(1)->position->direction==2,"diagonal floor geometry unsupported and atomic");}
+    for(unsigned index=2;index<6;++index) {int calls=0;FloorFixture f([&](auto,const auto&){++calls;return true;});
+     f.world.set_position(2,{index==4 ? 0 : 32767,index==2 ? 0 : 32767,1,0});seat(f);const auto pose=*f.world.find(1)->position;
+     odh::Vm vm(routine(3,index),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false && calls==0 && *f.world.find(1)->position==pose && f.world.find(2)->slots[0]==1,"out of World bounds is false before observer or detach");}
+    {FloorFixture f;f.world.create(3,odh::EntityKind::object,{0,0,1});f.world.set_position(3,{40,40,1,0});f.world.place_in_slot(3,0,1);
+     const auto pose=*f.world.find(1)->position;
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false && *f.world.find(1)->position==pose && f.world.find(3)->slots[0]==1 && f.world.find(1)->attachment->container==3,"floor snap cannot transfer from another container");}
+    {FloorFixture f;seat(f);bool observed=false;f.snap.reset();
+     f.snap.emplace(f.world,2,odh::ObjdBinding{138,0x12345678,129,128},f.slots,128,[&](auto actor,const auto& goal){
+         observed=actor==1 && goal==odh::EntityPosition{30,4,1,0} && f.world.find(2)->slots[0]==1 && f.world.find(1)->attachment &&
+                  *f.world.find(1)->position==odh::EntityPosition{30,20,1,2};return true;});
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true && observed,"validator sees complete pre-placement relation and pose");}
+    {FloorFixture f;seat(f);f.snap.reset();
+     f.snap.emplace(f.world,2,odh::ObjdBinding{138,0x12345678,129,128},f.slots,128,[&](auto,const auto&){f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,0});f.world.set_position(1,{11,12,1,4});return true;});
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false && *f.world.find(1)->position==odh::EntityPosition{11,12,1,4},"callback reused actor ID prevents placement against stale generation");}
+    for(const auto position:{odh::EntityPosition{-1,20,1,0},odh::EntityPosition{30,-1,1,0},odh::EntityPosition{32768,20,1,0},
+                             odh::EntityPosition{30,32768,1,0},odh::EntityPosition{30,20,0,0},odh::EntityPosition{30,20,1,8}}) {
+        FloorFixture f;seat(f);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{0,0,1,6});f.world.place_in_slot(1,0,3);
+        const auto pose=*f.world.find(1)->position,child=*f.world.find(3)->position;
+        require(!f.world.place_on_floor(1,position) && *f.world.find(1)->position==pose && *f.world.find(3)->position==child &&
+                f.world.find(2)->slots[0]==1 && f.world.find(1)->attachment->positioned,"invalid floor World position preserves relation and descendants atomically");
+    }
+    {FloorFixture f;seat(f);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{9,8,1,6});f.world.attach(1,0,3);
+     require(f.world.place_on_floor(1,{40,50,2,4}) && f.world.find(3)->attachment && *f.world.find(3)->position==odh::EntityPosition{9,8,1,6},"floor World move does not physically move unpositioned attachment");
+     require(!f.world.place_on_floor(99,{40,50,1,0}),"floor World rejects missing identity");}
+    for(unsigned mutation=0;mutation<16;++mutation) {FloorFixture f;seat(f);auto& route=f.slots.records[3];
+     switch(mutation) {
+     case 0:f.slots.version=9;break;case 1:route.offset_bits[1]=0x7FC00000;break;case 2:route.offset_bits[1]=0xC1700001;break;
+     case 3:route.offset_bits[0]=0x41700000;break;case 4:route.offset_bits[2]=0x41700000;break;case 5:route.flags=4096;break;
+     case 6:route.flags=4097|4;break;case 7:route.flags=4100;break;case 8:route.standing=1;break;case 9:route.sitting=1;break;
+     case 10:route.ground=1;break;case 11:route.proximity=std::array<std::int32_t,3>{16,15,16};break;
+     case 12:route.height=7;break;case 13:route.facing=-1;break;case 14:route.resolution=8;break;case 15:route.gradient_bits.reset();break;
+     }
+     odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault && f.world.find(1)->attachment && f.world.find(2)->slots[0]==1 && f.world.find(1)->position->direction==2,"unimplemented floor profile faults without state mutation");
+    }
     std::cout<<checks<<" snap/prefix checks passed (synthetic fixtures only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Snap test failed: "<<e.what()<<'\n';return 1;}}

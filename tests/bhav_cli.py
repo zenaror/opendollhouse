@@ -266,6 +266,68 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     write_bcf_entries([(b'test.bcf',[clip(b'Adult')]),(b'reset.bcf',[clip(b'ADULT')])])
     r=animated(operands=bytes(8),extra=reset_options)
     assert r.returncode==2 and 'casefold' in r.stderr and not r.stdout
+    # Two VM starts retain one world/controller graph and a global instruction budget.
+    original_prefix=prefix
+    function_prefix=bytearray(prefix)+bytes(68-len(prefix))
+    struct.pack_into('<H',function_prefix,10,4096)
+    struct.pack_into('<HH',function_prefix,64,4096,4097)
+    floor=struct.pack('<HIIIiiiIi',3,0,0xC1800000,0,0,0,0,4097,-1)+struct.pack('<iiiiiIiii',16,16,16,0,0,0x3E400000,0,-2,16)
+    def body(instructions):
+        return struct.pack('<HHBBHHH',0x8002,len(instructions),0,4,0,0,0)+b''.join(
+            struct.pack('<HBB',op,yes,no)+operands for op,operands,yes,no in instructions)
+    set_sit=bytes([0,0,1,0,0,5,18,7])
+    set_stand=bytes([0,0,0,0,0,5,18,7])
+    initial=body([(46,bytes([0,0,3,0,4,0,0,0]),1,255),
+                  (2,set_sit,2,255),(44,bytes(8),254,255)])
+    standing=body([(46,bytes([1,0,3,0,0,0,0,0]),1,255),
+                   (44,bytes([2,0,0,0,0,0,0,0]),2,1),
+                   (44,bytes(8),3,255),(2,set_stand,254,255)])
+    write_bcf_entries([(b'test.bcf',[clip(b'Adult')]),(b'reset.bcf',[clip(b'Sit'),clip(b'Stand')]),
+                       (b'extra.bcf',[clip(b'Rise',b'202')])])
+    reset_global(body_tables)
+    stand_options=['--reset-probe','reset.bcf','--sound-probe','--stand-after','--animation-extra','extra.bcf']
+    def sequence(first=initial,second=standing,definition=function_prefix,extra=()):
+        path.write_bytes(archive([(4096,first),(4097,second)],
+            struct.pack('<II4sI',0,10,b'TOLS',3)+storage+snap_route+floor,128,definition,
+            ((129,table([b'',b'Adult',b'Rise'])),)))
+        return subprocess.run(animation_args+stand_options+list(extra),capture_output=True,text=True)
+    r=sequence(extra=('--post-ticks','2'));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['container']==0 and d['posture']==0
+    assert d['final_position']==[64,48,1,0] and d['post_ticks']==2
+    assert [p['routine'] for p in d['phases']]==[4096,4097]
+    assert d['phases'][0]['container']==2 and d['phases'][0]['posture']==1
+    assert d['phases'][1]['container']==0 and d['phases'][1]['posture']==0
+    assert d['total_steps']==sum(p['steps'] for p in d['phases'])==len(d['trace'])
+    assert {e['phase'] for e in d['trace']}=={0,1}
+    assert [e['total_step'] for e in d['trace']]==list(range(d['total_steps']))
+    assert d['animation_progress']['name']=='Sit' # Actual reset precedes the posture write.
+    assert d['stand_selection']['stand']==4097 and d['stand_selection']['entry']=='test.iff'
+    assert [x['entry'] for x in d['animation_resources']]==['test.bcf','reset.bcf','extra.bcf']
+    assert [e['tick'] for e in d['animation_events']]==sorted(e['tick'] for e in d['animation_events'])
+    r=sequence(second=routine(46,bytes([9,0,3,0,0,0,0,0])));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_false' and d['container']==2 and d['posture']==1
+    r=sequence(first=routine(2,bytes([0,0,1,0,0,2,7,7])));d=json.loads(r.stdout)
+    assert d['status']=='returned_false' and len(d['phases'])==1 and {e['phase'] for e in d['trace']}=={0}
+    r=sequence(second=routine(50));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='fault' and d['container']==2, (r.returncode,d['status'],d.get('phases'))
+    r=sequence(second=routine(2,bytes([0,0,1,0,0,5,8,7]),yes=0));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='budget_exhausted' and d['total_steps']==10000
+    assert sum(p['steps'] for p in d['phases'])==10000 and d['phases'][1]['steps']==9997
+    for definition,message in [(function_prefix[:67],None),
+             (function_prefix[:44]+struct.pack('<H',1)+function_prefix[46:],'function table'),
+             (function_prefix[:66]+bytes(2),'Stand is absent')]:
+        r=sequence(definition=definition)
+        assert r.returncode==2 and (message is None or message in r.stderr) and not r.stdout
+    for extra in [('--animation-extra','EXTRA.BCF'),('--animation-extra','test.bcf'),
+                  tuple(['--animation-extra','x.bcf']*17)]:
+        r=sequence(extra=extra);assert r.returncode==2 and not r.stdout
+    write_bcf_entries([(b'test.bcf',[clip(b'Adult')]),(b'reset.bcf',[clip(b'Sit')]),
+                       (b'extra.bcf',[clip(b'ADULT')])])
+    r=sequence();assert r.returncode==2 and 'casefold' in r.stderr
+    for options in [('--stand-after',),('--animation-extra','extra.bcf')]:
+        r=subprocess.run(args+list(options),capture_output=True,text=True)
+        assert r.returncode==2 and not r.stdout
+    prefix=original_prefix
     global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2))
     many_events=(pas(b'Adult')+pas(b'absent.cfp')+
                  b''.join(u(n) for n in [0,0,0,0,0,1])+pas(b'ROOT')+
