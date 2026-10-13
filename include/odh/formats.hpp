@@ -171,5 +171,11 @@ ObjdBinding read_objd_binding(const View&);
 struct ObjdFunctions {std::uint32_t version;std::uint16_t main,sit,stand,uses_function_table;};
 // Stable prefix through StandID, not a complete object definition or OBJf.
 ObjdFunctions read_objd_functions(const View&);
+struct ObjdGraphics {
+    std::uint32_t version;
+    std::uint16_t base_graphic, num_graphics;
+};
+// Stable 10-byte prefix only; does not validate the complete definition.
+ObjdGraphics read_objd_graphics(const View&);
 
 } // namespace odh

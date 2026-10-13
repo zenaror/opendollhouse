@@ -8,7 +8,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | FAR | Assinatura `FAR!byAZ`, versão 1, nomes com comprimento uint32, duas extensões de tamanho iguais; índices e entradas dentro dos limites | Variante de nomes uint16, comprimentos diferentes, precedência de arquivos |
 | IFF | Identificador 2.0/2.5, cabeçalho de 64 bytes, chunks com cabeçalho de 76 bytes, tamanhos e campos externos big endian | Semântica dos chunks desconhecidos e validade do mapa de recursos |
 | BHAV | Versões 8000/8001/8002, instruções de 12 bytes, opcode little endian, oito operandos e oito bytes de metadata preservados; metadata 8002 de argumentos/locais/type/tree version | Metadata legada 8000/8001; cobertura funcional completa e scheduler; execução parcial 8002 descrita em vm-validation.md |
-| SPR2 | Versão 1000, tabela de offsets, cabeçalhos de 16 bytes, dimensões e flags | Pixels RLE, paletas, alpha/Z decodificados e renderização |
+| SPR2/PALT | SPR2 1000, frame RLE, RGBA/index/Z; PALT RGB e version/raw; limites/seleção explícitos | SPR2 outras versões, palette fallback, FloorCopy/ZAsAlpha e composição |
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
 | STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
@@ -18,7 +18,8 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
 | BCON | Contagem byte, flags brutas, constantes LE16 e extensão restante; máximo estrutural de255 palavras | TRCN, semiglobal/global/OTF e precedência geral de tuning |
-| DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
+| DGRP | Versões20000..20004, seleção direction/zoom/rotation, sprite refs/flags/offsets/raw floatbits | Composição geométrica, interpretação geral de flags e Z |
+| OBJD/SPR# | OBJD prefixos de identidade/funções/graphics; SPR# só versões no inspector | OBJD inteiro/OBJf e SPR# pixels |
 
 `read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões
 136/138/139/140/141/142, retornando GUID, AnimationTableID, SlotID, MasterID e
@@ -42,7 +43,9 @@ Limites iniciais configuráveis na API: 200.000 entradas por FAR, 100.000 chunks
 IFF, 1.000.000 de frames por SPR2, 4.096 interações por TTAB e 256 motivos por
 interação e 4.096 registros por SLOT. São limites de proteção deste protótipo, não
 limites atribuídos ao original. O índice FAR e os BHAVs são alocados somente após
-validação de tamanho; sprites não são expandidos em memória.
+validação de tamanho; o inspector não expande sprites. O decoder separado
+SPR2 expande somente o frame selecionado com budgets próprios; ver
+[sprite-validation.md](sprite-validation.md).
 
 Views compartilham um stream seekable e não são thread-safe. O inspector é uma
 ferramenta Linux host, usando filesystem/iostream e mapas para relatórios. O

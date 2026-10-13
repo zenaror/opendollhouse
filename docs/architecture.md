@@ -44,6 +44,7 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    [pose-validation.md](pose-validation.md), e meshes/skinning iniciais em
    [mesh-validation.md](mesh-validation.md). BMP/raster texturizado isolado está em
    [render-validation.md](render-validation.md); integração World/playback,
+   sprites alpha/Z e DGRP estão em [sprite-validation.md](sprite-validation.md);
    compositor e janela/input ainda pendentes.
    O objetivo inclui paredes e sobreposição, com capturas e cenas
    reproduzíveis. Conservar

@@ -1,5 +1,12 @@
 #include "odh/formats.hpp"
 namespace odh {
+ObjdGraphics read_objd_graphics(const View& payload) {
+    const auto prefix=payload.subview(0,10);
+    const auto version=prefix.le32(0);
+    if(version!=136 && version!=138 && version!=139 && version!=140 && version!=141 && version!=142)
+        throw FormatError("unsupported OBJD graphics prefix version");
+    return {version,prefix.le16(6),prefix.le16(8)};
+}
 ObjdBinding read_objd_binding(const View& payload) {
     const auto prefix=payload.subview(0,42);
     const auto version=prefix.le32(0);

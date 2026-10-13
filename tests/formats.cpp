@@ -160,6 +160,31 @@ int main() {
         use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 header crosses payload"); });
         bad = sprite; put(bad, 4, 0xFFFFFFFF, 4);
         use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 enormous frame count"); });
+        for (const auto version : {136U, 138U, 139U, 140U, 141U, 142U}) {
+            std::string graphics(10, '\0');
+            put(graphics, 0, version, 4); put(graphics, 4, 0xbeef, 2);
+            put(graphics, 6, 1128, 2); put(graphics, 8, 7, 2);
+            use(graphics, [&](const odh::View& v) {
+                const auto g = odh::read_objd_graphics(v);
+                require(g.version == version && g.base_graphic == 1128 && g.num_graphics == 7,
+                        "OBJD graphics prefix offsets and supported versions");
+            });
+            for (std::size_t n = 0; n < graphics.size(); ++n)
+                use(graphics.substr(0, n), [](const odh::View& v) {
+                    rejects([&] { odh::read_objd_graphics(v); }, "truncated OBJD graphics prefix");
+                });
+            put(graphics, 6, 0xffff, 2); put(graphics, 8, 0, 2);
+            use(graphics + "tail", [](const odh::View& v) {
+                const auto g = odh::read_objd_graphics(v);
+                require(g.base_graphic == 65535 && g.num_graphics == 0, "raw graphics IDs and prefix-only read");
+            });
+        }
+        for (const auto version : {0U, 135U, 137U, 143U, 0xffffffffU}) {
+            std::string graphics(10, '\0'); put(graphics, 0, version, 4);
+            use(graphics, [](const odh::View& v) {
+                rejects([&] { odh::read_objd_graphics(v); }, "unsupported OBJD graphics version");
+            });
+        }
         std::string functions(68,'\0');put(functions,0,138,4);
         put(functions,10,4096,2);put(functions,64,4100,2);put(functions,66,4102,2);put(functions,44,0,2);
         use(functions,[](const odh::View& v){const auto f=odh::read_objd_functions(v);
