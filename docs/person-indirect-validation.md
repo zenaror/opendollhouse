@@ -69,9 +69,12 @@ o probe de Main não recebeu silenciosamente o estado do Init separado.
 Um probe **isolado**, ainda no construtor parcial, de privado Load4098 para
 após10 instruções em semiglobal8244 pc15, leitura de global20 GameEdition.
 Esse resultado não valida Load após Init e não autoriza preencher o global
-com um default da referência. A próxima integração do construtor deve
-estabelecer esse contexto e manter a ordem Init/Load, empilhamento de Main e
-inicialização de BodySTR descrita pela referência, antes dos ticks normais.
+com um default da referência. Load é entrada2, não entrada8. A entrada8 é
+DynamicMultiTileUpdate (`VMEntity.cs:450,456`). O construtor da referência
+executa Init0 e atualização8, empilha Main e depois Avatar.Init aplica BodySTR
+(`VMEntity.cs:494–495`, `VMAvatar.cs:401`). A próxima integração deve preservar
+essa ordem e estabelecer quando a entrada Load2 é usada na restauração;
+o probe isolado não estabelece que Load pertence à sequência do construtor.
 
 Relatórios locais ignorados: `reports/person-indirect-init.json`,
 `reports/person-indirect-main.json` e `reports/person-indirect-load-isolated.json`.
