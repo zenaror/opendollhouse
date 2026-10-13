@@ -171,4 +171,53 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  plain_iff(zone,[('STR#',2,zoning)]);r=run(lot_args());assert r.returncode==2 and 'STR#1 absent' in r.stderr
  plain_iff(zone,[('STR#',1,struct.pack('<hH',-3,1)+b'\x011, unknown\0\0')]);r=run(lot_args())
  assert r.returncode==2 and 'unsupported lot zoning label' in r.stderr
+ # Ordered constructor subset: Init/entry8 first, body data before Main.
+ def strings(values):return struct.pack('<hH',-3,len(values))+b''.join(b'\x01'+v.encode()+b'\0\0' for v in values)
+ body_values=['']*27;body_values[0]='adult';body_values[12]='male';body_values[13]='27'
+ def startup_setup(init=None,dynamic=None,main=None,init_id=4097,dynamic_id=4101,body=body_values,private_walk=('','private-walk')):
+  definition=bytearray(objd(1));definition.extend(bytes(158-len(definition)))
+  struct.pack_into('<H',definition,38,200);struct.pack_into('<H',definition,86,init_id);struct.pack_into('<H',definition,156,dynamic_id)
+  chunks=[('OBJD',128,definition),('GLOB',128,b'\x0dFixturePerson'),('STR#',200,strings(body)),('BHAV',4096,routine(main or [expr(0,1)]))]
+  if init_id>255:chunks.append(('BHAV',init_id,routine(init or [(2,254,255,[58,0,9,0,0,5,18,7])])))
+  if dynamic_id>255:chunks.append(('BHAV',dynamic_id,routine(dynamic or [(2,254,255,[36,0,42,0,0,5,18,7])])))
+  if private_walk is not None:chunks.append(('STR#',150,strings(private_walk)))
+  archive(avatar,'Person.iff',chunks)
+  archive(semi,'FixturePerson.iff',[])
+  archive(glob,'Global.iff',[('STR#',150,strings(['global0','global1'])),('STR#',158,strings(['swim0'])),('STR#',151,strings(['child0'])),('STR#',160,strings(['child-swim0']))])
+ startup_setup();r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['startup_requested'] and d['body_initialized'] and d['steps']==3 and d['vm_steps']==1 and d['startup_steps']==2
+ assert [v['phase'] for v in d['trace']]==['init','dynamic_multitile','main']
+ assert [v['routine'] for v in d['startup_stages']]==[4097,4101] and all(v['status']=='returned_true' for v in d['startup_stages'])
+ assert d['actor_state']['age']==27 and d['actor_state']['autonomy']==42 and d['actor_state']['person_data'][7]==1000
+ assert d['actor_state']['motives']==[100]*11+[0]+[100]*4
+ assert d['body_state']['walk'][:2]==['global0','private-walk'] and d['body_state']['swim'][0]=='swim0'
+ assert d['body_state']['seed_before']==d['body_state']['seed_after']==1 and not d['body_state']['appearance_resources_resolved']
+ startup_setup(init=[(2,254,255,[0,0,0,0,0,2,10,7])],dynamic=[(2,254,255,[0,0,0,0,0,2,10,7])],main=[(2,254,255,[0,0,0,0,0,2,10,7])]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['status']=='returned_true' and all(v['status']=='returned_true' for v in d['startup_stages'])
+ named=list(body_values);named[11]='Alice';named[13]='17';named[12]='FeMaLe'
+ startup_setup(body=named,dynamic_id=0);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['body_state']['selected_name']=='Alice' and d['rng_seed_final']==33554433
+ assert d['body_state']['walk_table']==151 and d['body_state']['swim_table']==160 and d['body_state']['walk'][0]=='child0'
+ assert d['actor_state']['person_data'][65]==1 and d['actor_state']['age']==17 and d['startup_stages'][1]['steps']==0
+ startup_setup(init=[expr(0,1,255)],dynamic_id=0);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['startup_stages'][0]['status']=='returned_false' and d['body_initialized']
+ startup_setup(init=[(44,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['host_failed'] and d['status']=='fault' and d['diagnostic']=='unsupported primitive 44' and not d['body_initialized']
+ assert len(d['startup_stages'])==1 and [v['phase'] for v in d['trace']]==['init'] and d['startup_steps']==0 and d['steps']==1
+ startup_setup(init=[(2,1,255,[0,0,2,0,0,5,9,7]),(0,254,255,bytes(8))]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['host_failed'] and d['status']=='waiting' and d['ticks']==0 and not d['body_initialized']
+ startup_setup(dynamic=[expr(0,1,0)]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and d['startup_steps']==1 and not d['body_initialized']
+ assert len(d['trace'])==10000 and d['startup_stages'][1]['steps']==9999
+ # Offered actions are enqueued for Main only after successful body setup.
+ startup_setup(main=[call(256)]);archive(glob,'Global.iff',[('STR#',150,strings(['walk'])),('STR#',158,strings(['swim'])),('BHAV',256,routine([(17,1,253,[0,0,1,0,0,0,0,0]),expr(0,1)]))]);archive(action,'Chair.iff',[('OBJD',128,objd(2)),('BHAV',4096,routine([expr(0,1,255)]))])
+ r=run(['--initialize']+action_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['completion']['result'] is False and d['ticks']==1 and d['body_initialized'] and not d['action_incomplete']
+ assert [v['phase'] for v in d['trace']][:2]==['init','dynamic_multitile'] and all(v['phase']=='main' for v in d['trace'][2:])
+ for extra in [['--initialize','--initialize'],['--initialize','--age','27'],['--initialize','--flags','256'],['--initialize','--routine','4097']]:
+  startup_setup();r=run(extra);assert r.returncode==2 and not r.stdout
+ startup_setup();archive(glob,'Global.iff',[]);r=run(['--initialize']);assert r.returncode==2 and not r.stdout and 'walk/swim' in r.stderr
+ invalid_body=list(body_values);invalid_body[0]='dog';startup_setup(body=invalid_body);r=run(['--initialize']);assert r.returncode==2 and 'adult BodySTR' in r.stderr
+ # Old shortened OBJD fixture cannot invent startup fields.
+ setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

@@ -21,4 +21,10 @@ ObjdFunctions read_objd_functions(const View& payload) {
     const auto prefix=payload.subview(0,68);
     return {binding.version,prefix.le16(10),prefix.le16(64),prefix.le16(66),prefix.le16(44)};
 }
+ObjdStartup read_objd_startup(const View& payload) {
+    const auto prefix=payload.subview(0,158);
+    const auto version=prefix.le32(0);
+    if(version!=138)throw FormatError("unsupported OBJD startup prefix version");
+    return {version,prefix.le16(86),prefix.le16(156),prefix.le16(38)};
+}
 }

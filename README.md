@@ -93,9 +93,12 @@ carrega BCON explícitos. O [contexto de lote](docs/lot-validation.md) carrega S
 e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
 Inicialização completa e carregamento da casa como simulação seguem pendentes.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
-ciclos de Sleep com seed explícita; o Init nativo chega à escrita de traits.
+ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
-retorna true no probe; Load/BodySTR e a sequência do construtor seguem pendentes.
+retorna true no probe.
+O [startup do avatar](docs/avatar-startup-validation.md), via `--initialize`,
+liga Init/entrada8/BodySTR ao Main preservando World e RNG. Ainda não resolve
+aparências nem restaura o avatar salvo; o Main chega à dependência NBRS do bairro.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

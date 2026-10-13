@@ -4,11 +4,13 @@
 #include "odh/lot.hpp"
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
+#include "odh/avatar_body.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
 #include <memory>
 #include <charconv>
+#include <algorithm>
 
 namespace {
 struct Resource {std::string archive,entry;};
@@ -17,11 +19,12 @@ struct Loaded {
     odh::TuningTables tuning;
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::ObjdFunctions> functions;
+    std::optional<odh::ObjdStartup> startup;
     std::optional<odh::Glob> glob;
     std::optional<std::uint16_t> object_type;
 };
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
-Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={}) {
+Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={},bool startup=false) {
     Loaded result;
     with_far_entry(resource.archive,resource.entry,[&](const auto& view){
         odh::iff_chunks(view,[&](const auto& chunk){
@@ -36,6 +39,7 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
             if(definition&&chunk.type=="OBJD"&&chunk.id==*definition){
                 if(result.binding)throw odh::FormatError("ambiguous OBJD");
                 result.binding=odh::read_objd_binding(chunk.payload);result.functions=odh::read_objd_functions(chunk.payload);
+                if(startup)result.startup=odh::read_objd_startup(chunk.payload);
                 if(result.binding->version==138)result.object_type=chunk.payload.le16(18);
             }
             if(role==odh::RoutineScope::private_object&&chunk.type=="GLOB"&&chunk.id==128){
@@ -46,6 +50,13 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
     if(definition&&(!result.binding||!result.functions))throw odh::FormatError("selected OBJD absent");
     if(result.binding&&result.binding->master_id!=0)throw odh::FormatError("multitile identity unsupported");
     return result;
+}
+std::map<std::uint16_t,odh::StringTable> load_strings(const Resource& resource,const std::vector<std::uint16_t>& ids){
+    std::map<std::uint16_t,odh::StringTable> result;
+    with_far_entry(resource.archive,resource.entry,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type!="STR#"||std::find(ids.begin(),ids.end(),chunk.id)==ids.end())return;
+        if(!result.emplace(chunk.id,odh::read_strings(chunk.payload)).second)throw odh::FormatError("ambiguous startup STR# ID");
+    });});return result;
 }
 std::int16_t signed_word(std::uint16_t v){return static_cast<std::int16_t>(v<32768?static_cast<int>(v):static_cast<int>(v)-65536);}
 std::uint64_t seed_selector(const std::string& text){
@@ -63,7 +74,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
-    std::uint16_t ticks_limit=256;bool ticks_set=false;
+    std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
         if(option=="--avatar"&&!avatar&&n+3<argc){avatar=Resource{argv[n+1],argv[n+2]};avatar_def=selector(argv[n+3]);n+=3;}
         else if(option=="--semiglobal"&&!semi&&n+2<argc){semi=Resource{argv[n+1],argv[n+2]};n+=2;}
@@ -76,10 +87,11 @@ int main(int argc,char** argv) {
         else if(option=="--lot"&&!lot_path&&n+2<argc){lot_path=argv[n+1];lot_id=selector(argv[n+2]);n+=2;}
         else if(option=="--zoning"&&!zoning_path&&n+1<argc)zoning_path=argv[++n];
         else if(option=="--seed"&&!seed&&n+1<argc)seed=seed_selector(argv[++n]);
+        else if(option=="--initialize"&&!initialize)initialize=true;
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path))
-        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags)))
+        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="SIMI"||chunk.id!=1)return;
@@ -95,7 +107,7 @@ int main(int argc,char** argv) {
     if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
     std::vector<std::pair<std::int16_t,std::int16_t>> global_reads;
     std::vector<odh::LotZoneResult> zoning_reads;
-    auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def);
+    auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def,initialize);
     if(person.binding->version!=138||person.object_type!=2)throw odh::FormatError("person constructor profile requires OBJD138 ObjectType2");
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
        person.glob->name.find('\0')!=std::string::npos||fold(person.glob->name+".iff")!=fold(semi->entry))
@@ -107,6 +119,25 @@ int main(int argc,char** argv) {
     auto semi_data=load(*semi,odh::RoutineScope::semiglobal);
     person.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
     auto shared=load(*globals,odh::RoutineScope::global);
+    std::optional<odh::AvatarBodyStrings> body;
+    std::optional<odh::StringTable> body_walk,body_swim,private_walk;
+    if(initialize){
+        auto strings=load_strings(*avatar,{person.startup->body_strings,150});
+        const auto table=strings.find(person.startup->body_strings);
+        if(table==strings.end())throw odh::FormatError("startup BodySTR absent");
+        body=odh::parse_avatar_body_strings(table->second);
+        if(body->avatar_type!="adult")throw odh::FormatError("startup constructor profile requires adult BodySTR type");
+        const auto special=strings.find(150);if(special!=strings.end())private_walk=std::move(special->second);
+        const bool child=*body->age<18;
+        const std::uint16_t walk_id=child?151:150,swim_id=child?160:158;
+        auto animation_strings=load_strings(*globals,{walk_id,swim_id});
+        if(!animation_strings.count(walk_id)||!animation_strings.count(swim_id))throw odh::FormatError("startup global walk/swim STR# absent");
+        body_walk=std::move(animation_strings.at(walk_id));body_swim=std::move(animation_strings.at(swim_id));
+        for(const auto id:{person.startup->init,person.startup->dynamic_multitile})if(id>255){
+            const auto key=odh::routine_key(id);const auto& bank=key.scope==odh::RoutineScope::global?shared.routines:person.routines;
+            if(!bank.count(key))throw odh::FormatError("startup routine absent from explicit owner");
+        }
+    }
     std::optional<Loaded> action_data;
     if(action){action_data=load(*action,odh::RoutineScope::private_object,*action_def);
         if(odh::routine_key(*action_routine).scope!=odh::RoutineScope::private_object||action_data->routines.find(odh::routine_key(*action_routine))==action_data->routines.end())
@@ -163,16 +194,45 @@ int main(int argc,char** argv) {
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
-    vm.start(odh::routine_key(root),{1,1,1,1});
-    if(action&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{1,2,2,2}))throw odh::FormatError(queue.diagnostic());
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
+    std::vector<std::string> trace_phases;
+    struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
+    std::vector<StartupStage> stages;
+    std::uint64_t startup_steps=0;
+    std::optional<odh::AvatarBodyDescriptor> body_state;
+    std::optional<std::uint64_t> body_seed_before,body_seed_after;
+    const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){trace.push_back(record);trace_phases.push_back(phase);};};
+    if(initialize){
+        for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.startup->init},{"dynamic_multitile",person.startup->dynamic_multitile}}){
+            if(entry.second<=255){stages.push_back({entry.first,entry.second,odh::VmStatus::ready,0,"entry ID<=255 skipped by reference"});continue;}
+            vm.start(odh::routine_key(entry.second),{1,1,0,1},{0,0,0,0});
+            vm.run(10000-startup_steps,trace_in(entry.first));
+            stages.push_back({entry.first,entry.second,vm.status(),vm.steps(),vm.diagnostic()});
+            if(vm.status()!=odh::VmStatus::returned_true&&vm.status()!=odh::VmStatus::returned_false){
+                host_failed=true;host_diagnostic="startup entry did not return synchronously";break;
+            }
+            startup_steps+=vm.steps();
+        }
+    }
+    if(!host_failed){
+        // Stack Main before post-body initialization, then dispatch its first
+        // instruction only after the body data stage has completed.
+        vm.start(odh::routine_key(root),{1,1,static_cast<std::int16_t>(initialize?0:1),1});
+        if(initialize&&vm.status()!=odh::VmStatus::fault){
+            try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,1,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
+            catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
+        }
+        if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{1,2,2,2}))throw odh::FormatError(queue.diagnostic());
+    }
+    const auto total_steps=[&]{return startup_steps+vm.steps();};
     std::uint64_t ticks=0;const auto execute=[&] {
+        if(host_failed)return;
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
-        vm.run(vm.steps()<10000?10000-vm.steps():0,[&](const auto& record){trace.push_back(record);});
+        vm.run(total_steps()<10000?10000-total_steps():0,trace_in(initialize?"main":"root_probe"));
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
     };
     execute();
-    while(!host_failed&&ticks<ticks_limit&&vm.steps()<10000&&
+    while(!host_failed&&ticks<ticks_limit&&total_steps()<10000&&
           (vm.status()==odh::VmStatus::waiting||vm.status()==odh::VmStatus::yielded)) {
         ++ticks;
         if(!queue.tick(ticks)||!sleep.tick(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
@@ -181,18 +241,35 @@ int main(int argc,char** argv) {
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
-    const bool instruction_exhausted=vm.steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
-    std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":\"full Init/entry8/body-string pipeline not executed; explicit root may be Init\",\"avatar\":{\"archive\":"<<json_bytes(avatar->archive)<<",\"entry\":"<<json_bytes(avatar->entry)
+    const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
+    std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":"<<json_bytes(initialize?
+        "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and native save restoration not initialized":
+        "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
+        <<",\"startup_steps\":"<<startup_steps<<",\"startup_stages\":[";
+    for(std::size_t n=0;n<stages.size();++n){if(n)std::cout<<',';const auto& stage=stages[n];
+        std::cout<<"{\"phase\":"<<json_bytes(stage.phase)<<",\"routine\":"<<stage.routine<<",\"status\":"<<json_bytes(odh::vm_status_name(stage.status))<<",\"steps\":"<<stage.steps<<",\"diagnostic\":"<<json_bytes(stage.diagnostic)<<'}';}
+    std::cout<<"],\"body_initialized\":"<<(body_state?"true":"false")<<",\"body_state\":";
+    if(body_state){const auto& state=*body_state;
+        std::cout<<"{\"age\":"<<*state.body->age<<",\"gender\":";
+        if(state.body->gender)std::cout<<*state.body->gender;else std::cout<<"null";
+        std::cout<<",\"avatar_type\":"<<json_bytes(state.body->avatar_type)<<",\"body\":"<<json_bytes(state.body->body)<<",\"head\":"<<json_bytes(state.body->head)
+            <<",\"phenotype\":\"TS1 light reference policy\",\"appearance_resources_resolved\":false,\"selected_name\":"<<(state.selected_name?json_bytes(*state.selected_name):"null")
+            <<",\"seed_before\":"<<*body_seed_before<<",\"seed_after\":"<<*body_seed_after<<",\"walk_table\":"<<state.global_walk_id<<",\"swim_table\":"<<state.global_swim_id<<",\"hands\":[";
+        for(std::size_t n=0;n<6;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.body->hands[n]);}
+        std::cout<<"],\"walk\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.walk[n]);}
+        std::cout<<"],\"swim\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.swim[n]);}std::cout<<"]}";
+    }else std::cout<<"null";
+    std::cout<<",\"avatar\":{\"archive\":"<<json_bytes(avatar->archive)<<",\"entry\":"<<json_bytes(avatar->entry)
         <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":1,\"main\":"<<person.functions->main<<",\"root\":"<<root
         <<",\"semiglobal_archive\":"<<json_bytes(semi->archive)<<",\"semiglobal_entry\":"<<json_bytes(semi->entry)<<",\"glob_name\":"<<json_bytes(person.glob->name)
         <<"},\"global\":{\"archive\":"<<json_bytes(globals->archive)<<",\"entry\":"<<json_bytes(globals->entry)<<"},\"trace\":[";
     for(std::size_t n=0;n<trace.size();++n){if(n)std::cout<<',';const auto& t=trace[n];
-        std::cout<<"{\"step\":"<<t.step<<",\"depth\":"<<t.depth<<",\"owner\":"<<t.code_owner<<",\"routine\":"<<t.key.id<<",\"pc\":"<<t.pc
+        std::cout<<"{\"phase\":"<<json_bytes(trace_phases[n])<<",\"step\":"<<t.step<<",\"depth\":"<<t.depth<<",\"owner\":"<<t.code_owner<<",\"routine\":"<<t.key.id<<",\"pc\":"<<t.pc
             <<",\"opcode\":"<<t.instruction.opcode<<",\"true\":"<<static_cast<unsigned>(t.instruction.on_true)<<",\"false\":"<<static_cast<unsigned>(t.instruction.on_false)<<",\"operands\":[";
         for(std::size_t j=0;j<8;++j){if(j)std::cout<<',';std::cout<<static_cast<unsigned>(t.instruction.operands[j]);}std::cout<<"]}";
     }
     std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
-        <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
+        <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")<<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests
         <<",\"rng_backend\":\"FreeSO xorshift64star reference profile\",\"rng_seed_initial\":"<<seed.value_or(1)<<",\"rng_seed_final\":"<<random.seed()
         <<",\"rng_seed_source\":"<<json_bytes(seed?"explicit host fixture; original saved seed unavailable":"host default fixture1; original saved seed unavailable")

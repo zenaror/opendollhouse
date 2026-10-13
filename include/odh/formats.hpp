@@ -182,6 +182,10 @@ ObjdBinding read_objd_binding(const View&);
 struct ObjdFunctions {std::uint32_t version;std::uint16_t main,sit,stand,uses_function_table;};
 // Stable prefix through StandID, not a complete object definition or OBJf.
 ObjdFunctions read_objd_functions(const View&);
+struct ObjdStartup {std::uint32_t version;std::uint16_t init,dynamic_multitile,body_strings;};
+// OBJD138 avatar startup fields; entry2 Load is intentionally independent.
+// Requires the prefix through DynamicMultiTileUpdate, not complete validation.
+ObjdStartup read_objd_startup(const View&);
 struct ObjdGraphics {
     std::uint32_t version;
     std::uint16_t base_graphic, num_graphics;

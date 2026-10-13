@@ -8,6 +8,7 @@ O gate posterior de SIMI/current lot/zoning está em [lot-validation.md](lot-val
 O gate posterior com RNG compartilhado está em [random-validation.md](random-validation.md).
 A conclusão do Init privado com scopes30/31 está em
 [person-indirect-validation.md](person-indirect-validation.md).
+O modo posterior `--initialize` está em [avatar-startup-validation.md](avatar-startup-validation.md).
 É um host de diagnóstico sem janela; não substitui o preview e não representa
 um avatar/lote completamente inicializado.
 
