@@ -32,14 +32,18 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    `DiningChairs.iff`, GUID `0x26BFBB29`. Antes da execução, determinar o significado
    dos operandos, contexts e retomadas usados pelo cenário.
 3. **VM:** núcleo inicial de chamadas/expressões com traces implementado;
-   entidades/slots iniciais implementados, faltam scheduler e serviços.
+   entidades/slots, serviços de rota/snap/playback e duas VMs no probe implementados;
+   scheduler geral e queue continuam pendentes.
    A VM já aceita aguardar uma conclusão externa sem reexecutar a primitiva;
-   o backend de roteamento e a passagem de tempo ainda precisam ser ligados.
+   o host liga controladores por ticks; passagem geral de tempo ainda falta.
    Traces de instruções, chamadas e estados com fixtures sintéticas e
    cenários originais identificados. Comparação com FreeSO serve de referência
    auxiliar; decisões de fidelidade precisam de evidência do original.
 4. **Composição gráfica Linux cedo:** sprites com profundidade, personagens
-   animados, paredes e sobreposição, com capturas e cenas reproduzíveis. Conservar
+   animados. Skeleton/interpolação/matrizes iniciais implementados em
+   [pose-validation.md](pose-validation.md); meshes/skinning/texturas e compositor
+   ainda pendentes. O objetivo inclui paredes e sobreposição, com capturas e cenas
+   reproduzíveis. Conservar
    uma interface que permita experimentar software, híbrido CPU/GPU e geometria
    derivada no futuro backend New 3DS. PICA200 não oferece fragment shader
    programável equivalente ao das APIs modernas; não fazer o núcleo depender dele.

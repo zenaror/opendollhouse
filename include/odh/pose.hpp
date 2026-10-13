@@ -1,0 +1,33 @@
+#pragma once
+#include "odh/skeleton.hpp"
+
+namespace odh {
+struct PoseBone {
+    std::string name;
+    std::int32_t parent_index;
+    std::array<float,3> translation;
+    std::array<float,4> rotation;
+    // Row-major 3x4 affine matrix for COLUMN vectors: parentGlobal*local,
+    // local=translation*rotation. Position occupies elements 3,7,11.
+    std::array<float,12> absolute_matrix;
+    std::array<float,3> absolute_position;
+};
+struct SkeletonPose {
+    std::string skeleton,animation;
+    double requested_frame;
+    std::uint32_t frame;
+    float fraction;
+    bool completed;
+    std::vector<PoseBone> bones; // Original skeleton order, including unsorted trees.
+    std::vector<std::string> missing_motion_bones; // Motion order, duplicates retained.
+};
+// Pure, bounded single-clip sampling at weight1. Both resource pointers null
+// samples rest transforms. Translations become (-x,y,z); rotations (x,-y,-z,-w).
+// Quaternions are never implicitly normalized; Can flags do not filter motions.
+// Continuous negative frames clamp to0/fraction0 and complete; nonnegative
+// frames split into floor/fraction before clamping to the clip frame count.
+// Invalid hierarchy, resource pairing, ranges, nonfinite values or overflow
+// throws FormatError before returning a pose. Inputs are never mutated.
+SkeletonPose sample_pose(const Skeleton&,const AnimationHeader* =nullptr,
+                         const CfpPlanes* =nullptr,double frame=0);
+}

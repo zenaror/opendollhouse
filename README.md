@@ -160,6 +160,19 @@ executam eventos. A seleção de adulto é explícita: a idade ainda não foi
 inicializada no probe anterior. `odh-strings` suporta formatos 0..-3; `odh-animation`
 suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 em erro.
 
+`odh-pose` lê o skeleton binário, aplica os canais de um clipe/CFP e compõe as
+transformações dos ossos. A seleção dos recursos é explícita. Pode exportar um
+SVG de diagnóstico; isso ainda não desenha as meshes, roupas ou o cenário do jogo.
+
+```sh
+./build/odh-pose '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult --animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 80.5 --svg reports/pose-adult-80_5.svg > reports/pose-adult-80_5.json
+python3 tools/compare_pose.py '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf reports/pose-adult-80_5.json reports/chair-animation-cfp.json
+```
+
+O verificador compara campos brutos exatamente e poses numericamente; o CFP do
+relatório deve ter passado pelo gate `compare_cfp.py` acima. Detalhes e limites
+estão em [pose-validation.md](docs/pose-validation.md).
+
 ## Documentação
 
 - [Arquitetura e próximos experimentos](docs/architecture.md)
@@ -174,6 +187,7 @@ suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 e
 - [Percurso ligado à VM e ao World](docs/routing-validation.md)
 - [Snap, definição do objeto e ocupação](docs/snap-validation.md)
 - [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
+- [Skeleton, interpolação e transformações da pose](docs/pose-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)

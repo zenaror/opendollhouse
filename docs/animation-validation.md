@@ -1,5 +1,9 @@
 # Recursos de animação — 2026-10-13
 
+Extensão posterior: skeletons, conversão de eixos, interpolação e matrizes
+da pose estão em [pose-validation.md](pose-validation.md). O perfil de
+animação-only abaixo continua separado do novo leitor de skeletons.
+
 O checkpoint seguinte ligou frames/eventos silenciosos à VM; consultar
 [playback-validation.md](playback-validation.md). Abaixo está a evidência da
 etapa de leitura de recursos, anterior a essa ligação.

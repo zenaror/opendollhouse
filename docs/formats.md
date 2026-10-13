@@ -12,7 +12,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
 | STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
-| BCF | Perfil binário de animações com zero skeletons/appearances; motions, ranges, propriedades e eventos brutos | Skeletons/appearances, formatos textuais CMX/SKN/ANIM e runtime |
+| BCF | Leitores separados: animações com zero skeletons/appearances; skeletons com zero appearances/animações. Campos brutos, propriedades, ranges e extensões | Appearances, BCF misto e formatos textuais CMX/SKN/ANIM |
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
 | BCON | Contagem byte, flags brutas, constantes LE16 e extensão restante; máximo estrutural de255 palavras | TRCN, semiglobal/global/OTF e precedência geral de tuning |
