@@ -47,6 +47,12 @@ revisão fixa. O campo de slot sem recipiente é -1 nessa referência. Layouts
 de entidades no probe são construídos explicitamente; inicialização pelo
 original ainda não foi estabelecida.
 
+O leitor SLOT consulta `TSOClient/tso.files/Formats/IFF/Chunks/SLOT.cs` na
+revisão FreeSO acima. Preserva floats como bits e extensões ausentes como opcionais,
+sem aplicar defaults ou escalas do runtime. `Engine/VMSlotParser.cs` foi consultado
+para identificar a próxima etapa de geração/validação de destinos; sua política
+de colisões, scoring e rotação ainda não está implementada no ODH.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

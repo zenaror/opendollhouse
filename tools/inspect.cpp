@@ -54,11 +54,12 @@ void emit(const Counts& counts) {
     std::cout << '}';
 }
 struct Census {
-    Counts totals, chunks, versions, primitives, calls;
+    Counts totals, chunks, versions, primitives, calls, slot_types;
     void merge(const Census& other) {
         for (const auto pair : {std::pair<Counts*, const Counts*>(&totals, &other.totals),
                                {&chunks, &other.chunks}, {&versions, &other.versions},
-                               {&primitives, &other.primitives}, {&calls, &other.calls}})
+                               {&primitives, &other.primitives}, {&calls, &other.calls},
+                               {&slot_types, &other.slot_types}})
             for (const auto& item : *pair.second) (*pair.first)[item.first] += item.second;
     }
 };
@@ -96,6 +97,14 @@ Census inspect_iff(const odh::View& view) {
             const bool big = chunk.payload.le16(0) == 0;
             ++result.versions[std::string("SPR# ") + (big ? "BE " : "LE ") +
                 std::to_string(big ? chunk.payload.be32(0) : chunk.payload.le32(0))];
+        } else if (chunk.type == "SLOT") {
+            const auto table = odh::read_slot(chunk.payload);
+            ++result.versions["SLOT " + std::to_string(table.version)];
+            ++result.totals["slot_tables"];
+            result.totals["slot_records"] += table.records.size();
+            result.totals["slot_remaining_bytes"] += table.remaining_bytes;
+            for (const auto& record : table.records)
+                ++result.slot_types[std::to_string(record.type)];
         } else if (chunk.type == "TTAB") {
             const auto table = odh::read_ttab(chunk.payload);
             const std::string state = table.status == odh::TtabStatus::decoded ? "decoded" :
@@ -178,7 +187,8 @@ int main(int argc, char** argv) {
         emit(census.totals);
         for (const auto pair : {std::pair<const char*, const Counts*>("far_extensions", &extensions),
                                {"chunks", &census.chunks}, {"versions", &census.versions},
-                               {"primitive_occurrences", &census.primitives}, {"direct_call_occurrences", &census.calls}}) {
+                               {"primitive_occurrences", &census.primitives}, {"direct_call_occurrences", &census.calls},
+                               {"slot_type_occurrences", &census.slot_types}}) {
             std::cout << ',' << quoted(pair.first) << ':';
             emit(*pair.second);
         }

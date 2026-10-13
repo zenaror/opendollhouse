@@ -86,6 +86,16 @@ inicial. O relatório identifica `ODH_VM_constructed_world`: os BHAVs vêm do
 arquivo selecionado, mas as entidades são construídas no ODH. Não carrega
 um lote/save nem comprova comportamento do executável original.
 
+O registro de roteamento indicado pela cadeira pode ser consultado em leitura:
+
+```sh
+./build/odh-slot '../referencias/The Sims/GameData/Global/Global.far' Global.iff 100 3 1
+```
+
+Os últimos seletores significam tipo 3 e índice 1 dentro desse tipo. Sem eles,
+a ferramenta lista todos os registros. Os valores são brutos; floats são bits
+uint32 e campos ausentes da versão são `null`. Saída 0 indica leitura, 2 erro.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -97,6 +107,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Validação das tabelas de interação](docs/ttab-validation.md)
 - [Núcleo da VM e limites de validação](docs/vm-validation.md)
 - [Entidades, slots e probe da cadeira](docs/world-validation.md)
+- [Dados SLOT e recurso de roteamento](docs/slot-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

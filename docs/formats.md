@@ -10,6 +10,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | BHAV | Versões 8000/8001/8002, instruções de 12 bytes, opcode little endian, oito operandos e oito bytes de metadata preservados; metadata 8002 de argumentos/locais/type/tree version | Metadata legada 8000/8001; cobertura funcional completa e scheduler; execução parcial 8002 descrita em vm-validation.md |
 | SPR2 | Versão 1000, tabela de offsets, cabeçalhos de 16 bytes, dimensões e flags | Pixels RLE, paletas, alpha/Z decodificados e renderização |
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
+| SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
 | DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
 
 O leitor FAR deste perfil exige dados antes do manifesto e que o manifesto termine
@@ -23,7 +24,7 @@ recurso. Os campos não interpretados permanecem no stream de origem.
 
 Limites iniciais configuráveis na API: 200.000 entradas por FAR, 100.000 chunks por
 IFF, 1.000.000 de frames por SPR2, 4.096 interações por TTAB e 256 motivos por
-interação. São limites de proteção deste protótipo, não
+interação e 4.096 registros por SLOT. São limites de proteção deste protótipo, não
 limites atribuídos ao original. O índice FAR e os BHAVs são alocados somente após
 validação de tamanho; sprites não são expandidos em memória.
 

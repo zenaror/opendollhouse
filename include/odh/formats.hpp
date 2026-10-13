@@ -43,6 +43,7 @@ struct Limits {
     std::uint32_t sprite_frames = 1000000;
     std::uint32_t ttab_interactions = 4096;
     std::uint32_t ttab_motives = 256;
+    std::uint32_t slot_records = 4096;
 };
 
 struct FarEntry {
@@ -128,5 +129,28 @@ struct Ttab {
 // TS1 profile: raw 4..8, version 9 compression 0/1. Versions 2/3 and absent
 // payload are explicitly classified, not converted into executable empty tables.
 Ttab read_ttab(const View&, const Limits& = {});
+
+// Raw on-disk fields; absent version extensions are not filled with runtime
+// defaults. IEEE-754 bits and unscaled proximity values retain provenance.
+struct SlotRecord {
+    std::uint16_t type;
+    std::array<std::uint32_t, 3> offset_bits;
+    std::int32_t standing, sitting, ground;
+    std::uint32_t flags;
+    std::int32_t snap_target_slot;
+    std::optional<std::array<std::int32_t, 3>> proximity;
+    std::optional<std::int32_t> max_size, unknown_i10;
+    std::optional<std::uint32_t> gradient_bits;
+    std::optional<std::int32_t> height, facing, resolution;
+};
+struct SlotTable {
+    std::uint32_t reserved, version;
+    std::vector<SlotRecord> records;
+    std::uint64_t remaining_bytes;
+};
+// TOLS signature, explicit layouts 4..10. Unknown types/flags remain intact.
+SlotTable read_slot(const View&, const Limits& = {});
+// Index within a type group, preserving file order (not absolute record index).
+const SlotRecord* slot_of_type(const SlotTable&, std::uint16_t type, std::size_t index);
 
 } // namespace odh
