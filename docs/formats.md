@@ -14,6 +14,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
 | BCF | Leitores separados para animações, skeletons ou appearances, exigindo demais seções vazias; campos brutos, propriedades, ranges e extensões | BCF misto e formatos textuais CMX/SKN/ANIM |
 | BMF | Nomes, bones, faces, bindings, UVs, pesos, transforms floatbits e vertex_count2 bruto | SKN textual, materiais/roupas completos e semântica geral de vertex_count2 |
+| BMP | DIB40/BI_RGB8 ou24bpp, paleta/BGR, padding/orientação e RGBA opaco | DIBs/compressões/bpp restantes, alpha e color key |
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
 | BCON | Contagem byte, flags brutas, constantes LE16 e extensão restante; máximo estrutural de255 palavras | TRCN, semiglobal/global/OTF e precedência geral de tuning |

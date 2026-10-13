@@ -1,5 +1,8 @@
 # Appearances, BMF e skinning CPU — 2026-10-13
 
+Extensão posterior: texturas BMP e rasterizador CPU em
+[render-validation.md](render-validation.md). A evidência abaixo é do skinning.
+
 O núcleo lê appearances binárias e meshes BMF e transforma seus vértices pela
 pose já validada. Corpo e cabeça reais passam pelo pipeline, incluindo pesos
 de blend. É geometria CPU exportável, ainda sem texturas, compositor/janela de

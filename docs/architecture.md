@@ -42,7 +42,9 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
 4. **Composição gráfica Linux cedo:** sprites com profundidade, personagens
    animados. Skeleton/interpolação/matrizes iniciais implementados em
    [pose-validation.md](pose-validation.md), e meshes/skinning iniciais em
-   [mesh-validation.md](mesh-validation.md); texturas e compositor ainda pendentes.
+   [mesh-validation.md](mesh-validation.md). BMP/raster texturizado isolado está em
+   [render-validation.md](render-validation.md); integração World/playback,
+   compositor e janela/input ainda pendentes.
    O objetivo inclui paredes e sobreposição, com capturas e cenas
    reproduzíveis. Conservar
    uma interface que permita experimentar software, híbrido CPU/GPU e geometria

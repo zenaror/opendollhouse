@@ -185,6 +185,18 @@ python3 tools/compare_mesh.py '../referencias/The Sims/GameData/Animation/Animat
 texturas usando Pillow no host. Contratos e gates em
 [mesh-validation.md](docs/mesh-validation.md).
 
+`odh-render` desenha o avatar texturizado em C++ com buffer de profundidade.
+Recursos de cada parte e textura são selecionados explicitamente; a câmera
+fica fixa entre frames. Output PPM e JSON permitem validar imagens no Linux.
+
+```sh
+./build/odh-render '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult '../referencias/The Sims/GameData/Textures/Textures.far' --part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 160.75 --lit --output reports/render-native-160_75.ppm
+```
+
+O renderer ainda está isolado do World/playback e da janela/input; câmera e
+fidelidade visual original continuam por validar. Decoder BMP, limites,
+texels conferidos e resultados estão em [render-validation.md](docs/render-validation.md).
+
 ## Documentação
 
 - [Arquitetura e próximos experimentos](docs/architecture.md)
@@ -201,6 +213,7 @@ texturas usando Pillow no host. Contratos e gates em
 - [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
 - [Skeleton, interpolação e transformações da pose](docs/pose-validation.md)
 - [Appearances, BMF e skinning CPU](docs/mesh-validation.md)
+- [BMP e rasterização texturizada CPU](docs/render-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
