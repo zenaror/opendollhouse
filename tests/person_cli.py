@@ -24,6 +24,32 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
  def run(extra=()):return subprocess.run(args+list(extra),capture_output=True,text=True)
+ def next_random(seed,maximum):
+  if maximum==0:return seed,0
+  mask=(1<<64)-1;seed^=seed>>12;seed^=(seed<<25)&mask;seed^=seed>>27
+  return seed,((seed*2685821657736338717)&mask)%maximum
+ def random_row(destination,scope,maximum,range_scope=7,t=1):
+  return (8,t,255,list(struct.pack('<hHhH',destination,scope,maximum,range_scope)))
+ def check_temp(index,value):return (2,254,255,list(struct.pack('<hhBBBB',index,value,0,2,8,7)))
+ for seed_value,maximum in [(1,100),(0,100),((1<<64)-1,-1),(1,0),(1,1)]:
+  seed_after,result=next_random(seed_value,maximum&65535);signed_result=result if result<32768 else result-65536
+  setup(main=[random_row(0,8,maximum),check_temp(0,signed_result)]);r=run(['--seed',str(seed_value)]);d=json.loads(r.stdout)
+  assert r.returncode==0 and d['steps']==2 and d['status']=='returned_true'
+  assert d['rng_seed_initial']==seed_value and d['rng_seed_final']==seed_after and d['rng_cycle_requests']==0
+  assert d['random_reads']==[dict(owner=1,range=maximum&65535,result=signed_result,destination_scope=8,destination_index=0,seed_before=seed_value,seed_after=seed_after)]
+  assert 'explicit host fixture' in d['rng_seed_source']
+ # Sleep consumes the same state between two random primitive calls.
+ first,_=next_random(1,100);cycled,_=next_random(first,1);last,value=next_random(cycled,100)
+ setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[random_row(0,8,100), (0,2,255,bytes(8)),random_row(0,8,100,t=3),check_temp(0,value)])
+ r=run();d=json.loads(r.stdout)
+ assert r.returncode==0 and d['ticks']==3 and d['rng_cycle_requests']==1 and d['rng_seed_final']==last
+ assert [v['seed_before'] for v in d['random_reads']]==[1,cycled] and [v['seed_after'] for v in d['random_reads']]==[first,last]
+ for destination,scope,maximum,range_scope in [(20,8,100,7),(0,7,100,7),(0,10,100,7),(0,8,20,8),(0,8,0,256),(0,256,100,7)]:
+  setup(main=[random_row(destination,scope,maximum,range_scope,t=254)]);r=run();d=json.loads(r.stdout)
+  assert r.returncode==3 and d['status']=='fault' and d['rng_seed_final']==1 and d['random_reads']==[]
+ for value in ['-1','18446744073709551616','1garbage','0x','+1','']:
+  setup();r=run(['--seed',value]);assert r.returncode==2 and not r.stdout
+ setup();r=run(['--seed','0','--seed','1']);assert r.returncode==2 and not r.stdout
  setup();r=run(action_args);d=json.loads(r.stdout)
  assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['ticks']==1 and d['steps']==7
  assert d['completion']['result'] is False and d['queue_size']==0 and not d['queue_active']
@@ -59,7 +85,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # Proper clock cadence with a real Sleep controller, not synthetic true completion.
  setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[(0,254,255,bytes(8))])
  r=run();d=json.loads(r.stdout)
- assert r.returncode==0 and d['ticks']==3 and d['steps']==2 and d['rng_cycle_requests']==1 and d['rng_backend']=='not_implemented'
+ assert r.returncode==0 and d['ticks']==3 and d['steps']==2 and d['rng_cycle_requests']==1 and 'xorshift64star' in d['rng_backend']
+ assert d['rng_seed_initial']==1 and d['rng_seed_final']==33554433 and d['random_reads']==[]
  r=run(['--ticks','1']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['tick_budget_exhausted'] and d['ticks']==1 and d['status']=='waiting' and d['completion'] is None
  setup();legacy=bytearray(routine([expr(0,1)]));struct.pack_into('<H',legacy,0,0x8001)

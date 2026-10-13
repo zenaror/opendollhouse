@@ -3,10 +3,12 @@
 #include "odh/tuning.hpp"
 #include "odh/lot.hpp"
 #include "odh/lot_context.hpp"
+#include "odh/random.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
 #include <memory>
+#include <charconv>
 
 namespace {
 struct Resource {std::string archive,entry;};
@@ -46,12 +48,20 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
     return result;
 }
 std::int16_t signed_word(std::uint16_t v){return static_cast<std::int16_t>(v<32768?static_cast<int>(v):static_cast<int>(v)-65536);}
+std::uint64_t seed_selector(const std::string& text){
+    if(text.empty())throw odh::FormatError("empty RNG seed");
+    const bool hex=text.size()>2&&text[0]=='0'&&(text[1]=='x'||text[1]=='X');
+    std::uint64_t value=0;const auto result=std::from_chars(text.data()+(hex?2:0),text.data()+text.size(),value,hex?16:10);
+    if(result.ec!=std::errc{}||result.ptr!=text.data()+text.size())throw odh::FormatError("RNG seed outside uint64 profile");
+    return value;
+}
 }
 int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
     std::optional<std::string> lot_path,zoning_path;
     std::optional<std::uint16_t> lot_id;
+    std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::uint16_t ticks_limit=256;bool ticks_set=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
@@ -65,10 +75,11 @@ int main(int argc,char** argv) {
         else if(option=="--routine"&&!routine&&n+1<argc)routine=selector(argv[++n]);
         else if(option=="--lot"&&!lot_path&&n+2<argc){lot_path=argv[n+1];lot_id=selector(argv[n+2]);n+=2;}
         else if(option=="--zoning"&&!zoning_path&&n+1<argc)zoning_path=argv[++n];
+        else if(option=="--seed"&&!seed&&n+1<argc)seed=seed_selector(argv[++n]);
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path))
-        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="SIMI"||chunk.id!=1)return;
@@ -135,7 +146,11 @@ int main(int argc,char** argv) {
     if(action){owners.emplace(2,std::move(action_data->routines));
         if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");}
     std::uint64_t rng_requests=0;
-    odh::Sleep sleep(world,[&]{++rng_requests;});odh::InteractionQueue queue(world,1);
+    odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
+    odh::Sleep sleep(world,[&]{++rng_requests;random.next(1);});odh::InteractionQueue queue(world,1);
+    const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
+        if(random_reads.size()>=10000)throw odh::FormatError("random log exceeds bounded host profile");random_reads.push_back(value);
+    });
     const auto sleep_handler=sleep.primitive(),queue_handler=queue.primitive();
     const auto lot_handler=lot?lot->primitive([&](const auto& value){
         if(zoning_reads.size()>=10000)throw odh::FormatError("zoning read log exceeds bounded host profile");zoning_reads.push_back(value);
@@ -143,6 +158,7 @@ int main(int argc,char** argv) {
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
+        if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
@@ -178,7 +194,14 @@ int main(int argc,char** argv) {
     std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")<<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests
-        <<",\"rng_backend\":\"not_implemented\",\"queue_size\":"<<queue.size()<<",\"queue_active\":"<<(queue.active()?"true":"false")<<",\"action_incomplete\":"<<(action_incomplete?"true":"false")<<",\"action\":";
+        <<",\"rng_backend\":\"FreeSO xorshift64star reference profile\",\"rng_seed_initial\":"<<seed.value_or(1)<<",\"rng_seed_final\":"<<random.seed()
+        <<",\"rng_seed_source\":"<<json_bytes(seed?"explicit host fixture; original saved seed unavailable":"host default fixture1; original saved seed unavailable")
+        <<",\"random_reads\":[";
+    for(std::size_t n=0;n<random_reads.size();++n){if(n)std::cout<<',';const auto& value=random_reads[n];
+        std::cout<<"{\"owner\":"<<value.context.code_owner<<",\"range\":"<<value.range<<",\"result\":"<<value.result
+            <<",\"destination_scope\":"<<static_cast<unsigned>(value.destination_scope)<<",\"destination_index\":"<<value.destination_data
+            <<",\"seed_before\":"<<value.seed_before<<",\"seed_after\":"<<value.seed_after<<'}';}
+    std::cout<<"],\"queue_size\":"<<queue.size()<<",\"queue_active\":"<<(queue.active()?"true":"false")<<",\"action_incomplete\":"<<(action_incomplete?"true":"false")<<",\"action\":";
     if(action)std::cout<<"{\"archive\":"<<json_bytes(action->archive)<<",\"entry\":"<<json_bytes(action->entry)<<",\"objd_id\":"<<*action_def<<",\"guid\":"<<action_data->binding->guid<<",\"owner\":2,\"routine\":"<<*action_routine<<'}';else std::cout<<"null";
     std::cout<<",\"completion\":";
     if(queue.completion()){const auto& c=*queue.completion();std::cout<<"{\"uid\":"<<c.uid<<",\"ticket\":"<<c.ticket<<",\"tick\":"<<c.tick<<",\"result\":"<<(c.result?"true":"false")<<'}';}else std::cout<<"null";

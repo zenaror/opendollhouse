@@ -92,6 +92,8 @@ registra execução nativa parcial. O [tuning por owner](docs/tuning-validation.
 carrega BCON explícitos. O [contexto de lote](docs/lot-validation.md) carrega SIMI
 e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
 Inicialização completa e carregamento da casa como simulação seguem pendentes.
+O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
+ciclos de Sleep com seed explícita; o Init nativo chega à escrita de traits.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 
