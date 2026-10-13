@@ -1,0 +1,23 @@
+/build*/
+/reports/
+__pycache__/
+# Commercial reference files stay outside this checkout.
+*.iso
+*.exe
+*.bak
+*.far
+*.iff
+*.stx
+*.spf
+*.wll
+*.flr
+*.bcf
+*.bmf
+*.cfp
+*.cmx
+*.skn
+*.hit
+*.hot
+*.hsm
+*.xa
+*.sav

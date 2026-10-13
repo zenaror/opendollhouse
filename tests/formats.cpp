@@ -1,0 +1,154 @@
+#include "odh/formats.hpp"
+
+#include <iostream>
+#include <limits>
+#include <sstream>
+
+namespace {
+int checks = 0;
+void require(bool condition, const char* message) {
+    ++checks;
+    if (!condition) throw std::runtime_error(message);
+}
+template<class F> void rejects(F operation, const char* message) {
+    bool rejected = false;
+    try { operation(); } catch (const odh::FormatError&) { rejected = true; }
+    require(rejected, message);
+}
+void put(std::string& bytes, std::size_t offset, std::uint32_t value, unsigned width, bool big = false) {
+    for (unsigned i = 0; i < width; ++i)
+        bytes.at(offset + i) = static_cast<char>((value >> (8 * (big ? width - i - 1 : i))) & 255);
+}
+template<class F> void use(const std::string& bytes, F operation) {
+    std::istringstream input(bytes, std::ios::binary);
+    operation(odh::View(input, bytes.size()));
+}
+std::string bhav() {
+    std::string b(36, '\0');
+    put(b, 0, 0x8002, 2); put(b, 2, 2, 2);
+    put(b, 12, 0x100F, 2); put(b, 14, 1, 1); put(b, 15, 0xFE, 1);
+    put(b, 24, 2, 2); put(b, 26, 0xFF, 1); put(b, 27, 0xFD, 1);
+    put(b, 28, 0xAB, 1);
+    return b;
+}
+std::string iff(const std::string& payload) {
+    std::string b(140, '\0');
+    const std::string prefix = "IFF FILE 2.5:TYPE FOLLOWED BY SIZE";
+    const std::string credit = " JAMIE DOORNBOS & MAXIS 1";
+    b.replace(0, prefix.size(), prefix);
+    b.replace(prefix.size() + 1, credit.size(), credit);
+    b.replace(64, 4, "BHAV");
+    put(b, 68, static_cast<std::uint32_t>(76 + payload.size()), 4, true);
+    put(b, 72, 0x1234, 2, true); put(b, 74, 0xBEEF, 2, true);
+    return b + payload;
+}
+std::string far(const std::string& asset) {
+    const auto manifest = static_cast<std::uint32_t>(16 + asset.size());
+    std::string b(16, '\0'); b.replace(0, 8, "FAR!byAZ");
+    put(b, 8, 1, 4); put(b, 12, manifest, 4);
+    b += asset; b.resize(manifest + 20, '\0');
+    put(b, manifest, 1, 4);
+    put(b, manifest + 4, static_cast<std::uint32_t>(asset.size()), 4);
+    put(b, manifest + 8, static_cast<std::uint32_t>(asset.size()), 4);
+    put(b, manifest + 12, 16, 4); put(b, manifest + 16, 8, 4);
+    b += "test.iff";
+    return b;
+}
+} // namespace
+
+int main() {
+    try {
+        use("abcdef", [](const odh::View& v) {
+            require(v.subview(2, 2).u8(1) == 'd', "nested view offset");
+            rejects([&] { v.subview(2, 2).u8(2); }, "crossing nested boundary");
+            rejects([&] { v.subview(std::numeric_limits<std::uint64_t>::max(), 2); }, "overflow offset");
+            rejects([&] { v.subview(1, std::numeric_limits<std::uint64_t>::max()); }, "overflow size");
+        });
+        {
+            std::istringstream truncated("abc", std::ios::binary);
+            const odh::View declared(truncated, 6);
+            rejects([&] { declared.u8(5); }, "physical stream shorter than view");
+        }
+        auto routine = bhav();
+        use(routine, [](const odh::View& v) {
+            const auto b = odh::read_bhav(v);
+            require(b.instructions.size() == 2 && b.instructions[0].opcode == 0x100F, "BHAV endianness");
+            require(b.instructions[1].operands[0] == 0xAB, "preserve operands");
+        });
+        for (const auto version : {0x8000, 0x8001}) {
+            auto b = routine; put(b, 0, static_cast<std::uint32_t>(version), 2);
+            use(b, [](const odh::View& v) { require(odh::read_bhav(v).instructions.size() == 2, "older BHAV"); });
+        }
+        auto bad = routine; put(bad, 14, 2, 1);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::read_bhav(v); }, "invalid BHAV branch"); });
+        bad = routine; put(bad, 0, 0x8003, 2);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::read_bhav(v); }, "unsupported BHAV"); });
+
+        auto container = iff(routine);
+        use(container, [](const odh::View& v) {
+            int visited = 0;
+            require(odh::iff_chunks(v, [&](const odh::Chunk& c) {
+                ++visited;
+                require(c.id == 0x1234 && c.flags == 0xBEEF, "IFF big endian fields");
+                require(odh::read_bhav(c.payload).instructions.size() == 2, "nested BHAV");
+            }) == "2.5" && visited == 1, "IFF enumeration");
+        });
+        auto archive = far(container);
+        use(archive, [](const odh::View& v) {
+            const auto entries = odh::far1_index(v);
+            require(entries.size() == 1 && entries[0].name == "test.iff", "FAR index");
+            require(v.subview(entries[0].offset, entries[0].length).u8(0) == 'I', "FAR entry view");
+        });
+        use(archive, [](const odh::View& v) {
+            odh::Limits limits;
+            limits.far_entries = 0;
+            rejects([&] { odh::far1_index(v, limits); }, "FAR configured entry budget");
+        });
+        use(container, [](const odh::View& v) {
+            odh::Limits limits;
+            limits.iff_chunks = 0;
+            rejects([&] { odh::iff_chunks(v, [](const auto&) {}, limits); }, "IFF configured chunk budget");
+        });
+        bad = archive; put(bad, 12, 0xFFFFFFFF, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::far1_index(v); }, "FAR manifest outside file"); });
+        bad = archive; put(bad, 16 + container.size(), 0xFFFFFFFF, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::far1_index(v); }, "FAR enormous count"); });
+        bad = archive; put(bad, 16 + container.size() + 12, 0xFFFFFFFF, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::far1_index(v); }, "FAR data outside archive"); });
+        bad = archive; put(bad, 16 + container.size() + 16, 0xFFFFFFFF, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::far1_index(v); }, "FAR name allocation bound"); });
+        bad = container; put(bad, 68, 75, 4, true);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::iff_chunks(v, [](const auto&) {}); }, "IFF undersized chunk"); });
+        bad = container; put(bad, 68, 0xFFFFFFFF, 4, true);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::iff_chunks(v, [](const auto&) {}); }, "IFF chunk crosses resource"); });
+
+        std::string sprite(32, '\0');
+        put(sprite, 0, 1000, 4); put(sprite, 4, 1, 4); put(sprite, 12, 16, 4);
+        put(sprite, 16, 136, 2); put(sprite, 18, 368, 2); put(sprite, 20, 7, 4);
+        use(sprite, [](const odh::View& v) {
+            int visited = 0;
+            odh::spr2_frames(v, [&](const auto& f) {
+                ++visited; require(f.width == 136 && f.height == 368 && f.flags == 7, "SPR2 header");
+            });
+            require(visited == 1, "SPR2 callback count");
+        });
+        bad = sprite; put(bad, 12, 12, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 offset overlaps table"); });
+        bad = sprite; put(bad, 12, 17, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 header crosses payload"); });
+        bad = sprite; put(bad, 4, 0xFFFFFFFF, 4);
+        use(bad, [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "SPR2 enormous frame count"); });
+        // Every truncation point of independent valid fixtures must be rejected.
+        for (std::size_t n = 0; n < routine.size(); ++n)
+            use(routine.substr(0, n), [](const odh::View& v) { rejects([&] { odh::read_bhav(v); }, "truncated BHAV"); });
+        for (std::size_t n = 0; n < archive.size(); ++n)
+            use(archive.substr(0, n), [](const odh::View& v) { rejects([&] { odh::far1_index(v); }, "truncated FAR"); });
+        for (std::size_t n = 0; n < sprite.size(); ++n)
+            use(sprite.substr(0, n), [](const odh::View& v) { rejects([&] { odh::spr2_frames(v, [](const auto&) {}); }, "truncated SPR2"); });
+        std::cout << checks << " checks passed (synthetic fixtures only)\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "test failed: " << error.what() << '\n';
+        return 1;
+    }
+}
