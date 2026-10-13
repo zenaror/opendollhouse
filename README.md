@@ -113,6 +113,19 @@ até a animação 44 ainda não implementada. Não mostra uma animação de sent
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
+Para identificar e decodificar os recursos da animação adulta da cadeira:
+
+```sh
+./build/odh-strings '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 129 1 3
+./build/odh-animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf A2O-sit-left --cfp xskill-A2O-sit-left.cfp > reports/chair-animation-cfp.json
+python3 tools/compare_cfp.py '../referencias/The Sims/GameData/Animation/Animation.far' xskill-A2O-sit-left.cfp reports/chair-animation-cfp.json
+```
+
+Essas consultas preservam texto bruto e bits float32; não reproduzem os ossos ou
+executam eventos. A seleção de adulto é explícita: a idade ainda não foi
+inicializada no probe anterior. `odh-strings` suporta formatos 0..-3; `odh-animation`
+suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 em erro.
+
 ## Documentação
 
 - [Arquitetura e próximos experimentos](docs/architecture.md)
@@ -126,6 +139,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Cálculo de percurso na malha](docs/route-validation.md)
 - [Percurso ligado à VM e ao World](docs/routing-validation.md)
 - [Snap, definição do objeto e ocupação](docs/snap-validation.md)
+- [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

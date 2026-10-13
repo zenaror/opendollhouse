@@ -11,6 +11,9 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | SPR2 | Versão 1000, tabela de offsets, cabeçalhos de 16 bytes, dimensões e flags | Pixels RLE, paletas, alpha/Z decodificados e renderização |
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
+| STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
+| BCF | Perfil binário de animações com zero skeletons/appearances; motions, ranges, propriedades e eventos brutos | Skeletons/appearances, formatos textuais CMX/SKN/ANIM e runtime |
+| CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
 
 `read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões
@@ -35,6 +38,11 @@ validação de tamanho; sprites não são expandidos em memória.
 Views compartilham um stream seekable e não são thread-safe. O inspector é uma
 ferramenta Linux host, usando filesystem/iostream e mapas para relatórios. O
 desenho final de I/O e orçamento dos consoles permanece por medir.
+
+Animações usam limites próprios: 4.096 clipes, 4.096 motions cumulativas,
+65.536 unidades de propriedades/grupos/eventos cumulativas e 4 MiB de texto por
+leitura. STR# limita 65.536 entradas. CFP limita o total `3*T + 4*R` a 1.048.576
+amostras float32; não implica que esses sejam limites do original.
 
 ## Lacunas relevantes encontradas no corpus
 

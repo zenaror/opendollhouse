@@ -64,6 +64,12 @@ de offset/altura disponíveis para representação. O prefixo OBJD foi conferido
 em `TSOClient/tso.files/Formats/IFF/Chunks/OBJD.cs`. A aplicação visual da
 altura ainda não está implementada.
 
+Os leitores STR#/BCF/CFP consultaram `STR.cs`, `BCF.cs`, `Animation.cs`, `CFP.cs`,
+`BCFReadProxy.cs` e `TS1BCFProvider.cs` na mesma revisão fixa. A pesquisa da
+primitiva44 consultou também `VMAnimateSim.cs`, `VMAvatar.cs`, `VMAnimationState.cs`
+e `Animator.cs`. As identidades dos recursos e o contrato ainda não implementado
+estão em [animation-validation.md](animation-validation.md), com links fixos.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.
