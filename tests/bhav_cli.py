@@ -191,6 +191,71 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     assert r.returncode==3 and 'scope not supplied' in d['animation_diagnostic']
     for options in [('--age','32768'),('--age','1','--age','2'),('--animation-probe',str(bcf_path))]:
         r=animated(extra=options);assert r.returncode==2 and not r.stdout
+    # Reset uses only explicit global body tables: the object's STR150 is not
+    # an avatar body resource override. Tick the persistent loop after return.
+    def write_bcf_entries(entries):
+        payloads=[(name,u(0)+u(0)+u(len(clips))+b''.join(clips)) for name,clips in entries]
+        offset=16; data=b''; index=u(len(payloads))
+        for name,payload in payloads:
+            index+=struct.pack('<IIII',len(payload),len(payload),offset,len(name))+name
+            data+=payload;offset+=len(payload)
+        bcf_path.write_bytes(b'FAR!byAZ'+u(1)+u(offset)+data+index)
+    write_bcf_entries([(b'test.bcf',[clip(b'Adult'),clip(b'Child')]),
+                       (b'reset.bcf',[clip(b'Sit'),clip(b'Floor'),clip(b'Stand'),clip(b'ChildSit')])])
+    def reset_global(strings):
+        global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2,strings=strings))
+    body_tables=((150,table([b'',b'sIT',b'Floor',b'Stand'])),
+                 (151,table([b'',b'ChildSit',b'Floor',b'Stand'])))
+    reset_global(body_tables)
+    reset_options=('--reset-probe','reset.bcf')
+    for initial,name in [('1','Sit'),('2','Floor'),('0','Stand'),('7','Stand')]:
+        r=animated(strings=((150,table([b'',b'MissingOverride'])),),operands=bytes(8),
+                   extra=reset_options+('--posture',initial,'--post-ticks','10'))
+        d=json.loads(r.stdout)
+        assert r.returncode==0 and d['status']=='returned_true' and d['steps']==1
+        assert d['animation_progress']['name']==name and d['animation_progress']['loop']
+        assert not d['animation_progress']['end'] and d['post_ticks']==10 and d['execution_ticks']==0
+        assert d['simulation_ticks']==d['route_ticks']==10 and d['posture']==int(initial)
+        assert d['reset_resource']=={'archive':str(bcf_path),'entry':'reset.bcf',
+            'global_archive':str(global_path),'global_entry':'test.iff','walk_table_id':150,
+            'language':1,'avatar_resource_override':False,'hand_slot':0,'hand_empty':True,'head_seek':0}
+        assert len(d['animation_events'])==1 and d['trace'][0]['instruction']['opcode']==44
+    # Post ticks cannot advance a VM that is still runnable/budget exhausted.
+    path.write_bytes(archive([(4096,routine(44,bytes(8),yes=0))],
+                     struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix))
+    r=subprocess.run(animation_args+list(reset_options)+['--post-ticks','10'],capture_output=True,text=True)
+    d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='budget_exhausted' and d['steps']==10000
+    assert d['post_ticks']==0 and d['requested_post_ticks']==10 and d['simulation_ticks']==0
+    r=animated(operands=bytes(8),extra=reset_options+('--posture','1','--age','17'))
+    d=json.loads(r.stdout)
+    assert r.returncode==0 and d['animation_progress']['name']=='ChildSit' and d['reset_resource']['walk_table_id']==151
+    assert d['post_ticks']==0 and d['animation_progress']['frame']==0
+    for strings,message in [((), 'table absent'),(( (150,table([b''])),), 'index missing'),
+                            (((150,table([b'',b'Missing'])),), 'clip missing'),
+                            (((150,struct.pack('<hH',-3,2)+b'\x02\0\0\x02Sit\0\0'),),'language 1')]:
+        reset_global(strings)
+        r=animated(operands=bytes(8),extra=reset_options+('--posture','1'))
+        d=json.loads(r.stdout)
+        assert r.returncode==3 and d['status']=='fault' and message in d['animation_diagnostic']
+    reset_global(body_tables)
+    r=animated(operands=bytes(8),extra=('--reset-probe','absent.bcf'))
+    assert r.returncode==2 and 'exact archive entry not found' in r.stderr and not r.stdout
+    for extra in [('--post-ticks','1'),reset_options+('--post-ticks','4097'),
+                  reset_options+('--post-ticks','1','--post-ticks','2'),
+                  reset_options+reset_options]:
+        r=animated(operands=bytes(8),extra=extra)
+        assert r.returncode==2 and not r.stdout
+    r=subprocess.run(args+list(reset_options),capture_output=True,text=True)
+    assert r.returncode==2 and not r.stdout
+    # Explicitly selecting the same entry reuses identities rather than reloads.
+    reset_global(((150,table([b'',b'Adult',b'Adult',b'Adult'])),))
+    r=animated(operands=bytes(8),extra=('--reset-probe','test.bcf','--posture','1'))
+    assert r.returncode==0 and json.loads(r.stdout)['animation_progress']['name']=='Adult'
+    write_bcf_entries([(b'test.bcf',[clip(b'Adult')]),(b'reset.bcf',[clip(b'ADULT')])])
+    r=animated(operands=bytes(8),extra=reset_options)
+    assert r.returncode==2 and 'casefold' in r.stderr and not r.stdout
+    global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2))
     many_events=(pas(b'Adult')+pas(b'absent.cfp')+
                  b''.join(u(n) for n in [0,0,0,0,0,1])+pas(b'ROOT')+
                  b''.join(u(n) for n in [4,0,0,0,0,0,0,1,4096])+

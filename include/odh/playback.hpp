@@ -6,14 +6,17 @@
 
 namespace odh {
 using AnimationResolver = std::function<std::shared_ptr<const AnimationHeader>(const VmFrame&,std::uint32_t source,std::uint16_t id)>;
+using AnimationResetResolver = std::function<std::shared_ptr<const AnimationHeader>(const VmFrame&,std::int16_t normalized_posture)>;
 struct PlaybackLimits {std::size_t events=4096;std::uint32_t frames=1048576;std::uint64_t ticks=1048576;};
 struct PlaybackEvent {std::uint64_t tick;std::int16_t actor;std::int32_t time_id;AnimationProperties properties;};
-struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::size_t queued_events;bool end;};
+struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::size_t queued_events;bool end;bool loop=false;};
 // Silent primary animation controller. Resolver supplies explicit immutable
-// resource identity. No skeleton, render, audio, carry, looping or reset implied.
+// resource identity, including posture reset clips. No skeleton, render, audio,
+// hand gesture or carry backend is implied.
 class Playback {
 public:
-    Playback(World& world,AnimationResolver resolver,PlaybackLimits limits={}):world_(world),resolver_(std::move(resolver)),limits_(limits) {}
+    Playback(World& world,AnimationResolver resolver,PlaybackLimits limits={},AnimationResetResolver reset_resolver={}):
+        world_(world),resolver_(std::move(resolver)),limits_(limits),reset_resolver_(std::move(reset_resolver)) {}
     Playback(const Playback&)=delete;
     Playback& operator=(const Playback&)=delete;
     bool bind(Vm&);
@@ -29,13 +32,15 @@ private:
     struct State {
         std::shared_ptr<const AnimationHeader> clip;
         std::int16_t actor;std::uint64_t actor_generation,vm_generation;
-        float frame,speed;std::uint32_t frames;bool backwards,end=false;
+        float frame,speed;std::uint32_t frames;bool backwards,end=false,loop=false;
         std::vector<AnimationTimeProperty> events;std::size_t low=0,high=0;
         std::deque<std::int16_t> queue;std::uint16_t events_run=0;std::uint64_t ticks=0;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
+    std::optional<State> prepare(std::shared_ptr<const AnimationHeader>,const Entity&,bool backwards,bool loop,bool hurryable,std::string& error) const;
     bool deliver();
     World& world_;AnimationResolver resolver_;PlaybackLimits limits_;
+    AnimationResetResolver reset_resolver_;
     Vm* vm_=nullptr;std::optional<State> state_;std::optional<Wait> wait_;
     std::optional<std::uint64_t> last_tick_;std::string diagnostic_;bool executing_=false;
 };

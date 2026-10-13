@@ -1,5 +1,6 @@
 #include "odh/playback.hpp"
 #include <iostream>
+#include <cmath>
 
 namespace {
 int checks=0;
@@ -14,16 +15,21 @@ odh::Bhav routine(std::uint8_t flags=0,std::uint8_t expected=0,std::uint16_t id=
 }
 struct Fixture {
     odh::World world;
-    std::shared_ptr<odh::AnimationHeader> a=clip();
+    std::shared_ptr<odh::AnimationHeader> a=clip(),reset_a=clip();
+    std::int16_t posture=-1;
     std::uint32_t source=0;std::uint16_t selected=0;
     odh::Playback player{world,[&](const auto&,auto scope,auto id){source=scope;selected=id;return a;}};
     odh::Vm vm;
-    Fixture(std::uint8_t flags=0,std::uint8_t expected=0,std::uint16_t id=1,odh::PlaybackLimits limits={}):
-        player{world,[&](const auto&,auto scope,auto selected_id){source=scope;selected=selected_id;return a;},limits},
+    Fixture(std::uint8_t flags=0,std::uint8_t expected=0,std::uint16_t id=1,odh::PlaybackLimits limits={},bool reset_resources=true,odh::EntityLayout layout={0,88,1}):
+        player{world,[&](const auto&,auto scope,auto selected_id){source=scope;selected=selected_id;return a;},limits,reset_resources?odh::AnimationResetResolver{[&](const auto&,auto value){posture=value;return reset_a;}}:odh::AnimationResetResolver{}},
         vm({{odh::routine_key(4096),routine(flags,expected,id)}},world.vm_memory(),{},player.primitive()){
-        world.create(1,odh::EntityKind::avatar,{0,88,0});world.declare_object_word(1,17,0);player.bind(vm);
+        world.create(1,odh::EntityKind::avatar,layout);world.declare_object_word(1,17,0);player.bind(vm);
     }
     void start(const std::vector<std::int16_t>& args={}){vm.start(odh::routine_key(4096),{1,2,2},args);vm.run(20);}
+    odh::PrimitiveOutcome apply(std::uint8_t flags,std::uint16_t id=0){
+        const odh::VmFrame frame{odh::routine_key(4096),0,{1,2,2},{0,0},{0,0}};
+        return player.primitive()(frame,routine(flags,0,id).instructions[0],vm.temps(),{&vm,0});
+    }
     void xevt(std::int32_t time,const std::string& value){a->motions[0].time_properties={{{time,{{"xevt",value}}}}};}
 };
 }
@@ -69,9 +75,56 @@ int main(){try{
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"event budget rejects before creating clip");}
     {Fixture f;f.a->motions[0].frames=1048577;f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"frame bound checked before progression");}
-    for(const auto flags:{1,16,17,128}){Fixture f(static_cast<std::uint8_t>(flags));f.start();
-        require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"unsupported loop/carry/mode/flag faults");}
-    {Fixture f(0,0,0);f.start();require(f.vm.status()==odh::VmStatus::fault,"reset not falsely completed without posture resources");}
+    for(const auto flags:{16,17,128}){Fixture f(static_cast<std::uint8_t>(flags));f.start();
+        require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"unsupported carry/mode/flag faults");}
+    {Fixture f(0,0,0,{},false);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"reset not falsely completed without explicit resolver");}
+    for(const auto value:{1,2,0,-1,4}){Fixture f(0,0,0);f.world.set_person_data(1,0,static_cast<std::int16_t>(value));f.world.set_person_data(1,42,1);f.start();
+     require(f.posture==((value==1||value==2)?value:3),"reset normalizes only other postures to standing loop3");
+     require(f.vm.status()==odh::VmStatus::returned_true&&!f.vm.pending()&&f.player.progress()->loop&&f.player.progress()->frame==0,"reset starts loop and returns true immediately");
+     require(f.world.find(1)->person_data[42]==4&&f.world.find(1)->person_data[0]==value,"reset changes HeadSeekState42 only and preserves Posture0");
+     f.player.tick(1);require(f.vm.status()==odh::VmStatus::returned_true&&f.player.progress()->frame>1.1f,"reset loop persists after VM return");}
+    {Fixture f(64,0,0);f.world.declare_object_word(1,17,1);f.world.set_person_data(1,42,2);f.start();f.player.tick(1);
+     require(std::abs(f.player.progress()->frame-1.2f)<0.0001f&&f.world.find(1)->person_data[42]==2,"reset ignores Hurryable and preserves non-one HeadSeekState");}
+    {Fixture f(2,0,0);f.reset_a->motions[0].frames=1;f.start();
+     require(f.player.progress()->frame==1&&f.player.progress()->loop,"backwards reset starts at NumFrames");
+     f.player.tick(1);require(std::abs(f.player.progress()->frame+0.2f)<0.0001f&&!f.player.progress()->end,"backwards fractional negative truncates before loop end");
+     f.player.tick(2);require(std::abs(f.player.progress()->frame+0.4f)<0.0001f&&!f.player.progress()->end,"backwards wraps once with fractional overshoot");}
+    {Fixture f(1);f.a->motions[0].frames=1;f.xevt(0,"1");f.start();int observed=0;
+     require(f.vm.status()==odh::VmStatus::returned_true&&!f.vm.pending()&&f.player.progress()->loop,"mode1 starts primary loop without wait");
+     for(std::uint64_t t=1;t<=8;++t)f.player.tick(t,[&](const auto&){++observed;});
+     require(observed==1&&f.player.progress()->queued_events==1&&!f.player.progress()->end,"loop events are consumed once and retained queue stays bounded after VM return");
+     require(std::abs(f.player.progress()->frame-1.6f)<0.0001f,"one-frame clip wraps only once per tick even beyond one frame");
+     require(f.apply(1,1).disposition==odh::PrimitiveDisposition::goto_true&&f.player.progress()->frame==0&&f.player.progress()->queued_events==0,"mode1 replaces same immutable clip and clears consumed events");
+     f.player.tick(9,[&](const auto&){++observed;});require(observed==2,"replacement begins fresh event cursor");}
+    {Fixture f(67);f.world.declare_object_word(1,17,1);f.start();f.player.tick(1);
+     require(f.player.progress()->loop&&std::abs(f.player.progress()->frame-0.6f)<0.0001f,"mode1 honors backwards and hurryable doubling");}
+    {Fixture f(33);f.start();require(f.vm.status()==odh::VmStatus::returned_true,"mode1 does not require unused local event destination");}
+    {Fixture f(1);f.start();f.player.tick(1);f.vm.start(odh::routine_key(4096),{1,2,2});
+     require(!f.player.tick(2)&&!f.player.progress(),"VM restart invalidates returned loop");}
+    {Fixture f(1,0,1,{1,1048576,2});f.xevt(0,"100");f.start();f.player.tick(1);f.player.tick(2);
+     require(f.player.progress()->queued_events==1,"nonconsuming loop queue respects exact event budget");
+     require(f.player.tick(3)&&!f.player.progress()&&!f.vm.pending(),"loop tick budget cancels without creating ticket");}
+    for(const auto failure:{0,1,2,3,4}){Fixture f(1);f.start();f.player.tick(1);f.world.set_person_data(1,42,1);
+     if(failure==0)f.reset_a.reset();
+     if(failure==1){f.world.create(2,odh::EntityKind::object);f.world.attach(1,0,2);}
+     if(failure==2)f.reset_a->motions[0].frames=0;
+     if(failure==3)f.reset_a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};
+     if(failure==4)f.reset_a->motions[0].frames=1048577;
+     const auto before=f.player.progress();const auto world_before=*f.world.find(1);
+     require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported,"invalid reset resources or occupied hand explicitly unsupported");
+     const auto after=f.player.progress();const auto* actor=f.world.find(1);
+     require(after&&after->frame==before->frame&&after->frames==before->frames&&after->name==before->name&&after->loop==before->loop,"failed reset preserves existing primary clip");
+     require(actor->person_data==world_before.person_data&&actor->slots==world_before.slots&&actor->object_words==world_before.object_words,"failed reset does not alter world state");}
+    {Fixture f(1,0,1,{},false);f.start();f.world.set_person_data(1,42,1);const auto before=f.player.progress();
+     require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported&&f.player.progress()->frame==before->frame&&f.world.find(1)->person_data[42]==1,"missing reset resolver is atomic with existing loop");}
+    {Fixture f(0,0,0,{},true,{0,88,0});f.world.set_person_data(1,42,1);f.start();
+     require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress()&&f.posture==-1&&f.world.find(1)->person_data[42]==1,"absent hand slot is unknown and fails before reset resolution");}
+    {Fixture f(0,0,0,{},true,{0,42,1});f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"reset requires explicit HeadSeekState bank entry");}
+    for(const auto mode:{1,16}){Fixture f(static_cast<std::uint8_t>(mode),0,0);f.world.set_person_data(1,0,2);f.start();
+     require(f.vm.status()==odh::VmStatus::returned_true&&!f.vm.pending()&&f.player.progress()->loop&&f.posture==2,"ID0 modes1 and2 use ordinary posture reset");}
+    {Fixture f(0,0,1,{4096,0xffffffffU,10});f.a->motions[0].frames=0xffffffffU;f.start();
+     require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"host frame limits cannot permit clips beyond signed reference frame range");}
+    {Fixture f(17,0,0);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"ID0 mode3 carry cancellation remains unsupported");}
     {Fixture f;f.a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"missing property service does not silently succeed");}
     {Fixture f;f.a.reset();f.start();require(f.vm.status()==odh::VmStatus::fault,"missing clip is explicit fault");}

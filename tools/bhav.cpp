@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
+                     "  [--reset-probe ENTRY.bcf [--post-ticks 0..4096]] requires --animation-probe; explicit global posture loops.\n"
                      "  [--sound-probe] requires --animation-probe; silent FWAV requests, no audio backend.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
         return 2;
@@ -116,7 +117,8 @@ int main(int argc, char** argv) {
         bool route_probe=false;
         bool snap_probe=false, sound_probe=false;
         std::optional<std::uint16_t> object_def;
-        std::optional<std::uint16_t> occupant, posture, age;
+        std::optional<std::uint16_t> occupant, posture, age, post_ticks;
+        std::optional<std::string> reset_entry;
         std::optional<std::pair<std::string,std::string>> animation;
         std::optional<std::pair<std::string, std::string>> global;
         for (int n = 4; n < argc; ++n) {
@@ -130,6 +132,8 @@ int main(int argc, char** argv) {
             else if (option == "--autonomous" && !autonomous) autonomous = true;
             else if (option == "--occupant" && !occupant && n + 1 < argc) occupant = identifier(argv[++n]);
             else if (option == "--posture" && !posture && n + 1 < argc) posture = identifier(argv[++n]);
+            else if (option == "--reset-probe" && !reset_entry && n+1<argc) reset_entry=argv[++n];
+            else if (option == "--post-ticks" && !post_ticks && n+1<argc) post_ticks=identifier(argv[++n]);
             else if (option == "--age" && !age && n+1<argc) age=identifier(argv[++n]);
             else if (option == "--animation-probe" && !animation && n+2<argc) {
                 animation=std::make_pair(argv[n+1],argv[n+2]);n+=2;
@@ -143,7 +147,8 @@ int main(int argc, char** argv) {
             (snap_probe && (!route_probe || !object_def)) || (!snap_probe && object_def) ||
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
             (posture && *posture > 32767) || (animation && !snap_probe) ||
-            (age && (!animation || *age>32767)) || (sound_probe && !animation)) throw odh::FormatError("invalid constructed-world options");
+            (age && (!animation || *age>32767)) || (sound_probe && !animation) || (reset_entry && !animation) ||
+            (post_ticks && (!reset_entry || *post_ticks>4096))) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         std::optional<odh::SlotTable> routing_slots;
@@ -153,15 +158,26 @@ int main(int argc, char** argv) {
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
         std::map<std::string,std::shared_ptr<const odh::AnimationHeader>> clips;
-        std::map<std::uint16_t,odh::StringTable> animation_tables;
+        std::map<std::uint16_t,odh::StringTable> animation_tables, reset_tables;
         if(animation) {
-            with_far_entry(animation->first,animation->second,[&](const auto& view) {
+            const auto load_clips=[&](const std::string& entry) {
+            with_far_entry(animation->first,entry,[&](const auto& view) {
                 auto collection=odh::read_bcf_animations(view);
                 for(auto& clip:collection.animations) {
                     const auto name=fold(clip.name);
                     if(!clips.emplace(name,std::make_shared<const odh::AnimationHeader>(std::move(clip))).second)
                         throw odh::FormatError("ambiguous ASCII casefold animation name");
                 }
+            });
+            };
+            load_clips(animation->second);
+            if(reset_entry && *reset_entry!=animation->second)load_clips(*reset_entry);
+            if(reset_entry)with_far_entry(global->first,global->second,[&](const auto& view) {
+                odh::iff_chunks(view,[&](const odh::Chunk& c) {
+                    if(c.type!="STR#" || (c.id!=150 && c.id!=151))return;
+                    if(!reset_tables.emplace(c.id,odh::read_strings(c.payload)).second)
+                        throw odh::FormatError("ambiguous global STR# reset table");
+                });
             });
             with_far_entry(argv[1],argv[2],[&](const auto& view) {
                 odh::iff_chunks(view,[&](const odh::Chunk& c) {
@@ -199,7 +215,7 @@ int main(int argc, char** argv) {
         std::size_t storage_slots=1;
         if(snap_probe) {storage_slots=0;for(const auto& r:definition.slots->records) if(r.type==0) ++storage_slots;}
         if (world_probe) {
-            if (!world.create(1,odh::EntityKind::avatar,{0,88,0}) ||
+            if (!world.create(1,odh::EntityKind::avatar,{0,88,reset_entry?1u:0u}) ||
                 !world.create(2,odh::EntityKind::object,{0,0,storage_slots}) ||
                 !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
                 !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
@@ -221,6 +237,24 @@ int main(int argc, char** argv) {
         if(snap_probe) snap.emplace(world,2,*definition.binding,*definition.slots,definition.binding->slot_table);
         std::optional<odh::Playback> playback;
         std::string resolution_diagnostic;
+        odh::AnimationResetResolver reset_resolver;
+        if(reset_entry)reset_resolver=[&](const odh::VmFrame& frame,std::int16_t normalized_posture)
+            -> std::shared_ptr<const odh::AnimationHeader> {
+            resolution_diagnostic.clear();
+            const auto fail=[&](const std::string& text)->std::shared_ptr<const odh::AnimationHeader> {
+                resolution_diagnostic=text;return {};
+            };
+            const auto* actor=world.find(frame.context.caller);
+            if(!actor || actor->person_data.size()<=58)return fail("reset actor age unavailable");
+            const auto table_id=static_cast<std::uint16_t>(actor->person_data[58]<18?151:150);
+            const auto table=reset_tables.find(table_id);
+            if(table==reset_tables.end())return fail("reset global STR# table absent");
+            const auto* entry=odh::string_in_language(table->second,1,static_cast<std::uint16_t>(normalized_posture));
+            if(!entry)return fail("reset global STR# index missing in explicit language 1");
+            const auto clip=clips.find(fold(entry->value));
+            if(clip==clips.end())return fail("reset clip missing from supplied BCF entries");
+            return clip->second;
+        };
         if(animation) playback.emplace(world,[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id)
             -> std::shared_ptr<const odh::AnimationHeader> {
             resolution_diagnostic.clear();
@@ -242,7 +276,7 @@ int main(int argc, char** argv) {
             const auto clip=clips.find(fold(entry->value));
             if(clip==clips.end())return fail("animation clip missing from supplied BCF");
             return clip->second;
-        });
+        },odh::PlaybackLimits{},reset_resolver);
         if(snap_probe) {
             if(definition.binding->master_id!=0)
                 throw odh::FormatError("probe requires single-part OBJD: master resource not supplied");
@@ -320,6 +354,18 @@ int main(int argc, char** argv) {
             if(animation_events.size()==4096)animation_event_limit_reached=true;
             status=run_probe();
         }
+        const auto execution_ticks=ticks;
+        std::uint16_t post_ticks_run=0;
+        const bool terminal=status==odh::VmStatus::returned_true || status==odh::VmStatus::returned_false || status==odh::VmStatus::fault;
+        while(reset_entry && terminal && post_ticks_run<post_ticks.value_or(0) && !animation_event_limit_reached && !sound_event_limit_reached) {
+            ++post_ticks_run;
+            routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
+            playback->tick(ticks,[&](const auto& event){
+                if(animation_events.size()<4096)animation_events.push_back(event);
+                else animation_events_truncated=true;
+            });
+            if(animation_events.size()==4096)animation_event_limit_reached=true;
+        }
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
                   << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps()
                   << ",\"stack_depth\":" << vm.stack().size();
@@ -346,6 +392,12 @@ int main(int argc, char** argv) {
                 <<",\"posture\":"<<actor.person_data[0];
         }
         if(animation) {
+            if(reset_entry)std::cout<<",\"reset_resource\":{\"archive\":"<<quote(animation->first)
+                <<",\"entry\":"<<quote(*reset_entry)<<",\"global_archive\":"<<quote(global->first)
+                <<",\"global_entry\":"<<quote(global->second)<<",\"walk_table_id\":"<<(age.value_or(21)<18?151:150)
+                <<",\"language\":1,\"avatar_resource_override\":false,\"hand_slot\":0,\"hand_empty\":true,\"head_seek\":0}"
+                <<",\"execution_ticks\":"<<execution_ticks<<",\"post_ticks\":"<<post_ticks_run
+                <<",\"requested_post_ticks\":"<<post_ticks.value_or(0);
             std::cout<<",\"simulation_ticks\":"<<ticks<<",\"age\":"<<age.value_or(21)
                 <<",\"animation_code_owner\":{\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<",\"language\":1}"
                 <<",\"animation_diagnostic\":"<<quote(resolution_diagnostic.empty()?playback->diagnostic():resolution_diagnostic)
@@ -366,6 +418,7 @@ int main(int argc, char** argv) {
             const auto progress=playback->progress();
             if(progress)std::cout<<"{\"name\":"<<quote(progress->name)<<",\"frame\":"<<std::setprecision(9)<<progress->frame
                 <<",\"frames\":"<<std::setprecision(9)<<progress->frames<<",\"queued_events\":"<<progress->queued_events
+                <<",\"loop\":"<<(progress->loop?"true":"false")
                 <<",\"end\":"<<(progress->end?"true":"false")<<'}';
             else std::cout<<"null";
         }

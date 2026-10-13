@@ -73,6 +73,8 @@ estão em [animation-validation.md](animation-validation.md), com links fixos.
 O controlador silencioso de animação consulta também `VMAnimationScope.cs`, na
 mesma revisão: StackObject é65536, distinto de Misc3. Limites, scheduler parcial,
 eventos e cancelamento ODH estão em [playback-validation.md](playback-validation.md).
+Reset de postura e loops, incluindo STR150/151 global e HeadSeekState42, estão
+em [reset-validation.md](reset-validation.md), com limites de carry/gestos.
 
 O registro `VMContext.cs` foi conferido para distinguir opcodes decimais de
 hexadecimais. TestObjectType32 e PlaySound23 consultam seus handlers e `FWAV.cs`;

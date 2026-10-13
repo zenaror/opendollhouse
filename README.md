@@ -121,7 +121,13 @@ a partir do zero inicial do probe antigo.
 
 Com `--sound-probe`, o CLI resolve FWAV e registra pedidos não bloqueantes,
 com backend `none` e status `skipped_no_backend`; não reproduz áudio.
-O probe adulto termina o clipe e para no reset da44 ainda incompleto.
+O probe adulto termina o clipe e, sem recursos de reset, para na44 ID0.
+
+Adicione `--reset-probe a2o-sit-loop.cmx.bcf` para resolver a postura sentada
+pela STR150 global e manter seu loop. `--post-ticks 240` avança apenas os
+controladores após o fim/parada da VM, preservando seu status; não conclui a ação.
+O probe real com reset chega ao snap seguinte ainda não suportado, saída3.
+Personagens carregando objetos e gestos das mãos ainda exigem implementação.
 
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
@@ -155,6 +161,7 @@ suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 e
 - [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
+- [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo
