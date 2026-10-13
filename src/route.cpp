@@ -1,0 +1,107 @@
+#include "odh/route.hpp"
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <queue>
+#include <stdexcept>
+
+namespace odh {
+namespace {
+constexpr std::array<RoutePoint,8> directions={{{0,-1},{1,0},{0,1},{-1,0},{1,-1},{1,1},{-1,1},{-1,-1}}};
+int cardinal_direction(RoutePoint a,RoutePoint b) {
+    for(int n=0;n<4;++n) if(a.x+directions[n].x==b.x && a.y+directions[n].y==b.y) return n;
+    return -1;
+}
+}
+RouteGrid::RouteGrid(std::uint32_t width,std::uint32_t height,std::size_t limit):width_(width),height_(height) {
+    const auto cells=static_cast<std::uint64_t>(width)*height;
+    if(!width || !height || width>32767 || height>32767 || cells>limit ||
+       cells>std::numeric_limits<std::uint32_t>::max()/14U)
+        throw std::invalid_argument("route grid exceeds dimensions or cell budget");
+    blocked_.resize(static_cast<std::size_t>(cells));walls_.resize(blocked_.size());
+}
+bool RouteGrid::contains(RoutePoint p) const {
+    return p.x>=0 && p.y>=0 && static_cast<std::uint32_t>(p.x)<width_ && static_cast<std::uint32_t>(p.y)<height_;
+}
+std::size_t RouteGrid::index(RoutePoint p) const {
+    if(!contains(p)) throw std::out_of_range("route point outside grid");
+    return static_cast<std::size_t>(p.y)*width_+static_cast<std::size_t>(p.x);
+}
+RoutePoint RouteGrid::point(std::size_t n) const {
+    if(n>=cells()) throw std::out_of_range("route index outside grid");
+    return {static_cast<std::int32_t>(n%width_),static_cast<std::int32_t>(n/width_)};
+}
+bool RouteGrid::block(RoutePoint p,bool value) {
+    if(!contains(p)) return false;
+    blocked_[index(p)]=static_cast<std::uint8_t>(value);return true;
+}
+bool RouteGrid::wall(RoutePoint a,RoutePoint b,bool value) {
+    if(!contains(a) || !contains(b)) return false;
+    const auto d=cardinal_direction(a,b);
+    if(d<0) return false;
+    const auto reverse=(d+2)%4;
+    for(const auto& pair:{std::pair<std::size_t,int>{index(a),d},{index(b),reverse}}) {
+        const auto bit=static_cast<std::uint8_t>(1U<<pair.second);
+        if(value) walls_[pair.first]|=bit;
+        else walls_[pair.first]&=static_cast<std::uint8_t>(~bit);
+    }
+    return true;
+}
+bool RouteGrid::walkable(RoutePoint p) const {return contains(p) && blocked_[index(p)]==0;}
+bool RouteGrid::cardinal_step(RoutePoint a,RoutePoint b) const {
+    if(!walkable(a) || !walkable(b)) return false;
+    const auto d=cardinal_direction(a,b);
+    return d>=0 && (walls_[index(a)]&(1U<<d))==0;
+}
+bool RouteGrid::can_step(RoutePoint a,RoutePoint b) const {
+    if(!walkable(a) || !walkable(b)) return false;
+    const auto dx=b.x-a.x,dy=b.y-a.y;
+    if(dx==0 || dy==0) return cardinal_step(a,b);
+    if((dx!=1 && dx!=-1) || (dy!=1 && dy!=-1)) return false;
+    const RoutePoint horizontal{b.x,a.y},vertical{a.x,b.y};
+    // Both orthogonal passages must be clear: no cutting corners or wall ends.
+    return cardinal_step(a,horizontal) && cardinal_step(horizontal,b) &&
+           cardinal_step(a,vertical) && cardinal_step(vertical,b);
+}
+RoutePath find_route(const RouteGrid& grid,RoutePoint start,const std::vector<RoutePoint>& goals,RouteLimits limits) {
+    RoutePath result{RouteStatus::invalid_input,{},0,0};
+    if(!grid.walkable(start) || goals.empty()) return result;
+    std::vector<std::uint8_t> target(grid.cells()),closed(grid.cells());
+    bool any=false;
+    for(const auto p:goals) if(grid.walkable(p)) {target[grid.index(p)]=1;any=true;}
+    result.status=RouteStatus::no_path;
+    if(!any) return result;
+    constexpr auto infinity=std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> distance(grid.cells(),infinity);
+    std::vector<std::size_t> parent(grid.cells(),grid.cells());
+    using Entry=std::pair<std::uint32_t,std::size_t>;
+    std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> frontier;
+    if(limits.frontier==0) {result.status=RouteStatus::budget_exhausted;return result;}
+    const auto first=grid.index(start);distance[first]=0;frontier.push({0,first});
+    while(!frontier.empty()) {
+        const auto entry=frontier.top();frontier.pop();
+        const auto n=entry.second;
+        if(closed[n] || entry.first!=distance[n]) continue;
+        if(result.expanded>=limits.expanded) {result.status=RouteStatus::budget_exhausted;return result;}
+        closed[n]=1;++result.expanded;
+        if(target[n]) {
+            for(auto at=n;at!=grid.cells();at=parent[at]) result.points.push_back(grid.point(at));
+            std::reverse(result.points.begin(),result.points.end());
+            result.cost=distance[n];result.status=RouteStatus::found;return result;
+        }
+        const auto p=grid.point(n);
+        for(std::size_t d=0;d<directions.size();++d) {
+            const RoutePoint next{p.x+directions[d].x,p.y+directions[d].y};
+            if(!grid.can_step(p,next)) continue;
+            const auto m=grid.index(next);
+            const auto cost=d<4?10U:14U;
+            if(closed[m] || distance[n]>infinity-cost) continue;
+            const auto candidate=distance[n]+cost;
+            if(candidate>=distance[m]) continue;
+            if(frontier.size()>=limits.frontier) {result.status=RouteStatus::budget_exhausted;return result;}
+            distance[m]=candidate;parent[m]=n;frontier.push({candidate,m});
+        }
+    }
+    return result;
+}
+} // namespace odh

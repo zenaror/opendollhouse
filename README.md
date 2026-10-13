@@ -109,6 +109,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Entidades, slots e probe da cadeira](docs/world-validation.md)
 - [Dados SLOT e recurso de roteamento](docs/slot-validation.md)
 - [Suspensão da VM para serviços](docs/services-validation.md)
+- [Cálculo de percurso na malha](docs/route-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo
