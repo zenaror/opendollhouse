@@ -51,7 +51,8 @@ public:
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
-    bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant);
+    bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
+                       std::optional<std::uint8_t> direction={});
     bool detach(std::int16_t container, std::size_t slot);
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
     bool write(const VmFrame&, std::uint8_t scope, std::int16_t index, std::int16_t value);

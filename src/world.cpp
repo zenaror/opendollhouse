@@ -80,15 +80,16 @@ bool World::set_position(std::int16_t id,EntityPosition position) {
     const auto descendants=position_tree(id); // Allocation happens before any mutation.
     apply_position(descendants,position);return true;
 }
-bool World::place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant) {
+bool World::place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
+                          std::optional<std::uint8_t> direction) {
     const auto c=entities_.find(container),o=entities_.find(occupant);
     if(c==entities_.end() || o==entities_.end() || !c->second.position || !o->second.position ||
-       slot>=c->second.slots.size()) return false;
+       slot>=c->second.slots.size() || (direction&&*direction>7)) return false;
     const bool same=c->second.slots[slot]==occupant && o->second.attachment &&
                     o->second.attachment->container==container && o->second.attachment->slot==slot;
     const auto descendants=position_tree(occupant);
     if(!same && !attach(container,slot,occupant)) return false;
-    auto p=*c->second.position;p.direction=o->second.position->direction;
+    auto p=*c->second.position;p.direction=direction.value_or(o->second.position->direction);
     apply_position(descendants,p);o->second.attachment->positioned=true;return true;
 }
 bool World::attach(std::int16_t container, std::size_t slot, std::int16_t occupant) {

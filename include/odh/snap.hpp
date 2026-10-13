@@ -1,7 +1,8 @@
 #pragma once
 #include "odh/world.hpp"
 namespace odh {
-// Initial contained Literal snap profile for one explicitly bound code owner.
+// Zero-offset contained Literal snap, including SLOT SnapToDirection.
+// Containment is selected by SnapTargetSlot, not operand FootprintExtension.
 class Snap {
 public:
     Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id);

@@ -126,7 +126,9 @@ O probe adulto termina o clipe e, sem recursos de reset, para na44 ID0.
 Adicione `--reset-probe a2o-sit-loop.cmx.bcf` para resolver a postura sentada
 pela STR150 global e manter seu loop. `--post-ticks 240` avança apenas os
 controladores após o fim/parada da VM, preservando seu status; não conclui a ação.
-O probe real com reset chega ao snap seguinte ainda não suportado, saída3.
+O probe real com reset completa o BHAV selecionado, saída0/returned_true,
+com avatar no slot e alinhado à direção da cadeira. A notificação final é
+`no_thread`: o mundo construído ainda não tem scheduler/thread principal do objeto.
 Personagens carregando objetos e gestos das mãos ainda exigem implementação.
 
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
@@ -162,6 +164,7 @@ suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 e
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
+- [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

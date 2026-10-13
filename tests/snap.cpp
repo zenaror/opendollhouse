@@ -43,6 +43,32 @@ int main(){try{
      odh::Vm vm(routine(),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::returned_false && f.world.find(1)->position->x==10 &&
              !f.world.find(1)->attachment && f.world.find(2)->slots[0]==3,"occupied destination failure is atomic");}
+    for(const auto facing:{-3,-2,-1,0,1,2,3,4,5,6,7}) {
+        Fixture f;f.slots.records[1].flags=4096;f.slots.records[1].facing=facing;
+        f.world.set_position(2,{30,20,1,7});
+        auto routines=routine();routines.begin()->second.instructions[0].operands[4]=0;
+        odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(1)==odh::VmStatus::returned_true && f.world.find(1)->position->direction==(7+(facing<0?0:facing))%8,
+                "SnapToDirection rotates relative to object with wrap and negative defaults");
+        require(f.world.find(1)->attachment && f.world.find(2)->slots[0]==1,"operand flags zero still contains via SnapTargetSlot");
+        vm.start(odh::routine_key(4096),{1,2,2});require(vm.run(1)==odh::VmStatus::returned_true,"repeated oriented snap is idempotent");
+    }
+    {Fixture f;f.slots.records[1].flags=4096;f.slots.records[1].facing=-2;
+     auto routines=routine();routines.begin()->second.instructions[0].operands[4]=0;
+     f.world.place_in_slot(2,0,1);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{0,0,1,6});f.world.place_in_slot(1,0,3);
+     odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});vm.run(1);
+     require(f.world.find(1)->position->direction==0&&f.world.find(3)->position->direction==6&&f.world.find(3)->position->x==30,
+             "oriented re-snap retains child direction and physical containment");
+     const auto pose=*f.world.find(1)->position;
+     require(!f.world.place_in_slot(2,0,1,8)&&*f.world.find(1)->position==pose&&f.world.find(2)->slots[0]==1,"invalid orientation rejected before mutation");}
+    for(const auto facing:{-4,8}){Fixture f;f.slots.records[1].flags=4096;f.slots.records[1].facing=facing;
+     odh::Vm vm(routine(),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault&&!f.world.find(1)->attachment&&f.world.find(1)->position->direction==2,
+             "unsupported facing faults without containment or direction mutation");}
+    {Fixture f;f.slots.records[1].flags=4096;f.slots.records[1].facing=2;f.world.create(3,odh::EntityKind::avatar,{0,88,0});f.world.attach(2,0,3);
+     odh::Vm vm(routine(),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false&&f.world.find(1)->position->direction==2&&!f.world.find(1)->attachment,
+             "occupied oriented snap failure retains caller orientation");}
     {Fixture f;f.slots.records[0].offset_bits[0]=0x3F800000;odh::Vm vm(routine(),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::fault && !f.world.find(1)->attachment,"unknown storage geometry not accepted");}
     {Fixture f;odh::Vm vm(routine(4),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});

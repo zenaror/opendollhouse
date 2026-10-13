@@ -17,7 +17,7 @@ VmPrimitive Snap::primitive() {
         if(!vm_ || dispatch.origin!=vm_) return fail("snap controller bound to another VM");
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
         const auto mode=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
-        if(mode!=3 || i.operands[4]!=4 || i.operands[5] || i.operands[6] || i.operands[7])
+        if(mode!=3 || (i.operands[4]!=0 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
             return fail("snap operand profile not implemented");
         const auto* object=world_.find(object_);const auto* actor=world_.find(frame.context.caller);
         if(!object || object->generation!=generation_ || frame.context.stack_object!=object_ ||
@@ -26,7 +26,7 @@ VmPrimitive Snap::primitive() {
         const auto* route=slot_of_type(slots_,3,index);
         if(!route) return {PrimitiveDisposition::goto_false,{}};
         if(slots_.version!=10 || route->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
-           route->flags!=0 || route->standing || route->sitting || route->ground || route->snap_target_slot<0)
+           (route->flags!=0 && route->flags!=4096) || route->standing || route->sitting || route->ground || route->snap_target_slot<0)
             return fail("snap route SLOT profile not implemented");
         const auto number=static_cast<std::size_t>(route->snap_target_slot);
         const auto* storage=slot_of_type(slots_,0,number);
@@ -35,7 +35,15 @@ VmPrimitive Snap::primitive() {
             return fail("snap storage offset/height profile not implemented");
         if(binding_.slot_table==0 || actor->position->level!=object->position->level)
             return fail("snap binding or level unsupported");
-        return {world_.place_in_slot(object_,number,actor->id) ? PrimitiveDisposition::goto_true : PrimitiveDisposition::goto_false,{}};
+        std::optional<std::uint8_t> direction;
+        if(route->flags==4096) {
+            // VMSlotParser SnapToDirection with no compass bits: negative
+            // Facing uses relative NORTH; nonnegative Facing is an offset.
+            if(!route->facing || *route->facing<-3 || *route->facing>7) return fail("snap facing outside eight-direction profile");
+            const auto relative=*route->facing<0?0:*route->facing;
+            direction=static_cast<std::uint8_t>((object->position->direction+relative)%8);
+        }
+        return {world_.place_in_slot(object_,number,actor->id,direction) ? PrimitiveDisposition::goto_true : PrimitiveDisposition::goto_false,{}};
     };
 }
 }

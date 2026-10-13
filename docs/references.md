@@ -75,6 +75,8 @@ mesma revisão: StackObject é65536, distinto de Misc3. Limites, scheduler parci
 eventos e cancelamento ODH estão em [playback-validation.md](playback-validation.md).
 Reset de postura e loops, incluindo STR150/151 global e HeadSeekState42, estão
 em [reset-validation.md](reset-validation.md), com limites de carry/gestos.
+SnapToDirection e a notificação49 foram conferidos em VMSnap/VMSlotParser/SLOT
+e `VMNotifyOutOfIdle.cs`; ver [facing-validation.md](facing-validation.md).
 
 O registro `VMContext.cs` foi conferido para distinguir opcodes decimais de
 hexadecimais. TestObjectType32 e PlaySound23 consultam seus handlers e `FWAV.cs`;

@@ -77,6 +77,17 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     result=subprocess.run(args,capture_output=True,text=True);d=json.loads(result.stdout)
     assert result.returncode==0 and d['container']==2 and d['container_slot']==0 and d['final_position']==[64,64,1,0]
     assert d['object_binding']=={'objd_id':16808,'guid':0x12345678,'master_id':0,'sub_index':0,'slot_table':128,'animation_table':129}
+    # A contained literal snap with operand flags0 obtains direction from SLOT,
+    # then notifies an object explicitly lacking a main-thread backend.
+    oriented=bytearray(snap_route);struct.pack_into('<I',oriented,26,4096)
+    body=(struct.pack('<HHBBHHH',0x8002,2,0,4,0,0,0)+
+          struct.pack('<HBB',46,1,255)+bytes([0,0,3,0,0,0,0,0])+
+          struct.pack('<HBB',49,254,255)+bytes([255])*8)
+    path.write_bytes(archive([(4096,body)],struct.pack('<II4sI',0,10,b'TOLS',2)+storage+oriented,128,prefix))
+    r=subprocess.run(args,capture_output=True,text=True);d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['steps']==2
+    assert d['container']==2 and d['final_position']==[64,64,1,0]
+    assert d['idle_notifications']==[{'entity':2,'status':'no_thread'}]
     def typed(guid,owner=10,entity=0):
         operand=struct.pack('<IhBB',guid,entity,owner,0)
         path.write_bytes(archive([(4096,routine(32,operand))],

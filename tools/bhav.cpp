@@ -1,5 +1,6 @@
 #include "odh/routing.hpp"
 #include "odh/snap.hpp"
+#include "odh/notify.hpp"
 #include "odh/playback.hpp"
 #include "odh/object_type.hpp"
 #include "odh/sound.hpp"
@@ -299,11 +300,14 @@ int main(int argc, char** argv) {
                 if(sound_requests.size()==4096)sound_event_limit_reached=true;
             }):odh::VmPrimitive{};
         const auto type_handler=snap_probe?odh::object_type_primitive(world):odh::VmPrimitive{};
+        std::vector<std::pair<std::int16_t,std::string>> notifications;
+        const auto notify_handler=snap_probe?odh::notify_idle_primitive(world,{},[&](auto id,const auto& status){notifications.emplace_back(id,status);}):odh::VmPrimitive{};
         const auto animation_handler=animation?playback->primitive():odh::VmPrimitive{};
         const auto route_handler=routing.primitive();
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
         odh::VmPrimitive handler;
         if(route_probe) handler=[&](const auto& f,const auto& i,const auto& t,const auto& d) {
+            if(i.opcode==49 && notify_handler)return notify_handler(f,i,t,d);
             if(i.opcode==32 && type_handler)return type_handler(f,i,t,d);
             if(i.opcode==23 && sound_handler)return sound_handler(f,i,t,d);
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
@@ -384,6 +388,10 @@ int main(int argc, char** argv) {
         }
         if(snap_probe) {
             const auto& actor=*world.find(1);
+            std::cout<<",\"idle_notifications\":[";
+            for(std::size_t n=0;n<notifications.size();++n){if(n)std::cout<<',';
+                std::cout<<"{\"entity\":"<<notifications[n].first<<",\"status\":"<<quote(notifications[n].second)<<'}';}
+            std::cout<<']';
             std::cout<<",\"object_binding\":{\"objd_id\":"<<definition.id<<",\"guid\":"<<definition.binding->guid
                 <<",\"master_id\":"<<definition.binding->master_id<<",\"sub_index\":"<<definition.binding->sub_index
                 <<",\"slot_table\":"<<definition.binding->slot_table<<",\"animation_table\":"<<definition.binding->animation_table
