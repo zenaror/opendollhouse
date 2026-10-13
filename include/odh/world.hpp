@@ -4,6 +4,7 @@
 
 namespace odh {
 enum class EntityKind { object, avatar };
+struct EntityType {std::uint32_t guid;std::optional<std::uint32_t> master_guid;};
 struct EntityLayout {
     std::size_t attributes = 0;
     std::size_t person_data = 0;
@@ -26,6 +27,7 @@ struct Entity {
     std::optional<Attachment> attachment;
     std::optional<EntityPosition> position;
     std::uint64_t generation;
+    std::optional<EntityType> definition; // Explicit known single part or known master identity.
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -44,6 +46,7 @@ public:
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
     bool remove(std::int16_t id);
     const Entity* find(std::int16_t id) const;
+    bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_position(std::int16_t id, EntityPosition);

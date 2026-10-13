@@ -155,6 +155,8 @@ const SlotRecord* slot_of_type(const SlotTable&, std::uint16_t type, std::size_t
 struct ObjdBinding {
     std::uint32_t version,guid;
     std::uint16_t animation_table,slot_table;
+    std::uint16_t master_id=0;
+    std::int16_t sub_index=0;
 };
 // Only the stable prefix through SlotID. Does not validate the complete OBJD.
 ObjdBinding read_objd_binding(const View&);

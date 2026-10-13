@@ -11,7 +11,7 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
-def archive(rows,slots=None,slot_id=100,objd=None,strings=()):
+def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=()):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
         asset += b'BHAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
@@ -21,6 +21,8 @@ def archive(rows,slots=None,slot_id=100,objd=None,strings=()):
         asset += b'OBJD'+struct.pack('>IHH',76+len(objd),16808,0)+bytes(64)+objd
     for identifier,payload in strings:
         asset += b'STR#'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
+    for identifier,payload in sounds:
+        asset += b'FWAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     name=b'test.iff'
     return (b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+
             struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
@@ -74,7 +76,24 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
           '--object-def','16808','--global',str(global_path),'test.iff']
     result=subprocess.run(args,capture_output=True,text=True);d=json.loads(result.stdout)
     assert result.returncode==0 and d['container']==2 and d['container_slot']==0 and d['final_position']==[64,64,1,0]
-    assert d['object_binding']=={'objd_id':16808,'guid':0x12345678,'slot_table':128,'animation_table':129}
+    assert d['object_binding']=={'objd_id':16808,'guid':0x12345678,'master_id':0,'sub_index':0,'slot_table':128,'animation_table':129}
+    def typed(guid,owner=10,entity=0):
+        operand=struct.pack('<IhBB',guid,entity,owner,0)
+        path.write_bytes(archive([(4096,routine(32,operand))],
+                         struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix))
+        return subprocess.run(args,capture_output=True,text=True)
+    r=typed(0x12345678);d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['trace'][0]['instruction']['opcode']==32
+    r=typed(0x87654321);assert json.loads(r.stdout)['status']=='returned_false'
+    r=typed(0x12345678,7,2);assert json.loads(r.stdout)['status']=='returned_true'
+    r=typed(0x12345678,7,99);d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='fault'
+    r=typed(0x12345678,255);d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='fault'
+    multipart=bytearray(prefix);struct.pack_into('<H',multipart,20,1)
+    path.write_bytes(archive([(4096,routine())],struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,multipart))
+    r=subprocess.run(args,capture_output=True,text=True)
+    assert r.returncode==2 and 'master resource not supplied' in r.stderr and not r.stdout
     # Explicit synthetic animation resources; no transforms or skeleton are supplied.
     def u(n): return struct.pack('<I',n)
     def pas(s): return bytes([len(s)])+s
@@ -98,6 +117,40 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
         path.write_bytes(archive([(4096,routine(44,operands,no=no))],
                          struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix,strings))
         return subprocess.run(animation_args+list(extra),capture_output=True,text=True)
+    sound_args=animation_args+['--sound-probe']
+    def sounded(sounds=((1,b'chair_sit_wood\0trailer'),),operands=bytes([1,0,0x22,0x56,15,200,9,8]),yes=254):
+        path.write_bytes(archive([(4096,routine(23,operands,yes=yes))],
+                         struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix,sounds=sounds))
+        return subprocess.run(sound_args,capture_output=True,text=True)
+    r=sounded();d=json.loads(r.stdout)
+    assert r.returncode==0 and d['sound_backend']=='none' and d['status']=='returned_true'
+    assert d['evidence']=='ODH_VM_constructed_route_snap_silent_animation_sound_requests_world'
+    assert d['sound_requests']==[{'event_id':1,'name':'chair_sit_wood','source':2,'pan':False,
+           'zoom':False,'loop':True,'sample_rate':0x5622,'flags':15,'volume':200,'status':'skipped_no_backend'}]
+    assert d['sound_code_owner']=={'archive':str(path),'entry':'test.iff'}
+    global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2,
+                                  sounds=((1,b'global_sound\0'),)))
+    r=sounded();assert json.loads(r.stdout)['sound_requests'][0]['name']=='chair_sit_wood'
+    r=sounded(sounds=());assert json.loads(r.stdout)['sound_requests'][0]['name']=='global_sound'
+    r=sounded(operands=bytes([2,0,0,0,0,0,0,0]));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['sound_requests'][0]['status']=='missing_resource'
+    assert d['sound_requests'][0]['source']==1 and d['sound_requests'][0]['pan'] and d['sound_requests'][0]['zoom']
+    r=sounded(sounds=((1,b'piano_play\0'),),operands=bytes([1,0,0,0,0,0,0,0]));d=json.loads(r.stdout)
+    assert d['sound_requests'][0]['loop']
+    r=sounded(sounds=((1,b'one\0'),(1,b'two\0')))
+    assert r.returncode==2 and 'ambiguous FWAV' in r.stderr and not r.stdout
+    r=sounded(sounds=((1,b'nonterminated'),))
+    assert r.returncode==2 and 'NUL terminator' in r.stderr and not r.stdout
+    r=sounded(yes=0);d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='budget_exhausted' and len(d['sound_requests'])==4096
+    assert d['sound_event_limit_reached'] and not d['sound_events_truncated'] and d['steps']==4096
+    global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2))
+    path.write_bytes(archive([(4096,routine(23,bytes(8)))],
+                           struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix))
+    r=subprocess.run(animation_args,capture_output=True,text=True);d=json.loads(r.stdout)
+    assert r.returncode==3 and 'primitive 23' in d['diagnostic'] and 'sound_requests' not in d
+    r=subprocess.run(args+['--sound-probe'],capture_output=True,text=True)
+    assert r.returncode==2 and not r.stdout
     r=animated();d=json.loads(r.stdout)
     assert r.returncode==0 and d['status']=='returned_true' and d['age']==21
     assert d['evidence']=='ODH_VM_constructed_route_snap_silent_animation_world'
@@ -149,7 +202,7 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     assert not d['animation_events_truncated']
     write_bcf([clip(b'Adult'),clip(b'ADULT')])
     r=animated();assert r.returncode==2 and 'casefold' in r.stderr and not r.stdout
-    for options in [('--age','21'),('--animation-probe',str(bcf_path),'test.bcf')]:
+    for options in [('--age','21'),('--animation-probe',str(bcf_path),'test.bcf'),('--sound-probe',)]:
         result=run([(4096,routine())],*options)
         assert result.returncode==2 and not result.stdout
     args[args.index('16808')]='16809'

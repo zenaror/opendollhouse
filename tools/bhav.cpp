@@ -1,6 +1,8 @@
 #include "odh/routing.hpp"
 #include "odh/snap.hpp"
 #include "odh/playback.hpp"
+#include "odh/object_type.hpp"
+#include "odh/sound.hpp"
 #include "resource.hpp"
 
 #include <filesystem>
@@ -41,7 +43,8 @@ std::uint16_t identifier(const std::string& text) {
     return static_cast<std::uint16_t>(value);
 }
 void load(const std::string& path, const std::string& name, odh::RoutineSet& routines,
-          bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr) {
+          bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr,
+          std::map<std::uint16_t,odh::SoundEvent>* sounds=nullptr) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw odh::FormatError("cannot open archive");
     const odh::View archive(stream, std::filesystem::file_size(path));
@@ -60,6 +63,11 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
         if(slots && c.type=="SLOT" && c.id==100) {
             if(*slots) throw odh::FormatError("ambiguous global SLOT100");
             *slots=odh::read_slot(c.payload);
+        }
+        if(sounds && c.type=="FWAV") {
+            auto payload=c.payload;
+            if(!sounds->emplace(c.id,odh::read_fwav(payload)).second)
+                throw odh::FormatError("ambiguous FWAV ID in explicit resource");
         }
         if (c.type != "BHAV") return;
         const auto key = odh::routine_key(c.id);
@@ -98,6 +106,7 @@ int main(int argc, char** argv) {
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
+                     "  [--sound-probe] requires --animation-probe; silent FWAV requests, no audio backend.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
         return 2;
     }
@@ -105,7 +114,7 @@ int main(int argc, char** argv) {
         bool run = false;
         bool world_probe = false, autonomous = false;
         bool route_probe=false;
-        bool snap_probe=false;
+        bool snap_probe=false, sound_probe=false;
         std::optional<std::uint16_t> object_def;
         std::optional<std::uint16_t> occupant, posture, age;
         std::optional<std::pair<std::string,std::string>> animation;
@@ -115,6 +124,7 @@ int main(int argc, char** argv) {
             if (option == "--run" && !run) run = true;
             else if (option == "--world-probe" && !world_probe) world_probe = true;
             else if (option == "--route-probe" && !route_probe) route_probe=true;
+            else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
             else if (option == "--snap-probe" && !snap_probe) snap_probe=true;
             else if (option == "--object-def" && !object_def && n+1<argc) object_def=identifier(argv[++n]);
             else if (option == "--autonomous" && !autonomous) autonomous = true;
@@ -133,13 +143,14 @@ int main(int argc, char** argv) {
             (snap_probe && (!route_probe || !object_def)) || (!snap_probe && object_def) ||
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
             (posture && *posture > 32767) || (animation && !snap_probe) ||
-            (age && (!animation || *age>32767))) throw odh::FormatError("invalid constructed-world options");
+            (age && (!animation || *age>32767)) || (sound_probe && !animation)) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         std::optional<odh::SlotTable> routing_slots;
         DefinitionSelection definition{object_def.value_or(0),{}, {}};
-        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr);
-        if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr);
+        std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
+        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr);
+        if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
         std::map<std::string,std::shared_ptr<const odh::AnimationHeader>> clips;
         std::map<std::uint16_t,odh::StringTable> animation_tables;
@@ -232,11 +243,35 @@ int main(int argc, char** argv) {
             if(clip==clips.end())return fail("animation clip missing from supplied BCF");
             return clip->second;
         });
+        if(snap_probe) {
+            if(definition.binding->master_id!=0)
+                throw odh::FormatError("probe requires single-part OBJD: master resource not supplied");
+            if(!world.define_type(2,definition.binding->guid))
+                throw odh::FormatError("cannot bind probe object type");
+        }
+        struct ObservedSound {odh::SoundRequest request;std::string status;};
+        std::vector<ObservedSound> sound_requests;
+        bool sound_events_truncated=false,sound_event_limit_reached=false;
+        const auto sound_handler=sound_probe?odh::sound_primitive(world,
+            [&](const odh::VmFrame&,std::uint16_t id)->std::optional<odh::SoundEvent> {
+                auto selected=private_sounds.find(id);
+                if(selected!=private_sounds.end())return selected->second;
+                selected=global_sounds.find(id);
+                if(selected!=global_sounds.end())return selected->second;
+                return {};
+            },{},[&](const odh::SoundRequest& request,const std::string& status) {
+                if(sound_requests.size()<4096)sound_requests.push_back({request,status});
+                else sound_events_truncated=true;
+                if(sound_requests.size()==4096)sound_event_limit_reached=true;
+            }):odh::VmPrimitive{};
+        const auto type_handler=snap_probe?odh::object_type_primitive(world):odh::VmPrimitive{};
         const auto animation_handler=animation?playback->primitive():odh::VmPrimitive{};
         const auto route_handler=routing.primitive();
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
         odh::VmPrimitive handler;
         if(route_probe) handler=[&](const auto& f,const auto& i,const auto& t,const auto& d) {
+            if(i.opcode==32 && type_handler)return type_handler(f,i,t,d);
+            if(i.opcode==23 && sound_handler)return sound_handler(f,i,t,d);
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
@@ -247,7 +282,7 @@ int main(int argc, char** argv) {
         if(animation && !playback->bind(vm))throw odh::FormatError("cannot bind animation probe");
         vm.start(key,world_probe ? odh::VmContext{1,2,2} : odh::VmContext{},
                  {static_cast<std::int16_t>(autonomous ? 1 : 0)});
-        std::cout << "{\"evidence\":" << quote(animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
+        std::cout << "{\"evidence\":" << quote(sound_probe?"ODH_VM_constructed_route_snap_silent_animation_sound_requests_world":animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
                                                        route_probe?"ODH_VM_constructed_route_world":
                                                        world_probe ? "ODH_VM_constructed_world" : "ODH_VM_probe_without_world");
         if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
@@ -264,19 +299,26 @@ int main(int argc, char** argv) {
             instruction(event.instruction, event.pc);
             std::cout << '}';
         };
-        auto status=vm.run(10000,trace);
+        const auto run_probe=[&]() {
+            if(!sound_probe)return vm.run(vm.steps()<10000?10000-vm.steps():0,trace);
+            auto state=vm.status();
+            while((state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted) &&
+                  vm.steps()<10000 && !sound_event_limit_reached)state=vm.run(1,trace);
+            return state;
+        };
+        auto status=run_probe();
         std::uint64_t ticks=0;
         std::vector<odh::RouteMovement> movements;
         std::vector<odh::PlaybackEvent> animation_events;
         bool animation_events_truncated=false, animation_event_limit_reached=false;
-        while(route_probe && status==odh::VmStatus::waiting && ticks<4096 && !animation_event_limit_reached) {
+        while(route_probe && status==odh::VmStatus::waiting && ticks<4096 && !animation_event_limit_reached && !sound_event_limit_reached) {
             routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
             if(animation)playback->tick(ticks,[&](const auto& event){
                 if(animation_events.size()<4096)animation_events.push_back(event);
                 else animation_events_truncated=true;
             });
             if(animation_events.size()==4096)animation_event_limit_reached=true;
-            status=vm.run(vm.steps()<10000?10000-vm.steps():0,trace);
+            status=run_probe();
         }
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
                   << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps()
@@ -297,6 +339,7 @@ int main(int argc, char** argv) {
         if(snap_probe) {
             const auto& actor=*world.find(1);
             std::cout<<",\"object_binding\":{\"objd_id\":"<<definition.id<<",\"guid\":"<<definition.binding->guid
+                <<",\"master_id\":"<<definition.binding->master_id<<",\"sub_index\":"<<definition.binding->sub_index
                 <<",\"slot_table\":"<<definition.binding->slot_table<<",\"animation_table\":"<<definition.binding->animation_table
                 <<"},\"container\":"<<(actor.attachment?actor.attachment->container:0)
                 <<",\"container_slot\":"<<(actor.attachment?static_cast<std::int64_t>(actor.attachment->slot):-1)
@@ -325,6 +368,21 @@ int main(int argc, char** argv) {
                 <<",\"frames\":"<<std::setprecision(9)<<progress->frames<<",\"queued_events\":"<<progress->queued_events
                 <<",\"end\":"<<(progress->end?"true":"false")<<'}';
             else std::cout<<"null";
+        }
+        if(sound_probe) {
+            std::cout<<",\"sound_backend\":\"none\",\"sound_code_owner\":{\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<'}'
+                <<",\"sound_event_limit_reached\":"<<(sound_event_limit_reached?"true":"false")
+                <<",\"sound_events_truncated\":"<<(sound_events_truncated?"true":"false")<<",\"sound_requests\":[";
+            for(std::size_t n=0;n<sound_requests.size();++n) {
+                if(n)std::cout<<',';
+                const auto& e=sound_requests[n];const auto& r=e.request;
+                std::cout<<"{\"event_id\":"<<r.event_id<<",\"name\":"<<quote(r.name)<<",\"source\":"<<r.source
+                    <<",\"pan\":"<<(r.pan?"true":"false")<<",\"zoom\":"<<(r.zoom?"true":"false")
+                    <<",\"loop\":"<<(r.loop?"true":"false")<<",\"sample_rate\":"<<r.sample_rate
+                    <<",\"flags\":"<<static_cast<unsigned>(r.flags)<<",\"volume\":"<<static_cast<unsigned>(r.volume)
+                    <<",\"status\":"<<quote(e.status)<<'}';
+            }
+            std::cout<<']';
         }
         std::cout<<"}\n";
         return status == odh::VmStatus::returned_true || status == odh::VmStatus::returned_false ? 0 : 3;

@@ -107,7 +107,10 @@ Licença declarada MPL2.0; nenhum runtime C# foi incorporado. A ordem de arquivo
 parse de xevt e temporalidade são contratos da referência ainda sem comparação
 com `Sims.exe.bak`.
 
-Próxima unidade: investigar criação32/posicionamento23 e os GUIDs da branch
-de evento, preservando entidades e estado da animação. Depois completar reset,
+Correção posterior da identificação: o trace usa opcodes decimais. 32 é
+TestObjectType (0x20), 23 é PlaySound (0x17); criação é 42 (0x2A).
+O plano anterior chamou essas primitivas de criação/posicionamento por engano.
+Os dados do trace acima continuam válidos; consultar
+[object-sound-validation.md](object-sound-validation.md). Depois completar reset,
 demais serviços/recursos e cenário, carregar skeleton e compor visual Linux.
 Teste silencioso não substitui a versão Linux funcional solicitada.

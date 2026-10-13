@@ -29,13 +29,19 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     const auto count = layout.attributes + layout.person_data + layout.slots;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
-        std::nullopt,std::nullopt,++generation_sequence_});
+        std::nullopt,std::nullopt,++generation_sequence_,{}});
     words_ += count;
     return true;
 }
 const Entity* World::find(std::int16_t id) const {
     const auto found = entities_.find(id);
     return found == entities_.end() ? nullptr : &found->second;
+}
+bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid) {
+    const auto found=entities_.find(id);if(found==entities_.end())return false;
+    auto& type=found->second.definition;
+    if(type)return type->guid==guid&&type->master_guid==master_guid;
+    type=EntityType{guid,master_guid};return true;
 }
 bool World::declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value) {
     const auto found = entities_.find(id);

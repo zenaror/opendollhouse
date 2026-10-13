@@ -74,6 +74,10 @@ O controlador silencioso de animação consulta também `VMAnimationScope.cs`, n
 mesma revisão: StackObject é65536, distinto de Misc3. Limites, scheduler parcial,
 eventos e cancelamento ODH estão em [playback-validation.md](playback-validation.md).
 
+O registro `VMContext.cs` foi conferido para distinguir opcodes decimais de
+hexadecimais. TestObjectType32 e PlaySound23 consultam seus handlers e `FWAV.cs`;
+evidência/correção em [object-sound-validation.md](object-sound-validation.md).
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

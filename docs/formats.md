@@ -14,10 +14,12 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
 | BCF | Perfil binário de animações com zero skeletons/appearances; motions, ranges, propriedades e eventos brutos | Skeletons/appearances, formatos textuais CMX/SKN/ANIM e runtime |
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
+| FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
 | DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
 
 `read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões
-136/138/139/140/141/142, retornando GUID, AnimationTableID e SlotID. Não valida
+136/138/139/140/141/142, retornando GUID, AnimationTableID, SlotID, MasterID e
+SubIndex assinado. Não valida
 o restante do OBJD nem implementa uma fábrica completa de objetos.
 
 O leitor FAR deste perfil exige dados antes do manifesto e que o manifesto termine
