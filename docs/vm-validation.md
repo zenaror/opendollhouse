@@ -1,5 +1,8 @@
 # Núcleo inicial de execução BHAV — 2026-10-13
 
+Este checkpoint registra o primeiro núcleo. O avanço posterior de entidades
+e slots está documentado em `world-validation.md`.
+
 `odh_vm` agora executa um perfil limitado de BHAV 8002 sem janela. A biblioteca
 possui rotinas, frames, registradores e interfaces para memória do mundo;
 não possui entidades, scheduler, filas, roteamento, animação ou persistência.
@@ -78,10 +81,10 @@ rotina global foi chamada antes dessa falha. Relatórios locais ignorados:
 `reports/chair-action-vm.json` e `reports/chair-action-vm-sanitize.json`.
 
 ```sh
-./build/odh-bhav '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run
 ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-bhav \
-  '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run \
-  --global '../The Sims/GameData/Global/Global.far' Global.iff
+  '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
 ```
 
 Próximo trabalho: modelo de entidades/slots/person data e contexto de interação,

@@ -34,6 +34,18 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     report=json.loads(result.stdout)
     assert result.returncode==3 and report['status']=='fault' and report['stack_depth']==2
     assert [e['routine'] for e in report['trace']]==[4096,4097] and 'primitive 49' in report['diagnostic']
+    world_rows=[(4096,routine(2,bytes([0,0,11,0,0,2,16,3])))]
+    for occupant,expected in [('0','returned_false'),('1','returned_true'),('3','returned_false')]:
+        result=run(world_rows,'--run','--world-probe','--occupant',occupant)
+        report=json.loads(result.stdout)
+        assert result.returncode==0 and report['status']==expected and report['evidence']=='ODH_VM_constructed_world'
+        assert report['initial_world']['occupant']==int(occupant)
+    for options in [('--world-probe',),('--run','--occupant','1'),
+                    ('--run','--world-probe','--occupant','2'),
+                    ('--run','--world-probe','--posture','32768'),
+                    ('--run','--world-probe','--autonomous','--autonomous')]:
+        result=run(world_rows,*options)
+        assert result.returncode==2 and not result.stdout
     for rows,options in [([(4096,routine()),(4096,routine())],()),
                           ([(4096,routine())],('--run','--run')),
                           ([(4096,routine())],('--unknown',))]:

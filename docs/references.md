@@ -39,6 +39,14 @@ requer comparação com o original. Diferenças e falhas explícitas estão em
 `vm-validation.md`; não se reproduzem silenciosamente fallback de primitivas
 ausentes ou hacks de mundo da referência.
 
+O primeiro bridge de entidades consultou `Entities/VMEntity.cs`,
+`Model/VMStackObjectVariable.cs`, `Model/VMPersonDataVariable.cs`, `VMContext.cs`,
+`Engine/Scopes/VMSlotScope.cs`
+e `Primitives/VMGotoRoutingSlot.cs`, sob `TSOClient/tso.simantics/`, na mesma
+revisão fixa. O campo de slot sem recipiente é -1 nessa referência. Layouts
+de entidades no probe são construídos explicitamente; inicialização pelo
+original ainda não foi estabelecida.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

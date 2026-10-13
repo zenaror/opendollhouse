@@ -60,9 +60,9 @@ ctest --test-dir build --output-on-failure
 cmake -S . -B build-sanitize -DODH_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-sanitize -j 2
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize --output-on-failure
-ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../The Sims' > reports/corpus-ttab-sanitize.json
+ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > reports/corpus-ttab-sanitize.json
 python3 tools/check_census.py reports/corpus-ttab-sanitize.json
-./build/odh-ttab '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
+./build/odh-ttab '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
 ```
 
 Próxima unidade: dependências e semântica da interação, VM headless com traces

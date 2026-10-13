@@ -4,7 +4,8 @@ Reimplementação independente de The Sims 1 para PC, com suporte progressivo à
 sete expansões e ao conteúdo personalizado clássico. FreeSO e Simitone são
 referências técnicas e inspiração; a referência de comportamento é o jogo original.
 
-Estado: leitores de recursos e primeiro núcleo de execução BHAV em C++17,
+Estado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
+entidades/slots em C++17,
 com testes sem janela e traces. Ainda não há jogo executável, serviços completos
 de simulação, renderizador ou validação em consoles.
 
@@ -29,12 +30,12 @@ Os testes geram fixtures sintéticas na memória; não dependem dos dados comerc
 ## Inspecionar uma instalação fornecida pelo usuário
 
 Mantenha a instalação fora deste checkout. O exemplo abaixo pressupõe uma pasta
-irmã chamada `The Sims`. Feche o jogo enquanto registra o corpus de referência.
+irmã `referencias/The Sims`. Feche o jogo enquanto registra o corpus de referência.
 
 ```sh
 mkdir -p reports
-python3 tools/fingerprint.py '../The Sims' > reports/input-manifest.json
-./build/odh-inspect '../The Sims' > reports/corpus.json 2> reports/corpus-errors.txt
+python3 tools/fingerprint.py '../referencias/The Sims' > reports/input-manifest.json
+./build/odh-inspect '../referencias/The Sims' > reports/corpus.json 2> reports/corpus-errors.txt
 python3 tools/check_census.py reports/corpus.json
 ```
 
@@ -51,7 +52,7 @@ Ele não cobre todos os formatos da instalação, o executável ou a ISO.
 Para consultar os campos de uma tabela de interação específica:
 
 ```sh
-./build/odh-ttab '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
+./build/odh-ttab '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
 ```
 
 O nome da entrada é exato; o ID aceita decimal ou prefixo `0x`. A ferramenta
@@ -62,8 +63,8 @@ O JSON preserva bits restantes e não executa os BHAVs indicados pela tabela.
 Para inspecionar um BHAV ou fazer uma execução limitada sem serviços do mundo:
 
 ```sh
-./build/odh-bhav '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1002
-./build/odh-bhav '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1002
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run
 ```
 
 O modo `--run` emite trace e status JSON. Sem entidades, a cadeira para com
@@ -72,6 +73,18 @@ da rotina; 2 indica erro de uso/recurso. Há um orçamento de 10.000 instruçõe
 distinto de ticks do jogo. A biblioteca preserva o estado para retomada ao
 esgotar o orçamento. Recursos globais opcionais são fornecidos explicitamente
 com `--global ARCHIVE.far ENTRY.iff`; não há busca nem precedência automática.
+
+Um probe com entidades construídas permite investigar as branches da cadeira:
+
+```sh
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1002 --run --world-probe
+```
+
+O cenário tem caller 1, objeto 2 e outro avatar 3, com um slot no objeto.
+`--occupant 0|1|3`, `--posture 0..32767` e `--autonomous` configuram o estado
+inicial. O relatório identifica `ODH_VM_constructed_world`: os BHAVs vêm do
+arquivo selecionado, mas as entidades são construídas no ODH. Não carrega
+um lote/save nem comprova comportamento do executável original.
 
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
@@ -83,6 +96,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Validação do primeiro protótipo](docs/validation.md)
 - [Validação das tabelas de interação](docs/ttab-validation.md)
 - [Núcleo da VM e limites de validação](docs/vm-validation.md)
+- [Entidades, slots e probe da cadeira](docs/world-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

@@ -1,4 +1,4 @@
-#include "odh/vm.hpp"
+#include "odh/world.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -65,19 +65,29 @@ void instruction(const odh::Instruction& i, std::uint16_t pc) {
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::cerr << "Usage: odh-bhav ARCHIVE.far ENTRY.iff ROUTINE_ID [--run] [--global ARCHIVE.far ENTRY.iff]\n"
+                     "  [--world-probe [--occupant 0|1|3] [--posture 0..32767] [--autonomous]]\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
         return 2;
     }
     try {
         bool run = false;
+        bool world_probe = false, autonomous = false;
+        std::optional<std::uint16_t> occupant, posture;
         std::optional<std::pair<std::string, std::string>> global;
         for (int n = 4; n < argc; ++n) {
             const std::string option = argv[n];
             if (option == "--run" && !run) run = true;
+            else if (option == "--world-probe" && !world_probe) world_probe = true;
+            else if (option == "--autonomous" && !autonomous) autonomous = true;
+            else if (option == "--occupant" && !occupant && n + 1 < argc) occupant = identifier(argv[++n]);
+            else if (option == "--posture" && !posture && n + 1 < argc) posture = identifier(argv[++n]);
             else if (option == "--global" && !global && n + 2 < argc) {
                 global = std::make_pair(argv[n + 1], argv[n + 2]); n += 2;
             } else throw odh::FormatError("invalid or repeated option");
         }
+        if ((world_probe && !run) || (!world_probe && (occupant || posture || autonomous)) ||
+            (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
+            (posture && *posture > 32767)) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         load(argv[1], argv[2], routines, false);
@@ -105,9 +115,23 @@ int main(int argc, char** argv) {
             std::cout << "]}\n";
             return 0;
         }
-        odh::Vm vm(std::move(routines));
-        vm.start(key); // Zero IDs are unbound: world scopes will diagnose missing support.
-        std::cout << "{\"evidence\":\"ODH_VM_probe_without_world\",\"trace\":[";
+        odh::World world;
+        if (world_probe) {
+            if (!world.create(1,odh::EntityKind::avatar,{0,88,0}) ||
+                !world.create(2,odh::EntityKind::object,{0,0,1}) ||
+                !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
+                !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
+                (occupant.value_or(0) && !world.attach(2,0,static_cast<std::int16_t>(*occupant))))
+                throw odh::FormatError("cannot construct probe world");
+        }
+        odh::Vm vm(std::move(routines),world_probe ? world.vm_memory() : odh::VmMemory{});
+        vm.start(key,world_probe ? odh::VmContext{1,2,2} : odh::VmContext{},
+                 {static_cast<std::int16_t>(autonomous ? 1 : 0)});
+        std::cout << "{\"evidence\":" << quote(world_probe ? "ODH_VM_constructed_world" : "ODH_VM_probe_without_world");
+        if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
+            << occupant.value_or(0) << ",\"posture\":" << posture.value_or(0)
+            << ",\"autonomous\":" << (autonomous ? "true" : "false") << '}';
+        std::cout << ",\"trace\":[";
         bool first = true;
         const auto status = vm.run(10000, [&](const odh::VmTrace& event) {
             if (!first) std::cout << ',';

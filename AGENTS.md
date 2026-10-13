@@ -15,6 +15,8 @@
   Identificar revisão e licença de referências; não afirmar equivalência ao
   original apenas porque uma implementação de terceiros se comporta assim.
 - Os recursos comerciais, ISO, executáveis e saves ficam fora do checkout.
+  Instalação local atual: `../referencias/The Sims`; ISO em `../referencias/`.
+  A instalação foi movida pelo usuário em 2026-10-13; revalidar caminhos nas retomadas.
   Não modificar os originais ou outros projetos. Fixtures versionadas devem ser
   sintéticas ou ter licença/procedência adequada.
 - Separar leitura de estrutura, interpretação semântica, execução de VM,

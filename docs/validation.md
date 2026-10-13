@@ -24,7 +24,7 @@ e UBSan ativos. Não interpretar essa configuração como ausência comprovada d
 cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DODH_SANITIZERS=ON
 cmake --build build-sanitize -j 2
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize --output-on-failure
-ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../The Sims' > reports/corpus-sanitize.json
+ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > reports/corpus-sanitize.json
 python3 tools/check_census.py reports/corpus-sanitize.json
 ```
 
