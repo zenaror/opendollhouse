@@ -137,5 +137,15 @@ int main(){try{
     {Fixture f;f.xevt(0,"100");f.start();bool guarded=false;
      f.player.tick(1,[&](const auto&){try{f.player.tick(2);}catch(const std::logic_error&){guarded=true;}});
      require(guarded&&f.player.progress()->queued_events==1,"observer cannot reenter ticks");}
+    {Fixture f;require(!f.player.sample(),"no sample before animation starts");f.start();
+     const auto s=f.player.sample();require(s&&s->clip.get()==f.a.get()&&s->actor==1&&s->actor_generation==f.world.find(1)->generation&&s->vm_generation==f.vm.run_generation(),"typed sample retains resource and actor/run identity");
+     require(s->frame==f.player.progress()->frame&&s->frames==f.player.progress()->frames,"sample copies current frame metadata");
+     f.player.tick(1);require(f.player.sample()->frame>s->frame&&s->frame==0,"previous immutable sample does not advance with controller");
+     f.player.cancel();require(!f.player.sample()&&s->clip->name==f.a->name,"cancel invalidates controller sample while retained resource survives");}
+    {Fixture f(1);f.start();require(f.player.sample()->loop&&f.vm.status()==odh::VmStatus::returned_true,"nonblocking terminal loop remains drawable");
+     const auto before=f.player.progress();f.vm.start(odh::routine_key(4096),{1,2,2});
+     require(!f.player.sample()&&f.player.progress()->frame==before->frame,"sample rejects restarted run before tick without mutation");}
+    {Fixture f(1);f.start();const auto generation=f.player.sample()->actor_generation;f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,1});
+     require(f.world.find(1)->generation!=generation&&!f.player.sample(),"sample rejects removed/reused actor before tick");}
     std::cout<<checks<<" playback checks passed (silent synthetic resources only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Playback test failed: "<<e.what()<<'\n';return 1;}}

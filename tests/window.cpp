@@ -1,0 +1,31 @@
+#include "linux_window.hpp"
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <memory>
+int main(){try{
+    if(!std::getenv("DISPLAY")){std::cout<<"X11 display unavailable: skipped\n";return 77;}
+    Display* availability=XOpenDisplay(nullptr);if(!availability){std::cout<<"X11 DISPLAY inaccessible: skipped\n";return 77;}XCloseDisplay(availability);
+    odh_host::LinuxWindow window(128,96,"OpenDollhouse own-window backend test");
+    odh::RasterFrame frame{128,96,{}, {}};
+    frame.pixels.resize(128*96);frame.depth.resize(128*96,std::numeric_limits<float>::infinity());
+    for(std::size_t i=0;i<frame.pixels.size();++i)frame.pixels[i]={std::uint8_t((i&1)?255:0),std::uint8_t((i&2)?255:0),std::uint8_t((i&4)?255:0),255};
+    window.present(frame);if(window.readback()!=frame.pixels)throw std::runtime_error("native RGB readback differs");
+    auto invalid=frame;invalid.pixels.pop_back();bool rejected=false;try{window.present(invalid);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("short image accepted");
+    invalid=frame;invalid.pixels[0][3]=0;rejected=false;try{window.present(invalid);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("transparent frame accepted");
+    window.poll();
+    std::unique_ptr<Display,decltype(&XCloseDisplay)> sender(XOpenDisplay(nullptr),&XCloseDisplay);
+    if(!sender)throw std::runtime_error("cannot open own-window test sender");
+    auto key=[&](KeySym sym,int type=KeyPress){XEvent event{};event.xkey.type=type;event.xkey.display=sender.get();event.xkey.window=window.native_id();event.xkey.root=DefaultRootWindow(sender.get());event.xkey.same_screen=True;event.xkey.keycode=XKeysymToKeycode(sender.get(),sym);if(!event.xkey.keycode||!XSendEvent(sender.get(),window.native_id(),False,type==KeyPress?KeyPressMask:KeyReleaseMask,&event))throw std::runtime_error("own-window key injection failed");XSync(sender.get(),False);window.readback();};
+    key(XK_space);auto input=window.poll();if(!input.action||input.quit||input.pause)throw std::runtime_error("Space mapping failed");
+    key(XK_space);if(window.poll().action)throw std::runtime_error("held action repeated");key(XK_space,KeyRelease);window.poll();key(XK_space);if(!window.poll().action)throw std::runtime_error("released action not rearmed");
+    key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
+    key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
+    key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
+    key(XK_a);input=window.poll();if(input.action||input.pause||input.quit||input.rotation||input.zoom)throw std::runtime_error("unknown key mapped");
+    key(XK_Escape);if(!window.poll().quit)throw std::runtime_error("quit mapping failed");
+    std::cout<<"Own native X11 window: all12288RGB pixels equal; frame validation and keyboard mappings passed (synthetic app-directed events).\n";return 0;
+}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

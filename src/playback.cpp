@@ -20,6 +20,14 @@ std::int16_t event_code(const std::string& text) {
 }
 bool Playback::bind(Vm& vm) {if(executing_||(vm_&&vm_!=&vm))return false;vm_=&vm;return true;}
 VmPrimitive Playback::primitive() {return [this](const auto& f,const auto& i,const auto&,const auto& d){return request(f,i,d);};}
+std::optional<PlaybackSample> Playback::sample() const {
+    if(!state_ || !vm_ || state_->vm_generation!=vm_->run_generation())return {};
+    const auto* actor=world_.find(state_->actor);
+    if(!actor || actor->generation!=state_->actor_generation)return {};
+    if(wait_ && (!vm_->pending() || vm_->pending()->ticket!=wait_->ticket))return {};
+    return PlaybackSample{state_->clip,state_->actor,state_->actor_generation,state_->vm_generation,
+                          state_->frame,state_->frames,state_->end,state_->loop};
+}
 std::optional<PlaybackProgress> Playback::progress() const {
     if(!state_)return {};
     return PlaybackProgress{state_->clip->name,state_->frame,state_->frames,state_->queue.size(),state_->end,state_->loop};

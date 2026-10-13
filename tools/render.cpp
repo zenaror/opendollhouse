@@ -142,7 +142,7 @@ int main(int argc,char** argv){try{
             const auto& raw=unique_chunk(chunks,"SPR2",static_cast<std::uint16_t>(ref.sprite_id)).payload;
             const auto palette=odh::read_palt(unique_chunk(chunks,"PALT",static_cast<std::uint16_t>(raw.le32(8))).payload);
             auto frame=odh::read_spr2_frame(raw,ref.frame,palette);sprite_pixels+=frame.pixels.size();if(sprite_pixels>odh::CompositorLimits{}.pixels)throw odh::FormatError("scene cumulative sprite pixel limit exceeded");
-            placements.push_back(odh::place_sprite(camera,ref,frame,object_position,finite_float(object_direction*std::acos(-1.0)/4)));references.push_back(ref);sprites.push_back(std::move(frame));
+            placements.push_back(odh::place_sprite(camera,ref,frame,object_position,finite_float((object_direction%2==0?object_direction:0)*std::acos(-1.0)/4)));references.push_back(ref);sprites.push_back(std::move(frame));
         }
     });std::vector<odh::SpriteLayer> layers;for(std::size_t j=0;j<sprites.size();++j){const auto& p=placements[j];layers.push_back({&sprites[j],p.x,p.y,p.back_depth,p.front_depth_delta,p.flip});}
     composite=odh::composite_sprites(image,layers);image=std::move(composite->image);}

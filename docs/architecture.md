@@ -46,7 +46,9 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    [render-validation.md](render-validation.md); integração World/playback,
    sprites alpha/Z e DGRP estão em [sprite-validation.md](sprite-validation.md);
    projetor e compositor CPU estão em [composition-validation.md](composition-validation.md).
-   Integração com simulação e janela/input ainda pendentes.
+   Preview ligado à simulação e janela/input X11 estão em
+   [live-view-validation.md](live-view-validation.md); inicialização/encerramento
+   de poses e cena/lote completo ainda pendentes.
    O objetivo inclui paredes e sobreposição, com capturas e cenas
    reproduzíveis. Conservar
    uma interface que permita experimentar software, híbrido CPU/GPU e geometria

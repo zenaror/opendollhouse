@@ -8,8 +8,9 @@ Estado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
 com testes sem janela, traces, rasterização CPU de avatar texturizado e decode
 de sprites de objetos com alpha/Z, com composição de avatar/cadeira em imagens.
-Ainda faltam cena ligada à simulação, janela/input,
-serviços completos de simulação e validação em consoles.
+O probe da cadeira tem preview X11 opcional ligado ao World/playback. Ainda
+faltam inicialização/encerramento fiel das poses, lote, persistência, serviços
+completos de simulação e validação em consoles.
 
 Plataformas pretendidas: New Nintendo 3DS, PlayStation Vita, Android e Linux.
 O primeiro alvo funcional é Linux, para permitir testes, depuração e comparação
@@ -26,6 +27,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 2
 ctest --test-dir build --output-on-failure
 ```
+
+Preview opcional usa headers/libX11 de desenvolvimento quando disponíveis;
+`-DODH_X11=OFF` compila sem esse backend. Comandos de janela e seus limites estão
+em [live-view-validation.md](docs/live-view-validation.md).
 
 Os testes geram fixtures sintéticas na memória; não dependem dos dados comerciais.
 
@@ -218,6 +223,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [BMP e rasterização texturizada CPU](docs/render-validation.md)
 - [PALT, SPR2 com alpha/Z e grupos DGRP](docs/sprite-validation.md)
 - [Projeção e composição CPU de avatar/objeto](docs/composition-validation.md)
+- [World/playback e preview Linux X11](docs/live-view-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)

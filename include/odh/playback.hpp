@@ -9,6 +9,17 @@ using AnimationResolver = std::function<std::shared_ptr<const AnimationHeader>(c
 using AnimationResetResolver = std::function<std::shared_ptr<const AnimationHeader>(const VmFrame&,std::int16_t normalized_posture)>;
 struct PlaybackLimits {std::size_t events=4096;std::uint32_t frames=1048576;std::uint64_t ticks=1048576;};
 struct PlaybackEvent {std::uint64_t tick;std::int16_t actor;std::int32_t time_id;AnimationProperties properties;};
+// Immutable resource and actor/run identity for a render sample. The shared clip
+// remains alive independently of controller cancellation. Coordinates/poses are
+// not inferred here; callers bind the sampled actor to their World graphics.
+struct PlaybackSample {
+    std::shared_ptr<const AnimationHeader> clip;
+    std::int16_t actor;
+    std::uint64_t actor_generation,vm_generation;
+    float frame;
+    std::uint32_t frames;
+    bool end,loop;
+};
 struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::size_t queued_events;bool end;bool loop=false;};
 // Silent primary animation controller. Resolver supplies explicit immutable
 // resource identity, including posture reset clips. No skeleton, render, audio,
@@ -26,6 +37,9 @@ public:
     bool tick(std::uint64_t,const std::function<void(const PlaybackEvent&)>& observed={});
     void cancel(); // Explicit host cancellation clears clip and any matching wait (false).
     std::optional<PlaybackProgress> progress() const;
+    // Read-only. Rejects stale actor/run/wait identity before the next tick;
+    // terminal nonblocking loops remain valid while their VM run is unchanged.
+    std::optional<PlaybackSample> sample() const;
     const std::string& diagnostic() const {return diagnostic_;}
 private:
     struct Wait {std::uint64_t ticket;VmFrameBank bank;std::size_t index;std::uint8_t expected;};
