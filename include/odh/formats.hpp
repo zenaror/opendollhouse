@@ -99,6 +99,17 @@ struct Bcon {
 // Byte count, raw flags, then count LE16 words; preserve any trailing extent.
 Bcon read_bcon(const View&);
 
+struct Glob {
+    std::string name; // Raw bytes; no encoding conversion or path normalization.
+    std::uint64_t remaining_bytes;
+};
+enum class GlobNameEncoding { pascal_u8, c_string };
+// Native Pascal profile: byte length followed by that many name bytes (0..255).
+// Empty names and embedded NUL are preserved; expose any unknown trailing extent.
+// Explicit c_string profile requires a NUL terminator and allows at most 256
+// name bytes. No heuristic selects a layout from the first byte.
+Glob read_glob(const View&, GlobNameEncoding = GlobNameEncoding::pascal_u8);
+
 struct SpriteFrame {
     std::uint16_t width;
     std::uint16_t height;

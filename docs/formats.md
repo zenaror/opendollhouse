@@ -7,6 +7,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 |---|---|---|
 | FAR | Assinatura `FAR!byAZ`, versão 1, nomes com comprimento uint32, duas extensões de tamanho iguais; índices e entradas dentro dos limites | Variante de nomes uint16, comprimentos diferentes, precedência de arquivos |
 | IFF | Identificador 2.0/2.5, cabeçalho de 64 bytes, chunks com cabeçalho de 76 bytes, tamanhos e campos externos big endian | Semântica dos chunks desconhecidos e validade do mapa de recursos |
+| GLOB | Layout explícito Pascal-u8 ou C-string limitado, nome bruto e extensão restante; CLI valida vínculo Pascal128 ao semiglobal selecionado | Heurística de formatos, busca/precedência e resolução por múltiplos code owners |
 | BHAV | Versões 8000/8001/8002, instruções de 12 bytes, opcode little endian, oito operandos e oito bytes de metadata preservados; metadata 8002 de argumentos/locais/type/tree version | Metadata legada 8000/8001; cobertura funcional completa e scheduler; execução parcial 8002 descrita em vm-validation.md |
 | SPR2/PALT | SPR2 1000, frame RLE, RGBA/index/Z; PALT RGB e version/raw; limites/seleção explícitos | SPR2 outras versões, palette fallback, FloorCopy/ZAsAlpha e composição |
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |

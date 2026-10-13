@@ -11,7 +11,7 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
-def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=(),bcons=()):
+def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=(),bcons=(),globs=()):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
         asset += b'BHAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
@@ -25,6 +25,8 @@ def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=(),bcons=())
         asset += b'FWAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     for identifier,payload in bcons:
         asset += b'BCON'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
+    for identifier,payload in globs:
+        asset += b'GLOB'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     name=b'test.iff'
     return (b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+
             struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
@@ -44,6 +46,44 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     report=json.loads(result.stdout)
     assert result.returncode==3 and report['status']=='fault' and report['stack_depth']==2
     assert [e['routine'] for e in report['trace']]==[4096,4097] and 'primitive 49' in report['diagnostic']
+    # Explicit single code owner -> GLOB128 semiglobal -> global call graph.
+    # Each resource role accepts only its own BHAV ID range.
+    semi=Path(folder)/'semi.far'; globals_path=Path(folder)/'globals.far'
+    owner_rows=[(4096,routine(8192,bytes([255])*8))]
+    binding=bytes([4])+b'tEsT'+b'\xa3'*7
+    def linked(owner=owner_rows,globs=((128,binding),),semi_rows=None,*extra):
+        path.write_bytes(archive(owner,globs=globs))
+        semi.write_bytes(archive(semi_rows if semi_rows is not None else [(8192,routine(256,bytes([255])*8))]))
+        globals_path.write_bytes(archive([(256,routine())]))
+        return subprocess.run([binary,str(path),'test.iff','4096','--semiglobal',str(semi),'test.iff',
+                               '--global',str(globals_path),'test.iff',*extra],capture_output=True,text=True)
+    r=linked(); d=json.loads(r.stdout)
+    assert r.returncode==0 and d['evidence']=='static_structure_only'
+    assert d['semiglobal_binding']['name']=='tEsT' and d['semiglobal_binding']['remaining_bytes']==7
+    r=linked(owner_rows,((128,binding),),None,'--run'); d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['steps']==3
+    assert [t['routine'] for t in d['trace']]==[4096,8192,256]
+    assert d['semiglobal_binding']['code_owner_entry']=='test.iff'
+    for owner,globs,semi_rows,diagnostic in [
+        (owner_rows,(),None,'nonempty code-owner'),
+        (owner_rows,((128,b'\0'),),None,'nonempty code-owner'),
+        (owner_rows,((128,binding),(128,binding)),None,'ambiguous'),
+        (owner_rows,((129,binding),),None,'nonempty code-owner'),
+        (owner_rows,((128,b'\x05test'),),None,'truncated GLOB'),
+        (owner_rows,((128,b'\x05other'),),None,'does not match'),
+        (owner_rows,((128,b'\x05a/bcd'),),None,'flat semiglobal'),
+        (owner_rows,((128,b'\x05a\\bcd'),),None,'flat semiglobal'),
+        (owner_rows,((128,b'\x05a:bcd'),),None,'flat semiglobal'),
+        (owner_rows,((128,b'\x05a\0bcd'),),None,'flat semiglobal'),
+        (owner_rows,((128,binding),),[(4096,routine())],'resource role'),
+        (owner_rows,((128,binding),),[(256,routine())],'resource role'),
+        (owner_rows,((128,binding),),[(8192,routine()),(8192,routine())],'ambiguous'),
+        (owner_rows+[(8193,routine())],((128,binding),),None,'resource role'),
+    ]:
+        r=linked(owner,globs,semi_rows)
+        assert r.returncode==2 and not r.stdout and diagnostic in r.stderr,(r.returncode,r.stdout,r.stderr)
+    r=linked(owner_rows,((128,binding),),None,'--semiglobal',str(semi),'test.iff')
+    assert r.returncode==2 and not r.stdout and 'repeated option' in r.stderr
     world_rows=[(4096,routine(2,bytes([0,0,11,0,0,2,16,3])))]
     for occupant,expected in [('0','returned_false'),('1','returned_true'),('3','returned_false')]:
         result=run(world_rows,'--run','--world-probe','--occupant',occupant)

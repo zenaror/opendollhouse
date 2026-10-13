@@ -50,7 +50,8 @@ std::uint16_t identifier(const std::string& text) {
 void load(const std::string& path, const std::string& name, odh::RoutineSet& routines,
           bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr,
           std::map<std::uint16_t,odh::SoundEvent>* sounds=nullptr,
-          std::map<std::uint16_t,odh::Bcon>* tuning=nullptr) {
+          std::map<std::uint16_t,odh::Bcon>* tuning=nullptr,
+          std::optional<odh::Glob>* binding=nullptr,std::optional<odh::RoutineScope> required_scope={}) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw odh::FormatError("cannot open archive");
     const odh::View archive(stream, std::filesystem::file_size(path));
@@ -62,6 +63,10 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
     }
     if (!selected) throw odh::FormatError("exact archive entry not found");
     odh::iff_chunks(archive.subview(selected->offset, selected->length), [&](const odh::Chunk& c) {
+        if(binding && c.type=="GLOB" && c.id==128) {
+            if(*binding)throw odh::FormatError("ambiguous code-owner GLOB128 binding");
+            *binding=odh::read_glob(c.payload);
+        }
         if(definition && c.type=="OBJD" && c.id==definition->id) {
             if(definition->binding) throw odh::FormatError("ambiguous selected OBJD");
             definition->binding=odh::read_objd_binding(c.payload);
@@ -82,6 +87,8 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
         }
         if (c.type != "BHAV") return;
         const auto key = odh::routine_key(c.id);
+        if(required_scope && key.scope!=*required_scope)
+            throw odh::FormatError("BHAV scope outside explicit resource role");
         if (globals && key.scope != odh::RoutineScope::global)
             throw odh::FormatError("non-global routine in explicit global resource");
         if (!globals && key.scope == odh::RoutineScope::global)
@@ -113,6 +120,7 @@ void instruction(const odh::Instruction& i, std::uint16_t pc) {
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::cerr << "Usage: odh-bhav ARCHIVE.far ENTRY.iff ROUTINE_ID [--run] [--global ARCHIVE.far ENTRY.iff]\n"
+                     "  [--semiglobal ARCHIVE.far ENTRY.iff] validates code-owner Pascal GLOB128 binding.\n"
                      "  [--world-probe [--occupant 0|1|3] [--posture 0..32767] [--autonomous]]\n"
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
@@ -142,7 +150,7 @@ int main(int argc, char** argv) {
         std::optional<std::uint16_t> occupant, posture, age, post_ticks, hold_ticks;
         std::optional<std::string> reset_entry;
         std::optional<std::pair<std::string,std::string>> animation;
-        std::optional<std::pair<std::string, std::string>> global;
+        std::optional<std::pair<std::string, std::string>> global,semiglobal;
         for (int n = 4; n < argc; ++n) {
             const std::string option = argv[n];
             if(option=="--view"&&!view_textures&&n+1<argc)view_textures=argv[++n];
@@ -172,6 +180,9 @@ int main(int argc, char** argv) {
             else if (option == "--animation-probe" && !animation && n+2<argc) {
                 animation=std::make_pair(argv[n+1],argv[n+2]);n+=2;
             }
+            else if(option=="--semiglobal" && !semiglobal && n+2<argc) {
+                semiglobal=std::make_pair(argv[n+1],argv[n+2]);n+=2;
+            }
             else if (option == "--global" && !global && n + 2 < argc) {
                 global = std::make_pair(argv[n + 1], argv[n + 2]); n += 2;
             } else throw odh::FormatError("invalid or repeated option");
@@ -195,7 +206,26 @@ int main(int argc, char** argv) {
         DefinitionSelection definition{object_def.value_or(0),{}, {},stand_after,{}};
         std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
         std::map<std::uint16_t,odh::Bcon> private_tuning;
-        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr);
+        std::optional<odh::Glob> semiglobal_binding;
+        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr,
+             semiglobal?&semiglobal_binding:nullptr,semiglobal?std::optional<odh::RoutineScope>(odh::RoutineScope::private_object):std::nullopt);
+        if(semiglobal) {
+            if(!semiglobal_binding || semiglobal_binding->name.empty())
+                throw odh::FormatError("explicit semiglobal requires nonempty code-owner GLOB128");
+            const auto& name=semiglobal_binding->name;
+            if(name.find_first_of("/\\:\0",0,4)!=std::string::npos || name=="." || name=="..")
+                throw odh::FormatError("GLOB128 name outside flat semiglobal archive profile");
+            if(fold(name+".iff")!=fold(semiglobal->second))
+                throw odh::FormatError("explicit semiglobal entry does not match code-owner GLOB128");
+            load(semiglobal->first,semiglobal->second,routines,false,nullptr,nullptr,nullptr,nullptr,nullptr,odh::RoutineScope::semiglobal);
+        }
+        const auto emit_semiglobal=[&] {
+            if(!semiglobal)return;
+            std::cout<<",\"semiglobal_binding\":{\"code_owner_archive\":"<<quote(argv[1])
+                     <<",\"code_owner_entry\":"<<quote(argv[2])<<",\"glob_id\":128,\"encoding\":\"pascal_u8\",\"name\":"
+                     <<quote(semiglobal_binding->name)<<",\"remaining_bytes\":"<<semiglobal_binding->remaining_bytes
+                     <<",\"archive\":"<<quote(semiglobal->first)<<",\"entry\":"<<quote(semiglobal->second)<<'}';
+        };
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
         if(stand_after) {
@@ -272,7 +302,7 @@ int main(int argc, char** argv) {
                 if (n) std::cout << ',';
                 instruction(r.instructions[n], static_cast<std::uint16_t>(n));
             }
-            std::cout << "]}\n";
+            std::cout << "]";emit_semiglobal();std::cout<<"}\n";
             return 0;
         }
         odh::World world;
@@ -533,6 +563,7 @@ int main(int argc, char** argv) {
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
                   << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps() << ",\"total_steps\":" << total_steps()
                   << ",\"stack_depth\":" << vm.stack().size();
+        emit_semiglobal();
         if(stand_after) {
             const auto& functions=*definition.functions;
             std::cout<<",\"stand_selection\":{\"objd_id\":"<<definition.id<<",\"version\":"<<functions.version

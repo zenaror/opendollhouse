@@ -80,6 +80,10 @@ da rotina; 2 indica erro de uso/recurso. Há um orçamento de 10.000 instruçõe
 distinto de ticks do jogo. A biblioteca preserva o estado para retomada ao
 esgotar o orçamento. Recursos globais opcionais são fornecidos explicitamente
 com `--global ARCHIVE.far ENTRY.iff`; não há busca nem precedência automática.
+`--semiglobal ARCHIVE.far ENTRY.iff` carrega um semiglobal ligado pelo GLOB128
+Pascal do code owner, com validação do nome e dos scopes. O JSON registra o
+vínculo. O [contrato de Main/idle do avatar](docs/person-lifecycle-validation.md)
+descreve os caminhos nativos encontrados e os limites da execução atual.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 
