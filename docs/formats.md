@@ -44,7 +44,8 @@ IFF, 1.000.000 de frames por SPR2, 4.096 interações por TTAB e 256 motivos por
 interação e 4.096 registros por SLOT. São limites de proteção deste protótipo, não
 limites atribuídos ao original. O índice FAR e os BHAVs são alocados somente após
 validação de tamanho; o inspector não expande sprites. O decoder separado
-SPR2 expande somente o frame selecionado com budgets próprios; ver
+SPR2 expande somente o frame selecionado com budgets próprios; composição CPU
+com depth/alpha em [composition-validation.md](composition-validation.md). Ver
 [sprite-validation.md](sprite-validation.md).
 
 Views compartilham um stream seekable e não são thread-safe. O inspector é uma

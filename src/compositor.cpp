@@ -1,0 +1,108 @@
+#include "odh/compositor.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace odh {
+namespace {
+struct Bounds {
+    std::int64_t x0 = 0, y0 = 0, x1 = 0, y1 = 0; // Exclusive upper bounds.
+    std::uint64_t samples = 0;
+};
+
+Bounds bounds(const SpriteLayer& layer, const RasterFrame& base) {
+    const auto& sprite = *layer.frame;
+    const auto x0 = std::max(std::int64_t{0}, std::int64_t{layer.x});
+    const auto y0 = std::max(std::int64_t{0}, std::int64_t{layer.y});
+    const auto x1 = std::min(std::int64_t{base.width},
+                             std::int64_t{layer.x} + sprite.width);
+    const auto y1 = std::min(std::int64_t{base.height},
+                             std::int64_t{layer.y} + sprite.height);
+    if(x0 >= x1 || y0 >= y1) return {};
+    return {x0, y0, x1, y1, static_cast<std::uint64_t>(x1-x0)*
+                            static_cast<std::uint64_t>(y1-y0)};
+}
+
+double depth(const SpriteLayer& layer, std::uint8_t z) {
+    return double(layer.back_depth) + ((1-double(z)/255.0)/0.4)*
+                                      double(layer.front_depth_delta);
+}
+
+bool representable(double value) {
+    const auto maximum = double(std::numeric_limits<float>::max());
+    return std::isfinite(value) && value >= -maximum && value <= maximum;
+}
+} // namespace
+
+CompositeFrame composite_sprites(const RasterFrame& base,
+                                const std::vector<SpriteLayer>& layers,
+                                CompositorLimits limits) {
+    if(base.width == 0 || base.height == 0 || base.width > limits.width ||
+       base.height > limits.height)
+        throw FormatError("compositor base dimensions exceed limits or are zero");
+    const auto count = std::uint64_t{base.width}*base.height;
+    if(count > limits.pixels || count != base.pixels.size() || count != base.depth.size())
+        throw FormatError("compositor base pixel budget or arrays invalid");
+    for(const auto& pixel : base.pixels) if(pixel[3] != 255)
+        throw FormatError("compositor base must be opaque");
+    for(const auto value : base.depth)
+        if(!std::isfinite(value) && value != std::numeric_limits<float>::infinity())
+            throw FormatError("compositor base depth must be finite or positive infinity");
+    if(layers.size() > limits.layers)
+        throw FormatError("compositor layer budget exceeded");
+
+    std::uint64_t tested_samples = 0, sprite_pixels = 0;
+    for(const auto& layer : layers) {
+        if(!layer.frame) throw FormatError("compositor sprite frame is null");
+        const auto& sprite = *layer.frame;
+        if((sprite.flags & 3U) != 3U || (sprite.flags & ~7U) != 0)
+            throw FormatError("compositor requires pixel and Z flags without unknown flags");
+        const auto pixels = std::uint64_t{sprite.width}*sprite.height;
+        if(sprite.width > limits.width || sprite.height > limits.height ||
+           pixels > limits.pixels-sprite_pixels ||
+           pixels != sprite.pixels.size() || pixels != sprite.z.size())
+            throw FormatError("compositor sprite dimensions, pixel budget or arrays invalid");
+        sprite_pixels += pixels;
+        if(!std::isfinite(layer.back_depth) || !std::isfinite(layer.front_depth_delta) ||
+           !representable(depth(layer, 0)) || !representable(depth(layer, 255)))
+            throw FormatError("compositor sprite depth range is not finite float");
+        const auto candidates = bounds(layer, base).samples;
+        if(candidates > limits.samples-tested_samples)
+            throw FormatError("compositor sample budget exceeded");
+        tested_samples += candidates;
+    }
+
+    CompositeFrame result{base, tested_samples, 0, 0, 0};
+    for(const auto& layer : layers) {
+        const auto& sprite = *layer.frame;
+        const auto box = bounds(layer, base);
+        for(auto y = box.y0; y < box.y1; ++y)
+            for(auto x = box.x0; x < box.x1; ++x) {
+                auto sx = static_cast<std::uint64_t>(x-std::int64_t{layer.x});
+                const auto sy = static_cast<std::uint64_t>(y-std::int64_t{layer.y});
+                if(layer.flip) sx = std::uint64_t{sprite.width}-1-sx;
+                const auto source = static_cast<std::size_t>(sy*sprite.width+sx);
+                const auto& pixel = sprite.pixels[source];
+                if(pixel[3] == 0) { ++result.transparent_samples; continue; }
+                const auto destination = static_cast<std::size_t>(
+                    static_cast<std::uint64_t>(y)*base.width+static_cast<std::uint64_t>(x));
+                const auto z = static_cast<float>(depth(layer, sprite.z[source]));
+                if(!(z < result.image.depth[destination])) {
+                    ++result.occluded_samples;
+                    continue;
+                }
+                auto& output = result.image.pixels[destination];
+                const auto alpha = std::uint32_t{pixel[3]};
+                for(unsigned channel = 0; channel < 3; ++channel)
+                    output[channel] = static_cast<std::uint8_t>(
+                        (std::uint32_t{pixel[channel]}*alpha +
+                         std::uint32_t{output[channel]}*(255-alpha) + 127)/255);
+                output[3] = 255;
+                result.image.depth[destination] = z;
+                ++result.shaded_samples;
+            }
+    }
+    return result;
+}
+} // namespace odh

@@ -1,0 +1,49 @@
+#pragma once
+
+#include "odh/raster.hpp"
+#include "odh/sprite.hpp"
+
+namespace odh {
+
+struct SpriteLayer {
+    const Spr2Frame* frame;
+    std::int32_t x, y; // Top-left screen placement; decoded frame offsets are caller-owned.
+    float back_depth, front_depth_delta;
+    bool flip = false;
+};
+
+struct CompositorLimits {
+    std::uint32_t layers = 4096, pixels = 1048576, width = 2048, height = 2048;
+    std::uint64_t samples = 16777216;
+};
+
+struct CompositeFrame {
+    RasterFrame image;
+    // Sprite-only counters; image retains the base raster's counters.
+    std::uint64_t tested_samples = 0, shaded_samples = 0,
+                  transparent_samples = 0, occluded_samples = 0;
+};
+
+// Integer 1:1 placement and nearest sampling, with horizontal color/Z mirroring.
+// Depth is back_depth + ((1 - z/255.0)/0.4)*front_depth_delta, evaluated in double
+// then stored as float. Smaller depth wins; ties keep the existing fragment.
+// Explicit ODH straight-RGBA profile: alpha zero discards without writing depth;
+// other alpha values write depth and source-over RGB onto an opaque destination,
+// using (src*alpha + dst*(255-alpha) + 127)/255; output alpha remains 255.
+// This profile does not establish GPU or original-game blending equivalence.
+// Base dimensions must be nonzero, arrays exact, RGBA opaque, and depth finite or
+// +infinity. All layers, including clipped/empty ones, require nonnull frames,
+// pixel and Z flags, no unknown flags, exact RGBA/Z arrays, and finite parameters
+// whose full byte-Z depth range is representable as float. Indices are ignored.
+// Width/height limits apply to the base and each sprite. The pixel limit bounds
+// the base and, separately, the sum of all layer extents (repeated frames count
+// again). Every clipped bounding-box candidate counts toward the cumulative
+// sample budget. Empty sprite extents are allowed. All validation precedes
+// copying/rendering; invalid
+// inputs or exceeded budgets throw FormatError, without mutating inputs or
+// returning a partial result.
+CompositeFrame composite_sprites(const RasterFrame& base,
+                                const std::vector<SpriteLayer>& layers,
+                                CompositorLimits = {});
+
+} // namespace odh

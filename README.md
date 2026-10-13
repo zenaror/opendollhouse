@@ -7,7 +7,8 @@ referências técnicas e inspiração; a referência de comportamento é o jogo 
 Estado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
 com testes sem janela, traces, rasterização CPU de avatar texturizado e decode
-de sprites de objetos com alpha/Z. Ainda faltam cena integrada, janela/input,
+de sprites de objetos com alpha/Z, com composição de avatar/cadeira em imagens.
+Ainda faltam cena ligada à simulação, janela/input,
 serviços completos de simulação e validação em consoles.
 
 Plataformas pretendidas: New Nintendo 3DS, PlayStation Vita, Android e Linux.
@@ -216,6 +217,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Appearances, BMF e skinning CPU](docs/mesh-validation.md)
 - [BMP e rasterização texturizada CPU](docs/render-validation.md)
 - [PALT, SPR2 com alpha/Z e grupos DGRP](docs/sprite-validation.md)
+- [Projeção e composição CPU de avatar/objeto](docs/composition-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)

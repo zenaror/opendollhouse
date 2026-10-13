@@ -118,4 +118,69 @@ with tempfile.TemporaryDirectory(prefix='odh-render-') as folder:
     bad(run(entries=replace(b'mesh.bmf', bmf()[:-1])))
     bad(run('--output', str(folder / 'absent' / 'out.ppm'), common=False), 'PPM')
     bad(run('--output', '/dev/full', common=False), 'PPM')
+    # Full private-object loader -> projection -> sprite compositor -> PPM.
+    object_archive=folder/'objects.far'
+    def object_asset(alpha=31, flags=0, missing=False):
+        def chunk(kind,ident,data):return kind+struct.pack('>IHH',76+len(data),ident,0)+bytes(64)+data
+        obj=struct.pack('<IHHH',138,0,1128,1)
+        records=b''.join(struct.pack('<III',d,3,1)+struct.pack('<IIiiIIII',1128,0,0,0,0,flags,0,0) for d in (1,4,16,64))
+        group=struct.pack('<HI',20004,4)+records
+        packet=struct.pack('<HBBBB', (2<<13)|1,255,1,alpha,0)
+        frame=struct.pack('<HHIHHhh',1,1,7,0xA3A3,0,99,99)+struct.pack('<H',2+len(packet))+packet+struct.pack('<H',5<<13)
+        sprite=struct.pack('<IIII',1000,1,2,16)+frame
+        palette=struct.pack('<II',1,2)+bytes(8)+bytes((0,0,0,20,40,200))
+        payload=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
+        pieces=[(b'OBJD',100,obj),(b'DGRP',1128,group),(b'SPR2',1128,sprite)]
+        if not missing:pieces.append((b'PALT',2,palette))
+        return payload+b''.join(chunk(*args) for args in pieces)
+    def scene_run(*tail,alpha=31,flags=0,missing=False):
+        object_archive.write_bytes(far([(b'object.iff',object_asset(alpha,flags,missing))]))
+        return run('--output',str(output),'--width','16','--height','16','--scene',str(object_archive),'object.iff','100',*tail,common=False,entries=replace(b'mesh.bmf',bmf(faces=0)))
+    d=good(scene_run());assert d['evidence']=='ODH_CPU_avatar_object_composition'
+    assert d['scene']['world_connected'] is False and d['scene']['playback_connected'] is False
+    assert d['scene']['group_id']==1128 and d['scene']['sprite_bytes']==6
+    assert d['scene']['layers'][0]['x']==8 and d['scene']['layers'][0]['y']==7
+    assert pixels()[7*16+8]==(20,40,200) and d['covered_pixels']==1
+    for rotation in range(4):
+        d=good(scene_run('--world-rotation',str(rotation)));assert d['covered_pixels']==1
+    d=good(scene_run(alpha=15));a=15*255//31
+    assert pixels()[7*16+8]==tuple((c*a+b*(255-a)+127)//255 for c,b in zip((20,40,200),(245,245,242)))
+    d=good(scene_run(alpha=0));assert d['covered_pixels']==0 and d['scene']['sprite_transparent']==1
+    d=good(scene_run('--object-position','100','100','0'));assert d['scene']['sprite_tested']==0
+    d=good(scene_run(flags=1));assert d['scene']['layers'][0]['flip'] is True
+    for tail in [('--world-zoom','0'),('--world-zoom','4'),('--world-rotation','4'),('--avatar-direction','8'),('--object-direction','1'),('--graphic','1'),('--scale','2'),('--avatar-position','NaN','0','0')]:bad(scene_run(*tail))
+    depth_file=folder/'depth.f32';d=good(scene_run('--depth-output',str(depth_file)))
+    values=struct.unpack('<256f',depth_file.read_bytes());assert sum(math.isfinite(x) for x in values)==1
+    assert math.isfinite(values[7*16+8]) and d['depth_output']==str(depth_file)
+    before=output.read_bytes()
+    bad(scene_run('--depth-output',str(output)),'must differ')
+    bad(scene_run('--depth-output',str(folder)+ '/./render.ppm'),'must differ')
+    alias=folder/'alias.depth';alias.symlink_to(output);bad(scene_run('--depth-output',str(alias)),'must differ');alias.unlink()
+    alias.hardlink_to(output);bad(scene_run('--depth-output',str(alias)),'must differ');alias.unlink()
+    assert output.read_bytes()==before
+    bad(scene_run('--depth-output',str(folder/'missing'/'out.depth')),'depth output')
+    bad(scene_run(missing=True),'chunk');bad(scene_run(flags=2),'flags')
+    for option in ('--scene','--world-zoom','--world-rotation','--object-direction','--avatar-direction','--graphic','--avatar-position','--object-position','--center-tile'):bad(run(option))
+    bad(run('--world-zoom','2'),'requires --scene')
+    object_archive.write_bytes(far([(b'object.iff',object_asset())]))
+    # Nonempty mesh analytic oracle verifies the avatar world transform branch.
+    # At pixel center(80.5,20.5), a constant-Z or constant-X triangle has a
+    # directly solvable world coordinate/depth after cardinal yaw.
+    for direction in (0,2):
+        df=folder/f'avatar-{direction}.depth'
+        args=('--output',str(output),'--width','160','--height','160','--scene',str(object_archive),'object.iff','100','--object-position','100','100','0','--avatar-direction',str(direction),'--depth-output',str(df))
+        d=good(run(*args,common=False));assert d['scene']['sprite_tested']==0
+        header=b'P6\n160 160\n255\n';raw=output.read_bytes();assert raw.startswith(header)
+        at=20*160+80;assert raw[len(header)+at*3:len(header)+at*3+3]==bytes((200,40,20))
+        x,z=(.5*6/128,0) if direction==0 else (0,-.5*6/128)
+        y=(128*(x+z)/12-(20.5-80))/(128*math.sqrt(3/8)/3)
+        expected=-math.sqrt(3/8)*(x+z)-.5*y
+        actual=struct.unpack_from('<f',df.read_bytes(),at*4)[0]
+        assert abs(actual-expected)<3e-6,(direction,actual,expected)
+        first_ppm=output.read_bytes();first_depth=struct.unpack('<25600f',df.read_bytes())
+        good(run(*args,'--avatar-position','1.5','.5','0','--center-tile','1.5','.5','0',common=False))
+        assert output.read_bytes()==first_ppm
+        moved=struct.unpack('<25600f',df.read_bytes())
+        assert all((math.isinf(a) and math.isinf(b)) or abs(a-b)<3e-6 for a,b in zip(first_depth,moved))
+
 print('Render CLI passed (original synthetic fixtures only)')
