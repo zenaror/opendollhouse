@@ -31,14 +31,15 @@ const char* vm_status_name(VmStatus status) {
     case VmStatus::ready: return "ready";
     case VmStatus::running: return "running";
     case VmStatus::budget_exhausted: return "budget_exhausted";
+    case VmStatus::waiting: return "waiting";
     case VmStatus::returned_true: return "returned_true";
     case VmStatus::returned_false: return "returned_false";
     case VmStatus::fault: return "fault";
     }
     return "invalid_status";
 }
-Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits)
-    : routines_(std::move(routines)), memory_(std::move(memory)), limits_(limits) {}
+Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits, VmPrimitive primitive)
+    : routines_(std::move(routines)), memory_(std::move(memory)), limits_(limits), primitive_(std::move(primitive)) {}
 
 void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
     const auto found = routines_.find(key);
@@ -64,6 +65,7 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
 VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
     stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
+    pending_.reset();
     status_ = VmStatus::running;
     try { push(key, context, args); }
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
@@ -206,10 +208,34 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
             } else if (instruction.opcode == 2) {
                 const auto result = expression(instruction);
                 branch(result);
-            } else throw VmError("unsupported primitive " + std::to_string(instruction.opcode));
+            } else {
+                const auto outcome = primitive_ ? primitive_(frame,instruction,temps_) : PrimitiveOutcome{};
+                switch (outcome.disposition) {
+                case PrimitiveDisposition::goto_true: branch(true); break;
+                case PrimitiveDisposition::goto_false: branch(false); break;
+                case PrimitiveDisposition::wait:
+                    if (ticket_sequence_ == std::numeric_limits<std::uint64_t>::max())
+                        throw VmError("service ticket overflow");
+                    pending_ = VmPending{++ticket_sequence_,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
+                    status_ = VmStatus::waiting; break;
+                case PrimitiveDisposition::unsupported:
+                    throw VmError(outcome.diagnostic.empty() ? "unsupported primitive " + std::to_string(instruction.opcode)
+                                                             : outcome.diagnostic);
+                default: throw VmError("invalid primitive outcome");
+                }
+            }
         } catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
     }
     if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
     return status_;
+}
+bool Vm::complete(std::uint64_t ticket, bool result) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter completion");
+    if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
+    pending_.reset();
+    status_ = VmStatus::running;
+    try { branch(result); }
+    catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
+    return true;
 }
 } // namespace odh

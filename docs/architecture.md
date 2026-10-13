@@ -33,6 +33,8 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    dos operandos, contexts e retomadas usados pelo cenário.
 3. **VM:** núcleo inicial de chamadas/expressões com traces implementado;
    entidades/slots iniciais implementados, faltam scheduler e serviços.
+   A VM já aceita aguardar uma conclusão externa sem reexecutar a primitiva;
+   o backend de roteamento e a passagem de tempo ainda precisam ser ligados.
    Traces de instruções, chamadas e estados com fixtures sintéticas e
    cenários originais identificados. Comparação com FreeSO serve de referência
    auxiliar; decisões de fidelidade precisam de evidência do original.
