@@ -24,6 +24,12 @@ Leituras relevantes no FreeSO:
 - `TSOClient/tso.simantics/Engine/VMThread.cs`, `VMStackFrame.cs` e `VMContext.cs`.
 - Provedores `TSOClient/tso.content/TS1/` e `VMTS1Activator.cs`.
 
+O leitor TTAB usa como referência de formato `TTAB.cs` e `IffFieldEncode.cs`
+de `TSOClient/tso.files/Formats/IFF/Chunks/` no FreeSO, revisão fixa
+`4c6b3e8f5835b228723caea3c9f683c62f244f73`. A implementação C++ inclui
+limites próprios, diagnóstico de truncamento e estados para layouts não lidos.
+Ler campos conforme essa referência não comprova o tratamento do original.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

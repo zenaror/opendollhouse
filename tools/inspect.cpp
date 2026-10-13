@@ -96,6 +96,18 @@ Census inspect_iff(const odh::View& view) {
             const bool big = chunk.payload.le16(0) == 0;
             ++result.versions[std::string("SPR# ") + (big ? "BE " : "LE ") +
                 std::to_string(big ? chunk.payload.be32(0) : chunk.payload.le32(0))];
+        } else if (chunk.type == "TTAB") {
+            const auto table = odh::read_ttab(chunk.payload);
+            const std::string state = table.status == odh::TtabStatus::decoded ? "decoded" :
+                table.status == odh::TtabStatus::empty ? "empty" :
+                table.status == odh::TtabStatus::legacy_unsupported ? "legacy_unsupported" : "absent_payload";
+            ++result.totals["ttab_" + state];
+            if (table.version) ++result.versions["TTAB " + std::to_string(*table.version)];
+            if (table.compressed) ++result.totals["ttab_compressed_decoded"];
+            result.totals["ttab_interactions_decoded"] += table.interactions.size();
+            result.totals["ttab_remaining_bits"] += table.remaining_bits;
+            for (const auto& interaction : table.interactions)
+                result.totals["ttab_motive_entries_decoded"] += interaction.motives.size();
         }
     });
     ++result.versions["IFF " + version];

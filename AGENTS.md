@@ -3,6 +3,10 @@
 - O desenvolvimento inicial foi autorizado em 2026-10-13. Avançar em unidades
   pequenas e verificáveis, mantendo as decisões humanas e os limites da evidência.
 - Git de trabalho: https://git.home.zsrv.com.br/zenaror/opendollhouse.
+- Meta ativa: primeira versão funcional e testável no Linux antes dos ports
+  New 3DS/Vita/Android (decisão humana de 2026-10-13). Seguir autonomamente em
+  milestones, com testes e checkpoints. New 3DS segue orientando restrições
+  arquiteturais; resultados Linux não validam consoles.
 - Consultar OMM no escopo `OpenDollhouse` nas retomadas. Ler o handoff antes de
   atualizar; usar o SHA atual em `expected_sha256`. Registrar revisão, checks,
   pendências e referências. Notas históricas de planejamento não revogam a

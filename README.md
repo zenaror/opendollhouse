@@ -8,8 +8,9 @@ Estado: primeiro protótipo de inspeção de recursos em C++17. Ainda não há j
 executável, VM funcional, renderizador ou validação em consoles.
 
 Plataformas pretendidas: New Nintendo 3DS, PlayStation Vita, Android e Linux.
-O New 3DS orienta os experimentos de consumo e desempenho. O desenvolvimento e
-os testes iniciais são feitos em Linux.
+O primeiro alvo funcional é Linux, para permitir testes, depuração e comparação
+antes dos ports. O New 3DS continua orientando consumo, carregamento e decisões
+portáveis desde o início. Cada console exigirá validação própria em hardware.
 
 ## Compilar e testar
 
@@ -46,6 +47,17 @@ contagens diferentes legitimamente. Igualdade de contagens não autentica arquiv
 o manifesto de hashes registra a identidade dos inputs efetivamente selecionados.
 Ele não cobre todos os formatos da instalação, o executável ou a ISO.
 
+Para consultar os campos de uma tabela de interação específica:
+
+```sh
+./build/odh-ttab '../The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
+```
+
+O nome da entrada é exato; o ID aceita decimal ou prefixo `0x`. A ferramenta
+rejeita seleção ambígua. Saída 0 indica tabela decodificada ou contagem vazia,
+3 indica payload ausente ou versão legada não suportada, 2 indica erro.
+O JSON preserva bits restantes e não executa os BHAVs indicados pela tabela.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -54,6 +66,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Arquitetura e próximos experimentos](docs/architecture.md)
 - [Perfil dos formatos suportados e lacunas](docs/formats.md)
 - [Validação do primeiro protótipo](docs/validation.md)
+- [Validação das tabelas de interação](docs/ttab-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

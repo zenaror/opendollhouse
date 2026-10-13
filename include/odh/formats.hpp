@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <istream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -40,6 +41,8 @@ struct Limits {
     std::uint32_t far_entries = 200000;
     std::uint32_t iff_chunks = 100000;
     std::uint32_t sprite_frames = 1000000;
+    std::uint32_t ttab_interactions = 4096;
+    std::uint32_t ttab_motives = 256;
 };
 
 struct FarEntry {
@@ -88,5 +91,34 @@ struct SpriteFrame {
 // SPR2 1000 header inspection; RLE pixels, palettes and Z are not decoded.
 void spr2_frames(const View&, const std::function<void(const SpriteFrame&)>&,
                  const Limits& = {});
+
+enum class TtabStatus { decoded, empty, legacy_unsupported, absent_payload };
+struct MotiveEntry {
+    std::int16_t minimum;
+    std::int16_t delta;
+    std::uint16_t personality_modifier;
+};
+struct Interaction {
+    std::uint16_t action;
+    std::uint16_t test;
+    std::uint32_t flags;
+    std::uint32_t label_index;
+    std::uint32_t attenuation_code;
+    std::uint32_t attenuation_bits; // Preserve IEEE-754 bits; no arithmetic here.
+    std::uint32_t autonomy_threshold;
+    std::int32_t joining_index;
+    std::vector<MotiveEntry> motives;
+};
+struct Ttab {
+    TtabStatus status;
+    std::uint16_t declared_count;
+    std::optional<std::uint16_t> version;
+    bool compressed;
+    std::uint64_t remaining_bits; // Expose padding/unknown tail, not silently discard.
+    std::vector<Interaction> interactions;
+};
+// TS1 profile: raw 4..8, version 9 compression 0/1. Versions 2/3 and absent
+// payload are explicitly classified, not converted into executable empty tables.
+Ttab read_ttab(const View&, const Limits& = {});
 
 } // namespace odh
