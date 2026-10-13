@@ -21,3 +21,6 @@ __pycache__/
 *.hsm
 *.xa
 *.sav
+
+# Pinned upstream source checkouts used only for local reference.
+/refs/upstream/

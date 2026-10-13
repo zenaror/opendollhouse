@@ -14,6 +14,11 @@
 - FreeSO/Simitone são inspiração e referências. ODH tem implementação própria.
   Identificar revisão e licença de referências; não afirmar equivalência ao
   original apenas porque uma implementação de terceiros se comporta assim.
+- Fontes FreeSO/Simitone locais em `refs/upstream/`, ignoradas no Git ODH,
+  com revisões fixadas em `docs/references.md`. Consultar primeiro com `rg` e
+  leitura de trechos; conector/web quando faltar material ou para nova revisão.
+  Preservar distinção FreeSO principal/submódulo Simitone; não rodar setup/build
+  ou atualizar os checkouts de referência durante consulta rotineira.
 - Os recursos comerciais, ISO, executáveis e saves ficam fora do checkout.
   Instalação local atual: `../referencias/The Sims`; ISO em `../referencias/`.
   A instalação foi movida pelo usuário em 2026-10-13; revalidar caminhos nas retomadas.

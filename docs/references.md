@@ -2,8 +2,8 @@
 
 FreeSO, Simitone e seus autores/contribuidores oferecem investigação e
 implementações importantes de formatos, SimAntics e integração TS1. ODH usa esses
-trabalhos como conhecimento e inspiração. Este checkout não inclui nem depende
-do runtime ou implementação C# desses projetos.
+trabalhos como conhecimento e inspiração. O código versionado do ODH não inclui
+nem depende do runtime ou implementação C# desses projetos.
 
 Revisões de referência identificadas em 2026-10-13:
 
@@ -11,6 +11,40 @@ Revisões de referência identificadas em 2026-10-13:
 - [Simitone — 4906db3156616bfaffc10ce0963cf08062975fef](https://github.com/riperiperi/Simitone/tree/4906db3156616bfaffc10ce0963cf08062975fef).
 - O submódulo FreeSO desse Simitone aponta para
   `f86bbd34b2112296ed786741f640a0535886d180`. Essas referências são distintas.
+
+## Checkouts locais de consulta
+
+Por solicitação do usuário, as fontes estão materializadas em `refs/upstream/`,
+ignorada pelo Git do ODH. Consultar primeiro esses arquivos com `rg` e ler
+somente os trechos necessários. Usar conector/web quando o material não estiver
+local ou quando for necessário verificar uma revisão externa nova. Os hashes
+fixados evitam misturar consultas de versões diferentes.
+
+| Checkout local | Revisão |
+|---|---|
+| `refs/upstream/FreeSO` | `4c6b3e8f5835b228723caea3c9f683c62f244f73` |
+| `refs/upstream/Simitone` | `4906db3156616bfaffc10ce0963cf08062975fef` |
+| `refs/upstream/Simitone/FreeSO` | `f86bbd34b2112296ed786741f640a0535886d180` (submódulo) |
+
+Os clones usam histórico raso e as duas raízes estão em HEAD destacado. O
+submódulo FreeSO específico do Simitone é materializado na revisão própria;
+outros submódulos não são inicializados. Nenhum build, setup ou runtime de
+terceiros é executado para consulta. Os diretórios não são dependências de
+compilação do ODH e não são publicados junto com seu código. Licenças e créditos
+originais permanecem nos respectivos checkouts.
+
+Uma pesquisa focada, sem percorrer arquivos de runtime/binários:
+
+```sh
+rg --no-ignore-vcs -n 'GetTuningVariable' refs/upstream/FreeSO/TSOClient/tso.simantics --glob '*.cs'
+```
+
+A economia esperada vem da reutilização dos arquivos e da leitura de trechos
+focados. O clone não mede nem garante uma quantidade específica de tokens
+poupados. Pesquisas que despejam arquivos inteiros continuam gerando contexto
+extenso, por isso devem ser evitadas.
+
+## Proveniência anterior
 
 A pesquisa inicial também consultou links `master`; esse conjunto não foi
 arquivado como snapshot integral. As revisões acima permitem consultas futuras
