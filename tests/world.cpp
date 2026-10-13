@@ -72,6 +72,83 @@ int main() {
                 chain.attach(1,0,2) && chain.attach(2,0,3),"nested container chain");
         require(!chain.attach(3,0,1) && chain.find(3)->slots[0]==0,"long containment cycle rejected");
 
+        odh::World banks;
+        require(banks.create(1,odh::EntityKind::avatar,{1,1,1,16}) &&
+                banks.create(2,odh::EntityKind::avatar,{0,0,0,7}) &&
+                banks.create(3,odh::EntityKind::object),"explicit motive bank layouts");
+        require(banks.read(f,14,6)==0 && banks.read(f,15,6)==0,
+                "allocated comfort words start at zero");
+        require(banks.write(f,14,6,45) && banks.write(f,15,6,-35) &&
+                banks.read(f,14,6)==45 && banks.read(f,15,6)==-35,
+                "motive scopes separate caller and stack avatar");
+        require(banks.write(f,14,6,std::numeric_limits<std::int16_t>::max()) &&
+                banks.read(f,14,6)==100 && banks.write(f,15,6,std::numeric_limits<std::int16_t>::min()) &&
+                banks.read(f,15,6)==-100,"motive writes clamp to fixed default bounds");
+        require(banks.set_motive(1,6,25) && banks.read(f,14,6)==25 &&
+                banks.write(f,14,6,120) && banks.read(f,14,6)==100,
+                "direct motive setter shares clipping and allows decreases");
+        require(banks.write(f,14,15,1) && banks.read(f,14,15)==1 &&
+                !banks.read(f,14,16) && !banks.write(f,14,16,7) &&
+                !banks.read(f,15,7) && !banks.write(f,15,7,7) &&
+                !banks.read(f,14,-1) && !banks.set_motive(1,-1,7),"motive allocated index bounds");
+        require(!banks.read(frame(3,3),14,0) && !banks.read(frame(3,3),15,0) &&
+                !banks.write(frame(3,3),14,0,1) && !banks.write(frame(3,3),15,0,1) &&
+                !banks.set_motive(3,0,1),"objects have no motive bank");
+        require(!banks.read(frame(9,9),14,0) && !banks.write(frame(9,9),15,0,1),
+                "missing motive entity is unsupported");
+        require(banks.create(4,odh::EntityKind::avatar,{1,1,1}) && banks.find(4)->motives.empty() &&
+                !banks.read(frame(4,4),14,0) && !banks.write(frame(4,4),15,0,1),
+                "legacy three field layout leaves motives absent");
+        const auto before_invalid=banks.word_count();
+        require(!banks.create(5,odh::EntityKind::avatar,{0,0,0,17}) &&
+                !banks.create(5,odh::EntityKind::object,{0,0,0,1}) &&
+                banks.word_count()==before_invalid && !banks.find(5),"invalid motive layouts fail atomically");
+        require(!banks.read(f,21,9) && !banks.read(frame(3,3),21,9),
+                "definition object type is never inferred from entity kind");
+        require(banks.declare_definition_word(1,9,2) && !banks.read(f,21,9) &&
+                banks.declare_definition_word(2,9,42) && banks.read(f,21,9)==42 &&
+                banks.read(frame(2,1),21,9)==2,"definition scope selects exact stack object bank");
+        const auto before_repeat=banks.word_count();
+        require(banks.declare_definition_word(2,9,42) && !banks.declare_definition_word(2,9,2) &&
+                banks.word_count()==before_repeat && banks.read(f,21,9)==42,
+                "definition declaration is immutable and idempotent");
+        require(!banks.write(f,21,9,42) && !banks.write(f,21,9,7) && !banks.write(f,21,10,7) &&
+                banks.read(f,21,9)==42 && !banks.read(f,21,10),"definition scope is always read only");
+        require(!banks.read(f,21,11) && banks.read(f,4,11)==2 &&
+                banks.declare_definition_word(2,11,81) && banks.read(f,21,11)==81 && banks.read(f,4,11)==2,
+                "definition index never falls back to derived object fields");
+        require(banks.declare_definition_word(2,0,123) && banks.declare_definition_word(2,255,-123) &&
+                banks.read(f,21,0)==123 && banks.read(f,21,255)==-123 &&
+                !banks.declare_definition_word(2,-1,1) && !banks.declare_definition_word(2,256,1) &&
+                !banks.read(f,21,-1) && !banks.read(f,21,256) &&
+                !banks.declare_definition_word(99,0,1),"explicit raw definition index profile bounds");
+        const auto generation=banks.find(2)->generation;
+        const auto before_remove=banks.word_count();
+        require(banks.remove(2) && banks.word_count()==before_remove-11 &&
+                banks.create(2,odh::EntityKind::avatar,{0,0,0,7}) &&
+                banks.find(2)->generation!=generation && banks.read(f,15,6)==0 && !banks.read(f,21,9),
+                "removal releases motives and definitions and reused IDs inherit no values");
+
+        odh::World bank_limit({4,20,2});
+        require(!bank_limit.create(1,odh::EntityKind::avatar,{0,0,0,3}) && bank_limit.word_count()==0 &&
+                bank_limit.create(1,odh::EntityKind::avatar,{0,0,0,2}),"motive per bank budget");
+        require(bank_limit.declare_definition_word(1,9,2) && bank_limit.declare_definition_word(1,255,8) &&
+                !bank_limit.declare_definition_word(1,0,7) && bank_limit.word_count()==4 &&
+                !bank_limit.read(frame(1,1),21,0),"definition per bank budget failure leaves no entry");
+        require(bank_limit.declare_definition_word(1,9,2) && !bank_limit.declare_definition_word(1,9,3) &&
+                bank_limit.word_count()==4,"full definition bank still allows identical declaration");
+        odh::World total_limit({3,4,16});
+        require(!total_limit.create(1,odh::EntityKind::avatar,{1,1,1,2}) &&
+                total_limit.word_count()==0 && !total_limit.find(1),"motive global budget failure atomic");
+        require(total_limit.create(1,odh::EntityKind::avatar,{0,0,0,3}) &&
+                total_limit.create(2,odh::EntityKind::object) && total_limit.declare_definition_word(2,9,7) &&
+                !total_limit.declare_definition_word(1,9,2) && total_limit.word_count()==4 &&
+                !total_limit.read(frame(1,1),21,9),"definition global budget failure atomic");
+        require(total_limit.declare_definition_word(2,9,7) && total_limit.set_motive(1,0,12) &&
+                total_limit.word_count()==4,"existing definition and motive writes consume no words");
+        require(total_limit.remove(1) && total_limit.remove(2) && total_limit.word_count()==0 &&
+                total_limit.create(1,odh::EntityKind::avatar,{0,0,0,4}),"new banks release global budget");
+
         // Independent synthetic program reads caller ID and a stack object slot.
         require(w.create(1,odh::EntityKind::avatar,{0,88,0}) && w.create(2,odh::EntityKind::object,{0,0,1}),"VM world setup");
         odh::Bhav r{0x8002,{{2,254,255,{0,0,11,0,0,2,16,3}}},{},odh::Bhav::Metadata{0,4,0,0}};

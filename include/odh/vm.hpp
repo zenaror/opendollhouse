@@ -58,7 +58,7 @@ struct VmFrameWrite {
 struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
-    std::optional<VmFrameWrite> write = {}; // Only immediate branch outcomes may write.
+    std::optional<VmFrameWrite> write = {}; // Branches and WAIT may publish validated frame output.
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
@@ -94,6 +94,9 @@ public:
     // An invalid frame output rejects the entire completion without consuming its ticket.
     // Completion follows the saved instruction's branch; it does not dispatch again.
     bool complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> write = {});
+    // Publish a matching wait's frame output without branching, dispatching, or
+    // consuming its ticket. Invalid/stale updates leave the entire VM unchanged.
+    bool update_pending(std::uint64_t ticket, VmFrameWrite write);
 private:
     void push(RoutineKey, VmContext, const std::vector<std::int16_t>&);
     void branch(bool);

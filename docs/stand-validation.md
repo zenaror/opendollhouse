@@ -27,8 +27,9 @@ retomada de uma rota suspensa pelo dispatcher completo.
 
 A Main1000 da cadeira é distinta: Global280(idle), MySlot0, teste de definição
 do ocupante tipo2 e4113 decimal/0x1011 (“inc comfort”). Threads, scopes de definição/tuning,
-Sleep/RNG/interrupts e motivos desse loop ainda exigem implementação; `no_thread`
-da notificação anterior continua sendo a descrição honesta do probe.
+Sleep/RNG/interrupts e motivos desse loop estavam ausentes neste checkpoint;
+[main-validation.md](main-validation.md) registra a extensão posterior com
+Sleep, interrupção e conforto. RNG real e scheduler geral continuam pendentes.
 
 ## Snap de saída e estado atômico
 

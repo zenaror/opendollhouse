@@ -49,14 +49,16 @@ int main() {
         error_return.start(key);error_return.run(1);
         require(error_return.complete(error_return.pending()->ticket,true) && error_return.status()==odh::VmStatus::fault,"FD fault on completion remains explicit");
         bool guarded=false;
+        bool update_guarded=false;
         odh::Vm* ptr=nullptr;
         odh::Vm reentry({{key,routine({{45,254,255,{}}})}}, {}, {},
             [&](const auto&,const auto&,const auto&,const auto&){
                 try{ptr->complete(1,true);}catch(const std::logic_error&){guarded=true;}
+                try{ptr->update_pending(1,{odh::VmFrameBank::arguments,0,99});}catch(const std::logic_error&){update_guarded=true;}
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_false,{}};
             });
         ptr=&reentry;reentry.start(key);
-        require(reentry.run(1)==odh::VmStatus::returned_false && guarded,"service cannot complete while dispatching");
+        require(reentry.run(1)==odh::VmStatus::returned_false && guarded && update_guarded,"service cannot complete or update while dispatching");
         for (const auto bank : {odh::VmFrameBank::arguments,odh::VmFrameBank::locals}) {
             const std::uint8_t scope=bank==odh::VmFrameBank::arguments ? 9 : 25;
             const auto program=routine({{44,1,2,{}},
@@ -90,6 +92,18 @@ int main() {
                         "out of range output atomically rejects completion");
                 require(!event.complete(ticket,result,odh::VmFrameWrite{static_cast<odh::VmFrameBank>(99),0,42}) && unchanged(),
                         "invalid output bank atomically rejects completion");
+                require(!event.update_pending(ticket+1,{bank,0,42}) && unchanged(),
+                        "wrong ticket update preserves entire waiting state");
+                require(!event.update_pending(ticket,{bank,size,42}) && unchanged() &&
+                        !event.update_pending(ticket,{static_cast<odh::VmFrameBank>(99),0,42}) && unchanged(),
+                        "invalid update bank/index atomically preserves wait");
+                require(event.update_pending(ticket,{bank,0,13}) && event.pending()->ticket==ticket &&
+                        event.status()==odh::VmStatus::waiting && event.stack().back().pc==0 &&
+                        event.steps()==steps && event.run_generation()==generation && event.diagnostic().empty(),
+                        "matching pending update publishes without branch or consuming ticket");
+                const auto& updated=bank==odh::VmFrameBank::arguments ? event.stack().back().arguments : event.stack().back().locals;
+                require(updated[0]==13 && event.update_pending(ticket,{bank,0,17}) && updated[0]==17,
+                        "one pending ticket accepts repeated validated updates");
                 require(event.complete(ticket,result,odh::VmFrameWrite{bank,0,42}) &&
                         event.stack().back().pc==(result ? 1 : 2) && event.run_generation()==generation,
                         "matching event writes frame and follows selected branch without restarting");
@@ -105,6 +119,8 @@ int main() {
                         event.stack().back().arguments[0]==8 && event.stack().back().locals[0]==0,
                         "restart invalidates event output and identifies new run");
                 const auto fresh_generation=event.run_generation();
+                require(!event.update_pending(canceled_ticket,{bank,0,99}) && event.stack().back().arguments[0]==8,
+                        "restart rejects canceled pending update without new-frame mutation");
                 require(event.start(child)==odh::VmStatus::fault && event.run_generation()==fresh_generation+1,
                         "failed start still identifies a new run");
                 odh::Vm immediate({{key,program}}, {}, {},
@@ -125,10 +141,10 @@ int main() {
                 require(invalid.run(1)==odh::VmStatus::fault && !invalid.pending() &&
                         invalid.stack().back().pc==0 && invalid.stack().back().arguments[0]==7 &&
                         invalid.stack().back().locals[0]==0 && invalid.diagnostic().find("frame output")!=std::string::npos,
-                        "invalid or forbidden immediate output faults without mutation or branch");
+                        "invalid or forbidden output faults without mutation or branch");
             }
         }
-        for (const auto disposition : {odh::PrimitiveDisposition::wait,odh::PrimitiveDisposition::unsupported,
+        for (const auto disposition : {odh::PrimitiveDisposition::unsupported,
                                       odh::PrimitiveDisposition::goto_true}) {
             odh::Vm invalid({{key,routine({{44,1,1,{}},{44,254,255,{}}})}}, {}, {},
                 [=](const auto&,const auto&,const auto&,const auto&) {
@@ -141,6 +157,20 @@ int main() {
                     invalid.stack().back().pc==0 && invalid.stack().back().arguments[0]==7 &&
                     invalid.diagnostic().find("frame output")!=std::string::npos,
                     "forbidden valid write or invalid bank never mutates frame");
+        }
+        for(const auto bank:{odh::VmFrameBank::arguments,odh::VmFrameBank::locals}) {
+            odh::Vm wait_write({{key,routine({{44,1,1,{}},{2,254,255,{0,0,42,0,0,2,
+                static_cast<std::uint8_t>(bank==odh::VmFrameBank::arguments ? 9 : 25),7}}})}}, {}, {},
+                [=](const auto&,const auto&,const auto&,const auto&) {
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{},odh::VmFrameWrite{bank,0,42}};
+                });
+            wait_write.start(key,{}, {7});
+            require(wait_write.run(1)==odh::VmStatus::waiting && wait_write.stack().back().pc==0 &&
+                    (bank==odh::VmFrameBank::arguments ? wait_write.stack().back().arguments[0] :
+                                                       wait_write.stack().back().locals[0])==42,
+                    "validated WAIT publishes argument/local before exposing pending instruction");
+            require(wait_write.complete(wait_write.pending()->ticket,true) && wait_write.run(1)==odh::VmStatus::returned_true,
+                    "following branch observes value published by WAIT");
         }
         std::cout<<checks<<" service checks passed (synthetic fixtures only)\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Service test failed: "<<e.what()<<'\n';return 1;}

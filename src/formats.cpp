@@ -5,6 +5,18 @@
 
 namespace odh {
 
+Bcon read_bcon(const View& view) {
+    const auto count = view.u8(0);
+    const auto flags = view.u8(1);
+    const std::uint64_t extent = 2 + 2 * static_cast<std::uint64_t>(count);
+    if (extent > view.size()) throw FormatError("truncated BCON constants");
+    Bcon result{flags, {}, view.size() - extent};
+    result.constants.reserve(count);
+    for (std::uint64_t i = 0; i < count; ++i)
+        result.constants.push_back(view.le16(2 + 2 * i));
+    return result;
+}
+
 View::View(std::istream& input, std::uint64_t size) : View(input, 0, size) {}
 View::View(std::istream& input, std::uint64_t base, std::uint64_t size)
     : input_(&input), base_(base), size_(size) {

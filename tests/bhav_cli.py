@@ -11,7 +11,7 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
-def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=()):
+def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=(),bcons=()):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
         asset += b'BHAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
@@ -23,6 +23,8 @@ def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=()):
         asset += b'STR#'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     for identifier,payload in sounds:
         asset += b'FWAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
+    for identifier,payload in bcons:
+        asset += b'BCON'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     name=b'test.iff'
     return (b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+
             struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
@@ -327,6 +329,75 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     for options in [('--stand-after',),('--animation-extra','extra.bcf')]:
         r=subprocess.run(args+list(options),capture_output=True,text=True)
         assert r.returncode==2 and not r.stdout
+    # A second live VM shares occupied-slot, definition and comfort memory.
+    write_bcf_entries([(b'test.bcf',[clip(b'Adult')]),(b'reset.bcf',[clip(b'Sit'),clip(b'Stand')]),
+                       (b'extra.bcf',[clip(b'Rise',b'202')])])
+    reset_global(body_tables)
+    main_definition=bytearray(function_prefix)
+    struct.pack_into('<H',main_definition,10,4098)
+    def expr(lhs,rhs,op,left,right):
+        return struct.pack('<hhBBBB',lhs,rhs,0,op,left,right)
+    main_body=body([(2,expr(0,20000,5,9,7),1,255),(0,bytes(8),2,255),
+                    (2,expr(0,0,5,10,20),3,255),(2,expr(0,1,2,10,7),4,6),
+                    (2,expr(9,2,2,21,7),5,6),(2,expr(6,128,3,15,26),6,255),
+                    (2,expr(0,2,5,9,7),7,255),(0,bytes(8),2,255)])
+    notified_initial=body([(46,bytes([0,0,3,0,4,0,0,0]),1,255),
+                            (49,bytes(8),2,255),(2,set_sit,3,255),(44,bytes(8),254,255)])
+    def main_sequence(main=main_body,definition=main_definition,bcons=((4097,b'\x01\x00\x01\x00'),),extra=(),first=notified_initial):
+        path.write_bytes(archive([(4096,first),(4097,standing),(4098,main)],
+            struct.pack('<II4sI',0,10,b'TOLS',3)+storage+snap_route+floor,128,definition,
+            ((129,table([b'',b'Adult',b'Rise'])),),bcons=bcons))
+        return subprocess.run(animation_args+stand_options+['--main-probe']+list(extra),capture_output=True,text=True)
+    r=main_sequence(extra=('--hold-ticks','6','--post-ticks','2'));d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['scene_status']=='returned', (r.returncode,r.stderr,d.get('scene_status'),d.get('object_thread',{}).get('diagnostic'))
+    assert d['idle_notifications']==[{'entity':2,'status':'notified'}]
+    assert d['object_thread']['routine']==4098 and d['object_thread']['status']=='waiting'
+    assert d['comfort_initial']==0 and d['comfort_final']>=2 and d['phases'][0]['comfort']==1
+    assert d['actual_hold_ticks']==d['requested_hold_ticks']==6 and d['post_ticks']==2
+    assert d['object_thread']['clock']==d['simulation_ticks'] and d['object_thread']['rng_cycles']>0
+    assert d['total_steps']==sum(p['steps'] for p in d['phases'])+d['object_thread']['steps']
+    assert d['object_thread']['steps']==len(d['object_thread']['trace'])
+    assert d['object_thread']['rng_backend']=='none' and d['object_thread']['rng_cycles_semantics']=='requested advances only'
+    assert d['avatar_definition_profile']=={'source':'constructed_definition','object_type':2}
+    r=main_sequence();d=json.loads(r.stdout)
+    assert r.returncode==0 and d['actual_hold_ticks']==0 and d['phases'][0]['comfort']==1
+    for extra in [('--hold-ticks','4097'),('--hold-ticks','1','--hold-ticks','2'),('--main-probe',)]:
+        r=main_sequence(extra=extra);assert r.returncode==2 and not r.stdout
+    for opts in [('--main-probe',),('--hold-ticks','1')]:
+        r=subprocess.run(animation_args+list(opts),capture_output=True,text=True)
+        assert r.returncode==2 and not r.stdout
+    for main_id in [0,280,5000]:
+        absent=bytearray(main_definition);struct.pack_into('<H',absent,10,main_id)
+        r=main_sequence(definition=absent)
+        assert r.returncode==2 and 'Main is absent' in r.stderr and not r.stdout
+    r=main_sequence(bcons=());d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='returned_true' and d['scene_status']=='fault'
+    assert len(d['phases'])==1 and d['object_thread']['status']=='fault'
+    assert 'scope 26' in d['object_thread']['diagnostic'] and d['comfort_final']==0
+    r=main_sequence(bcons=((4097,b'\x01\x00\x01\x00'),)*2)
+    assert r.returncode==2 and 'ambiguous private BCON' in r.stderr and not r.stdout
+    # Faulting Main prevents avatar execution; the chair cannot write My Motive.
+    r=main_sequence(main=routine(2,expr(6,1,5,14,7)));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['scene_status']=='fault' and d['steps']==0
+    assert 'write scope 14' in d['object_thread']['diagnostic'] and d['comfort_final']==0
+    r=main_sequence(main=routine(2,expr(9,2,5,21,7)));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['scene_status']=='fault' and 'write scope 21' in d['object_thread']['diagnostic']
+    r=main_sequence(main=struct.pack('<HH',0x8000,1)+bytes(8)+struct.pack('<HBB',2,254,255)+expr(0,1,5,8,7));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['scene_status']=='fault' and 'metadata' in d['object_thread']['diagnostic']
+    r=main_sequence(main=routine(50));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['scene_status']=='fault' and len(d['object_thread']['trace'])==1
+    r=main_sequence(main=routine(2,expr(0,1,5,8,7),yes=0),extra=('--hold-ticks','6','--post-ticks','2'));d=json.loads(r.stdout)
+    assert r.returncode==3 and d['scene_status']=='budget_exhausted' and d['total_steps']==10000
+    assert d['steps']==0 and d['actual_hold_ticks']==0 and d['post_ticks']==0
+    # A globally supplied Sleep BHAV remains under this chair's context.
+    global_sleep=body([(0,bytes(8),254,255)])
+    global_path.write_bytes(archive([(280,global_sleep)],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2,
+                                  strings=body_tables))
+    global_call=body([(280,struct.pack('<hhhh',20000,0,0,0),1,255),
+                      (2,expr(0,0,5,10,20),2,255),(2,expr(6,128,3,15,26),254,255)])
+    r=main_sequence(main=global_call);d=json.loads(r.stdout)
+    assert r.returncode==0 and d['comfort_final']==1
+    assert 280 in [e['routine'] for e in d['object_thread']['trace']]
     prefix=original_prefix
     global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2))
     many_events=(pas(b'Adult')+pas(b'absent.cfp')+

@@ -225,9 +225,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("service ticket overflow");
                 const VmDispatch dispatch{this,++ticket_sequence_};
                 const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
-                if (outcome.write && (outcome.disposition == PrimitiveDisposition::wait ||
-                                      outcome.disposition == PrimitiveDisposition::unsupported))
-                    throw VmError("wait/unsupported primitive outcome must not carry frame output");
+                if (outcome.write && outcome.disposition == PrimitiveDisposition::unsupported)
+                    throw VmError("unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
@@ -238,6 +237,11 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     }
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
+                    if (outcome.write) {
+                        auto* destination = frame_output(stack_.back(), *outcome.write);
+                        if (!destination) throw VmError("primitive frame output bank/index outside frame");
+                        *destination = outcome.write->value;
+                    }
                     pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
                     status_ = VmStatus::waiting; break;
                 case PrimitiveDisposition::unsupported:
@@ -250,6 +254,14 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
     }
     if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
     return status_;
+}
+bool Vm::update_pending(std::uint64_t ticket, VmFrameWrite output) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter pending update");
+    if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
+    auto* destination = frame_output(stack_.back(), output);
+    if (!destination) return false;
+    *destination = output.value;
+    return true;
 }
 bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> output) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter completion");

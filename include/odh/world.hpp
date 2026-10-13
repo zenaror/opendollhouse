@@ -9,6 +9,7 @@ struct EntityLayout {
     std::size_t attributes = 0;
     std::size_t person_data = 0;
     std::size_t slots = 0;
+    std::size_t motives = 0;
 };
 struct Attachment { std::int16_t container; std::size_t slot; bool positioned=false; };
 struct EntityPosition {
@@ -28,6 +29,8 @@ struct Entity {
     std::optional<EntityPosition> position;
     std::uint64_t generation;
     std::optional<EntityType> definition; // Explicit known single part or known master identity.
+    std::vector<std::int16_t> motives;
+    std::map<std::int16_t, std::int16_t> definition_words;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -49,6 +52,8 @@ public:
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
+    bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
+    bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,

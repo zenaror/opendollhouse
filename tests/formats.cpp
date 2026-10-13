@@ -58,6 +58,28 @@ std::string far(const std::string& asset) {
 
 int main() {
     try {
+        std::string constants(8, '\0');
+        put(constants, 0, 3, 1); put(constants, 1, 128, 1);
+        put(constants, 2, 1, 2); put(constants, 4, 0x8000, 2); put(constants, 6, 0xffff, 2);
+        use(constants, [](const odh::View& v) {
+            const auto b = odh::read_bcon(v);
+            require(b.flags == 128 && b.constants == std::vector<std::uint16_t>{1, 0x8000, 0xffff}
+                    && b.remaining_bytes == 0, "BCON raw words and flags");
+        });
+        use(constants + "tail", [](const odh::View& v) {
+            require(odh::read_bcon(v).remaining_bytes == 4, "BCON trailing extent");
+        });
+        use(std::string(2, '\0'), [](const odh::View& v) {
+            require(odh::read_bcon(v).constants.empty(), "empty BCON");
+        });
+        for (std::size_t n = 0; n < constants.size(); ++n)
+            use(constants.substr(0, n), [](const odh::View& v) {
+                rejects([&] { odh::read_bcon(v); }, "truncated BCON");
+            });
+        std::string maximum(512, '\0'); put(maximum, 0, 255, 1);
+        use(maximum, [](const odh::View& v) {
+            require(odh::read_bcon(v).constants.size() == 255, "BCON byte count bound");
+        });
         use("abcdef", [](const odh::View& v) {
             require(v.subview(2, 2).u8(1) == 'd', "nested view offset");
             rejects([&] { v.subview(2, 2).u8(2); }, "crossing nested boundary");

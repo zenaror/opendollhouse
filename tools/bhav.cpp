@@ -4,6 +4,7 @@
 #include "odh/playback.hpp"
 #include "odh/object_type.hpp"
 #include "odh/sound.hpp"
+#include "odh/sleep.hpp"
 #include "resource.hpp"
 
 #include <filesystem>
@@ -47,7 +48,8 @@ std::uint16_t identifier(const std::string& text) {
 }
 void load(const std::string& path, const std::string& name, odh::RoutineSet& routines,
           bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr,
-          std::map<std::uint16_t,odh::SoundEvent>* sounds=nullptr) {
+          std::map<std::uint16_t,odh::SoundEvent>* sounds=nullptr,
+          std::map<std::uint16_t,odh::Bcon>* tuning=nullptr) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw odh::FormatError("cannot open archive");
     const odh::View archive(stream, std::filesystem::file_size(path));
@@ -72,6 +74,10 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
             auto payload=c.payload;
             if(!sounds->emplace(c.id,odh::read_fwav(payload)).second)
                 throw odh::FormatError("ambiguous FWAV ID in explicit resource");
+        }
+        if(tuning && c.type=="BCON") {
+            if(!tuning->emplace(c.id,odh::read_bcon(c.payload)).second)
+                throw odh::FormatError("ambiguous private BCON ID");
         }
         if (c.type != "BHAV") return;
         const auto key = odh::routine_key(c.id);
@@ -112,6 +118,7 @@ int main(int argc, char** argv) {
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
                      "  [--reset-probe ENTRY.bcf [--post-ticks 0..4096]] requires --animation-probe; explicit global posture loops.\n"
                      "  [--stand-after] requires reset, sound, animation and snap probes; legacy selected OBJD Stand.\n"
+                     "  [--main-probe [--hold-ticks 0..4096]] requires --stand-after; constructed live chair Main.\n"
                      "  [--animation-extra ENTRY.bcf] repeat up to 16; explicit same-FAR collections.\n"
                      "  [--sound-probe] requires --animation-probe; silent FWAV requests, no audio backend.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
@@ -121,10 +128,10 @@ int main(int argc, char** argv) {
         bool run = false;
         bool world_probe = false, autonomous = false;
         bool route_probe=false;
-        bool snap_probe=false, sound_probe=false, stand_after=false;
+        bool snap_probe=false, sound_probe=false, stand_after=false, main_probe=false;
         std::vector<std::string> animation_extra;
         std::optional<std::uint16_t> object_def;
-        std::optional<std::uint16_t> occupant, posture, age, post_ticks;
+        std::optional<std::uint16_t> occupant, posture, age, post_ticks, hold_ticks;
         std::optional<std::string> reset_entry;
         std::optional<std::pair<std::string,std::string>> animation;
         std::optional<std::pair<std::string, std::string>> global;
@@ -134,6 +141,8 @@ int main(int argc, char** argv) {
             else if (option == "--world-probe" && !world_probe) world_probe = true;
             else if (option == "--route-probe" && !route_probe) route_probe=true;
             else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
+            else if (option == "--main-probe" && !main_probe) main_probe=true;
+            else if (option == "--hold-ticks" && !hold_ticks && n+1<argc) hold_ticks=identifier(argv[++n]);
             else if (option == "--stand-after" && !stand_after) stand_after=true;
             else if (option == "--animation-extra" && n+1<argc && animation_extra.size()<16) animation_extra.emplace_back(argv[++n]);
             else if (option == "--snap-probe" && !snap_probe) snap_probe=true;
@@ -158,13 +167,15 @@ int main(int argc, char** argv) {
             (posture && *posture > 32767) || (animation && !snap_probe) ||
             (age && (!animation || *age>32767)) || (sound_probe && !animation) || (reset_entry && !animation) ||
             (post_ticks && (!reset_entry || *post_ticks>4096)) ||
+            (main_probe && !stand_after) || (hold_ticks && (!main_probe || *hold_ticks>4096)) ||
             (!animation_extra.empty() && !animation) || (stand_after && (!reset_entry || !sound_probe || !snap_probe || !animation))) throw odh::FormatError("invalid constructed-world options");
         const auto key = odh::routine_key(identifier(argv[3]));
         odh::RoutineSet routines;
         std::optional<odh::SlotTable> routing_slots;
         DefinitionSelection definition{object_def.value_or(0),{}, {},stand_after,{}};
         std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
-        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr);
+        std::map<std::uint16_t,odh::Bcon> private_tuning;
+        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr);
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
         if(stand_after) {
@@ -174,6 +185,11 @@ int main(int argc, char** argv) {
             const auto stand=odh::routine_key(f.stand);
             if(stand.scope!=odh::RoutineScope::private_object || routines.find(stand)==routines.end())
                 throw odh::FormatError("selected OBJD Stand is absent from private code-owner routines");
+        }
+        if(main_probe) {
+            const auto main=odh::routine_key(definition.functions->main);
+            if(definition.functions->main==0 || main.scope!=odh::RoutineScope::private_object || routines.find(main)==routines.end())
+                throw odh::FormatError("selected OBJD Main is absent from private code-owner routines");
         }
         std::map<std::string,std::shared_ptr<const odh::AnimationHeader>> clips;
         std::map<std::uint16_t,odh::StringTable> animation_tables, reset_tables;
@@ -243,7 +259,7 @@ int main(int argc, char** argv) {
         std::size_t storage_slots=1;
         if(snap_probe) {storage_slots=0;for(const auto& r:definition.slots->records) if(r.type==0) ++storage_slots;}
         if (world_probe) {
-            if (!world.create(1,odh::EntityKind::avatar,{0,88,reset_entry?1u:0u}) ||
+            if (!world.create(1,odh::EntityKind::avatar,{0,88,reset_entry?1u:0u,main_probe?16u:0u}) ||
                 !world.create(2,odh::EntityKind::object,{0,0,storage_slots}) ||
                 !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
                 !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
@@ -252,6 +268,8 @@ int main(int argc, char** argv) {
                 (occupant.value_or(0) && !world.attach(2,0,static_cast<std::int16_t>(*occupant))))
                 throw odh::FormatError("cannot construct probe world");
         }
+        if(main_probe && (!world.declare_definition_word(1,9,2) || !world.set_motive(1,6,0)))
+            throw odh::FormatError("cannot construct avatar motive and definition profile");
         odh::RouteGrid grid(128,128);
         if(route_probe) {
             if(!world.set_position(1,{16,64,1,0}) || !world.set_position(2,{64,64,1,0}))
@@ -330,8 +348,10 @@ int main(int argc, char** argv) {
                 if(sound_requests.size()==4096)sound_event_limit_reached=true;
             }):odh::VmPrimitive{};
         const auto type_handler=snap_probe?odh::object_type_primitive(world):odh::VmPrimitive{};
+        std::uint64_t rng_cycles=0;
+        odh::Sleep main_sleep(world,[&](){++rng_cycles;});
         std::vector<std::pair<std::int16_t,std::string>> notifications;
-        const auto notify_handler=snap_probe?odh::notify_idle_primitive(world,{},[&](auto id,const auto& status){notifications.emplace_back(id,status);}):odh::VmPrimitive{};
+        const auto notify_handler=snap_probe?odh::notify_idle_primitive(world,main_probe?odh::IdleNotifySink{[&](auto id){return id==2 && main_sleep.interrupt();}}:odh::IdleNotifySink{},[&](auto id,const auto& status){notifications.emplace_back(id,status);}):odh::VmPrimitive{};
         const auto animation_handler=animation?playback->primitive():odh::VmPrimitive{};
         const auto route_handler=routing.primitive();
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
@@ -343,6 +363,30 @@ int main(int argc, char** argv) {
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
+        const auto world_memory=world.vm_memory();
+        auto main_memory=world_memory;
+        main_memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
+            if(scope!=26)return world_memory.read(frame,scope,index);
+            const auto data=static_cast<std::uint16_t>(index);
+            if(data>=8192)return {};
+            const auto table=private_tuning.find(static_cast<std::uint16_t>(4096+(data>>7)));
+            const auto item=data&127;
+            if(table==private_tuning.end() || item>=table->second.constants.size())return {};
+            const auto word=table->second.constants[item];
+            return static_cast<std::int16_t>(word<=32767?word:static_cast<std::int32_t>(word)-65536);
+        };
+        const auto sleep_handler=main_sleep.primitive();
+        std::unique_ptr<odh::Vm> main_vm;
+        if(main_probe) {
+            main_vm=std::make_unique<odh::Vm>(routines,main_memory,odh::VmLimits{},
+                [&](const auto& f,const auto& i,const auto& t,const auto& d) {
+                    if(i.opcode==0)return sleep_handler(f,i,t,d);
+                    if(i.opcode==32)return type_handler(f,i,t,d);
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"unsupported object Main primitive"};
+                });
+            if(!main_sleep.bind(*main_vm))throw odh::FormatError("cannot bind chair Main Sleep");
+            main_vm->start(odh::routine_key(definition.functions->main),{2,2,2});
+        }
         odh::Vm vm(std::move(routines),world_probe ? world.vm_memory() : odh::VmMemory{}, {},
                    handler);
         routing.bind(vm);
@@ -360,21 +404,32 @@ int main(int argc, char** argv) {
         std::cout << ",\"trace\":[";
         bool first = true;
         std::size_t phase=0, previous_steps=0;
+        std::vector<odh::VmTrace> main_trace;
+        const auto main_steps=[&](){return main_vm?main_vm->steps():0;};
+        const auto total_steps=[&](){return previous_steps+vm.steps()+main_steps();};
+        const auto main_failed=[&](){return main_vm && (main_vm->status()==odh::VmStatus::fault || main_vm->status()==odh::VmStatus::budget_exhausted);};
+        const auto pump_main=[&]() {
+            if(!main_vm || main_failed())return;
+            const auto state=main_vm->status();
+            if(state==odh::VmStatus::running)main_vm->run(total_steps()<10000?10000-total_steps():0,
+                [&](const auto& event){if(main_trace.size()<10000)main_trace.push_back(event);});
+        };
         const auto trace=[&](const odh::VmTrace& event) {
             if (!first) std::cout << ',';
             first = false;
-            std::cout << "{\"step\":" << event.step << ",\"phase\":" << phase << ",\"total_step\":" << previous_steps+event.step << ",\"depth\":" << event.depth
+            std::cout << "{\"step\":" << event.step << ",\"phase\":" << phase << ",\"total_step\":" << previous_steps+event.step+main_steps() << ",\"depth\":" << event.depth
                       << ",\"routine\":" << event.key.id << ",\"instruction\":";
             instruction(event.instruction, event.pc);
             std::cout << '}';
         };
         const auto run_probe=[&]() {
-            if(!sound_probe)return vm.run(previous_steps+vm.steps()<10000?10000-previous_steps-vm.steps():0,trace);
+            if(main_failed())return vm.status();
+            if(!sound_probe)return vm.run(total_steps()<10000?10000-total_steps():0,trace);
             auto state=vm.status();
-            if(previous_steps+vm.steps()>=10000 && (state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted))
+            if(total_steps()>=10000 && (state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted))
                 return vm.run(0,trace);
             while((state==odh::VmStatus::running || state==odh::VmStatus::budget_exhausted) &&
-                  previous_steps+vm.steps()<10000 && !sound_event_limit_reached)state=vm.run(1,trace);
+                  total_steps()<10000 && !sound_event_limit_reached)state=vm.run(1,trace);
             return state;
         };
         auto status=vm.status();
@@ -383,47 +438,58 @@ int main(int argc, char** argv) {
         std::vector<odh::PlaybackEvent> animation_events;
         bool animation_events_truncated=false, animation_event_limit_reached=false;
         struct Phase {std::uint16_t routine;odh::VmStatus status;std::size_t steps;std::uint64_t ticks;
-                      odh::EntityPosition position;std::int16_t container,posture;};
+                      odh::EntityPosition position;std::int16_t container,posture,comfort;};
         std::vector<Phase> phases;
-        const auto execute_phase=[&](std::uint16_t routine) {
-            const auto begin_tick=ticks;
-            status=run_probe();
-            while(route_probe && status==odh::VmStatus::waiting && ticks<4096 &&
-                  previous_steps+vm.steps()<10000 && !animation_event_limit_reached && !sound_event_limit_reached) {
-                routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
-                if(animation)playback->tick(ticks,[&](const auto& event){
-                    if(animation_events.size()<4096)animation_events.push_back(event);
-                    else animation_events_truncated=true;
-                });
-                if(animation_events.size()==4096)animation_event_limit_reached=true;
-                status=run_probe();
-            }
-            if(stand_after) {
-                const auto& actor=*world.find(1);
-                phases.push_back({routine,status,vm.steps(),ticks-begin_tick,*actor.position,
-                                  static_cast<std::int16_t>(actor.attachment?actor.attachment->container:0),actor.person_data[0]});
-            }
-        };
-        execute_phase(key.id);
-        if(stand_after && status==odh::VmStatus::returned_true) {
-            previous_steps+=vm.steps();++phase;
-            vm.start(odh::routine_key(definition.functions->stand),{1,2,2},{0,0,0,0});
-            execute_phase(definition.functions->stand);
-        }
-        const auto execution_ticks=ticks;
-        std::uint16_t post_ticks_run=0;
-        const bool terminal=status==odh::VmStatus::returned_true || status==odh::VmStatus::returned_false || status==odh::VmStatus::fault;
-        while(reset_entry && terminal && post_ticks_run<post_ticks.value_or(0) && !animation_event_limit_reached && !sound_event_limit_reached) {
-            ++post_ticks_run;
-            routing.tick(++ticks,[&](const auto& movement){movements.push_back(movement);});
-            playback->tick(ticks,[&](const auto& event){
+        const auto world_tick=[&]() {
+            ++ticks;
+            if(main_probe)main_sleep.tick(ticks);
+            routing.tick(ticks,[&](const auto& movement){movements.push_back(movement);});
+            if(animation)playback->tick(ticks,[&](const auto& event){
                 if(animation_events.size()<4096)animation_events.push_back(event);
                 else animation_events_truncated=true;
             });
             if(animation_events.size()==4096)animation_event_limit_reached=true;
+            status=vm.status();
+            if(status==odh::VmStatus::running || status==odh::VmStatus::waiting)status=run_probe();
+            pump_main();
+        };
+        const auto execute_phase=[&](std::uint16_t routine) {
+            const auto begin_tick=ticks;
+            if(!main_failed())status=run_probe();
+            pump_main();
+            while(route_probe && status==odh::VmStatus::waiting && ticks<4096 &&
+                  total_steps()<10000 && !main_failed() && !animation_event_limit_reached && !sound_event_limit_reached)
+                world_tick();
+            if(stand_after) {
+                const auto& actor=*world.find(1);
+                phases.push_back({routine,status,vm.steps(),ticks-begin_tick,*actor.position,
+                                  static_cast<std::int16_t>(actor.attachment?actor.attachment->container:0),actor.person_data[0],
+                                  main_probe?actor.motives[6]:static_cast<std::int16_t>(0)});
+            }
+        };
+        pump_main(); // Object Main reaches its first idle request at clock zero.
+        execute_phase(key.id);
+        std::uint16_t hold_ticks_run=0;
+        if(stand_after && status==odh::VmStatus::returned_true && !main_failed()) {
+            while(hold_ticks_run<hold_ticks.value_or(0) && total_steps()<10000 && !main_failed() &&
+                  !animation_event_limit_reached && !sound_event_limit_reached) {
+                ++hold_ticks_run;world_tick();
+            }
+            if(!main_probe || (!main_failed() && total_steps()<10000 && !animation_event_limit_reached && !sound_event_limit_reached)) {
+                previous_steps+=vm.steps();++phase;
+                vm.start(odh::routine_key(definition.functions->stand),{1,2,2},{0,0,0,0});
+                execute_phase(definition.functions->stand);
+            }
+        }
+        const auto execution_ticks=ticks;
+        std::uint16_t post_ticks_run=0;
+        const bool terminal=status==odh::VmStatus::returned_true || status==odh::VmStatus::returned_false || status==odh::VmStatus::fault;
+        while(reset_entry && terminal && post_ticks_run<post_ticks.value_or(0) && !main_failed() &&
+              (!main_probe || total_steps()<10000) && !animation_event_limit_reached && !sound_event_limit_reached) {
+            ++post_ticks_run;world_tick();
         }
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
-                  << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps() << ",\"total_steps\":" << previous_steps+vm.steps()
+                  << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps() << ",\"total_steps\":" << total_steps()
                   << ",\"stack_depth\":" << vm.stack().size();
         if(stand_after) {
             const auto& functions=*definition.functions;
@@ -437,7 +503,9 @@ int main(int argc, char** argv) {
                 std::cout<<"{\"routine\":"<<p.routine<<",\"status\":"<<quote(odh::vm_status_name(p.status))
                     <<",\"steps\":"<<p.steps<<",\"ticks\":"<<p.ticks<<",\"position\":["<<p.position.x<<','
                     <<p.position.y<<','<<p.position.level<<','<<static_cast<unsigned>(p.position.direction)
-                    <<"],\"container\":"<<p.container<<",\"posture\":"<<p.posture<<'}';
+                    <<"],\"container\":"<<p.container<<",\"posture\":"<<p.posture;
+                if(main_probe)std::cout<<",\"comfort\":"<<p.comfort;
+                std::cout<<'}';
             }
             std::cout<<']';
         }
@@ -520,7 +588,26 @@ int main(int argc, char** argv) {
             }
             std::cout<<']';
         }
+        if(main_probe) {
+            const auto scene=main_vm->status()==odh::VmStatus::fault || status==odh::VmStatus::fault?"fault":
+                total_steps()>=10000 || main_vm->status()==odh::VmStatus::budget_exhausted || status==odh::VmStatus::budget_exhausted?"budget_exhausted":
+                status==odh::VmStatus::returned_true || status==odh::VmStatus::returned_false?"returned":"incomplete";
+            std::cout<<",\"scene_status\":"<<quote(scene)<<",\"requested_hold_ticks\":"<<hold_ticks.value_or(0)
+                <<",\"actual_hold_ticks\":"<<hold_ticks_run<<",\"comfort_initial\":0,\"comfort_final\":"<<world.find(1)->motives[6]
+                <<",\"avatar_definition_profile\":{\"source\":\"constructed_definition\",\"object_type\":2}"
+                <<",\"object_thread\":{\"routine\":"<<definition.functions->main<<",\"status\":"<<quote(odh::vm_status_name(main_vm->status()))
+                <<",\"steps\":"<<main_vm->steps()<<",\"diagnostic\":"<<quote(main_vm->diagnostic())
+                <<",\"rng_backend\":\"none\",\"rng_cycles_semantics\":\"requested advances only\",\"rng_cycles\":"<<rng_cycles<<",\"clock\":"<<main_sleep.clock()<<",\"trace\":[";
+            for(std::size_t n=0;n<main_trace.size();++n) {
+                if(n)std::cout<<',';
+                const auto& e=main_trace[n];
+                std::cout<<"{\"step\":"<<e.step<<",\"depth\":"<<e.depth<<",\"routine\":"<<e.key.id<<",\"instruction\":";
+                instruction(e.instruction,e.pc);std::cout<<'}';
+            }
+            std::cout<<"]}";
+        }
         std::cout<<"}\n";
+        if(main_probe && (main_failed() || total_steps()>=10000))return 3;
         return status == odh::VmStatus::returned_true || status == odh::VmStatus::returned_false ? 0 : 3;
     } catch (const std::exception& e) {
         std::cerr << "odh-bhav: " << e.what() << '\n';

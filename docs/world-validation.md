@@ -28,6 +28,10 @@ Os slots aqui são armazenamento de ocupação. Não são os registros geométri
 de roteamento de um chunk SLOT. OBJD/SLOT, posição, footprint, multi-tile,
 motivos e inicialização real ainda precisam ser integrados.
 
+Extensão posterior: bancos de motivos14/15 e definição21 explícitos, orçamento
+e clipping estão em [main-validation.md](main-validation.md). A inicialização
+real e o decaimento de motivos continuam pendentes.
+
 Limites ODH configuráveis: 4.096 entidades, 65.536 palavras no total, 4.096
 palavras por banco. A faixa de índices int16 também limita os bancos. São
 limites de proteção; não são RAM medida nem limites atribuídos ao TS1/3DS.

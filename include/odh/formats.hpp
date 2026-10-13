@@ -91,6 +91,14 @@ struct Bhav {
 // Decode the structure only. No instruction execution or operand semantics.
 Bhav read_bhav(const View&);
 
+struct Bcon {
+    std::uint8_t flags;
+    std::vector<std::uint16_t> constants;
+    std::uint64_t remaining_bytes;
+};
+// Byte count, raw flags, then count LE16 words; preserve any trailing extent.
+Bcon read_bcon(const View&);
+
 struct SpriteFrame {
     std::uint16_t width;
     std::uint16_t height;

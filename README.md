@@ -128,7 +128,7 @@ pela STR150 global e manter seu loop. `--post-ticks 240` avança apenas os
 controladores após o fim/parada da VM, preservando seu status; não conclui a ação.
 O probe real com reset completa o BHAV selecionado, saída0/returned_true,
 com avatar no slot e alinhado à direção da cadeira. A notificação final é
-`no_thread`: o mundo construído ainda não tem scheduler/thread principal do objeto.
+`no_thread` quando a thread principal não é solicitada.
 Personagens carregando objetos e gestos das mãos ainda exigem implementação.
 
 `--stand-after --animation-extra adult-chair-stand-new.cmx.bcf` executa depois
@@ -137,6 +137,12 @@ O probe barato retorna true nas duas fases, esvazia o slot e termina com postura
 O despacho é do host de teste; ainda não é o scheduler/queue completo do jogo.
 As fases e o orçamento global aparecem no JSON. O loop após Stand é registrado
 conforme a ordem efetiva do BHAV, sem forçar uma pose visual de pé.
+
+Acrescente `--main-probe --hold-ticks 120` à sequência para executar também
+a Main da cadeira, acordá-la pela notificação ao sentar e testar o conforto
+enquanto o avatar permanece sentado. O JSON separa as duas VMs e informa
+conforto, espera e orçamento compartilhado. Esse host ainda não implementa
+queue geral, decaimento de motivos ou RNG real; veja [a validação](docs/main-validation.md).
 
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.

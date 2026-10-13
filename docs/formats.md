@@ -15,6 +15,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | BCF | Perfil binário de animações com zero skeletons/appearances; motions, ranges, propriedades e eventos brutos | Skeletons/appearances, formatos textuais CMX/SKN/ANIM e runtime |
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
+| BCON | Contagem byte, flags brutas, constantes LE16 e extensão restante; máximo estrutural de255 palavras | TRCN, semiglobal/global/OTF e precedência geral de tuning |
 | DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
 
 `read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões

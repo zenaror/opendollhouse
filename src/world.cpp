@@ -1,4 +1,5 @@
 #include "odh/world.hpp"
+#include <algorithm>
 #include <limits>
 
 namespace odh {
@@ -12,7 +13,7 @@ bool valid_position(EntityPosition position) {
            position.level>=1 && position.direction<=7;
 }
 std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
-    return scope == 0 || scope == 3 || scope == 18 || scope == 20
+    return scope == 0 || scope == 3 || scope == 14 || scope == 18 || scope == 20
         ? frame.context.caller : frame.context.stack_object;
 }
 }
@@ -21,19 +22,20 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
         (kind != EntityKind::object && kind != EntityKind::avatar) ||
         entities_.count(id) || entities_.size() >= limits_.entities ||
         layout.attributes > limits_.bank_words || layout.person_data > limits_.bank_words ||
-        layout.slots > limits_.bank_words || layout.attributes > 32768 ||
+        layout.slots > limits_.bank_words || layout.motives > limits_.bank_words ||
+        layout.motives > 16 || layout.attributes > 32768 ||
         layout.person_data > 32768 || layout.slots > 32767 ||
-        (kind != EntityKind::avatar && layout.person_data != 0)) return false;
+        (kind != EntityKind::avatar && (layout.person_data != 0 || layout.motives != 0))) return false;
     // Subtract before summing, so even caller-provided limits cannot overflow.
     auto available = limits_.words - words_;
-    for (const auto count : {layout.attributes, layout.person_data, layout.slots}) {
+    for (const auto count : {layout.attributes, layout.person_data, layout.slots, layout.motives}) {
         if (count > available) return false;
         available -= count;
     }
-    const auto count = layout.attributes + layout.person_data + layout.slots;
+    const auto count = layout.attributes + layout.person_data + layout.slots + layout.motives;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
-        std::nullopt,std::nullopt,++generation_sequence_,{}});
+        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{}});
     words_ += count;
     return true;
 }
@@ -62,6 +64,25 @@ bool World::set_person_data(std::int16_t id, std::int16_t index, std::int16_t va
     if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
         !valid_index(index,found->second.person_data.size())) return false;
     found->second.person_data[static_cast<std::size_t>(index)] = value; return true;
+}
+bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) {
+    const auto found = entities_.find(id);
+    if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
+        !valid_index(index,found->second.motives.size())) return false;
+    auto& old = found->second.motives[static_cast<std::size_t>(index)];
+    // Fixed reference default: no tuning override or motive decay in this world.
+    old = std::clamp(value,static_cast<std::int16_t>(-100),
+                     std::max(old,static_cast<std::int16_t>(100)));
+    return true;
+}
+bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value) {
+    const auto found = entities_.find(id);
+    if (found == entities_.end() || index < 0 || index > 255) return false;
+    auto& bank = found->second.definition_words;
+    const auto field = bank.find(index);
+    if (field != bank.end()) return field->second == value;
+    if (bank.size() >= limits_.bank_words || words_ >= limits_.words) return false;
+    bank.emplace(index,value); ++words_; return true;
 }
 std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
     std::vector<std::int16_t> descendants{id};
@@ -140,14 +161,23 @@ bool World::remove(std::int16_t id) {
     auto& entity = found->second;
     if (entity.attachment) detach(entity.attachment->container,entity.attachment->slot);
     for (std::size_t slot = 0; slot < entity.slots.size(); ++slot) detach(id,slot);
-    words_ -= entity.attributes.size() + entity.person_data.size() + entity.slots.size() + entity.object_words.size();
+    words_ -= entity.attributes.size() + entity.person_data.size() + entity.slots.size() +
+              entity.object_words.size() + entity.motives.size() + entity.definition_words.size();
     entities_.erase(found); return true;
 }
 std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope, std::int16_t index) const {
-    if (scope != 0 && scope != 1 && scope != 3 && scope != 4 && scope != 16 &&
-        scope != 18 && scope != 19 && scope != 20) return std::nullopt;
+    if (scope != 0 && scope != 1 && scope != 3 && scope != 4 && scope != 14 && scope != 15 &&
+        scope != 16 && scope != 18 && scope != 19 && scope != 20 && scope != 21) return std::nullopt;
     const auto* entity = find(scope_entity(frame,scope));
     if (!entity) return std::nullopt;
+    if (scope == 21) {
+        const auto field = entity->definition_words.find(index);
+        return field == entity->definition_words.end() ? std::nullopt : std::optional<std::int16_t>(field->second);
+    }
+    if (scope == 14 || scope == 15) {
+        if (entity->kind != EntityKind::avatar || !valid_index(index,entity->motives.size())) return std::nullopt;
+        return entity->motives[static_cast<std::size_t>(index)];
+    }
     if (scope == 0 || scope == 1) {
         if (!valid_index(index,entity->attributes.size())) return std::nullopt;
         return entity->attributes[static_cast<std::size_t>(index)];
@@ -176,6 +206,7 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
         entity.attributes[static_cast<std::size_t>(index)] = value; return true;
     }
     if (scope == 18 || scope == 19) return set_person_data(entity.id,index,value);
+    if (scope == 14 || scope == 15) return set_motive(entity.id,index,value);
     if ((scope == 3 || scope == 4) && !derived(index)) {
         const auto field = entity.object_words.find(index);
         if (field == entity.object_words.end()) return false;
