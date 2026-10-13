@@ -173,6 +173,18 @@ O verificador compara campos brutos exatamente e poses numericamente; o CFP do
 relatório deve ter passado pelo gate `compare_cfp.py` acima. Detalhes e limites
 estão em [pose-validation.md](docs/pose-validation.md).
 
+`odh-mesh` lê uma appearance/BMF e aplica skinning CPU à pose. Exporta JSON e,
+opcionalmente, OBJ com vertices/UVs/normals; ainda sem texturas ou renderer de jogo.
+
+```sh
+./build/odh-mesh '../referencias/The Sims/GameData/Animation/Animation.far' b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf adult-skeleton.cmx.bcf adult --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 80.5 --obj reports/mesh-body-80_5.obj > reports/mesh-body-80_5.json
+python3 tools/compare_mesh.py '../referencias/The Sims/GameData/Animation/Animation.far' b001mafit_01.cmx.bcf xskin-b001mafit_01-PELVIS-BODY.bmf reports/mesh-body-80_5.json
+```
+
+`preview_mesh.py OUTPUT.png REPORT...` produz uma prévia diagnóstica sem
+texturas usando Pillow no host. Contratos e gates em
+[mesh-validation.md](docs/mesh-validation.md).
+
 ## Documentação
 
 - [Arquitetura e próximos experimentos](docs/architecture.md)
@@ -188,6 +200,7 @@ estão em [pose-validation.md](docs/pose-validation.md).
 - [Snap, definição do objeto e ocupação](docs/snap-validation.md)
 - [Recursos de animação e próximo contrato da VM](docs/animation-validation.md)
 - [Skeleton, interpolação e transformações da pose](docs/pose-validation.md)
+- [Appearances, BMF e skinning CPU](docs/mesh-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)

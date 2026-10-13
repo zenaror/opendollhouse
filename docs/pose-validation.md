@@ -1,5 +1,8 @@
 # Skeleton e pose de animação — 2026-10-13
 
+Extensão posterior: appearances/BMF e skinning estão em
+[mesh-validation.md](mesh-validation.md). A evidência abaixo permanece do sampler.
+
 O núcleo agora lê skeletons binários BCF e calcula poses a partir de um clipe e
 seu CFP, com interpolação e composição hierárquica. `odh-pose` expõe as matrizes
 e pode exportar um desenho de ossos. Isso prepara o desenho do personagem;

@@ -41,8 +41,9 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    auxiliar; decisões de fidelidade precisam de evidência do original.
 4. **Composição gráfica Linux cedo:** sprites com profundidade, personagens
    animados. Skeleton/interpolação/matrizes iniciais implementados em
-   [pose-validation.md](pose-validation.md); meshes/skinning/texturas e compositor
-   ainda pendentes. O objetivo inclui paredes e sobreposição, com capturas e cenas
+   [pose-validation.md](pose-validation.md), e meshes/skinning iniciais em
+   [mesh-validation.md](mesh-validation.md); texturas e compositor ainda pendentes.
+   O objetivo inclui paredes e sobreposição, com capturas e cenas
    reproduzíveis. Conservar
    uma interface que permita experimentar software, híbrido CPU/GPU e geometria
    derivada no futuro backend New 3DS. PICA200 não oferece fragment shader
