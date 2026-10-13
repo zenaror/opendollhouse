@@ -3,6 +3,7 @@
 Checkpoint de 2026-10-13. `odh-person` liga um avatar e seu semiglobal a uma VM
 permanente, com Sleep e InteractionQueue no mesmo relógio. Executa o Main real
 ou uma rotina privada selecionada explicitamente e preserva o primeiro fault.
+O avanço posterior de scope26 está em [tuning-validation.md](tuning-validation.md).
 É um host de diagnóstico sem janela; não substitui o preview e não representa
 um avatar/lote completamente inicializado.
 
@@ -117,8 +118,9 @@ A leitura de referência e dos recursos localiza tuning necessário a Init:
 `0x4084`→GlobalBCON257[4]=1 e `0x4087`→GlobalBCON257[7]=7. A referência divide
 Tuning em faixas private/semi/global e consulta o recurso correspondente ao
 owner; o resolver do probe anterior da cadeira só fornecia private BCON.
-O novo host ainda não possui resolver26. Uma implementação por owner e bank
-explicitamente carregado é o próximo gate, com ausência diferente de zero.
+Esse era o limite deste checkpoint inicial. O avanço posterior liga resolver26
+por owner com BCON explícitos e ausência diferente de zero; o Init agora alcança
+o contexto de lote, conforme [tuning-validation.md](tuning-validation.md).
 
 8325/init motives chama global321, que usa lote atual e GenericTS1Call/28 para
 zoning. A área de lote/globals deve vir de contexto explícito. A árvore4100 de

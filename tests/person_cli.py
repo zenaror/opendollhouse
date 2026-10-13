@@ -14,11 +14,13 @@ def archive(path,name,chunks):
  name=name.encode('ascii');path.write_bytes(b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
 with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  root=Path(folder);avatar=root/'avatar.far';semi=root/'semi.far';glob=root/'global.far';action=root/'action.far'
- def setup(main=None,global_rows=None,action_rows=None):
-  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))])
-  archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))])
-  archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))])
-  archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))])
+ def bcons(tables):
+  return [('BCON',rid,bytes([len(values),0])+struct.pack('<'+'H'*len(values),*values)) for rid,values in tables]
+ def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=()):
+  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+bcons(private_bcons))
+  archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))]+bcons(semi_bcons))
+  archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))]+bcons(global_bcons))
+  archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
  def run(extra=()):return subprocess.run(args+list(extra),capture_output=True,text=True)
@@ -29,6 +31,26 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['trace'][2]['routine']==d['trace'][4]['routine']==256 and d['trace'][2]['pc']==d['trace'][4]['pc']==0
  assert d['avatar']['guid']==0x11111111 and d['action']['guid']==0x22222222 and d['actor_state']['flags']==256
  assert 'full Init' in d['initialization'] and 'FreeSO' in d['constructor_profile'] and d['stack']==[]
+ def tuned(temp,query,t=254):return (2,t,255,[temp,0,query&255,query>>8,0,5,8,26])
+ setup(global_rows=[tuned(3,0,1),tuned(4,0x2000,2),tuned(5,0x4000,3),(17,4,253,[0,0,1,0,0,0,0,0]),expr(6,1)],
+       action_rows=[tuned(0,0,1),tuned(1,0x2000,255)],private_bcons=[(4096,[65534])],semi_bcons=[(8192,[11])],
+       global_bcons=[(256,[0])],action_bcons=[(4096,[25]),(8192,[126])])
+ r=run(action_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['completion']['result'] is False and d['ticks']==1
+ assert d['tuning_reads']==[
+  dict(owner=1,scope='private',table=4096,index=0,value=-2,semiglobal_fallback=False),
+  dict(owner=1,scope='semiglobal',table=8192,index=0,value=11,semiglobal_fallback=False),
+  dict(owner=1,scope='global',table=256,index=0,value=0,semiglobal_fallback=False),
+  dict(owner=2,scope='private',table=4096,index=0,value=25,semiglobal_fallback=False),
+  dict(owner=2,scope='semiglobal',table=8192,index=0,value=126,semiglobal_fallback=True)]
+ assert 'BCON only' in d['tuning_profile']
+ # Existing semiglobal with missing table must not use the private cache.
+ setup(main=[tuned(0,0x2000)],private_bcons=[(8192,[99])]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported read scope 26 index 8192' and d['tuning_reads']==[]
+ setup(main=[tuned(0,0x4001)],global_bcons=[(256,[0])]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported read scope 26 index 16385' and d['tuning_reads']==[]
+ setup(private_bcons=[(4096,[1]),(4096,[2])]);r=run()
+ assert r.returncode==2 and not r.stdout and 'ambiguous BCON' in r.stderr
  setup();r=run(action_args+['--ticks','0']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['tick_budget_exhausted'] and d['status']=='yielded' and d['completion']['tick']==0
  setup(global_rows=[(17,1,253,[0,0,0,0,0,0,0,0]),expr(3,1)])

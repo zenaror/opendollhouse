@@ -1,5 +1,6 @@
 #include "odh/interaction.hpp"
 #include "odh/sleep.hpp"
+#include "odh/tuning.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -9,6 +10,7 @@ namespace {
 struct Resource {std::string archive,entry;};
 struct Loaded {
     odh::RoutineSet routines;
+    odh::TuningTables tuning;
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::Glob> glob;
@@ -19,6 +21,9 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
     Loaded result;
     with_far_entry(resource.archive,resource.entry,[&](const auto& view){
         odh::iff_chunks(view,[&](const auto& chunk){
+            if(chunk.type=="BCON") {
+                if(!result.tuning.emplace(chunk.id,odh::read_bcon(chunk.payload)).second)throw odh::FormatError("ambiguous BCON ID in explicit resource");
+            }
             if(chunk.type=="BHAV") {
                 const auto key=odh::routine_key(chunk.id);
                 if(key.scope!=role)throw odh::FormatError("BHAV outside explicit resource role");
@@ -85,13 +90,27 @@ int main(int argc,char** argv) {
     }
     if(!world.declare_object_word(1,8,signed_word(flags.value_or(256))))throw odh::FormatError("flags fixture construction failed");
     if(age&&!world.set_person_data(1,58,static_cast<std::int16_t>(*age)))throw odh::FormatError("age fixture construction failed");
+    odh::TuningResources tuning_resources;
+    tuning_resources.globals=std::move(shared.tuning);
+    tuning_resources.owners.emplace(1,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
+    if(action)tuning_resources.owners.emplace(2,odh::TuningOwner{std::move(action_data->tuning),{},odh::TuningSemiState::absent});
+    const odh::BconTuning tuning(std::move(tuning_resources));
+    std::vector<odh::TuningValue> tuning_reads;
+    const auto world_memory=world.vm_memory();auto memory=world_memory;
+    memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
+        if(scope!=26)return world_memory.read(frame,scope,index);
+        const auto value=tuning.read(frame.context.code_owner,index);
+        if(!value)return {};
+        if(tuning_reads.size()>=20000)throw odh::FormatError("tuning read log exceeds bounded host profile");
+        tuning_reads.push_back(*value);return value->value;
+    };
     odh::RoutineOwners owners{{1,std::move(person.routines)}};
     if(action){owners.emplace(2,std::move(action_data->routines));
         if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");}
     std::uint64_t rng_requests=0;
     odh::Sleep sleep(world,[&]{++rng_requests;});odh::InteractionQueue queue(world,1);
     const auto sleep_handler=sleep.primitive(),queue_handler=queue.primitive();
-    odh::Vm vm(std::move(shared.routines),world.vm_memory(),{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
+    odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
@@ -132,6 +151,13 @@ int main(int argc,char** argv) {
     if(action)std::cout<<"{\"archive\":"<<json_bytes(action->archive)<<",\"entry\":"<<json_bytes(action->entry)<<",\"objd_id\":"<<*action_def<<",\"guid\":"<<action_data->binding->guid<<",\"owner\":2,\"routine\":"<<*action_routine<<'}';else std::cout<<"null";
     std::cout<<",\"completion\":";
     if(queue.completion()){const auto& c=*queue.completion();std::cout<<"{\"uid\":"<<c.uid<<",\"ticket\":"<<c.ticket<<",\"tick\":"<<c.tick<<",\"result\":"<<(c.result?"true":"false")<<'}';}else std::cout<<"null";
+    std::cout<<",\"tuning_profile\":\"explicit BCON only; no OTF or entity replacement backend; missing remains unsupported\",\"tuning_reads\":[";
+    for(std::size_t n=0;n<tuning_reads.size();++n){if(n)std::cout<<',';const auto& v=tuning_reads[n];
+        const auto scope=v.address.scope==odh::RoutineScope::global?"global":v.address.scope==odh::RoutineScope::semiglobal?"semiglobal":"private";
+        std::cout<<"{\"owner\":"<<v.owner<<",\"scope\":"<<json_bytes(scope)<<",\"table\":"<<v.address.table<<",\"index\":"<<static_cast<unsigned>(v.address.index)
+            <<",\"value\":"<<v.value<<",\"semiglobal_fallback\":"<<(v.semiglobal_fallback?"true":"false")<<'}';
+    }
+    std::cout<<']';
     const auto* actor=world.find(1);
     std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)
         <<",\"age_initial\":"<<age.value_or(0)<<",\"actor_state\":{\"flags\":"<<actor->object_words.at(8)<<",\"age\":"<<actor->person_data[58]
