@@ -15,7 +15,9 @@ A meta Linux funcional continua aberta.
   enquanto não houver perfil explícito de frames legados.
 - Chamadas diretas opcode >= 256: global abaixo de 4096, privado abaixo de
   8192, semiglobal a partir de 8192. O conjunto de recursos é explícito para
-  um code owner. Não há mudança dinâmica de proprietário, função/OBJf ou
+  um code owner no checkpoint inicial. O avanço posterior de bancos por owner
+  e invocações explícitas está em [code-owner-validation.md](code-owner-validation.md).
+  Ainda não há função/OBJf ou
   precedência de arquivos. Global/privado/semiglobal não se misturam por ID.
 - Quatro palavras de argumento; -1 usa temp correspondente quando ao menos
   um argumento 1..3 é diferente de zero, conforme a referência FreeSO.

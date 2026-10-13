@@ -38,10 +38,10 @@ Somente BHAVs privados são aceitos no owner desse modo; somente semiglobais
 no recurso ligado; somente globais em `--global`. O JSON registra os dois
 arquivos, GLOB/encoding/nome/extensão. Não busca arquivos automaticamente.
 
-A VM ainda tem um único banco privado por conjunto de rotinas. Isso permite
-inspecionar o avatar com seu semiglobal, mas não juntar privados do avatar e
-da cadeira, que ambos possuem4096. Frames com code owners distintos e recursos
-por owner são trabalho pendente para a queue geral.
+O CLI deste checkpoint fornece um único banco privado e não junta avatar e
+cadeira4096. A biblioteca agora suporta bancos por owner e chamadas explícitas
+entre frames, conforme [code-owner-validation.md](code-owner-validation.md);
+a integração desses bancos ao host e à queue geral continua pendente.
 
 ## Contrato da referência e estrutura nativa
 
@@ -118,7 +118,7 @@ recursos; não há evidência para reset incondicional após qualquer interaçã
 - O cenário anterior cadeira/Sit/hold120/Stand/post240 permanece94 dispatches,
   662 ticks, Comfort3; todos os campos JSON da simulação são iguais à baseline.
 
-A próxima unidade precisa modelar code owner nos frames/bancos e a continuação
+A próxima unidade precisa integrar os bancos por owner à continuação
 Main/AllowPush, depois ampliar Sleep/RNG/escopos/resolução Misc e recursos do
 avatar em gates limitados. O idle em pé, a inicialização completa, a comparação
 visual com o original, lote/save e consoles permanecem pendentes.

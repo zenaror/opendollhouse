@@ -47,13 +47,37 @@ const char* vm_status_name(VmStatus status) {
     }
     return "invalid_status";
 }
-Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits, VmPrimitive primitive)
-    : routines_(std::move(routines)), memory_(std::move(memory)), limits_(limits), primitive_(std::move(primitive)) {}
+Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits, VmPrimitive primitive, RoutineOwners owners)
+    : routines_(std::move(routines)), owners_(std::move(owners)), memory_(std::move(memory)), limits_(limits), primitive_(std::move(primitive)) {
+    if(!limits_.code_owners || owners_.size()>=limits_.code_owners)
+        throw std::invalid_argument("VM code owner limit");
+    for(const auto& owner:owners_) {
+        if(owner.first==0)throw std::invalid_argument("default code owner zero cannot be replaced");
+        for(const auto& entry:owner.second) {
+            const auto expected=routine_key(entry.first.id);
+            if(entry.first.scope==RoutineScope::global || entry.first.scope!=expected.scope)
+                throw std::invalid_argument("additional owner contains invalid routine scope");
+        }
+    }
+}
+const Bhav* Vm::resolve(RoutineKey key, CodeOwner owner) const {
+    if(owner!=0 && owners_.find(owner)==owners_.end())return nullptr;
+    const auto& bank=(key.scope==RoutineScope::global || owner==0)?routines_:owners_.at(owner);
+    const auto found=bank.find(key);
+    return found==bank.end()?nullptr:&found->second;
+}
+const Bhav& Vm::current_routine(const VmFrame& frame) const {
+    const auto* routine=resolve(frame.key,frame.context.code_owner);
+    if(!routine)throw VmError("frame code-owner routine unavailable");
+    return *routine;
+}
 
 void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
-    const auto found = routines_.find(key);
-    if (found == routines_.end()) throw VmError("routine not supplied: " + std::to_string(key.id));
-    const auto& routine = found->second;
+    if(context.code_owner!=0 && owners_.find(context.code_owner)==owners_.end())
+        throw VmError("code owner not supplied: " + std::to_string(context.code_owner));
+    const auto* found = resolve(key,context.code_owner);
+    if (!found) throw VmError("routine not supplied: " + std::to_string(key.id) + " code owner " + std::to_string(context.code_owner));
+    const auto& routine = *found;
     if (routine.version != 0x8002 || !routine.metadata)
         throw VmError("execution requires BHAV 8002 metadata");
     if (routine.instructions.empty()) throw VmError("empty routine has no entry instruction");
@@ -165,14 +189,14 @@ void Vm::branch(bool result) {
     // Iteratively unwind returning children; parent stays on its call instruction.
     while (!stack_.empty()) {
         auto& frame = stack_.back();
-        const auto& instruction = routines_.at(frame.key).instructions.at(frame.pc);
+        const auto& instruction = current_routine(frame).instructions.at(frame.pc);
         auto target = result ? instruction.on_true : instruction.on_false;
         if (target == 0xFD) {
             target = instruction.on_true != 0xFD ? instruction.on_true : instruction.on_false;
             if (target == 0xFD) throw VmError("both branches are FD error destinations");
         }
         if (target < 0xFD) {
-            if (target >= routines_.at(frame.key).instructions.size()) throw VmError("branch outside routine");
+            if (target >= current_routine(frame).instructions.size()) throw VmError("branch outside routine");
             frame.pc = target; return;
         }
         result = target == 0xFE;
@@ -192,20 +216,20 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
     for (std::uint64_t used = 0; used < budget && status_ == VmStatus::running; ++used) {
         try {
             const auto& frame = stack_.back();
-            const auto& routine = routines_.at(frame.key);
+            const auto& routine = current_routine(frame);
             if (frame.pc >= routine.instructions.size()) throw VmError("instruction pointer outside routine");
             const auto instruction = routine.instructions[frame.pc];
             if (steps_ == std::numeric_limits<std::uint64_t>::max()) throw VmError("step counter overflow");
-            if (trace) trace(VmTrace{steps_, stack_.size(), frame.key, frame.pc, instruction});
+            if (trace) trace(VmTrace{steps_, stack_.size(), frame.key, frame.pc, instruction,frame.context.code_owner});
             ++steps_;
             if (instruction.opcode >= 256) {
                 const auto key = routine_key(instruction.opcode);
-                const auto found = routines_.find(key);
-                if (found == routines_.end() || !found->second.metadata) {
+                const auto* found = resolve(key,frame.context.code_owner);
+                if (!found || !found->metadata) {
                     push(key, frame.context, {}); // Produce the specific missing/metadata diagnostic.
                     continue;
                 }
-                const auto count = std::max<std::size_t>(4, found->second.metadata->arguments);
+                const auto count = std::max<std::size_t>(4, found->metadata->arguments);
                 if (count > temps_.size()) throw VmError("call argument count exceeds supported temp mapping");
                 std::vector<std::int16_t> args(count);
                 const bool substitute = operand_word(instruction, 2) != 0 ||
@@ -225,9 +249,15 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("service ticket overflow");
                 const VmDispatch dispatch{this,++ticket_sequence_};
                 const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
+                if(outcome.call && outcome.disposition!=PrimitiveDisposition::call)
+                    throw VmError("primitive call payload requires call disposition");
                 if (outcome.write && outcome.disposition == PrimitiveDisposition::unsupported)
                     throw VmError("unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
+                case PrimitiveDisposition::call:
+                    if(!outcome.call || outcome.write)throw VmError("primitive call requires child and forbids frame output");
+                    push(outcome.call->key,outcome.call->context,outcome.call->arguments);
+                    break;
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
                     if (outcome.write) {
@@ -242,7 +272,7 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                         if (!destination) throw VmError("primitive frame output bank/index outside frame");
                         *destination = outcome.write->value;
                     }
-                    pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction},frame.context};
+                    pending_ = VmPending{dispatch.ticket,VmTrace{steps_-1,stack_.size(),frame.key,frame.pc,instruction,frame.context.code_owner},frame.context};
                     status_ = VmStatus::waiting; break;
                 case PrimitiveDisposition::unsupported:
                     throw VmError(outcome.diagnostic.empty() ? "unsupported primitive " + std::to_string(instruction.opcode)

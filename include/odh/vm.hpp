@@ -13,8 +13,12 @@ struct RoutineKey {
         return scope != other.scope ? scope < other.scope : id < other.id;
     }
 };
+using CodeOwner = std::uint32_t; // Resource identity; independent of World entity IDs.
 // Explicit resource set for one code owner. No implicit file precedence.
 using RoutineSet = std::map<RoutineKey, Bhav>;
+// Additional immutable owners contain only private/semiglobal routines.
+// Owner zero is reserved for the default set; global routines are shared there.
+using RoutineOwners = std::map<CodeOwner, RoutineSet>;
 RoutineKey routine_key(std::uint16_t id);
 
 enum class VmStatus { ready, running, budget_exhausted, waiting, returned_true, returned_false, fault };
@@ -23,6 +27,7 @@ struct VmContext {
     std::int16_t caller = 0;
     std::int16_t callee = 0;
     std::int16_t stack_object = 0;
+    CodeOwner code_owner = 0;
 };
 struct VmFrame {
     RoutineKey key;
@@ -37,6 +42,7 @@ struct VmTrace {
     RoutineKey key;
     std::uint16_t pc;
     Instruction instruction;
+    CodeOwner code_owner = 0;
 };
 // World scopes are supplied explicitly by the eventual entity/world layer.
 // Empty callbacks or nullopt mean unsupported, never zero or success.
@@ -47,8 +53,14 @@ struct VmMemory {
 struct VmLimits {
     std::size_t stack_depth = 64;
     std::size_t frame_variables = 4096;
+    std::size_t code_owners = 64; // Includes default owner zero.
 };
-enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported };
+enum class PrimitiveDisposition { goto_true, goto_false, wait, unsupported, call };
+struct VmCall {
+    RoutineKey key;
+    VmContext context;
+    std::vector<std::int16_t> arguments;
+};
 enum class VmFrameBank { arguments, locals };
 struct VmFrameWrite {
     VmFrameBank bank;
@@ -59,6 +71,7 @@ struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
     std::optional<VmFrameWrite> write = {}; // Branches and WAIT may publish validated frame output.
+    std::optional<VmCall> call = {}; // Explicit child frame; parent remains on this instruction.
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
@@ -74,7 +87,8 @@ struct VmPending {
 // No scheduler, entities, queue, routing, animation, or clock is implied.
 class Vm {
 public:
-    explicit Vm(RoutineSet routines, VmMemory memory = {}, VmLimits limits = {}, VmPrimitive primitive = {});
+    explicit Vm(RoutineSet routines, VmMemory memory = {}, VmLimits limits = {}, VmPrimitive primitive = {},
+                RoutineOwners owners = {});
     Vm(const Vm&) = delete;
     Vm& operator=(const Vm&) = delete;
     Vm(Vm&&) = delete;
@@ -98,12 +112,15 @@ public:
     // consuming its ticket. Invalid/stale updates leave the entire VM unchanged.
     bool update_pending(std::uint64_t ticket, VmFrameWrite write);
 private:
+    const Bhav* resolve(RoutineKey, CodeOwner) const;
+    const Bhav& current_routine(const VmFrame&) const;
     void push(RoutineKey, VmContext, const std::vector<std::int16_t>&);
     void branch(bool);
     bool expression(const Instruction&);
     std::int16_t read(std::uint8_t, std::int16_t);
     void write(std::uint8_t, std::int16_t, std::int32_t);
     RoutineSet routines_;
+    RoutineOwners owners_;
     VmMemory memory_;
     VmLimits limits_;
     std::vector<VmFrame> stack_;
