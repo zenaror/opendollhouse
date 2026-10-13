@@ -58,6 +58,12 @@ Para a ligação inicial de roteamento foram também consultados `VMRoutingFrame
 escreve person data RouteEntryFlags na chegada; snap Mode3 é Literal. O backend
 ODH ainda tem regras provisórias descritas em `routing-validation.md`.
 
+O perfil de contenção consultou `Entities/VMGameObject.cs` (`PlaceInSlot`) no
+mesmo FreeSO fixo: posição física acompanha a do recipiente, com dados SLOT
+de offset/altura disponíveis para representação. O prefixo OBJD foi conferido
+em `TSOClient/tso.files/Formats/IFF/Chunks/OBJD.cs`. A aplicação visual da
+altura ainda não está implementada.
+
 Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
 com verificações próprias de limites e fixtures sintéticas. A referência de
 comportamento final continua sendo o executável original identificado.

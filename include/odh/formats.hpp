@@ -152,5 +152,11 @@ struct SlotTable {
 SlotTable read_slot(const View&, const Limits& = {});
 // Index within a type group, preserving file order (not absolute record index).
 const SlotRecord* slot_of_type(const SlotTable&, std::uint16_t type, std::size_t index);
+struct ObjdBinding {
+    std::uint32_t version,guid;
+    std::uint16_t animation_table,slot_table;
+};
+// Only the stable prefix through SlotID. Does not validate the complete OBJD.
+ObjdBinding read_objd_binding(const View&);
 
 } // namespace odh

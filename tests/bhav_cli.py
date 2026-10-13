@@ -11,12 +11,14 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
-def archive(rows,slots=None):
+def archive(rows,slots=None,slot_id=100,objd=None):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
         asset += b'BHAV'+struct.pack('>IHH',76+len(payload),identifier,0)+bytes(64)+payload
     if slots is not None:
-        asset += b'SLOT'+struct.pack('>IHH',76+len(slots),100,0)+bytes(64)+slots
+        asset += b'SLOT'+struct.pack('>IHH',76+len(slots),slot_id,0)+bytes(64)+slots
+    if objd is not None:
+        asset += b'OBJD'+struct.pack('>IHH',76+len(objd),16808,0)+bytes(64)+objd
     name=b'test.iff'
     return (b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+
             struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
@@ -60,6 +62,20 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     assert [m['tick'] for m in d['movements']]==list(range(1,34))
     r=run([(4096,routine())],'--run','--world-probe','--route-probe')
     assert r.returncode==2 and not r.stdout
+    prefix=bytearray(42);struct.pack_into('<I',prefix,0,138);struct.pack_into('<H',prefix,26,129)
+    struct.pack_into('<I',prefix,28,0x12345678);struct.pack_into('<H',prefix,40,128)
+    storage=struct.pack('<HIIIiiiIi',0,0,0,0,0,0,0,0,-1)+struct.pack('<iiiiiIiii',16,16,16,100,0,0x3E400000,7,-2,16)
+    snap_route=struct.pack('<HIIIiiiIi',3,0,0,0,0,0,0,0,0)+struct.pack('<iiiiiIiii',16,16,16,0,0,0x3E400000,0,-2,16)
+    path.write_bytes(archive([(4096,routine(46,bytes([0,0,3,0,4,0,0,0])))],
+                  struct.pack('<II4sI',0,10,b'TOLS',2)+storage+snap_route,128,prefix))
+    args=[binary,str(path),'test.iff','4096','--run','--world-probe','--route-probe','--snap-probe',
+          '--object-def','16808','--global',str(global_path),'test.iff']
+    result=subprocess.run(args,capture_output=True,text=True);d=json.loads(result.stdout)
+    assert result.returncode==0 and d['container']==2 and d['container_slot']==0 and d['final_position']==[64,64,1,0]
+    assert d['object_binding']=={'objd_id':16808,'guid':0x12345678,'slot_table':128,'animation_table':129}
+    args[args.index('16808')]='16809'
+    result=subprocess.run(args,capture_output=True,text=True)
+    assert result.returncode==2 and not result.stdout
     for rows,options in [([(4096,routine()),(4096,routine())],()),
                           ([(4096,routine())],('--run','--run')),
                           ([(4096,routine())],('--unknown',))]:

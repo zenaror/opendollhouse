@@ -53,11 +53,37 @@ bool World::set_person_data(std::int16_t id, std::int16_t index, std::int16_t va
         !valid_index(index,found->second.person_data.size())) return false;
     found->second.person_data[static_cast<std::size_t>(index)] = value; return true;
 }
+std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
+    std::vector<std::int16_t> descendants{id};
+    for(std::size_t n=0;n<descendants.size();++n)
+        for(const auto occupant:entities_.at(descendants[n]).slots)
+            if(occupant && entities_.at(occupant).attachment->positioned) descendants.push_back(occupant);
+    return descendants;
+}
+void World::apply_position(const std::vector<std::int16_t>& descendants,EntityPosition position) {
+    entities_.at(descendants[0]).position=position;
+    for(std::size_t n=1;n<descendants.size();++n) {
+        auto& child=entities_.at(descendants[n]);
+        auto p=position;p.direction=child.position->direction;child.position=p;
+    }
+}
 bool World::set_position(std::int16_t id,EntityPosition position) {
     const auto found=entities_.find(id);
     if(found==entities_.end() || found->second.attachment || position.x<0 || position.y<0 ||
        position.x>32767 || position.y>32767 || position.level<1 || position.direction>7) return false;
-    found->second.position=position;return true;
+    const auto descendants=position_tree(id); // Allocation happens before any mutation.
+    apply_position(descendants,position);return true;
+}
+bool World::place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant) {
+    const auto c=entities_.find(container),o=entities_.find(occupant);
+    if(c==entities_.end() || o==entities_.end() || !c->second.position || !o->second.position ||
+       slot>=c->second.slots.size()) return false;
+    const bool same=c->second.slots[slot]==occupant && o->second.attachment &&
+                    o->second.attachment->container==container && o->second.attachment->slot==slot;
+    const auto descendants=position_tree(occupant);
+    if(!same && !attach(container,slot,occupant)) return false;
+    auto p=*c->second.position;p.direction=o->second.position->direction;
+    apply_position(descendants,p);o->second.attachment->positioned=true;return true;
 }
 bool World::attach(std::int16_t container, std::size_t slot, std::int16_t occupant) {
     const auto c = entities_.find(container), o = entities_.find(occupant);

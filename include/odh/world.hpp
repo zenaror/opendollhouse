@@ -9,7 +9,7 @@ struct EntityLayout {
     std::size_t person_data = 0;
     std::size_t slots = 0;
 };
-struct Attachment { std::int16_t container; std::size_t slot; };
+struct Attachment { std::int16_t container; std::size_t slot; bool positioned=false; };
 struct EntityPosition {
     std::int32_t x,y; // Adapter uses 1/16 tile, not pixels.
     std::int16_t level;
@@ -48,6 +48,7 @@ public:
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
+    bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant);
     bool detach(std::int16_t container, std::size_t slot);
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
     bool write(const VmFrame&, std::uint8_t scope, std::int16_t index, std::int16_t value);
@@ -55,6 +56,8 @@ public:
     VmMemory vm_memory();
     std::size_t word_count() const { return words_; }
 private:
+    std::vector<std::int16_t> position_tree(std::int16_t) const;
+    void apply_position(const std::vector<std::int16_t>&,EntityPosition);
     std::map<std::int16_t, Entity> entities_;
     WorldLimits limits_;
     std::size_t words_ = 0;

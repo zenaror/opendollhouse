@@ -106,6 +106,10 @@ O JSON inclui movimentos e posição final. O perfil inicial de roteamento
 suporta o SLOT selecionado, com política de percurso e velocidade provisórias.
 A ação ainda para em `snap`, saída 3; não é sentar/levantar completo.
 
+Adicione `--snap-probe --object-def 16808` para usar o OBJD explícito da
+cadeira selecionada. Esse perfil liga a ocupação ao SLOT privado; a ação chega
+até a animação 44 ainda não implementada. Não mostra uma animação de sentar.
+
 `reports/` e os diretórios de build são ignorados pelo Git. Não inclua executáveis,
 ISOs, recursos comerciais, saves, extrações ou bancos de análise do original no Git.
 
@@ -121,6 +125,7 @@ ISOs, recursos comerciais, saves, extrações ou bancos de análise do original 
 - [Suspensão da VM para serviços](docs/services-validation.md)
 - [Cálculo de percurso na malha](docs/route-validation.md)
 - [Percurso ligado à VM e ao World](docs/routing-validation.md)
+- [Snap, definição do objeto e ocupação](docs/snap-validation.md)
 - [Referências e atribuição](docs/references.md)
 
 O contexto, decisões e handoffs também são mantidos na OMM, escopo

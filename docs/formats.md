@@ -13,6 +13,10 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
 | DGRP/OBJD/SPR# | Somente contagem de versões nos cabeçalhos pelo inspector | Decodificação completa e validação dessas versões |
 
+`read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões
+136/138/139/140/141/142, retornando GUID, AnimationTableID e SlotID. Não valida
+o restante do OBJD nem implementa uma fábrica completa de objetos.
+
 O leitor FAR deste perfil exige dados antes do manifesto e que o manifesto termine
 no fim do arquivo. Uma variante diferente produz diagnóstico explícito, sem
 supor automaticamente que todo arquivo comercial com outro layout está corrompido.
