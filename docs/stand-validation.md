@@ -26,7 +26,7 @@ Calleravatar1/Calleechair2/StackObjectchair2; não implementa ainda20, queue ou
 retomada de uma rota suspensa pelo dispatcher completo.
 
 A Main1000 da cadeira é distinta: Global280(idle), MySlot0, teste de definição
-do ocupante tipo2 e410D (“inc comfort”). Threads, scopes de definição/tuning,
+do ocupante tipo2 e4113 decimal/0x1011 (“inc comfort”). Threads, scopes de definição/tuning,
 Sleep/RNG/interrupts e motivos desse loop ainda exigem implementação; `no_thread`
 da notificação anterior continua sendo a descrição honesta do probe.
 
