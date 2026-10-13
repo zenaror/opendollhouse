@@ -1,0 +1,71 @@
+"""Resource owner + native entry host integration, entirely synthetic inputs."""
+import json,struct,subprocess,sys,tempfile
+from pathlib import Path
+binary=sys.argv[1]
+def routine(rows):
+ return struct.pack('<HHBBHHH',0x8002,len(rows),0,4,0,0,0)+b''.join(struct.pack('<HBB',op,t,f)+bytes(data) for op,t,f,data in rows)
+def expr(temp,value,t=254):return (2,t,255,[temp,0,value,0,0,5,8,7])
+def call(op,t=254,f=255,args=bytes(8)):return (op,t,f,args)
+def objd(guid):
+ b=bytearray(68);struct.pack_into('<I',b,0,138);struct.pack_into('<H',b,10,4096);struct.pack_into('<H',b,18,2);struct.pack_into('<I',b,28,guid);return b
+def archive(path,name,chunks):
+ asset=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
+ for kind,rid,data in chunks:asset+=kind.encode('ascii')+struct.pack('>IHH',76+len(data),rid,0)+bytes(64)+data
+ name=name.encode('ascii');path.write_bytes(b'FAR!byAZ'+struct.pack('<II',1,16+len(asset))+asset+struct.pack('<I',1)+struct.pack('<IIII',len(asset),len(asset),16,len(name))+name)
+with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
+ root=Path(folder);avatar=root/'avatar.far';semi=root/'semi.far';glob=root/'global.far';action=root/'action.far'
+ def setup(main=None,global_rows=None,action_rows=None):
+  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))])
+  archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))])
+  archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))])
+  archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))])
+ args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
+ action_args=['--action',str(action),'Chair.iff','128','4096']
+ def run(extra=()):return subprocess.run(args+list(extra),capture_output=True,text=True)
+ setup();r=run(action_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['ticks']==1 and d['steps']==7
+ assert d['completion']['result'] is False and d['queue_size']==0 and not d['queue_active']
+ assert [t['owner'] for t in d['trace']]==[1,1,1,2,1,1,1]
+ assert d['trace'][2]['routine']==d['trace'][4]['routine']==256 and d['trace'][2]['pc']==d['trace'][4]['pc']==0
+ assert d['avatar']['guid']==0x11111111 and d['action']['guid']==0x22222222 and d['actor_state']['flags']==256
+ assert 'full Init' in d['initialization'] and 'FreeSO' in d['constructor_profile'] and d['stack']==[]
+ setup();r=run(action_args+['--ticks','0']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['tick_budget_exhausted'] and d['status']=='yielded' and d['completion']['tick']==0
+ setup(global_rows=[(17,1,253,[0,0,0,0,0,0,0,0]),expr(3,1)])
+ r=run(action_args);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['action_incomplete'] and d['completion'] is None and d['queue_size']==1 and d['actor_state']['flags']==320
+ # Proper clock cadence with a real Sleep controller, not synthetic true completion.
+ setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[(0,254,255,bytes(8))])
+ r=run();d=json.loads(r.stdout)
+ assert r.returncode==0 and d['ticks']==3 and d['steps']==2 and d['rng_cycle_requests']==1 and d['rng_backend']=='not_implemented'
+ r=run(['--ticks','1']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['tick_budget_exhausted'] and d['ticks']==1 and d['status']=='waiting' and d['completion'] is None
+ setup();legacy=bytearray(routine([expr(0,1)]));struct.pack_into('<H',legacy,0,0x8001)
+ archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',128,b'\x0dFixturePerson'),('BHAV',4096,legacy)])
+ for extra in [[],action_args]:
+  r=run(extra);d=json.loads(r.stdout)
+  assert r.returncode==3 and not r.stderr and d['status']=='fault' and d['steps']==0 and d['stack_depth']==0
+  assert d['diagnostic']=='execution requires BHAV 8002 metadata'
+ # Unknown primitive remains a coherent runtime failure, with owner/PC/provenance.
+ setup(global_rows=[(44,254,255,bytes(8))]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 44'
+ assert d['stack'][-1]['owner']==1 and d['stack'][-1]['routine']==256 and d['stack'][-1]['caller']==1
+ setup(main=[expr(0,1,0)]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and len(d['trace'])==10000
+ for index in [1,25,26,29,41,62]:
+  setup(main=[(2,254,255,[index,0,0,0,0,2,3,7])]);r=run();d=json.loads(r.stdout)
+  assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
+ setup();r=run(['--flags','65535','--age','27']+action_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-1 and d['actor_state']['age']==27
+ for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256']]:
+  setup();r=run(extra);assert r.returncode==2 and not r.stdout and r.stderr
+ setup();invalid_type=objd(1);struct.pack_into('<H',invalid_type,18,0)
+ archive(avatar,'Person.iff',[('OBJD',128,invalid_type),('GLOB',128,b'\x0dFixturePerson'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
+ assert r.returncode==2 and not r.stdout and 'ObjectType2' in r.stderr
+ setup();archive(semi,'FixturePerson.iff' ,[('BHAV',4096,routine([expr(0,1)]))]);r=run()
+ assert r.returncode==2 and not r.stdout and 'resource role' in r.stderr
+ setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',128,b'\x05other'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
+ assert r.returncode==2 and not r.stdout and 'GLOB128' in r.stderr
+ setup();archive(action,'Chair.iff',[('OBJD',128,objd(2)),('GLOB',128,b'\x04Semi'),('BHAV',4096,routine([expr(0,1)]))]);r=run(action_args)
+ assert r.returncode==2 and not r.stdout and 'action semiglobal' in r.stderr
+print('person host CLI checks passed (synthetic fixtures only)')
