@@ -1,5 +1,8 @@
 # Relacionamentos TS1 em memória
 
+O [checkpoint seguinte de bootstrap](bootstrap-validation.md) remove o fault
+de GameEdition registrado abaixo e documenta o novo gate nativo.
+
 O runtime mantém uma cópia própria das relações de NBRS e matrizes de objetos
 transitórios. Carregar o bairro não modifica o IFF comercial, e esta unidade não
 grava saves nem restaura relações de objetos de ObjM.

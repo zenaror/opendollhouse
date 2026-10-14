@@ -8,6 +8,7 @@
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
 #include "odh/relationship.hpp"
+#include "odh/bootstrap.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -113,7 +114,10 @@ int main(int argc,char** argv) {
     if(zoning_path&&!zoning)throw odh::FormatError("zoning STR#1 absent");
     std::optional<odh::LotContext> lot;
     if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
-    std::vector<std::pair<std::int16_t,std::int16_t>> global_reads;
+    struct GlobalRead {std::int16_t index,value;bool bootstrap;};
+    std::vector<GlobalRead> global_reads;
+    std::optional<odh::Ts1BootstrapGlobals> bootstrap_globals;
+    if(initialize)bootstrap_globals.emplace();
     std::vector<odh::LotZoneResult> zoning_reads;
     std::optional<odh::Nbrs> nbrs;
     if(neighborhood_path)with_iff_file(*neighborhood_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
@@ -183,8 +187,11 @@ int main(int argc,char** argv) {
             if(!value)return {};
             if(neighbor_reads.size()>=20000)throw odh::FormatError("neighbor read log exceeds bounded host profile");
             neighbor_reads.push_back(*value);return value->value;}
-        if(scope==6){const auto value=lot?lot->read(index):std::nullopt;
-            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.emplace_back(index,*value);}return value;}
+        if(scope==6){
+            const auto runtime=bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
+            const auto value=runtime?runtime:(lot?lot->read(index):std::nullopt);
+            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.push_back({index,*value,runtime.has_value()});}
+            return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
         const auto value=tuning.read(frame.context.code_owner,index);
         if(!value)return {};
@@ -192,7 +199,9 @@ int main(int argc,char** argv) {
         tuning_reads.push_back(*value);return value->value;
     };
     memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value){
-        if(scope==6)return lot&&lot->write(index,value);
+        if(scope==6){
+            if(bootstrap_globals&&bootstrap_globals->read(index))return bootstrap_globals->write(index,value);
+            return lot&&lot->write(index,value);}
         return world_memory.write(frame,scope,index,value);
     };
     odh::RoutineOwners owners{{1,std::move(person.routines)}};
@@ -348,10 +357,19 @@ int main(int argc,char** argv) {
     std::cout<<"],\"lot\":";
     if(lot)std::cout<<"{\"house\":"<<json_bytes(*lot_path)<<",\"selected_id\":"<<*lot_id<<",\"serialized_id\":"<<simi->global_data[10]
         <<",\"simi_version\":"<<simi->version<<",\"serialized_globals\":"<<simi->global_data.size()<<",\"remaining_bytes\":"<<simi->remaining_bytes
-        <<",\"profile\":\"SIMI static globals; selected lot overrides10; clock/entity/runtime initialization fields unsupported\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
+        <<",\"profile\":\"SIMI static globals; selected lot overrides10; clock/entity fields unsupported; bootstrap globals provided separately when initialized\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
     else std::cout<<"null";
+    std::cout<<",\"global_bootstrap\":";
+    if(bootstrap_globals){
+        std::cout<<"{\"profile\":\"FreeSO TS1 Init/IFF activation; all-expansions policy; not detected installation or saved VM restore\",\"globals\":[";
+        for(std::size_t n=0;n<odh::Ts1BootstrapGlobals::indices.size();++n){if(n)std::cout<<',';
+            const auto index=odh::Ts1BootstrapGlobals::indices[n];
+            std::cout<<"{\"index\":"<<index<<",\"initial\":"<<odh::Ts1BootstrapGlobals::initial[n]<<",\"current\":"<<*bootstrap_globals->read(index)<<'}';}
+        std::cout<<"]}";
+    }else std::cout<<"null";
     std::cout<<",\"global_reads\":[";
-    for(std::size_t n=0;n<global_reads.size();++n){if(n)std::cout<<',';std::cout<<"{\"index\":"<<global_reads[n].first<<",\"value\":"<<global_reads[n].second<<'}';}
+    for(std::size_t n=0;n<global_reads.size();++n){if(n)std::cout<<',';std::cout<<"{\"index\":"<<global_reads[n].index<<",\"value\":"<<global_reads[n].value
+        <<",\"source\":"<<json_bytes(global_reads[n].bootstrap?"runtime_bootstrap":"lot_context")<<'}';}
     std::cout<<"],\"zoning_reads\":[";
     for(std::size_t n=0;n<zoning_reads.size();++n){if(n)std::cout<<',';const auto& value=zoning_reads[n];
         std::cout<<"{\"input\":"<<value.input<<",\"value\":"<<value.value<<",\"fallback\":"<<(value.fallback?"true":"false")<<'}';}

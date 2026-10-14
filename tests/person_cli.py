@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  for number,expected,fallback in [(1,0,False),(58,1,False),(81,2,True),(89,2,True),(80,1,True),(90,1,True)]:
   setup(main=[read_lot,zone_call,(2,254,255,[0,0,expected,0,0,2,8,7])]);r=run(lot_args(number));d=json.loads(r.stdout)
   assert r.returncode==0 and d['status']=='returned_true' and d['steps']==3 and d['ticks']==0
-  assert d['global_reads']==[dict(index=10,value=number)]
+  assert d['global_reads']==[dict(index=10,value=number,source="lot_context")]
   assert d['zoning_reads']==[dict(input=number,value=expected,fallback=fallback)]
   assert d['lot']['selected_id']==number and d['lot']['serialized_id']==99 and d['lot']['serialized_globals']==32
  setup(main=[read_lot,zone_call,(2,254,255,[0,0,0,0,0,2,8,7])]);r=run(['--lot',str(house),'1']);d=json.loads(r.stdout)
@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   setup(main=[(2,254,255,[0,0,index,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
   assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
  setup(main=[(2,254,255,[0,0,23,0,0,5,8,6])]);r=run(lot_args());d=json.loads(r.stdout)
- assert r.returncode==0 and d['global_reads']==[dict(index=23,value=56)]
+ assert r.returncode==0 and d['global_reads']==[dict(index=23,value=56,source="lot_context")]
  for extra in [['--zoning',str(zone)],['--lot',str(house),'0'],['--lot',str(house),'32768'],lot_args()+['--lot',str(house),'2']]:
   r=run(extra);assert r.returncode==2 and not r.stdout
  plain_iff(house,[('SIMI',1,simi),('SIMI',1,simi)]);r=run(lot_args());assert r.returncode==2 and 'ambiguous SIMI1' in r.stderr
@@ -354,6 +354,34 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # An unbound neighborhood remains unsupported, rather than an implicit empty save.
  startup_setup(main=[relationship_row()]);r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==3 and d['diagnostic']=='unsupported primitive 26' and d['relationship_state'] is None
+ # VM bootstrap globals exist before private Init, even without a lot. They
+ # override serialized runtime fields and persist across vm.start into Main.
+ bootstrap_saved=struct.pack('<II4s',0,0x3e,b'IMIS')+struct.pack('<32h',*([123]*32))+bytes(34+24)
+ plain_iff(house,[('SIMI',1,bootstrap_saved)]);plain_iff(zone,[('STR#',1,zoning)])
+ def global_to_temp(index,t=254):return (2,t,255,list(struct.pack('<hhBBBB',0,index,0,5,8,6)))
+ for index,expected in [(17,4),(20,255),(25,4)]:
+  startup_setup(init=[global_to_temp(index,1),check_temp(0,expected)],dynamic_id=0,
+                main=[global_to_temp(index,1),check_temp(0,expected)])
+  for extra in [[],lot_args()]:
+   r=run(['--initialize']+extra);d=json.loads(r.stdout)
+   assert r.returncode==0 and d['global_reads']==[dict(index=index,value=expected,source='runtime_bootstrap')]*2
+   assert d['global_bootstrap']['globals']==[dict(index=17,initial=4,current=4),dict(index=20,initial=255,current=255),dict(index=25,initial=4,current=4)]
+ # A zero write is a real runtime value, not absence falling back to saved123.
+ write_zero=(2,254,255,[20,0,0,0,0,5,6,7])
+ startup_setup(init=[write_zero],dynamic_id=0,main=[global_to_temp(20,1),check_temp(0,0)])
+ house_before=house.read_bytes();r=run(['--initialize']+lot_args());d=json.loads(r.stdout)
+ assert r.returncode==0 and d['global_bootstrap']['globals'][1]['current']==0
+ assert d['global_reads']==[dict(index=20,value=0,source='runtime_bootstrap')] and house.read_bytes()==house_before
+ # New host construction resets the profile; probes do not initialize it.
+ startup_setup(main=[global_to_temp(20,1),check_temp(0,255)])
+ r=run(['--initialize']);d=json.loads(r.stdout);assert r.returncode==0 and d['global_bootstrap']['globals'][1]['current']==255
+ r=run(lot_args());d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported read scope 6 index 20' and d['global_bootstrap'] is None
+ # Undefined clock/entity globals still fail despite bootstrap and saved words.
+ for index in [0,1,3,4,5,6,7,8,9,32,33]:
+  startup_setup(main=[global_to_temp(index)])
+  r=run(['--initialize']+lot_args());d=json.loads(r.stdout)
+  assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

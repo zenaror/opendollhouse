@@ -104,8 +104,9 @@ fornece NBRS, enumeração e PersonData dos vizinhos. Main chega à primitiva de
 relacionamentos. O [vínculo do personagem real](docs/avatar-neighbor-validation.md),
 via `--avatar-file`, restaura PersonData por GUID antes de Main. O
 [backend de relacionamentos](docs/relationship-validation.md) lê e escreve
-em cópia própria de NBRS; Main agora chega ao global GameEdition. Família
-ativada, aparência e restauração completa do lote seguem pendentes.
+em cópia própria de NBRS. O [bootstrap explícito](docs/bootstrap-validation.md)
+fornece GameEdition e dois globals de runtime; Main chega à busca de objeto
+por GUID. Família ativada, aparência e restauração completa do lote seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 
