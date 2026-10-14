@@ -30,7 +30,9 @@ com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
 ao PulseAudio estão em [linux-audio-validation.md](linux-audio-validation.md).
 Probe XA->PCM Linux com cursor e fila limitada em
 [xa-play-validation.md](xa-play-validation.md). Ligação a eventos HIT, mixer
-e lifecycle de soundthread continuam pendentes.
+e ligação ao scheduler do jogo continuam pendentes. Lifecycle HIT portátil
+inicial (NoteOn/WaitSamp/End) e integração isolada com PCM estão em
+[hit-thread-validation.md](hit-thread-validation.md); isso ainda não retoma Main.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

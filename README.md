@@ -337,6 +337,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Argumentos HIT explícitos e consulta à origem do World](docs/hit-invocation-validation.md)
 - [Saída PCM Linux opcional e validação do backend](docs/linux-audio-validation.md)
 - [Probe XA para saída Linux com fila limitada](docs/xa-play-validation.md)
+- [Lifecycle persistente HIT: NoteOn, WaitSamp e End](docs/hit-thread-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)

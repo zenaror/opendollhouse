@@ -1,4 +1,6 @@
 #include "odh/hit_selection.hpp"
+#include "odh/hit_thread.hpp"
+#include <algorithm>
 #include <limits>
 
 namespace odh {
@@ -29,8 +31,14 @@ public:
         plan.initial_arguments = args;
         if(args) for(std::size_t n=0;n<args->size();++n) plan.registers[n+1]=(*args)[n];
     }
-    HitNotePlan run(const HotTrack* track) {
+    const HitNotePlan& run(const HotTrack* track, const HitNoteBackend* backend = nullptr,
+                    std::uint32_t note_limit = 0) {
         if (track) initialize(*track);
+        if (backend && finished) return plan;
+        if (backend && ended) {
+            finished = !last_active(*backend);
+            return plan;
+        }
         for (;;) {
             instruction_pc.reset();
             if (plan.steps >= limits.instructions) fail("instruction budget exhausted before NoteOn");
@@ -49,6 +57,19 @@ public:
                 plan.patch_id = *patch;
                 plan.pc = current.pc;
                 plan.note_destination = dest;
+                if (backend) {
+                    if (hot.patches.at(*patch).looped) fail("looped patch outside HIT thread profile");
+                    if (notes.size() >= note_limit) fail("successful note budget exhausted");
+                    const auto handle = backend->start(*patch);
+                    if (handle) {
+                        if (std::find(notes.begin(), notes.end(), *handle) != notes.end())
+                            fail("backend reused a live thread note handle");
+                        const auto index = static_cast<std::int32_t>(notes.size());
+                        notes.push_back(*handle);
+                        write(dest, index);
+                    } else write(dest, -1);
+                    break; // NoteOn preserves flags.
+                }
                 append();
                 plan.zero_flag = zero;
                 plan.sign_flag = sign;
@@ -139,6 +160,10 @@ public:
             case 69: {
                 const auto group = byte();
                 if (plan.sequence_group_kills.size() >= limits.group_kills) fail("sequence-group request budget exhausted");
+                if (backend) {
+                    if (!backend->kill_group) fail("sequence-group effect requires backend callback");
+                    backend->kill_group(group);
+                }
                 plan.sequence_group_kills.push_back(group);
                 current.sequence_group_kill = group;
                 break;
@@ -164,21 +189,37 @@ public:
                 flags(value);
                 break;
             }
-            case 11: fail("WaitSamp reached before first NoteOn");
-            case 12: fail("End reached before first NoteOn");
+            case 11:
+                if (!backend) fail("WaitSamp reached before first NoteOn");
+                if (last_active(*backend)) --pc;
+                append();
+                snapshot();
+                return plan; // Always HALT for this tick, even when inactive.
+            case 12:
+                if (!backend) fail("End reached before first NoteOn");
+                ended = true;
+                append();
+                snapshot();
+                return plan; // Completion tested on a subsequent tick.
             default: fail("unsupported HIT opcode " + std::to_string(op));
             }
             append();
         }
     }
+    void start(const HotTrack* track) { if (track) initialize(*track); }
+    std::uint32_t cursor() const { return pc; }
+    bool bytecode_ended() const { return ended; }
+    bool complete() const { return finished; }
+    std::size_t note_count() const { return notes.size(); }
+    const HitNotePlan& state() const { return plan; }
 private:
     const HitFile& hit;
     const Hot& hot;
-    const std::array<std::int32_t, 29>& object_vars;
-    const HitChooser& chooser;
-    const HitSelectionLimits& limits;
+    const std::array<std::int32_t, 29> object_vars;
+    const HitChooser chooser;
+    const HitSelectionLimits limits;
     HitJumpOperand jump_operand;
-    const HitSourceFieldReader& source_reader;
+    const HitSourceFieldReader source_reader;
     std::uint32_t pc;
     std::optional<std::uint32_t> instruction_pc;
     std::uint64_t code_end = 0;
@@ -186,6 +227,22 @@ private:
     std::optional<std::uint32_t> list, patch;
     HitNotePlan plan;
     HitSelectionTrace current;
+    bool ended = false, finished = false;
+    std::vector<std::uint64_t> notes;
+    bool last_active(const HitNoteBackend& backend) const {
+        if (notes.empty()) return false;
+        switch (backend.status(notes.back())) {
+        case HitNoteStatus::active: return true;
+        case HitNoteStatus::complete: return false;
+        case HitNoteStatus::failed: fail("note backend failed");
+        }
+        fail("invalid note backend status");
+    }
+    void snapshot() {
+        plan.zero_flag = zero;
+        plan.sign_flag = sign;
+        plan.active_hitlist = list;
+    }
     [[noreturn]] void fail(const std::string& reason) const {
         throw FormatError("HIT selection at PC " + std::to_string(instruction_pc.value_or(pc)) +
                           " (cursor " + std::to_string(pc) + "): " + reason);
@@ -272,6 +329,62 @@ private:
     }
 };
 }
+struct HitThread::Impl {
+    Selection execution;
+    HitNoteBackend backend;
+    std::uint32_t note_limit;
+    bool fault = false, ticking = false;
+    Impl(const HitFile& hit, const Hot& hot, std::uint32_t start,
+         const std::array<std::int32_t,29>& vars, HitChooser chooser,
+         HitNoteBackend output, HitThreadLimits limits, const HotTrack* track,
+         HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args)
+        : execution(hit,hot,start,vars,chooser,limits.execution,operand,reader,args),
+          backend(std::move(output)), note_limit(limits.notes) {
+        if (!backend.start || !backend.status) throw FormatError("HIT thread requires start/status callbacks");
+        if (!note_limit || note_limit > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+            throw FormatError("HIT thread invalid note budget");
+        execution.start(track);
+    }
+};
+HitThread::HitThread(const HitFile& hit, const Hot& hot, std::uint32_t start,
+                     const std::array<std::int32_t,29>& vars, HitChooser chooser,
+                     HitNoteBackend backend, HitThreadLimits limits, const HotTrack* track,
+                     HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args)
+    : impl_(std::make_unique<Impl>(hit,hot,start,vars,std::move(chooser),std::move(backend),limits,
+                                   track,operand,std::move(reader),args)) {}
+HitThread::~HitThread() = default;
+HitThreadTick HitThread::tick() {
+    auto& p = *impl_;
+    if (p.fault) throw FormatError("HIT thread is faulted");
+    if (p.ticking) { p.fault = true; throw FormatError("HIT thread reentrant tick"); }
+    p.ticking = true;
+    try {
+        HitNoteBackend guarded;
+        guarded.start = [&p](std::uint32_t patch) {
+            const auto result = p.backend.start(patch);
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
+            return result;
+        };
+        guarded.status = [&p](std::uint64_t handle) {
+            const auto result = p.backend.status(handle);
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
+            return result;
+        };
+        if (p.backend.kill_group) guarded.kill_group = [&p](std::uint8_t group) {
+            p.backend.kill_group(group);
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
+        };
+        p.execution.run(nullptr, &guarded, p.note_limit);
+        p.ticking = false;
+        if (p.fault) throw FormatError("HIT thread reentrant callback fault");
+        return p.execution.complete() ? HitThreadTick::complete : HitThreadTick::yielded;
+    } catch (...) { p.ticking = false; p.fault = true; throw; }
+}
+std::uint32_t HitThread::pc() const { return impl_->execution.cursor(); }
+bool HitThread::bytecode_ended() const { return impl_->execution.bytecode_ended(); }
+bool HitThread::faulted() const { return impl_->fault; }
+std::size_t HitThread::notes_started() const { return impl_->execution.note_count(); }
+const HitNotePlan& HitThread::state() const { return impl_->execution.state(); }
 HitNotePlan select_hit_note(const HitFile& hit, const Hot& hot, std::uint32_t start,
                            const std::array<std::int32_t, 29>& vars,
                            const HitChooser& chooser, const HitSelectionLimits& limits,
