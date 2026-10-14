@@ -93,6 +93,7 @@ std::vector<FarEntry> far1_index(const View& file, const Limits& limits) {
     std::vector<FarEntry> entries;
     entries.reserve(count);
     std::uint64_t position = 4;
+    std::uint64_t name_bytes = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto length = table.le32(position);
         const auto second_length = table.le32(position + 4);
@@ -103,8 +104,11 @@ std::vector<FarEntry> far1_index(const View& file, const Limits& limits) {
             throw FormatError("unsupported FAR entry with differing data lengths");
         if (offset < 16 || offset > manifest || length > manifest - offset)
             throw FormatError("FAR entry outside pre-manifest data area");
-        if (name_length == 0 || name_length > 4096 || name_length > table.size() - position)
+        if (name_length == 0 || name_length > limits.far_name_length || name_length > table.size() - position)
             throw FormatError("FAR name outside index bounds or supported length");
+        if (name_length > limits.far_name_bytes - name_bytes)
+            throw FormatError("FAR cumulative name bytes exceed configured limit");
+        name_bytes += name_length;
         std::string name(name_length, '\0');
         table.read(position, name.data(), name.size());
         if (name.find('\0') != std::string::npos) throw FormatError("FAR name contains NUL");

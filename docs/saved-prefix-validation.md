@@ -1,5 +1,8 @@
 # Prefixos salvos, posições e tabela de tipos
 
+O [checkpoint de estado comum](object-state-validation.md) posterior acrescenta
+frames/relações/slots e catálogo explícito de definições, sem restaurar World.
+
 O host agora decodifica o prefixo de cada instância ObjM e liga seu ObjectID
 à entrada serializada de objt. O resultado é um snapshot próprio com
 coordenadas, footprint, atributos e bancos brutos. Não publica entidades em

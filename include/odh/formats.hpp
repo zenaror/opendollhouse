@@ -44,6 +44,8 @@ struct Limits {
     std::uint32_t ttab_interactions = 4096;
     std::uint32_t ttab_motives = 256;
     std::uint32_t slot_records = 4096;
+    std::uint32_t far_name_length = 4096;
+    std::uint64_t far_name_bytes = 1024 * 1024; // All serialized names, including duplicates.
 };
 
 struct FarEntry {

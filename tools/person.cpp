@@ -12,6 +12,8 @@
 #include "odh/entity_next.hpp"
 #include "odh/inventory_find.hpp"
 #include "odh/saved_objects.hpp"
+#include "odh/definition_index.hpp"
+#include "odh/objm_common.hpp"
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
@@ -95,6 +97,7 @@ std::uint64_t seed_selector(const std::string& text){
 int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
+    std::vector<std::pair<std::string,bool>> definition_sources;
     std::optional<std::string> lot_path,zoning_path,neighborhood_path;
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
@@ -116,14 +119,46 @@ int main(int argc,char** argv) {
         else if(option=="--initialize"&&!initialize)initialize=true;
         else if(option=="--activate-family"&&!activate_family)activate_family=true;
         else if(option=="--neighborhood"&&!neighborhood_path&&n+1<argc)neighborhood_path=argv[++n];
+        else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
+            if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
+            definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
+            if(definition_sources.back().first.size()>4096)throw odh::FormatError("definition source path exceeds bounded host profile");
+        }
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path)))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
     std::optional<std::vector<odh::SavedObjectPrefix>> saved_prefixes;
+    std::optional<std::vector<odh::ObjmCommonState>> saved_common;
+    std::optional<odh::DefinitionIndex> definition_index;
+    if(!definition_sources.empty()){
+        std::vector<odh::DefinitionCandidate> candidates;
+        std::uint64_t provenance_available=256*1024;
+        const auto add_iff=[&](const auto& view,const std::string& source,const std::string& asset){
+            odh::Limits limits;limits.iff_chunks=4096;
+            odh::iff_chunks(view,[&](const auto& chunk){
+                if(chunk.type!="OBJD")return;
+                if(candidates.size()>=8192||source.size()>provenance_available||asset.size()>provenance_available-source.size())
+                    throw odh::FormatError("definition candidate/provenance budget exceeded");
+                auto definition=odh::read_object_definition(chunk.payload);
+                provenance_available-=source.size()+asset.size();
+                candidates.push_back({source,asset,chunk.id,definition});
+            },limits);
+        };
+        for(const auto& source:definition_sources){
+            if(source.second){with_iff_file(source.first,[&](const auto& view){add_iff(view,source.first,"");});continue;}
+            std::ifstream stream(source.first,std::ios::binary);
+            if(!stream)throw odh::FormatError("cannot open explicit definition archive");
+            const odh::View archive(stream,std::filesystem::file_size(source.first));
+            odh::Limits limits;limits.far_entries=8192;limits.far_name_length=4096;limits.far_name_bytes=256*1024;
+            for(const auto& entry:odh::far1_index(archive,limits))
+                add_iff(archive.subview(entry.offset,entry.length),source.first,entry.name);
+        }
+        definition_index.emplace(candidates);
+    }
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type=="objt"&&chunk.id==0){
             if(objt)throw odh::FormatError("ambiguous objt0");objt=odh::read_objt(chunk.payload);
@@ -138,6 +173,16 @@ int main(int argc,char** argv) {
     if(objm){
         if(!objt)throw odh::FormatError("objt0 absent for saved ObjM prefixes");
         saved_prefixes=odh::read_saved_object_prefixes(*objm,*objt);
+        std::vector<odh::ObjmCommonState> common;
+        common.reserve(saved_prefixes->size());
+        std::uint64_t common_words_available=65536;
+        for(std::size_t n=0;n<saved_prefixes->size();++n){
+            odh::ObjmCommonLimits limits;limits.decoded_words=common_words_available;
+            auto state=odh::read_objm_common(objm->blocks[n],(*saved_prefixes)[n].prefix,limits);
+            common_words_available-=state.decoded_words;
+            common.push_back(std::move(state));
+        }
+        saved_common=std::move(common);
     }
     if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||chunk.id!=1)return;
@@ -472,6 +517,50 @@ int main(int argc,char** argv) {
             std::cout<<"]}";
         }
         std::cout<<"]}";
+    }else std::cout<<"null";
+    std::cout<<",\"definition_catalog\":";
+    if(definition_index)std::cout<<"{\"profile\":\"explicit sources; unique GUID only; original precedence unproven\",\"guids\":"
+        <<definition_index->guid_count()<<",\"candidates\":"<<definition_index->candidate_count()<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"saved_definition_records\":[";
+    if(saved_prefixes&&definition_index)for(std::size_t n=0;n<saved_prefixes->size();++n){
+        if(n)std::cout<<',';const auto& p=(*saved_prefixes)[n];const auto* matches=definition_index->candidates(p.guid);
+        const auto* unique=definition_index->unique(p.guid);
+        std::cout<<"{\"object_id\":"<<p.object_id<<",\"guid\":"<<p.guid<<",\"status\":"
+            <<json_bytes(unique?"unique":matches?"ambiguous":"missing")<<",\"candidates\":[";
+        if(matches)for(std::size_t i=0;i<matches->size();++i){if(i)std::cout<<',';const auto& c=(*matches)[i];const auto& d=c.definition;
+            std::cout<<"{\"source\":"<<json_bytes(c.source)<<",\"asset\":"<<json_bytes(c.asset)<<",\"chunk_id\":"<<c.chunk_id
+                <<",\"version\":"<<d.version<<",\"object_type\":"<<d.object_type<<",\"master_id\":"<<d.master_id
+                <<",\"sub_index\":"<<d.sub_index<<",\"is_multitile\":"<<(d.is_multitile?"true":"false")
+                <<",\"header_extent\":"<<d.header_extent<<",\"remaining_bytes\":"<<d.remaining_bytes<<'}';
+        }
+        std::cout<<"]}";
+    }
+    std::cout<<"],\"saved_common_records\":";
+    if(saved_common){
+        std::cout<<'[';const auto bank=[&](const auto& values){std::cout<<'[';for(std::size_t i=0;i<values.size();++i){if(i)std::cout<<',';std::cout<<values[i];}std::cout<<']';};
+        for(std::size_t n=0;n<saved_common->size();++n){if(n)std::cout<<',';const auto& s=(*saved_common)[n];
+            std::cout<<"{\"object_id\":"<<(*saved_prefixes)[n].object_id<<",\"block_offset\":"<<s.block_offset
+                <<",\"start_bits\":"<<s.start_bits<<",\"consumed_bits\":"<<s.consumed_bits<<",\"remaining_bits\":"<<s.remaining_bits
+                <<",\"decoded_words\":"<<s.decoded_words<<",\"stack_count\":"<<s.stack_count<<",\"stack_flags\":"<<s.stack_flags<<",\"stack\":[";
+            for(std::size_t i=0;i<s.stack.size();++i){if(i)std::cout<<',';const auto& f=s.stack[i];
+                std::cout<<"{\"stack_object_id\":"<<f.stack_object_id<<",\"tree_id\":"<<f.tree_id<<",\"node_id\":"<<f.node_id
+                    <<",\"local_count\":"<<static_cast<unsigned>(f.local_count)<<",\"parameter_count\":"<<static_cast<unsigned>(f.parameter_count)
+                    <<",\"parameters\":";bank(f.parameters);std::cout<<",\"locals\":";bank(f.locals);
+                std::cout<<",\"primitive_state\":"<<f.primitive_state<<",\"code_owner_obj_type\":"<<f.code_owner_obj_type<<'}';
+            }
+            std::cout<<"],\"relationship_flag\":"<<s.relationship_flag<<",\"relationship_count\":"<<s.relationship_count<<",\"relationships\":[";
+            for(std::size_t i=0;i<s.relationships.size();++i){if(i)std::cout<<',';const auto& r=s.relationships[i];
+                std::cout<<"{\"is_present\":"<<r.is_present<<",\"target_id\":"<<r.target_id<<",\"value_count\":"<<r.value_count<<",\"values\":";
+                bank(r.values);std::cout<<'}';
+            }
+            std::cout<<"],\"slot_count\":"<<s.slot_count<<",\"linked_slot\":";
+            if(s.linked_slot)std::cout<<'['<<s.linked_slot->unknown<<','<<s.linked_slot->object_id<<']';else std::cout<<"null";
+            std::cout<<",\"slots\":[";for(std::size_t i=0;i<s.slots.size();++i){if(i)std::cout<<',';std::cout<<'['<<s.slots[i].unknown<<','<<s.slots[i].object_id<<']';}
+            std::cout<<"],\"dynamic_sprite_flag_count\":"<<s.dynamic_sprite_flag_count<<",\"dynamic_sprite_flags\":";bank(s.dynamic_sprite_flags);
+            std::cout<<",\"resource_dependent_state_decoded\":false,\"world_entities_restored\":false}";
+        }
+        std::cout<<']';
     }else std::cout<<"null";
     std::cout<<",\"global_bootstrap\":";
     if(bootstrap_globals){

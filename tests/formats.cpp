@@ -54,6 +54,20 @@ std::string far(const std::string& asset) {
     b += "test.iff";
     return b;
 }
+std::string far_names(const std::vector<std::string>& names) {
+    std::string bytes(20, '\0');
+    bytes.replace(0, 8, "FAR!byAZ");
+    put(bytes, 8, 1, 4); put(bytes, 12, 16, 4);
+    put(bytes, 16, static_cast<std::uint32_t>(names.size()), 4);
+    for (const auto& name : names) {
+        const auto offset = bytes.size();
+        bytes.resize(offset + 16, '\0');
+        put(bytes, offset + 8, 16, 4);
+        put(bytes, offset + 12, static_cast<std::uint32_t>(name.size()), 4);
+        bytes += name;
+    }
+    return bytes;
+}
 } // namespace
 
 int main() {
@@ -116,6 +130,46 @@ int main() {
             }) == "2.5" && visited == 1, "IFF enumeration");
         });
         auto archive = far(container);
+        const auto names = far_names({"same", "same"});
+        use(names, [](const odh::View& v) {
+            odh::Limits limits;
+            limits.far_name_length = 4; limits.far_name_bytes = 8;
+            const auto entries = odh::far1_index(v, limits);
+            require(entries.size() == 2 && entries[0].name == "same" && entries[1].name == "same",
+                    "FAR exact name budgets and duplicate preservation");
+            limits.far_name_bytes = 7;
+            rejects([&] { odh::far1_index(v, limits); }, "FAR duplicate names consume cumulative budget");
+            limits.far_name_bytes = 8; limits.far_name_length = 3;
+            rejects([&] { odh::far1_index(v, limits); }, "FAR configured individual name budget");
+            limits.far_name_length = 4; limits.far_name_bytes = 0;
+            rejects([&] { odh::far1_index(v, limits); }, "FAR zero cumulative name budget");
+            limits.far_name_bytes = 8; limits.far_name_length = 0;
+            rejects([&] { odh::far1_index(v, limits); }, "FAR zero individual name budget");
+        });
+        use(far_names({std::string(4097, 'x')}), [](const odh::View& v) {
+            rejects([&] { odh::far1_index(v); }, "FAR default name length budget");
+            odh::Limits limits; limits.far_name_length = 4097; limits.far_name_bytes = 4097;
+            require(odh::far1_index(v, limits)[0].name.size() == 4097, "FAR raised explicit name budget");
+        });
+        use(far_names({std::string(4096, 'x')}), [](const odh::View& v) {
+            require(odh::far1_index(v)[0].name.size() == 4096, "FAR exact default individual bound");
+        });
+        std::vector<std::string> maximum_names(256, std::string(4096, 'x'));
+        use(far_names(maximum_names), [](const odh::View& v) {
+            require(odh::far1_index(v).size() == 256, "FAR exact default cumulative bound");
+        });
+        maximum_names.push_back("x");
+        use(far_names(maximum_names), [](const odh::View& v) {
+            rejects([&] { odh::far1_index(v); }, "FAR default cumulative bound plus one");
+        });
+        use(far_names({}), [](const odh::View& v) {
+            odh::Limits limits; limits.far_name_length = 0; limits.far_name_bytes = 0;
+            require(odh::far1_index(v, limits).empty(), "FAR empty index permits zero name budget");
+        });
+        for (std::size_t size = 20; size < names.size(); ++size)
+            use(names.substr(0, size), [](const odh::View& v) {
+                rejects([&] { odh::far1_index(v); }, "FAR truncated multiple name records");
+            });
         use(archive, [](const odh::View& v) {
             const auto entries = odh::far1_index(v);
             require(entries.size() == 1 && entries[0].name == "test.iff", "FAR index");

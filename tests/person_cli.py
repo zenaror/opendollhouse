@@ -532,6 +532,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   return bytes(int(bits[n:n+8].ljust(8,'0'),2) for n in range(0,len(bits),8))
  prefix_fields=[(0,32)]*4+[(-16,32),(-16,32),(1,32),(1,16),(0,16)]
  prefix_fields+=[(0,16)]*8+[(2 if n==11 else 0,16) for n in range(68)]+[(0,16)]*5
+ prefix_fields+=[(0,32),(512,32),(-1,32),(0,32),(0,16),(0,16)]
  prefix_bytes=fields_bytes(prefix_fields)
  table_bytes=fields_bytes([(2,16),(1,16),(0,16)])
  skip_end=13+len(table_bytes)+4+len(prefix_bytes)-12
@@ -543,6 +544,23 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and len(records)==1 and records[0]['object_id']==2 and records[0]['type_id']==1
  assert records[0]['guid']==0x11223344 and records[0]['x']==-16 and records[0]['out_of_world']
  assert records[0]['object_data'][11]==2 and not d['saved_object_prefixes']['world_entities_restored']
+ assert d['saved_common_records'][0]['stack_count']==0 and d['saved_common_records'][0]['relationship_flag']==-1
+ assert d['saved_common_records'][0]['consumed_bits']>records[0]['consumed_bits'] and d['definition_catalog'] is None
+ definitions=root/'Definitions.iff';definition=bytearray(objd(0x11223344))
+ struct.pack_into('<HHh',definition,18,4,42,-1);plain_iff(definitions,[('OBJD',321,definition)])
+ r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['definition_catalog']['guids']==1 and d['definition_catalog']['candidates']==1
+ match=d['saved_definition_records'][0];assert match['status']=='unique' and match['object_id']==2
+ assert match['candidates'][0]['chunk_id']==321 and match['candidates'][0]['master_id']==42 and match['candidates'][0]['is_multitile']
+ assert match['candidates'][0]['sub_index']==-1 and not d['saved_common_records'][0]['world_entities_restored']
+ r=run(['--initialize','--lot',str(house),'7']+['--object-definition-file',str(definitions)]*2);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['saved_definition_records'][0]['status']=='ambiguous' and len(d['saved_definition_records'][0]['candidates'])==2
+ struct.pack_into('<I',definition,28,88);plain_iff(definitions,[('OBJD',321,definition)])
+ r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['saved_definition_records'][0]['status']=='missing' and not d['saved_definition_records'][0]['candidates']
+ struct.pack_into('<I',definition,0,139);plain_iff(definitions,[('OBJD',321,definition)])
+ r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);assert r.returncode==2 and not r.stdout
+ r=run(['--initialize']+['--object-definition-file',str(definitions)]*17);assert r.returncode==2 and not r.stdout
  for chunks in [[],[('objt',0,objt_payload),('objt',0,objt_payload)], [('objt',0,struct.pack('<II4sI',0,2,b'tjbo',0))]]:
   plain_iff(house,[('SIMI',1,bootstrap_saved),('ObjM',1,objm_payload)]+chunks)
   r=run(['--initialize','--lot',str(house),'7']);assert r.returncode==2 and not r.stdout

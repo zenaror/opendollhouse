@@ -114,7 +114,9 @@ seleciona FAMI pela casa e classifica Bob como residente de House07; Main chega
 à operação de inventário. A [consulta FindToken](docs/inventory-validation.md)
 lê NGBH e ultrapassa esse gate; o Main residente chega à animação44.
 O [snapshot salvo](docs/saved-prefix-validation.md) decodifica posições e bancos
-iniciais de ObjM e resolve IDs à tabela objt. Aparência, restante das instâncias,
+iniciais de ObjM e resolve IDs à tabela objt. O [estado comum](docs/object-state-validation.md)
+inclui frames, relações e slots, com catálogo OBJD de fontes explícitas.
+Aparência, partes dependentes de recursos das instâncias,
 publicação das entidades/posições em World e arquitetura seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
