@@ -1,4 +1,5 @@
 #include "odh/hit_selection.hpp"
+#include "odh/sound.hpp"
 #include <iostream>
 #include <limits>
 
@@ -29,8 +30,9 @@ struct Fixture {
     odh::HitNotePlan run(const odh::HitChooser& chooser = {}, const odh::HitSelectionLimits& limits = {},
                          const odh::HotTrack* track = nullptr, std::uint32_t start = 16,
                          odh::HitJumpOperand operand = odh::HitJumpOperand::FreeSoHeuristic,
-                         const odh::HitSourceFieldReader& reader = {}) const {
-        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand, reader);
+                         const odh::HitSourceFieldReader& reader = {},
+                         std::optional<odh::HitArguments> args = {}) const {
+        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand, reader, args);
     }
 };
 template<class F> void rejected(F&& operation, const char* reason) {
@@ -48,6 +50,56 @@ bool predicate(unsigned op, int value) {
 }
 }
 int main() { try {
+    for(const auto a:{std::numeric_limits<std::int32_t>::min(),0,std::numeric_limits<std::int32_t>::max()})
+    for(const auto b:{-123,0,123}) for(const auto c:{-1,0,1}) {
+        Fixture f; f.emit({6,4,1,6,5,2,6,6,3});f.note(100,7);
+        const odh::HitArguments args{{a,b,c}};
+        const auto p=f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,{},args);
+        require(p.initial_arguments==args && p.registers[4]==a && p.registers[5]==b && p.registers[6]==c,
+                "bytecode reads all three exact signed invocation arguments");
+        require(p.registers[0]==0 && p.registers[7]==0 && p.registers[15]==0 && p.locals[0]==0,
+                "arguments do not seed unrelated registers/locals or NoteOn destination");
+    }
+    {
+        Fixture f;f.note();const auto p=f.run();
+        require(!p.initial_arguments && p.registers[1]==12 && p.registers[2]==0 && p.registers[3]==0,
+                "omitted tuple retains reference initialization");
+        odh::HitArguments args{{0,0,0}};
+        const auto seeded=f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,{},args);
+        args[0]=123;
+        require(seeded.initial_arguments==odh::HitArguments{{0,0,0}} && seeded.registers[1]==0,
+                "explicit zero tuple has no default fallback and plan owns its initial arguments");
+    }
+    {
+        odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,66,0,0}) &&
+                                world.create(2,odh::EntityKind::object,{1,0,0,0}),"create actual World source banks");
+        require(world.set_person_data(1,7,300),"set World neatness source");
+        odh::VmFrame frame{odh::routine_key(4096),0,{2,2,2},{},{}};
+        require(world.write(frame,0,0,-7),"set World object attribute source");
+        const std::map<std::int16_t,std::uint64_t> generations{{1,world.find(1)->generation},{2,world.find(2)->generation}};
+        const odh::HitSourceFieldReader reader=[&](std::int32_t source,std::int32_t field)->std::optional<std::int32_t>{
+            if(source<=0 || source>32767 || field<0)return std::nullopt;
+            const auto id=static_cast<std::int16_t>(source);const auto expected=generations.find(id);
+            const auto entity=world.find(id);
+            if(!entity || expected==generations.end() || entity->generation!=expected->second)return std::nullopt;
+            const auto fields=odh::sound_source_variables(*entity);
+            if(!fields || static_cast<std::uint32_t>(field)>=fields->fields.size())return std::nullopt;
+            return fields->fields[static_cast<std::size_t>(field)];
+        };
+        Fixture f;f.vars[20]=999;f.emit({72,4,1,2});f.note();
+        const auto p=f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,reader,odh::HitArguments{{1,20,0}});
+        require(p.registers[4]==30 && p.trace[0].source_object_value==1 && p.trace[0].field_index==20,
+                "invocation args query World entity1 without aliasing reference source12");
+        const auto q=f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,reader,odh::HitArguments{{2,1,0}});
+        require(q.registers[4]==-7 && q.trace[0].source_object_value==2 && q.trace[0].sign_flag,
+                "same bytecode queries another World source's signed object attribute");
+        require(world.set_person_data(1,7,660),"update live World source");
+        require(f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,reader,odh::HitArguments{{1,20,0}}).registers[4]==66,
+                "subsequent invocation reads current bank");
+        require(world.remove(1) && world.create(1,odh::EntityKind::avatar,{0,66,0,0}),"reuse World source ID");
+        rejected([&]{f.run({}, {},nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,reader,odh::HitArguments{{1,20,0}});},
+                 "World provider can reject stale entity incarnation rather than binding reused ID");
+    }
     for (unsigned op = 62; op <= 67; ++op) for (int value : {-1, 0, 1}) {
         Fixture f;
         f.emit({4, 0, static_cast<std::uint8_t>(value)});

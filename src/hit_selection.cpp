@@ -14,7 +14,8 @@ class Selection {
 public:
     Selection(const HitFile& file, const Hot& resources, std::uint32_t start,
               const std::array<std::int32_t, 29>& vars, const HitChooser& choice,
-              const HitSelectionLimits& bounds, HitJumpOperand operand, const HitSourceFieldReader& reader)
+              const HitSelectionLimits& bounds, HitJumpOperand operand, const HitSourceFieldReader& reader,
+              std::optional<HitArguments> args)
         : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), jump_operand(operand), source_reader(reader), pc(start) {
         if (operand != HitJumpOperand::FreeSoHeuristic && operand != HitJumpOperand::Literal32)
             fail("unsupported Jump operand profile");
@@ -25,6 +26,8 @@ public:
         if (code_end > hit.bytes.size() || code_end <= 16) fail("invalid HIT code region");
         address(pc);
         plan.registers[1] = 12;
+        plan.initial_arguments = args;
+        if(args) for(std::size_t n=0;n<args->size();++n) plan.registers[n+1]=(*args)[n];
     }
     HitNotePlan run(const HotTrack* track) {
         if (track) initialize(*track);
@@ -273,7 +276,7 @@ HitNotePlan select_hit_note(const HitFile& hit, const Hot& hot, std::uint32_t st
                            const std::array<std::int32_t, 29>& vars,
                            const HitChooser& chooser, const HitSelectionLimits& limits,
                            const HotTrack* track, HitJumpOperand jump_operand,
-                           const HitSourceFieldReader& source_reader) {
-    return Selection(hit, hot, start, vars, chooser, limits, jump_operand, source_reader).run(track);
+                           const HitSourceFieldReader& source_reader, std::optional<HitArguments> args) {
+    return Selection(hit, hot, start, vars, chooser, limits, jump_operand, source_reader, args).run(track);
 }
 }

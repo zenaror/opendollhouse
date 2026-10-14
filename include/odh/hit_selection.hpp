@@ -7,6 +7,9 @@ namespace odh {
 // static evidence from the separately supplied Sims.exe, not proven for .bak.
 // Other selection semantics remain the bounded FreeSO reference profile.
 enum class HitJumpOperand { FreeSoHeuristic, Literal32 };
+// Raw invocation arguments for registers1,2,3. No volume/pan conversion or
+// ArgStyle/shared-variable initialization is implied by this tuple.
+using HitArguments = std::array<std::int32_t, 3>;
 struct HitSelectionLimits {
     std::uint32_t instructions = 4096;
     std::uint32_t trace_entries = 4096;
@@ -49,6 +52,7 @@ struct HitNotePlan {
     bool zero_flag = false, sign_flag = false;
     std::optional<std::uint32_t> active_hitlist;
     std::optional<HitChoice> initial_choice;
+    std::optional<HitArguments> initial_arguments;
     std::array<std::int32_t, 16> registers{};
     std::array<std::int32_t, 54> locals{};
     std::vector<HitSelectionTrace> trace;
@@ -60,6 +64,8 @@ struct HitNotePlan {
 // Offline, bounded primary-FreeSO TS1 selection profile, not an audio backend
 // or proof of original-game semantics. start_pc is an already resolved code
 // address. Registers/local variables begin zero, except register 1 = 12.
+// Explicit initial_args instead seed registers1,2,3 from the owned tuple;
+// every other initial register/local and zero/sign flag stays unchanged.
 // GetSrcDataField reads object_vars[field] directly: field 20 is index 20,
 // FreeSO neatness/10, not index 14 (age). The caller supplies all 29 values.
 // If source_reader is supplied, it replaces that lookup and receives BOTH
@@ -90,5 +96,6 @@ HitNotePlan select_hit_note(const HitFile&, const Hot&, std::uint32_t start_pc,
                            const HitChooser&, const HitSelectionLimits& = {},
                            const HotTrack* initial_track = nullptr,
                            HitJumpOperand jump_operand = HitJumpOperand::FreeSoHeuristic,
-                           const HitSourceFieldReader& source_reader = {});
+                           const HitSourceFieldReader& source_reader = {},
+                           std::optional<HitArguments> initial_args = {});
 }

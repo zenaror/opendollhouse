@@ -54,4 +54,13 @@ fixture=1,7,0,0,0,0
     d=json.loads(r.stdout)
     assert r.returncode==0 and d['evidence']=='offline_HIT_selection_with_explicit_source_fields' and d['field_source']==12
     assert d['note']['trace'][1]['source']==12 and d['note']['trace'][1]['field_value']==0 and d['note']['trace'][1]['zero']
+    r=subprocess.run(args+['--choice','0','--field-source','1','--field','20','30','--args','1','1024','0'],capture_output=True,text=True)
+    d=json.loads(r.stdout)
+    assert r.returncode==0 and d['evidence']=='offline_HIT_selection_with_explicit_arguments'
+    assert d['initial_args_fixture']==[1,1024,0] and d['note']['trace'][1]['source']==1 and d['note']['trace'][1]['field_value']==30
+    for extra in [['--args'],['--args','1'],['--args','1','2'],['--args','1','2','2147483648'],['--args','-2147483649','0','0'],['--args','0','0','0','--args','1','2','3']]:
+        r=subprocess.run(args+extra,capture_output=True,text=True);assert r.returncode==2 and not r.stdout
+    for source in [0,-2147483648,2147483647]:
+        r=subprocess.run(args+['--choice','0','--field-source',str(source),'--field','20','0','--args',str(source),'0','0'],capture_output=True,text=True)
+        d=json.loads(r.stdout);assert r.returncode==0 and d['initial_args_fixture']==[source,0,0] and d['note']['trace'][1]['source']==source
 print('HIT note CLI offline fixture selection passed')

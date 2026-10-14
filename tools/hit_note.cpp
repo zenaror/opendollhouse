@@ -17,9 +17,10 @@ template<class T>T number(const std::string& text){
 std::string lower(std::string text){for(auto& c:text)if(c>='A'&&c<='Z')c=static_cast<char>(c+32);return text;}
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: odh-hit-note HSM HOT HIT EVENT [--field INDEX INT32] [--field-source INT32] [--choice INDEX] [--jump-operand free-so|literal32]...");
+    if(argc<5)throw odh::FormatError("usage: odh-hit-note HSM HOT HIT EVENT [--field INDEX INT32] [--field-source INT32] [--args INT32 INT32 INT32] [--choice INDEX] [--jump-operand free-so|literal32]...");
     auto jump_operand=odh::HitJumpOperand::FreeSoHeuristic;bool jump_seen=false;
     std::optional<std::int32_t> field_source;
+    std::optional<odh::HitArguments> initial_args;
     std::array<std::int32_t,29> fields{};std::array<bool,29> seen{};
     std::vector<std::size_t> choices;
     for(int i=5;i<argc;++i){const std::string option=argv[i];
@@ -30,6 +31,10 @@ int main(int argc,char** argv){try{
         }else if(option=="--choice"&&i+1<argc){
             if(choices.size()>=256)throw odh::FormatError("HIT choice fixture count exceeds budget");
             choices.push_back(number<std::size_t>(argv[++i]));
+        }else if(option=="--args"&&i+3<argc&&!initial_args){
+            odh::HitArguments values{};
+            for(auto& value:values)value=number<std::int32_t>(argv[++i]);
+            initial_args=values;
         }else if(option=="--field-source"&&i+1<argc&&!field_source){
             field_source=number<std::int32_t>(argv[++i]);
         }else if(option=="--jump-operand"&&i+1<argc&&!jump_seen){
@@ -60,15 +65,18 @@ int main(int argc,char** argv){try{
                 const auto index=choices[next_choice++];
                 if(index<ids.size())choice_records.push_back({list,ids[index],index});
                 return index;
-            },{},&track->second,jump_operand,source_reader);
+            },{},&track->second,jump_operand,source_reader,initial_args);
         if(next_choice!=choices.size()){plan.reset();diagnostic="unused explicit HIT choices";}
     }catch(const odh::FormatError& e){diagnostic=e.what();}
-    std::cout<<"{\"evidence\":"<<json_bytes(field_source?"offline_HIT_selection_with_explicit_source_fields":jump_operand==odh::HitJumpOperand::Literal32?
+    std::cout<<"{\"evidence\":"<<json_bytes(initial_args?"offline_HIT_selection_with_explicit_arguments":field_source?"offline_HIT_selection_with_explicit_source_fields":jump_operand==odh::HitJumpOperand::Literal32?
             "offline_FreeSO_HIT_selection_with_literal32_Jump":"offline_FreeSO_HIT_note_selection_profile")
         <<",\"jump_operand\":"
         <<json_bytes(jump_operand==odh::HitJumpOperand::Literal32?"literal32":"free-so")
         <<",\"field_source\":"<<(field_source?std::to_string(*field_source):"null")
-        <<",\"audio_submitted\":false,\"event\":"<<json_bytes(name)
+        <<",\"initial_args_fixture\":";
+    if(initial_args)std::cout<<'['<<(*initial_args)[0]<<','<<(*initial_args)[1]<<','<<(*initial_args)[2]<<']';
+    else std::cout<<"null";
+    std::cout<<",\"audio_submitted\":false,\"event\":"<<json_bytes(name)
         <<",\"track\":"<<*event->second.track_id<<",\"start_pc\":"<<*track->second.subroutine_offset
         <<",\"resources\":{\"hsm_records\":"<<hsm.records<<",\"hsm_duplicates\":"<<hsm.duplicate_names
         <<",\"hot_records\":"<<hot.records<<",\"hot_unsupported_records\":"<<hot.unsupported_records
