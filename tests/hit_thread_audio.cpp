@@ -1,5 +1,6 @@
 #include "odh/hit_thread.hpp"
 #include "odh/xa_audio.hpp"
+#include "odh/sound_threads.hpp"
 #include "linux_audio.hpp"
 #include <chrono>
 #include <cstdlib>
@@ -55,6 +56,44 @@ int main() { try {
     if(starts!=1 || thread.pc()!=26 || !thread.bytecode_ended() || thread.faulted() ||
        thread.notes_started()!=1 || output->queued_frames() || bytes!=input || pcm.samples.size()!=56)
         throw std::runtime_error("HIT decoded-audio lifecycle mismatch");
-    std::cout<<"Synthetic XA->HIT note->SDL dummy WaitSamp/End integration passed\n";
+    output.reset(); // Dummy permits one open device; first probe is complete.
+    // A collection must cancel queued audio even when WaitSamp cannot finish.
+    struct AudioOwner:odh::SoundThreadLifetime {
+        odh_host::LinuxAudio audio{{8000,1}};
+        unsigned& stops;std::size_t& queued_before;bool& clean;bool stopped=false;
+        AudioOwner(unsigned& s,std::size_t& q,bool& c):stops(s),queued_before(q),clean(c){}
+        void stop() noexcept override {
+            if(stopped)return;
+            stopped=true;++stops;
+            try {queued_before=audio.queued_frames();audio.pause();audio.clear();clean=audio.queued_frames()==0;}
+            catch(...){clean=false;}
+        }
+        ~AudioOwner() override {stop();}
+    };
+    odh::World world;world.create(1,odh::EntityKind::avatar,{0,66,0,0});
+    odh::SoundRequest request{355,0,0,0,1,"fixture",false,false,false,{}};
+    request.source_variables=odh::sound_source_variables(*world.find(1));
+    unsigned stops=0;std::size_t queued_before=0;bool clean=false;
+    odh::SoundThreadCollection collection(world,[&](const auto&,const auto& binding){
+        auto owner=std::make_unique<AudioOwner>(stops,queued_before,clean);
+        auto* device=owner.get();
+        odh::HitNoteBackend sound;
+        sound.start=[&,device](auto)->std::optional<std::uint64_t>{
+            if(device->audio.queue(pcm.samples.data(),56)!=56)throw std::runtime_error("partial cancellation fixture");
+            return 1;
+        };
+        sound.status=[device](auto){return device->audio.queued_frames()?odh::HitNoteStatus::active:odh::HitNoteStatus::complete;};
+        odh::HitSourceFieldReader reader=[binding](auto source,auto field){return binding.read(source,field);};
+        auto active_thread=std::make_unique<odh::HitThread>(hit,hot,16,vars,odh::HitChooser{},sound,
+            odh::HitThreadLimits{},nullptr,odh::HitJumpOperand::FreeSoHeuristic,reader);
+        return std::make_unique<odh::SoundThreadInstance>(std::move(active_thread),std::move(owner));
+    });
+    if(!collection.submit(request) || collection.tick().active!=1)throw std::runtime_error("cancellation fixture not active");
+    world.remove(1);
+    const auto cancelled=collection.tick();
+    if(cancelled.owner_invalid!=1 || cancelled.completed || cancelled.faulted || cancelled.active ||
+       stops!=1 || queued_before!=56 || !clean)
+        throw std::runtime_error("removed owner did not cancel queued SDL audio exactly once");
+    std::cout<<"Synthetic XA->HIT->SDL dummy wait/end and owner cancellation passed\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;} }

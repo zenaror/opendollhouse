@@ -35,7 +35,9 @@ inicial (NoteOn/WaitSamp/End) e integração isolada com PCM estão em
 [hit-thread-validation.md](hit-thread-validation.md); isso ainda não retoma Main.
 Leitura viva dos bancos da origem usa ligação protegida por ID/geração em
 [sound-source-binding-validation.md](sound-source-binding-validation.md).
-Cancelamento por remoção do dono e coleção de sons no scheduler permanecem pendentes.
+Coleção portátil com ticks explícitos, capacidade limitada e cancelamento por
+remoção/IDreuse em [sound-thread-collection-validation.md](sound-thread-collection-validation.md).
+Ligação ao loop principal, factory de eventos nativos e mixer permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem
