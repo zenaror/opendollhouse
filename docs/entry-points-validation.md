@@ -1,5 +1,9 @@
 # Funções de entrada da entidade
 
+O [checkpoint de família e ObjM](family-restore-validation.md) posterior
+documenta o caminho residente em House07; os gates visitantes abaixo
+permanecem evidência do perfil sem ativação.
+
 O host agora liga uma tabela própria de funções à entidade e fornece a leitura
 StackObjectFunction35. A seleção usa a entidade StackObject do frame, não
 CodeOwner, Caller, Callee ou EntityKind. Uma ação0 válida difere de uma tabela

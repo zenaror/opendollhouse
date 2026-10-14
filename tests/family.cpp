@@ -1,0 +1,94 @@
+#include "odh/family.hpp"
+#include <iostream>
+#include <limits>
+#include <sstream>
+
+namespace {
+int checks=0;
+void require(bool value,const char* message) { ++checks; if (!value) throw std::runtime_error(message); }
+template<class F> void rejects(F f,const char* message) {
+    bool rejected=false; try { f(); } catch(const odh::FormatError&) { rejected=true; }
+    require(rejected,message);
+}
+void u32(std::string& s,std::uint32_t n) { for (int i=0;i<4;++i) s+=static_cast<char>(n>>(i*8)); }
+void patch(std::string& s,std::size_t offset,std::uint32_t n) { for(int i=0;i<4;++i) s.at(offset+static_cast<std::size_t>(i))=static_cast<char>(n>>(i*8)); }
+std::string payload(std::uint32_t count=2) {
+    std::string s;
+    u32(s,0xdeadbeef);u32(s,9);s+="IMAF";
+    for (auto n:{7U,0xffffffffU,0x80000000U,0x7fffffffU,0x87654321U,0x12345678U})u32(s,n);
+    u32(s,count); for(std::uint32_t i=0;i<count;++i)u32(s,0xffffffffU-i);
+    return s;
+}
+odh::Family read(const std::string& s,const odh::FamiLimits& limits={}) {
+    std::istringstream input(s,std::ios::binary);return odh::read_fami(odh::View(input,s.size()),limits);
+}
+odh::FamilyEntry entry(std::uint16_t id,std::int32_t house,std::uint32_t guid=0xffffffffU) {
+    auto f=read(payload(0));f.house_number=house;f.member_guids={guid};return {id,std::move(f)};
+}
+}
+int main() {
+ try {
+    const auto raw=payload();const auto f=read(raw);
+    require(f.reserved==0xdeadbeef&&f.version==9,"header metadata retained");
+    require(f.house_number==7&&f.family_number==-1,"house and alternate family number retained");
+    require(f.budget==std::numeric_limits<std::int32_t>::min()&&f.value_in_arch==std::numeric_limits<std::int32_t>::max(),"signed extrema retained");
+    require(f.family_friends==-2023406815&&f.unknown==0x12345678,"signed friends and raw unknown retained");
+    require(f.member_guids==std::vector<std::uint32_t>({0xffffffffU,0xfffffffeU})&&f.remaining_bytes==0,"high GUIDs remain unsigned");
+    for (auto version:{0U,8U,9U,0xffffffffU}) {
+        auto s=raw;patch(s,4,version);require(read(s).version==version,"version metadata has no invented whitelist");
+    }
+    for (std::size_t n=0;n<raw.size();++n)rejects([&]{read(raw.substr(0,n));},"all required prefixes reject");
+    for (std::size_t tail=0;tail<=17;++tail) {
+        const auto decoded=read(raw+std::string(tail,'\x81'));
+        require(decoded.remaining_bytes==tail&&decoded.member_guids==f.member_guids,"tail extent retained without optional zero defaults");
+    }
+    auto bad=raw;bad[8]='x';rejects([&]{read(bad);},"invalid signature");
+    for(auto count:{0xffffffffU,0x80000000U,0x7fffffffU,3U}) {
+        auto s=raw;patch(s,36,count);rejects([&]{read(s);},"negative/impossible count rejected before allocation");
+    }
+    odh::FamiLimits exact;exact.payload_bytes=raw.size();exact.members=2;
+    require(read(raw,exact).member_guids.size()==2,"exact limits accepted");
+    auto limit=exact;--limit.payload_bytes;rejects([&]{read(raw,limit);},"payload budget");
+    limit=exact;--limit.members;rejects([&]{read(raw,limit);},"member budget");
+    limit={};limit.members=0;require(read(payload(0),limit).member_guids.empty(),"empty family allowed");
+    require(read(payload(256)).member_guids.size()==256,"default member boundary");
+    rejects([&]{read(payload(257));},"default member cap");
+    rejects([&]{read(payload(0)+std::string(65536-39,'x'));},"default payload cap includes tails");
+    {
+        std::istringstream input("prefix"+raw+"tail");odh::View view(input,6+raw.size()+4);
+        require(odh::read_fami(view.subview(6,raw.size())).remaining_bytes==0,"bounded subview");
+        rejects([&]{odh::read_fami(view.subview(6,raw.size()-1));},"outside subview member unavailable");
+    }
+    {
+        std::istringstream input(raw.substr(0,raw.size()-1));odh::View view(input,raw.size());
+        rejects([&]{odh::read_fami(view);},"physical truncation never caught as optional tail");
+    }
+    std::vector<odh::FamilyEntry> source{entry(65535,7),entry(9,32768),entry(2,-1),entry(1,65543,0x80000000U)};
+    odh::FamilyContext context(source);
+    require(context.source()[0].chunk_id==65535&&context.source()[3].chunk_id==1,"serialized ordering retained");
+    require(context.by_house(7)->chunk_id==1&&context.by_house(7)->family.house_number==65543,"last serialized same low16 house wins without narrowing raw field");
+    require(context.by_house(-32768)->chunk_id==9&&context.by_house(-1)->chunk_id==2,"signed16 house cast profile");
+    require(context.by_id(65535)->family.family_number==-1,"unsigned chunk identity distinct from FamilyNumber");
+    require(!context.by_id(8)&&!context.by_house(8),"missing identity/house is absent");
+    require(odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU)&&!odh::FamilyContext::contains(*context.by_id(65535),0x80000000U),"membership uses exact unsigned GUIDs");
+    source[0].family.member_guids.clear();source[3].family.house_number=8;source.clear();
+    require(context.by_house(7)->chunk_id==1&&odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU),"immutable owned source snapshot");
+    std::vector<odh::FamilyEntry> reversed{entry(1,7),entry(65535,7)};
+    require(odh::FamilyContext(reversed).by_house(7)->chunk_id==65535,"serialized reverse chooses different winner");
+    reversed[1].chunk_id=1;rejects([&]{odh::FamilyContext c(reversed);},"duplicate chunk IDs ambiguous even across houses");
+    auto wide=entry(3,std::numeric_limits<std::int32_t>::min());
+    require(odh::FamilyContext({wide}).by_house(0)->family.house_number==std::numeric_limits<std::int32_t>::min(),"int32 minimum exact low16 mapping");
+    wide.family.house_number=std::numeric_limits<std::int32_t>::max();
+    require(odh::FamilyContext({wide}).by_house(-1)->chunk_id==3,"int32 maximum exact low16 mapping");
+    wide.family.member_guids.resize(257);rejects([&]{odh::FamilyContext c({wide});},"runtime per-family member cap");
+    std::vector<odh::FamilyEntry> bounded;
+    for(std::uint16_t id=0;id<4096;++id)bounded.push_back(entry(id,id));
+    require(odh::FamilyContext(bounded).source().size()==4096,"runtime exact family cap");
+    bounded.push_back(entry(4096,4096));rejects([&]{odh::FamilyContext c(bounded);},"runtime family count cap");
+    bounded.resize(257);for(auto& e:bounded)e.family.member_guids.resize(256);
+    rejects([&]{odh::FamilyContext c(bounded);},"runtime cumulative member cap");
+    bounded.resize(256);require(odh::FamilyContext(bounded).source().size()==256,"runtime exact cumulative member cap");
+    require(odh::FamilyContext({}).source().empty(),"empty runtime context");
+    std::cout<<checks<<" family checks passed\n";
+ } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
+}

@@ -109,7 +109,10 @@ fornece GameEdition e dois globals de runtime. A
 [enumeração de entidades](docs/entity-next-validation.md) cobre pessoas, objetos
 e GUIDs exatos. As [funções de entrada](docs/entry-points-validation.md) vêm
 do OBJD/OBJf da entidade, inclusive o dispatch de startup; Main chega agora
-a GotoRoutingSlot. Família ativada, aparência e restauração completa do lote seguem pendentes.
+a GotoRoutingSlot no perfil visitante. A [ativação de família](docs/family-restore-validation.md)
+seleciona FAMI pela casa e classifica Bob como residente de House07; Main chega
+à operação de inventário. O reader ObjM conserva mapas e blocos comprimidos.
+Aparência e restauração de instâncias, posições e arquitetura seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

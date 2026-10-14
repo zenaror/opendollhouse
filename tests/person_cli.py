@@ -467,6 +467,35 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  # Old short root probes keep the existing partial resource profile.
  setup(main=[(2,254,255,[0,0,15,0,0,5,8,35])]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['entry_point_table'] is None and d['diagnostic']=='unsupported read scope 35 index 15'
+ # Explicit activation uses FAMI's chunk ID selected by house, not FamilyNumber.
+ def fami_payload(house_id=7,alternate=99,members=(1,)):
+  return struct.pack('<II4s7i',0,7,b'IMAF',house_id,alternate,20000,1234,2,17,len(members))+struct.pack('<'+'I'*len(members),*members)
+ def family_neighborhood(chunks=None):
+  nbrs_payload=struct.pack('<II4sI',0,62,b'SRBN',1)+relation_neighbor(48,1,())
+  plain_iff(neighborhood,[('NBRS',1,nbrs_payload)]+([('FAMI',1,fami_payload())] if chunks is None else chunks))
+ family_args=['--initialize','--activate-family','--lot',str(house),'7','--neighborhood',str(neighborhood)]
+ family_neighborhood();family_before=neighborhood.read_bytes()
+ startup_setup(init=[global_to_temp(9,1),check_temp(0,1)],dynamic_id=0,
+               main=[select_actor,(2,2,255,[0,0,32,0,0,5,8,18]),check_temp(0,0)])
+ r=run(family_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['family_activation']['chunk_id']==1 and d['family_activation']['family_number']==99
+ assert d['family_activation']['house_number']==7 and d['family_activation']['current_global9']==1
+ assert d['neighbor_inheritance']['current_family']==1 and d['neighbor_inheritance']['selected_person_type']==0
+ assert d['global_reads']==[dict(index=9,value=1,source='family_activation')] and neighborhood.read_bytes()==family_before
+ # Global9 is writable VM state; a write does not replace CurrentFamily's pointer.
+ startup_setup(init=[(2,254,255,[9,0,0,0,0,5,6,7])],dynamic_id=0,
+               main=[global_to_temp(9,1),check_temp(0,0)])
+ r=run(family_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['family_activation']['current_global9']==0 and d['neighbor_inheritance']['current_family']==1
+ assert d['neighbor_inheritance']['selected_person_type']==0
+ # Without explicit activation the same house/member remains a visitor profile.
+ startup_setup();r=run([v for v in family_args if v!='--activate-family']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['family_activation'] is None and d['neighbor_inheritance']['selected_person_type']==1
+ for chunks in [[],[('FAMI',1,fami_payload(house_id=8))],[('FAMI',1,fami_payload(members=(2,)))]]:
+  family_neighborhood(chunks);r=run(family_args);assert r.returncode==2 and not r.stdout
+ for extra in [['--activate-family'],['--initialize','--activate-family'],family_args+['--activate-family']]:
+  r=run(extra);assert r.returncode==2 and not r.stdout
+ family_neighborhood()
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

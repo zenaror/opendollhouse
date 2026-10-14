@@ -42,9 +42,10 @@ produz visitante1. Um valor salvo signed-1 não equivale ao ID65535.
 NeighborId31 recebe a identidade real, GreetStatus34 é zerado; ghost salvo
 é conservado e informado, sem alegar efeitos de renderização.
 
-O helper admite uma família ativada explícita. Este host ainda passa ausência:
-selecionar uma casa não ativa uma FAMI nem transforma Bob em residente.
-Ativação de família e restauração do lote são pendências separadas.
+O helper admite uma família ativada explícita. Neste checkpoint o host passava
+ausência; o [checkpoint de ativação](family-restore-validation.md) posterior
+adiciona a flag explícita. Selecionar uma casa sem essa flag continua sem
+ativar FAMI. Ativação e restauração do lote são etapas separadas.
 
 ## Atributos limitados de TS1
 

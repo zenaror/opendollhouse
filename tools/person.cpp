@@ -11,6 +11,8 @@
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
 #include "odh/entry_points.hpp"
+#include "odh/family.hpp"
+#include "odh/objm.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -95,7 +97,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
-    std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false;
+    std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
         if(option=="--avatar"&&!avatar&&n+3<argc){avatar=Resource{argv[n+1],argv[n+2]};avatar_def=selector(argv[n+3]);n+=3;}
         else if(option=="--avatar-file"&&!avatar&&n+2<argc){avatar=Resource{argv[n+1],"",true};avatar_def=selector(argv[n+2]);n+=2;}
@@ -110,13 +112,18 @@ int main(int argc,char** argv) {
         else if(option=="--zoning"&&!zoning_path&&n+1<argc)zoning_path=argv[++n];
         else if(option=="--seed"&&!seed&&n+1<argc)seed=seed_selector(argv[++n]);
         else if(option=="--initialize"&&!initialize)initialize=true;
+        else if(option=="--activate-family"&&!activate_family)activate_family=true;
         else if(option=="--neighborhood"&&!neighborhood_path&&n+1<argc)neighborhood_path=argv[++n];
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags)))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
-    std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
+    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path)))
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+    std::optional<odh::Simi> simi;
+    std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type=="ObjM"&&chunk.id==1){
+            if(objm)throw odh::FormatError("ambiguous ObjM1");objm=odh::read_objm(chunk.payload);
+        }
         if(chunk.type!="SIMI"||chunk.id!=1)return;
         if(simi)throw odh::FormatError("ambiguous SIMI1");simi=odh::read_simi(chunk.payload);
     });});
@@ -128,23 +135,44 @@ int main(int argc,char** argv) {
     if(zoning_path&&!zoning)throw odh::FormatError("zoning STR#1 absent");
     std::optional<odh::LotContext> lot;
     if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
-    struct GlobalRead {std::int16_t index,value;bool bootstrap;};
+    enum class GlobalSource {lot,bootstrap,family};
+    struct GlobalRead {std::int16_t index,value;GlobalSource source;};
     std::vector<GlobalRead> global_reads;
     std::optional<odh::Ts1BootstrapGlobals> bootstrap_globals;
     if(initialize)bootstrap_globals.emplace();
     std::vector<odh::LotZoneResult> zoning_reads;
     std::optional<odh::Nbrs> nbrs;
+    std::vector<odh::FamilyEntry> family_records;
+    std::uint32_t family_members_available=65536;
     if(neighborhood_path)with_iff_file(*neighborhood_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(activate_family&&chunk.type=="FAMI"){
+            if(family_records.size()>=4096)throw odh::FormatError("family count exceeds bounded host profile");
+            odh::FamiLimits family_limits;family_limits.members=std::min<std::uint32_t>(256,family_members_available);
+            auto family=odh::read_fami(chunk.payload,family_limits);
+            family_members_available-=static_cast<std::uint32_t>(family.member_guids.size());
+            family_records.push_back({chunk.id,std::move(family)});
+        }
         if(chunk.type!="NBRS"||chunk.id!=1)return;
         if(nbrs)throw odh::FormatError("ambiguous NBRS1");nbrs=odh::read_nbrs(chunk.payload);
     });});
     if(neighborhood_path&&!nbrs)throw odh::FormatError("NBRS1 absent");
     std::optional<odh::NeighborContext> neighbors;
     if(nbrs)neighbors.emplace(std::move(*nbrs));
+    std::optional<odh::FamilyContext> families;
+    const odh::FamilyEntry* active_family=nullptr;
+    std::optional<std::int16_t> family_global;
+    if(activate_family){
+        families.emplace(family_records);
+        active_family=families->by_house(static_cast<std::int16_t>(*lot_id));
+        if(!active_family)throw odh::FormatError("selected house has no FAMI assignment");
+        family_global=signed_word(active_family->chunk_id);
+    }
     std::vector<odh::NeighborNext> neighbor_next;
     std::vector<odh::NeighborDataValue> neighbor_reads;
     auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def,initialize);
     if(person.binding->version!=138||person.object_type!=2)throw odh::FormatError("person constructor profile requires OBJD138 ObjectType2");
+    if(active_family&&(!odh::FamilyContext::contains(*active_family,person.binding->guid)||!neighbors->id_for_guid(person.binding->guid)))
+        throw odh::FormatError("avatar GUID is not a bound member of selected FAMI");
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
        person.glob->name.find('\0')!=std::string::npos||fold(person.glob->name+".iff")!=fold(semi->entry))
         throw odh::FormatError("semiglobal does not match flat Pascal GLOB128 binding");
@@ -205,8 +233,9 @@ int main(int argc,char** argv) {
             neighbor_reads.push_back(*value);return value->value;}
         if(scope==6){
             const auto runtime=bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
-            const auto value=runtime?runtime:(lot?lot->read(index):std::nullopt);
-            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.push_back({index,*value,runtime.has_value()});}
+            const auto family_value=index==9?family_global:std::nullopt;
+            const auto value=family_value?family_value:runtime?runtime:(lot?lot->read(index):std::nullopt);
+            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.push_back({index,*value,family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});}
             return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
         const auto value=tuning.read(frame.context.code_owner,index);
@@ -216,6 +245,7 @@ int main(int argc,char** argv) {
     };
     memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value){
         if(scope==6){
+            if(index==9&&family_global){family_global=value;return true;}
             if(bootstrap_globals&&bootstrap_globals->read(index))return bootstrap_globals->write(index,value);
             return lot&&lot->write(index,value);}
         return world_memory.write(frame,scope,index,value);
@@ -291,7 +321,7 @@ int main(int argc,char** argv) {
         }
         if(initialize&&neighbors&&!host_failed&&vm.status()!=odh::VmStatus::fault){
             if(const auto id=neighbors->id_for_guid(person.binding->guid)){
-                try{inherited=odh::inherit_neighbor(world,1,*neighbors->by_id(*id));}
+                try{inherited=odh::inherit_neighbor(world,1,*neighbors->by_id(*id),active_family?std::optional<std::uint16_t>{active_family->chunk_id}:std::nullopt);}
                 catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
             }
         }
@@ -339,10 +369,18 @@ int main(int argc,char** argv) {
         for(std::size_t n=0;n<table.entries.size();++n){if(n)std::cout<<',';std::cout<<"{\"condition\":"<<table.entries[n].condition<<",\"action\":"<<table.entries[n].action<<'}';}
         std::cout<<"]}";
     }else std::cout<<"null";
+    std::cout<<",\"family_activation\":";
+    if(active_family){const auto& v=*active_family;
+        std::cout<<"{\"chunk_id\":"<<v.chunk_id<<",\"house_number\":"<<v.family.house_number<<",\"family_number\":"<<v.family.family_number
+            <<",\"version\":"<<v.family.version<<",\"budget\":"<<v.family.budget<<",\"current_global9\":"<<*family_global
+            <<",\"profile\":\"CurrentFamily and global9 selected; no SelectWholeFamily/VerifyFamily or saved resident restoration\",\"members\":[";
+        for(std::size_t n=0;n<v.family.member_guids.size();++n){if(n)std::cout<<',';std::cout<<v.family.member_guids[n];}std::cout<<"]}";
+    }else std::cout<<"null";
     std::cout<<",\"neighbor_inheritance\":";
     if(inherited){const auto& v=*inherited;
         std::cout<<"{\"neighbor_id\":"<<v.neighbor_id<<",\"guid\":"<<v.guid
-            <<",\"current_family\":null,\"family_policy\":\"no activated FAMI; visitor classification\",\"neighbor_family\":"<<v.neighbor_family
+            <<",\"current_family\":"<<(v.current_family?std::to_string(*v.current_family):"null")
+            <<",\"family_policy\":"<<json_bytes(active_family?"activated FAMI chunk comparison":"no activated FAMI; visitor classification")<<",\"neighbor_family\":"<<v.neighbor_family
             <<",\"bank_words_before\":"<<v.bank_words_before<<",\"bank_words_after\":"<<v.bank_words_after
             <<",\"saved_data_present\":"<<(v.saved_data_present?"true":"false")
             <<",\"retained_gender\":"<<v.retained_gender<<",\"retained_person_type\":"<<v.retained_person_type
@@ -389,6 +427,12 @@ int main(int argc,char** argv) {
         <<",\"simi_version\":"<<simi->version<<",\"serialized_globals\":"<<simi->global_data.size()<<",\"remaining_bytes\":"<<simi->remaining_bytes
         <<",\"profile\":\"SIMI static globals; selected lot overrides10; clock/entity fields unsupported; bootstrap globals provided separately when initialized\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
     else std::cout<<"null";
+    std::cout<<",\"saved_objm_container\":";
+    if(objm){std::uint64_t bytes=0;for(const auto& block:objm->blocks)bytes+=block.bytes.size();
+        std::cout<<"{\"version\":"<<objm->version<<",\"compression\":"<<static_cast<unsigned>(objm->compression)
+            <<",\"mapped_ids\":"<<objm->map_records.size()<<",\"blocks\":"<<objm->blocks.size()<<",\"owned_block_bytes\":"<<bytes
+            <<",\"remaining_bytes\":"<<objm->remaining_bytes<<",\"instance_state_decoded\":false,\"world_entities_restored\":false}";
+    }else std::cout<<"null";
     std::cout<<",\"global_bootstrap\":";
     if(bootstrap_globals){
         std::cout<<"{\"profile\":\"FreeSO TS1 Init/IFF activation; all-expansions policy; not detected installation or saved VM restore\",\"globals\":[";
@@ -399,7 +443,7 @@ int main(int argc,char** argv) {
     }else std::cout<<"null";
     std::cout<<",\"global_reads\":[";
     for(std::size_t n=0;n<global_reads.size();++n){if(n)std::cout<<',';std::cout<<"{\"index\":"<<global_reads[n].index<<",\"value\":"<<global_reads[n].value
-        <<",\"source\":"<<json_bytes(global_reads[n].bootstrap?"runtime_bootstrap":"lot_context")<<'}';}
+        <<",\"source\":"<<json_bytes(global_reads[n].source==GlobalSource::family?"family_activation":global_reads[n].source==GlobalSource::bootstrap?"runtime_bootstrap":"lot_context")<<'}';}
     std::cout<<"],\"zoning_reads\":[";
     for(std::size_t n=0;n<zoning_reads.size();++n){if(n)std::cout<<',';const auto& value=zoning_reads[n];
         std::cout<<"{\"input\":"<<value.input<<",\"value\":"<<value.value<<",\"fallback\":"<<(value.fallback?"true":"false")<<'}';}
