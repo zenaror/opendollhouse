@@ -1,6 +1,9 @@
 #include "saved_resources.hpp"
 #include "saved_appearance.hpp"
 #include "saved_object_renderer.hpp"
+#include "saved_floor_renderer.hpp"
+#include "saved_architecture_resources.hpp"
+#include "odh/terrain.hpp"
 #include "saved_tail_json.hpp"
 #include "json.hpp"
 #include "odh/graphics_state.hpp"
@@ -40,9 +43,9 @@ void animation_json(std::ostream& out,const std::optional<SavedAnimationAppearan
 }
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
+    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
     std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::string skeleton_entry,skeleton_name,depth;bool draw_objects=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
+    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path;bool draw_objects=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
     std::set<std::string> seen;
     for(int n=5;n<argc;++n){const std::string option=argv[n];
         auto need=[&](int count){if(argc-n-1<count)throw odh::FormatError("incomplete saved scene option");};
@@ -51,6 +54,7 @@ int main(int argc,char** argv){try{
             sources.push_back({argv[++n],option=="--object-definition-file"});continue;}
         if(!seen.insert(option).second)throw odh::FormatError("duplicate saved scene option");
         if(option=="--objects")draw_objects=true;
+        else if(option=="--floors"){need(1);floors_path=argv[++n];if(floors_path->empty())throw odh::FormatError("empty floor input");}
         else if(option=="--skeleton"){need(2);skeleton_entry=argv[++n];skeleton_name=argv[++n];}
         else if(option=="--neighborhood"){need(1);neighborhood=argv[++n];}
         else if(option=="--depth-output"){need(1);depth=argv[++n];if(depth.empty())throw odh::FormatError("empty depth output");}
@@ -65,11 +69,44 @@ int main(int argc,char** argv){try{
         throw odh::FormatError("saved scene requires definitions, skeleton and output");
     std::vector<std::string> inputs{argv[1],argv[2],argv[3]};for(const auto& s:sources)inputs.push_back(s.path);
     if(neighborhood)inputs.push_back(*neighborhood);
+    if(floors_path)inputs.push_back(*floors_path);
     for(const auto& p:inputs){different(argv[4],p);if(!depth.empty())different(depth,p);}
     if(!depth.empty())different(argv[4],depth);
     auto index=saved_definition_index(sources);auto records=saved_world_records(argv[1],*index);
     std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
     auto world=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
+    std::optional<SavedArchitectureResource> architecture;
+    std::map<std::int16_t,std::array<float,2>> group_centers;
+    if(floors_path){
+        architecture=saved_architecture_resource(argv[1]);
+        for(const auto& map:architecture->maps)if(map.first=="FLRm"&&!map.second.entries.empty())
+            throw odh::FormatError("custom FLRm materials require a resource resolver");
+        // Bounded no-overflow subset of the reference's short-coordinate group
+        // average. Saved raw coordinates are retained, including absent members.
+        std::map<std::int16_t,const odh::SavedWorldEntity*> by_id;
+        for(const auto& r:world->records)by_id.emplace(static_cast<std::int16_t>(r.saved.object_id),&r);
+        for(const auto& group:world->multitile_groups){
+            if(group.members.empty())throw odh::FormatError("empty saved terrain group");
+            std::int32_t x=0,y=0;
+            for(auto id:group.members){const auto& p=by_id.at(id)->saved.prefix;x+=p.x;y+=p.y;
+                if(x < -32768 || x > 32767 || y < -32768 || y > 32767)
+                    throw odh::FormatError("terrain group short-coordinate overflow unsupported");}
+            const auto count=static_cast<std::int32_t>(group.members.size());
+            const std::array<float,2> center{static_cast<float>(x/count)/16,static_cast<float>(y/count)/16};
+            for(auto id:group.members)if(!group_centers.emplace(id,center).second)
+                throw odh::FormatError("duplicate terrain group member");
+        }
+    }
+    auto elevation=[&](std::int16_t id){
+        if(!architecture)return 0.0f;
+        const auto* e=world->world->find(id);
+        if(!e||!e->position)throw odh::FormatError("terrain entity position unavailable");
+        if(e->attachment){e=world->world->find(e->attachment->container);
+            if(!e||!e->position||e->attachment)throw odh::FormatError("terrain containment unsupported");}
+        auto xy=std::array<float,2>{static_cast<float>(e->position->x)/16,static_cast<float>(e->position->y)/16};
+        if(e->kind==odh::EntityKind::object){const auto found=group_centers.find(e->id);if(found!=group_centers.end())xy=found->second;}
+        return odh::terrain_interp_altitude(architecture->architecture,xy[0],xy[1]);
+    };
     struct Actor {const odh::SavedWorldEntity* saved;odh::GraphicsEntity graphics;SavedAppearance appearance;};
     std::vector<Actor> actors;std::vector<std::int16_t> outside;
     SavedAppearanceResources resources(argv[2],argv[3],skeleton_entry,skeleton_name);
@@ -78,6 +115,7 @@ int main(int argc,char** argv){try{
         if(!world->world->find(id)->position){outside.push_back(id);continue;}
         if(actors.size()>=16)throw odh::FormatError("saved scene avatar budget exceeded");
         actors.push_back({&r,odh::graphics_entity(*world->world,id),resources.resolve(*r.tail.person)});
+        actors.back().graphics.tile_position[2]+=elevation(id);
     }
     if(actors.empty()&&!draw_objects)throw odh::FormatError("saved scene has no positioned avatars");
     for(const auto& a:actors)for(std::size_t i=0;i<3;++i)camera.center_tile[i]+=a.graphics.tile_position[i]/static_cast<float>(actors.size());
@@ -86,17 +124,33 @@ int main(int argc,char** argv){try{
         for(const auto& r:world->records){const auto* e=world->world->find(static_cast<std::int16_t>(r.saved.object_id));
             if(!e->position||e->kind!=odh::EntityKind::object||r.saved.prefix.object_data[34]!=0)continue;
             ++count;camera.center_tile[0]+=static_cast<float>(e->position->x)/16-.5f;camera.center_tile[1]+=static_cast<float>(e->position->y)/16-.5f;
-            camera.center_tile[2]+=static_cast<float>(e->position->level-1)*2.95f;
+            camera.center_tile[2]+=static_cast<float>(e->position->level-1)*2.95f+elevation(e->id);
         }
         if(!count)throw odh::FormatError("saved scene has no positioned visible entities");
         for(auto& c:camera.center_tile)c/=static_cast<float>(count);
     }
     odh::RasterOptions options;options.lighting=true;
     odh::RasterFrame image=odh::rasterize(camera.width,camera.height,{}, {},options);
+    std::optional<SavedFloorResult> floor_result;
+    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera);image=std::move(floor_result->image);}
     std::ostringstream report;report<<std::setprecision(17)<<"{\"evidence\":"<<json_bytes(draw_objects?"ODH_saved_World_avatar_object_CPU_snapshot":"ODH_saved_World_avatar_CPU_snapshot")<<",\"house\":"<<json_bytes(argv[1])
        <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"objects_rendered\":"<<(draw_objects?"true":"false")<<",\"original_visual_equivalence\":false"
        <<",\"entities\":"<<world->records.size()<<",\"avatars_rendered\":"<<actors.size()<<",\"out_of_world_avatars\":";
     odh_tools::saved_bank(report,outside);report<<",\"center_tile\":";odh_tools::saved_bank(report,camera.center_tile);
+    report<<",\"architecture_decoded\":"<<(architecture?"true":"false")
+          <<",\"floors_rendered\":"<<(floor_result?"true":"false")
+          <<",\"walls_rendered\":false,\"grass_surface_rendered\":false,\"terrain_profile\":"
+          <<(architecture?json_bytes("FreeSO_byte1_times10_bilinear_BaseAlt0_bounded_group_average"):"null")
+          <<",\"floor_materials\":[";
+    if(floor_result)for(std::size_t n=0;n<floor_result->materials.size();++n){if(n)report<<',';const auto& m=floor_result->materials[n];
+        report<<"{\"pattern\":"<<m.pattern<<",\"sprite_id\":"<<m.sprite_id<<",\"palette_id\":"<<m.palette_id<<",\"width\":"<<m.width<<",\"height\":"<<m.height<<'}';}
+    report<<"],\"floor_draws\":[";
+    if(floor_result)for(std::size_t n=0;n<floor_result->draws.size();++n){if(n)report<<',';const auto& d=floor_result->draws[n];
+        report<<"{\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"level\":"<<unsigned(d.level)<<",\"pattern\":"<<d.pattern
+              <<",\"half\":"<<unsigned(d.half)<<",\"altitude\":";odh_tools::saved_bank(report,d.altitude);report<<'}';}
+    report<<"],\"floor_triangles\":"<<(floor_result?floor_result->triangles:0)
+          <<",\"floor_texture_bytes\":"<<(floor_result?floor_result->texture_bytes:0)
+          <<",\"floor_geometry_texture_pixel_visits\":"<<(floor_result?floor_result->geometry_texture_pixel_visits:0);
     report<<",\"zoom\":"<<unsigned(camera.zoom)<<",\"rotation\":"<<unsigned(camera.rotation)<<",\"actors\":[";
     std::uint64_t vertices=0,triangles=0,textures=0,samples=0;
     for(std::size_t n=0;n<actors.size();++n){auto& a=actors[n];SceneRenderer renderer(a.appearance.scene);
@@ -147,7 +201,8 @@ int main(int argc,char** argv){try{
             const auto hidden=world->world->read(f,3,34),graphic=world->world->read(f,3,0);
             if(!hidden||!graphic)throw odh::FormatError("saved object visibility/graphic unavailable");
             if(*hidden!=0){++hidden_objects;continue;}
-            const auto g=odh::graphics_entity(*world->world,id,slots);
+            auto g=odh::graphics_entity(*world->world,id,slots);
+            g.tile_position[2]+=elevation(id);
             objects.push_back({id,raw.saved.guid,*graphic,g.direction,g.tile_position,raw.common.dynamic_sprite_flags});
         }
         SavedObjectRenderer object_renderer(*index);auto result=object_renderer.render(objects,camera,image);

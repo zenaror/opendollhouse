@@ -102,8 +102,10 @@ reais de House07 nas posições do World, em uma imagem CPU estática. Arquitetu
 e threads do lote continuam pendentes. Com `--objects`, o
 [host compõe os objetos salvos](docs/saved-object-architecture-validation.md),
 incluindo contenção por SLOT e gráficos dinâmicos. `odh-architecture` decodifica
-as grades de piso/parede e mapas de recursos; desenhá-los e construir rooms
-segue pendente.
+as grades de piso/parede e mapas de recursos. Com `--floors FLOORS_IFF`, o
+[compositor de pisos e terreno](docs/saved-floor-validation.md) desenha materiais
+globais, meios pisos diagonais e aplica altitude a pisos, objetos e avatares.
+Paredes, superfície de grama, rooms e execução do lote continuam pendentes.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
