@@ -35,6 +35,16 @@ Pixel at_uv(const odh::BitmapImage& image,float u,float v,odh::TextureFilter fil
 }
 
 int main() {try {
+    {
+        auto tri=triangle();tri.vertices[0].color={1,0,0};tri.vertices[1].color={0,1,0};tri.vertices[2].color={0,0,1};
+        odh::RasterOptions options;options.vertex_colors=true;
+        const std::vector<odh::BitmapImage> tex{texture(1,1,{white})};
+        require(odh::rasterize(1,1,{tri},tex,options).pixels[0]==Pixel{128,64,64,255},"barycentric vertex RGB modulation");
+        require(odh::rasterize(1,1,{tri},tex).pixels[0]==white,"default profile ignores valid vertex colors");
+        for(auto& v:tri.vertices)v.normal={0,-1,0};options.lighting=true;options.directional_up_light=true;
+        require(odh::rasterize(1,1,{tri},tex,options).pixels[0]==Pixel{0,0,0,255},"directional up lighting lower hemisphere");
+        for(float bad:{-0.01f,1.01f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}){tri.vertices[0].color[0]=bad;rejects([&]{odh::rasterize(1,1,{tri},tex,options);});}
+    }
     const auto palette=texture(2,2,{red,green,blue,white});
     const std::vector<odh::BitmapImage> solids{texture(1,1,{red}),texture(1,1,{green}),
                                                texture(1,1,{white})};

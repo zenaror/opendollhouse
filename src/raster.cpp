@@ -126,6 +126,8 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 throw FormatError("raster UV must be finite");
             for(const auto x:vertex.normal)if(!std::isfinite(x))
                 throw FormatError("raster normal must be finite");
+            for(const auto x:vertex.color)if(!std::isfinite(x)||x<0||x>1)
+                throw FormatError("raster vertex color outside finite unit range");
         }
         const auto candidates=bounds(triangle,width,height).samples;
         if(candidates>limits.samples-tested_samples)
@@ -166,6 +168,11 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 if(!std::isfinite(u) || !std::isfinite(v))
                     throw FormatError("raster interpolated UV overflow");
                 auto color=sample(textures[triangle.texture],u,v,options.filter);
+                if(options.vertex_colors)for(unsigned c=0;c<3;++c){
+                    double modulation=0;
+                    for(unsigned i=0;i<3;++i)modulation+=weights[i]*vertices[i].color[c];
+                    color[c]*=std::clamp(modulation,0.0,1.0);
+                }
                 double shade=1;
                 if(options.lighting) {
                     const double nx=blend(vertices,weights,0,true);
@@ -173,7 +180,7 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                     const double nz=blend(vertices,weights,2,true);
                     const double length=std::sqrt(nx*nx+ny*ny+nz*nz);
                     const double up=length==0?1:std::clamp(ny/length,-1.0,1.0);
-                    shade=std::sqrt((up+1)*0.5)*0.5+0.5;
+                    shade=options.directional_up_light?(up+1)*0.5:std::sqrt((up+1)*0.5)*0.5+0.5;
                 }
                 for(unsigned channel=0;channel<3;++channel)
                     frame.pixels[index][channel]=static_cast<std::uint8_t>(

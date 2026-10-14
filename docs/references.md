@@ -24,6 +24,7 @@ fixados evitam misturar consultas de versões diferentes.
 |---|---|
 | `refs/upstream/FreeSO` | `4c6b3e8f5835b228723caea3c9f683c62f244f73` |
 | `refs/upstream/Simitone` | `4906db3156616bfaffc10ce0963cf08062975fef` |
+| `refs/upstream/FSOMonoGame` | `74f7ef558111e62a7d0a2228b6f9714980e000fa` |
 | `refs/upstream/Simitone/FreeSO` | `f86bbd34b2112296ed786741f640a0535886d180` (submódulo) |
 
 Os clones usam histórico raso e as duas raízes estão em HEAD destacado. O
@@ -140,3 +141,9 @@ Outras fontes:
 FreeSO declara MPL 2.0. Qualquer reutilização futura de código, shaders ou assets
 de terceiros deve registrar licença, origem e revisão. A licença do frontend
 Simitone não deve ser presumida a partir da licença de seu submódulo.
+
+Em 2026-10-14, foi clonado o [FSOMonoGame fixado pelo FreeSO](https://github.com/riperiperi/FSOMonoGame/tree/74f7ef558111e62a7d0a2228b6f9714980e000fa)
+para conferir `Color.Lerp`/`MathHelper.Lerp`: operações float e conversão int por
+truncamento antes de `ToVector4`. A licença declarada nessa revisão é Ms-PL.
+Checkout shallow e destacado, apenas consulta; nenhum build/setup executado.
+A implementação CPU própria não liga nem incorpora o runtime C# dessa biblioteca.

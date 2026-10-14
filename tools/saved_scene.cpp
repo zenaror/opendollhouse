@@ -4,6 +4,7 @@
 #include "saved_floor_renderer.hpp"
 #include "saved_architecture_resources.hpp"
 #include "odh/terrain.hpp"
+#include "odh/terrain_surface.hpp"
 #include "saved_tail_json.hpp"
 #include "json.hpp"
 #include "odh/graphics_state.hpp"
@@ -43,9 +44,9 @@ void animation_json(std::ostream& out,const std::optional<SavedAnimationAppearan
 }
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
+    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--terrain-theme 0..7] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
     std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path;bool draw_objects=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
+    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path;std::optional<odh::TerrainTheme> terrain_theme;bool draw_objects=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
     std::set<std::string> seen;
     for(int n=5;n<argc;++n){const std::string option=argv[n];
         auto need=[&](int count){if(argc-n-1<count)throw odh::FormatError("incomplete saved scene option");};
@@ -55,6 +56,7 @@ int main(int argc,char** argv){try{
         if(!seen.insert(option).second)throw odh::FormatError("duplicate saved scene option");
         if(option=="--objects")draw_objects=true;
         else if(option=="--floors"){need(1);floors_path=argv[++n];if(floors_path->empty())throw odh::FormatError("empty floor input");}
+        else if(option=="--terrain-theme"){need(1);auto value=selector(argv[++n]);if(value>=8)throw odh::FormatError("terrain theme exceeds range");terrain_theme=static_cast<odh::TerrainTheme>(value);}
         else if(option=="--skeleton"){need(2);skeleton_entry=argv[++n];skeleton_name=argv[++n];}
         else if(option=="--neighborhood"){need(1);neighborhood=argv[++n];}
         else if(option=="--depth-output"){need(1);depth=argv[++n];if(depth.empty())throw odh::FormatError("empty depth output");}
@@ -67,6 +69,7 @@ int main(int argc,char** argv){try{
     }
     if(sources.empty()||skeleton_entry.empty()||skeleton_name.empty()||std::string(argv[4]).empty())
         throw odh::FormatError("saved scene requires definitions, skeleton and output");
+    if(terrain_theme&&!floors_path)throw odh::FormatError("terrain theme requires --floors");
     std::vector<std::string> inputs{argv[1],argv[2],argv[3]};for(const auto& s:sources)inputs.push_back(s.path);
     if(neighborhood)inputs.push_back(*neighborhood);
     if(floors_path)inputs.push_back(*floors_path);
@@ -131,15 +134,33 @@ int main(int argc,char** argv){try{
     }
     odh::RasterOptions options;options.lighting=true;
     odh::RasterFrame image=odh::rasterize(camera.width,camera.height,{}, {},options);
+    std::optional<odh::TerrainSurface> terrain_geometry;
+    if(terrain_theme){
+        terrain_geometry=odh::terrain_surface(architecture->architecture,camera,*terrain_theme);
+        odh::RasterOptions ground_options;ground_options.lighting=true;ground_options.directional_up_light=true;ground_options.vertex_colors=true;
+        const odh::BitmapImage white{1,1,32,true,{{255,255,255,255}},0};
+        image=odh::rasterize(camera.width,camera.height,terrain_geometry->triangles,{white},ground_options);
+    }
     std::optional<SavedFloorResult> floor_result;
-    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera);image=std::move(floor_result->image);}
+    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera);
+        if(terrain_geometry){image=odh::merge_raster(image,floor_result->image);floor_result->image=odh::RasterFrame{};}
+        else image=std::move(floor_result->image);
+    }
     std::ostringstream report;report<<std::setprecision(17)<<"{\"evidence\":"<<json_bytes(draw_objects?"ODH_saved_World_avatar_object_CPU_snapshot":"ODH_saved_World_avatar_CPU_snapshot")<<",\"house\":"<<json_bytes(argv[1])
        <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"objects_rendered\":"<<(draw_objects?"true":"false")<<",\"original_visual_equivalence\":false"
        <<",\"entities\":"<<world->records.size()<<",\"avatars_rendered\":"<<actors.size()<<",\"out_of_world_avatars\":";
     odh_tools::saved_bank(report,outside);report<<",\"center_tile\":";odh_tools::saved_bank(report,camera.center_tile);
     report<<",\"architecture_decoded\":"<<(architecture?"true":"false")
           <<",\"floors_rendered\":"<<(floor_result?"true":"false")
-          <<",\"walls_rendered\":false,\"grass_surface_rendered\":false,\"terrain_profile\":"
+          <<",\"walls_rendered\":false,\"grass_surface_rendered\":"<<(terrain_geometry?"true":"false")
+          <<",\"grass_blades_rendered\":false,\"terrain_theme\":"<<(terrain_theme?std::to_string(unsigned(*terrain_theme)):"null")
+          <<",\"terrain_whole_tiles\":"<<(terrain_geometry?terrain_geometry->whole_tiles:0)
+          <<",\"terrain_half_tiles\":"<<(terrain_geometry?terrain_geometry->half_tiles:0)
+          <<",\"terrain_triangles\":"<<(terrain_geometry?terrain_geometry->triangles.size():0)
+          <<",\"terrain_geometry_bytes\":"<<(terrain_geometry?terrain_geometry->triangles.size()*sizeof(odh::RasterTriangle):0)
+          <<",\"terrain_reserved_triangle_bytes\":"<<(terrain_geometry?terrain_geometry->triangles.capacity()*sizeof(odh::RasterTriangle):0)
+          <<",\"terrain_lighting\":"<<(terrain_theme?json_bytes("CPU_directional_up_no_room_light_gamma_blades"):"null")
+          <<",\"terrain_profile\":"
           <<(architecture?json_bytes("FreeSO_byte1_times10_bilinear_BaseAlt0_bounded_group_average"):"null")
           <<",\"floor_materials\":[";
     if(floor_result)for(std::size_t n=0;n<floor_result->materials.size();++n){if(n)report<<',';const auto& m=floor_result->materials[n];

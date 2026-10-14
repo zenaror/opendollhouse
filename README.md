@@ -105,7 +105,9 @@ incluindo contenção por SLOT e gráficos dinâmicos. `odh-architecture` decodi
 as grades de piso/parede e mapas de recursos. Com `--floors FLOORS_IFF`, o
 [compositor de pisos e terreno](docs/saved-floor-validation.md) desenha materiais
 globais, meios pisos diagonais e aplica altitude a pisos, objetos e avatares.
-Paredes, superfície de grama, rooms e execução do lote continuam pendentes.
+Com `--terrain-theme 0`, a [base do terreno](docs/terrain-surface-validation.md)
+compõe o solo com cores salvas e normais de relevo. Temas são explícitos; grama
+em lâminas, iluminação por rooms, paredes e execução do lote seguem pendentes.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
