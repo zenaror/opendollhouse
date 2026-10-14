@@ -14,11 +14,13 @@
 #include "odh/saved_objects.hpp"
 #include "odh/definition_index.hpp"
 #include "odh/objm_common.hpp"
+#include "odh/objm_tail.hpp"
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
 #include "resource.hpp"
 #include "json.hpp"
+#include "saved_tail_json.hpp"
 #include <iostream>
 #include <memory>
 #include <charconv>
@@ -133,6 +135,7 @@ int main(int argc,char** argv) {
     std::optional<odh::Objt> objt;
     std::optional<std::vector<odh::SavedObjectPrefix>> saved_prefixes;
     std::optional<std::vector<odh::ObjmCommonState>> saved_common;
+    std::optional<std::vector<std::optional<odh::ObjmTailState>>> saved_tails;
     std::optional<odh::DefinitionIndex> definition_index;
     if(!definition_sources.empty()){
         std::vector<odh::DefinitionCandidate> candidates;
@@ -183,6 +186,22 @@ int main(int argc,char** argv) {
             common.push_back(std::move(state));
         }
         saved_common=std::move(common);
+        if(definition_index){
+            std::vector<std::optional<odh::ObjmTailState>> tails;
+            tails.reserve(saved_prefixes->size());
+            std::uint64_t tail_words_available=65536,string_bytes_available=256*1024;
+            for(std::size_t n=0;n<saved_prefixes->size();++n){
+                const auto& prefix=(*saved_prefixes)[n];
+                const auto* definition=definition_index->unique(prefix.guid);
+                if(!definition){tails.emplace_back();continue;}
+                odh::ObjmTailLimits limits;limits.decoded_words=tail_words_available;limits.string_bytes=string_bytes_available;
+                auto tail=odh::read_objm_tail(objm->blocks[n],(*saved_common)[n],objm->version,
+                    definition->definition,*objt->entry_for_type(prefix.type_id),limits);
+                tail_words_available-=tail.decoded_words;string_bytes_available-=tail.string_bytes;
+                tails.emplace_back(std::move(tail));
+            }
+            saved_tails=std::move(tails);
+        }
     }
     if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||chunk.id!=1)return;
@@ -496,7 +515,9 @@ int main(int argc,char** argv) {
     if(objm){std::uint64_t bytes=0;for(const auto& block:objm->blocks)bytes+=block.bytes.size();
         std::cout<<"{\"version\":"<<objm->version<<",\"compression\":"<<static_cast<unsigned>(objm->compression)
             <<",\"mapped_ids\":"<<objm->map_records.size()<<",\"blocks\":"<<objm->blocks.size()<<",\"owned_block_bytes\":"<<bytes
-            <<",\"remaining_bytes\":"<<objm->remaining_bytes<<",\"instance_state_decoded\":false,\"world_entities_restored\":false}";
+            <<",\"remaining_bytes\":"<<objm->remaining_bytes
+            <<",\"known_reference_schema_decoded\":"<<(saved_tails&&std::all_of(saved_tails->begin(),saved_tails->end(),[](const auto& tail){return tail.has_value();})?"true":"false")
+            <<",\"instance_state_decoded\":false,\"world_entities_restored\":false}";
     }else std::cout<<"null";
     std::cout<<",\"saved_object_prefixes\":";
     if(saved_prefixes){
@@ -559,6 +580,18 @@ int main(int argc,char** argv) {
             std::cout<<",\"slots\":[";for(std::size_t i=0;i<s.slots.size();++i){if(i)std::cout<<',';std::cout<<'['<<s.slots[i].unknown<<','<<s.slots[i].object_id<<']';}
             std::cout<<"],\"dynamic_sprite_flag_count\":"<<s.dynamic_sprite_flag_count<<",\"dynamic_sprite_flags\":";bank(s.dynamic_sprite_flags);
             std::cout<<",\"resource_dependent_state_decoded\":false,\"world_entities_restored\":false}";
+        }
+        std::cout<<']';
+    }else std::cout<<"null";
+    std::cout<<",\"saved_tail_records\":";
+    if(saved_tails){
+        std::cout<<'[';
+        for(std::size_t n=0;n<saved_tails->size();++n){if(n)std::cout<<',';const auto& tail=(*saved_tails)[n];
+            std::cout<<"{\"object_id\":"<<(*saved_prefixes)[n].object_id<<",\"status\":"
+                <<json_bytes(tail?"decoded_known_reference_schema":"definition_unavailable")
+                <<",\"world_entities_restored\":false,\"saved_threads_restored\":false,\"state\":";
+            if(tail)odh_tools::saved_tail(std::cout,*tail);else std::cout<<"null";
+            std::cout<<'}';
         }
         std::cout<<']';
     }else std::cout<<"null";

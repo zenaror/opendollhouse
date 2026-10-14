@@ -533,6 +533,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  prefix_fields=[(0,32)]*4+[(-16,32),(-16,32),(1,32),(1,16),(0,16)]
  prefix_fields+=[(0,16)]*8+[(2 if n==11 else 0,16) for n in range(68)]+[(0,16)]*5
  prefix_fields+=[(0,32),(512,32),(-1,32),(0,32),(0,16),(0,16)]
+ prefix_fields+=[(0,32)]*6+[(0,16),(0,32)] # Multitile + final UnknownInt.
  prefix_bytes=fields_bytes(prefix_fields)
  table_bytes=fields_bytes([(2,16),(1,16),(0,16)])
  skip_end=13+len(table_bytes)+4+len(prefix_bytes)-12
@@ -553,11 +554,17 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  match=d['saved_definition_records'][0];assert match['status']=='unique' and match['object_id']==2
  assert match['candidates'][0]['chunk_id']==321 and match['candidates'][0]['master_id']==42 and match['candidates'][0]['is_multitile']
  assert match['candidates'][0]['sub_index']==-1 and not d['saved_common_records'][0]['world_entities_restored']
+ tail=d['saved_tail_records'][0];assert tail['status']=='decoded_known_reference_schema'
+ assert tail['state']['multitile']['parent_id']==0 and tail['state']['unknown_int']==0
+ assert tail['state']['consumed_bits']>d['saved_common_records'][0]['consumed_bits']
+ assert not tail['world_entities_restored'] and not tail['saved_threads_restored']
  r=run(['--initialize','--lot',str(house),'7']+['--object-definition-file',str(definitions)]*2);d=json.loads(r.stdout)
  assert r.returncode==0 and d['saved_definition_records'][0]['status']=='ambiguous' and len(d['saved_definition_records'][0]['candidates'])==2
+ assert d['saved_tail_records'][0]['state'] is None and d['saved_tail_records'][0]['status']=='definition_unavailable'
  struct.pack_into('<I',definition,28,88);plain_iff(definitions,[('OBJD',321,definition)])
  r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);d=json.loads(r.stdout)
  assert r.returncode==0 and d['saved_definition_records'][0]['status']=='missing' and not d['saved_definition_records'][0]['candidates']
+ assert d['saved_tail_records'][0]['state'] is None
  struct.pack_into('<I',definition,0,139);plain_iff(definitions,[('OBJD',321,definition)])
  r=run(['--initialize','--lot',str(house),'7','--object-definition-file',str(definitions)]);assert r.returncode==2 and not r.stdout
  r=run(['--initialize']+['--object-definition-file',str(definitions)]*17);assert r.returncode==2 and not r.stdout

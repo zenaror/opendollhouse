@@ -116,7 +116,8 @@ lê NGBH e ultrapassa esse gate; o Main residente chega à animação44.
 O [snapshot salvo](docs/saved-prefix-validation.md) decodifica posições e bancos
 iniciais de ObjM e resolve IDs à tabela objt. O [estado comum](docs/object-state-validation.md)
 inclui frames, relações e slots, com catálogo OBJD de fontes explícitas.
-Aparência, partes dependentes de recursos das instâncias,
+A [cauda conhecida](docs/saved-tail-validation.md) inclui multitile, portais e
+aparência/dados salvos dos personagens. Resolução gráfica da aparência,
 publicação das entidades/posições em World e arquitetura seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:

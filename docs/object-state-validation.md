@@ -1,5 +1,8 @@
 # Definições explícitas e estado comum das instâncias
 
+O [checkpoint da cauda](saved-tail-validation.md) posterior completa a leitura
+do esquema conhecido, incluindo personagens, sem aplicar estado a World.
+
 O host pode indexar definições OBJD de fontes explícitas e lê o estado comum
 de cada bloco salvo: frames da VM, relações, slots e flags de sprites dinâmicos.
 Essa etapa termina antes das partes dependentes de recursos, sem restaurar
