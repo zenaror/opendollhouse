@@ -172,6 +172,41 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  plain_iff(zone,[('STR#',1,struct.pack('<hH',-3,1)+b'\x011, unknown\0\0')]);r=run(lot_args())
  assert r.returncode==2 and 'unsupported lot zoning label' in r.stderr
  # Ordered constructor subset: Init/entry8 first, body data before Main.
+ neighborhood=root/'Neighborhood.iff'
+ def neighbor_record(nid,family=0,mode=5):
+  bank=[0]*80;bank[61]=family
+  return struct.pack('<ii',1,4)+b'n\0'+struct.pack('<ii',0,mode)+(struct.pack('<80h',*bank) if mode>0 else b'')+struct.pack('<hIii',nid,0x11112222,-1,0)
+ def neighborhood_file(records):plain_iff(neighborhood,[('NBRS',1,struct.pack('<II4sI',0,62,b'SRBN',len(records))+b''.join(records))])
+ neighborhood_file([neighbor_record(19),struct.pack('<i',0),neighbor_record(11,7),neighbor_record(15)])
+ choose=(31,2,255,[0,0,0,0,133,10,0,0])
+ setup(main=[(2,1,255,[0,0,0,0,0,5,10,7]),choose,(2,3,255,[0,0,61,0,0,5,8,32]),check_temp(0,7)])
+ r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['steps']==4 and d['neighbor_next']==[dict(current=0,result=11,success=True)]
+ assert d['neighbor_reads']==[dict(neighbor=11,index=61,value=7,source='serialized')]
+ assert d['neighborhood']['entries']==4 and d['neighborhood']['active']==3
+ # End has no output and keeps the target identity.
+ setup(main=[(2,1,255,[0,0,19,0,0,5,10,7]),(31,255,2,[0,0,0,0,133,10,0,0]),(2,254,255,[0,0,19,0,0,2,10,7])])
+ r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['status']=='returned_true' and d['neighbor_next']==[dict(current=19,result=-1,success=False)]
+ # Legacy flags override meaningless encoded owner/index to StackObjectID.
+ setup(main=[(2,1,255,[0,0,0,0,0,5,10,7]),(31,2,255,[1,2,3,4,5,255,255,255]),(2,254,255,[0,0,11,0,0,2,10,7])])
+ r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout);assert r.returncode==0 and d['neighbor_next'][0]['result']==11
+ for index,expected_source in [(80,'legacy_zero_extension'),(87,'legacy_zero_extension')]:
+  setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,index,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+  assert r.returncode==0 and d['neighbor_reads']==[dict(neighbor=11,index=index,value=0,source=expected_source)]
+ setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,88,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported read scope 32 index 88'
+ neighborhood_file([neighbor_record(11,mode=0)])
+ setup(main=[(2,1,255,[0,0,11,0,0,5,10,7]),(2,254,255,[0,0,61,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_reads'][0]['source']=='absent_person_data_reference_zero'
+ neighborhood_file([]);setup(main=[(2,254,255,[0,0,61,0,0,5,8,32])]);r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_reads']==[dict(neighbor=1,index=61,value=0,source='missing_neighbor_reference_zero')]
+ r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported read scope 32 index 61'
+ setup(main=[(31,254,255,[0,0,0,0,133,10,0,0])]);r=run();d=json.loads(r.stdout);assert r.returncode==3 and d['diagnostic']=='unsupported primitive 31'
+ neighborhood_file([neighbor_record(11),neighbor_record(11)]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'ambiguous active neighbor ID' in r.stderr
+ plain_iff(neighborhood,[]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'NBRS1 absent' in r.stderr
+ payload=struct.pack('<II4sI',0,62,b'SRBN',0);plain_iff(neighborhood,[('NBRS',1,payload),('NBRS',1,payload)]);r=run(['--neighborhood',str(neighborhood)]);assert r.returncode==2 and 'ambiguous NBRS1' in r.stderr
+ neighborhood_file([]);r=run(['--neighborhood',str(neighborhood),'--neighborhood',str(neighborhood)]);assert r.returncode==2
  def strings(values):return struct.pack('<hH',-3,len(values))+b''.join(b'\x01'+v.encode()+b'\0\0' for v in values)
  body_values=['']*27;body_values[0]='adult';body_values[12]='male';body_values[13]='27'
  def startup_setup(init=None,dynamic=None,main=None,init_id=4097,dynamic_id=4101,body=body_values,private_walk=('','private-walk')):

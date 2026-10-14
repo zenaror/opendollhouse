@@ -272,6 +272,10 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("service ticket overflow");
                 const VmDispatch dispatch{this,++ticket_sequence_};
                 const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
+                if (outcome.stack_object_write &&
+                    outcome.disposition != PrimitiveDisposition::goto_true &&
+                    outcome.disposition != PrimitiveDisposition::goto_false)
+                    throw VmError("primitive stack-object output requires synchronous branch disposition");
                 if (outcome.temp_write) {
                     if (outcome.disposition != PrimitiveDisposition::goto_true &&
                         outcome.disposition != PrimitiveDisposition::goto_false)
@@ -297,7 +301,7 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     break;
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
-                    // Validate both outputs before publishing either.
+                    // Validate all frame/temp/context outputs before publishing any.
                     if (outcome.write && !frame_output(stack_.back(), *outcome.write))
                         throw VmError("primitive frame output bank/index outside frame");
                     if (outcome.write) {
@@ -306,6 +310,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     }
                     if (outcome.temp_write)
                         temps_[outcome.temp_write->index] = outcome.temp_write->value;
+                    if (outcome.stack_object_write)
+                        stack_.back().context.stack_object = outcome.stack_object_write->value;
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
                     if (outcome.write) {

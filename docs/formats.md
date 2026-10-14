@@ -60,6 +60,10 @@ amostras float32; não implica que esses sejam limites do original.
 
 ## Lacunas relevantes encontradas no corpus
 
+NBRS do bairro tem leitor estrutural bounded, preservando placeholders,80/256
+palavras de pessoa e relações int32. Runtime/limites em
+[neighborhood-validation.md](neighborhood-validation.md); não instancia avatares.
+
 SIMI de casas externas preserva32/64 globais, campos fixos, seis registros de
 orçamento e extensão desconhecida. Versões e cobertura estão em
 [lot-validation.md](lot-validation.md); isso não carrega arquitetura ou entidades.

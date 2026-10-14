@@ -5,6 +5,7 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/avatar_body.hpp"
+#include "odh/neighbor_context.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -70,7 +71,7 @@ std::uint64_t seed_selector(const std::string& text){
 int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
-    std::optional<std::string> lot_path,zoning_path;
+    std::optional<std::string> lot_path,zoning_path,neighborhood_path;
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
@@ -88,10 +89,11 @@ int main(int argc,char** argv) {
         else if(option=="--zoning"&&!zoning_path&&n+1<argc)zoning_path=argv[++n];
         else if(option=="--seed"&&!seed&&n+1<argc)seed=seed_selector(argv[++n]);
         else if(option=="--initialize"&&!initialize)initialize=true;
+        else if(option=="--neighborhood"&&!neighborhood_path&&n+1<argc)neighborhood_path=argv[++n];
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags)))
-        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="SIMI"||chunk.id!=1)return;
@@ -107,6 +109,16 @@ int main(int argc,char** argv) {
     if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
     std::vector<std::pair<std::int16_t,std::int16_t>> global_reads;
     std::vector<odh::LotZoneResult> zoning_reads;
+    std::optional<odh::Nbrs> nbrs;
+    if(neighborhood_path)with_iff_file(*neighborhood_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type!="NBRS"||chunk.id!=1)return;
+        if(nbrs)throw odh::FormatError("ambiguous NBRS1");nbrs=odh::read_nbrs(chunk.payload);
+    });});
+    if(neighborhood_path&&!nbrs)throw odh::FormatError("NBRS1 absent");
+    std::optional<odh::NeighborContext> neighbors;
+    if(nbrs)neighbors.emplace(std::move(*nbrs));
+    std::vector<odh::NeighborNext> neighbor_next;
+    std::vector<odh::NeighborDataValue> neighbor_reads;
     auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def,initialize);
     if(person.binding->version!=138||person.object_type!=2)throw odh::FormatError("person constructor profile requires OBJD138 ObjectType2");
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
@@ -161,6 +173,10 @@ int main(int argc,char** argv) {
     std::vector<odh::TuningValue> tuning_reads;
     const auto world_memory=world.vm_memory();auto memory=world_memory;
     memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
+        if(scope==32){const auto value=neighbors?neighbors->person_data(frame.context.stack_object,index):std::nullopt;
+            if(!value)return {};
+            if(neighbor_reads.size()>=20000)throw odh::FormatError("neighbor read log exceeds bounded host profile");
+            neighbor_reads.push_back(*value);return value->value;}
         if(scope==6){const auto value=lot?lot->read(index):std::nullopt;
             if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.emplace_back(index,*value);}return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
@@ -186,11 +202,15 @@ int main(int argc,char** argv) {
     const auto lot_handler=lot?lot->primitive([&](const auto& value){
         if(zoning_reads.size()>=10000)throw odh::FormatError("zoning read log exceeds bounded host profile");zoning_reads.push_back(value);
     }):odh::VmPrimitive{};
+    const auto neighbor_handler=neighbors?neighbors->primitive(memory,[&](const auto& value){
+        if(neighbor_next.size()>=10000)throw odh::FormatError("neighbor enumeration log exceeds bounded host profile");neighbor_next.push_back(value);
+    }):odh::VmPrimitive{};
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
+        if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -298,6 +318,18 @@ int main(int argc,char** argv) {
     std::cout<<"],\"zoning_reads\":[";
     for(std::size_t n=0;n<zoning_reads.size();++n){if(n)std::cout<<',';const auto& value=zoning_reads[n];
         std::cout<<"{\"input\":"<<value.input<<",\"value\":"<<value.value<<",\"fallback\":"<<(value.fallback?"true":"false")<<'}';}
+    std::cout<<"],\"neighborhood\":";
+    if(neighbors)std::cout<<"{\"file\":"<<json_bytes(*neighborhood_path)<<",\"version\":"<<neighbors->source().version
+        <<",\"entries\":"<<neighbors->source().entries.size()<<",\"active\":"<<neighbors->active_count()<<",\"remaining_bytes\":"<<neighbors->source().remaining_bytes<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"neighbor_next\":[";
+    for(std::size_t n=0;n<neighbor_next.size();++n){if(n)std::cout<<',';const auto& value=neighbor_next[n];
+        std::cout<<"{\"current\":"<<value.current<<",\"result\":"<<value.result<<",\"success\":"<<(value.success?"true":"false")<<'}';}
+    std::cout<<"],\"neighbor_reads\":[";
+    for(std::size_t n=0;n<neighbor_reads.size();++n){if(n)std::cout<<',';const auto& value=neighbor_reads[n];
+        const auto source=value.source==odh::NeighborDataSource::serialized?"serialized":value.source==odh::NeighborDataSource::legacy_zero_extension?"legacy_zero_extension":
+            value.source==odh::NeighborDataSource::missing_neighbor_zero?"missing_neighbor_reference_zero":"absent_person_data_reference_zero";
+        std::cout<<"{\"neighbor\":"<<value.neighbor<<",\"index\":"<<value.index<<",\"value\":"<<value.value<<",\"source\":"<<json_bytes(source)<<'}';}
     std::cout<<']';
     const auto* actor=world.find(1);
     std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)

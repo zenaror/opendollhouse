@@ -81,6 +81,9 @@ struct VmTempWrite {
     std::size_t index;
     std::int16_t value;
 };
+struct VmStackObjectWrite {
+    std::int16_t value;
+};
 struct PrimitiveOutcome {
     PrimitiveDisposition disposition = PrimitiveDisposition::unsupported;
     std::string diagnostic;
@@ -88,6 +91,9 @@ struct PrimitiveOutcome {
     std::optional<VmCall> call = {}; // Explicit child frame; parent remains on this instruction.
     // Synchronous branches only. Validated together with frame output before either is published.
     std::optional<VmTempWrite> temp_write = {};
+    // Synchronous branches only; may hold any signed identity, independent of World entities.
+    // Validated with frame/temp output before publication; other context identities are preserved.
+    std::optional<VmStackObjectWrite> stack_object_write = {};
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };

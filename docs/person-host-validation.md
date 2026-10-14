@@ -9,6 +9,7 @@ O gate posterior com RNG compartilhado está em [random-validation.md](random-va
 A conclusão do Init privado com scopes30/31 está em
 [person-indirect-validation.md](person-indirect-validation.md).
 O modo posterior `--initialize` está em [avatar-startup-validation.md](avatar-startup-validation.md).
+A enumeração posterior de vizinhos está em [neighborhood-validation.md](neighborhood-validation.md).
 É um host de diagnóstico sem janela; não substitui o preview e não representa
 um avatar/lote completamente inicializado.
 
