@@ -37,7 +37,10 @@ Leitura viva dos bancos da origem usa ligação protegida por ID/geração em
 [sound-source-binding-validation.md](sound-source-binding-validation.md).
 Coleção portátil com ticks explícitos, capacidade limitada e cancelamento por
 remoção/IDreuse em [sound-thread-collection-validation.md](sound-thread-collection-validation.md).
-Ligação ao loop principal, factory de eventos nativos e mixer permanecem pendentes.
+Factory de perfil HOT/bytecode explícito em
+[sound-factory-validation.md](sound-factory-validation.md), validada também com
+recursos nativos e estado World construído. Loader genérico de patch/XA,
+ligação ao loop principal e mixer permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem
