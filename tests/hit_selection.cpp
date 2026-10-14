@@ -1,0 +1,289 @@
+#include "odh/hit_selection.hpp"
+#include <iostream>
+#include <limits>
+
+namespace {
+int checks = 0;
+void require(bool condition, const char* reason) {
+    ++checks;
+    if (!condition) throw std::runtime_error(reason);
+}
+struct Fixture {
+    odh::HitFile hit;
+    odh::Hot hot;
+    std::array<std::int32_t, 29> vars{};
+    Fixture() {
+        hit.major_version = 1;
+        hit.bytes.resize(16);
+        for (auto id : {100U, 200U, 300U}) hot.patches[id] = {"synthetic", "synthetic.xa", false, false};
+    }
+    std::uint32_t pc() const { return static_cast<std::uint32_t>(hit.bytes.size()); }
+    void emit(std::initializer_list<std::uint8_t> bytes) { hit.bytes.insert(hit.bytes.end(), bytes); }
+    void word(std::uint32_t bits) {
+        for (unsigned shift = 0; shift < 32; shift += 8) hit.bytes.push_back(static_cast<std::uint8_t>(bits >> shift));
+    }
+    void load(std::uint8_t dest, std::uint32_t bits) { emit({5, dest}); word(bits); }
+    void note(std::uint32_t patch = 100, std::uint8_t dest = 6) { load(50, patch); emit({2, dest}); }
+    void branch(std::uint8_t op, std::uint32_t id) { emit({op}); word(id); }
+    void target(std::uint32_t id, std::uint32_t at) { hot.track_data[id] = at; hit.entry_points[id] = at; }
+    odh::HitNotePlan run(const odh::HitChooser& chooser = {}, const odh::HitSelectionLimits& limits = {},
+                         const odh::HotTrack* track = nullptr, std::uint32_t start = 16) const {
+        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track);
+    }
+};
+template<class F> void rejected(F&& operation, const char* reason) {
+    bool failed = false;
+    try { operation(); } catch (const odh::FormatError& e) {
+        failed = true;
+        require(std::string(e.what()).find("HIT selection") != std::string::npos, "errors identify selection boundary");
+    }
+    require(failed, reason);
+}
+bool predicate(unsigned op, int value) {
+    const bool zero = value == 0, sign = value < 0;
+    return op == 62 ? zero : op == 63 ? !zero : op == 64 ? !sign && !zero :
+           op == 65 ? sign : op == 66 ? !sign : sign || zero;
+}
+}
+int main() { try {
+    for (unsigned op = 62; op <= 67; ++op) for (int value : {-1, 0, 1}) {
+        Fixture f;
+        f.emit({4, 0, static_cast<std::uint8_t>(value)});
+        f.branch(static_cast<std::uint8_t>(op), 0x122);
+        f.note(200, 6);
+        f.target(0x122, f.pc());
+        f.note(100, 7);
+        const auto p = f.run();
+        const bool take = predicate(op, value);
+        require(p.patch_id == (take ? 100U : 200U) && p.note_destination == (take ? 7 : 6), "all six conditional branches use zero/sign flags");
+        require(p.trace[1].branch_taken == take && p.trace[1].branch_id == 0x122 &&
+                (take ? p.trace[1].branch_pc == f.hot.track_data[0x122] : !p.trace[1].branch_pc), "taken branch target remapping recorded");
+        require(p.steps == p.trace.size() && p.trace.back().opcode == 2 && p.pc == p.trace.back().pc, "first NoteOn counted/traced without audio effect");
+        require(p.registers[p.note_destination] == 0, "NoteOn destination not written");
+    }
+    {
+        Fixture f; f.emit({4, 2, 255, 6, 3, 2, 14, 3}); f.note();
+        const auto p = f.run();
+        require(p.registers[1] == 12 && p.registers[2] == -1 && p.registers[3] == -1, "initial register one, sign extension and Set");
+        require(p.trace[0].sign_flag && p.trace[1].sign_flag && p.trace[2].sign_flag, "LoadB/Set/Test flags");
+        require(p.locals[0] == 0 && p.locals[53] == 0, "54 locals initialized to zero");
+    }
+    {
+        Fixture f; f.load(15, 0xffffffffU); f.emit({6, 69, 15, 14, 69}); f.note(100, 69);
+        const auto p = f.run();
+        require(p.registers[15] == -1 && p.locals[53] == -1 && p.note_destination == 69,
+                "highest supported register/local locations work including NoteOn destination validation");
+        require(p.trace[2].sign_flag && p.locals[53] == -1, "Test reads high local without NoteOn overwriting it");
+    }
+    for (const auto& pair : {std::pair<std::uint32_t, std::uint32_t>{0x7fffffffU, 0xffffffffU},
+                           {0x80000000U, 1U}, {0xffffffffU, 0xffffffffU}}) {
+        Fixture f; f.load(0, pair.first); f.load(2, pair.second); f.emit({20, 0, 2}); f.note();
+        const auto p = f.run();
+        const auto bits = pair.first - pair.second;
+        require(p.trace[2].zero_flag == (bits == 0) && p.trace[2].sign_flag == ((bits & 0x80000000U) != 0), "Cmp wraps int32 subtraction like unchecked C#");
+        require(static_cast<std::uint32_t>(p.registers[0]) == pair.first, "Cmp preserves operands");
+    }
+    for (std::uint8_t field = 0; field < 29; ++field) {
+        Fixture f; for (std::size_t n = 0; n < f.vars.size(); ++n) f.vars[n] = static_cast<std::int32_t>(n) * 17 - 200;
+        f.emit({4, 2, field, 72, 3, 1, 2}); f.note();
+        const auto p = f.run();
+        require(p.registers[3] == f.vars[field] && p.trace[1].field_index == field && p.trace[1].field_value == f.vars[field], "GetSrcDataField uses every direct object-variable index");
+        require(p.trace[1].source_object_value == 12, "GetSrcDataField source variable read and recorded");
+        if (field == 20) require(p.registers[3] != f.vars[14], "field20 is objectvar20, not age14");
+    }
+    for (std::uint32_t field : {0xffffffffU, 29U, 0x7fffffffU}) {
+        Fixture f; f.load(2, field); f.emit({72, 3, 1, 2}); f.note();
+        rejected([&] { f.run(); }, "invalid field index rejected without zero invention/overflow");
+    }
+    {
+        Fixture f; f.hot.hitlists[77].ids = {200, 100, 300};
+        f.load(0, 77); f.emit({68, 0, 4, 2, 255, 69, 0, 69, 44, 39, 50, 2, 7, 255});
+        int calls = 0;
+        const auto choose = [&](auto id, const auto& ids) -> std::size_t {
+            ++calls; require(id == 77 && ids == std::vector<std::uint32_t>({200, 100, 300}), "chooser receives list ID and complete entries"); return 1;
+        };
+        const auto p = f.run(choose);
+        require(calls == 1 && p.patch_id == 100 && p.active_hitlist == 77, "explicit chooser returns index, not patch ID");
+        require(p.sign_flag && !p.zero_flag && p.trace[5].sign_flag, "SmartChoose preserves flags despite positive chosen ID");
+        require(p.trace[5].choice->index == 1 && p.trace[5].choice->patch_id == 100 && p.trace[5].patch_replaced == true, "choice and patch write side effect recorded");
+        require(p.sequence_group_kills == std::vector<std::uint8_t>({0, 44}) && p.trace[3].sequence_group_kill == 0, "sequence-group kill requests are ordered data");
+        require(p.pc + 2 < f.hit.bytes.size() && p.note_destination == 7 && p.registers[7] == 0, "execution ends before NoteOn destination write and ignores following unsupported opcode");
+        rejected([&] { f.run(); }, "missing chooser rejected");
+        rejected([&] { f.run([](auto, const auto&) { return 3U; }); }, "out-of-range chooser index rejected");
+        rejected([&] { f.run([](auto, const auto&) { return std::numeric_limits<std::size_t>::max(); }); }, "maximum chooser index rejected");
+        odh::HitSelectionLimits limits; limits.group_kills = 1;
+        rejected([&] { f.run(choose, limits); }, "group-kill request budget enforced");
+        limits.group_kills = 64; limits.choice_ids = 3;
+        require(f.run(choose, limits).patch_id == 100, "choice entry budget exact boundary accepted");
+        const auto previous_calls = calls;
+        limits.choice_ids = 2;
+        rejected([&] { f.run(choose, limits); }, "over-limit choice snapshot rejected");
+        require(calls == previous_calls, "choice entry budget rejects before callback");
+        auto empty = f; empty.hot.hitlists[77].ids.clear();
+        rejected([&] { empty.run(choose); }, "empty list rejected");
+        auto missing = f; missing.hot.hitlists.clear();
+        rejected([&] { missing.run(choose); }, "missing list rejected");
+        auto unsupported = f; unsupported.hot.hitlists[77].unsupported_reason = "synthetic unsupported encoding";
+        rejected([&] { unsupported.run(choose); }, "unsupported list rejected");
+    }
+    {
+        Fixture f; f.hot.hitlists[71].ids = {200, 300}; f.hot.hitlists[72].ids = {100};
+        f.load(0, 72); f.emit({68, 0, 39, 18, 2, 4});
+        odh::HotTrack track; track.hitlist_id = 71; track.patch_id = 0;
+        std::vector<std::uint32_t> calls;
+        const auto chooser = [&](auto list, const auto&) -> std::size_t { calls.push_back(list); return list == 71 ? 1 : 0; };
+        const auto p = f.run(chooser, {}, &track);
+        require(calls == std::vector<std::uint32_t>({71, 72}) && p.initial_choice->patch_id == 300 && p.patch_id == 100, "SetTrack makes initial choice before bytecode switches list");
+        require(p.locals[2] == 100 && p.locals[34] == 0, "0x12 patch variable side effect, independent of variable50");
+        require(f.hot.tracks.empty() && track.patch_id == 0 && f.hot.hitlists[71].ids[1] == 300, "selection does not mutate HOT track/hitlist resources");
+        rejected([&] { f.run({}, {}, &track); }, "initial track selection requires explicit chooser");
+        track.hitlist_id.reset();
+        rejected([&] { f.run(chooser, {}, &track); }, "unresolved initial track rejects");
+    }
+    {
+        Fixture f; f.hot.hitlists[77].ids = {100};
+        f.load(0, 77); f.emit({68, 0, 4, 2, 0, 39, 50, 2, 6});
+        int calls = 0;
+        const auto p = f.run([&](auto, const auto&) { ++calls; return 0U; });
+        require(calls == 1 && p.zero_flag && !p.sign_flag, "one-element list still invokes chooser and SmartChoose preserves zero flag");
+        auto invalid = f; invalid.hot.hitlists[77].ids = {999};
+        rejected([&] { invalid.run([](auto, const auto&) { return 0U; }); }, "chosen nonexistent patch fails at NoteOn without prior patch");
+        invalid.hit.bytes.insert(invalid.hit.bytes.begin() + 16, {5, 18, 200, 0, 0, 0});
+        require(invalid.run([](auto, const auto&) { return 0U; }).patch_id == 200,
+                "SmartChoose invalid patch write preserves prior patch under FreeSO side effect rule");
+    }
+    {
+        Fixture f; f.emit({2, 5});
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 200;
+        const auto p = f.run({}, {}, &track);
+        require(p.patch_id == 200 && !p.initial_choice && p.locals[2] == 0 && p.locals[34] == 0, "initial patch selected without writing locals or invoking chooser");
+        track.unsupported_reason = "unresolved synthetic metadata";
+        rejected([&] { f.run({}, {}, &track); }, "unsupported initial track rejects");
+    }
+    for (auto dest : {18, 50}) {
+        Fixture f; f.load(static_cast<std::uint8_t>(dest), 200); f.load(static_cast<std::uint8_t>(dest), 999); f.emit({2, 3});
+        const auto p = f.run();
+        require(p.patch_id == 200 && p.locals[static_cast<std::size_t>(dest - 16)] == 999 && p.trace[1].patch_replaced == false, "failed patch lookup preserves previous valid patch while storing invalid ID");
+        Fixture no_patch; no_patch.load(static_cast<std::uint8_t>(dest), 999); no_patch.emit({2, 3});
+        rejected([&] { no_patch.run(); }, "NoteOn cannot use nonexistent patch");
+    }
+    {
+        Fixture f; f.branch(13, 0x122); f.emit({255}); f.target(0x122, f.pc()); f.note();
+        const auto p = f.run();
+        require(p.trace[0].branch_id == 0x122 && p.trace[0].next_pc == f.hot.track_data[0x122] && p.steps == 3, "literal Jump remaps and skips dead bytes");
+    }
+    for (bool zero_probe : {false, true}) {
+        Fixture f; f.load(3, 0x122); f.emit({13, 3, 255});
+        const auto target = f.pc(); f.target(0x122, target);
+        if (zero_probe) f.emit({0, 255, 255});
+        f.note();
+        const auto p = f.run();
+        require(p.trace[1].next_pc == target + (zero_probe ? 3U : 0U), "register Jump probes at target and zero byte skips THREE target bytes");
+        require(p.trace[1].branch_pc == p.trace[1].next_pc && p.trace[1].branch_id == 0x122, "register Jump target trace includes probe adjustment");
+    }
+    {
+        // The low byte 3 is ambiguous as a literal. The pinned FreeSO rule
+        // selects register3=0, so it must fail instead of silently using259.
+        Fixture f; f.branch(13, 259); f.target(259, f.pc()); f.note();
+        rejected([&] { f.run(); }, "low-byte literal collision never receives a hidden fallback");
+    }
+    {
+        Fixture f; f.load(3, 123); f.emit({13, 3}); f.target(123, f.pc()); f.emit({0, 0, 0});
+        rejected([&] { f.run(); }, "register Jump probe skip cannot land at code end");
+    }
+    for (unsigned invalid : {0U, 11U, 12U, 1U, 3U, 15U, 24U, 70U, 96U, 255U}) {
+        Fixture f; f.emit({static_cast<std::uint8_t>(invalid)}); f.note();
+        rejected([&] { f.run(); }, "unknown/NOP/WaitSamp/End opcodes never silently continue");
+    }
+    for (unsigned location : {70U, 99U, 100U, 135U, 136U, 255U}) {
+        for (unsigned op : {4U, 5U, 6U, 14U, 20U, 39U, 68U, 72U, 2U}) {
+            Fixture f;
+            if (op == 4) f.emit({4, static_cast<std::uint8_t>(location), 1});
+            if (op == 5) f.load(static_cast<std::uint8_t>(location), 1);
+            if (op == 6) f.emit({6, 0, static_cast<std::uint8_t>(location)});
+            if (op == 14 || op == 39 || op == 68 || op == 2) f.emit({static_cast<std::uint8_t>(op), static_cast<std::uint8_t>(location)});
+            if (op == 20) f.emit({20, 0, static_cast<std::uint8_t>(location)});
+            if (op == 72) f.emit({72, 0, static_cast<std::uint8_t>(location), 1});
+            f.note();
+            rejected([&] { f.run(); }, "unmapped/global variable locations rejected");
+        }
+    }
+    {
+        Fixture f; f.emit({39, 0}); f.note();
+        rejected([&] { f.run([](auto, const auto&) { return 0U; }); }, "SmartChoose without list rejects");
+        Fixture absent; absent.emit({2, 0});
+        rejected([&] { absent.run(); }, "NoteOn without selected patch rejects");
+    }
+    {
+        Fixture f; f.branch(13, 0x122); f.target(0x122, 16);
+        odh::HitSelectionLimits limits; limits.instructions = 3;
+        rejected([&] { f.run({}, limits); }, "cyclic Jump terminates at instruction budget");
+        limits.instructions = 50; limits.trace_entries = 2;
+        rejected([&] { f.run({}, limits); }, "trace budget bounds cycle");
+        limits.instructions = 0;
+        rejected([&] { f.run({}, limits); }, "zero instruction budget rejects");
+        limits.instructions = 1; limits.trace_entries = 0;
+        rejected([&] { f.run({}, limits); }, "zero trace budget rejects");
+    }
+    {
+        Fixture f; f.note();
+        odh::HitSelectionLimits limits; limits.instructions = 2; limits.trace_entries = 2;
+        require(f.run({}, limits).steps == 2, "exact first-note instruction/trace budget accepted");
+        limits.instructions = 1;
+        rejected([&] { f.run({}, limits); }, "budget before first-note fails");
+        limits.instructions = 2; limits.trace_entries = 1;
+        rejected([&] { f.run({}, limits); }, "trace budget before first-note fails");
+        for (std::size_t size = 16; size < f.hit.bytes.size(); ++size) {
+            auto truncated = f; truncated.hit.bytes.resize(size);
+            rejected([&] { truncated.run(); }, "every truncated first-note fixture prefix rejects");
+        }
+        for (unsigned start : {0U, 15U, f.pc(), std::numeric_limits<std::uint32_t>::max()})
+            rejected([&] { f.run({}, {}, nullptr, start); }, "start PC outside code region rejects");
+        auto table = f; table.hit.entry_table_offset = 16;
+        rejected([&] { table.run(); }, "invalid empty code before table rejects");
+        table.hit.entry_table_offset = f.pc() + 1;
+        rejected([&] { table.run(); }, "table outside file rejects");
+        auto version = f; version.hit.major_version = 2;
+        rejected([&] { version.run(); }, "unsupported HIT major version rejects");
+        version = f; version.hit.minor_version = 1;
+        rejected([&] { version.run(); }, "unsupported HIT minor version rejects");
+        version.hit.minor_version = 8;
+        require(version.run().patch_id == 100, "supported minor8 accepted");
+    }
+    for (auto op : {13, 62, 63, 64, 65, 66, 67}) {
+        Fixture f;
+        const auto value = static_cast<std::uint8_t>(op == 62 || op == 67 ? 0 : op == 65 ? 255 : 1);
+        f.emit({4, 0, value}); f.branch(static_cast<std::uint8_t>(op), 0x122); f.note();
+        rejected([&] { f.run(); }, "missing taken branch remap rejects");
+        f.target(0x122, f.pc() - 8);
+        f.hit.entry_points[0x122] = 16;
+        rejected([&] { f.run(); }, "TrackData/ENTP misbinding rejects");
+        f.hit.entry_points.clear();
+        for (unsigned target : {0U, 15U, f.pc(), std::numeric_limits<std::uint32_t>::max()}) {
+            f.hot.track_data[0x122] = target;
+            rejected([&] { f.run(); }, "branch outside code rejects");
+        }
+        f.hot.track_data[0x122] = f.pc() - 8;
+        f.hit.entry_table_offset = f.pc() - 8;
+        rejected([&] { f.run(); }, "branch to ENTP/header space rejects");
+    }
+    for (auto op : {62, 63, 64, 65, 66, 67}) {
+        Fixture f;
+        const int value = op == 62 || op == 65 || op == 67 ? 1 : op == 63 || op == 64 ? 0 : -1;
+        f.emit({4, 0, static_cast<std::uint8_t>(value)});
+        f.branch(static_cast<std::uint8_t>(op), 0xffffffffU);
+        f.note();
+        const auto p = f.run();
+        require(p.patch_id == 100 && p.trace[1].branch_taken == false && !p.trace[1].branch_pc,
+                "untaken missing branch ID remains unresolved and execution continues");
+        require(p.trace[1].zero_flag == (value == 0) && p.trace[1].sign_flag == (value < 0), "untaken branch preserves flags");
+        // Still consume the complete four-byte target, even when untaken.
+        f.hit.bytes.resize(22);
+        rejected([&] { f.run(); }, "truncated untaken conditional operand rejects");
+    }
+    std::cout << checks << " HIT selection checks passed (synthetic; offline first-note plan only)\n";
+    return 0;
+} catch (const std::exception& e) {
+    std::cerr << "HIT selection test failed: " << e.what() << '\n';
+    return 1;
+} }
