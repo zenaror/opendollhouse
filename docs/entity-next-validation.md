@@ -1,5 +1,8 @@
 # Enumeração de entidades do World
 
+O [checkpoint seguinte de funções](entry-points-validation.md) fornece scope35
+e documenta o avanço dos gates abaixo até GotoRoutingSlot.
+
 SetToNext31 agora consulta entidades do World nos modos0 (todas),1 (avatares),
 2 (objetos comuns) e4 (GUID exato da definição). A enumeração de vizinhos5
 continua usando NBRS, como um provider separado. Outros modos não são

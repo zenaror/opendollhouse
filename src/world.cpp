@@ -13,6 +13,7 @@ bool valid_position(EntityPosition position) {
            position.level>=1 && position.direction<=7;
 }
 std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
+    if (scope == 35) return frame.context.stack_object;
     return scope == 0 || scope == 3 || scope == 14 || scope == 18 || scope == 20
         ? frame.context.caller : frame.context.stack_object;
 }
@@ -35,7 +36,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     const auto count = layout.attributes + layout.person_data + layout.slots + layout.motives;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
-        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{}});
+        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{},{}});
     words_ += count;
     return true;
 }
@@ -58,6 +59,21 @@ bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::ui
     auto& type=found->second.definition;
     if(type)return type->guid==guid&&type->master_guid==master_guid;
     type=EntityType{guid,master_guid};return true;
+}
+bool World::define_entry_points(std::int16_t id,const std::vector<EntryPoint>& values) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end() || !found->second.definition || values.size()>256) return false;
+    auto& table=found->second.entry_points;
+    if(table) return table->size()==values.size() &&
+        std::equal(table->begin(),table->end(),values.begin(),[](const auto& a,const auto& b) {
+            return a.condition==b.condition && a.action==b.action;
+        });
+    // Divide limits before multiplying the bounded count, avoiding overflow.
+    if(values.size()>limits_.bank_words/2 || values.size()>(limits_.words-words_)/2) return false;
+    auto owned=values;
+    table.emplace(std::move(owned));
+    words_+=2*values.size();
+    return true;
 }
 bool World::declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value) {
     const auto found = entities_.find(id);
@@ -185,14 +201,22 @@ bool World::remove(std::int16_t id) {
     if (entity.attachment) detach(entity.attachment->container,entity.attachment->slot);
     for (std::size_t slot = 0; slot < entity.slots.size(); ++slot) detach(id,slot);
     words_ -= entity.attributes.size() + entity.person_data.size() + entity.slots.size() +
-              entity.object_words.size() + entity.motives.size() + entity.definition_words.size();
+              entity.object_words.size() + entity.motives.size() + entity.definition_words.size() +
+              (entity.entry_points ? 2*entity.entry_points->size() : 0);
     entities_.erase(found); return true;
 }
 std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope, std::int16_t index) const {
     if (scope != 0 && scope != 1 && scope != 3 && scope != 4 && scope != 14 && scope != 15 &&
-        scope != 16 && scope != 18 && scope != 19 && scope != 20 && scope != 21) return std::nullopt;
+        scope != 16 && scope != 18 && scope != 19 && scope != 20 && scope != 21 && scope != 35) return std::nullopt;
     const auto* entity = find(scope_entity(frame,scope));
     if (!entity) return std::nullopt;
+    if (scope == 35) {
+        if (!entity->entry_points || !valid_index(index,entity->entry_points->size())) return std::nullopt;
+        const auto action=(*entity->entry_points)[static_cast<std::size_t>(index)].action;
+        // Preserve the low 16 bits with a defined signed conversion.
+        return static_cast<std::int16_t>(action<=32767 ? static_cast<std::int32_t>(action)
+                                                     : static_cast<std::int32_t>(action)-65536);
+    }
     if (scope == 21) {
         const auto field = entity->definition_words.find(index);
         return field == entity->definition_words.end() ? std::nullopt : std::optional<std::int16_t>(field->second);

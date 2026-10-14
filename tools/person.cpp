@@ -10,6 +10,7 @@
 #include "odh/relationship.hpp"
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/entry_points.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -28,6 +29,7 @@ struct Loaded {
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::ObjdStartup> startup;
+    std::optional<odh::EntryPointTable> entry_points;
     std::optional<odh::Glob> glob;
     std::optional<std::uint16_t> object_type;
 };
@@ -35,6 +37,7 @@ std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<ch
 Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={},bool startup=false) {
     Loaded result;
     with_resource(resource,[&](const auto& view){
+        std::optional<odh::View> objd_payload,objf_payload;std::size_t objf_count=0;
         odh::iff_chunks(view,[&](const auto& chunk){
             if(chunk.type=="BCON") {
                 if(!result.tuning.emplace(chunk.id,odh::read_bcon(chunk.payload)).second)throw odh::FormatError("ambiguous BCON ID in explicit resource");
@@ -44,8 +47,12 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
                 if(key.scope!=role)throw odh::FormatError("BHAV outside explicit resource role");
                 if(!result.routines.emplace(key,odh::read_bhav(chunk.payload)).second)throw odh::FormatError("ambiguous BHAV");
             }
+            if(definition&&chunk.type=="OBJf"&&chunk.id==*definition){
+                ++objf_count;if(!objf_payload)objf_payload=chunk.payload;
+            }
             if(definition&&chunk.type=="OBJD"&&chunk.id==*definition){
                 if(result.binding)throw odh::FormatError("ambiguous OBJD");
+                objd_payload=chunk.payload;
                 result.binding=odh::read_objd_binding(chunk.payload);result.functions=odh::read_objd_functions(chunk.payload);
                 if(startup)result.startup=odh::read_objd_startup(chunk.payload);
                 if(result.binding->version==138)result.object_type=chunk.payload.le16(18);
@@ -54,6 +61,12 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
                 if(result.glob)throw odh::FormatError("ambiguous GLOB128");result.glob=odh::read_glob(chunk.payload);
             }
         });
+        if(result.functions){
+            if(result.functions->uses_function_table!=0){
+                if(objf_count!=1)throw odh::FormatError(objf_count?"ambiguous selected OBJf":"selected OBJf absent");
+                result.entry_points=odh::read_objf(*objf_payload);
+            }else if(startup||(result.binding->version==138&&objd_payload->size()>=162))result.entry_points=odh::read_objd_entry_points(*objd_payload);
+        }
     });
     if(definition&&(!result.binding||!result.functions))throw odh::FormatError("selected OBJD absent");
     if(result.binding&&result.binding->master_id!=0)throw odh::FormatError("multitile identity unsupported");
@@ -135,8 +148,8 @@ int main(int argc,char** argv) {
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
        person.glob->name.find('\0')!=std::string::npos||fold(person.glob->name+".iff")!=fold(semi->entry))
         throw odh::FormatError("semiglobal does not match flat Pascal GLOB128 binding");
-    if(person.functions->uses_function_table!=0)throw odh::FormatError("avatar OBJf dispatch unsupported");
-    const auto root=routine.value_or(person.functions->main);
+    const auto avatar_main=person.entry_points?(person.entry_points->entries.size()>1?person.entry_points->entries[1].action:std::uint16_t{0}):person.functions->main;
+    const auto root=routine.value_or(avatar_main);
     if(root==0||odh::routine_key(root).scope!=odh::RoutineScope::private_object||person.routines.find(odh::routine_key(root))==person.routines.end())
         throw odh::FormatError("avatar root routine absent from explicit private owner");
     auto semi_data=load(*semi,odh::RoutineScope::semiglobal);
@@ -145,6 +158,7 @@ int main(int argc,char** argv) {
     std::optional<odh::AvatarBodyStrings> body;
     std::optional<odh::StringTable> body_walk,body_swim,private_walk;
     if(initialize){
+        if(!person.entry_points||person.entry_points->entries.size()<=8)throw odh::FormatError("startup requires entry points0/1/8");
         auto strings=load_strings(*avatar,{person.startup->body_strings,150});
         const auto table=strings.find(person.startup->body_strings);
         if(table==strings.end())throw odh::FormatError("startup BodySTR absent");
@@ -156,7 +170,7 @@ int main(int argc,char** argv) {
         auto animation_strings=load_strings(*globals,{walk_id,swim_id});
         if(!animation_strings.count(walk_id)||!animation_strings.count(swim_id))throw odh::FormatError("startup global walk/swim STR# absent");
         body_walk=std::move(animation_strings.at(walk_id));body_swim=std::move(animation_strings.at(swim_id));
-        for(const auto id:{person.startup->init,person.startup->dynamic_multitile})if(id>255){
+        for(const auto id:{person.entry_points->entries[0].action,person.entry_points->entries[8].action})if(id>255){
             const auto key=odh::routine_key(id);const auto& bank=key.scope==odh::RoutineScope::global?shared.routines:person.routines;
             if(!bank.count(key))throw odh::FormatError("startup routine absent from explicit owner");
         }
@@ -169,6 +183,7 @@ int main(int argc,char** argv) {
     }
     odh::World world({},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     if(!world.create(1,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(1,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
+    if(person.entry_points&&!world.define_entry_points(1,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     // Explicit reference constructor subset, not completed native Init.
     for(std::int16_t index=0;index<79;++index) {
         if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
@@ -207,7 +222,8 @@ int main(int argc,char** argv) {
     };
     odh::RoutineOwners owners{{1,std::move(person.routines)}};
     if(action){owners.emplace(2,std::move(action_data->routines));
-        if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");}
+        if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");
+        if(action_data->entry_points&&!world.define_entry_points(2,action_data->entry_points->entries))throw odh::FormatError("action entry point binding failed");}
     std::uint64_t rng_requests=0;
     odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
     odh::Sleep sleep(world,[&]{++rng_requests;random.next(1);});odh::InteractionQueue queue(world,1);
@@ -254,7 +270,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
     const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){trace.push_back(record);trace_phases.push_back(phase);};};
     if(initialize){
-        for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.startup->init},{"dynamic_multitile",person.startup->dynamic_multitile}}){
+        for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.entry_points->entries[0].action},{"dynamic_multitile",person.entry_points->entries[8].action}}){
             if(entry.second<=255){stages.push_back({entry.first,entry.second,odh::VmStatus::ready,0,"entry ID<=255 skipped by reference"});continue;}
             vm.start(odh::routine_key(entry.second),{1,1,0,1},{0,0,0,0});
             vm.run(10000-startup_steps,trace_in(entry.first));
@@ -316,6 +332,13 @@ int main(int argc,char** argv) {
         std::cout<<"],\"walk\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.walk[n]);}
         std::cout<<"],\"swim\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.swim[n]);}std::cout<<"]}";
     }else std::cout<<"null";
+    std::cout<<",\"entry_point_table\":";
+    if(person.entry_points){const auto& table=*person.entry_points;
+        std::cout<<"{\"source\":"<<json_bytes(table.source==odh::EntryPointSource::objd_legacy?"OBJD138 generated33":"OBJf matching OBJD chunk ID")
+            <<",\"version\":"<<table.version<<",\"remaining_bytes\":"<<table.remaining_bytes<<",\"entries\":[";
+        for(std::size_t n=0;n<table.entries.size();++n){if(n)std::cout<<',';std::cout<<"{\"condition\":"<<table.entries[n].condition<<",\"action\":"<<table.entries[n].action<<'}';}
+        std::cout<<"]}";
+    }else std::cout<<"null";
     std::cout<<",\"neighbor_inheritance\":";
     if(inherited){const auto& v=*inherited;
         std::cout<<"{\"neighbor_id\":"<<v.neighbor_id<<",\"guid\":"<<v.guid
@@ -333,7 +356,7 @@ int main(int argc,char** argv) {
         <<",\"avatar\":{\"resource_kind\":"<<json_bytes(avatar->standalone?"standalone_iff":"far_entry")
         <<",\"file\":"<<(avatar->standalone?json_bytes(avatar->archive):"null")
         <<",\"archive\":"<<(avatar->standalone?"null":json_bytes(avatar->archive))<<",\"entry\":"<<json_bytes(avatar->entry)
-        <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":1,\"main\":"<<person.functions->main<<",\"root\":"<<root
+        <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":1,\"main\":"<<avatar_main<<",\"objd_main\":"<<person.functions->main<<",\"root\":"<<root
         <<",\"semiglobal_archive\":"<<json_bytes(semi->archive)<<",\"semiglobal_entry\":"<<json_bytes(semi->entry)<<",\"glob_name\":"<<json_bytes(person.glob->name)
         <<"},\"global\":{\"archive\":"<<json_bytes(globals->archive)<<",\"entry\":"<<json_bytes(globals->entry)<<"},\"trace\":[";
     for(std::size_t n=0;n<trace.size();++n){if(n)std::cout<<',';const auto& t=trace[n];

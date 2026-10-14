@@ -210,7 +210,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  def strings(values):return struct.pack('<hH',-3,len(values))+b''.join(b'\x01'+v.encode()+b'\0\0' for v in values)
  body_values=['']*27;body_values[0]='adult';body_values[12]='male';body_values[13]='27'
  def startup_setup(init=None,dynamic=None,main=None,init_id=4097,dynamic_id=4101,body=body_values,private_walk=('','private-walk')):
-  definition=bytearray(objd(1));definition.extend(bytes(158-len(definition)))
+  definition=bytearray(objd(1));definition.extend(bytes(162-len(definition)))
   struct.pack_into('<H',definition,38,200);struct.pack_into('<H',definition,86,init_id);struct.pack_into('<H',definition,156,dynamic_id)
   chunks=[('OBJD',128,definition),('GLOB',128,b'\x0dFixturePerson'),('STR#',200,strings(body)),('BHAV',4096,routine(main or [expr(0,1)]))]
   if init_id>255:chunks.append(('BHAV',init_id,routine(init or [(2,254,255,[58,0,9,0,0,5,18,7])])))
@@ -419,6 +419,54 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  startup_setup(main=[entity_row(flags=130,t=255,f=1),(2,254,255,[0,0,0,0,0,2,10,7])])
  r=run(['--initialize']);d=json.loads(r.stdout)
  assert r.returncode==0 and d['entity_next'][0]['mode']==2 and d['entity_next'][0]['result'] is None
+ # Scope35 reads entry points owned by the selected World entity.
+ select_actor=(2,1,255,[0,0,1,0,0,5,10,7])
+ read_portal=(2,2,255,[0,0,15,0,0,5,8,35])
+ startup_setup(main=[select_actor,read_portal,check_temp(0,0)])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entry_point_table']['source']=='OBJD138 generated33'
+ assert len(d['entry_point_table']['entries'])==33 and d['entry_point_table']['entries'][15]==dict(condition=0,action=0)
+ # Explicit OBJf must win over deliberately different OBJD function fields.
+ def objf_values(count=33):
+  pairs=[(0,0)]*count
+  if count>0:pairs[0]=(65535,4097)
+  if count>1:pairs[1]=(99,4102)
+  if count>8:pairs[8]=(42,4101)
+  if count>15:pairs[15]=(123,65535)
+  return pairs
+ def objf_payload(pairs):return struct.pack('<II4sI',17,0,b'fJBO',len(pairs))+b''.join(struct.pack('<HH',*v) for v in pairs)
+ def explicit_table_setup(pairs=None,wrong_id=False,duplicate=False):
+  definition=bytearray(objd(1));definition.extend(bytes(162-len(definition)))
+  struct.pack_into('<H',definition,38,200);struct.pack_into('<H',definition,86,4999);struct.pack_into('<H',definition,156,4998);struct.pack_into('<H',definition,44,1)
+  # OBJf is before OBJD to test order-independent selection.
+  chunk=('OBJf',129 if wrong_id else 128,objf_payload(objf_values() if pairs is None else pairs))
+  chunks=[chunk]+([chunk] if duplicate else [])+[
+   ('OBJD',128,definition),('GLOB',128,b'\x0dFixturePerson'),('STR#',200,strings(body_values)),
+   ('BHAV',4096,routine([(44,254,255,bytes(8))])),
+   ('BHAV',4097,routine([expr(0,1)])),('BHAV',4101,routine([expr(0,1)])),
+   ('BHAV',4102,routine([select_actor,read_portal,check_temp(0,-1)]))]
+  archive(avatar,'Person.iff',chunks)
+  archive(semi,'FixturePerson.iff',[])
+  archive(glob,'Global.iff',[('STR#',150,strings(['walk'])),('STR#',158,strings(['swim']))])
+ explicit_table_setup();r=run(['--initialize']);assert r.stdout,(r.returncode,r.stderr);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['avatar']['main']==4102 and d['avatar']['root']==4102,(r.returncode,d['diagnostic'],d['avatar'])
+ assert [v['routine'] for v in d['startup_stages']]==[4097,4101]
+ assert d['entry_point_table']['source']=='OBJf matching OBJD chunk ID' and d['entry_point_table']['entries'][15]==dict(condition=123,action=65535)
+ # Missing/duplicate/mismatching selected OBJf is a resource error, not fallback.
+ for wrong_id,duplicate in [(True,False),(False,True)]:
+  explicit_table_setup(wrong_id=wrong_id,duplicate=duplicate);r=run(['--initialize'])
+  assert r.returncode==2 and not r.stdout and 'OBJf' in r.stderr
+ explicit_table_setup(pairs=[]);r=run(['--initialize']);assert r.returncode==2 and not r.stdout
+ # Function table lookups do not synthesize missing indices or allow writes.
+ startup_setup(main=[select_actor,(2,254,255,[0,0,33,0,0,5,8,35])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported read scope 35 index 33'
+ startup_setup(main=[select_actor,(2,254,255,[15,0,99,0,0,5,35,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported write scope 35 index 15' and d['entry_point_table']['entries'][15]['action']==0
+ # Old short root probes keep the existing partial resource profile.
+ setup(main=[(2,254,255,[0,0,15,0,0,5,8,35])]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['entry_point_table'] is None and d['diagnostic']=='unsupported read scope 35 index 15'
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

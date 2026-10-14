@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/vm.hpp"
+#include "odh/entry_points.hpp"
 
 namespace odh {
 enum class EntityKind { object, avatar };
@@ -32,6 +33,7 @@ struct Entity {
     std::optional<EntityType> definition; // Explicit known single part or known master identity.
     std::vector<std::int16_t> motives;
     std::map<std::int16_t, std::int16_t> definition_words;
+    std::optional<std::vector<EntryPoint>> entry_points; // Unset differs from an explicitly empty table.
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -60,6 +62,10 @@ public:
     // wraparound. The signed cursor need not identify an existing entity.
     std::optional<std::int16_t> next_entity_of_guid(std::int16_t current,std::uint32_t guid) const;
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
+    // Bind an immutable owned table to a typed entity; identical repeats succeed.
+    // Each condition/action pair consumes two words. Empty tables are valid.
+    // Validation/allocation precedes publication; failures leave state unchanged.
+    bool define_entry_points(std::int16_t id,const std::vector<EntryPoint>& values);
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
     // Atomically replace an avatar's bank with an owned copy (empty is valid).
