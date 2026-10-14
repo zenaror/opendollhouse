@@ -283,7 +283,7 @@ target_link_libraries(odh_relationship PUBLIC odh_neighbor_context odh_world)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_relationship PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
-target_link_libraries(odh-person PRIVATE odh_objm_tail odh_objm_common odh_definition_index odh_saved_objects odh_inventory_find odh_objm odh_family odh_entity_next odh_bootstrap odh_relationship odh_avatar_neighbor odh_interaction odh_sleep odh_tuning odh_lot_context odh_random odh_avatar_body odh_neighbor_context)
+target_link_libraries(odh-person PRIVATE odh_animation_catalog odh_playback odh_objm_tail odh_objm_common odh_definition_index odh_saved_objects odh_inventory_find odh_objm odh_family odh_entity_next odh_bootstrap odh_relationship odh_avatar_neighbor odh_interaction odh_sleep odh_tuning odh_lot_context odh_random odh_avatar_body odh_neighbor_context)
 add_executable(odh-bhav tools/bhav.cpp)
 add_library(odh_notify src/notify.cpp)
 target_link_libraries(odh_notify PUBLIC odh_world)
@@ -580,6 +580,8 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/slot_cli.py $<TARGET_FILE:odh-slot>)
     add_test(NAME bhav_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/bhav_cli.py $<TARGET_FILE:odh-bhav>)
+    add_test(NAME person_animation_cli COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/person_animation_cli.py $<TARGET_FILE:odh-person>)
     add_test(NAME person_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/person_cli.py $<TARGET_FILE:odh-person>)
   endif()

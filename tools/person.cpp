@@ -18,6 +18,8 @@
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
+#include "odh/playback.hpp"
+#include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include "saved_tail_json.hpp"
@@ -100,6 +102,7 @@ int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
     std::vector<std::pair<std::string,bool>> definition_sources;
+    std::vector<std::string> animation_sources;
     std::optional<std::string> lot_path,zoning_path,neighborhood_path;
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
@@ -121,6 +124,11 @@ int main(int argc,char** argv) {
         else if(option=="--initialize"&&!initialize)initialize=true;
         else if(option=="--activate-family"&&!activate_family)activate_family=true;
         else if(option=="--neighborhood"&&!neighborhood_path&&n+1<argc)neighborhood_path=argv[++n];
+        else if(option=="--animation-source"&&n+1<argc){
+            if(animation_sources.size()>=16)throw odh::FormatError("animation source count exceeds bounded host profile");
+            animation_sources.emplace_back(argv[++n]);
+            if(animation_sources.back().size()>4096)throw odh::FormatError("animation source path exceeds bounded host profile");
+        }
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
             definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
@@ -129,7 +137,7 @@ int main(int argc,char** argv) {
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path)))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -362,6 +370,64 @@ int main(int argc,char** argv) {
         if(inventory_records.size()>=10000)throw odh::FormatError("inventory log exceeds bounded host profile");
         inventory_records.push_back(value);
     }):odh::VmPrimitive{};
+    std::optional<odh::AvatarBodyDescriptor> body_state;
+    std::optional<odh::host::AnimationCatalog> animation_catalog;
+    std::map<std::uint16_t,odh::StringTable> global_animation_tables;
+    std::map<std::int16_t,std::map<std::uint16_t,odh::StringTable>> private_animation_tables;
+    std::map<std::int16_t,std::uint16_t> animation_table_ids;
+    std::string animation_resolution_diagnostic;
+    std::vector<odh::PlaybackEvent> animation_events;
+    std::uint64_t animation_event_bytes=0;
+    std::optional<odh::Playback> playback;
+    if(!animation_sources.empty()){
+        animation_catalog.emplace(animation_sources);
+        global_animation_tables=load_strings(*globals,{128,130,150,151,156,157});
+        const auto bind_tables=[&](std::int16_t owner,const Resource& resource,const Loaded& data){
+            const auto base=data.binding->animation_table;
+            animation_table_ids.emplace(owner,base);
+            private_animation_tables.emplace(owner,load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130}));
+        };
+        bind_tables(1,*avatar,person);if(action)bind_tables(2,*action,*action_data);
+    }
+    const auto resolve_animation=[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id,std::optional<std::int16_t> posture)
+        ->std::shared_ptr<const odh::AnimationHeader>{
+        animation_resolution_diagnostic.clear();
+        try{
+            const auto* actor=world.find(frame.context.caller);
+            if(!actor||actor->person_data.size()<=58)throw odh::FormatError("animation actor age unavailable");
+            const bool child=actor->person_data[58]<18;
+            const odh::StringTable* table=nullptr;
+            const auto find_table=[](const auto& tables,std::uint16_t key)->const odh::StringTable*{
+                const auto i=tables.find(key);return i==tables.end()?nullptr:&i->second;
+            };
+            if(posture&&body_state){
+                auto resource=animation_catalog->resolve(body_state->walk.at(static_cast<std::size_t>(*posture)));
+                const auto* header=&resource->header;
+                return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
+            }
+            if(posture){table=find_table(global_animation_tables,child?151:150);id=static_cast<std::uint16_t>(*posture);}
+            else if(source==0||source==65536){
+                const auto owner=source==0?frame.context.code_owner:frame.context.stack_object;
+                const auto tables=private_animation_tables.find(owner);const auto base=animation_table_ids.find(owner);
+                if(tables==private_animation_tables.end()||base==animation_table_ids.end())throw odh::FormatError("animation owner not supplied by host");
+                table=find_table(tables->second,static_cast<std::uint16_t>(base->second+(child?1:0)));
+                if(!table)table=find_table(tables->second,child?130:129);
+            }else if(source==1)table=find_table(global_animation_tables,128);
+            else if(source==2)table=find_table(global_animation_tables,130);
+            else if(source==3)table=find_table(global_animation_tables,child?157:156);
+            else throw odh::FormatError("animation source outside explicit host profile");
+            if(!table)throw odh::FormatError("animation STR# table absent including fallback");
+            const auto* entry=odh::string_in_language(*table,1,id);
+            if(!entry)throw odh::FormatError("animation STR# index absent in explicit language 1");
+            auto resource=animation_catalog->resolve(entry->value);
+            const auto* header=&resource->header;
+            return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
+        }catch(const odh::FormatError& e){animation_resolution_diagnostic=e.what();return {};}
+    };
+    if(animation_catalog)playback.emplace(world,
+        [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
+        [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
+    const auto animation_handler=playback?playback->primitive():odh::VmPrimitive{};
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
@@ -371,15 +437,16 @@ int main(int argc,char** argv) {
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
         if(i.opcode==51&&inventory_handler)return inventory_handler(f,i,t,d);
+        if(i.opcode==44&&animation_handler)return animation_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
+    if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
     struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
     std::vector<StartupStage> stages;
     std::uint64_t startup_steps=0;
-    std::optional<odh::AvatarBodyDescriptor> body_state;
     std::optional<odh::NeighborInheritance> inherited;
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
     const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){trace.push_back(record);trace_phases.push_back(phase);};};
@@ -423,6 +490,13 @@ int main(int argc,char** argv) {
           (vm.status()==odh::VmStatus::waiting||vm.status()==odh::VmStatus::yielded)) {
         ++ticks;
         if(!queue.tick(ticks)||!sleep.tick(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
+        if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
+            if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
+            std::uint64_t bytes=sizeof(odh::PlaybackEvent);
+            for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
+            if(bytes>256*1024-animation_event_bytes)throw odh::FormatError("animation event log bytes exceed bounded host profile");
+            animation_events.push_back(event);animation_event_bytes+=bytes;
+        });
         execute();
     }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
@@ -673,7 +747,25 @@ int main(int argc,char** argv) {
     std::cout<<"],\"motives\":[";for(std::size_t n=0;n<actor->motives.size();++n){if(n)std::cout<<',';std::cout<<actor->motives[n];}std::cout<<"]}";
     std::cout<<",\"stack\":[";for(std::size_t n=0;n<vm.stack().size();++n){if(n)std::cout<<',';const auto& f=vm.stack()[n];
         std::cout<<"{\"owner\":"<<f.context.code_owner<<",\"routine\":"<<f.key.id<<",\"pc\":"<<f.pc<<",\"caller\":"<<f.context.caller<<",\"callee\":"<<f.context.callee<<",\"stack_object\":"<<f.context.stack_object<<'}';}
-    std::cout<<"]}\n";
+    std::cout<<']';
+    if(playback){
+        std::cout<<",\"animation_profile\":\"silent primary Playback; explicit FAR catalog and STR language1; no rig/render/audio or saved continuation\""
+            <<",\"animation_resolution_diagnostic\":"<<json_bytes(animation_resolution_diagnostic)
+            <<",\"animation_progress\":";
+        const auto progress=playback->progress();
+        if(progress)std::cout<<"{\"name\":"<<json_bytes(progress->name)<<",\"frame\":"<<progress->frame
+            <<",\"frames\":"<<progress->frames<<",\"queued_events\":"<<progress->queued_events
+            <<",\"end\":"<<(progress->end?"true":"false")<<",\"loop\":"<<(progress->loop?"true":"false")<<'}';
+        else std::cout<<"null";
+        std::cout<<",\"animation_events\":[";
+        for(std::size_t n=0;n<animation_events.size();++n){if(n)std::cout<<',';const auto& event=animation_events[n];
+            std::cout<<"{\"tick\":"<<event.tick<<",\"actor\":"<<event.actor<<",\"time_id\":"<<event.time_id<<",\"properties\":[";
+            for(std::size_t p=0;p<event.properties.size();++p){if(p)std::cout<<',';
+                std::cout<<'['<<json_bytes(event.properties[p].first)<<','<<json_bytes(event.properties[p].second)<<']';}
+            std::cout<<"]}";
+        }std::cout<<']';
+    }
+    std::cout<<"}\n";
     return host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
  }catch(const std::exception& e){std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;}
 }
