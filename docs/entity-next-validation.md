@@ -83,8 +83,9 @@ construído, não a restauração do lote ou de seus residentes.
 - Person1 seleciona actorID1 e depois retorna false no cursor1, sem wrap.
 - Object0, depois de novo cursor0, seleciona actorID1.
 - Os dois param em PersonGlobals8286 pc29, Expression read scope35/index15,
-  operandos `[15,0,0,0,0,2,35,7]`, ainda unsupported. É leitura de
-  definição da entidade encontrada; não é novo fault na enumeração.
+  operandos `[15,0,0,0,0,2,35,7]`, ainda unsupported. É leitura da
+  função de entrada15 da entidade encontrada (StackObjectFunction), não
+  novo fault na enumeração nem scope21 StackObjectDefinition.
 - Seed final16610512366814951206; saída3, host_failed=false.
 
 Ausências acima são válidas para o World construído do host. Não se conclui
@@ -104,6 +105,8 @@ Debug e ASan/UBSan:57 testes passaram e1 X11 foi pulado (58 configurados).
 LeakSanitizer ficou desativado por ptrace. Não houve teste de console,
 execução comparativa do original ou validação de lote jogável.
 
-Próxima dependência: ligar scope35 à definição OBJD da entidade selecionada,
-com contrato de campo/versão proveniente do recurso. Restaurar residentes,
+Próxima dependência: ligar scope35 à tabela EntryPoints da entidade selecionada,
+com ActionFunction15 proveniente de OBJD/OBJf conforme UsesFnTable.
+VMMemory.cs:146–147 lê EntryPoints[data].ActionFunction; setter de scope35
+retorna false. Não é um lookup de code owner nem acesso direto a uma palavra OBJD. Restaurar residentes,
 objetos, posições e estado do lote permanece necessário para a versão Linux.
