@@ -107,10 +107,13 @@ as grades de piso/parede e mapas de recursos. Com `--floors FLOORS_IFF`, o
 globais, meios pisos diagonais e aplica altitude a pisos, objetos e avatares.
 Com `--terrain-theme 0`, a [base do terreno](docs/terrain-surface-validation.md)
 compõe o solo com cores salvas e normais de relevo. Temas são explícitos; grama
-em lâminas, iluminação por rooms, paredes e execução do lote seguem pendentes.
+em lâminas, iluminação por rooms e execução do lote seguem pendentes.
+Com `--walls WALLS_IFF` (junto de `--floors`), o
+[snapshot de paredes erguidas](docs/saved-wall-validation.md) aplica padrões e
+máscaras reais de portas/janelas, com depth compartilhado. Junções e cutaway
+seguem pendentes.
 O [leitor SPR#](docs/wall-resource-validation.md), `odh-spr`, decodifica os padrões
-e máscaras reais de paredes, com seleção IFF/FAR e paleta explícita. Sua composição
-no lote segue em integração. `odh-wall-appearance` já prepara os
+e máscaras reais de paredes, com seleção IFF/FAR e paleta explícita. A [composição CPU](docs/wall-sprite-validation.md) preserva os recortes das máscaras. `odh-wall-appearance` já prepara os
 [overrides de portas/janelas](docs/wall-appearance-validation.md) a partir dos
 bindings OBJD e flags salvos, preservando os dados e sem reInit.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
