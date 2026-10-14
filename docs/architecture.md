@@ -33,6 +33,9 @@ Probe XA->PCM Linux com cursor e fila limitada em
 e ligação ao scheduler do jogo continuam pendentes. Lifecycle HIT portátil
 inicial (NoteOn/WaitSamp/End) e integração isolada com PCM estão em
 [hit-thread-validation.md](hit-thread-validation.md); isso ainda não retoma Main.
+Leitura viva dos bancos da origem usa ligação protegida por ID/geração em
+[sound-source-binding-validation.md](sound-source-binding-validation.md).
+Cancelamento por remoção do dono e coleção de sons no scheduler permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

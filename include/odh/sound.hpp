@@ -37,6 +37,26 @@ struct SoundRequest {
 };
 using SoundResolver = std::function<std::optional<SoundEvent>(const VmFrame&, std::uint16_t)>;
 using SoundSink = std::function<bool(const SoundRequest&)>;
+// Live source lookup guarded by the submission's entity generation. World
+// must outlive all copies. No Entity pointer or bank snapshot is retained.
+// This is an ODH lifetime guard; it does not schedule or cancel audio.
+class SoundSourceBinding {
+public:
+    static std::optional<SoundSourceBinding> bind(const World&, const SoundRequest&,
+                                                 std::size_t field_limit = 256);
+    bool valid() const; // Entity identity only; required banks may be missing.
+    std::optional<SoundSourceVariables> refresh() const;
+    std::optional<std::int32_t> read(std::int32_t source, std::int32_t field) const;
+private:
+    SoundSourceBinding(const World& world, std::int16_t source,
+                       std::uint64_t generation, SoundVariableProfile profile, std::size_t limit)
+        : world_(&world), source_(source), generation_(generation), profile_(profile), limit_(limit) {}
+    const World* world_;
+    std::int16_t source_;
+    std::uint64_t generation_;
+    SoundVariableProfile profile_;
+    std::size_t limit_;
+};
 // World must outlive the primitive. The resolver supplies explicit code-owner
 // resource lookup. Submission is nonblocking; acceptance does not prove playback.
 // Source variables are captured before resolver/backend callbacks. An absent

@@ -36,6 +36,33 @@ SoundEvent read_fwav(const View& view, std::size_t text_limit) {
     throw FormatError("FWAV event name has no NUL terminator");
 }
 
+std::optional<SoundSourceBinding> SoundSourceBinding::bind(const World& world,
+    const SoundRequest& request, std::size_t limit) {
+    if (!request.source_variables) return std::nullopt;
+    SoundSourceBinding binding(world,request.source,request.source_variables->generation,
+                               request.source_variables->profile,limit);
+    if (!binding.refresh()) return std::nullopt;
+    return binding;
+}
+bool SoundSourceBinding::valid() const {
+    const auto entity = world_->find(source_);
+    return entity && entity->generation == generation_;
+}
+std::optional<SoundSourceVariables> SoundSourceBinding::refresh() const {
+    const auto entity = world_->find(source_);
+    if (!entity || entity->generation != generation_) return std::nullopt;
+    auto values = sound_source_variables(*entity,limit_);
+    if (!values || values->profile != profile_) return std::nullopt;
+    return values;
+}
+std::optional<std::int32_t> SoundSourceBinding::read(std::int32_t source, std::int32_t field) const {
+    if (source != source_ || field < 0 || static_cast<std::uint64_t>(field) >= limit_)
+        return std::nullopt;
+    const auto values = refresh();
+    if (!values || static_cast<std::size_t>(field) >= values->fields.size()) return std::nullopt;
+    return values->fields[static_cast<std::size_t>(field)];
+}
+
 VmPrimitive sound_primitive(World& world, SoundResolver resolve, SoundSink sink,
     std::function<void(const SoundRequest&, const std::string&)> observed) {
     return [&world,resolve=std::move(resolve),sink=std::move(sink),observed=std::move(observed)]
