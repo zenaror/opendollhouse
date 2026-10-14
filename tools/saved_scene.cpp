@@ -186,7 +186,7 @@ int main(int argc,char** argv){try{
     report<<"],\"floor_triangles\":"<<(floor_result?floor_result->triangles:0)
           <<",\"floor_texture_bytes\":"<<(floor_result?floor_result->texture_bytes:0)
           <<",\"floor_geometry_texture_pixel_visits\":"<<(floor_result?floor_result->geometry_texture_pixel_visits:0);
-    if(wall_result){report<<",\"wall_profile\":"<<(wall_result?json_bytes("FreeSO_2D_standing_up_unlit_no_junctions_ODH_projection"):"null")
+    if(wall_result){report<<",\"wall_profile\":"<<(wall_result?json_bytes("FreeSO_2D_standing_up_with_junctions_unlit_ODH_projection"):"null")
           <<",\"wall_layers\":"<<(wall_result?wall_result->draws.size():0)
           <<",\"wall_cached_assets\":"<<(wall_result?wall_result->cached_assets:0)
           <<",\"wall_cached_frames\":"<<(wall_result?wall_result->cached_frames:0)
@@ -207,6 +207,13 @@ int main(int argc,char** argv){try{
               <<",\"pattern_sprite\":"<<d.pattern_sprite<<",\"pattern_palette\":"<<d.pattern_palette<<",\"mask_sprite\":"<<d.mask_sprite<<",\"mask_palette\":"<<d.mask_palette
               <<",\"pattern_palette_missing\":"<<(d.pattern_palette_missing?"true":"false")<<",\"mask_palette_missing\":"<<(d.mask_palette_missing?"true":"false")
               <<",\"mask_fallback\":"<<(d.mask_fallback?"true":"false")<<",\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"width\":"<<d.width<<",\"height\":"<<d.height
+              <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta<<'}';}
+    report<<"],\"wall_junctions_unmapped\":"<<wall_result->unmapped_junctions<<",\"wall_junction_draws\":[";
+    for(std::size_t n=0;n<wall_result->junctions.size();++n){if(n)report<<',';const auto& d=wall_result->junctions[n];const auto& j=d.junction;
+        report<<"{\"tile_x\":"<<j.x<<",\"tile_y\":"<<j.y<<",\"level\":"<<unsigned(j.level)<<",\"raw_flags\":"<<unsigned(j.raw_flags)
+              <<",\"rotated_flags\":"<<unsigned(j.rotated_flags)<<",\"frame\":"<<unsigned(j.frame)<<",\"source\":"<<json_bytes(d.source)
+              <<",\"sprite_id\":"<<d.sprite_id<<",\"palette_id\":"<<d.palette_id<<",\"palette_missing\":"<<(d.palette_missing?"true":"false")
+              <<",\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"width\":"<<d.width<<",\"height\":"<<d.height
               <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta<<'}';}
     report<<']';}
     report<<",\"zoom\":"<<unsigned(camera.zoom)<<",\"rotation\":"<<unsigned(camera.rotation)<<",\"actors\":[";

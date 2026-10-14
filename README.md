@@ -110,7 +110,8 @@ compõe o solo com cores salvas e normais de relevo. Temas são explícitos; gra
 em lâminas, iluminação por rooms e execução do lote seguem pendentes.
 Com `--walls WALLS_IFF` (junto de `--floors`), o
 [snapshot de paredes erguidas](docs/saved-wall-validation.md) aplica padrões e
-máscaras reais de portas/janelas, com depth compartilhado. Junções e cutaway
+máscaras reais de portas/janelas, com depth compartilhado e
+[junções reais](docs/saved-wall-cap-validation.md). Paredes abaixadas e cutaway
 seguem pendentes.
 O [leitor SPR#](docs/wall-resource-validation.md), `odh-spr`, decodifica os padrões
 e máscaras reais de paredes, com seleção IFF/FAR e paleta explícita. A [composição CPU](docs/wall-sprite-validation.md) preserva os recortes das máscaras. `odh-wall-appearance` já prepara os

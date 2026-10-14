@@ -23,7 +23,7 @@ std::string spr(bool hole=false,bool empty=false,unsigned frames=4,std::uint16_t
     for(unsigned i=0;i<frames;++i){set(b,12+i*4,static_cast<std::uint32_t>(b.size()));
         std::string f(8,'\0');set(f,4,empty?0:1,2);set(f,6,empty?0:1,2);
         if(!empty){if(hole)f+=std::string("\4\4\1\1",4);
-            else f+=std::string("\4\6\2\1",4)+std::string(1,static_cast<char>(i))+std::string(1,'\0');}
+            else f+=std::string("\4\6\2\1",4)+std::string(1,static_cast<char>(i%4))+std::string(1,'\0');}
         f+=std::string("\5\0",2);b+=f;
     }return b;
 }
@@ -37,9 +37,10 @@ std::string far(const std::string& asset,bool duplicate=false){
     for(unsigned i=0;i<(duplicate?2U:1U);++i){std::string e(16,'\0');set(e,0,static_cast<std::uint32_t>(asset.size()));set(e,4,static_cast<std::uint32_t>(asset.size()));set(e,8,16);set(e,12,8);b+=e+"test.iff";}
     return b;
 }
-std::string globals(bool missing_palette=false,bool missing_pattern=false,bool mask_hole=false,bool empty=false){
+std::string globals(bool missing_palette=false,bool missing_pattern=false,bool mask_hole=false,bool empty=false,bool caps_hole=false){
     std::string b=header();if(!missing_palette)b+=chunk("PALT",7,palette());
     for(unsigned zoom=1;zoom<=3;++zoom){
+        b+=chunk("SPR#",static_cast<std::uint16_t>(4095+zoom),spr(caps_hole,false,46));
         b+=chunk("SPR#",static_cast<std::uint16_t>(2+(zoom-1)*512),spr(mask_hole));
         for(unsigned p=0;p<10;++p)if(!missing_pattern||p!=2)
             b+=chunk("SPR#",static_cast<std::uint16_t>(1536+(zoom-1)*256+p),spr(false,empty));
@@ -97,13 +98,15 @@ int main(){try{
     odh::WorldProjection camera;camera.width=camera.height=128;camera.center_tile={1,1,0};
     a=architecture();a.levels[0].walls[4]={1,0,1,0,2,0,0,0};appearance.faces={override_face(1,1,1,40,123)};
     auto result=renderer.render(a,appearance,camera,base(),false);
-    check(result.draws.size()==1&&result.cached_assets==2&&result.cached_frames==2&&result.cached_pixels==2&&result.cached_frame_bytes==10);
+    check(result.draws.size()==1&&result.cached_assets==2&&result.cached_frames==4&&result.cached_pixels==4&&result.cached_frame_bytes==20);
+    check(result.junctions.size()==2&&result.unmapped_junctions==0&&result.junctions[0].sprite_id==4098&&result.junctions[0].junction.frame==3&&result.junctions[1].junction.frame==0);
+    check(result.junctions[0].source==global.string()&&result.junctions[0].palette_id==7&&!result.junctions[0].palette_missing);
     const auto& draw=result.draws[0];check(draw.pattern_sprite==2050&&draw.mask_sprite==5002&&draw.pattern_palette==7&&draw.mask_palette==7);
     check(!draw.mask_fallback&&!draw.pattern_palette_missing&&draw.mask_palette_missing);
     check(draw.x==0&&draw.y==-175&&draw.width==64&&draw.height==271);
     check(result.composite.shaded_samples==64*96&&result.composite.image.pixels[0]==std::array<std::uint8_t,4>{10,20,30,255});
     check(result.composite.image.tested_samples==19&&result.composite.image.shaded_samples==7);
-    const auto again=renderer.render(a,appearance,camera,base(),false);check(again.cached_frames==2&&again.composite.image.pixels==result.composite.image.pixels);
+    const auto again=renderer.render(a,appearance,camera,base(),false);check(again.cached_frames==4&&again.composite.image.pixels==result.composite.image.pixels);
     check(std::abs(draw.back_depth-(-.3f*.7071067811865475f*.8660254037844386f))<.000002f);
     check(std::abs(draw.front_depth_delta+3.6742346141747673f)<.000002f);
     for(unsigned zoom=1;zoom<=3;++zoom){camera.zoom=static_cast<std::uint8_t>(zoom);result=renderer.render(a,appearance,camera,base(),false);
@@ -148,13 +151,64 @@ int main(){try{
         check(repeated.levels[0].walls[0].top_left_style==1&&repeated.levels[0].walls[0].top_left_pattern==2);}
     for(unsigned mode=0;mode<6;++mode){const auto path=tmp.path/("variant"+std::to_string(mode)+".iff");auto content=globals(mode==0,mode==1,mode==2,mode==3);
         if(mode==4)content+=chunk("SPR#",2050,spr());
-        if(mode==5){content=header()+chunk("PALT",7,palette())+chunk("SPR#",2050,spr(false,false,1));}
+        if(mode==5){content=header()+chunk("PALT",7,palette())+chunk("SPR#",4098,spr(false,false,46))+chunk("SPR#",2050,spr(false,false,1));}
         write(path,content);SavedWallRenderer variant(path.string(),absent);
         if(mode==1||mode==3||mode==4)rejects([&]{variant.render(a,{},camera,base(),false);});
-        else if(mode==0){const auto black=variant.render(a,{},camera,base(),false);check(black.draws[0].pattern_palette_missing&&black.draws[0].mask_palette_missing&&!black.draws[0].mask_fallback);check(black.composite.image.pixels[0]==std::array<std::uint8_t,4>{0,0,0,255});}
+        else if(mode==0){const auto black=variant.render(a,{},camera,base(),false);check(black.draws[0].pattern_palette_missing&&black.draws[0].mask_palette_missing&&!black.draws[0].mask_fallback);check(black.composite.image.pixels[0]==std::array<std::uint8_t,4>{0,0,0,255});check(black.junctions[0].palette_missing);}
         else if(mode==2){const auto hole=variant.render(a,{},camera,base(),false);check(hole.composite.shaded_samples==0&&hole.composite.transparent_samples==hole.composite.tested_samples);check(std::isinf(hole.composite.image.depth[0]));}
         else{auto diagonal=a;diagonal.levels[0].walls[4].segments=16;diagonal.levels[0].walls[4].bottom_right_pattern=2;rejects([&]{variant.render(diagonal,{},camera,base(),false);});}
     }
+    // Independent record-driven raster oracle: junctions before walls, separate
+    // source-map dimensions and integer pixel centers. At a large finite camera
+    // origin, float depth quantization creates real cap/wall ties in the ODH
+    // profile; different cap RGB makes ordering directly observable.
+    a=architecture();a.levels[0].walls[4]={1,0,1,0,2,0,0,0};
+    auto cap_camera=camera;cap_camera.center_tile={1,1,2.95f};
+    auto compare=[&](const SavedWallRenderResult& rendered,bool hole_caps=false){
+        auto expected=base();std::uint64_t tested=0,shaded=0,transparent=0,occluded=0,color_ties=0;
+        auto draw_layer=[&](const auto& record,const odh::WallDepth& depth_map,unsigned frame,bool hole){
+            const std::array<std::uint8_t,4> color{static_cast<std::uint8_t>(10+(frame%4)*50),20,30,255};
+            for(std::int64_t y=std::max(std::int64_t{0},std::int64_t{record.y});y<std::min(std::int64_t{128},std::int64_t{record.y}+record.height);++y)
+                for(std::int64_t x=std::max(std::int64_t{0},std::int64_t{record.x});x<std::min(std::int64_t{128},std::int64_t{record.x}+record.width);++x){
+                    ++tested;if(hole){++transparent;continue;}
+                    const auto sx=static_cast<std::uint64_t>(x-record.x),sy=static_cast<std::uint64_t>(y-record.y);
+                    const auto zx=(2*sx+1)*depth_map.width/(2*record.width),zy=(2*sy+1)*depth_map.height/(2*record.height);
+                    const auto raw=depth_map.pixels[zy*depth_map.width+zx];
+                    const float depth_value=static_cast<float>(double(record.back_depth)+(1.-double(raw)/255.)/.4*double(record.front_depth_delta));
+                    const auto index=static_cast<std::size_t>(y*128+x);
+                    if(depth_value==expected.depth[index]&&expected.pixels[index]!=color)++color_ties;
+                    if(depth_value<expected.depth[index]){expected.depth[index]=depth_value;expected.pixels[index]=color;++shaded;}else ++occluded;
+                }
+        };
+        for(const auto& j:rendered.junctions)draw_layer(j,odh::wall_junction_depth(cap_camera.zoom),j.junction.frame,hole_caps);
+        for(const auto& w:rendered.draws)draw_layer(w,odh::wall_sprite_depth(cap_camera.zoom,w.face.orientation),w.face.orientation,false);
+        check(rendered.composite.image.pixels==expected.pixels&&rendered.composite.image.depth==expected.depth);
+        check(rendered.composite.tested_samples==tested&&rendered.composite.shaded_samples==shaded&&
+            rendered.composite.transparent_samples==transparent&&rendered.composite.occluded_samples==occluded);
+        return color_ties;
+    };
+    for(unsigned zoom=1;zoom<=3;++zoom)for(unsigned rotation=0;rotation<4;++rotation){
+        cap_camera.zoom=static_cast<std::uint8_t>(zoom);cap_camera.rotation=static_cast<std::uint8_t>(rotation);
+        const auto caps=renderer.render(a,{},cap_camera,base(),false);check(caps.junctions.size()==2&&caps.draws.size()==(rotation==0||rotation==1?1U:0U));
+        check(caps.junctions[0].sprite_id==4095+zoom&&caps.junctions[0].width==(32U<<(zoom-1))&&caps.junctions[0].height==(16U<<(zoom-1)));
+        const auto& j=caps.junctions[0];const auto origin=odh::project_tile(cap_camera,{float(j.junction.x)-.5f,float(j.junction.y)-.5f,float(j.junction.level)*2.95f});
+        const unsigned scale=1U<<(zoom-1);const int rx[]={1,2,4},ry[]={80,159,317};
+        const int ax[]={0,-16,0,16},ay[]={8,0,-8,0};
+        check(j.x==static_cast<std::int32_t>(double(origin[0])+rx[zoom-1]-17*scale+ax[rotation]*static_cast<int>(scale))&&
+            j.y==static_cast<std::int32_t>(double(origin[1])+ry[zoom-1]-87*scale+ay[rotation]*static_cast<int>(scale)));
+        compare(caps);
+    }
+    cap_camera.zoom=3;cap_camera.rotation=0;cap_camera.center_tile={1000001.f,1000001.f,816499.5f};
+    const auto ties=renderer.render(a,{},cap_camera,base(),false);check(compare(ties)>0);
+    {const auto path=tmp.path/"cap-holes.iff";write(path,globals(false,false,false,false,true));SavedWallRenderer cap_holes(path.string(),absent);
+        cap_camera.center_tile={1,1,2.95f};const auto holes=cap_holes.render(a,{},cap_camera,base(),false);
+        check(holes.composite.transparent_samples>0&&holes.junctions.size()==2);compare(holes,true);
+        check(std::isinf(holes.composite.image.depth[33*128]));}
+    {auto unmapped=a;unmapped.levels[0].walls[1]={16,0,0,1,0,0,2,2};unmapped.levels[0].walls[4]={2,0,0,1,0,2,0,0};
+        const auto caps=renderer.render(unmapped,{},cap_camera,base(),false);check(caps.unmapped_junctions==1&&caps.junctions.size()==2);}
+    {const auto path=tmp.path/"missing-caps.iff";write(path,header()+chunk("PALT",7,palette())+chunk("SPR#",2050,spr())+chunk("SPR#",1026,spr()));
+        SavedWallRenderer missing_caps(path.string(),absent);rejects([&]{missing_caps.render(a,{},camera,base(),false);});}
+    {auto fence=a;fence.levels[0].walls[4].top_left_style=2;check(renderer.render(fence,{},cap_camera,base(),false).junctions.empty());}
     SavedWallRenderer moved(std::move(renderer));rejects([&]{renderer.render(a,{},camera,base(),false);});check(moved.render(a,{},camera,base(),false).draws.size()==1);
     a.levels[0].walls[4].segments=0;check(moved.render(a,{},camera,base(),false).composite.image.pixels==base().pixels);
     std::cout<<checks<<" saved wall renderer checks passed (synthetic only)\n";

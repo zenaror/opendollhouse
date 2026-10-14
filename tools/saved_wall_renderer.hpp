@@ -3,6 +3,7 @@
 #include "odh/projection.hpp"
 #include "odh/wall_appearance.hpp"
 #include "odh/wall_sprite.hpp"
+#include "odh/wall_junction.hpp"
 #include <memory>
 
 struct SavedWallFace {
@@ -33,9 +34,20 @@ struct SavedWallDraw {
     std::uint32_t width,height;
     float back_depth,front_depth_delta;
 };
+struct SavedWallJunctionDraw {
+    odh::WallJunction junction;
+    std::string source;
+    std::uint16_t sprite_id,palette_id;
+    bool palette_missing=false;
+    std::int32_t x,y;
+    std::uint32_t width,height;
+    float back_depth,front_depth_delta;
+};
 struct SavedWallRenderResult {
     odh::CompositeFrame composite;
     std::vector<SavedWallDraw> draws;
+    std::vector<SavedWallJunctionDraw> junctions;
+    std::uint32_t unmapped_junctions=0;
     std::size_t cached_assets=0,cached_frames=0,mask_fallbacks=0;
     std::uint64_t cached_pixels=0,cached_frame_bytes=0;
 };
@@ -53,7 +65,13 @@ struct SavedWallRenderResult {
 // Placement uses shared ODH projection, source destination rectangles minus
 // cadge origin plus rotation anchor; depth uses shared unnormalized coordinates.
 // This preserves ODH's unverified scroll-round/half-pixel calibration boundary.
-// Standing/up only: no cutaway, junctions, thick-wall extensions, rooms/lighting,
+// Standing/up caps use core FreeSO linear-endpoint-spill profile, square grids
+// <=64x64x2. SPR#4096/4097/4098 is sampled by rotated JunctionMap frame, using
+// its own alpha; no object mask or wall paint. Caps are submitted before WALL
+// layers, matching the reference's grouped Z_BUFFER-before-WALL ordering.
+// Their source position is(x-.5,y-.5,level*2.95+altitude_at_integer_x_y).
+// Junction and wall layers share all compositor budgets and decoded-frame cache.
+// Standing/up only: no cutaway, thick-wall extensions, rooms/lighting,
 // resource remapping or claim of original/GPU equivalence. Terrain is optional.
 // Failure preserves inputs but may populate bounded resource cache.
 class SavedWallRenderer {

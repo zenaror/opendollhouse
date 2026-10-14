@@ -133,6 +133,7 @@ struct SavedWallRenderer::Impl {
     struct Frame {odh::SprFrame image;std::uint16_t palette;bool palette_missing;};
     std::map<FrameKey,Frame> frames;
     std::map<std::pair<std::uint8_t,std::uint8_t>,odh::WallDepth> depths;
+    std::map<std::uint8_t,odh::WallDepth> junction_depths;
     std::uint64_t chunks=0,pixels=0,bytes=0,provenance=0;
     Impl(const std::string& path,const odh::DefinitionIndex& definitions):index(definitions),global(path){
         asset(path,"");
@@ -185,10 +186,12 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
     if(base.width!=camera.width||base.height!=camera.height)throw odh::FormatError("saved wall camera/base mismatch");
     odh::project_tile(camera,camera.center_tile);
     const auto faces=saved_wall_faces(architecture,appearance,camera.rotation);
+    const auto junctions=odh::standing_wall_junctions(architecture,camera.rotation);
     const auto cells=std::size_t(architecture.width)*architecture.height;
     if(terrain&&(!architecture.altitude||architecture.altitude->size()!=cells))
         throw odh::FormatError("saved wall terrain altitude extent invalid");
     SavedWallRenderResult result;std::vector<odh::WallSpriteLayer> layers;
+    result.unmapped_junctions=junctions.unmapped;
     auto& globals=impl_->asset(impl_->global,"");std::uint64_t names=0;
     // WallComponent destination arrays; medium/far cardinal rectangle heights
     // intentionally differ from generated Z-map heights (136/135, 68/67).
@@ -198,6 +201,40 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         {{2,39,32,136},{34,39,32,136},{2,55,64,120},{30,73,8,116}},
         {{4,77,64,271},{68,77,64,271},{4,109,128,240},{60,145,16,232}}
     };
+    const auto altitude_at=[&](std::uint32_t x,std::uint32_t y){
+        float altitude=0;
+        if(terrain&&x>0&&y>0){
+            const auto x1=(x+1)%architecture.width,y1=(y+1)%architecture.height;
+            const auto at=[&](std::uint32_t ax,std::uint32_t ay){return unsigned((*architecture.altitude)[std::size_t(ay)*architecture.width+ax][1])*10U;};
+            const auto center=(at(x,y)+at(x1,y)+at(x,y1)+at(x1,y1))/4U;
+            altitude=(static_cast<float>(center)-static_cast<float>(base_alt))*(3.f/160.f);
+        }
+        return altitude;
+    };
+    static constexpr Rect junction_rects[]={{1,80,32,16},{2,159,64,32},{4,317,128,64}};
+    // _2DWorldBatch groups Z_BUFFER ahead of WALL. Junction textures provide
+    // both their RGB and their own alpha, never object replacement masks.
+    for(const auto& j:junctions.junctions){
+        const auto id=static_cast<std::uint16_t>(4095+camera.zoom);
+        const auto& frame=impl_->frame(impl_->global,"",globals,id,j.frame);
+        auto z=impl_->junction_depths.find(camera.zoom);
+        if(z==impl_->junction_depths.end())z=impl_->junction_depths.emplace(camera.zoom,odh::wall_junction_depth(camera.zoom)).first;
+        const std::array<float,3> tile{float(j.x)-.5f,float(j.y)-.5f,float(j.level)*2.95f+altitude_at(j.x,j.y)};
+        const auto origin=odh::project_tile(camera,tile);const auto rect=junction_rects[camera.zoom-1];
+        const int scale=1<<(camera.zoom-1);const double width=32*scale;
+        const std::array<std::array<double,2>,4> anchor{{{0,width/4},{-width/2,0},{0,-width/4},{width/2,0}}};
+        const auto x=integer(double(origin[0])+rect.x-17*scale+anchor[camera.rotation][0]);
+        const auto y=integer(double(origin[1])+rect.y-87*scale+anchor[camera.rotation][1]);
+        integer(double(x)+rect.w);integer(double(y)+rect.h);
+        static constexpr std::array<std::array<float,3>,4> back{{{.15f,0,.15f},{.15f,0,2.85f},{2.85f,0,2.85f},{2.85f,0,.15f}}};
+        const auto b=back[camera.rotation];
+        const auto back_depth=odh::project_world(camera,{3*tile[0]+b[0],3*tile[2],3*tile[1]+b[2]})[2];
+        constexpr float front_delta=-3.6742346141747673f;
+        layers.push_back({&frame.image,nullptr,&z->second,x,y,rect.w,rect.h,back_depth,front_delta});
+        if(impl_->global.size()>256*1024-names)throw odh::FormatError("saved wall junction provenance budget exceeded");
+        names+=impl_->global.size();
+        result.junctions.push_back({j,impl_->global,id,frame.palette,frame.palette_missing,x,y,rect.w,rect.h,back_depth,front_delta});
+    }
     for(const auto& f:faces){
         if(f.pattern>=256)throw odh::FormatError("saved wall pattern requires unresolved external mapping");
         const auto pid=static_cast<std::uint16_t>(1536+f.pattern+(camera.zoom-1)*256);
@@ -225,13 +262,7 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
             mask=&impl_->frame(mask_source,mask_asset,*resource,mid,f.orientation);
         const auto key=std::make_pair(camera.zoom,f.orientation);auto z=impl_->depths.find(key);
         if(z==impl_->depths.end())z=impl_->depths.emplace(key,odh::wall_sprite_depth(camera.zoom,f.orientation)).first;
-        float altitude=0;
-        if(terrain&&f.x>0&&f.y>0){
-            const auto x1=(f.x+1)%architecture.width,y1=(f.y+1)%architecture.height;
-            const auto at=[&](std::uint32_t x,std::uint32_t y){return unsigned((*architecture.altitude)[std::size_t(y)*architecture.width+x][1])*10U;};
-            const auto center=(at(f.x,f.y)+at(x1,f.y)+at(f.x,y1)+at(x1,y1))/4U;
-            altitude=(static_cast<float>(center)-static_cast<float>(base_alt))*(3.f/160.f);
-        }
+        const float altitude=altitude_at(f.x,f.y);
         const std::array<float,3> tile{float(f.x),float(f.y),float(f.level-1)*2.95f+altitude};
         const auto origin=odh::project_tile(camera,tile);const auto rect=rects[camera.zoom-1][f.orientation];
         const int scale=1<<(camera.zoom-1);const double width=32*scale;
