@@ -108,6 +108,9 @@ globais, meios pisos diagonais e aplica altitude a pisos, objetos e avatares.
 Com `--terrain-theme 0`, a [base do terreno](docs/terrain-surface-validation.md)
 compõe o solo com cores salvas e normais de relevo. Temas são explícitos; grama
 em lâminas, iluminação por rooms, paredes e execução do lote seguem pendentes.
+O [leitor SPR#](docs/wall-resource-validation.md), `odh-spr`, decodifica os padrões
+e máscaras reais de paredes, com seleção IFF/FAR e paleta explícita. Sua composição
+no lote e os overrides arquitetônicos de portas/janelas seguem em integração.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
