@@ -36,6 +36,68 @@ int main() {try {
     require(parse(maximum+std::string(1,'\0')).name==maximum,"default maximum accepted with terminator");
     rejected(maximum+std::string("x\0",2));
 
+    {
+        odh::World sources;
+        require(sources.create(1,odh::EntityKind::avatar,{0,66,0,0}) &&
+                sources.create(2,odh::EntityKind::object,{3,0,0,0}),"create independent source banks");
+        const std::vector<std::pair<std::int16_t,std::int16_t>> values{
+            {2,119},{3,-11},{4,0},{5,32767},{6,-9},{7,309},
+            {10,1200},{12,-32768},{15,999},{17,1009},{58,21},{65,1}};
+        for(const auto& value:values) require(sources.set_person_data(1,value.first,value.second),"set selected source PersonData");
+        const auto original=sources.find(1)->person_data;
+        const auto vars=odh::sound_source_variables(*sources.find(1));
+        std::vector<std::int32_t> expected(29);
+        expected[0]=1;expected[2]=100;expected[5]=99;expected[7]=-3276;expected[11]=100;
+        expected[14]=21;expected[15]=11;expected[16]=-1;expected[18]=3276;expected[20]=30;
+        require(vars && vars->fields==expected && vars->profile==odh::SoundVariableProfile::simitone_avatar &&
+                vars->generation==sources.find(1)->generation,"avatar fields map exactly; skills capped above only; personalities/negative signed division preserved");
+        require(sources.find(1)->person_data==original,"source extraction never changes World");
+        require(!odh::sound_source_variables(*sources.find(1),28) &&
+                odh::sound_source_variables(*sources.find(1),29)->fields==expected,"avatar exact field budget");
+        for(const auto age: {std::int16_t(-1),std::int16_t(0),std::int16_t(17),std::int16_t(18)}) {
+            require(sources.set_person_data(1,58,age),"set child boundary");
+            const auto fields=odh::sound_source_variables(*sources.find(1));
+            require(fields && fields->fields[0]==((age<18&&age!=0)?2:1) && fields->fields[14]==age,
+                    "age0 uses gender; age18 adult; negative age follows exact reference predicate");
+        }
+        require(sources.set_person_data(1,65,24),"set pet gender flags");
+        require(odh::sound_source_variables(*sources.find(1))->fields[0]==24,"adult gender bitfield retained without filtering");
+        for(std::int16_t index=0;index<3;++index) {
+            auto f=frame();f.context.caller=2;
+            require(sources.write(f,0,index,static_cast<std::int16_t>(index-2)),"set object attribute");
+        }
+        const auto object=odh::sound_source_variables(*sources.find(2),4);
+        require(object && object->fields==std::vector<std::int32_t>({0,-2,-1,0}) &&
+                object->profile==odh::SoundVariableProfile::simitone_object,"object attributes prefixed with zero; signs preserved");
+        require(!odh::sound_source_variables(*sources.find(2),3),"object bank is rejected rather than truncated at budget");
+        require(sources.create(3,odh::EntityKind::avatar,{0,65,0,0}) &&
+                !odh::sound_source_variables(*sources.find(3)),"incomplete avatar bank has no invented source variables");
+        require(sources.create(4,odh::EntityKind::object),"create empty object");
+        require(odh::sound_source_variables(*sources.find(4),1)->fields==std::vector<std::int32_t>({0}) &&
+                !odh::sound_source_variables(*sources.find(4),0),"empty object still needs prefix field budget");
+        require(sources.create(5,odh::EntityKind::object,{255,0,0,0}) && sources.create(6,odh::EntityKind::object,{256,0,0,0}),"create boundary object banks");
+        require(odh::sound_source_variables(*sources.find(5))->fields.size()==256 &&
+                !odh::sound_source_variables(*sources.find(6)),"default per-request field bound is256");
+        odh::SoundRequest captured{};
+        const auto sound=odh::sound_primitive(sources,[](const auto&,auto){return std::optional<odh::SoundEvent>{{"source_fixture",0}};},
+            [&](const odh::SoundRequest& request){captured=request;return true;});
+        require(invoke(sound,instruction(2)).disposition==odh::PrimitiveDisposition::goto_true &&
+                captured.source==2 && captured.source_variables->fields==object->fields,"StackObject source bank reaches backend");
+        require(invoke(sound).disposition==odh::PrimitiveDisposition::goto_true &&
+                captured.source_variables->fields[20]==30,"Caller avatar source bank reaches backend");
+        const auto generation=captured.source_variables->generation;
+        require(sources.set_person_data(1,7,990) && captured.source_variables->fields[20]==30,"submitted variables own their snapshot after live-bank mutation");
+        require(invoke(sound).disposition==odh::PrimitiveDisposition::goto_true && captured.source_variables->fields[20]==99,
+                "next submission refreshes changed bank");
+        require(sources.remove(1) && sources.create(1,odh::EntityKind::avatar,{0,66,0,0}),"reuse caller ID");
+        require(invoke(sound).disposition==odh::PrimitiveDisposition::goto_true &&
+                captured.source_variables->generation!=generation,"snapshot stamps new entity incarnation");
+        auto removing=odh::sound_primitive(sources,[&](const auto&,auto){sources.remove(1);return std::optional<odh::SoundEvent>{{"source_fixture",0}};},
+            [&](const odh::SoundRequest& request){captured=request;return true;});
+        require(invoke(removing).disposition==odh::PrimitiveDisposition::goto_true && captured.source_variables &&
+                captured.source_variables->fields.size()==29,"resolver mutation cannot invalidate the captured source bank");
+    }
+
     odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
     int resolves=0,submissions=0,observations=0;
     odh::SoundRequest last{};std::string status;

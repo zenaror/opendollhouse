@@ -58,6 +58,11 @@ aceitação do pedido pelo callback, não reprodução. O CLI usa backend `none`
 Não há mixing, sample decoding, deduplicação de sons ativos, HIT variables,
 acústica/atenuação ou reprodução real. Não simular que um áudio foi tocado.
 
+Atualização posterior: [o bridge de variáveis de origem](sound-source-variable-validation.md)
+agora anexa snapshots limitados de PersonData/atributos aos pedidos, conforme
+o perfil TS1 do Simitone. O estado sem HIT variables descrito acima pertence
+a este checkpoint histórico; ainda não há thread de som ou reprodução real.
+
 Em DiningChairs.iff, FWAV0 é `chair_sit_metal` (16 bytes incluindo NUL),
 FWAV1 é `chair_sit_wood` (15 bytes). FWAV2..5 também foram vistos, sem uso
 neste trace. A sequência nativa barata testa Office(false), Cheap(true),
