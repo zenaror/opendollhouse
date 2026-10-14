@@ -7,6 +7,14 @@ enum class RelationshipMatrix { neighbor, object };
 struct RelationshipLimits {
     std::size_t sources = 4096, pairs = 16384, values = 65536;
 };
+struct SavedObjectRelationship {
+    std::int32_t target;
+    std::vector<std::int32_t> values;
+};
+struct SavedObjectRelationships {
+    std::int16_t source;
+    std::vector<SavedObjectRelationship> relationships;
+};
 struct RelationshipRecord {
     VmContext context;
     RelationshipMatrix matrix = RelationshipMatrix::neighbor;
@@ -20,15 +28,24 @@ struct RelationshipRecord {
 // Owns a mutable TS1 matrix copied from the immutable neighbor snapshot.
 // Disk int32 values become signed low16 words; raw int32 target keys and tails
 // beyond byte-addressable index255 remain owned and preserved. Object matrices
-// are runtime-only, keyed by source identity/generation and target ushort ID;
+// are keyed by source identity/generation and target ushort ID;
 // no TSO persistence, TS1 save writer or inbound relationship index is implied.
 class RelationshipState {
 public:
+    explicit RelationshipState(RelationshipLimits limits = {}): limits_(limits) {}
     explicit RelationshipState(const NeighborContext&, RelationshipLimits = {});
     RelationshipState(const RelationshipState&) = delete;
     RelationshipState& operator=(const RelationshipState&) = delete;
     RelationshipState(RelationshipState&&) = delete;
     RelationshipState& operator=(RelationshipState&&) = delete;
+    // Atomically bind saved OBJECT sources to their actual World generations.
+    // Empty relations bind/count a source; empty batches succeed. Existing bound
+    // generations, missing/duplicate sources, duplicate low16 target keys and
+    // combined NBRS/OBJECT budget overflow return false without mutation.
+    // Targets need not exist in World. Values become signed low16 words, with
+    // no clamp and all tails preserved; caller retains the raw saved snapshot.
+    // Allocation exceptions propagate with all matrix/counts unchanged.
+    bool import_object_relationships(const World&, const std::vector<SavedObjectRelationships>&);
     // State and World must outlive the returned callback/bound VM. Captured
     // memory/observer callbacks are owned. Callbacks must not reenter or mutate
     // this relationship state; observers must not throw;

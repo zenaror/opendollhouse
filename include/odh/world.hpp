@@ -2,6 +2,7 @@
 
 #include "odh/vm.hpp"
 #include "odh/entry_points.hpp"
+#include <array>
 
 namespace odh {
 enum class EntityKind { object, avatar };
@@ -22,6 +23,10 @@ struct EntityPosition {
         return x==p.x && y==p.y && level==p.level && direction==p.direction;
     }
 };
+struct SavedObjectBanks {
+    std::array<std::int16_t,68> object_data;
+    std::array<std::int16_t,5> extras;
+};
 struct Entity {
     std::int16_t id;
     EntityKind kind;
@@ -34,6 +39,10 @@ struct Entity {
     std::vector<std::int16_t> motives;
     std::map<std::int16_t, std::int16_t> definition_words;
     std::optional<std::vector<EntryPoint>> entry_points; // Unset differs from an explicitly empty table.
+    // Original owned save snapshot; runtime writes never change these banks.
+    std::optional<SavedObjectBanks> saved_object_banks;
+    // Save baseline while uncontained; ordinary entities keep the existing -1.
+    std::int16_t unattached_slot=-1;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -54,6 +63,19 @@ public:
     World(World&&) = delete;
     World& operator=(World&&) = delete;
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
+    // Import a new typed entity atomically. All banks are copied after validation;
+    // motives retain their signed values without the runtime setter's clamp.
+    // Raw ObjectData/extras consume 73 words in addition to 64 ordinary runtime
+    // ObjectData words; derived indices 2/3/11/67 retain their existing getters.
+    // Slots start empty for a subsequent validated containment import.
+    // Allocation exceptions propagate without publishing state or a generation.
+    bool create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t guid,
+        const std::vector<std::int16_t>& attributes,
+        const std::vector<std::int16_t>& person_data,
+        const std::vector<std::int16_t>& motives,
+        const std::array<std::int16_t,68>& object_data,
+        const std::array<std::int16_t,5>& extras, std::size_t slots,
+        std::optional<std::uint32_t> master_guid={});
     bool remove(std::int16_t id);
     const Entity* find(std::int16_t id) const;
     // Live positive-ID enumeration, including entities with unknown definitions.

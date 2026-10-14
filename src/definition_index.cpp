@@ -18,4 +18,15 @@ const std::vector<DefinitionCandidate>* DefinitionIndex::candidates(std::uint32_
 const DefinitionCandidate* DefinitionIndex::unique(std::uint32_t guid) const{
     const auto* values=candidates(guid);return values&&values->size()==1?&values->front():nullptr;
 }
+const DefinitionCandidate* DefinitionIndex::unique_master(const DefinitionCandidate& part) const{
+    if(part.definition.master_id==0)return nullptr;
+    const DefinitionCandidate* result=nullptr;
+    for(const auto& group:definitions_)for(const auto& candidate:group.second){
+        if(candidate.source!=part.source||candidate.asset!=part.asset||
+           candidate.definition.master_id!=part.definition.master_id||candidate.definition.sub_index!=-1)continue;
+        if(result||unique(candidate.definition.guid)!=&candidate)return nullptr;
+        result=&candidate;
+    }
+    return result;
+}
 }

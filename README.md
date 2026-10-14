@@ -92,6 +92,10 @@ registra execução nativa parcial. O [tuning por owner](docs/tuning-validation.
 carrega BCON explícitos. O [contexto de lote](docs/lot-validation.md) carrega SIMI
 e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
 Inicialização completa e carregamento da casa como simulação seguem pendentes.
+A [importação de entidades salvas](docs/saved-world-validation.md), com
+`odh-saved-world`, agora cria um World próprio com IDs, bancos, posições,
+contenção e relacionamentos. Os scripts salvos permanecem dormentes; arquitetura
+e renderização desse lote ainda não estão integradas.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097

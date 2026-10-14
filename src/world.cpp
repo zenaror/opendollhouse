@@ -36,8 +36,43 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     const auto count = layout.attributes + layout.person_data + layout.slots + layout.motives;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
-        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{},{}});
+        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{},{},{}});
     words_ += count;
+    return true;
+}
+bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t guid,
+    const std::vector<std::int16_t>& attributes,
+    const std::vector<std::int16_t>& person_data,
+    const std::vector<std::int16_t>& motives,
+    const std::array<std::int16_t,68>& object_data,
+    const std::array<std::int16_t,5>& extras, std::size_t slots,
+    std::optional<std::uint32_t> master_guid) {
+    if (id<=0 || !guid || (master_guid && !*master_guid) ||
+        generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
+        (kind!=EntityKind::object && kind!=EntityKind::avatar) ||
+        entities_.count(id) || entities_.size()>=limits_.entities ||
+        attributes.size()>limits_.bank_words || person_data.size()>limits_.bank_words ||
+        motives.size()>limits_.bank_words || slots>limits_.bank_words ||
+        object_data.size()>limits_.bank_words || extras.size()>limits_.bank_words ||
+        attributes.size()>32768 || person_data.size()>32768 || slots>32767 ||
+        motives.size()>16 || object_data[1]<0 || object_data[1]>7 ||
+        (kind!=EntityKind::avatar && (!person_data.empty() || !motives.empty()))) return false;
+    auto available=limits_.words-words_;
+    for (const auto count : {attributes.size(),person_data.size(),motives.size(),slots,
+                             object_data.size(),extras.size(),std::size_t{64}}) {
+        if (count>available) return false;
+        available-=count;
+    }
+    const auto count=limits_.words-words_-available;
+    const auto generation=generation_sequence_+1;
+    Entity candidate{id,kind,attributes,person_data,std::vector<std::int16_t>(slots),{},
+        {},{},generation,EntityType{guid,master_guid},motives,{},{},
+        SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1}};
+    for (std::int16_t index=0;index<68;++index)
+        if (!derived(index)) candidate.object_words.emplace(index,object_data[static_cast<std::size_t>(index)]);
+    entities_.emplace(id,std::move(candidate));
+    generation_sequence_=generation;
+    words_+=count;
     return true;
 }
 const Entity* World::find(std::int16_t id) const {
@@ -156,6 +191,7 @@ bool World::place_on_floor(std::int16_t id,EntityPosition position) {
     if(old) {
         entities_.at(old->container).slots[old->slot]=0;
         found->second.attachment.reset();
+        if (found->second.saved_object_banks) found->second.unattached_slot=-1;
     }
     apply_position(descendants,position);return true;
 }
@@ -191,7 +227,11 @@ bool World::detach(std::int16_t container, std::size_t slot) {
     const auto c = entities_.find(container);
     if (c == entities_.end() || slot >= c->second.slots.size()) return false;
     const auto occupant = c->second.slots[slot];
-    if (occupant) entities_.at(occupant).attachment.reset();
+    if (occupant) {
+        auto& entity=entities_.at(occupant);
+        entity.attachment.reset();
+        if (entity.saved_object_banks) entity.unattached_slot=-1;
+    }
     c->second.slots[slot] = 0; return true;
 }
 bool World::remove(std::int16_t id) {
@@ -202,7 +242,8 @@ bool World::remove(std::int16_t id) {
     for (std::size_t slot = 0; slot < entity.slots.size(); ++slot) detach(id,slot);
     words_ -= entity.attributes.size() + entity.person_data.size() + entity.slots.size() +
               entity.object_words.size() + entity.motives.size() + entity.definition_words.size() +
-              (entity.entry_points ? 2*entity.entry_points->size() : 0);
+              (entity.entry_points ? 2*entity.entry_points->size() : 0) +
+              (entity.saved_object_banks ? 73 : 0);
     entities_.erase(found); return true;
 }
 std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope, std::int16_t index) const {
@@ -244,7 +285,7 @@ std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope
     if (index == 11) return entity->id;
     if (index == 67) return static_cast<std::int16_t>(entity->slots.size());
     if (index == 2) return entity->attachment ? entity->attachment->container : static_cast<std::int16_t>(0);
-    if (index == 3) return entity->attachment ? static_cast<std::int16_t>(entity->attachment->slot) : static_cast<std::int16_t>(-1);
+    if (index == 3) return entity->attachment ? static_cast<std::int16_t>(entity->attachment->slot) : entity->unattached_slot;
     const auto field = entity->object_words.find(index);
     return field == entity->object_words.end() ? std::nullopt : std::optional<std::int16_t>(field->second);
 }

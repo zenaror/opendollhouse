@@ -1,5 +1,6 @@
 #include "odh/relationship.hpp"
 #include <algorithm>
+#include <set>
 
 namespace odh {
 namespace {
@@ -39,6 +40,46 @@ RelationshipState::RelationshipState(const NeighborContext& context, Relationshi
             ++pairs_; values_+=relation.values.size();
         }
     }
+}
+bool RelationshipState::import_object_relationships(const World& world,
+    const std::vector<SavedObjectRelationships>& saved) {
+    if (saved.empty()) return true;
+    if (saved.size() > limits_.sources-sources_.size()) return false;
+    auto pairs=pairs_, values=values_;
+    std::set<Source> bindings;
+    for (const auto& entry : saved) {
+        const auto entity=world.find(entry.source);
+        if (!entity) return false;
+        const Source source{RelationshipMatrix::object,entry.source,entity->generation};
+        if (sources_.find(source)!=sources_.end() || !bindings.insert(source).second) return false;
+        if (entry.relationships.size() > limits_.pairs-pairs) return false;
+        pairs+=entry.relationships.size();
+        for (const auto& relation : entry.relationships) {
+            if (relation.values.size() > limits_.values-values) return false;
+            values+=relation.values.size();
+        }
+    }
+    // Duplicate detection uses the adapted dictionary key, so distinct raw
+    // signed32 targets that alias after ushort conversion reject the batch.
+    for (const auto& entry : saved) {
+        std::set<std::uint16_t> targets;
+        for (const auto& relation : entry.relationships)
+            if (!targets.insert(static_cast<std::uint16_t>(relation.target)).second) return false;
+    }
+    auto candidate=sources_;
+    for (const auto& entry : saved) {
+        const auto entity=world.find(entry.source);
+        auto& target_pairs=candidate[{RelationshipMatrix::object,entry.source,entity->generation}];
+        for (const auto& relation : entry.relationships) {
+            std::vector<std::int16_t> words;
+            words.reserve(relation.values.size());
+            for (const auto value : relation.values) words.push_back(low16(value));
+            target_pairs.emplace(static_cast<std::uint16_t>(relation.target),std::move(words));
+        }
+    }
+    sources_.swap(candidate);
+    pairs_=pairs;values_=values;
+    return true;
 }
 std::optional<std::int16_t> RelationshipState::lookup(Source source,std::int32_t target,std::size_t index) const {
     const auto s=sources_.find(source); if (s==sources_.end()) return {};

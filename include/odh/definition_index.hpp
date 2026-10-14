@@ -20,6 +20,9 @@ public:
     explicit DefinitionIndex(const std::vector<DefinitionCandidate>&,const DefinitionIndexLimits& = {});
     const std::vector<DefinitionCandidate>* candidates(std::uint32_t guid) const;
     const DefinitionCandidate* unique(std::uint32_t guid) const;
+    // Resolve a multitile master within the same explicit source/asset and
+    // MasterID, SubIndex=-1. Missing/duplicate globally ambiguous GUIDs fail.
+    const DefinitionCandidate* unique_master(const DefinitionCandidate&) const;
     std::size_t guid_count() const{return definitions_.size();}
     std::size_t candidate_count() const{return candidates_;}
 private:

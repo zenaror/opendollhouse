@@ -30,5 +30,19 @@ int main(){try{
     require(odh::DefinitionIndex({},limits).guid_count()==0,"empty explicit resource set valid zero budget");
     definition.guid=0;odh::DefinitionIndex zero({{"","",0,definition}});
     require(zero.unique(0)&&zero.unique(0)->definition.guid==0,"explicit metadata zero GUID retained independently of objt sentinel rules");
+    auto part=definition;part.guid=12;part.master_id=7;part.sub_index=0;
+    auto master=part;master.guid=13;master.sub_index=-1;
+    source={{"source","asset",1,part},{"source","asset",2,master}};
+    odh::DefinitionIndex grouped(source);
+    require(grouped.unique_master(*grouped.unique(12))==grouped.unique(13),"master resolved within explicit asset and MasterID");
+    source[1].asset="other";odh::DefinitionIndex other_asset(source);
+    require(!other_asset.unique_master(*other_asset.unique(12)),"master in another asset not guessed");
+    source[1].asset="asset";source.push_back({"other-source","other-asset",3,master});
+    odh::DefinitionIndex ambiguous_master(source);
+    require(!ambiguous_master.unique_master(*ambiguous_master.unique(12)),"globally ambiguous master GUID does not resolve");
+    source.pop_back();auto another=master;another.guid=14;source.push_back({"source","asset",3,another});
+    odh::DefinitionIndex duplicate_master(source);
+    require(!duplicate_master.unique_master(*duplicate_master.unique(12)),"two different masters for same group rejected");
+    part.master_id=0;require(!grouped.unique_master({"source","asset",1,part}),"single tile has no inferred master");
     std::cout<<checks<<" definition index checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
