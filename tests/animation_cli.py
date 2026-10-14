@@ -41,6 +41,17 @@ with tempfile.TemporaryDirectory(prefix='odh-animation-') as folder:
     assert d['evidence'] == 'animation_metadata_only'
     assert d['cfp']['raw_float_planes'] == [[0x3f800000]]*7
     assert d['animations'][0]['motions'][0]['time_properties'][0][0] == {'id':100, 'pairs':[['xevt','100']]}
+    for entry, selector in [(b'Animations\\XSKILL.CFP', r'Animations\XSKILL.CFP'),
+                            (b'Animations/xskill.cfp', 'Animations/xskill.cfp')]:
+        nested = decoded(run(animation, 'test.bcf', 'clip', '--cfp', selector,
+                             entries=[(b'test.bcf', bcf), (entry, cfp)]))
+        assert nested == d
+    r = run(animation, 'test.bcf', 'clip', '--cfp', r'Animations\wrong.cfp',
+            entries=[(b'test.bcf', bcf), (b'Animations\\xskill.cfp', cfp)])
+    assert r.returncode == 2 and 'CFP entry must match' in r.stderr and not r.stdout
+    r = run(animation, 'test.bcf', 'clip', '--cfp', 'Other/xskill.cfp',
+            entries=[(b'test.bcf', bcf), (b'Animations\\xskill.cfp', cfp)])
+    assert r.returncode == 2 and 'exact archive entry not found' in r.stderr and not r.stdout
     for binary, args in [(strings, ('test.iff','129','3','0')),
                          (strings, ('test.iff','129junk')),
                          (animation, ('test.bcf','missing')),

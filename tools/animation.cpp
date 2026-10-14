@@ -4,6 +4,10 @@
 #include <iostream>
 namespace {
 std::string normalized(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c+('a'-'A'));return s;}
+std::string normalized_basename(std::string s){
+    for(auto& c:s){if(c=='\\')c='/';if(c>='A'&&c<='Z')c=static_cast<char>(c+('a'-'A'));}
+    const auto separator=s.find_last_of('/');if(separator!=std::string::npos)s.erase(0,separator+1);return s;
+}
 void pairs(const odh::AnimationProperties& p){std::cout<<'[';for(std::size_t n=0;n<p.size();++n){if(n)std::cout<<',';
     std::cout<<'['<<json_bytes(p[n].first)<<','<<json_bytes(p[n].second)<<']';}std::cout<<']';}
 void animation(const odh::AnimationHeader& a){std::cout<<"{\"name\":"<<json_bytes(a.name)<<",\"xskill\":"<<json_bytes(a.xskill)
@@ -25,7 +29,7 @@ int main(int argc,char** argv){if(argc!=3&&argc!=4&&argc!=6){std::cerr<<"Usage: 
             if(selected)throw odh::FormatError("ambiguous animation name");selected=&a;}
         if(argc>=4&&!selected)throw odh::FormatError("animation not found in selected BCF");
         std::optional<odh::CfpPlanes> cfp;
-        if(argc==6){if(std::string(argv[4])!="--cfp" || normalized(argv[5])!=normalized(selected->xskill+".cfp"))
+        if(argc==6){if(std::string(argv[4])!="--cfp" || normalized_basename(argv[5])!=normalized_basename(selected->xskill+".cfp"))
                 throw odh::FormatError("CFP entry must match selected animation xskill");
             with_far_entry(argv[1],argv[5],[&](const auto& view){cfp=odh::read_cfp(view,selected->translations,selected->rotations);});}
         std::cout<<"{\"evidence\":\"animation_metadata_only\",\"remaining_bytes\":"<<table->remaining_bytes<<",\"animations\":[";
