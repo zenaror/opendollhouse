@@ -111,7 +111,9 @@ e GUIDs exatos. As [funções de entrada](docs/entry-points-validation.md) vêm
 do OBJD/OBJf da entidade, inclusive o dispatch de startup; Main chega agora
 a GotoRoutingSlot no perfil visitante. A [ativação de família](docs/family-restore-validation.md)
 seleciona FAMI pela casa e classifica Bob como residente de House07; Main chega
-à operação de inventário. O reader ObjM conserva mapas e blocos comprimidos.
+à operação de inventário. A [consulta FindToken](docs/inventory-validation.md)
+lê NGBH e ultrapassa esse gate; o Main residente chega à animação44.
+O reader ObjM conserva mapas e blocos comprimidos.
 Aparência e restauração de instâncias, posições e arquitetura seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:

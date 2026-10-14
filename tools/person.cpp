@@ -10,6 +10,7 @@
 #include "odh/relationship.hpp"
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/inventory_find.hpp"
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
@@ -142,9 +143,12 @@ int main(int argc,char** argv) {
     if(initialize)bootstrap_globals.emplace();
     std::vector<odh::LotZoneResult> zoning_reads;
     std::optional<odh::Nbrs> nbrs;
+    std::optional<odh::Ngbh> ngbh;
+    std::optional<std::uint16_t> ngbh_id;
     std::vector<odh::FamilyEntry> family_records;
     std::uint32_t family_members_available=65536;
     if(neighborhood_path)with_iff_file(*neighborhood_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type=="NGBH"&&!ngbh){ngbh=odh::read_ngbh(chunk.payload);ngbh_id=chunk.id;}
         if(activate_family&&chunk.type=="FAMI"){
             if(family_records.size()>=4096)throw odh::FormatError("family count exceeds bounded host profile");
             odh::FamiLimits family_limits;family_limits.members=std::min<std::uint32_t>(256,family_members_available);
@@ -279,6 +283,11 @@ int main(int argc,char** argv) {
         if(relationship_records.size()>=10000)throw odh::FormatError("relationship log exceeds bounded host profile");
         relationship_records.push_back(value);
     }):odh::VmPrimitive{};
+    std::vector<odh::InventoryFind> inventory_records;
+    const auto inventory_handler=ngbh?odh::inventory_find_primitive(*ngbh,world,[&](const auto& value){
+        if(inventory_records.size()>=10000)throw odh::FormatError("inventory log exceeds bounded host profile");
+        inventory_records.push_back(value);
+    }):odh::VmPrimitive{};
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
@@ -287,6 +296,7 @@ int main(int argc,char** argv) {
         if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
+        if(i.opcode==51&&inventory_handler)return inventory_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -480,6 +490,25 @@ int main(int argc,char** argv) {
             <<",\"value_after\":"<<(v.value_after?std::to_string(*v.value_after):"null")
             <<",\"created\":"<<(v.created?"true":"false")<<",\"grown\":"<<(v.grown?"true":"false")
             <<",\"success\":"<<(v.success?"true":"false")<<",\"skipped_entities\":"<<(v.skipped_entities?"true":"false")<<",\"diff_multiplier\":1}";
+    }
+    std::cout<<']';
+    std::cout<<",\"inventory_state\":";
+    if(ngbh){
+        std::size_t items=0;for(const auto& pair:ngbh->inventory_by_id)items+=pair.second.size();
+        std::cout<<"{\"chunk_id\":"<<*ngbh_id<<",\"version\":"<<ngbh->version
+            <<",\"inventory_extension\":"<<(ngbh->inventory_present?"true":"false")
+            <<",\"inventories\":"<<ngbh->inventory_by_id.size()<<",\"items\":"<<items
+            <<",\"remaining_bytes\":"<<ngbh->remaining_bytes<<",\"profile\":\"loaded NGBH; read-only FindToken3; no inventory mutation/persistence\"}";
+    }else std::cout<<"null";
+    std::cout<<",\"inventory_records\":[";
+    for(std::size_t n=0;n<inventory_records.size();++n){if(n)std::cout<<',';const auto& v=inventory_records[n];
+        std::cout<<"{\"caller\":"<<v.context.caller<<",\"stack_object\":"<<v.context.stack_object
+            <<",\"owner\":"<<v.context.code_owner<<",\"target\":"<<v.target<<",\"neighbor\":"<<v.neighbor
+            <<",\"guid\":"<<v.guid<<",\"type\":"<<static_cast<unsigned>(v.type)
+            <<",\"count_temp\":"<<static_cast<unsigned>(v.count_temp)<<",\"index_temp\":"<<static_cast<unsigned>(v.index_temp)
+            <<",\"write_index\":"<<(v.write_index?"true":"false")<<",\"success\":"<<(v.success?"true":"false")
+            <<",\"found_index\":"<<(v.found_index?std::to_string(*v.found_index):"null")
+            <<",\"count\":"<<(v.count?std::to_string(*v.count):"null")<<'}';
     }
     std::cout<<']';
     std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)

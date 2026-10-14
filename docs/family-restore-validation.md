@@ -1,5 +1,8 @@
 # Família ativada e contêiner de entidades salvas
 
+O [checkpoint de inventário](inventory-validation.md) posterior remove o
+gate51 abaixo e registra o avanço até AnimateSim44 e a auditoria das posições.
+
 Checkpoint de 2026-10-13. O host pode selecionar a família pela casa correta,
 publicar seu ChunkID em global9 e usar CurrentFamily na herança do personagem.
 Também lê e conserva os blocos comprimidos ObjM do lote. Não restaura ainda

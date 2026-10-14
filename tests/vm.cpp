@@ -28,6 +28,27 @@ odh::Instruction call(unsigned id, unsigned yes = 254, unsigned no = 255) {
     return {static_cast<std::uint16_t>(id), static_cast<std::uint8_t>(yes),
             static_cast<std::uint8_t>(no), {255,255,255,255,255,255,255,255}};
 }
+odh::Vm output_machine(odh::PrimitiveOutcome outcome) {
+    return odh::Vm({{key(), routine({{1,1,2,{}},expr(2,1,1,7,7),expr(2,1,2,7,7)},1)}},
+        {}, {}, [outcome](const auto&,const auto&,const auto&,const auto&) { return outcome; });
+}
+void rejects_outputs(odh::PrimitiveOutcome outcome) {
+    auto vm = output_machine(outcome);
+    vm.start(key(),{11,22,33},{17});
+    for (std::size_t i=0;i<vm.temps().size();++i) vm.temps()[i]=static_cast<std::int16_t>(100+i);
+    const auto before=vm.temps();
+    const auto arguments=vm.stack()[0].arguments;
+    const auto locals=vm.stack()[0].locals;
+    require(vm.run(1)==odh::VmStatus::fault,"invalid paired output faults");
+    require(vm.temps()==before,"invalid paired output preserves every temp");
+    require(vm.stack().size()==1 && vm.stack()[0].pc==0 &&
+            vm.stack()[0].arguments==arguments && vm.stack()[0].locals==locals,
+            "invalid paired output preserves frame and branch");
+    require(vm.stack()[0].context.caller==11 && vm.stack()[0].context.callee==22 &&
+            vm.stack()[0].context.stack_object==33 && vm.stack()[0].context.code_owner==0,
+            "invalid paired output preserves all context identities");
+    require(!vm.pending(),"invalid paired output does not publish wait or child");
+}
 }
 int main() {
     try {
@@ -139,6 +160,65 @@ int main() {
         auto set_stack = machine(routine({expr(5,0,42,10,7,1),expr(2,0,42,10,7)}));
         set_stack.start(key(),{1,2,2});
         require(set_stack.run(2)==odh::VmStatus::returned_true,"stack object context read/write");
+
+        // Primitive outputs publish as one validated synchronous operation. The second
+        // temp is applied last when both outputs address the same register.
+        for (const auto disposition : {odh::PrimitiveDisposition::goto_true,
+                                       odh::PrimitiveDisposition::goto_false}) {
+            for (const bool aliased : {false,true}) {
+                odh::PrimitiveOutcome output{disposition,{}};
+                output.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,0,99};
+                output.temp_write=odh::VmTempWrite{0,0};
+                output.second_temp_write=odh::VmTempWrite{aliased ? 0u : 19u,-32768};
+                output.stack_object_write=odh::VmStackObjectWrite{-42};
+                auto vm=output_machine(output); vm.start(key(),{11,22,33},{17});
+                vm.temps().fill(73);
+                auto expected=vm.temps(); expected[0]=0;
+                expected[aliased ? 0 : 19]=-32768;
+                require(vm.run(1)==odh::VmStatus::budget_exhausted && vm.temps()==expected &&
+                        vm.stack()[0].arguments[0]==99 && vm.stack()[0].context.stack_object==-42 &&
+                        vm.stack()[0].context.caller==11 && vm.stack()[0].context.callee==22,
+                        "paired output publishes frame, signed temps and stack object together");
+                require(vm.stack()[0].pc==(disposition==odh::PrimitiveDisposition::goto_true ? 1 : 2),
+                        "paired output takes requested branch");
+                require(vm.run(1)==(disposition==odh::PrimitiveDisposition::goto_true ?
+                        odh::VmStatus::returned_true : odh::VmStatus::returned_false),
+                        "paired output preserves true and false returns");
+            }
+        }
+        odh::PrimitiveOutcome paired{odh::PrimitiveDisposition::goto_true,{}};
+        paired.write=odh::VmFrameWrite{odh::VmFrameBank::locals,0,99};
+        paired.temp_write=odh::VmTempWrite{20,9};
+        paired.second_temp_write=odh::VmTempWrite{19,-7};
+        paired.stack_object_write=odh::VmStackObjectWrite{-42};
+        rejects_outputs(paired); // Invalid first temp must not publish a valid second temp.
+        paired.temp_write=odh::VmTempWrite{0,9};
+        paired.second_temp_write=odh::VmTempWrite{20,-7};
+        rejects_outputs(paired); // Invalid second temp must not publish the first or frame/context.
+        paired.second_temp_write=odh::VmTempWrite{19,-7};
+        paired.write=odh::VmFrameWrite{odh::VmFrameBank::locals,4,99};
+        rejects_outputs(paired);
+        paired.write=odh::VmFrameWrite{static_cast<odh::VmFrameBank>(99),0,99};
+        rejects_outputs(paired);
+        // Exercise second_temp_write independently, so rejection cannot be caused
+        // by the established first-temp or stack-object disposition checks.
+        paired.temp_write.reset(); paired.stack_object_write.reset();
+        paired.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,0,99};
+        for (const auto disposition : {odh::PrimitiveDisposition::wait,
+                                       odh::PrimitiveDisposition::call,
+                                       odh::PrimitiveDisposition::unsupported}) {
+            paired.disposition=disposition;
+            if (disposition==odh::PrimitiveDisposition::call) paired.call=odh::VmCall{key(),{},{}};
+            else paired.call.reset();
+            rejects_outputs(paired);
+        }
+        paired.disposition=odh::PrimitiveDisposition::goto_true; paired.call.reset();
+        auto second_only=output_machine(paired); second_only.start(key(),{11,22,33},{17});
+        second_only.temps()[0]=42;
+        require(second_only.run(1)==odh::VmStatus::budget_exhausted &&
+                second_only.temps()[0]==42 && second_only.temps()[19]==-7 &&
+                second_only.stack()[0].arguments[0]==99,
+                "second temp can publish without first temp");
         std::cout << checks << " VM checks passed (synthetic fixtures only)\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "VM test failed: " << e.what() << '\n'; return 1; }

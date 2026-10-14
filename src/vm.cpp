@@ -276,11 +276,12 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     outcome.disposition != PrimitiveDisposition::goto_true &&
                     outcome.disposition != PrimitiveDisposition::goto_false)
                     throw VmError("primitive stack-object output requires synchronous branch disposition");
-                if (outcome.temp_write) {
+                if (outcome.temp_write || outcome.second_temp_write) {
                     if (outcome.disposition != PrimitiveDisposition::goto_true &&
                         outcome.disposition != PrimitiveDisposition::goto_false)
                         throw VmError("primitive temp output requires synchronous branch disposition");
-                    if (outcome.temp_write->index >= temps_.size())
+                    if ((outcome.temp_write && outcome.temp_write->index >= temps_.size()) ||
+                        (outcome.second_temp_write && outcome.second_temp_write->index >= temps_.size()))
                         throw VmError("primitive temp output index outside registers");
                 }
                 if(outcome.call && outcome.disposition!=PrimitiveDisposition::call)
@@ -310,6 +311,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     }
                     if (outcome.temp_write)
                         temps_[outcome.temp_write->index] = outcome.temp_write->value;
+                    if (outcome.second_temp_write)
+                        temps_[outcome.second_temp_write->index] = outcome.second_temp_write->value;
                     if (outcome.stack_object_write)
                         stack_.back().context.stack_object = outcome.stack_object_write->value;
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;

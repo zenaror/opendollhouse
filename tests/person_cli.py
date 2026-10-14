@@ -496,6 +496,33 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  for extra in [['--activate-family'],['--initialize','--activate-family'],family_args+['--activate-family']]:
   r=run(extra);assert r.returncode==2 and not r.stdout
  family_neighborhood()
+ # Inventory51 uses a loaded NGBH, distinct from NBRS or an absent resource.
+ ngbh_header=struct.pack('<II4s16h',0,62,b'HBGN',*([0]*16))
+ query_token=list(bytes([3,6,17,13])+struct.pack('<I',0x4e562938))
+ family_neighborhood([('FAMI',1,fami_payload()),('NGBH',7,ngbh_header)])
+ inventory_before=neighborhood.read_bytes()
+ startup_setup(dynamic_id=0,main=[(51,255,1,query_token),check_temp(0,0)])
+ r=run(family_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['inventory_state']['chunk_id']==7 and not d['inventory_state']['inventory_extension']
+ assert d['inventory_state']['inventories']==0 and d['inventory_records'][0]['neighbor']==48
+ assert not d['inventory_records'][0]['success'] and d['inventory_records'][0]['count'] is None
+ assert neighborhood.read_bytes()==inventory_before
+ # First NGBH in serialized order supplies inventories, with both temp outputs.
+ items=struct.pack('<iIHiIH',9,0x4e562938,20,6,0x4e562938,3)
+ ngbh_populated=ngbh_header+struct.pack('<iihi',1,1,48,2)+items
+ family_neighborhood([('FAMI',1,fami_payload()),('NGBH',7,ngbh_populated),('NGBH',1,b'bad')])
+ check_count=list(check_temp(0,3));check_count[1]=2
+ startup_setup(dynamic_id=0,main=[(51,1,255,query_token),tuple(check_count),check_temp(1,1)])
+ r=run(family_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['inventory_state']['items']==2 and d['inventory_records'][0]['count']==3
+ assert d['inventory_records'][0]['found_index']==1 and d['inventory_records'][0]['success']
+ # Absent NGBH is unsupported, not a known empty inventory.
+ family_neighborhood();r=run(family_args);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['inventory_state'] is None and not d['inventory_records']
+ # Truncated first NGBH is an input error before VM execution.
+ family_neighborhood([('FAMI',1,fami_payload()),('NGBH',1,ngbh_header+b'\x01')])
+ r=run(family_args);assert r.returncode==2 and not r.stdout and 'NGBH' in r.stderr
+ family_neighborhood()
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

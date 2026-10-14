@@ -94,6 +94,8 @@ struct PrimitiveOutcome {
     // Synchronous branches only; may hold any signed identity, independent of World entities.
     // Validated with frame/temp output before publication; other context identities are preserved.
     std::optional<VmStackObjectWrite> stack_object_write = {};
+    // Synchronous branches only; validated with every output, applied after temp_write.
+    std::optional<VmTempWrite> second_temp_write = {};
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
