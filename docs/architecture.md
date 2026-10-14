@@ -28,7 +28,9 @@ limitado; Audio recebe eventos; Platform abstrai I/O, entrada e serviços.
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
 ao PulseAudio estão em [linux-audio-validation.md](linux-audio-validation.md).
-Ligação XA/HIT, mixer e lifecycle de soundthread continuam pendentes.
+Probe XA->PCM Linux com cursor e fila limitada em
+[xa-play-validation.md](xa-play-validation.md). Ligação a eventos HIT, mixer
+e lifecycle de soundthread continuam pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem
