@@ -1,6 +1,8 @@
 # NBRS, enumeração de vizinhos e PersonData do bairro
 
-Checkpoint de 2026-10-13. `odh-person --neighborhood NBRS_IFF` lê o bairro sem
+Checkpoint de 2026-10-13. Este registro descreve o gate histórico dessa unidade;
+o [checkpoint de herança](avatar-neighbor-validation.md) acrescenta o personagem
+real por GUID e o perfil limitado de atributos TS1. `odh-person --neighborhood NBRS_IFF` lê o bairro sem
 gravar em arquivos originais. O Main nativo já seleciona uma identidade de
 vizinho e lê seus dados mesmo sem avatar correspondente instanciado no World.
 Relacionamentos e vínculo do caller ao vizinho real seguem pendentes.

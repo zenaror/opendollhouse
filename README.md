@@ -98,10 +98,12 @@ Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado409
 retorna true no probe.
 O [startup do avatar](docs/avatar-startup-validation.md), via `--initialize`,
 liga Init/entrada8/BodySTR ao Main preservando World e RNG. Ainda não resolve
-aparências nem restaura o avatar salvo.
+aparências nem restaura o save completo.
 O [contexto do bairro](docs/neighborhood-validation.md), via `--neighborhood`,
 fornece NBRS, enumeração e PersonData dos vizinhos. Main chega à primitiva de
-relacionamentos; vínculo do caller ao avatar real e relações seguem pendentes.
+relacionamentos. O [vínculo do personagem real](docs/avatar-neighbor-validation.md),
+via `--avatar-file`, restaura PersonData por GUID antes de Main; relações,
+família ativada e aparência ainda seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

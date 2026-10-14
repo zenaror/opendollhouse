@@ -11,6 +11,9 @@ public:
     explicit NeighborContext(Nbrs);
     const Nbrs& source() const{return source_;}
     std::size_t active_count() const{return active_.size();}
+    const NeighborRecord* by_id(std::int16_t id) const;
+    // Default reference mapping: last active serialized record for this GUID.
+    std::optional<std::int16_t> id_for_guid(std::uint32_t guid) const;
     // Raw provider result; -1 means end. Negative results also branch false in
     // SetToNext, even if they came from a serialized signed neighbor ID.
     std::int16_t next(std::int16_t current) const;
@@ -21,5 +24,6 @@ private:
     Nbrs source_;
     std::vector<Ordered> ordered_;
     std::map<std::int16_t,std::size_t> active_;
+    std::map<std::uint32_t,std::int16_t> guids_;
 };
 }

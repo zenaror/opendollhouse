@@ -65,6 +65,19 @@ bool World::set_person_data(std::int16_t id, std::int16_t index, std::int16_t va
         !valid_index(index,found->second.person_data.size())) return false;
     found->second.person_data[static_cast<std::size_t>(index)] = value; return true;
 }
+bool World::replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values) {
+    const auto found = entities_.find(id);
+    if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
+        values.size() > limits_.bank_words || values.size() > 32768) return false;
+    auto& bank = found->second.person_data;
+    const auto retained_words = words_ - bank.size();
+    if (values.size() > limits_.words - retained_words) return false;
+    const auto replacement_size = values.size();
+    auto replacement = values; // Copy before publication, including self-aliasing input.
+    bank.swap(replacement);
+    words_ = retained_words + replacement_size;
+    return true;
+}
 bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) {
     const auto found = entities_.find(id);
     if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
@@ -179,7 +192,11 @@ std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope
         return entity->motives[static_cast<std::size_t>(index)];
     }
     if (scope == 0 || scope == 1) {
-        if (!valid_index(index,entity->attributes.size())) return std::nullopt;
+        if (!valid_index(index,entity->attributes.size())) {
+            if (attribute_policy_ == AttributePolicy::ts1_bounded &&
+                valid_index(index,limits_.bank_words)) return std::int16_t{0};
+            return std::nullopt;
+        }
         return entity->attributes[static_cast<std::size_t>(index)];
     }
     if (scope == 18 || scope == 19) {
@@ -202,7 +219,19 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
     if (found == entities_.end()) return false;
     auto& entity = found->second;
     if (scope == 0 || scope == 1) {
-        if (!valid_index(index,entity.attributes.size())) return false;
+        if (!valid_index(index,entity.attributes.size())) {
+            if (attribute_policy_ != AttributePolicy::ts1_bounded ||
+                !valid_index(index,limits_.bank_words)) return false;
+            const auto replacement_size = static_cast<std::size_t>(index) + 1;
+            const auto retained_words = words_ - entity.attributes.size();
+            if (replacement_size > limits_.words - retained_words) return false;
+            auto replacement = entity.attributes;
+            replacement.resize(replacement_size,0);
+            replacement[static_cast<std::size_t>(index)] = value;
+            entity.attributes.swap(replacement);
+            words_ = retained_words + replacement_size;
+            return true;
+        }
         entity.attributes[static_cast<std::size_t>(index)] = value; return true;
     }
     if (scope == 18 || scope == 19) return set_person_data(entity.id,index,value);

@@ -253,6 +253,46 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   startup_setup();r=run(extra);assert r.returncode==2 and not r.stdout
  startup_setup();archive(glob,'Global.iff',[]);r=run(['--initialize']);assert r.returncode==2 and not r.stdout and 'walk/swim' in r.stderr
  invalid_body=list(body_values);invalid_body[0]='dog';startup_setup(body=invalid_body);r=run(['--initialize']);assert r.returncode==2 and 'adult BodySTR' in r.stderr
+ # Real-character loading route, with GUID binding after BodySTR and before Main.
+ # Synthetic NBRS saves age/personality but constructor gender/schedule survive.
+ def inherited_record(nid,guid=1,mode=5):
+  bank=[0]*80;bank[58]=42;bank[61]=7;bank[65]=1;bank[35]=99;bank[34]=88;bank[68]=3
+  return struct.pack('<ii',1,4)+b'n\0'+struct.pack('<ii',0,mode)+(struct.pack('<80h',*bank) if mode>0 else b'')+struct.pack('<hIii',nid,guid,-1,0)
+ verify_neighbor=(2,254,255,[31,0,48,0,0,2,18,7])
+ startup_setup(main=[verify_neighbor])
+ neighborhood_file([inherited_record(48)])
+ r=run(['--initialize','--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_inheritance']['neighbor_id']==48
+ assert d['neighbor_inheritance']['current_family'] is None and d['neighbor_inheritance']['selected_person_type']==1
+ assert d['neighbor_inheritance']['bank_words_before']==101 and d['neighbor_inheritance']['bank_words_after']==88
+ bank=d['actor_state']['person_data']
+ assert len(bank)==88 and bank[31]==48 and bank[58]==42 and bank[65]==0 and bank[35]==0 and bank[34]==0 and bank[68]==3
+ assert d['actor_state']['motives']==[100]*11+[0]+[100]*4 and 'bounded growth' in d['attribute_policy']
+ # Materialize the synthetic FAR member, then use standalone IFF for the same pipeline.
+ standalone=root/'Character.iff';raw=avatar.read_bytes();size=struct.unpack_from('<I',raw,12)[0]-16;standalone.write_bytes(raw[16:16+size])
+ file_args=[binary,'--avatar-file',str(standalone),'128']+args[5:]
+ r=subprocess.run(file_args+['--initialize','--neighborhood',str(neighborhood)],capture_output=True,text=True);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['avatar']['resource_kind']=='standalone_iff' and d['avatar']['file']==str(standalone) and d['avatar']['archive'] is None
+ assert d['actor_state']['person_data']==bank and d['neighbor_inheritance']['neighbor_id']==48
+ # No GUID match must leave the template bank alone, regardless of enumeration order.
+ neighborhood_file([inherited_record(11,guid=2)])
+ startup_setup();r=run(['--initialize','--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_inheritance'] is None and len(d['actor_state']['person_data'])==101
+ assert d['actor_state']['person_data'][31]==0 and 'no active neighbor matching' in d['neighbor_binding_policy']
+ # Last serialized GUID match wins, even when its numeric ID is smaller.
+ neighborhood_file([inherited_record(60),inherited_record(48)])
+ startup_setup(main=[verify_neighbor]);r=run(['--initialize','--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_inheritance']['neighbor_id']==48
+ # An explicit routine probe never restores saved neighbor banks.
+ startup_setup();r=run(['--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['neighbor_inheritance'] is None and d['attribute_policy']=='fixed banks'
+ # Missing native attributes read as zero, then grow only on successful writes.
+ startup_setup(init=[(2,1,255,[0,0,2,0,0,5,8,0]),check_temp(0,0)],
+               main=[(2,1,255,[2,0,77,0,0,5,0,7]),(2,254,255,[2,0,77,0,0,2,0,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['actor_state']['attributes']==[0,0,77]
+ for extra in [['--avatar-file',str(standalone),'128'],['--avatar-file',str(standalone)]]:
+  r=run(extra);assert r.returncode==2 and not r.stdout
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

@@ -6,6 +6,7 @@
 #include "odh/random.hpp"
 #include "odh/avatar_body.hpp"
 #include "odh/neighbor_context.hpp"
+#include "odh/avatar_neighbor.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -14,7 +15,10 @@
 #include <algorithm>
 
 namespace {
-struct Resource {std::string archive,entry;};
+struct Resource {std::string archive,entry;bool standalone=false;};
+template<class F>void with_resource(const Resource& resource,F read){
+    if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
+}
 struct Loaded {
     odh::RoutineSet routines;
     odh::TuningTables tuning;
@@ -27,7 +31,7 @@ struct Loaded {
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
 Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={},bool startup=false) {
     Loaded result;
-    with_far_entry(resource.archive,resource.entry,[&](const auto& view){
+    with_resource(resource,[&](const auto& view){
         odh::iff_chunks(view,[&](const auto& chunk){
             if(chunk.type=="BCON") {
                 if(!result.tuning.emplace(chunk.id,odh::read_bcon(chunk.payload)).second)throw odh::FormatError("ambiguous BCON ID in explicit resource");
@@ -54,7 +58,7 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
 }
 std::map<std::uint16_t,odh::StringTable> load_strings(const Resource& resource,const std::vector<std::uint16_t>& ids){
     std::map<std::uint16_t,odh::StringTable> result;
-    with_far_entry(resource.archive,resource.entry,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+    with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||std::find(ids.begin(),ids.end(),chunk.id)==ids.end())return;
         if(!result.emplace(chunk.id,odh::read_strings(chunk.payload)).second)throw odh::FormatError("ambiguous startup STR# ID");
     });});return result;
@@ -78,6 +82,7 @@ int main(int argc,char** argv) {
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
         if(option=="--avatar"&&!avatar&&n+3<argc){avatar=Resource{argv[n+1],argv[n+2]};avatar_def=selector(argv[n+3]);n+=3;}
+        else if(option=="--avatar-file"&&!avatar&&n+2<argc){avatar=Resource{argv[n+1],"",true};avatar_def=selector(argv[n+2]);n+=2;}
         else if(option=="--semiglobal"&&!semi&&n+2<argc){semi=Resource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--global"&&!globals&&n+2<argc){globals=Resource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--action"&&!action&&n+4<argc){action=Resource{argv[n+1],argv[n+2]};action_def=selector(argv[n+3]);action_routine=selector(argv[n+4]);n+=4;}
@@ -93,7 +98,7 @@ int main(int argc,char** argv) {
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags)))
-        throw odh::FormatError("usage: --avatar FAR ENTRY OBJD --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;std::optional<odh::LotZoning> zoning;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="SIMI"||chunk.id!=1)return;
@@ -156,7 +161,7 @@ int main(int argc,char** argv) {
             throw odh::FormatError("action routine absent from explicit private owner");
         if(action_data->glob&&!action_data->glob->name.empty())throw odh::FormatError("action semiglobal not supplied by this host profile");
     }
-    odh::World world;
+    odh::World world({},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     if(!world.create(1,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(1,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
     // Explicit reference constructor subset, not completed native Init.
     for(std::int16_t index=0;index<79;++index) {
@@ -220,6 +225,7 @@ int main(int argc,char** argv) {
     std::vector<StartupStage> stages;
     std::uint64_t startup_steps=0;
     std::optional<odh::AvatarBodyDescriptor> body_state;
+    std::optional<odh::NeighborInheritance> inherited;
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
     const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){trace.push_back(record);trace_phases.push_back(phase);};};
     if(initialize){
@@ -242,6 +248,12 @@ int main(int argc,char** argv) {
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,1,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
         }
+        if(initialize&&neighbors&&!host_failed&&vm.status()!=odh::VmStatus::fault){
+            if(const auto id=neighbors->id_for_guid(person.binding->guid)){
+                try{inherited=odh::inherit_neighbor(world,1,*neighbors->by_id(*id));}
+                catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
+            }
+        }
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{1,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
     const auto total_steps=[&]{return startup_steps+vm.steps();};
@@ -263,7 +275,7 @@ int main(int argc,char** argv) {
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
     const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
     std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":"<<json_bytes(initialize?
-        "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and native save restoration not initialized":
+        "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
         <<",\"startup_steps\":"<<startup_steps<<",\"startup_stages\":[";
     for(std::size_t n=0;n<stages.size();++n){if(n)std::cout<<',';const auto& stage=stages[n];
@@ -279,7 +291,23 @@ int main(int argc,char** argv) {
         std::cout<<"],\"walk\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.walk[n]);}
         std::cout<<"],\"swim\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.swim[n]);}std::cout<<"]}";
     }else std::cout<<"null";
-    std::cout<<",\"avatar\":{\"archive\":"<<json_bytes(avatar->archive)<<",\"entry\":"<<json_bytes(avatar->entry)
+    std::cout<<",\"neighbor_inheritance\":";
+    if(inherited){const auto& v=*inherited;
+        std::cout<<"{\"neighbor_id\":"<<v.neighbor_id<<",\"guid\":"<<v.guid
+            <<",\"current_family\":null,\"family_policy\":\"no activated FAMI; visitor classification\",\"neighbor_family\":"<<v.neighbor_family
+            <<",\"bank_words_before\":"<<v.bank_words_before<<",\"bank_words_after\":"<<v.bank_words_after
+            <<",\"saved_data_present\":"<<(v.saved_data_present?"true":"false")
+            <<",\"retained_gender\":"<<v.retained_gender<<",\"retained_person_type\":"<<v.retained_person_type
+            <<",\"retained_visitor_schedule\":"<<v.retained_visitor_schedule
+            <<",\"selected_person_type\":"<<v.selected_person_type<<",\"ghost\":"<<v.ghost<<'}';
+    }else std::cout<<"null";
+    std::cout<<",\"neighbor_binding_policy\":"<<json_bytes(!initialize?"not requested for explicit root probe":
+        !neighbors?"neighborhood not loaded":host_failed?"startup or inheritance failed":
+        inherited?"GUID inheritance before first Main instruction":"no active neighbor matching avatar GUID");
+    std::cout<<",\"attribute_policy\":"<<json_bytes(initialize?"TS1 zero reads and bounded growth in scopes0/1":"fixed banks")
+        <<",\"avatar\":{\"resource_kind\":"<<json_bytes(avatar->standalone?"standalone_iff":"far_entry")
+        <<",\"file\":"<<(avatar->standalone?json_bytes(avatar->archive):"null")
+        <<",\"archive\":"<<(avatar->standalone?"null":json_bytes(avatar->archive))<<",\"entry\":"<<json_bytes(avatar->entry)
         <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":1,\"main\":"<<person.functions->main<<",\"root\":"<<root
         <<",\"semiglobal_archive\":"<<json_bytes(semi->archive)<<",\"semiglobal_entry\":"<<json_bytes(semi->entry)<<",\"glob_name\":"<<json_bytes(person.glob->name)
         <<"},\"global\":{\"archive\":"<<json_bytes(globals->archive)<<",\"entry\":"<<json_bytes(globals->entry)<<"},\"trace\":[";
@@ -337,6 +365,8 @@ int main(int argc,char** argv) {
         <<",\"autonomy\":"<<actor->person_data[36]<<",\"weight\":"<<actor->object_words.at(27)<<",\"support_strength\":"<<actor->object_words.at(28)
         <<",\"rotation_notches\":"<<actor->object_words.at(23)<<",\"flag_field2\":"<<actor->object_words.at(40)<<",\"room_placement\":"<<actor->object_words.at(30)<<",\"hunger\":"<<actor->motives[7]<<",\"person_data\":[";
     for(std::size_t n=0;n<actor->person_data.size();++n){if(n)std::cout<<',';std::cout<<actor->person_data[n];}
+    std::cout<<"],\"attributes\":[";
+    for(std::size_t n=0;n<actor->attributes.size();++n){if(n)std::cout<<',';std::cout<<actor->attributes[n];}
     std::cout<<"],\"motives\":[";for(std::size_t n=0;n<actor->motives.size();++n){if(n)std::cout<<',';std::cout<<actor->motives[n];}std::cout<<"]}";
     std::cout<<",\"stack\":[";for(std::size_t n=0;n<vm.stack().size();++n){if(n)std::cout<<',';const auto& f=vm.stack()[n];
         std::cout<<"{\"owner\":"<<f.context.code_owner<<",\"routine\":"<<f.key.id<<",\"pc\":"<<f.pc<<",\"caller\":"<<f.context.caller<<",\"callee\":"<<f.context.callee<<",\"stack_object\":"<<f.context.stack_object<<'}';}

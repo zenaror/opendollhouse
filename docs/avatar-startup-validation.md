@@ -1,6 +1,8 @@
 # Sequência de inicialização do avatar no host Linux
 
-Checkpoint de 2026-10-13. `odh-person --initialize` executa Init e a entrada
+Checkpoint de 2026-10-13. Este registro descreve o gate histórico dessa unidade;
+o [checkpoint de herança](avatar-neighbor-validation.md) acrescenta o personagem
+real por GUID e o perfil limitado de atributos TS1. `odh-person --initialize` executa Init e a entrada
 de atualização de multitile, empilha Main e aplica o estágio BodySTR antes da
 primeira instrução de Main. World e RNG persistem entre os estágios. Isso liga
 o Init privado concluído ao Main; aparências, tuning especial e restauração

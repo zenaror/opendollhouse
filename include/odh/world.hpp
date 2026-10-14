@@ -4,6 +4,7 @@
 
 namespace odh {
 enum class EntityKind { object, avatar };
+enum class AttributePolicy { fixed, ts1_bounded };
 struct EntityType {std::uint32_t guid;std::optional<std::uint32_t> master_guid;};
 struct EntityLayout {
     std::size_t attributes = 0;
@@ -41,7 +42,11 @@ struct WorldLimits {
 // this does not load a lot, parse SLOT/OBJD, or initialize TS1 objects.
 class World {
 public:
-    explicit World(WorldLimits limits = {}) : limits_(limits) {}
+    // ts1_bounded reads absent attribute words as zero and grows on write,
+    // within bank_words and the nonnegative signed VM index range (32768 words).
+    // This bounded profile does not implement the reference's full ushort range.
+    explicit World(WorldLimits limits = {}, AttributePolicy attributes = AttributePolicy::fixed)
+        : limits_(limits), attribute_policy_(attributes) {}
     World(const World&) = delete;
     World& operator=(const World&) = delete;
     World(World&&) = delete;
@@ -52,6 +57,10 @@ public:
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);
+    // Atomically replace an avatar's bank with an owned copy (empty is valid).
+    // Validation returns false without mutation; allocation exceptions propagate
+    // without changing entity state or word accounting.
+    bool replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values);
     bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_position(std::int16_t id, EntityPosition);
@@ -63,6 +72,8 @@ public:
     bool place_on_floor(std::int16_t id,EntityPosition);
     bool detach(std::int16_t container, std::size_t slot);
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
+    // Attribute growth validates budget and allocates before publication.
+    // Allocation exceptions propagate without changing state or word accounting.
     bool write(const VmFrame&, std::uint8_t scope, std::int16_t index, std::int16_t value);
     // World must outlive bound VMs. Its address is stable (copy/move disabled).
     VmMemory vm_memory();
@@ -72,6 +83,7 @@ private:
     void apply_position(const std::vector<std::int16_t>&,EntityPosition);
     std::map<std::int16_t, Entity> entities_;
     WorldLimits limits_;
+    AttributePolicy attribute_policy_;
     std::size_t words_ = 0;
     std::uint64_t generation_sequence_ = 0;
 };

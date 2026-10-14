@@ -234,6 +234,11 @@ void invalid_profiles() {
 int main() {
     try {
         ordering(); person_data(); primitive_targets(); false_results(); actual_vm(); invalid_profiles();
+        auto a=entry(19),b=entry(11),c=entry(15);c.record->guid=0x12345678;
+        odh::NeighborContext guids(catalog({a,b,{0,{}},c}));
+        require(guids.id_for_guid(0xA0123456)==11,"GUID map last serialized wins rather than highest sorted ID");
+        require(guids.id_for_guid(0x12345678)==15&&!guids.id_for_guid(0),"distinct GUID and missing mapping remain explicit");
+        require(guids.by_id(19)&&guids.by_id(19)->neighbor_id==19&&guids.by_id(11)&&!guids.by_id(0),"record lookup retains actual active identity excluding placeholders");
         std::cout << checks << " checks passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

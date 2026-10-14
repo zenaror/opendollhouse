@@ -18,10 +18,18 @@ NeighborContext::NeighborContext(Nbrs source):source_(std::move(source)) {
         names-=record.name.size();relations-=record.relationships.size();
         for(const auto& rel:record.relationships){if(rel.values.size()>values)throw FormatError("neighbor runtime relationship value budget exceeded");values-=rel.values.size();}
         if(!active_.emplace(record.neighbor_id,n).second)throw FormatError("ambiguous active neighbor ID");
+        guids_[record.guid]=record.neighbor_id;
         ordered_.push_back({record.neighbor_id,n});
     }
     std::stable_sort(ordered_.begin(),ordered_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
     for(std::size_t n=0;n<ordered_.size();++n)if(source_.entries[ordered_[n].serialized_index].record)active_.at(ordered_[n].id)=n;
+}
+const NeighborRecord* NeighborContext::by_id(std::int16_t id) const {
+    const auto active=active_.find(id);
+    return active==active_.end()?nullptr:&*source_.entries[ordered_[active->second].serialized_index].record;
+}
+std::optional<std::int16_t> NeighborContext::id_for_guid(std::uint32_t guid) const {
+    const auto found=guids_.find(guid);return found==guids_.end()?std::nullopt:std::optional<std::int16_t>{found->second};
 }
 std::int16_t NeighborContext::next(std::int16_t current) const {
     const auto active=active_.find(current);
