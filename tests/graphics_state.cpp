@@ -79,8 +79,19 @@ int main() {
          f.table.records.clear();rejects([&]{odh::graphics_entity(f.world,1,f.resolver());},"missing storage slot rejected");}
         {Fixture f;require(f.world.attach(2,0,1),"attach without placement");
          rejects([&]{odh::graphics_entity(f.world,1,f.resolver());},"unpositioned attachment rejected");}
+        {Fixture f;std::array<std::int16_t,68> data{};data[1]=6;data[3]=-1;data[11]=3;
+         require(f.world.create_saved_entity(3,odh::EntityKind::avatar,123,{},{},{},data,{},0),"create saved avatar graphics fixture");
+         require(f.world.set_position(3,{3200,6400,1,6})&&f.world.attach(2,0,3),"saved attachment preserves copied position");
+         require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11.5f,18.5f,2.95f}),"saved avatar resolves SLOT despite unpositioned raw attachment");}
         {Fixture f;f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{8,8,1,0});f.world.place_in_slot(2,0,3);
-         rejects([&]{odh::graphics_entity(f.world,3,f.resolver());},"contained object requires unsupported SLOT height profile");}
+         require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11,18,4.35f}),"contained object uses parent origin without avatar half tile and height7 class");}
+        for(int height=0;height<=9;++height){Fixture f;f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{8,8,1,0});
+         f.world.attach(2,0,3);auto& slot=f.table.records[1];slot.height=height;slot.offset_bits[2]=bits(10);
+         const std::array<float,10> z{2,0,.5f,.8f,.8f,2,0,1.4f,.8f,0};
+         require(same(odh::graphics_entity(f.world,3,f.resolver()).tile_position,{11,18,2.95f+z[static_cast<std::size_t>(height)]}),"all object SLOT height classes and raw Z cases");
+         slot.height=-1;rejects([&]{odh::graphics_entity(f.world,3,f.resolver());},"negative object SLOT height rejected");
+         slot.height=10;rejects([&]{odh::graphics_entity(f.world,3,f.resolver());},"large object SLOT height rejected");
+         slot.height=5;slot.offset_bits[2]=0x7FC00000;rejects([&]{odh::graphics_entity(f.world,3,f.resolver());},"raw object SLOT Z must be finite");}
         {Fixture f;f.world.create(3,odh::EntityKind::object,{0,0,1});f.world.set_position(3,{8,8,1,0});
          f.world.place_in_slot(3,0,2);f.place();
          rejects([&]{odh::graphics_entity(f.world,1,f.resolver());},"nested container rejected");}

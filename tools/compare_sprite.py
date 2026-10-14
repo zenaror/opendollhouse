@@ -38,18 +38,30 @@ assert actual['objd']['version'] == version and actual['objd']['base_graphic'] =
 assert actual['objd']['num_graphics'] == graphics
 group_id = base+actual['objd']['graphic_index']; assert group_id == actual['objd']['group_id']
 group = chunks['DGRP', group_id]
-version, count = struct.unpack_from('<HI', group); assert version == 20004
-cursor, selected = 6, []
+version, = struct.unpack_from('<H', group); assert 20000 <= version <= 20004
+count, = struct.unpack_from('<H' if version < 20003 else '<I', group, 2)
+cursor, selected = (4 if version < 20003 else 6), []
+assert actual['dgrp']['version'] == version
 direction = actual['dgrp']['requested_direction']; rotation = actual['dgrp']['rotation']
 rotated = ((direction << (rotation*2)) & 255) | (direction >> (8-rotation*2))
 for _ in range(count):
-    facing, zoom, sprites = struct.unpack_from('<III', group, cursor); cursor += 12
+    if version < 20003:
+        sprites, facing, zoom = struct.unpack_from('<HBB', group, cursor); cursor += 4
+    else:
+        facing, zoom, sprites = struct.unpack_from('<III', group, cursor); cursor += 12
     records = []
     for _ in range(sprites):
-        sprite, frame, x, y, zb, flags, xb, yb = struct.unpack_from('<IIiiIIII', group, cursor)
-        cursor += 32
+        xb = yb = zb = 0; legacy_type = None
+        if version < 20003:
+            legacy_type, sprite, frame, flags, x, y = struct.unpack_from('<HHHHhh', group, cursor); cursor += 12
+            if version == 20001:
+                zb, = struct.unpack_from('<I', group, cursor); cursor += 4
+        else:
+            sprite, frame, x, y, zb, flags = struct.unpack_from('<IIiiII', group, cursor); cursor += 24
+            if version == 20004:
+                xb, yb = struct.unpack_from('<II', group, cursor); cursor += 8
         records.append(dict(sprite_id=sprite, frame=frame, x=x, y=y, flags=flags,
-                            object_offset_bits=[xb, yb, zb], legacy_type=None))
+                            object_offset_bits=[xb, yb, zb], legacy_type=legacy_type))
     if facing == rotated and zoom == actual['dgrp']['zoom']:
         selected.append(records)
 assert len(selected) == 1 and actual['dgrp']['direction_rotated'] == rotated

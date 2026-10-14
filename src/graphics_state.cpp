@@ -33,7 +33,7 @@ GraphicsEntity graphics_entity(const World& world,std::int16_t id,GraphicsSlotRe
     if(!child->attachment)return result;
     const auto attachment=*child->attachment;
     const auto child_position=*child->position;
-    if(child->kind!=EntityKind::avatar || !attachment.positioned)
+    if(child->kind==EntityKind::avatar && !attachment.positioned && !child->saved_object_banks)
         throw FormatError("graphics containment profile is unsupported");
     const auto* parent=world.find(attachment.container);
     if(!parent)throw FormatError("graphics container does not exist");
@@ -50,11 +50,12 @@ GraphicsEntity graphics_entity(const World& world,std::int16_t id,GraphicsSlotRe
     // Reacquire both identities before accessing any earlier entity pointer.
     child=world.find(id);parent=world.find(parent_id);
     if(!child || !parent || child->generation!=result.generation ||
-       parent->generation!=parent_generation || child->kind!=EntityKind::avatar ||
+       parent->generation!=parent_generation || child->kind!=result.kind ||
        parent->kind!=EntityKind::object || !child->position || !parent->position ||
        !(*child->position==child_position) || !(*parent->position==parent_position) ||
        !child->attachment || child->attachment->container!=parent_id ||
-       child->attachment->slot!=attachment.slot || !child->attachment->positioned ||
+       child->attachment->slot!=attachment.slot ||
+       (child->kind==EntityKind::avatar && !child->attachment->positioned && !child->saved_object_banks) ||
        parent->attachment || attachment.slot>=parent->slots.size() || parent->slots[attachment.slot]!=id)
         throw FormatError("graphics SLOT resolver invalidated entity state");
     if(!table)throw FormatError("graphics container SLOT table is missing");
@@ -70,7 +71,16 @@ GraphicsEntity graphics_entity(const World& world,std::int16_t id,GraphicsSlotRe
         default:break; // ObjectComponent uses north rotation for diagonals.
     }
     result.tile_position=free_position(EntityKind::object,parent_position);
-    result.tile_position[0]+=0.5f+x;result.tile_position[1]+=0.5f+y;
+    const float avatar_offset=child->kind==EntityKind::avatar?0.5f:0.0f;
+    result.tile_position[0]+=avatar_offset+x;result.tile_position[1]+=avatar_offset+y;
+    if(child->kind==EntityKind::object) {
+        const auto height=slot->height.value_or(0);
+        if(height<0 || height>9)throw FormatError("graphics SLOT height unsupported");
+        constexpr std::array<float,9> heights{0,2.5f,4,4,0,0,7,4,0};
+        const float z=(height==0 || height==5)?coordinate(slot->offset_bits[2])*16.0f/5.0f:
+            heights[static_cast<std::size_t>(height-1)]/5.0f;
+        result.tile_position[2]+=z;
+    }
     for(const auto n:result.tile_position)if(!std::isfinite(n))
         throw FormatError("graphics SLOT position arithmetic overflow");
     result.container=parent_id;

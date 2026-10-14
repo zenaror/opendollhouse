@@ -98,8 +98,12 @@ contenção e relacionamentos. Os scripts salvos permanecem dormentes; arquitetu
 e renderização completa desse lote ainda não estão integradas.
 O [host de avatares salvos](docs/saved-avatar-render-validation.md),
 `odh-saved-scene`, renderiza corpo/cabeça/mãos e o frame salvo dos dois avatares
-reais de House07 nas posições do World, em uma imagem CPU estática. Arquitetura,
-objetos e threads do lote continuam pendentes.
+reais de House07 nas posições do World, em uma imagem CPU estática. Arquitetura
+e threads do lote continuam pendentes. Com `--objects`, o
+[host compõe os objetos salvos](docs/saved-object-architecture-validation.md),
+incluindo contenção por SLOT e gráficos dinâmicos. `odh-architecture` decodifica
+as grades de piso/parede e mapas de recursos; desenhá-los e construir rooms
+segue pendente.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097
