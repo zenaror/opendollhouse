@@ -1,5 +1,8 @@
 # Inventário do bairro e consulta FindToken
 
+O [checkpoint de prefixos salvos](saved-prefix-validation.md) posterior
+implementa o decoder C++ e a ligação objt descritos na próxima etapa abaixo.
+
 O host lê NGBH externo e despacha opcode51/mode3 FindToken sobre o inventário
 do avatar. Dados do original continuam imutáveis. Não implementa ainda as
 operações de adicionar/remover tokens, enumeração, autofollow ou persistência.

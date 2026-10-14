@@ -524,5 +524,28 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  r=run(family_args);assert r.returncode==2 and not r.stdout and 'NGBH' in r.stderr
  family_neighborhood()
  # Old shortened OBJD fixture cannot invent startup fields.
+ # Saved prefix mapping uses ObjectData11 and one-based serialized objt order.
+ def fields_bytes(values):
+  bits=''
+  for value,width in values:
+   bits+='0' if value==0 else '111'+format(value&((1<<width)-1),'0'+str(width)+'b')
+  return bytes(int(bits[n:n+8].ljust(8,'0'),2) for n in range(0,len(bits),8))
+ prefix_fields=[(0,32)]*4+[(-16,32),(-16,32),(1,32),(1,16),(0,16)]
+ prefix_fields+=[(0,16)]*8+[(2 if n==11 else 0,16) for n in range(68)]+[(0,16)]*5
+ prefix_bytes=fields_bytes(prefix_fields)
+ table_bytes=fields_bytes([(2,16),(1,16),(0,16)])
+ skip_end=13+len(table_bytes)+4+len(prefix_bytes)-12
+ objm_payload=struct.pack('<II4sB',0,62,b'MjbO',1)+table_bytes+struct.pack('<i',skip_end)+prefix_bytes
+ objt_payload=struct.pack('<II4sI6H',0,2,b'tjbo',0x11223344,0,0,0,0,99,4)+b'foo\0'+bytes(4)
+ startup_setup();plain_iff(house,[('SIMI',1,bootstrap_saved),('ObjM',1,objm_payload),('objt',0,objt_payload)])
+ r=run(['--initialize','--lot',str(house),'7']);d=json.loads(r.stdout)
+ records=d['saved_object_prefixes']['records']
+ assert r.returncode==0 and len(records)==1 and records[0]['object_id']==2 and records[0]['type_id']==1
+ assert records[0]['guid']==0x11223344 and records[0]['x']==-16 and records[0]['out_of_world']
+ assert records[0]['object_data'][11]==2 and not d['saved_object_prefixes']['world_entities_restored']
+ for chunks in [[],[('objt',0,objt_payload),('objt',0,objt_payload)], [('objt',0,struct.pack('<II4sI',0,2,b'tjbo',0))]]:
+  plain_iff(house,[('SIMI',1,bootstrap_saved),('ObjM',1,objm_payload)]+chunks)
+  r=run(['--initialize','--lot',str(house),'7']);assert r.returncode==2 and not r.stdout
+ plain_iff(house,[('SIMI',1,bootstrap_saved)])
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

@@ -113,8 +113,9 @@ a GotoRoutingSlot no perfil visitante. A [ativação de família](docs/family-re
 seleciona FAMI pela casa e classifica Bob como residente de House07; Main chega
 à operação de inventário. A [consulta FindToken](docs/inventory-validation.md)
 lê NGBH e ultrapassa esse gate; o Main residente chega à animação44.
-O reader ObjM conserva mapas e blocos comprimidos.
-Aparência e restauração de instâncias, posições e arquitetura seguem pendentes.
+O [snapshot salvo](docs/saved-prefix-validation.md) decodifica posições e bancos
+iniciais de ObjM e resolve IDs à tabela objt. Aparência, restante das instâncias,
+publicação das entidades/posições em World e arquitetura seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

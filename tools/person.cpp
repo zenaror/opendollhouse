@@ -11,6 +11,7 @@
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
 #include "odh/inventory_find.hpp"
+#include "odh/saved_objects.hpp"
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
@@ -121,7 +122,12 @@ int main(int argc,char** argv) {
         throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
+    std::optional<odh::Objt> objt;
+    std::optional<std::vector<odh::SavedObjectPrefix>> saved_prefixes;
     if(lot_path)with_iff_file(*lot_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type=="objt"&&chunk.id==0){
+            if(objt)throw odh::FormatError("ambiguous objt0");objt=odh::read_objt(chunk.payload);
+        }
         if(chunk.type=="ObjM"&&chunk.id==1){
             if(objm)throw odh::FormatError("ambiguous ObjM1");objm=odh::read_objm(chunk.payload);
         }
@@ -129,6 +135,10 @@ int main(int argc,char** argv) {
         if(simi)throw odh::FormatError("ambiguous SIMI1");simi=odh::read_simi(chunk.payload);
     });});
     if(lot_path&&!simi)throw odh::FormatError("SIMI1 absent in selected house");
+    if(objm){
+        if(!objt)throw odh::FormatError("objt0 absent for saved ObjM prefixes");
+        saved_prefixes=odh::read_saved_object_prefixes(*objm,*objt);
+    }
     if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||chunk.id!=1)return;
         if(zoning)throw odh::FormatError("ambiguous zoning STR#1");zoning=odh::read_lot_zoning(odh::read_strings(chunk.payload));
@@ -442,6 +452,26 @@ int main(int argc,char** argv) {
         std::cout<<"{\"version\":"<<objm->version<<",\"compression\":"<<static_cast<unsigned>(objm->compression)
             <<",\"mapped_ids\":"<<objm->map_records.size()<<",\"blocks\":"<<objm->blocks.size()<<",\"owned_block_bytes\":"<<bytes
             <<",\"remaining_bytes\":"<<objm->remaining_bytes<<",\"instance_state_decoded\":false,\"world_entities_restored\":false}";
+    }else std::cout<<"null";
+    std::cout<<",\"saved_object_prefixes\":";
+    if(saved_prefixes){
+        std::cout<<"{\"profile\":\"owned prefix snapshot; raw objt GUID mapping; OBJD and complete instance state unresolved\",\"objt_version\":"<<objt->version
+            <<",\"objt_entries\":"<<objt->entries.size()<<",\"world_entities_restored\":false,\"records\":[";
+        for(std::size_t n=0;n<saved_prefixes->size();++n){if(n)std::cout<<',';const auto& v=(*saved_prefixes)[n];const auto& p=v.prefix;
+            std::cout<<"{\"object_id\":"<<v.object_id<<",\"type_id\":"<<v.type_id<<",\"guid\":"<<v.guid
+                <<",\"block_offset\":"<<p.block_offset<<",\"odd_offset\":"<<(p.odd_offset?"true":"false")
+                <<",\"consumed_bits\":"<<p.consumed_bits<<",\"remaining_bits\":"<<p.remaining_bits
+                <<",\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"level\":"<<p.level
+                <<",\"out_of_world\":"<<(p.x==-16&&p.y==-16?"true":"false")
+                <<",\"footprint\":["<<p.footprint.min_y<<','<<p.footprint.min_x<<','<<p.footprint.max_y<<','<<p.footprint.max_x
+                <<"],\"unknown_data\":"<<p.unknown_data<<",\"attributes\":[";
+            for(std::size_t i=0;i<p.attributes.size();++i){if(i)std::cout<<',';std::cout<<p.attributes[i];}
+            std::cout<<"],\"temps\":[";for(std::size_t i=0;i<p.temps.size();++i){if(i)std::cout<<',';std::cout<<p.temps[i];}
+            std::cout<<"],\"object_data\":[";for(std::size_t i=0;i<p.object_data.size();++i){if(i)std::cout<<',';std::cout<<p.object_data[i];}
+            std::cout<<"],\"extras\":[";for(std::size_t i=0;i<p.extras.size();++i){if(i)std::cout<<',';std::cout<<p.extras[i];}
+            std::cout<<"]}";
+        }
+        std::cout<<"]}";
     }else std::cout<<"null";
     std::cout<<",\"global_bootstrap\":";
     if(bootstrap_globals){
