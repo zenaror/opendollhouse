@@ -119,3 +119,18 @@ a entrada15 recebe BHAV_Portal. A consulta pertence à entidade StackObject,
 não ao owner de código da rotina em execução. O parser atual de ODH ainda
 não fornece a tabela completa de funções nem OBJf. Esse suporte continua
 pendente; não se retorna um zero genérico para funções desconhecidas.
+
+Para Bob e User00003, a leitura estática confirmou UsesFnTable(byte44)=0 e
+BHAV_Portal(byte34)=0: a entrada15 gerada vale0. Não foi derivada de EntityKind.
+
+Há uma dependência de bootstrap além dos dados salvos: HelpSystem OBJD16807
+tem Global(byte84)=1 e ObjectType(byte18)=7. TS1ObjectProvider.cs:68,103–105
+inclui globals que não são GiftToken em ControllerObjects. O importador
+antigo VMTS1Activator.cs:217–220 cria esses controladores OUT_OF_WORLD,
+incluindo HelpSystem. No VMTS1ActivatorNew consultado não há loop equivalente
+ControllerObjects; são rotas diferentes. A escolha/restauração do importador
+e dos controladores precisa ser explícita, sem promover ausência serializada
+a ausência no runtime completo. VM.Init sozinho não cria esses controladores.
+
+A auditoria de FAR1 local não encontrou OBJD para0xef122974. Sua identidade
+continua desconhecida; não foram inventariados standalone/downloads.
