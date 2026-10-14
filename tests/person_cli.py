@@ -382,6 +382,43 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   startup_setup(main=[global_to_temp(index)])
   r=run(['--initialize']+lot_args());d=json.loads(r.stdout)
   assert r.returncode==3 and d['diagnostic']==f'unsupported read scope 6 index {index}' and d['global_reads']==[]
+ # SetToNext object type uses World, not the neighbor provider.
+ def entity_row(guid=1,flags=132,scope=10,index=0,t=254,f=255):
+  return (31,t,f,list(struct.pack('<IBBBB',guid,flags,scope,255,index)))
+ startup_setup(main=[entity_row(t=1),(2,254,255,[0,0,1,0,0,2,10,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next']==[dict(caller=1,stack_object=0,owner=1,guid=1,mode=4,current=0,result=1,success=True,scope=10,index=0)]
+ assert d['neighbor_next']==[] and 'saved lot entities not restored' in d['entity_population']
+ # An absent GUID preserves the cursor; false has no synthetic identity.
+ startup_setup(main=[entity_row(guid=2,t=255,f=1),(2,254,255,[0,0,0,0,0,2,10,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next'][0]['result'] is None and not d['entity_next'][0]['success']
+ # No wrap at the last matching ID, even if the old cursor doesn't exist.
+ startup_setup(main=[(2,1,255,[0,0,2,0,0,5,10,7]),entity_row(t=255,f=2),(2,254,255,[0,0,2,0,0,2,10,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next'][0]['current']==2 and d['entity_next'][0]['result'] is None
+ # Legacy operands ignore scope/index/local and force StackObjectID.
+ startup_setup(main=[entity_row(flags=4,scope=255,index=255,t=1),(2,254,255,[0,0,1,0,0,2,10,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next'][0]['scope']==10 and d['entity_next'][0]['index']==0
+ # New destination is a Temp register; neighbor records never become entities.
+ startup_setup(main=[entity_row(scope=8,t=1),check_temp(0,1)])
+ neighborhood_file([relation_neighbor(48,1,())])
+ r=run(['--initialize','--neighborhood',str(neighborhood)]);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next'][0]['result']==1 and d['entity_next'][0]['scope']==8
+ # Same scalar GUID exists in NBRS, but only actorID1 is eligible in World.
+ assert d['neighbor_inheritance']['neighbor_id']==48 and d['entity_next'][0]['result']!=48
+ startup_setup(main=[entity_row(scope=8,index=20)])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='entity enumeration target unavailable' and d['entity_next']==[]
+ # General/person/non-person filters enumerate only World entities.
+ for mode in [0,1]:
+  startup_setup(main=[entity_row(guid=0xfedcba98,flags=128|mode,t=1),(2,254,255,[0,0,1,0,0,2,10,7])])
+  r=run(['--initialize']);d=json.loads(r.stdout)
+  assert r.returncode==0 and d['entity_next'][0]['mode']==mode and d['entity_next'][0]['result']==1
+ startup_setup(main=[entity_row(flags=130,t=255,f=1),(2,254,255,[0,0,0,0,0,2,10,7])])
+ r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['entity_next'][0]['mode']==2 and d['entity_next'][0]['result'] is None
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

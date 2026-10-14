@@ -54,6 +54,11 @@ public:
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
     bool remove(std::int16_t id);
     const Entity* find(std::int16_t id) const;
+    // Live positive-ID enumeration, including entities with unknown definitions.
+    std::optional<std::int16_t> next_entity(std::int16_t current,std::optional<EntityKind> kind={}) const;
+    // Live exact definition GUID query, including avatars; no master alias or
+    // wraparound. The signed cursor need not identify an existing entity.
+    std::optional<std::int16_t> next_entity_of_guid(std::int16_t current,std::uint32_t guid) const;
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     bool declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_person_data(std::int16_t id, std::int16_t index, std::int16_t value);

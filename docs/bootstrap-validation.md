@@ -1,5 +1,8 @@
 # Globals de bootstrap TS1
 
+O [checkpoint seguinte de enumeração](entity-next-validation.md) remove os
+faults de SetToNext registrados abaixo e documenta o avanço até scope35.
+
 O host `odh-person --initialize` agora inicializa três globals de runtime
 antes do Init privado do avatar:17=4,20=255,25=4. O banco é próprio e fixo,
 com três palavras16 e sem alocação dinâmica. Ele persiste entre as entradas

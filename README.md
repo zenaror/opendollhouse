@@ -105,8 +105,10 @@ relacionamentos. O [vínculo do personagem real](docs/avatar-neighbor-validation
 via `--avatar-file`, restaura PersonData por GUID antes de Main. O
 [backend de relacionamentos](docs/relationship-validation.md) lê e escreve
 em cópia própria de NBRS. O [bootstrap explícito](docs/bootstrap-validation.md)
-fornece GameEdition e dois globals de runtime; Main chega à busca de objeto
-por GUID. Família ativada, aparência e restauração completa do lote seguem pendentes.
+fornece GameEdition e dois globals de runtime. A
+[enumeração de entidades](docs/entity-next-validation.md) cobre pessoas, objetos
+e GUIDs exatos; Main chega à leitura da definição OBJD selecionada. Família
+ativada, aparência e restauração completa do lote seguem pendentes.
 
 Um probe com entidades construídas permite investigar as branches da cadeira:
 

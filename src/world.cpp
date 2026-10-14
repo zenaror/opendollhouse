@@ -43,6 +43,16 @@ const Entity* World::find(std::int16_t id) const {
     const auto found = entities_.find(id);
     return found == entities_.end() ? nullptr : &found->second;
 }
+std::optional<std::int16_t> World::next_entity_of_guid(std::int16_t current,std::uint32_t guid) const {
+    for(auto it=entities_.upper_bound(current);it!=entities_.end();++it)
+        if(it->second.definition && it->second.definition->guid==guid)return it->first;
+    return {};
+}
+std::optional<std::int16_t> World::next_entity(std::int16_t current,std::optional<EntityKind> kind) const {
+    for(auto it=entities_.upper_bound(current);it!=entities_.end();++it)
+        if(!kind || it->second.kind==*kind)return it->first;
+    return {};
+}
 bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid) {
     const auto found=entities_.find(id);if(found==entities_.end())return false;
     auto& type=found->second.definition;

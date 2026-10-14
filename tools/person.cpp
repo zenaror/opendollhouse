@@ -9,6 +9,7 @@
 #include "odh/avatar_neighbor.hpp"
 #include "odh/relationship.hpp"
 #include "odh/bootstrap.hpp"
+#include "odh/entity_next.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -220,6 +221,11 @@ int main(int argc,char** argv) {
     const auto neighbor_handler=neighbors?neighbors->primitive(memory,[&](const auto& value){
         if(neighbor_next.size()>=10000)throw odh::FormatError("neighbor enumeration log exceeds bounded host profile");neighbor_next.push_back(value);
     }):odh::VmPrimitive{};
+    std::vector<odh::EntityNext> entity_next;
+    const auto entity_handler=odh::entity_next_primitive(world,memory,[&](const auto& value){
+        if(entity_next.size()>=10000)throw odh::FormatError("entity enumeration log exceeds bounded host profile");
+        entity_next.push_back(value);
+    });
     std::optional<odh::RelationshipState> relationships;
     if(neighbors)relationships.emplace(*neighbors);
     std::vector<odh::RelationshipRecord> relationship_records;
@@ -232,6 +238,7 @@ int main(int argc,char** argv) {
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
+        if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
@@ -380,6 +387,11 @@ int main(int argc,char** argv) {
     std::cout<<",\"neighbor_next\":[";
     for(std::size_t n=0;n<neighbor_next.size();++n){if(n)std::cout<<',';const auto& value=neighbor_next[n];
         std::cout<<"{\"current\":"<<value.current<<",\"result\":"<<value.result<<",\"success\":"<<(value.success?"true":"false")<<'}';}
+    std::cout<<"],\"entity_population\":\"constructed actor and optional action target; saved lot entities not restored\",\"entity_next\":[";
+    for(std::size_t n=0;n<entity_next.size();++n){if(n)std::cout<<',';const auto& v=entity_next[n];
+        std::cout<<"{\"caller\":"<<v.context.caller<<",\"stack_object\":"<<v.context.stack_object<<",\"owner\":"<<v.context.code_owner
+            <<",\"guid\":"<<v.guid<<",\"mode\":"<<static_cast<unsigned>(v.mode)<<",\"current\":"<<v.current<<",\"result\":"<<(v.result?std::to_string(*v.result):"null")
+            <<",\"success\":"<<(v.success?"true":"false")<<",\"scope\":"<<static_cast<unsigned>(v.scope)<<",\"index\":"<<v.index<<'}';}
     std::cout<<"],\"neighbor_reads\":[";
     for(std::size_t n=0;n<neighbor_reads.size();++n){if(n)std::cout<<',';const auto& value=neighbor_reads[n];
         const auto source=value.source==odh::NeighborDataSource::serialized?"serialized":value.source==odh::NeighborDataSource::legacy_zero_extension?"legacy_zero_extension":

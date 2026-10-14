@@ -1,0 +1,26 @@
+#pragma once
+#include "odh/world.hpp"
+namespace odh {
+struct EntityNext {
+    VmContext context;
+    std::uint32_t guid;
+    std::int16_t current;
+    std::optional<std::int16_t> result;
+    bool success;
+    std::uint8_t scope;
+    std::int16_t index;
+    std::uint8_t mode=4;
+};
+// Bounded ODH SetToNext (opcode31) profile: mode0 any entity, mode1 avatar,
+// mode2 object, mode4 exact definition GUID. Modes0/1/2 include unknown
+// definitions and ignore GUID/Local operand bytes. All modes stop without wrap.
+// World must
+// outlive the primitive/VM. Callbacks are owned copies; objects they capture
+// must also outlive it. Memory callbacks and observer must not throw or reenter
+// the VM; a rejected external write must leave its backend unchanged.
+// Unlike FreeSO's ignored SetVariable bool, ODH rejects unavailable writes.
+// Observer runs only after a completed false/true dispatch; native VM outputs
+// are staged and published by Vm after the primitive returns.
+VmPrimitive entity_next_primitive(const World&,VmMemory memory={},
+    std::function<void(const EntityNext&)> observed={});
+}
