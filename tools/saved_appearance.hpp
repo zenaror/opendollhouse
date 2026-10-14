@@ -1,6 +1,7 @@
 #pragma once
 #include "scene_renderer.hpp"
 #include "odh/objm_tail.hpp"
+#include "odh/avatar_body.hpp"
 
 struct SavedAnimationAppearance {
     std::string raw, entry, cfp_entry;
@@ -26,6 +27,9 @@ public:
     SavedAppearanceResources(SavedAppearanceResources&&) noexcept;
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;
     SavedAppearance resolve(const odh::ObjmPersonState&);
+    // All six BodySTR 17..22 variants are required and tagged for SceneState.
+    // Raw saved hand fields are not interpreted or changed by this opt-in path.
+    SavedAppearance resolve_gestures(const odh::ObjmPersonState&, const odh::AvatarBodyStrings&);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

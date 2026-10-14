@@ -757,6 +757,10 @@ int main(int argc,char** argv) {
             <<",\"frames\":"<<progress->frames<<",\"queued_events\":"<<progress->queued_events
             <<",\"end\":"<<(progress->end?"true":"false")<<",\"loop\":"<<(progress->loop?"true":"false")<<'}';
         else std::cout<<"null";
+        std::cout<<",\"animation_hands\":";
+        const auto hands=playback->hands();
+        if(hands)std::cout<<"{\"left\":"<<static_cast<unsigned>(hands->left)<<",\"right\":"<<static_cast<unsigned>(hands->right)<<'}';
+        else std::cout<<"null";
         std::cout<<",\"animation_events\":[";
         for(std::size_t n=0;n<animation_events.size();++n){if(n)std::cout<<',';const auto& event=animation_events[n];
             std::cout<<"{\"tick\":"<<event.tick<<",\"actor\":"<<event.actor<<",\"time_id\":"<<event.time_id<<",\"properties\":[";

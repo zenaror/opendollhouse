@@ -7,6 +7,20 @@
 
 namespace odh {
 namespace {
+std::optional<HandGesture> gesture(const std::string& text){
+    const auto space=[](char c){return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='\f'||c=='\v';};
+    const auto* first=text.data();const auto* last=first+text.size();
+    while(first!=last&&space(*first))++first;
+    while(first!=last&&space(last[-1]))--last;
+    if(first!=last&&*first=='+'){++first;if(first!=last&&*first=='-')return {};}
+    int value=0;const auto r=std::from_chars(first,last,value);
+    if(r.ec!=std::errc{}||r.ptr!=last||value<0||value>3)return {};
+    return static_cast<HandGesture>(value);
+}
+const std::string* property(const AnimationProperties& pairs,const char* key){
+    for(const auto& pair:pairs)if(pair.first==key)return &pair.second;
+    return nullptr;
+}
 PrimitiveOutcome unsupported(const std::string& text) {return {PrimitiveDisposition::unsupported,text};}
 std::int16_t event_code(const std::string& text) {
     auto first=text.data(),last=first+text.size();
@@ -19,6 +33,12 @@ std::int16_t event_code(const std::string& text) {
 }
 }
 bool Playback::bind(Vm& vm) {if(executing_||(vm_&&vm_!=&vm))return false;vm_=&vm;return true;}
+std::optional<AvatarHands> Playback::hands() const {
+    if(!hands_||!vm_||hands_->vm_generation!=vm_->run_generation())return {};
+    const auto* actor=world_.find(hands_->actor);
+    if(!actor||actor->generation!=hands_->actor_generation)return {};
+    return hands_->value;
+}
 VmPrimitive Playback::primitive() {return [this](const auto& f,const auto& i,const auto&,const auto& d){return request(f,i,d);};}
 std::optional<PlaybackSample> Playback::sample() const {
     if(!state_ || !vm_ || state_->vm_generation!=vm_->run_generation())return {};
@@ -26,7 +46,7 @@ std::optional<PlaybackSample> Playback::sample() const {
     if(!actor || actor->generation!=state_->actor_generation)return {};
     if(wait_ && (!vm_->pending() || vm_->pending()->ticket!=wait_->ticket))return {};
     return PlaybackSample{state_->clip,state_->actor,state_->actor_generation,state_->vm_generation,
-                          state_->frame,state_->frames,state_->end,state_->loop};
+                          state_->frame,state_->frames,state_->end,state_->loop,hands().value_or(AvatarHands{})};
 }
 std::optional<PlaybackProgress> Playback::progress() const {
     if(!state_)return {};
@@ -48,12 +68,14 @@ std::optional<Playback::State> Playback::prepare(std::shared_ptr<const Animation
             for(const auto& pair:event.pairs){
                 if(pairs>=limits_.events)return reject("animation property budget exceeded");
                 ++pairs;
-                if(pair.first!="xevt"&&pair.first!="footstep")return reject("animation property service not implemented: "+pair.first);
+                if(pair.first!="xevt"&&pair.first!="footstep"&&pair.first!="lefthand"&&pair.first!="righthand")return reject("animation property service not implemented: "+pair.first);
                 if(pair.first=="xevt"){
                     if(counted>=limits_.events)return reject("animation queue budget exceeded");
                     ++counted;
                     if(event_code(pair.second)<100&&++counted_short_events>255)return reject("animation event counter exceeds byte profile");}
             }
+            for(const auto* key:{"righthand","lefthand"})if(const auto* value=property(event.pairs,key))
+                if(!gesture(*value))return reject("animation hand gesture outside supported numeric range 0..3");
             next.events.push_back(event);
         }}
     if(!next.frames||next.frames>limits_.frames||next.frames>static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())||!limits_.ticks)return reject("animation frame/tick budget exceeded");
@@ -84,10 +106,10 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         const auto normalized=static_cast<std::int16_t>((posture==1||posture==2)?posture:3);
         std::string error;auto next=prepare(reset_resolver_(f,normalized),*actor,(flags&2U)!=0,true,false,error);
         if(!next)return unsupported(error);
-        // Commit only after resource and budget validation. Gesture rendering
-        // and carrying remain outside this silent, known-empty-hand profile.
+        // Commit only after resource and budget validation.
         if(actor->person_data[42]==1)world_.set_person_data(actor->id,42,4);
-        state_=std::move(*next);return {PrimitiveDisposition::goto_true,{}};
+        state_=std::move(*next);hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
+        return {PrimitiveDisposition::goto_true,{}};
     }
     if(mode>=2)return unsupported("animation carry mode outside primary playback profile");
     const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
@@ -99,6 +121,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         std::string error;auto next=prepare(clip,*actor,(flags&2U)!=0,mode==1,(flags&64U)!=0,error);
         if(!next)return unsupported(error);
         state_=std::move(*next);
+        hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
     }
     if(mode==1)return {PrimitiveDisposition::goto_true,{}};
     // On reentry, queued events take precedence over the end marker.
@@ -167,6 +190,10 @@ bool Playback::tick(std::uint64_t now,const std::function<void(const PlaybackEve
                     return true;}
                 const auto code=event_code(pair.second);state_->queue.push_back(code);
                 if(code<100)++state_->events_run;}
+            // PropertyList's keyed lookup returns its first matching pair.
+            // Apply both sides before observers see the event. Raw VM banks stay untouched.
+            if(const auto* value=property(event.pairs,"righthand"))hands_->value.right=*gesture(*value);
+            if(const auto* value=property(event.pairs,"lefthand"))hands_->value.left=*gesture(*value);
             notifications.push_back({now,state_->actor,event.id,event.pairs});
         }
         // Truncation matches SilentFrameProgress, without an overflowing

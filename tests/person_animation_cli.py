@@ -151,6 +151,21 @@ with tempfile.TemporaryDirectory(prefix='odh-person-animation-') as folder:
     assert [row['pc'] for row in data['trace']] == [0, 1, 0]
     catalog()
 
+    # Timed gestures are visual state, separate from PersonData22/23.
+    catalog([clip('clip', [(0, [('lefthand', '1'), ('righthand', '2')])])])
+    setup(private=fallback)
+    data = decoded(run(['--ticks', '1']), 3)
+    assert data['animation_hands'] == dict(left=1, right=2)
+    assert data['actor_state']['person_data'][22:24] == [0, 0]
+    assert data['animation_events'][0]['properties'] == [['lefthand', '1'], ['righthand', '2']]
+    data = decoded(run())
+    assert data['animation_progress'] is None and data['animation_hands'] == dict(left=1, right=2)
+    catalog([clip('clip', [(0, [('lefthand', 'bad')])])])
+    data = decoded(run(), 3)
+    assert data['status'] == 'fault' and data['animation_hands'] is None
+    assert 'gesture' in data['diagnostic']
+    catalog()
+
     # Object tables: explicit table plus child offset, then native fallback.
     for age, table_id in [(27, 200), (18, 200), (17, 201), (0, 201)]:
         setup(private=[('STR#', table_id, strings(['', 'clip']))], table=200)

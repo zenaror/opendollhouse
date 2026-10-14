@@ -147,5 +147,38 @@ int main(){try{
      require(!f.player.sample()&&f.player.progress()->frame==before->frame,"sample rejects restarted run before tick without mutation");}
     {Fixture f(1);f.start();const auto generation=f.player.sample()->actor_generation;f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,1});
      require(f.world.find(1)->generation!=generation&&!f.player.sample(),"sample rejects removed/reused actor before tick");}
+    {Fixture f;require(!f.player.hands(),"no inferred gestures before primary clip");
+     const auto before=f.world.find(1)->person_data;
+     f.a->motions[0].time_properties={{{0,{{"lefthand","1"},{"righthand","2"},{"xevt","7"}}},
+                                     {70,{{"lefthand","3"},{"righthand","0"}}}}};
+     f.start();const auto initial=f.player.sample();
+     require(initial->hands.left==odh::HandGesture::idle&&initial->hands.right==odh::HandGesture::idle,"clip start explicitly resets both hands");
+     bool observed=false;f.player.tick(1,[&](const auto&){const auto h=f.player.hands();observed=h&&h->left==odh::HandGesture::pointing&&h->right==odh::HandGesture::fist;});
+     require(observed&&f.player.sample()->hands.left==odh::HandGesture::pointing,"event observer and render sample see committed gestures");
+     require(initial->hands.left==odh::HandGesture::idle&&f.world.find(1)->person_data==before,"previous sample and raw person banks unchanged");
+     f.player.tick(2);require(f.player.hands()->left==odh::HandGesture::none&&f.player.hands()->right==odh::HandGesture::idle,"later timed event changes both hands");
+     f.vm.run(20);f.player.tick(3);f.player.tick(4);
+     require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.sample()&&f.player.hands()->left==odh::HandGesture::none,"gestures persist after completed clip");}
+    for(const auto* valid:{"0","1","2","3"," +2 ","\t1\r\n","-0"}){
+     Fixture f;f.a->motions[0].time_properties={{{0,{{"lefthand",valid}}}}};f.start();
+     require(f.vm.status()==odh::VmStatus::waiting,"supported gesture numeric syntax");f.player.tick(1);
+     require(f.player.hands().has_value(),"valid gesture committed");}
+    for(const auto* invalid:{"","bad","1x","1.0","4","-1","32768","+","+-0"," 1 2 "}){
+     Fixture f;f.a->motions[0].time_properties={{{0,{{"lefthand",invalid}}}}};f.start();
+     require(f.vm.status()==odh::VmStatus::fault&&!f.player.sample()&&!f.player.hands(),"invalid gesture rejects before primary state or hand mutation");}
+    {Fixture f;f.a->motions[0].time_properties={{{0,{{"lefthand","1"},{"lefthand","bad"},{"righthand","2"},{"righthand","0"}}}}};
+     f.start();f.player.tick(1);require(f.player.hands()->left==odh::HandGesture::pointing&&f.player.hands()->right==odh::HandGesture::fist,"first hand property value wins as reference keyed lookup");
+     const auto hand=f.player.hands();f.player.cancel();
+     require(!f.player.sample()&&f.player.hands()->left==hand->left,"cancel preserves current visual hand state");
+     f.vm.start(odh::routine_key(4096),{1,2,2});require(!f.player.hands(),"stale run gesture identity rejected before next tick");}
+    {Fixture f(1);f.a->motions[0].time_properties={{{0,{{"lefthand","3"},{"righthand","1"}}}}};f.start();f.player.tick(1);
+     require(f.player.hands()->left==odh::HandGesture::none,"loop can hide hand");
+     f.reset_a->motions[0].time_properties={{{0,{{"lefthand","bad"}}}}};
+     require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported&&f.player.hands()->left==odh::HandGesture::none,"invalid reset preserves previous gestures");
+     f.reset_a->motions[0].time_properties.clear();require(f.apply(0).disposition==odh::PrimitiveDisposition::goto_true,"valid posture reset accepted");
+     require(f.player.hands()->left==odh::HandGesture::idle&&f.player.hands()->right==odh::HandGesture::idle,"posture reset restores idle hands");
+     f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,1});require(!f.player.hands(),"removed/reused actor cannot inherit gestures");}
+    {Fixture f(2);f.a->motions[0].time_properties={{{0,{{"lefthand","1"}}},{60,{{"righthand","3"}}}}};f.start();f.player.tick(1);
+     require(f.player.hands()->left==odh::HandGesture::idle&&f.player.hands()->right==odh::HandGesture::none,"backwards consumes later event first");}
     std::cout<<checks<<" playback checks passed (silent synthetic resources only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Playback test failed: "<<e.what()<<'\n';return 1;}}

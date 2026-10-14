@@ -45,6 +45,7 @@ struct ProbeView::Impl {
         if(sample&&(sample->actor!=avatar.id||sample->actor_generation!=avatar.generation))throw odh::FormatError("view playback identity does not match avatar");
         SceneState state{avatar.tile_position,object.tile_position,avatar.direction,object.direction,
                          sample?sample->clip.get():nullptr,sample?sample->frame:0};
+        state.hands=playback.hands().value_or(odh::AvatarHands{});
         auto rendered=renderer.render(state,camera,options);
         const auto* actor=world.find(1);const auto* obj=world.find(2);
         if(!actor||!obj||!actor->position||!obj->position||actor->person_data.empty())throw odh::FormatError("view world state missing");

@@ -86,6 +86,7 @@ struct SceneRenderer::Impl {
     odh::Skeleton skeleton;
     std::vector<odh::Mesh> meshes;
     std::vector<odh::BitmapImage> textures;
+    std::vector<std::optional<SceneHandPart>> hands;
     std::optional<odh::Dgrp> group;
     std::map<SpriteKey, odh::Spr2Frame> sprites;
     std::map<std::string, Clip> clips;
@@ -107,6 +108,8 @@ struct SceneRenderer::Impl {
         Archive texture_archive(config.textures_far);
         std::uint64_t geometry_vertices = 0, texture_pixels = 0;
         for (const auto& part : config.parts) {
+            if (part.hand && (!odh::valid_hand_gesture(part.hand->gesture) || part.hand->gesture == odh::HandGesture::none))
+                throw odh::FormatError("scene renderer hand part must specify idle, pointing or fist");
             const auto appearances = odh::read_bcf_appearances(animation_archive.exact(part.appearance_entry));
             const odh::Appearance* appearance = nullptr;
             for (const auto& candidate : appearances.appearances) {
@@ -143,6 +146,7 @@ struct SceneRenderer::Impl {
             texture_size += texture.pixels.size() * 4;
             meshes.push_back(std::move(mesh));
             textures.push_back(std::move(texture));
+            hands.push_back(part.hand);
         }
         if (!config.object_far.empty() || !config.object_entry.empty() || config.object_id!=0) {
             if (config.object_far.empty() || config.object_entry.empty())
@@ -212,6 +216,8 @@ struct SceneRenderer::Impl {
     odh::CompositeFrame render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options) {
         if (state.avatar_direction > 7 || state.object_direction > 7)
             throw odh::FormatError("scene renderer direction must be 0..7");
+        if (!odh::valid_hand_gesture(state.hands.left) || !odh::valid_hand_gesture(state.hands.right))
+            throw odh::FormatError("scene renderer invalid hand gesture");
         if (!std::isfinite(state.frame)) throw odh::FormatError("scene renderer frame must be finite");
         // Validate the camera and both tile coordinates before decoding any CFP.
         odh::project_tile(camera, state.avatar_tile);
@@ -226,6 +232,8 @@ struct SceneRenderer::Impl {
         std::vector<odh::RasterTriangle> triangles;
         triangles.reserve(static_cast<std::size_t>(triangle_count));
         for (std::size_t index = 0; index < meshes.size(); ++index) {
+            if (hands[index] && hands[index]->gesture != (hands[index]->right ? state.hands.right : state.hands.left))
+                continue;
             const auto mesh = odh::skin_mesh(meshes[index], pose);
             std::vector<odh::RasterVertex> projected;
             projected.reserve(mesh.vertices.size());

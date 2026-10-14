@@ -44,6 +44,21 @@ struct Archive {
     odh::View view(const odh::FarEntry& e){return odh::View(stream,size).subview(e.offset,e.length);}
 };
 struct Named {std::string entry,name;};
+struct HandResource {std::string appearance,texture_map;};
+HandResource hand_resource(const std::string& raw) {
+    bounded_name(raw);
+    const auto comma=raw.find(',');
+    HandResource out{raw.substr(0,comma),comma==std::string::npos?std::string{}:raw.substr(comma+1)};
+    bounded_name(out.appearance);
+    if(out.appearance.find_first_of("=;")!=std::string::npos)
+        throw odh::FormatError("BodySTR hand appearance syntax invalid");
+    if(comma!=std::string::npos) {
+        if(out.texture_map.empty()||out.texture_map.find_first_of(",;")!=std::string::npos)
+            throw odh::FormatError("BodySTR hand requires one texture binding");
+        texture_override(out.texture_map);
+    }
+    return out;
+}
 }
 SavedAnimationAppearance saved_animation_appearance(const std::string& raw,const odh::AnimationHeader& header) {
     bounded_name(raw);std::array<std::string,8> fields;std::size_t start=0;
@@ -85,7 +100,8 @@ struct SavedAppearanceResources::Impl {
         if(found->second.size()!=1)throw odh::FormatError("saved appearance named resource ambiguous: "+name);
         return found->second.front();
     }
-    void part(SceneConfig& out,const std::string& name,const std::string& raw_texture) {
+    void part(SceneConfig& out,const std::string& name,const std::string& raw_texture,
+              std::optional<SceneHandPart> hand={}) {
         bounded_name(name);auto host=named(appearances,name);auto collection=odh::read_bcf_appearances(animations.view(animations.select(host.entry)));
         const odh::Appearance* appearance=nullptr;for(const auto& p:collection.appearances)if(p.name==host.name)appearance=&p;
         if(!appearance||appearance->bindings.empty()||appearance->bindings.size()>16)throw odh::FormatError("saved appearance binding count unsupported");
@@ -98,7 +114,7 @@ struct SavedAppearanceResources::Impl {
             mesh_entries.push_back(mesh_entry);defaults.push_back(mesh.texture_name);}
         for(std::size_t i=0;i<mesh_entries.size();++i){auto texture=override&&i==replaced?*override:defaults[i];bounded_name(texture);
             if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative part budget exceeded");
-            out.parts.push_back({host.entry,host.name,mesh_entries[i],textures.select(texture+".bmp").name});}
+            out.parts.push_back({host.entry,host.name,mesh_entries[i],textures.select(texture+".bmp").name,hand});}
     }
     std::optional<SavedAnimationAppearance> animation(const std::string& raw) {
         if(raw.empty())return {};
@@ -107,6 +123,15 @@ struct SavedAppearanceResources::Impl {
         for(const auto& c:decoded.animations)if(c.name==host.name){auto out=saved_animation_appearance(raw,c);out.entry=host.entry;out.cfp_entry=animations.select(c.xskill+".cfp").name;return out;}
         throw odh::FormatError("saved animation indexed header missing");
     }
+    SavedAppearance body_head_animation(const odh::ObjmPersonState& person) {
+        if(person.accessory_count!=0||!person.accessories.empty())throw odh::FormatError("saved appearance accessories unsupported");
+        if(!person.carry_animation.bytes.empty())throw odh::FormatError("saved appearance carry animation unsupported");
+        SavedAppearance out;out.scene=config;
+        part(out.scene,person.body.bytes,person.body_texture.bytes);part(out.scene,person.head.bytes,person.head_texture.bytes);
+        out.current=animation(person.animation.bytes);out.base=animation(person.base_animation.bytes);
+        if(out.current&&out.current->weight_milli!=1000)throw odh::FormatError("saved appearance current animation blending unsupported");
+        return out;
+    }
 };
 SavedAppearanceResources::SavedAppearanceResources(const std::string& a,const std::string& t,const std::string& se,const std::string& sn):impl_(std::make_unique<Impl>(a,t,se,sn)){}
 SavedAppearanceResources::~SavedAppearanceResources()=default;
@@ -114,12 +139,21 @@ SavedAppearanceResources::SavedAppearanceResources(SavedAppearanceResources&&) n
 SavedAppearanceResources& SavedAppearanceResources::operator=(SavedAppearanceResources&&) noexcept=default;
 SavedAppearance SavedAppearanceResources::resolve(const odh::ObjmPersonState& person) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
-    if(person.accessory_count!=0||!person.accessories.empty())throw odh::FormatError("saved appearance accessories unsupported");
-    if(!person.carry_animation.bytes.empty())throw odh::FormatError("saved appearance carry animation unsupported");
-    SavedAppearance out;out.scene=impl_->config;
-    impl_->part(out.scene,person.body.bytes,person.body_texture.bytes);impl_->part(out.scene,person.head.bytes,person.head_texture.bytes);
+    auto out=impl_->body_head_animation(person);
     impl_->part(out.scene,person.left_hand.bytes,person.left_hand_texture.bytes);impl_->part(out.scene,person.right_hand.bytes,person.right_hand_texture.bytes);
-    out.current=impl_->animation(person.animation.bytes);out.base=impl_->animation(person.base_animation.bytes);
-    if(out.current&&out.current->weight_milli!=1000)throw odh::FormatError("saved appearance current animation blending unsupported");
+    return out;
+}
+SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPersonState& person,const odh::AvatarBodyStrings& body) {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    std::array<HandResource,6> variants;
+    for(std::size_t i=0;i<variants.size();++i)variants[i]=hand_resource(body.hands[i]);
+    auto out=impl_->body_head_animation(person);
+    for(std::size_t i=0;i<variants.size();++i) {
+        const bool right=(i%2)==1;
+        // Pinned FreeSO TS1 ReloadHandgroup takes right pointing/fist texture
+        // from RightHand.Idle, while retaining each gesture's own appearance.
+        impl_->part(out.scene,variants[i].appearance,right?variants[1].texture_map:variants[i].texture_map,
+                    SceneHandPart{right,static_cast<odh::HandGesture>(i/2)});
+    }
     return out;
 }
