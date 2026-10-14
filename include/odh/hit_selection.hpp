@@ -3,6 +3,10 @@
 #include "odh/hit_resources.hpp"
 
 namespace odh {
+// Only the Jump operand interpretation changes. Literal32 is supported by
+// static evidence from the separately supplied Sims.exe, not proven for .bak.
+// Other selection semantics remain the bounded FreeSO reference profile.
+enum class HitJumpOperand { FreeSoHeuristic, Literal32 };
 struct HitSelectionLimits {
     std::uint32_t instructions = 4096;
     std::uint32_t trace_entries = 4096;
@@ -58,9 +62,12 @@ struct HitNotePlan {
 // ENTP row must agree. Untaken conditional operands are consumed but not
 // resolved, matching FreeSO. Addresses must be in the code
 // region [16,ENTP), or [16,bytes.size()) when there is no ENTP table.
-// Jump's first byte > 15 selects a 32-bit literal. Otherwise it is a register
-// ID: FreeSO remaps that register's value BEFORE inspecting the TARGET byte;
+// With default FreeSoHeuristic, Jump's first byte > 15 selects a 32-bit literal.
+// Otherwise it is a register ID: FreeSO remaps that register's value BEFORE
+// inspecting the TARGET byte;
 // a zero byte skips three target bytes, a nonzero byte leaves PC at the target.
+// Literal32 instead always consumes a four-byte ID and remaps it directly;
+// it never reads a register or probes/skips the destination's first bytes.
 // Writes to 0x12 and decimal 50 replace the selected patch only when it exists
 // in HOT, preserving the previous patch on a failed lookup, as in FreeSO.
 // optional initial_track applies SetTrack's initial hitlist/patch selection;
@@ -72,5 +79,6 @@ struct HitNotePlan {
 HitNotePlan select_hit_note(const HitFile&, const Hot&, std::uint32_t start_pc,
                            const std::array<std::int32_t, 29>& object_vars,
                            const HitChooser&, const HitSelectionLimits& = {},
-                           const HotTrack* initial_track = nullptr);
+                           const HotTrack* initial_track = nullptr,
+                           HitJumpOperand jump_operand = HitJumpOperand::FreeSoHeuristic);
 }

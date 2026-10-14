@@ -32,8 +32,18 @@ fixture=1,7,0,0,0,0
     for extra in [[],['--choice','99'],['--choice','0'],['--choice','0','--choice','0','--choice','0']]:
         r=subprocess.run(args+extra,capture_output=True,text=True);assert r.returncode==3 and not r.stderr
         d=json.loads(r.stdout);assert d['note'] is None and d['diagnostic'] and not d['audio_submitted']
-    for extra in [['--field','29','0'],['--field','20','1','--field','20','2'],['--field','0','2147483648'],['--choice','-1'],['--field']]:
+    for extra in [['--field','29','0'],['--field','20','1','--field','20','2'],['--field','0','2147483648'],['--choice','-1'],['--field'],['--jump-operand'],['--jump-operand','auto'],['--jump-operand','literal32','--jump-operand','free-so']]:
         r=subprocess.run(args+extra,capture_output=True,text=True);assert r.returncode==2 and not r.stdout
     r=subprocess.run(args[:-1]+['missing'],capture_output=True,text=True);assert r.returncode==2 and not r.stdout
     assert originals==[p.read_bytes() for p in [hsm,hot,hit]]
+    hot.write_text(hot.read_text()+'\n[TrackData]\n0x103=0x15\n')
+    hit.write_bytes(b'HIT!'+struct.pack('<II',1,8)+b'TRAX'+bytes([13,3,1,0,0,5,50,10,0,0,0,2,5]))
+    r=subprocess.run(args+['--choice','0'],capture_output=True,text=True)
+    assert r.returncode==3 and json.loads(r.stdout)['note'] is None
+    r=subprocess.run(args+['--choice','0','--jump-operand','literal32'],capture_output=True,text=True)
+    d=json.loads(r.stdout)
+    assert r.returncode==0 and not r.stderr and d['jump_operand']=='literal32' and not d['audio_submitted']
+    assert d['evidence']=='offline_FreeSO_HIT_selection_with_literal32_Jump'
+    assert d['note']['patch_id']==10 and d['note']['trace'][0]['branch_id']==259
+    assert d['note']['trace'][0]['next_pc']==21
 print('HIT note CLI offline fixture selection passed')

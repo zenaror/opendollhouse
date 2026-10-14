@@ -292,6 +292,8 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [World/playback e preview Linux X11](docs/live-view-validation.md)
 - [Execução silenciosa dos frames/eventos](docs/playback-validation.md)
 - [Teste de tipo e pedidos de som](docs/object-sound-validation.md)
+- [Seleção HIT e limite do perfil FreeSO](docs/hit-selection-validation.md)
+- [Jump HIT no executável distinto e probe literal explícito](docs/hit-jump-binary-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)

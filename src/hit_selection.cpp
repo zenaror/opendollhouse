@@ -14,8 +14,10 @@ class Selection {
 public:
     Selection(const HitFile& file, const Hot& resources, std::uint32_t start,
               const std::array<std::int32_t, 29>& vars, const HitChooser& choice,
-              const HitSelectionLimits& bounds)
-        : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), pc(start) {
+              const HitSelectionLimits& bounds, HitJumpOperand operand)
+        : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), jump_operand(operand), pc(start) {
+        if (operand != HitJumpOperand::FreeSoHeuristic && operand != HitJumpOperand::Literal32)
+            fail("unsupported Jump operand profile");
         if (hit.major_version != 1 || (hit.minor_version != 0 && hit.minor_version != 8))
             fail("unsupported HIT version");
         if (hit.bytes.size() > std::numeric_limits<std::uint32_t>::max()) fail("HIT too large");
@@ -73,6 +75,14 @@ public:
                 break;
             }
             case 13: {
+                if (jump_operand == HitJumpOperand::Literal32) {
+                    const auto id = word();
+                    pc = remap(id);
+                    current.branch_id = id;
+                    current.branch_pc = pc;
+                    current.branch_taken = true;
+                    break;
+                }
                 const auto first = byte();
                 std::uint32_t id;
                 if (first > 15) {
@@ -157,6 +167,7 @@ private:
     const std::array<std::int32_t, 29>& object_vars;
     const HitChooser& chooser;
     const HitSelectionLimits& limits;
+    HitJumpOperand jump_operand;
     std::uint32_t pc;
     std::optional<std::uint32_t> instruction_pc;
     std::uint64_t code_end = 0;
@@ -253,7 +264,7 @@ private:
 HitNotePlan select_hit_note(const HitFile& hit, const Hot& hot, std::uint32_t start,
                            const std::array<std::int32_t, 29>& vars,
                            const HitChooser& chooser, const HitSelectionLimits& limits,
-                           const HotTrack* track) {
-    return Selection(hit, hot, start, vars, chooser, limits).run(track);
+                           const HotTrack* track, HitJumpOperand jump_operand) {
+    return Selection(hit, hot, start, vars, chooser, limits, jump_operand).run(track);
 }
 }

@@ -17,7 +17,8 @@ template<class T>T number(const std::string& text){
 std::string lower(std::string text){for(auto& c:text)if(c>='A'&&c<='Z')c=static_cast<char>(c+32);return text;}
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: odh-hit-note HSM HOT HIT EVENT [--field INDEX INT32] [--choice INDEX]...");
+    if(argc<5)throw odh::FormatError("usage: odh-hit-note HSM HOT HIT EVENT [--field INDEX INT32] [--choice INDEX] [--jump-operand free-so|literal32]...");
+    auto jump_operand=odh::HitJumpOperand::FreeSoHeuristic;bool jump_seen=false;
     std::array<std::int32_t,29> fields{};std::array<bool,29> seen{};
     std::vector<std::size_t> choices;
     for(int i=5;i<argc;++i){const std::string option=argv[i];
@@ -28,6 +29,10 @@ int main(int argc,char** argv){try{
         }else if(option=="--choice"&&i+1<argc){
             if(choices.size()>=256)throw odh::FormatError("HIT choice fixture count exceeds budget");
             choices.push_back(number<std::size_t>(argv[++i]));
+        }else if(option=="--jump-operand"&&i+1<argc&&!jump_seen){
+            jump_seen=true;const std::string value=argv[++i];
+            if(value=="literal32")jump_operand=odh::HitJumpOperand::Literal32;
+            else if(value!="free-so")throw odh::FormatError("invalid HIT Jump operand profile");
         }else throw odh::FormatError("invalid HIT note option");
     }
     const auto hsm=read_file(argv[1],[](const auto& view){return odh::read_hsm(view);});
@@ -47,10 +52,14 @@ int main(int argc,char** argv){try{
                 const auto index=choices[next_choice++];
                 if(index<ids.size())choice_records.push_back({list,ids[index],index});
                 return index;
-            },{},&track->second);
+            },{},&track->second,jump_operand);
         if(next_choice!=choices.size()){plan.reset();diagnostic="unused explicit HIT choices";}
     }catch(const odh::FormatError& e){diagnostic=e.what();}
-    std::cout<<"{\"evidence\":\"offline_FreeSO_HIT_note_selection_profile\",\"audio_submitted\":false,\"event\":"<<json_bytes(name)
+    std::cout<<"{\"evidence\":"<<json_bytes(jump_operand==odh::HitJumpOperand::Literal32?
+            "offline_FreeSO_HIT_selection_with_literal32_Jump":"offline_FreeSO_HIT_note_selection_profile")
+        <<",\"jump_operand\":"
+        <<json_bytes(jump_operand==odh::HitJumpOperand::Literal32?"literal32":"free-so")
+        <<",\"audio_submitted\":false,\"event\":"<<json_bytes(name)
         <<",\"track\":"<<*event->second.track_id<<",\"start_pc\":"<<*track->second.subroutine_offset
         <<",\"resources\":{\"hsm_records\":"<<hsm.records<<",\"hsm_duplicates\":"<<hsm.duplicate_names
         <<",\"hot_records\":"<<hot.records<<",\"hot_unsupported_records\":"<<hot.unsupported_records

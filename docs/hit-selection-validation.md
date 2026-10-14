@@ -119,7 +119,13 @@ Sims.exe is a distinct7-section3043328-byte binary, SHA256
 Neither was imported into Ghidra or executed in this unit. File naming/operator
 report is not independent release provenance.
 
-Next: resolve the native operand/field interpretation using a dedicated original
+Follow-up: [the dedicated binary investigation](hit-jump-binary-validation.md)
+finds a four-byte literal Jump operand in the distinct supplied `Sims.exe`.
+An explicitly selected probe mode now reaches the first native-resource NoteOn;
+other semantics remain the FreeSO profile and `.bak` equivalence is unproven.
+The findings above describe the default heuristic mode and its preserved gate.
+
+Next: resolve the native field interpretation using a dedicated original
 binary investigation; connect sound-thread execution and the verified XA codec
 to the real Linux backend. Saved frame/queue/clock continuation and the interactive
 Linux lot remain required; no saved avatar is reinitialized to bypass those gates.

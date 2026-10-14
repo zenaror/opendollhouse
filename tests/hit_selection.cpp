@@ -27,8 +27,9 @@ struct Fixture {
     void branch(std::uint8_t op, std::uint32_t id) { emit({op}); word(id); }
     void target(std::uint32_t id, std::uint32_t at) { hot.track_data[id] = at; hit.entry_points[id] = at; }
     odh::HitNotePlan run(const odh::HitChooser& chooser = {}, const odh::HitSelectionLimits& limits = {},
-                         const odh::HotTrack* track = nullptr, std::uint32_t start = 16) const {
-        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track);
+                         const odh::HotTrack* track = nullptr, std::uint32_t start = 16,
+                         odh::HitJumpOperand operand = odh::HitJumpOperand::FreeSoHeuristic) const {
+        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand);
     }
 };
 template<class F> void rejected(F&& operation, const char* reason) {
@@ -171,6 +172,29 @@ int main() { try {
         Fixture f; f.branch(13, 0x122); f.emit({255}); f.target(0x122, f.pc()); f.note();
         const auto p = f.run();
         require(p.trace[0].branch_id == 0x122 && p.trace[0].next_pc == f.hot.track_data[0x122] && p.steps == 3, "literal Jump remaps and skips dead bytes");
+    }
+    for (unsigned low = 0; low < 256; ++low) {
+        Fixture f; const auto id = 0x100U + low;
+        f.load(3, 999); // Deliberately unrelated: Literal32 never reads register3.
+        f.branch(13, id); f.emit({255}); f.target(id, f.pc()); f.note();
+        const auto p = f.run({}, {}, nullptr, 16, odh::HitJumpOperand::Literal32);
+        require(p.patch_id == 100 && p.steps == 4 && p.trace[1].branch_id == id &&
+                p.trace[1].next_pc == f.hot.track_data[id], "literal32 accepts every low byte without register or target probe heuristics");
+    }
+    for (unsigned length = 0; length < 4; ++length) {
+        Fixture f; f.emit({13});
+        for (unsigned i = 0; i < length; ++i) f.emit({0});
+        rejected([&] { f.run({}, {}, nullptr, 16, odh::HitJumpOperand::Literal32); },
+                 "literal32 rejects every truncated four-byte operand");
+    }
+    {
+        Fixture f; f.branch(13, 259); f.note();
+        rejected([&] { f.run({}, {}, nullptr, 16, odh::HitJumpOperand::Literal32); }, "literal32 requires mapped branch ID");
+        f.target(259, 0);
+        rejected([&] { f.run({}, {}, nullptr, 16, odh::HitJumpOperand::Literal32); }, "literal32 rejects header target");
+        f.target(259, 16); odh::HitSelectionLimits limit; limit.instructions = 3;
+        rejected([&] { f.run({}, limit, nullptr, 16, odh::HitJumpOperand::Literal32); }, "literal32 cycles respect budget");
+        rejected([&] { f.run({}, {}, nullptr, 16, static_cast<odh::HitJumpOperand>(99)); }, "unknown Jump profile rejected");
     }
     for (bool zero_probe : {false, true}) {
         Fixture f; f.load(3, 0x122); f.emit({13, 3, 255});
