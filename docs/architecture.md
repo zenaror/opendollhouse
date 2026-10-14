@@ -10,6 +10,16 @@ VM, renderização, interação e lote mínimo, não apenas o inspector host atu
 Os constraints do New 3DS continuam considerados na arquitetura; a execução em
 Linux não comprova viabilidade ou desempenho nos portáteis.
 
+Decisão de entrada de dados de 2026-10-14: o motor lê assets fornecidos pelo
+jogador, sem depender de executável original ou realizar checagem de CD.
+Priorizar a árvore de dados copiados/extraídos tanto no Linux quanto no
+armazenamento dos portáteis. ISO é uma fonte de preparação; a imagem local
+contém cinco CABs de instalação `Setup/data1.cab`–`data5.cab`, sem FAR soltos.
+Importação dos CABs/leitura direta da ISO é trabalho pendente, separado do
+runtime. O preparo deve preservar a fonte, produzir arquivos com caminhos e
+identidades verificáveis e reportar recursos ausentes. Isso não distribui
+dados comerciais com o ODH nem exige um leitor óptico no dispositivo alvo.
+
 O núcleo deve poder executar testes sem janela, GPU ou áudio. A interface envia
 ações lógicas. Simulação, scheduler e renderização têm relógios e responsabilidades
 separados. Resources resolve origem/precedência e fornece representações com cache
@@ -37,8 +47,9 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    A VM já aceita aguardar uma conclusão externa sem reexecutar a primitiva;
    o host liga controladores por ticks; passagem geral de tempo ainda falta.
    Traces de instruções, chamadas e estados com fixtures sintéticas e
-   cenários originais identificados. Comparação com FreeSO serve de referência
-   auxiliar; decisões de fidelidade precisam de evidência do original.
+   cenários originais identificados. Simitone e seu submódulo em caminhos TS1
+   são a referência técnica prioritária; FreeSO principal é comparativo.
+   Decisões de fidelidade precisam de evidência do original.
 4. **Composição gráfica Linux cedo:** sprites com profundidade, personagens
    animados. Skeleton/interpolação/matrizes iniciais implementados em
    [pose-validation.md](pose-validation.md), e meshes/skinning iniciais em

@@ -1,5 +1,8 @@
 # Orientação do OpenDollhouse
 
+- Base comum: papel OMM `project-base`. Mapa local no README; planejamento
+  canônico em `docs/architecture.md`, evidência nos documentos de validação
+  e em `reports/`. Preservar as particularidades e autorizações abaixo.
 - O desenvolvimento inicial foi autorizado em 2026-10-13. Avançar em unidades
   pequenas e verificáveis, mantendo as decisões humanas e os limites da evidência.
 - Git de trabalho: https://git.home.zsrv.com.br/zenaror/opendollhouse.
@@ -32,6 +35,10 @@
   A instalação foi movida pelo usuário em 2026-10-13; revalidar caminhos nas retomadas.
   Não modificar os originais ou outros projetos. Fixtures versionadas devem ser
   sintéticas ou ter licença/procedência adequada.
+- Decisão humana de 2026-10-14: o runtime exige dados do jogo, sem depender
+  de executável original, disco inserido ou checagem de CD. Priorizar uma pasta
+  de dados copiados; ISO serve como fonte de preparação/importação. Estado e
+  limites da importação ficam em `docs/architecture.md` e README.
 - Separar leitura de estrutura, interpretação semântica, execução de VM,
   comportamento do original e testes em hardware. Não promover contagens,
   compilação ou testes sintéticos a prova de compatibilidade.

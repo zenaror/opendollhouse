@@ -18,6 +18,43 @@ O primeiro alvo funcional é Linux, para permitir testes, depuração e compara�
 antes dos ports. O New 3DS continua orientando consumo, carregamento e decisões
 portáveis desde o início. Cada console exigirá validação própria em hardware.
 
+## Dados do jogo
+
+O motor ODH lê recursos externos do The Sims Complete Collection. O jogador
+fornece os dados copiados do jogo ou uma ISO da qual preparar esses dados.
+O runtime não depende do executável original, de disco inserido ou de verificação
+de CD. A entrada prioritária desta versão é a pasta de dados extraídos, adequada
+também ao armazenamento dos portáteis.
+
+A ISO local foi inspecionada somente para leitura: os recursos de instalação
+estão em `Setup/data1.cab` até `data5.cab`, sem FAR diretamente acessíveis.
+Os CLIs atuais leem arquivos/pastas; leitura direta de ISO e importação dos
+CABs ainda não estão implementadas. A preparação desses assets será uma etapa
+separada, preservando a fonte e diagnosticando dados ausentes ou incompatíveis.
+
+## Organização e continuidade
+
+| Conteúdo | Local canônico |
+|---|---|
+| Orientação do projeto | `AGENTS.md`; base compartilhada no papel OMM `project-base` |
+| Planejamento e critérios Linux/ports | [docs/architecture.md](docs/architecture.md) |
+| Contratos e validação técnica | `docs/`; índice de documentos abaixo |
+| Núcleo C++ e interfaces | `src/` e `include/odh/` |
+| Fixtures sintéticas e regressões | `tests/` |
+| CLIs, verificadores e scripts Ghidra | `tools/` |
+| Configuração de build e testes | `CMakeLists.txt` |
+| Evidências locais e projetos de análise | `reports/`, ignorado pelo Git |
+| Consultas upstream fixadas | `refs/upstream/`; [revisões e créditos](docs/references.md) |
+| Dados comerciais preservados | pasta externa `../referencias/` |
+| Posição atual e pendências | handoff OMM no escopo `OpenDollhouse` |
+
+O repositório mantido é `opendollhouse`, no Git de trabalho indicado em
+`AGENTS.md`. FreeSO, Simitone, seu submódulo e FSOMonoGame são clones locais
+de consulta; suas estruturas e revisões ficam preservadas. Logs, capturas,
+receipts e projetos Ghidra únicos ficam retidos em `reports/`; ser ignorado
+pelo Git não os torna descartáveis. Não houve remoção de evidências neste
+checkpoint de organização.
+
 ## Compilar e testar
 
 Requisitos desta etapa: compilador C++17 e CMake 3.16 ou superior. Os scripts
@@ -296,6 +333,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Seleção HIT e limite do perfil FreeSO](docs/hit-selection-validation.md)
 - [Jump HIT no executável distinto e probe literal explícito](docs/hit-jump-binary-validation.md)
 - [Variáveis de origem dos pedidos de som no perfil Simitone](docs/sound-source-variable-validation.md)
+- [Callback HIT por origem/campo e diferenças no executável fornecido](docs/hit-source-callback-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)
