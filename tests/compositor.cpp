@@ -207,6 +207,89 @@ int main() { try {
     solid.indices = {1,2,3}; solid.x = 123; solid.y = -123;
     require(odh::composite_sprites(backdrop,{layer(solid)}).image.pixels[0] == red,
             "index metadata and decoded offsets are ignored by explicit placement API");
+
+    auto raster_base = base(5,1,blue);
+    auto raster_layer = base(5,1,red);
+    const auto infinity = std::numeric_limits<float>::infinity();
+    raster_base.depth = {2,2,2,infinity,infinity};
+    raster_layer.depth = {1,3,2,4,infinity};
+    const auto merged = odh::merge_raster(raster_base,raster_layer);
+    require(merged.pixels == std::vector<Pixel>{red,blue,blue,red,blue} &&
+            merged.depth == std::vector<float>{1,2,2,4,infinity},
+            "raster merge resolves front, back, ties, finite background and infinite background");
+    require(merged.tested_samples == 38 && merged.shaded_samples == 14,
+            "raster merge preserves cumulative work counters rather than visible pixel counts");
+    require(merged.width == 5 && merged.height == 1 &&
+            raster_base.pixels == std::vector<Pixel>(5,blue) &&
+            raster_layer.pixels == std::vector<Pixel>(5,red),
+            "raster merge owns result and leaves both source colors unchanged");
+    auto own_copy = merged;
+    own_copy.pixels[0] = green;
+    own_copy.depth[0] = -20;
+    require(raster_layer.pixels[0] == red && raster_layer.depth[0] == 1 &&
+            raster_base.depth[0] == 2, "merged pixel and depth storage never aliases sources");
+    const auto self = odh::merge_raster(raster_base,raster_base);
+    require(self.pixels == raster_base.pixels && self.depth == raster_base.depth &&
+            self.tested_samples == 38, "self merge keeps ties and counts both submitted frames");
+    require(odh::merge_raster(base(1,1,blue,-maximum),base(1,1,red,maximum)).depth[0] == -maximum,
+            "finite extreme signed raster depths are valid");
+    auto exact_limits = odh::RasterLimits{};
+    exact_limits.width = 5; exact_limits.height = 1; exact_limits.pixels = 5;
+    exact_limits.samples = 38;
+    require(odh::merge_raster(raster_base,raster_layer,exact_limits).tested_samples == 38,
+            "exact viewport pixel and cumulative raster sample bounds accepted");
+    for(unsigned which = 0; which < 4; ++which) {
+        auto limited = exact_limits;
+        if(which == 0) limited.width = 4;
+        if(which == 1) limited.height = 0;
+        if(which == 2) limited.pixels = 4;
+        if(which == 3) limited.samples = 37;
+        rejects([&]{odh::merge_raster(raster_base,raster_layer,limited);});
+    }
+    rejects([&]{odh::merge_raster(base(0,1),base(0,1));});
+    rejects([&]{odh::merge_raster(base(1,0),base(1,0));});
+    rejects([&]{odh::merge_raster(base(2,1),base(1,2));});
+    rejects([&]{odh::merge_raster(base(1,1),base(2,1));});
+    for(unsigned which = 0; which < 7; ++which) {
+        auto invalid = raster_layer;
+        if(which == 0) invalid.pixels.clear();
+        if(which == 1) invalid.pixels.push_back(red);
+        if(which == 2) invalid.depth.clear();
+        if(which == 3) invalid.depth.push_back(1);
+        if(which == 4) invalid.pixels[0][3] = 0;
+        if(which == 5) invalid.pixels[0][3] = 254;
+        if(which == 6) invalid.shaded_samples = invalid.tested_samples+1;
+        rejects([&]{odh::merge_raster(raster_base,invalid);});
+        rejects([&]{odh::merge_raster(invalid,raster_layer);});
+    }
+    for(const auto invalid_depth : {std::numeric_limits<float>::quiet_NaN(),-infinity}) {
+        auto invalid = raster_layer; invalid.depth.back() = invalid_depth;
+        rejects([&]{odh::merge_raster(raster_base,invalid);});
+        rejects([&]{odh::merge_raster(invalid,raster_layer);});
+    }
+    auto overflow_base = base(), overflow_layer = base();
+    overflow_base.tested_samples = std::numeric_limits<std::uint64_t>::max();
+    overflow_base.shaded_samples = overflow_base.tested_samples;
+    overflow_layer.tested_samples = 1; overflow_layer.shaded_samples = 1;
+    auto maximum_samples = odh::RasterLimits{};
+    maximum_samples.samples = std::numeric_limits<std::uint64_t>::max();
+    rejects([&]{odh::merge_raster(overflow_base,overflow_layer,maximum_samples);});
+    overflow_layer.tested_samples = 0; overflow_layer.shaded_samples = 0;
+    const auto maximum_counter = odh::merge_raster(overflow_base,overflow_layer,maximum_samples);
+    require(maximum_counter.tested_samples == maximum_samples.samples &&
+            maximum_counter.shaded_samples == maximum_samples.samples,
+            "maximum uint64 counters accepted without overflow at exact bound");
+    auto zero_raster = base(); zero_raster.tested_samples = zero_raster.shaded_samples = 0;
+    auto zero_samples = odh::RasterLimits{}; zero_samples.samples = 0;
+    require(odh::merge_raster(zero_raster,zero_raster,zero_samples).tested_samples == 0,
+            "zero work counters fit zero sample budget despite viewport comparisons");
+    auto late_invalid = raster_layer; late_invalid.depth.back() = -infinity;
+    const auto retained_pixels = raster_base.pixels;
+    const auto retained_depth = raster_base.depth;
+    rejects([&]{odh::merge_raster(raster_base,late_invalid);});
+    require(raster_base.pixels == retained_pixels && raster_base.depth == retained_depth &&
+            raster_base.tested_samples == 19 && raster_base.shaded_samples == 7,
+            "late raster validation failure preserves full base state");
     std::cout << checks << " compositor checks passed (synthetic fixtures only)\n";
     return 0;
 } catch(const std::exception& e) {

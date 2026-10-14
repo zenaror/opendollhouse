@@ -35,6 +35,42 @@ bool representable(double value) {
 }
 } // namespace
 
+RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
+                         RasterLimits limits) {
+    if(base.width != layer.width || base.height != layer.height)
+        throw FormatError("raster merge dimensions must match");
+    std::uint64_t tested = 0, shaded = 0;
+    for(const auto* frame : {&base, &layer}) {
+        if(frame->width == 0 || frame->height == 0 || frame->width > limits.width ||
+           frame->height > limits.height)
+            throw FormatError("raster merge dimensions exceed limits or are zero");
+        const auto count = std::uint64_t{frame->width}*frame->height;
+        if(count > limits.pixels || count != frame->pixels.size() || count != frame->depth.size())
+            throw FormatError("raster merge pixel budget or arrays invalid");
+        if(frame->shaded_samples > frame->tested_samples ||
+           frame->tested_samples > limits.samples-tested)
+            throw FormatError("raster merge sample counters or cumulative budget invalid");
+        tested += frame->tested_samples;
+        // Each shaded count is bounded by its tested count, whose sum fits.
+        shaded += frame->shaded_samples;
+        for(const auto& pixel : frame->pixels) if(pixel[3] != 255)
+            throw FormatError("raster merge frames must be opaque");
+        for(const auto value : frame->depth)
+            if(!std::isfinite(value) && value != std::numeric_limits<float>::infinity())
+                throw FormatError("raster merge depth must be finite or positive infinity");
+    }
+    RasterFrame result = base;
+    result.tested_samples = tested;
+    result.shaded_samples = shaded;
+    for(std::size_t i = 0; i < result.pixels.size(); ++i) {
+        if(layer.depth[i] < result.depth[i]) {
+            result.pixels[i] = layer.pixels[i];
+            result.depth[i] = layer.depth[i];
+        }
+    }
+    return result;
+}
+
 CompositeFrame composite_sprites(const RasterFrame& base,
                                 const std::vector<SpriteLayer>& layers,
                                 CompositorLimits limits) {

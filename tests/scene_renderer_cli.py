@@ -35,6 +35,14 @@ with tempfile.TemporaryDirectory(prefix='odh-scene-host-') as folder:
     assert json.loads(r.stdout)==dict(cache_clips=1,cache_samples=14,vertices=3,triangles=1)
     r=subprocess.run([render,str(a),'rig.bcf','rig',str(t),'--part','app.bcf','appearance','mesh.bmf','red.bmp','--animation','anim.bcf','clip','POSE.cfp','--frame','.5','--scene',str(o),'object.iff','100','--width','160','--height','160','--output',str(p/'control.ppm'),'--depth-output',str(p/'control.depth')],capture_output=True,text=True);assert r.returncode==0 and not r.stderr,r.stderr
     for ext in ('.ppm','.depth'):assert (p/('host'+ext)).read_bytes()==(p/('control'+ext)).read_bytes(),ext
+    # Independent CLI control: a DGRP with zero sprite references contributes
+    # nothing, so its result must equal the host's avatar-only branch.
+    empty_dgrp=struct.pack('<HI',20004,1)+struct.pack('<III',1,3,0)
+    empty_iff=iff[:64]+chunk(b'OBJD',100,obj)+chunk(b'DGRP',1128,empty_dgrp)
+    empty=p/'empty.far';empty.write_bytes(far([(b'empty.iff',empty_iff)]))
+    r=subprocess.run([render,str(a),'rig.bcf','rig',str(t),'--part','app.bcf','appearance','mesh.bmf','red.bmp','--animation','anim.bcf','clip','POSE.cfp','--frame','.5','--scene',str(empty),'empty.iff','100','--width','160','--height','160','--output',str(p/'avatar-control.ppm'),'--depth-output',str(p/'avatar-control.depth')],capture_output=True,text=True)
+    assert r.returncode==0 and not r.stderr,r.stderr
+    for ext in ('.ppm','.depth'):assert (p/('host-avatar'+ext)).read_bytes()==(p/('avatar-control'+ext)).read_bytes(),ext
     # Source ambiguity remains explicit even through the folded CFP cache resolver.
     a.write_bytes(far([(b'rig.bcf',rig),(b'app.bcf',app),(b'mesh.bmf',mesh),(b'anim.bcf',anim),(b'POSE.cfp',cfp),(b'pose.cfp',cfp)]))
     r=subprocess.run([host,str(a),str(t),str(o),str(p/'bad')],capture_output=True,text=True);assert r.returncode==2 and not r.stdout and 'ambiguous' in r.stderr

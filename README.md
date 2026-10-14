@@ -95,7 +95,11 @@ Inicialização completa e carregamento da casa como simulação seguem pendente
 A [importação de entidades salvas](docs/saved-world-validation.md), com
 `odh-saved-world`, agora cria um World próprio com IDs, bancos, posições,
 contenção e relacionamentos. Os scripts salvos permanecem dormentes; arquitetura
-e renderização desse lote ainda não estão integradas.
+e renderização completa desse lote ainda não estão integradas.
+O [host de avatares salvos](docs/saved-avatar-render-validation.md),
+`odh-saved-scene`, renderiza corpo/cabeça/mãos e o frame salvo dos dois avatares
+reais de House07 nas posições do World, em uma imagem CPU estática. Arquitetura,
+objetos e threads do lote continuam pendentes.
 O [RNG compartilhado](docs/random-validation.md) fornece Random Number e os
 ciclos de Sleep com seed explícita.
 Com [PersonData por temp](docs/person-indirect-validation.md), o Init privado4097

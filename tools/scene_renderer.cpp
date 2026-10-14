@@ -86,7 +86,7 @@ struct SceneRenderer::Impl {
     odh::Skeleton skeleton;
     std::vector<odh::Mesh> meshes;
     std::vector<odh::BitmapImage> textures;
-    odh::Dgrp group;
+    std::optional<odh::Dgrp> group;
     std::map<SpriteKey, odh::Spr2Frame> sprites;
     std::map<std::string, Clip> clips;
     std::uint64_t sample_count = 0, vertex_count = 0, triangle_count = 0;
@@ -144,7 +144,11 @@ struct SceneRenderer::Impl {
             meshes.push_back(std::move(mesh));
             textures.push_back(std::move(texture));
         }
-        load_object(config);
+        if (!config.object_far.empty() || !config.object_entry.empty() || config.object_id!=0) {
+            if (config.object_far.empty() || config.object_entry.empty())
+                throw odh::FormatError("scene renderer incomplete object resource selection");
+            load_object(config);
+        }
     }
 
     void load_object(const SceneConfig& config) {
@@ -160,7 +164,7 @@ struct SceneRenderer::Impl {
         group = odh::read_dgrp(unique_chunk(chunks, "DGRP", graphics.base_graphic).payload);
         std::map<std::uint16_t, odh::Palette> palettes;
         std::uint64_t sprite_pixels = 0;
-        for (const auto& image : group.images) {
+        for (const auto& image : group->images) {
             for (const auto& reference : image.sprites) {
                 if (reference.sprite_id > 65535 || (reference.flags & ~1U))
                     throw odh::FormatError("scene renderer unsupported DGRP sprite reference or flags");
@@ -211,9 +215,12 @@ struct SceneRenderer::Impl {
         if (!std::isfinite(state.frame)) throw odh::FormatError("scene renderer frame must be finite");
         // Validate the camera and both tile coordinates before decoding any CFP.
         odh::project_tile(camera, state.avatar_tile);
-        odh::project_tile(camera, state.object_tile);
-        const auto* image = odh::dgrp_image(group, static_cast<std::uint8_t>(1U << state.object_direction), camera.zoom, camera.rotation);
-        if (!image) throw odh::FormatError("scene renderer drawing direction/zoom missing");
+        const odh::DgrpImage* image=nullptr;
+        if (group) {
+            odh::project_tile(camera, state.object_tile);
+            image = odh::dgrp_image(*group, static_cast<std::uint8_t>(1U << state.object_direction), camera.zoom, camera.rotation);
+            if (!image) throw odh::FormatError("scene renderer drawing direction/zoom missing");
+        }
         const auto* cfp = state.animation ? &planes(*state.animation) : nullptr;
         const auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
         std::vector<odh::RasterTriangle> triangles;
@@ -234,6 +241,7 @@ struct SceneRenderer::Impl {
                 triangles.push_back({{projected[face[0]], projected[face[1]], projected[face[2]]}, index});
         }
         const auto base = odh::rasterize(camera.width, camera.height, triangles, textures, options);
+        if (!image) return {base};
         std::vector<odh::SpriteLayer> layers;
         layers.reserve(image->sprites.size());
         for (const auto& reference : image->sprites) {

@@ -29,6 +29,15 @@ int main(int argc,char**argv){try{
     auto bad=clips.animations[0];++bad.translations;state.animation=&bad;bool rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("mismatched cached header accepted or cache mutated");
     state.animation=&clips.animations[0];state.frame=std::numeric_limits<double>::quiet_NaN();rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("nonfinite frame accepted");
     save(second.image,argv[4]);SceneRenderer moved(std::move(renderer));state.frame=.5;rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("moved renderer accepted");
+    auto avatar_config=config;avatar_config.object_far.clear();avatar_config.object_entry.clear();avatar_config.object_id=0;
+    SceneRenderer avatar_only(avatar_config);
+    auto isolated=avatar_only.render(state,camera);
+    if(avatar_only.sprite_bytes()!=0 || isolated.tested_samples!=0 || isolated.shaded_samples!=0)
+        throw std::runtime_error("avatar-only renderer loaded or composed object sprites");
+    save(isolated.image,std::string(argv[4])+"-avatar");
+    avatar_config.object_entry="object.iff";rejected=false;
+    try{SceneRenderer invalid(avatar_config);}catch(const odh::FormatError&){rejected=true;}
+    if(!rejected)throw std::runtime_error("partial object selection accepted");
     if(moved.render(state,camera).image.pixels!=second.image.pixels)throw std::runtime_error("moved assets changed output");
     odh::World world;world.create(1,odh::EntityKind::avatar,{0,88,1});world.create(2,odh::EntityKind::object,{0,0,1});world.set_position(1,{8,8,1,0});world.set_position(2,{8,8,1,0});world.declare_object_word(1,17,0);
     const odh::Bhav routine{0x8002,{{44,254,255,{1,0,0,0,0,1,0,0}}},{},odh::Bhav::Metadata{1,2,0,0}};

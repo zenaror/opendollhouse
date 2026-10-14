@@ -24,6 +24,17 @@ struct CompositeFrame {
                   transparent_samples = 0, occluded_samples = 0;
 };
 
+// Merge opaque raster frames in the same screen/depth coordinate space. Smaller
+// depth wins; ties keep base, and layer +infinity never covers base. Dimensions
+// must be equal and nonzero, arrays exact, RGBA opaque, and depths finite or
+// +infinity. Viewport/pixel limits bound each frame and the owned result. Raster
+// tested/shaded counters are summed (not final visible-pixel counts); each input
+// must have shaded <= tested and the cumulative tested count must fit samples
+// without overflow. Merge comparisons do not add raster samples. All validation
+// precedes copying; invalid inputs throw FormatError with inputs unchanged.
+RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
+                         RasterLimits = {});
+
 // Integer 1:1 placement and nearest sampling, with horizontal color/Z mirroring.
 // Depth is back_depth + ((1 - z/255.0)/0.4)*front_depth_delta, evaluated in double
 // then stored as float. Smaller depth wins; ties keep the existing fragment.

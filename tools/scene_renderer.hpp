@@ -11,6 +11,7 @@ struct ScenePart {
 
 struct SceneConfig {
     std::string animation_far, skeleton_entry, skeleton_name, textures_far;
+    // Both empty, with object_id0, selects an avatar-only scene.
     std::string object_far, object_entry;
     std::uint16_t object_id = 0;
     std::vector<ScenePart> parts;
@@ -25,7 +26,7 @@ struct SceneState {
     double frame = 0;
 };
 
-// Bounded CPU host for one avatar and one single-part object's base graphic.
+// Bounded CPU host for one avatar and an optional single-part object's graphic.
 // Rig, raw meshes, textures and unique DGRP sprite frames are loaded once.
 // CFP coordinate planes are cached on first use, with exact case-folded xskill
 // resolution and no anonymous fallback. Per-frame geometry is never cached.
