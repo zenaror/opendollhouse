@@ -293,6 +293,67 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and d['actor_state']['attributes']==[0,0,77]
  for extra in [['--avatar-file',str(standalone),'128'],['--avatar-file',str(standalone)]]:
   r=run(extra);assert r.returncode==2 and not r.stdout
+ # TS1 relationships execute against an owned runtime copy, not serialized NBRS.
+ def relationship_row(index=0,mode=0,flags=3,local=0,scope=8,data=0,t=254,f=255):
+  return (26,t,f,list(struct.pack('<BBBBHh',index,mode,flags,local,scope,data)))
+ def relation_neighbor(nid,guid,rels):
+  bank=[0]*80;bank[61]=1
+  payload=struct.pack('<ii',1,4)+b'n\0'+struct.pack('<ii',0,5)+struct.pack('<80h',*bank)+struct.pack('<hIii',nid,guid,-1,len(rels))
+  for target,values in rels:
+   payload+=struct.pack('<iii',1,target,len(values))+struct.pack('<'+'i'*len(values),*values)
+  return payload
+ rel_args=['--initialize','--neighborhood',str(neighborhood)]
+ def rel_setup(rows,relations=((47,[55,0]),)):
+  startup_setup(main=rows)
+  neighborhood_file([relation_neighbor(48,1,relations),relation_neighbor(47,2,((48,[-12]),))])
+  return neighborhood.read_bytes()
+ stack47=(2,1,255,[0,0,47,0,0,5,10,7])
+ before=rel_setup([stack47,relationship_row(t=2),check_temp(0,55)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['relationship_records'][0]['source']==48 and d['relationship_records'][0]['target']==47
+ assert d['relationship_records'][0]['value_before']==55 and d['relationship_records'][0]['value_after']==55
+ assert d['relationship_records'][0]['success'] and d['relationship_state']['pairs']==2 and neighborhood.read_bytes()==before
+ # Set clamps; Add wraps short before clamp; NoClamp preserves wrapped result.
+ before=rel_setup([stack47,relationship_row(flags=6,scope=7,data=200,t=2),
+                  relationship_row(flags=34,scope=7,data=-400,t=3),
+                  relationship_row(flags=70,scope=7,data=32767,t=4),
+                  relationship_row(flags=98,scope=7,data=1,t=5),
+                  relationship_row(t=6),check_temp(0,-32768)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and [v['value_after'] for v in d['relationship_records']]==[100,-100,32767,-32768,-32768]
+ assert neighborhood.read_bytes()==before
+ # Reverse direction uses Betty's independent saved relation.
+ rel_setup([stack47,relationship_row(mode=1,t=2),check_temp(0,-12)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['relationship_records'][0]['source']==47 and d['relationship_records'][0]['target']==48
+ # FailSmall leaves missing slots untouched, then a read creates zeros without flag.
+ rel_setup([stack47,relationship_row(index=2,t=255,f=2),
+            relationship_row(index=2,flags=2,t=3),check_temp(0,0)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and [v['success'] for v in d['relationship_records']]==[False,True]
+ assert d['relationship_records'][1]['grown'] and d['relationship_state']['values']==4
+ # Missing source is a fault, not false or a synthetic neighbor inserted.
+ rel_setup([stack47,(2,2,255,[31,0,0,0,0,5,18,7]),relationship_row()])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['status']=='fault' and 'source' in d['diagnostic'] and d['relationship_state']['pairs']==2
+ # Legacy opcode24 uses Parameters as value address.
+ rel_setup([stack47,(24,254,255,[0,0,0,0,3,0,0,0])])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['relationship_records'][0]['value_after']==55
+ # Target is only a key: it need not be an existing neighbor. An invalid output
+ # must not publish the otherwise-needed relation growth.
+ stack_missing=(2,1,255,list(struct.pack('<hhBBBB',0,6000,0,5,10,7)))
+ rel_setup([stack_missing,relationship_row(flags=2,data=20)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['relationship_state']['pairs']==2 and d['relationship_state']['values']==3
+ # SetMode3 ensures the slot but does not touch its deliberately invalid variable.
+ rel_setup([stack_missing,relationship_row(index=3,flags=38,scope=65535,data=-32768)])
+ r=run(rel_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['relationship_state']['pairs']==3 and d['relationship_state']['values']==7
+ assert d['relationship_records'][0]['value_after'] is None and d['relationship_records'][0]['created']
+ # An unbound neighborhood remains unsupported, rather than an implicit empty save.
+ startup_setup(main=[relationship_row()]);r=run(['--initialize']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['diagnostic']=='unsupported primitive 26' and d['relationship_state'] is None
  # Old shortened OBJD fixture cannot invent startup fields.
  setup();r=run(['--initialize']);assert r.returncode==2 and not r.stdout
 print('person host CLI checks passed (synthetic fixtures only)')

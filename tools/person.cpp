@@ -7,6 +7,7 @@
 #include "odh/avatar_body.hpp"
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
+#include "odh/relationship.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include <iostream>
@@ -210,12 +211,20 @@ int main(int argc,char** argv) {
     const auto neighbor_handler=neighbors?neighbors->primitive(memory,[&](const auto& value){
         if(neighbor_next.size()>=10000)throw odh::FormatError("neighbor enumeration log exceeds bounded host profile");neighbor_next.push_back(value);
     }):odh::VmPrimitive{};
+    std::optional<odh::RelationshipState> relationships;
+    if(neighbors)relationships.emplace(*neighbors);
+    std::vector<odh::RelationshipRecord> relationship_records;
+    const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
+        if(relationship_records.size()>=10000)throw odh::FormatError("relationship log exceeds bounded host profile");
+        relationship_records.push_back(value);
+    }):odh::VmPrimitive{};
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
+        if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -360,6 +369,22 @@ int main(int argc,char** argv) {
         std::cout<<"{\"neighbor\":"<<value.neighbor<<",\"index\":"<<value.index<<",\"value\":"<<value.value<<",\"source\":"<<json_bytes(source)<<'}';}
     std::cout<<']';
     const auto* actor=world.find(1);
+    std::cout<<",\"relationship_state\":";
+    if(relationships)std::cout<<"{\"profile\":\"TS1 runtime copy; multiplier1; original NBRS unchanged; object matrices are not restored from ObjM\",\"sources\":"<<relationships->source_count()
+        <<",\"pairs\":"<<relationships->pair_count()<<",\"values\":"<<relationships->value_count()<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"relationship_records\":[";
+    for(std::size_t n=0;n<relationship_records.size();++n){if(n)std::cout<<',';const auto& v=relationship_records[n];
+        std::cout<<"{\"caller\":"<<v.context.caller<<",\"stack_object\":"<<v.context.stack_object
+            <<",\"owner\":"<<v.context.code_owner<<",\"matrix\":"<<json_bytes(v.matrix==odh::RelationshipMatrix::neighbor?"neighbor":"object")
+            <<",\"source\":"<<v.source<<",\"target\":"<<v.target<<",\"index\":"<<static_cast<unsigned>(v.index)
+            <<",\"mode\":"<<static_cast<unsigned>(v.mode)<<",\"set_mode\":"<<static_cast<unsigned>(v.set_mode)
+            <<",\"value_before\":"<<(v.value_before?std::to_string(*v.value_before):"null")
+            <<",\"value_after\":"<<(v.value_after?std::to_string(*v.value_after):"null")
+            <<",\"created\":"<<(v.created?"true":"false")<<",\"grown\":"<<(v.grown?"true":"false")
+            <<",\"success\":"<<(v.success?"true":"false")<<",\"skipped_entities\":"<<(v.skipped_entities?"true":"false")<<",\"diff_multiplier\":1}";
+    }
+    std::cout<<']';
     std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)
         <<",\"age_initial\":"<<age.value_or(0)<<",\"actor_state\":{\"flags\":"<<actor->object_words.at(8)<<",\"age\":"<<actor->person_data[58]
         <<",\"autonomy\":"<<actor->person_data[36]<<",\"weight\":"<<actor->object_words.at(27)<<",\"support_strength\":"<<actor->object_words.at(28)

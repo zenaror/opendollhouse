@@ -1,6 +1,7 @@
 # Personagem real e herança do bairro
 
-Checkpoint de 2026-10-13. O host aceita um IFF privado externo de personagem
+Checkpoint de 2026-10-13. O [gate de relacionamentos](relationship-validation.md)
+posterior remove o fault opcode26 e documenta o avanço até GameEdition. O host aceita um IFF privado externo de personagem
 com `--avatar-file IFF OBJD`, além do caminho existente `--avatar FAR ENTRY OBJD`.
 Os recursos comerciais permanecem fora do checkout e não são modificados.
 
