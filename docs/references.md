@@ -5,6 +5,21 @@ implementações importantes de formatos, SimAntics e integração TS1. ODH usa 
 trabalhos como conhecimento e inspiração. O código versionado do ODH não inclui
 nem depende do runtime ou implementação C# desses projetos.
 
+## Prioridade para The Sims Complete Collection
+
+Por orientação humana de 2026-10-14, consultar primeiro o frontend Simitone
+e seu submódulo FreeSO na revisão fixada. Identificar como o Simitone ativa
+os caminhos TS1 antes de interpretar o código compartilhado. O FreeSO principal
+serve como referência secundária para comparação, formatos comuns e correções;
+comportamentos exclusivos de The Sims Online não definem o comportamento alvo.
+A referência de fidelidade continua sendo o jogo original.
+
+Esta prioridade vale para novas investigações e revisões de contratos quando
+necessárias. Os documentos anteriores preservam a origem realmente consultada;
+não se troca sua atribuição apenas porque um arquivo tem equivalente no
+submódulo. A [verificação inicial desta decisão](reference-priority-2026-10-14.md)
+registra os caminhos TS1 e a comparação do interpretador HIT.
+
 Revisões de referência identificadas em 2026-10-13:
 
 - [FreeSO — 4c6b3e8f5835b228723caea3c9f683c62f244f73](https://github.com/riperiperi/FreeSO/tree/4c6b3e8f5835b228723caea3c9f683c62f244f73).
@@ -37,7 +52,7 @@ originais permanecem nos respectivos checkouts.
 Uma pesquisa focada, sem percorrer arquivos de runtime/binários:
 
 ```sh
-rg --no-ignore-vcs -n 'GetTuningVariable' refs/upstream/FreeSO/TSOClient/tso.simantics --glob '*.cs'
+rg --no-ignore-vcs -n 'GetTuningVariable' refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics --glob '*.cs'
 ```
 
 A economia esperada vem da reutilização dos arquivos e da leitura de trechos

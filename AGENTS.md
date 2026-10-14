@@ -11,7 +11,15 @@
   atualizar; usar o SHA atual em `expected_sha256`. Registrar revisão, checks,
   pendências e referências. Notas históricas de planejamento não revogam a
   autorização posterior de desenvolvimento.
-- FreeSO/Simitone são inspiração e referências. ODH tem implementação própria.
+- Prioridade humana de 2026-10-14: Simitone é a referência técnica principal
+  para The Sims Complete Collection. Consultar primeiro seu frontend em
+  `refs/upstream/Simitone/Client/` e o núcleo da revisão que ele usa em
+  `refs/upstream/Simitone/FreeSO/`, verificando os caminhos TS1 efetivamente
+  ativados. O FreeSO principal é referência secundária para comparação,
+  formatos compartilhados e correções; não importar comportamentos de TSO
+  como se fossem do TS1. As referências antigas mantêm sua proveniência;
+  não relabelar evidência anterior sem comparar as implementações.
+- Simitone/FreeSO são inspiração e referências. ODH tem implementação própria.
   Identificar revisão e licença de referências; não afirmar equivalência ao
   original apenas porque uma implementação de terceiros se comporta assim.
 - Fontes FreeSO/Simitone locais em `refs/upstream/`, ignoradas no Git ODH,

@@ -1,8 +1,9 @@
 # OpenDollhouse
 
 Reimplementação independente de The Sims 1 para PC, com suporte progressivo às
-sete expansões e ao conteúdo personalizado clássico. FreeSO e Simitone são
-referências técnicas e inspiração; a referência de comportamento é o jogo original.
+sete expansões e ao conteúdo personalizado clássico. Simitone e a revisão do
+FreeSO usada por ele são as referências técnicas prioritárias; FreeSO principal
+é uma referência secundária. A referência de comportamento é o jogo original.
 
 Estado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
