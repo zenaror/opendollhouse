@@ -107,6 +107,15 @@ execução comparativa do original ou validação de lote jogável.
 
 Próxima dependência: ligar scope35 à tabela EntryPoints da entidade selecionada,
 com ActionFunction15 proveniente de OBJD/OBJf conforme UsesFnTable.
-VMMemory.cs:146–147 lê EntryPoints[data].ActionFunction; setter de scope35
+VMMemory.cs:144–145 lê EntryPoints[data].ActionFunction; setter de scope35
 retorna false. Não é um lookup de code owner nem acesso direto a uma palavra OBJD. Restaurar residentes,
 objetos, posições e estado do lote permanece necessário para a versão Linux.
+
+
+Contrato seguinte localizado: `VMEntity.cs:224–229` usa
+GenerateFunctionTable(OBJD) quando UsesFnTable=0; senão, usa o OBJf com o
+mesmo ChunkID do OBJD. `GenerateFunctionTable` em444–478 cria33 entradas;
+a entrada15 recebe BHAV_Portal. A consulta pertence à entidade StackObject,
+não ao owner de código da rotina em execução. O parser atual de ODH ainda
+não fornece a tabela completa de funções nem OBJf. Esse suporte continua
+pendente; não se retorna um zero genérico para funções desconhecidas.
