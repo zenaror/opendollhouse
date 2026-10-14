@@ -120,8 +120,11 @@ Thus the literal-Jump probe remains a combination of bounded reference semantics
 and one verified operand rule. Do not apply its sequence-group effects to live
 sounds before resolving that contract.
 
-Next: identify source callback/register initialization, implement verified
+Follow-up: [the registered source callback](hit-source-callback-validation.md)
+is now identified in the distinct supplied executable. ODH has an explicit
+source-field reader; reference snapshots above remain Simitone semantics.
+Register initialization and full field context are still pending. Next steps:
 sound-thread lifecycle/WaitSamp and live refresh, then connect XA to Linux audio.
-Variable-length object HIT inputs, saved threads/clock continuation, continuous
+Full variable-length object HIT integration, saved threads/clock continuation, continuous
 lot simulation and original comparison remain required. No dummy backend is
 registered to bypass Main in this checkpoint.

@@ -14,8 +14,8 @@ class Selection {
 public:
     Selection(const HitFile& file, const Hot& resources, std::uint32_t start,
               const std::array<std::int32_t, 29>& vars, const HitChooser& choice,
-              const HitSelectionLimits& bounds, HitJumpOperand operand)
-        : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), jump_operand(operand), pc(start) {
+              const HitSelectionLimits& bounds, HitJumpOperand operand, const HitSourceFieldReader& reader)
+        : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), jump_operand(operand), source_reader(reader), pc(start) {
         if (operand != HitJumpOperand::FreeSoHeuristic && operand != HitJumpOperand::Literal32)
             fail("unsupported Jump operand profile");
         if (hit.major_version != 1 || (hit.minor_version != 0 && hit.minor_version != 8))
@@ -145,9 +145,16 @@ public:
                 const auto source = read(byte());
                 const auto field = read(byte());
                 variable(dest);
-                if (field < 0 || static_cast<std::uint32_t>(field) >= object_vars.size()) fail("GetSrcDataField index outside object variables");
-                const auto value = object_vars[static_cast<std::size_t>(field)];
-                current.source_object_value = source; // Source read is required, even though FreeSO ignores its value.
+                std::int32_t value;
+                if(source_reader) {
+                    const auto result=source_reader(source,field);
+                    if(!result) fail("GetSrcDataField lookup failed for source " + std::to_string(source) + " field " + std::to_string(field));
+                    value=*result;
+                } else {
+                    if (field < 0 || static_cast<std::uint32_t>(field) >= object_vars.size()) fail("GetSrcDataField index outside object variables");
+                    value = object_vars[static_cast<std::size_t>(field)];
+                }
+                current.source_object_value = source;
                 current.field_index = field;
                 current.field_value = value;
                 write(dest, value);
@@ -168,6 +175,7 @@ private:
     const HitChooser& chooser;
     const HitSelectionLimits& limits;
     HitJumpOperand jump_operand;
+    const HitSourceFieldReader& source_reader;
     std::uint32_t pc;
     std::optional<std::uint32_t> instruction_pc;
     std::uint64_t code_end = 0;
@@ -264,7 +272,8 @@ private:
 HitNotePlan select_hit_note(const HitFile& hit, const Hot& hot, std::uint32_t start,
                            const std::array<std::int32_t, 29>& vars,
                            const HitChooser& chooser, const HitSelectionLimits& limits,
-                           const HotTrack* track, HitJumpOperand jump_operand) {
-    return Selection(hit, hot, start, vars, chooser, limits, jump_operand).run(track);
+                           const HotTrack* track, HitJumpOperand jump_operand,
+                           const HitSourceFieldReader& source_reader) {
+    return Selection(hit, hot, start, vars, chooser, limits, jump_operand, source_reader).run(track);
 }
 }

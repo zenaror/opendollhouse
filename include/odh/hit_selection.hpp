@@ -19,6 +19,12 @@ struct HitSelectionLimits {
 // It must not mutate the supplied HIT/HOT resources through other aliases.
 using HitChooser = std::function<std::size_t(std::uint32_t,
                                             const std::vector<std::uint32_t>&)>;
+// Explicit signed (source, field) lookup, for integrating a World/source
+// provider. nullopt means unsupported/missing, distinct from a valid zero.
+// The reader must not mutate HIT/HOT inputs through aliases. Calls are bounded
+// by the selection instruction budget; no result or reader is retained.
+using HitSourceFieldReader = std::function<std::optional<std::int32_t>(std::int32_t,
+                                                                    std::int32_t)>;
 struct HitChoice {
     std::uint32_t hitlist_id = 0, patch_id = 0;
     std::size_t index = 0;
@@ -56,6 +62,9 @@ struct HitNotePlan {
 // address. Registers/local variables begin zero, except register 1 = 12.
 // GetSrcDataField reads object_vars[field] directly: field 20 is index 20,
 // FreeSO neatness/10, not index 14 (age). The caller supplies all 29 values.
+// If source_reader is supplied, it replaces that lookup and receives BOTH
+// source/field register values without the default object_vars index bound.
+// Missing lookups fail explicitly; no array or zero fallback is applied.
 // Only registers [0,16) and locals [16,70) can be bytecode variables here;
 // unmapped and global locations are rejected rather than invented as zero.
 // Every taken branch ID resolves through HOT TrackData; any corresponding HIT
@@ -80,5 +89,6 @@ HitNotePlan select_hit_note(const HitFile&, const Hot&, std::uint32_t start_pc,
                            const std::array<std::int32_t, 29>& object_vars,
                            const HitChooser&, const HitSelectionLimits& = {},
                            const HotTrack* initial_track = nullptr,
-                           HitJumpOperand jump_operand = HitJumpOperand::FreeSoHeuristic);
+                           HitJumpOperand jump_operand = HitJumpOperand::FreeSoHeuristic,
+                           const HitSourceFieldReader& source_reader = {});
 }

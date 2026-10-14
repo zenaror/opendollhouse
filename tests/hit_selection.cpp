@@ -28,8 +28,9 @@ struct Fixture {
     void target(std::uint32_t id, std::uint32_t at) { hot.track_data[id] = at; hit.entry_points[id] = at; }
     odh::HitNotePlan run(const odh::HitChooser& chooser = {}, const odh::HitSelectionLimits& limits = {},
                          const odh::HotTrack* track = nullptr, std::uint32_t start = 16,
-                         odh::HitJumpOperand operand = odh::HitJumpOperand::FreeSoHeuristic) const {
-        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand);
+                         odh::HitJumpOperand operand = odh::HitJumpOperand::FreeSoHeuristic,
+                         const odh::HitSourceFieldReader& reader = {}) const {
+        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand, reader);
     }
 };
 template<class F> void rejected(F&& operation, const char* reason) {
@@ -91,6 +92,35 @@ int main() { try {
         require(p.registers[3] == f.vars[field] && p.trace[1].field_index == field && p.trace[1].field_value == f.vars[field], "GetSrcDataField uses every direct object-variable index");
         require(p.trace[1].source_object_value == 12, "GetSrcDataField source variable read and recorded");
         if (field == 20) require(p.registers[3] != f.vars[14], "field20 is objectvar20, not age14");
+    }
+    for (const auto source : {0U,12U,999U,0x80000000U}) {
+        for (const auto field : {0U,20U,29U,0xffffffffU,0x7fffffffU}) {
+            Fixture f; f.vars[20]=555; f.load(1,source); f.load(2,field); f.emit({72,3,1,2}); f.note();
+            const auto expected_source=source==0x80000000U ? std::numeric_limits<std::int32_t>::min() : static_cast<std::int32_t>(source);
+            const auto expected_field=field==0xffffffffU ? -1 : static_cast<std::int32_t>(field);
+            int calls=0;
+            const auto p=f.run({}, {}, nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,
+                [&](std::int32_t s,std::int32_t n)->std::optional<std::int32_t>{
+                    ++calls;require(s==expected_source&&n==expected_field,"reader receives exact signed source and field register values");
+                    return s==12 ? 0 : -123;
+                });
+            require(calls==1 && p.registers[3]==(source==12?0:-123) && p.trace[2].source_object_value==expected_source &&
+                    p.trace[2].field_index==expected_field && p.trace[2].zero_flag==(source==12),"custom reader replaces array lookup and retains valid zero/sign flags");
+        }
+    }
+    {
+        Fixture f; f.vars[20]=555; f.emit({4,2,20,72,3,1,2}); f.note();
+        rejected([&]{f.run({}, {}, nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,
+                          [](auto,auto)->std::optional<std::int32_t>{return std::nullopt;});},"missing explicit source field never falls back to default array");
+        int calls=0;f.hit.bytes[20]=70; // invalid destination at GetSrcDataField
+        rejected([&]{f.run({}, {}, nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,
+                          [&](auto,auto)->std::optional<std::int32_t>{++calls;return 0;});},"invalid destination rejects before source callback");
+        require(calls==0,"invalid destination cannot query source provider");
+        Fixture cyclic;cyclic.emit({4,2,20,72,3,1,2});cyclic.branch(13,0x122);cyclic.target(0x122,19);
+        odh::HitSelectionLimits bound;bound.instructions=5;
+        rejected([&]{cyclic.run({},bound,nullptr,16,odh::HitJumpOperand::FreeSoHeuristic,
+                               [&](auto,auto)->std::optional<std::int32_t>{++calls;return 0;});},"source-callback cycles obey instruction budget");
+        require(calls==2,"budget bounds source callback invocations");
     }
     for (std::uint32_t field : {0xffffffffU, 29U, 0x7fffffffU}) {
         Fixture f; f.load(2, field); f.emit({72, 3, 1, 2}); f.note();

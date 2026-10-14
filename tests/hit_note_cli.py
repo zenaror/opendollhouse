@@ -32,7 +32,7 @@ fixture=1,7,0,0,0,0
     for extra in [[],['--choice','99'],['--choice','0'],['--choice','0','--choice','0','--choice','0']]:
         r=subprocess.run(args+extra,capture_output=True,text=True);assert r.returncode==3 and not r.stderr
         d=json.loads(r.stdout);assert d['note'] is None and d['diagnostic'] and not d['audio_submitted']
-    for extra in [['--field','29','0'],['--field','20','1','--field','20','2'],['--field','0','2147483648'],['--choice','-1'],['--field'],['--jump-operand'],['--jump-operand','auto'],['--jump-operand','literal32','--jump-operand','free-so']]:
+    for extra in [['--field','29','0'],['--field','20','1','--field','20','2'],['--field','0','2147483648'],['--choice','-1'],['--field'],['--jump-operand'],['--jump-operand','auto'],['--jump-operand','literal32','--jump-operand','free-so'],['--field-source'],['--field-source','2147483648'],['--field-source','0','--field-source','12']]:
         r=subprocess.run(args+extra,capture_output=True,text=True);assert r.returncode==2 and not r.stdout
     r=subprocess.run(args[:-1]+['missing'],capture_output=True,text=True);assert r.returncode==2 and not r.stdout
     assert originals==[p.read_bytes() for p in [hsm,hot,hit]]
@@ -46,4 +46,12 @@ fixture=1,7,0,0,0,0
     assert d['evidence']=='offline_FreeSO_HIT_selection_with_literal32_Jump'
     assert d['note']['patch_id']==10 and d['note']['trace'][0]['branch_id']==259
     assert d['note']['trace'][0]['next_pc']==21
+    hit.write_bytes(b'HIT!'+struct.pack('<II',1,8)+b'TRAX'+bytes([4,2,20,72,3,1,2,5,50,10,0,0,0,2,5]))
+    for extra in [['--field-source','12'],['--field-source','1','--field','20','30']]:
+        r=subprocess.run(args+['--choice','0']+extra,capture_output=True,text=True)
+        d=json.loads(r.stdout);assert r.returncode==3 and d['note'] is None and 'lookup failed for source 12 field 20' in d['diagnostic']
+    r=subprocess.run(args+['--choice','0','--field-source','12','--field','20','0'],capture_output=True,text=True)
+    d=json.loads(r.stdout)
+    assert r.returncode==0 and d['evidence']=='offline_HIT_selection_with_explicit_source_fields' and d['field_source']==12
+    assert d['note']['trace'][1]['source']==12 and d['note']['trace'][1]['field_value']==0 and d['note']['trace'][1]['zero']
 print('HIT note CLI offline fixture selection passed')
