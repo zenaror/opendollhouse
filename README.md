@@ -111,8 +111,10 @@ em lâminas, iluminação por rooms e execução do lote seguem pendentes.
 Com `--walls WALLS_IFF` (junto de `--floors`), o
 [snapshot de paredes erguidas](docs/saved-wall-validation.md) aplica padrões e
 máscaras reais de portas/janelas, com depth compartilhado e
-[junções reais](docs/saved-wall-cap-validation.md). Paredes abaixadas e cutaway
-seguem pendentes.
+[junções reais](docs/saved-wall-cap-validation.md).
+`--level 1|2 --wall-mode up|down` seleciona o
+[andar e as paredes abaixadas](docs/wall-view-validation.md); cutaway por
+proximidade e visibilidade runtime seguem pendentes.
 O [leitor SPR#](docs/wall-resource-validation.md), `odh-spr`, decodifica os padrões
 e máscaras reais de paredes, com seleção IFF/FAR e paleta explícita. A [composição CPU](docs/wall-sprite-validation.md) preserva os recortes das máscaras. `odh-wall-appearance` já prepara os
 [overrides de portas/janelas](docs/wall-appearance-validation.md) a partir dos

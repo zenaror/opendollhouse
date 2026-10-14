@@ -13,6 +13,7 @@ struct SavedWallFace {
     odh::WallAppearanceStyle style;
     std::int16_t object_owner=0;
     bool door=false;
+    bool down=false;
 };
 // Pure standing/up RotateWall profile: visible TL/TR; reverse BR/BL use
 // neighboring forward-face style/appearance owners. Diagonals select rotated
@@ -22,7 +23,7 @@ struct SavedWallFace {
 // grids remain unchanged. Working style !=1 precedes object overrides.
 // Strict grids <=64x64x2, known/exclusive segment bits, unique appearance faces.
 std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture&,
-    const odh::WallAppearance&,std::uint8_t rotation);
+    const odh::WallAppearance&,std::uint8_t rotation,odh::WallView={});
 
 struct SavedWallDraw {
     SavedWallFace face;
@@ -33,6 +34,7 @@ struct SavedWallDraw {
     std::int32_t x,y;
     std::uint32_t width,height;
     float back_depth,front_depth_delta;
+    bool global_down_up_fallback=false; //Far Down absent: all zooms use Up masks.
 };
 struct SavedWallJunctionDraw {
     odh::WallJunction junction;
@@ -47,6 +49,7 @@ struct SavedWallRenderResult {
     odh::CompositeFrame composite;
     std::vector<SavedWallDraw> draws;
     std::vector<SavedWallJunctionDraw> junctions;
+    std::vector<SavedWallFace> omitted_doors; //Cut cardinal door faces; no resource reads.
     std::uint32_t unmapped_junctions=0;
     std::size_t cached_assets=0,cached_frames=0,mask_fallbacks=0;
     std::uint64_t cached_pixels=0,cached_frame_bytes=0;
@@ -65,13 +68,23 @@ struct SavedWallRenderResult {
 // Placement uses shared ODH projection, source destination rectangles minus
 // cadge origin plus rotation anchor; depth uses shared unnormalized coordinates.
 // This preserves ODH's unverified scroll-round/half-pixel calibration boundary.
-// Standing/up caps use core FreeSO linear-endpoint-spill profile, square grids
+// Uniform view: selected story1..2; lower up, higher hidden; optional selected
+// story down. Default2/up preserves previous output. No proximity/room cutaway.
+// Down ignores object style overrides, omits cut cardinal doors and their caps,
+// preserves fences. Global Far Down absent selects all corresponding Up masks;
+// if Far Down exists, all three Down chunks are required by source initializer.
+// This fallback is recorded separately from missing-mask pattern-alpha fallback.
+// Source seven linear neighbor addresses must be valid on every nonzero selected
+// story tile when down; unsafe borders fail explicitly. No exterior clamp.
+// Caps use core FreeSO linear-endpoint-spill profile, square grids
 // <=64x64x2. SPR#4096/4097/4098 is sampled by rotated JunctionMap frame, using
 // its own alpha; no object mask or wall paint. Caps are submitted before WALL
 // layers, matching the reference's grouped Z_BUFFER-before-WALL ordering.
-// Their source position is(x-.5,y-.5,level*2.95+altitude_at_integer_x_y).
+// Their source position is(x-.5,y-.5), with upZ=level*2.95+altitude and
+// downZ=.3+(level-1)*2.95+altitude_at_integer_x_y. Up caps take priority at mixed
+// sites; Down uses the same sprite/depth maps and destination rectangles.
 // Junction and wall layers share all compositor budgets and decoded-frame cache.
-// Standing/up only: no cutaway, thick-wall extensions, rooms/lighting,
+// No partial cutaway, thick-wall extensions, rooms/lighting,
 // resource remapping or claim of original/GPU equivalence. Terrain is optional.
 // Failure preserves inputs but may populate bounded resource cache.
 class SavedWallRenderer {
@@ -82,7 +95,7 @@ public:
     SavedWallRenderer& operator=(SavedWallRenderer&&) noexcept;
     SavedWallRenderResult render(const odh::SavedArchitecture&,const odh::WallAppearance&,
         const odh::WorldProjection&,const odh::RasterFrame&,
-        bool apply_terrain=true,std::int32_t base_alt=0);
+        bool apply_terrain=true,std::int32_t base_alt=0,odh::WallView={});
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

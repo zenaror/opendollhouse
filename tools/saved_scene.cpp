@@ -46,9 +46,9 @@ void animation_json(std::ostream& out,const std::optional<SavedAnimationAppearan
 }
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--walls WALLS_IFF] [--terrain-theme 0..7] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
+    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--walls WALLS_IFF] [--terrain-theme 0..7] [--level 1..2] [--wall-mode up|down] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
     std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path,walls_path;std::optional<odh::TerrainTheme> terrain_theme;bool draw_objects=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
+    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path,walls_path;std::optional<odh::TerrainTheme> terrain_theme;bool draw_objects=false;std::uint8_t selected_level=2;bool walls_down=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
     std::set<std::string> seen;
     for(int n=5;n<argc;++n){const std::string option=argv[n];
         auto need=[&](int count){if(argc-n-1<count)throw odh::FormatError("incomplete saved scene option");};
@@ -59,6 +59,8 @@ int main(int argc,char** argv){try{
         if(option=="--objects")draw_objects=true;
         else if(option=="--floors"){need(1);floors_path=argv[++n];if(floors_path->empty())throw odh::FormatError("empty floor input");}
         else if(option=="--walls"){need(1);walls_path=argv[++n];if(walls_path->empty())throw odh::FormatError("empty wall input");}
+        else if(option=="--level"){need(1);auto value=selector(argv[++n]);if(value<1||value>2)throw odh::FormatError("selected level outside profile");selected_level=static_cast<std::uint8_t>(value);}
+        else if(option=="--wall-mode"){need(1);const std::string mode=argv[++n];if(mode!="up"&&mode!="down")throw odh::FormatError("wall mode must be up or down");walls_down=mode=="down";}
         else if(option=="--terrain-theme"){need(1);auto value=selector(argv[++n]);if(value>=8)throw odh::FormatError("terrain theme exceeds range");terrain_theme=static_cast<odh::TerrainTheme>(value);}
         else if(option=="--skeleton"){need(2);skeleton_entry=argv[++n];skeleton_name=argv[++n];}
         else if(option=="--neighborhood"){need(1);neighborhood=argv[++n];}
@@ -72,6 +74,7 @@ int main(int argc,char** argv){try{
     }
     if(sources.empty()||skeleton_entry.empty()||skeleton_name.empty()||std::string(argv[4]).empty())
         throw odh::FormatError("saved scene requires definitions, skeleton and output");
+    if(seen.count("--wall-mode")&&!walls_path)throw odh::FormatError("wall mode requires --walls");
     if(walls_path&&!floors_path)throw odh::FormatError("walls require --floors for shared terrain profile");
     if(terrain_theme&&!floors_path)throw odh::FormatError("terrain theme requires --floors");
     std::vector<std::string> inputs{argv[1],argv[2],argv[3]};for(const auto& s:sources)inputs.push_back(s.path);
@@ -118,11 +121,12 @@ int main(int argc,char** argv){try{
         return odh::terrain_interp_altitude(architecture->architecture,xy[0],xy[1]);
     };
     struct Actor {const odh::SavedWorldEntity* saved;odh::GraphicsEntity graphics;SavedAppearance appearance;};
-    std::vector<Actor> actors;std::vector<std::int16_t> outside;
+    std::vector<Actor> actors;std::vector<std::int16_t> outside,above_avatars;
     SavedAppearanceResources resources(argv[2],argv[3],skeleton_entry,skeleton_name);
     for(const auto& r:world->records){if(!r.tail.person)continue;
         auto id=static_cast<std::int16_t>(r.saved.object_id);
         if(!world->world->find(id)->position){outside.push_back(id);continue;}
+        if(world->world->find(id)->position->level>selected_level){above_avatars.push_back(id);continue;}
         if(actors.size()>=16)throw odh::FormatError("saved scene avatar budget exceeded");
         actors.push_back({&r,odh::graphics_entity(*world->world,id),resources.resolve(*r.tail.person)});
         actors.back().graphics.tile_position[2]+=elevation(id);
@@ -132,7 +136,7 @@ int main(int argc,char** argv){try{
     if(actors.empty()){
         std::size_t count=0;
         for(const auto& r:world->records){const auto* e=world->world->find(static_cast<std::int16_t>(r.saved.object_id));
-            if(!e->position||e->kind!=odh::EntityKind::object||r.saved.prefix.object_data[34]!=0)continue;
+            if(!e->position||e->position->level>selected_level||e->kind!=odh::EntityKind::object||r.saved.prefix.object_data[34]!=0)continue;
             ++count;camera.center_tile[0]+=static_cast<float>(e->position->x)/16-.5f;camera.center_tile[1]+=static_cast<float>(e->position->y)/16-.5f;
             camera.center_tile[2]+=static_cast<float>(e->position->level-1)*2.95f+elevation(e->id);
         }
@@ -149,7 +153,7 @@ int main(int argc,char** argv){try{
         image=odh::rasterize(camera.width,camera.height,terrain_geometry->triangles,{white},ground_options);
     }
     std::optional<SavedFloorResult> floor_result;
-    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera);
+    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera,true,0,selected_level);
         if(terrain_geometry){image=odh::merge_raster(image,floor_result->image);floor_result->image=odh::RasterFrame{};}
         else image=std::move(floor_result->image);
     }
@@ -157,7 +161,7 @@ int main(int argc,char** argv){try{
     if(walls_path){
         auto appearance=saved_wall_appearance(*world,*index,architecture->architecture);
         SavedWallRenderer renderer(*walls_path,*index);
-        wall_result=renderer.render(architecture->architecture,appearance.appearance,camera,image);
+        wall_result=renderer.render(architecture->architecture,appearance.appearance,camera,image,true,0,odh::WallView{selected_level,walls_down});
         image=std::move(wall_result->composite.image);
     }
     std::ostringstream report;report<<std::setprecision(17)<<"{\"evidence\":"<<json_bytes(draw_objects?"ODH_saved_World_avatar_object_CPU_snapshot":"ODH_saved_World_avatar_CPU_snapshot")<<",\"house\":"<<json_bytes(argv[1])
@@ -186,7 +190,7 @@ int main(int argc,char** argv){try{
     report<<"],\"floor_triangles\":"<<(floor_result?floor_result->triangles:0)
           <<",\"floor_texture_bytes\":"<<(floor_result?floor_result->texture_bytes:0)
           <<",\"floor_geometry_texture_pixel_visits\":"<<(floor_result?floor_result->geometry_texture_pixel_visits:0);
-    if(wall_result){report<<",\"wall_profile\":"<<(wall_result?json_bytes("FreeSO_2D_standing_up_with_junctions_unlit_ODH_projection"):"null")
+    if(wall_result){report<<",\"wall_profile\":"<<(wall_result?json_bytes(walls_down?"FreeSO_2D_uniform_down_selected_story_unlit_ODH_projection":"FreeSO_2D_standing_up_with_junctions_unlit_ODH_projection"):"null")
           <<",\"wall_layers\":"<<(wall_result?wall_result->draws.size():0)
           <<",\"wall_cached_assets\":"<<(wall_result?wall_result->cached_assets:0)
           <<",\"wall_cached_frames\":"<<(wall_result?wall_result->cached_frames:0)
@@ -207,15 +211,26 @@ int main(int argc,char** argv){try{
               <<",\"pattern_sprite\":"<<d.pattern_sprite<<",\"pattern_palette\":"<<d.pattern_palette<<",\"mask_sprite\":"<<d.mask_sprite<<",\"mask_palette\":"<<d.mask_palette
               <<",\"pattern_palette_missing\":"<<(d.pattern_palette_missing?"true":"false")<<",\"mask_palette_missing\":"<<(d.mask_palette_missing?"true":"false")
               <<",\"mask_fallback\":"<<(d.mask_fallback?"true":"false")<<",\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"width\":"<<d.width<<",\"height\":"<<d.height
-              <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta<<'}';}
+              <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta;
+        if(seen.count("--level")||seen.count("--wall-mode"))report<<",\"down\":"<<(f.down?"true":"false")<<",\"global_down_up_fallback\":"<<(d.global_down_up_fallback?"true":"false");
+        report<<'}';}
     report<<"],\"wall_junctions_unmapped\":"<<wall_result->unmapped_junctions<<",\"wall_junction_draws\":[";
     for(std::size_t n=0;n<wall_result->junctions.size();++n){if(n)report<<',';const auto& d=wall_result->junctions[n];const auto& j=d.junction;
         report<<"{\"tile_x\":"<<j.x<<",\"tile_y\":"<<j.y<<",\"level\":"<<unsigned(j.level)<<",\"raw_flags\":"<<unsigned(j.raw_flags)
               <<",\"rotated_flags\":"<<unsigned(j.rotated_flags)<<",\"frame\":"<<unsigned(j.frame)<<",\"source\":"<<json_bytes(d.source)
               <<",\"sprite_id\":"<<d.sprite_id<<",\"palette_id\":"<<d.palette_id<<",\"palette_missing\":"<<(d.palette_missing?"true":"false")
               <<",\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"width\":"<<d.width<<",\"height\":"<<d.height
-              <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta<<'}';}
-    report<<']';}
+              <<",\"back_depth\":"<<d.back_depth<<",\"front_depth_delta\":"<<d.front_depth_delta;
+        if(seen.count("--level")||seen.count("--wall-mode"))report<<",\"down\":"<<(j.down?"true":"false");
+        report<<'}';}
+    report<<']';
+    if(seen.count("--level")||seen.count("--wall-mode")){
+        report<<",\"wall_omitted_doors\":[";
+        for(std::size_t n=0;n<wall_result->omitted_doors.size();++n){if(n)report<<',';const auto& f=wall_result->omitted_doors[n];
+            report<<"{\"tile_x\":"<<f.x<<",\"tile_y\":"<<f.y<<",\"level\":"<<unsigned(f.level)<<",\"orientation\":"<<unsigned(f.orientation)
+                  <<",\"owner_x\":"<<f.owner_x<<",\"owner_y\":"<<f.owner_y<<",\"owner_segment\":"<<unsigned(f.owner_segment)<<'}';}
+        report<<']';
+    }}
     report<<",\"zoom\":"<<unsigned(camera.zoom)<<",\"rotation\":"<<unsigned(camera.rotation)<<",\"actors\":[";
     std::uint64_t vertices=0,triangles=0,textures=0,samples=0;
     for(std::size_t n=0;n<actors.size();++n){auto& a=actors[n];SceneRenderer renderer(a.appearance.scene);
@@ -237,7 +252,7 @@ int main(int argc,char** argv){try{
         report<<"],\"vertices\":"<<renderer.vertices()<<",\"triangles\":"<<renderer.triangles()<<",\"texture_bytes\":"<<renderer.texture_bytes()<<'}';
     }
     report<<"],\"objects\":[";
-    std::size_t outside_objects=0,hidden_objects=0;
+    std::size_t outside_objects=0,hidden_objects=0,above_objects=0;
     if(draw_objects){
         std::map<std::uint32_t,odh::SlotTable> tables;
         auto slots=[&](const odh::Entity& container)->const odh::SlotTable* {
@@ -262,10 +277,13 @@ int main(int argc,char** argv){try{
         for(const auto& raw:world->records){const auto id=static_cast<std::int16_t>(raw.saved.object_id);const auto* entity=world->world->find(id);
             if(entity->kind!=odh::EntityKind::object)continue;
             if(!entity->position){++outside_objects;continue;}
+            if(entity->position->level>selected_level){++above_objects;continue;}
             const odh::VmFrame f{odh::routine_key(4096),0,{id,id,id,0},{},{}};
             const auto hidden=world->world->read(f,3,34),graphic=world->world->read(f,3,0);
             if(!hidden||!graphic)throw odh::FormatError("saved object visibility/graphic unavailable");
             if(*hidden!=0){++hidden_objects;continue;}
+            if(walls_down&&entity->position->level==selected_level&&(static_cast<std::uint16_t>(raw.saved.prefix.object_data[8])&1024U))
+                throw odh::FormatError("HideForCutaway needs runtime wall occupancy reconstruction");
             auto g=odh::graphics_entity(*world->world,id,slots);
             g.tile_position[2]+=elevation(id);
             objects.push_back({id,raw.saved.guid,*graphic,g.direction,g.tile_position,raw.common.dynamic_sprite_flags});
@@ -280,6 +298,10 @@ int main(int argc,char** argv){try{
               <<",\"cached_object_frames\":"<<result.cached_frames<<",\"cached_object_pixels\":"<<result.cached_pixels<<",\"object_sprite_bytes\":"<<result.cached_frame_bytes
               <<",\"object_tested_samples\":"<<result.composite.tested_samples<<",\"object_shaded_samples\":"<<result.composite.shaded_samples;
     }else report<<']';
+    if(seen.count("--level")||seen.count("--wall-mode")){
+        report<<",\"selected_level\":"<<unsigned(selected_level)<<",\"wall_mode\":"<<json_bytes(walls_down?"down":"up")
+              <<",\"above_level_objects\":"<<above_objects<<",\"above_level_avatars\":";odh_tools::saved_bank(report,above_avatars);
+    }
     std::uint64_t covered=0;for(float z:image.depth)if(std::isfinite(z))++covered;
     report<<",\"out_of_world_objects\":"<<outside_objects<<",\"hidden_objects\":"<<hidden_objects
           <<",\"vertices\":"<<vertices<<",\"triangles\":"<<triangles<<",\"texture_bytes\":"<<textures<<",\"cfp_samples\":"<<samples

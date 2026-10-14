@@ -28,7 +28,7 @@ public:
     explicit SavedFloorRenderer(const std::string& floors_iff);
     ~SavedFloorRenderer();
     SavedFloorResult render(const odh::SavedArchitecture&,const odh::WorldProjection&,
-                           bool apply_terrain=true,std::int32_t base_alt=0);
+                           bool apply_terrain=true,std::int32_t base_alt=0,std::uint8_t level=2);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -164,7 +164,7 @@ int main(){try{
     // profile; different cap RGB makes ordering directly observable.
     a=architecture();a.levels[0].walls[4]={1,0,1,0,2,0,0,0};
     auto cap_camera=camera;cap_camera.center_tile={1,1,2.95f};
-    auto compare=[&](const SavedWallRenderResult& rendered,bool hole_caps=false){
+    auto compare=[&](const SavedWallRenderResult& rendered,bool hole_caps=false,bool hole_down_walls=false){
         auto expected=base();std::uint64_t tested=0,shaded=0,transparent=0,occluded=0,color_ties=0;
         auto draw_layer=[&](const auto& record,const odh::WallDepth& depth_map,unsigned frame,bool hole){
             const std::array<std::uint8_t,4> color{static_cast<std::uint8_t>(10+(frame%4)*50),20,30,255};
@@ -181,7 +181,7 @@ int main(){try{
                 }
         };
         for(const auto& j:rendered.junctions)draw_layer(j,odh::wall_junction_depth(cap_camera.zoom),j.junction.frame,hole_caps);
-        for(const auto& w:rendered.draws)draw_layer(w,odh::wall_sprite_depth(cap_camera.zoom,w.face.orientation),w.face.orientation,false);
+        for(const auto& w:rendered.draws)draw_layer(w,odh::wall_sprite_depth(cap_camera.zoom,w.face.orientation),w.face.orientation,hole_down_walls&&w.face.down);
         check(rendered.composite.image.pixels==expected.pixels&&rendered.composite.image.depth==expected.depth);
         check(rendered.composite.tested_samples==tested&&rendered.composite.shaded_samples==shaded&&
             rendered.composite.transparent_samples==transparent&&rendered.composite.occluded_samples==occluded);
@@ -209,6 +209,66 @@ int main(){try{
     {const auto path=tmp.path/"missing-caps.iff";write(path,header()+chunk("PALT",7,palette())+chunk("SPR#",2050,spr())+chunk("SPR#",1026,spr()));
         SavedWallRenderer missing_caps(path.string(),absent);rejects([&]{missing_caps.render(a,{},camera,base(),false);});}
     {auto fence=a;fence.levels[0].walls[4].top_left_style=2;check(renderer.render(fence,{},cap_camera,base(),false).junctions.empty());}
+    // Uniform story selector/down: defaults retain all earlier up output;
+    // top-down ignores architectural window style and uses base global Down.
+    auto stories=architecture();for(auto& level:stories.levels)level.walls[4]={1,0,22,0,2,0,0,0};
+    odh::WallAppearance window;window.faces={override_face(1,1,1,40,123)};window.faces[0].door=false;
+    const auto all_up=renderer.render(stories,window,camera,base(),false);
+    const auto explicit_up=renderer.render(stories,window,camera,base(),false,0,{2,false});
+    check(all_up.composite.image.pixels==explicit_up.composite.image.pixels&&all_up.composite.image.depth==explicit_up.composite.image.depth);
+    const auto first_story=renderer.render(stories,window,camera,base(),false,0,{1,false});
+    check(first_story.draws.size()==1&&first_story.draws[0].face.level==1&&first_story.junctions.size()==2);
+    {auto hidden_story=stories;hidden_story.levels[1].walls[4].top_left_pattern=256;
+        check(renderer.render(hidden_story,window,camera,base(),false,0,{1,false}).draws.size()==1);
+        rejects([&]{renderer.render(hidden_story,window,camera,base(),false,0,{2,false});});}
+    const auto fallback_path=tmp.path/"down-far-absent.iff";
+    write(fallback_path,globals()+chunk("SPR#",1027,spr(true))); //Near Down exists but Far Down absent: ignore it at all zooms.
+    SavedWallRenderer far_absent(fallback_path.string(),absent);
+    auto simple=architecture();simple.levels[0].walls[4]={1,0,1,0,2,0,0,0};
+    for(unsigned zoom=1;zoom<=3;++zoom){auto view_camera=camera;view_camera.zoom=static_cast<std::uint8_t>(zoom);
+        const auto down=far_absent.render(simple,window,view_camera,base(),false,0,{1,true});
+        check(down.draws.size()==1&&down.draws[0].face.down&&down.draws[0].face.style.raw_style==1&&down.draws[0].face.style.resource_guid==0);
+        check(down.draws[0].global_down_up_fallback&&!down.draws[0].mask_fallback&&down.draws[0].mask_sprite==2+(zoom-1)*512);
+        check(down.junctions.size()==2&&down.junctions[0].junction.down);
+        const auto up=far_absent.render(simple,{},view_camera,base(),false,0,{1,false});
+        check(down.draws[0].x==up.draws[0].x&&down.draws[0].y==up.draws[0].y&&down.draws[0].width==up.draws[0].width&&down.draws[0].height==up.draws[0].height&&
+            down.draws[0].back_depth==up.draws[0].back_depth&&down.draws[0].front_depth_delta==up.draws[0].front_depth_delta);
+    }
+    const auto down_path=tmp.path/"all-down.iff";auto down_content=globals();
+    for(unsigned zoom=1;zoom<=3;++zoom)down_content+=chunk("SPR#",static_cast<std::uint16_t>(3+(zoom-1)*512),spr(true,false,4,9));
+    write(down_path,down_content);SavedWallRenderer down_renderer(down_path.string(),absent);
+    for(unsigned zoom=1;zoom<=3;++zoom){auto view_camera=camera;view_camera.zoom=static_cast<std::uint8_t>(zoom);
+        const auto down=down_renderer.render(simple,window,view_camera,base(),false,0,{1,true});
+        check(down.draws[0].mask_sprite==3+(zoom-1)*512&&!down.draws[0].global_down_up_fallback&&down.draws[0].mask_palette_missing);
+        check(down.composite.transparent_samples>0&&down.composite.shaded_samples>0);
+        const auto& cap=down.junctions[0];const auto origin=odh::project_tile(view_camera,{float(cap.junction.x)-.5f,float(cap.junction.y)-.5f,.3f});
+        const unsigned scale=1U<<(zoom-1);const int ry[]={80,159,317};
+        check(cap.y==static_cast<std::int32_t>(double(origin[1])+ry[zoom-1]-87*scale+8*scale));
+        cap_camera=view_camera;compare(down,false,true);
+    }
+    {auto topdown=down_renderer.render(stories,{},camera,base(),false,0,{2,true});check(topdown.draws.size()==2);
+        check(!topdown.draws[0].face.down&&topdown.draws[1].face.down&&topdown.draws[0].mask_sprite==1026&&topdown.draws[1].mask_sprite==1027);
+        for(const auto& cap:topdown.junctions)check(cap.junction.down==(cap.junction.level==2));}
+    {auto door=window;door.faces[0].door=true;auto hidden=down_renderer.render(simple,door,camera,base(),false,0,{1,true});
+        check(hidden.draws.empty()&&hidden.omitted_doors.size()==1&&hidden.junctions.empty());
+        auto unresolvable=door;unresolvable.faces[0].style.resource_guid=999;
+        check(down_renderer.render(simple,unresolvable,camera,base(),false,0,{1,true}).omitted_doors.size()==1);
+        auto above=door;above.faces[0].level=2;hidden=down_renderer.render(stories,above,camera,base(),false,0,{2,true});
+        check(hidden.draws.size()==1&&hidden.draws[0].face.level==1&&hidden.omitted_doors.size()==1);}
+    {auto diagonal=simple;diagonal.levels[0].walls[4]={16,0,0,1,0,0,2,2};auto door=window;door.faces[0].segment=2;door.faces[0].door=true;
+        const auto down=down_renderer.render(diagonal,door,camera,base(),false,0,{1,true});check(down.draws.size()==1&&down.draws[0].face.down&&down.omitted_doors.empty()&&down.junctions.size()==2);}
+    // Visible reverse faces source their cuts and base styles from neighbors.
+    auto reverse=architecture();reverse.width=reverse.height=5;for(auto& level:reverse.levels)level.walls.assign(25,{});
+    reverse.levels[0].walls[6]={12,0,0,0,0,0,2,2};reverse.levels[0].walls[7]={1,0,1,0,2,0,0,0};reverse.levels[0].walls[11]={2,0,0,12,0,2,0,0};
+    const auto reverse_faces=saved_wall_faces(reverse,{},2,{1,true});
+    for(const auto& face:reverse_faces)if(face.x==1&&face.y==1){check(face.down==(face.orientation==0));check(face.style.raw_style==(face.orientation==0?1:12));}
+    {const auto path=tmp.path/"down-partial-set.iff";write(path,globals()+chunk("SPR#",3,spr()));SavedWallRenderer partial(path.string(),absent);
+        for(unsigned zoom=1;zoom<=3;++zoom){auto view_camera=camera;view_camera.zoom=static_cast<std::uint8_t>(zoom);rejects([&]{partial.render(simple,{},view_camera,base(),false,0,{1,true});});}}
+    {auto fence=simple;fence.levels[0].walls[4].top_left_style=12;const auto down=down_renderer.render(fence,window,camera,base(),false,0,{1,true});
+        check(!down.draws[0].face.down&&down.junctions.empty());}
+    {auto unsafe=simple;unsafe.levels[0].walls[0]={2,0,0,2,0,0,0,0};rejects([&]{down_renderer.render(unsafe,{},camera,base(),false,0,{1,true});});
+        auto bad=window;bad.faces[0].door=true;bad.faces[0].door_owner=0;rejects([&]{down_renderer.render(simple,bad,camera,base(),false,0,{1,true});});
+        rejects([&]{down_renderer.render(simple,{},camera,base(),false,0,{0,false});});rejects([&]{down_renderer.render(simple,{},camera,base(),false,0,{3,true});});}
     SavedWallRenderer moved(std::move(renderer));rejects([&]{renderer.render(a,{},camera,base(),false);});check(moved.render(a,{},camera,base(),false).draws.size()==1);
     a.levels[0].walls[4].segments=0;check(moved.render(a,{},camera,base(),false).composite.image.pixels==base().pixels);
     std::cout<<checks<<" saved wall renderer checks passed (synthetic only)\n";

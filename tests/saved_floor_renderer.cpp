@@ -42,6 +42,11 @@ int main(){try{
  wall.top_left_pattern=wall.top_left_style=0;a.levels[0].floors[5]=1;check(renderer.render(a,camera).triangles==2);
  wall.segments=48;rejects([&]{renderer.render(a,camera);});wall.segments=0;
  a.levels[1].floors[5]=1;result=renderer.render(a,camera);check(result.draws.size()==2&&result.triangles==4&&result.draws[1].level==2);
+ auto lower=renderer.render(a,camera,true,0,1);check(lower.draws.size()==1&&lower.draws[0].level==1&&lower.triangles==2);
+ auto without_upper=a;without_upper.levels[1].floors[5]=0;auto baseline=renderer.render(without_upper,camera);
+ check(lower.image.pixels==baseline.image.pixels&&lower.image.depth==baseline.image.depth&&a.levels[1].floors[5]==1);
+ a.levels[1].floors[5]=256;check(renderer.render(a,camera,true,0,1).draws.size()==1);rejects([&]{renderer.render(a,camera,true,0,2);});
+ rejects([&]{renderer.render(a,camera,true,0,0);});rejects([&]{renderer.render(a,camera,true,0,3);});
  a.levels[1].floors[5]=0;a.pools=std::vector<std::uint8_t>(16,255);check(renderer.render(a,camera).draws.size()==1);(*a.pools)[0]=1;rejects([&]{renderer.render(a,camera);});a.pools.reset();
  a.levels[0].floors[5]=256;rejects([&]{renderer.render(a,camera);});a.levels[0].floors[5]=2;rejects([&]{renderer.render(a,camera);});a.levels[0].floors[5]=1;
  a.levels[0].floors[15]=1;rejects([&]{renderer.render(a,camera);});a.levels[0].floors[15]=0;

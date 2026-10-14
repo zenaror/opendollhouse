@@ -78,6 +78,45 @@ int main(){try{
     a=grid();a.levels[1].walls.pop_back();rejects([&]{odh::standing_wall_junctions(a,0);});
     for(unsigned bits:{17U,33U,48U,64U,255U}){a=grid();a.levels[1].walls[8].segments=static_cast<std::uint8_t>(bits);rejects([&]{odh::standing_wall_junctions(a,0);});}
 
+    a=grid(5);for(auto& level:a.levels)level.walls[12]={3,0,22,3,0,0,0,0};
+    auto cuts=odh::wall_view_cuts(a,{2,true});
+    require(cuts[0][12].top_left==0&&cuts[0][12].top_right==0&&cuts[1][12].top_left==3&&cuts[1][12].top_right==3,
+            "lower up selected top down working normalization");
+    r=odh::wall_junctions(a,{},0,{2,true});
+    for(const auto& j:r.junctions)require(j.down==(j.level==2),"selected story caps down lower story caps up");
+    r=odh::wall_junctions(a,{},0,{1,true});require(r.junctions.size()==3,"above selected story hidden");
+    for(const auto& j:r.junctions)require(j.level==1&&j.down,"story1 down caps only");
+    r=odh::wall_junctions(a,{},0,{1,false});for(const auto& j:r.junctions)require(j.level==1&&!j.down,"story1 up caps only");
+    for(unsigned fence:{2U,12U,13U,14U}){a.levels[1].walls[12].top_left_style=static_cast<std::uint16_t>(fence);
+        cuts=odh::wall_view_cuts(a,{2,true});require(cuts[1][12].top_left==0&&cuts[1][12].top_right==3,"top fences not cut");}
+    a=grid(5);a.levels[1].walls[12]={32,0,0,255,0,0,0,0};a.levels[1].walls[7]={1,0,1,0,0,0,0,0};
+    r=odh::wall_junctions(a,{},0,{2,true});const auto* preferred=find(r,2,2,2);
+    require(preferred&&preferred->raw_flags==DB&&!preferred->down,"nonzero up flags override down flags at mixed site");
+    cuts=odh::wall_view_cuts(a,{2,true});require(cuts[1][12].top_right==0,"diagonal255 remains up");
+    a.levels[1].walls[12].top_right_style=1;cuts=odh::wall_view_cuts(a,{2,true});require(cuts[1][12].top_right==3,"diagonal1 cuts down");
+    odh::WallAppearance appearance;appearance.faces.push_back({2,1,2,1,{1,0,{}},7,7,1,1,true,true});
+    r=odh::wall_junctions(a,appearance,0,{2,true});require(!find(r,2,1,2),"cut cardinal door endpoint omitted");
+    appearance.faces[0].door=false;r=odh::wall_junctions(a,appearance,0,{2,true});require(find(r,2,1,2)!=nullptr,"non-door window retains down endpoint");
+    appearance.faces[0]={2,2,2,2,{1,0,{}},7,7,1,1,true,false};
+    r=odh::wall_junctions(a,appearance,0,{2,true});require(find(r,2,2,2)!=nullptr,"diagonal endpoint has no cardinal door guard");
+    auto bad_appearance=appearance;bad_appearance.faces[0].door_owner=0;
+    rejects([&]{odh::wall_junctions(a,bad_appearance,0,{2,true});});
+    bad_appearance=appearance;bad_appearance.faces[0].door_generation=0;
+    rejects([&]{odh::wall_junctions(a,bad_appearance,0,{2,true});});
+    bad_appearance=appearance;bad_appearance.faces.push_back(bad_appearance.faces[0]);
+    rejects([&]{odh::wall_junctions(a,bad_appearance,0,{2,true});});
+    bad_appearance=appearance;bad_appearance.faces[0].owner=0;rejects([&]{odh::wall_junctions(a,bad_appearance,0);});
+    rejects([&]{odh::wall_view_cuts(a,{0,true});});rejects([&]{odh::wall_view_cuts(a,{3,false});});
+    // Validate seven linear reads even for fences. Safe x-edge spill is retained;
+    // actual out-of-array neighbors fail instead of inventing clamp semantics.
+    for(unsigned offset:{0U,4U,5U,20U,24U}){a=grid(5);a.levels[1].walls[offset]={2,0,0,2,0,0,0,0};
+        rejects([&]{odh::wall_view_cuts(a,{2,true});});}
+    a=grid(5);a.levels[1].walls[9]={2,0,0,1,0,0,0,0};r=odh::wall_junctions(a,{},0,{2,true});
+    flags(r,4,1,BR,2);flags(r,0,2,TL,2);require(find(r,0,2,2)->down,"safe source xedge linear spill down retained");
+    a=grid(5);a.levels[0].walls[0]={2,0,0,1,0,0,0,0};
+    require(!odh::wall_junctions(a,{},0,{2,true}).junctions.empty(),"lower story unsafe cut neighbors unused when top only down");
+    rejects([&]{odh::wall_junctions(a,{},0,{1,true});});
+
     const int saved_round=std::fegetround();std::fesetround(FE_TONEAREST);
     for(unsigned zoom=1;zoom<=3;++zoom){const auto actual=odh::wall_junction_depth(static_cast<std::uint8_t>(zoom));
         require(actual.width==(32U<<(zoom-1))&&actual.height==(16U<<(zoom-1)),"junction depth dimensions");

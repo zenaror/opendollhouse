@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <tuple>
 
 namespace odh {
 namespace {
@@ -16,6 +18,40 @@ bool thick(const SavedWallTile& t,std::uint8_t side) {
     const auto style=side==wall_top_left?t.top_left_style:t.top_right_style;
     // DecodeWalls working normalization before WallTile.TopLeft/RightThick.
     return style!=2&&style!=12&&style!=13&&style!=14;
+}
+void validate_grid(const SavedArchitecture& a,WallView view){
+    if(!a.width||a.width>64||a.width!=a.height||view.level<1||view.level>2)
+        throw FormatError("wall junction square grid/view invalid");
+    const auto count=std::size_t(a.width)*a.height;
+    for(const auto& level:a.levels){
+        if(level.walls.size()!=count)throw FormatError("wall junction grid array invalid");
+        for(const auto& t:level.walls)
+            if(t.segments>63||((t.segments&48)&&t.segments!=16&&t.segments!=32))
+                throw FormatError("wall junction unknown/mixed segments invalid");
+    }
+    if(view.down)for(std::size_t off=0;off<count;++off)
+        if(a.levels[view.level-1].walls[off].segments){
+            const auto at=static_cast<std::int64_t>(off),w=std::int64_t{a.width};
+            for(const auto index:{at+1,at-1,at+w,at-w,at-w-1,at+w-1,at-w+1})
+                if(index<0||static_cast<std::uint64_t>(index)>=count)
+                    throw FormatError("wall view source cut neighbor outside linear grid");
+        }
+}
+using FaceKey=std::tuple<std::uint8_t,std::uint32_t,std::uint32_t,std::uint8_t>;
+std::map<FaceKey,const WallAppearanceFace*> validate_appearance(const SavedArchitecture& a,const WallAppearance& appearance){
+    if(appearance.faces.size()>16384)throw FormatError("wall junction appearance budget exceeded");
+    std::map<FaceKey,const WallAppearanceFace*> faces;
+    for(const auto& f:appearance.faces){
+        if(f.x>=a.width||f.y>=a.height||f.level<1||f.level>2||(f.segment!=1&&f.segment!=2)||
+           f.owner<=0||!f.generation||f.door_owner<0||
+           ((f.door_owner==0)!=(f.door_generation==0))||(f.door&&f.door_owner==0)||
+           !faces.emplace(FaceKey{f.level,f.x,f.y,f.segment},&f).second)
+            throw FormatError("wall junction appearance identity/door marker invalid");
+        if(f.style.raw_style>=256||(f.style.resource_guid&&f.style.raw_style<=21)||
+           (!f.style.resource_guid&&f.style.raw_style>21))
+            throw FormatError("wall junction appearance style outside profile");
+    }
+    return faces;
 }
 
 // The junction ramps subtract a binary32 constant from binary32 values in
@@ -60,38 +96,53 @@ std::uint8_t rotate_wall_junction(std::uint8_t flags,std::uint8_t rotation) {
     return static_cast<std::uint8_t>((low&15U)|(low>>4)|((high|(high>>4))&240U));
 }
 WallJunctionResult standing_wall_junctions(const SavedArchitecture& a,std::uint8_t rotation) {
-    if(rotation>3||!a.width||a.width>64||a.width!=a.height)
-        throw FormatError("wall junction square grid/rotation invalid");
-    const auto count=std::size_t(a.width)*a.height;
-    for(const auto& level:a.levels){
-        if(level.walls.size()!=count)throw FormatError("wall junction grid array invalid");
-        for(const auto& t:level.walls)
-            if(t.segments>63 || ((t.segments&48)&&t.segments!=16&&t.segments!=32))
-                throw FormatError("wall junction unknown/mixed segments invalid");
+    return wall_junctions(a,{},rotation,{});
+}
+std::array<std::vector<WallCuts>,2> wall_view_cuts(const SavedArchitecture& a,WallView view){
+    validate_grid(a,view);const auto count=std::size_t(a.width)*a.height;
+    std::array<std::vector<WallCuts>,2> cuts;
+    for(auto& c:cuts)c.resize(count);
+    if(view.down)for(std::size_t off=0;off<count;++off){
+        const auto& t=a.levels[view.level-1].walls[off];auto& c=cuts[view.level-1][off];
+        if(thick(t,wall_top_left))c.top_left=3;
+        if((t.segments&48)?t.top_right_style==1:thick(t,wall_top_right))c.top_right=3;
     }
+    return cuts;
+}
+WallJunctionResult wall_junctions(const SavedArchitecture& a,const WallAppearance& appearance,
+    std::uint8_t rotation,WallView view){
+    if(rotation>3)throw FormatError("wall junction rotation invalid");
+    validate_grid(a,view);
+    const auto faces=validate_appearance(a,appearance);
+    const auto cuts=wall_view_cuts(a,view);
+    const auto count=std::size_t(a.width)*a.height;
     WallJunctionResult result;
-    for(std::uint8_t level=1;level<=2;++level){
-        std::vector<std::uint8_t> flags(count,0);
-        const auto add=[&](std::size_t index,std::uint8_t bits){if(index<count)flags[index]|=bits;};
+    for(std::uint8_t level=1;level<=view.level;++level){
+        std::vector<std::uint8_t> up(count,0),down(count,0);
         const auto& walls=a.levels[level-1].walls;
         for(std::size_t off=0;off<count;++off){const auto& t=walls[off];
-            if(thick(t,wall_top_left)){add(off,8);add(off+a.width,2);}
-            if(thick(t,wall_top_right)){add(off,4);add(off+1,1);}
+            const auto c=cuts[level-1][off];
+            const auto door=[&](std::uint8_t side){const auto found=faces.find(FaceKey{level,static_cast<std::uint32_t>(off%a.width),static_cast<std::uint32_t>(off/a.width),side});
+                return found!=faces.end()&&found->second->door;};
+            const auto add=[&](std::size_t index,std::uint8_t bits,bool cut){if(index<count)(cut?down:up)[index]|=bits;};
+            if(thick(t,wall_top_left)&&!(c.top_left&&door(1))){add(off,8,c.top_left!=0);add(off+a.width,2,c.top_left!=0);}
+            if(thick(t,wall_top_right)&&!(c.top_right&&door(2))){add(off,4,c.top_right!=0);add(off+1,1,c.top_right!=0);}
             if((t.top_right_style==1||t.top_right_style==255)&&t.segments==wall_vertical_diagonal){
-                add(off,128);add(off+a.width+1,32);
+                add(off,128,c.top_right!=0);add(off+a.width+1,32,c.top_right!=0);
             }else if((t.top_right_style==1||t.top_right_style==255)&&t.segments==wall_horizontal_diagonal){
-                add(off+1,16);add(off+a.width,64);
+                add(off+1,16,c.top_right!=0);add(off+a.width,64,c.top_right!=0);
             }
         }
         for(std::size_t off=0;off<count;++off){
-            if(flags[off]==0)continue;
-            const auto frame=wall_junction_frame(flags[off]);
+            const bool is_down=up[off]==0;const auto flags=is_down?down[off]:up[off];
+            if(flags==0)continue;
+            const auto frame=wall_junction_frame(flags);
             if(!frame){++result.unmapped;continue;}
-            const auto rotated=rotate_wall_junction(flags[off],rotation);
+            const auto rotated=rotate_wall_junction(flags,rotation);
             const auto rotated_frame=wall_junction_frame(rotated);
             if(!rotated_frame)throw FormatError("wall junction rotation map is not closed");
             result.junctions.push_back({static_cast<std::uint32_t>(off%a.width),
-                static_cast<std::uint32_t>(off/a.width),level,flags[off],rotated,*rotated_frame});
+                static_cast<std::uint32_t>(off/a.width),level,flags,rotated,*rotated_frame,is_down});
         }
     }
     return result;

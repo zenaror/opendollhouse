@@ -39,7 +39,8 @@ struct SavedFloorRenderer::Impl {
 };
 SavedFloorRenderer::SavedFloorRenderer(const std::string& path):impl_(std::make_unique<Impl>(path)){}
 SavedFloorRenderer::~SavedFloorRenderer()=default;
-SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,const odh::WorldProjection& camera,bool terrain,std::int32_t base_alt){
+SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,const odh::WorldProjection& camera,bool terrain,std::int32_t base_alt,std::uint8_t max_level){
+    if(max_level<1||max_level>2)throw odh::FormatError("floor selected level outside profile");
     odh::project_tile(camera,camera.center_tile);
     if(a.width<2||a.height<2||a.width>64||a.height>64)throw odh::FormatError("floor architecture extent unsupported");
     const auto count=std::size_t(a.width)*a.height;
@@ -68,7 +69,7 @@ SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,cons
         if(geometry.size()>odh::RasterLimits{}.triangles-triangles.size())throw odh::FormatError("floor triangle budget exceeded");
         triangles.insert(triangles.end(),geometry.begin(),geometry.end());result.draws.push_back({x,y,level,pattern,half,altitude});
     };
-    for(std::size_t l=0;l<2;++l)for(std::uint32_t y=0;y<a.height;++y)for(std::uint32_t x=0;x<a.width;++x){
+    for(std::size_t l=0;l<max_level;++l)for(std::uint32_t y=0;y<a.height;++y)for(std::uint32_t x=0;x<a.width;++x){
         const auto i=std::size_t(y)*a.width+x;const auto& wall=a.levels[l].walls[i];const auto pattern=a.levels[l].floors[i];
         const auto diagonal=wall.segments&(odh::wall_horizontal_diagonal|odh::wall_vertical_diagonal);
         if(diagonal){

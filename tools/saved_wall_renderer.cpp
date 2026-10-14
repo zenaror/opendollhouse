@@ -43,7 +43,7 @@ std::int32_t integer(double value) {
 }
 
 std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture& a,
-    const odh::WallAppearance& appearance,std::uint8_t rotation) {
+    const odh::WallAppearance& appearance,std::uint8_t rotation,odh::WallView view) {
     if(rotation>3||!a.width||!a.height||a.width>64||a.height>64)
         throw odh::FormatError("saved wall architecture/rotation invalid");
     const auto cells=std::size_t(a.width)*a.height;
@@ -54,11 +54,13 @@ std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture& a,
                 throw odh::FormatError("saved wall mixed/unknown segments unsupported");
         }
     }
+    const auto cuts=odh::wall_view_cuts(a,view);
     if(appearance.faces.size()>16384)throw odh::FormatError("saved wall appearance budget exceeded");
     std::map<FaceKey,const odh::WallAppearanceFace*> overrides;
     for(const auto& f:appearance.faces){
         if(f.x>=a.width||f.y>=a.height||f.level<1||f.level>2||(f.segment!=1&&f.segment!=2)||
-           !f.generation||f.owner<=0||
+           !f.generation||f.owner<=0||f.door_owner<0||
+           ((f.door_owner==0)!=(f.door_generation==0))||(f.door&&f.door_owner==0)||
            !overrides.emplace(FaceKey{f.level,f.x,f.y,f.segment},&f).second)
             throw odh::FormatError("saved wall appearance identity/grid invalid");
         if(f.style.raw_style>=256 || (f.style.resource_guid &&
@@ -68,12 +70,25 @@ std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture& a,
             throw odh::FormatError("saved wall appearance dynamic style missing GUID");
     }
     std::vector<SavedWallFace> result;
-    for(std::uint8_t level=1;level<=2;++level)
+    for(std::uint8_t level=1;level<=view.level;++level)
         for(std::uint32_t y=0;y<a.height;++y)for(std::uint32_t x=0;x<a.width;++x){
             const auto& t=a.levels[level-1].walls[std::size_t(y)*a.width+x];
             auto add=[&](std::uint8_t orientation,std::uint16_t pattern,
                          std::uint32_t ox,std::uint32_t oy,std::uint8_t side,bool override_allowed=true){
                 SavedWallFace f{x,y,ox,oy,level,orientation,side,pattern,{0,0,{}}};
+                auto rotated_cuts=cuts[level-1][std::size_t(y)*a.width+x];
+                if(orientation<2){
+                    const auto original=rotated_cuts;
+                    if(rotation==1){rotated_cuts={0,original.top_left};
+                        if(y+1<a.height)rotated_cuts.top_left=cuts[level-1][std::size_t(y+1)*a.width+x].top_right;
+                    }else if(rotation==2){rotated_cuts={0,original.top_left};
+                        if(y+1<a.height)rotated_cuts.top_right=cuts[level-1][std::size_t(y+1)*a.width+x].top_right;
+                        if(x+1<a.width)rotated_cuts.top_left=cuts[level-1][std::size_t(y)*a.width+x+1].top_left;
+                    }else if(rotation==3){rotated_cuts={original.top_right,0};
+                        if(x+1<a.width)rotated_cuts.top_right=cuts[level-1][std::size_t(y)*a.width+x+1].top_left;
+                    }
+                }
+                f.down=(orientation==0?rotated_cuts.top_left:rotated_cuts.top_right)!=0;
                 if(ox<a.width&&oy<a.height){
                     const auto& owner=a.levels[level-1].walls[std::size_t(oy)*a.width+ox];
                     f.style.raw_style=side==1?owner.top_left_style:owner.top_right_style;
@@ -86,7 +101,7 @@ std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture& a,
                     const auto found=overrides.find(FaceKey{level,ox,oy,side});
                     if(override_allowed&&found!=overrides.end()){
                         f.door=found->second->door;
-                        if(f.style.raw_style==1&&found->second->style.raw_style!=0){
+                        if(!f.down&&f.style.raw_style==1&&found->second->style.raw_style!=0){
                             f.style=found->second->style;f.object_owner=found->second->owner;
                         }
                     }
@@ -181,12 +196,12 @@ SavedWallRenderer& SavedWallRenderer::operator=(SavedWallRenderer&&) noexcept=de
 
 SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& architecture,
     const odh::WallAppearance& appearance,const odh::WorldProjection& camera,
-    const odh::RasterFrame& base,bool terrain,std::int32_t base_alt){
+    const odh::RasterFrame& base,bool terrain,std::int32_t base_alt,odh::WallView view){
     if(!impl_)throw odh::FormatError("moved saved wall renderer");
     if(base.width!=camera.width||base.height!=camera.height)throw odh::FormatError("saved wall camera/base mismatch");
     odh::project_tile(camera,camera.center_tile);
-    const auto faces=saved_wall_faces(architecture,appearance,camera.rotation);
-    const auto junctions=odh::standing_wall_junctions(architecture,camera.rotation);
+    const auto faces=saved_wall_faces(architecture,appearance,camera.rotation,view);
+    const auto junctions=odh::wall_junctions(architecture,appearance,camera.rotation,view);
     const auto cells=std::size_t(architecture.width)*architecture.height;
     if(terrain&&(!architecture.altitude||architecture.altitude->size()!=cells))
         throw odh::FormatError("saved wall terrain altitude extent invalid");
@@ -219,7 +234,8 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         const auto& frame=impl_->frame(impl_->global,"",globals,id,j.frame);
         auto z=impl_->junction_depths.find(camera.zoom);
         if(z==impl_->junction_depths.end())z=impl_->junction_depths.emplace(camera.zoom,odh::wall_junction_depth(camera.zoom)).first;
-        const std::array<float,3> tile{float(j.x)-.5f,float(j.y)-.5f,float(j.level)*2.95f+altitude_at(j.x,j.y)};
+        const float story_height=j.down?.3f+float(j.level-1)*2.95f:float(j.level)*2.95f;
+        const std::array<float,3> tile{float(j.x)-.5f,float(j.y)-.5f,story_height+altitude_at(j.x,j.y)};
         const auto origin=odh::project_tile(camera,tile);const auto rect=junction_rects[camera.zoom-1];
         const int scale=1<<(camera.zoom-1);const double width=32*scale;
         const std::array<std::array<double,2>,4> anchor{{{0,width/4},{-width/2,0},{0,-width/4},{width/2,0}}};
@@ -236,11 +252,12 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         result.junctions.push_back({j,impl_->global,id,frame.palette,frame.palette_missing,x,y,rect.w,rect.h,back_depth,front_delta});
     }
     for(const auto& f:faces){
+        if(f.orientation<2&&f.down&&f.door){result.omitted_doors.push_back(f);continue;}
         if(f.pattern>=256)throw odh::FormatError("saved wall pattern requires unresolved external mapping");
         const auto pid=static_cast<std::uint16_t>(1536+f.pattern+(camera.zoom-1)*256);
         const auto& pattern=impl_->frame(impl_->global,"",globals,pid,f.orientation);
         std::string mask_source=impl_->global,mask_asset;
-        Asset* resource=&globals;std::uint16_t mid=0;
+        Asset* resource=&globals;std::uint16_t mid=0;bool down_up_fallback=false;
         if(f.style.resource_guid){
             const auto* c=impl_->index.unique(f.style.resource_guid);
             if(!c)throw odh::FormatError("saved wall concrete mask definition missing/ambiguous");
@@ -254,8 +271,18 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
                 throw odh::FormatError("saved wall object mask identity changed");
             for(unsigned i=0;i<6;++i)if(f.style.sprites[i]!=static_cast<std::uint16_t>(std::uint32_t(*binding.sprite_base)+i))
                 throw odh::FormatError("saved wall object mask binding changed");
-            mid=f.style.sprites[camera.zoom-1];
-        }else mid=static_cast<std::uint16_t>(2*f.style.raw_style+(camera.zoom-1)*512);
+            mid=f.style.sprites[camera.zoom-1+(f.down?3:0)];
+        }else{
+            mid=static_cast<std::uint16_t>(2*f.style.raw_style+(camera.zoom-1)*512);
+            if(f.down&&f.style.raw_style!=0){
+                const auto far_down=static_cast<std::uint16_t>(2*f.style.raw_style+1);
+                if(!globals.find("SPR#",far_down))down_up_fallback=true;
+                else{
+                    for(unsigned zoom=0;zoom<3;++zoom)globals.require("SPR#",static_cast<std::uint16_t>(far_down+zoom*512));
+                    ++mid;
+                }
+            }
+        }
         const Impl::Frame* mask=nullptr;
         // Style0 has no provider entry; missing selected SPR is pattern fallback.
         if(f.style.raw_style!=0&&resource->find("SPR#",mid))
@@ -282,7 +309,7 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         names+=impl_->global.size()+mask_source.size()+mask_asset.size();
         result.draws.push_back({f,impl_->global,mask_source,mask_asset,pid,pattern.palette,mid,
             mask?mask->palette:std::uint16_t{0},!mask,pattern.palette_missing,
-            mask&&mask->palette_missing,x,y,rect.w,rect.h,back_depth,front_delta});
+            mask&&mask->palette_missing,x,y,rect.w,rect.h,back_depth,front_delta,down_up_fallback});
         if(!mask)++result.mask_fallbacks;
     }
     result.composite=odh::composite_wall_sprites(base,layers);
