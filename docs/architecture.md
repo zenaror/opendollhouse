@@ -25,6 +25,11 @@ ações lógicas. Simulação, scheduler e renderização têm relógios e respo
 separados. Resources resolve origem/precedência e fornece representações com cache
 limitado; Audio recebe eventos; Platform abstrai I/O, entrada e serviços.
 
+Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
+com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
+ao PulseAudio estão em [linux-audio-validation.md](linux-audio-validation.md).
+Ligação XA/HIT, mixer e lifecycle de soundthread continuam pendentes.
+
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem
 ao despacho de opcodes. Não introduzir pausas arbitrárias de execução ou
