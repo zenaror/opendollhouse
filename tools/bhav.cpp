@@ -142,6 +142,7 @@ int main(int argc, char** argv) {
                      "  [--audio-probe HSM HOT HIT (--audio-args R1 R2 R3|--audio-caller-args) --audio-jump free-so|literal32\n"
                      "   --audio-gain-q15 0..32768 --audio-pan-q15 -32768..32768 --audio-choose-first\n"
                      "   (--audio-far FILE|--audio-xa FILE)... [--audio-rate 8000..192000]\n"
+                     "   [--audio-native-controls EXTVOL PAN] raw signed int32, separate from DSP Q15.\n"
                      "   [--audio-drain-ms 1..5000]] requires --sound-probe and Linux SDL audio.\n"
                      "  [--view TEXTURES.far --view-skeleton ENTRY NAME --view-part ENTRY NAME BMF TEXTURE]\n"
                      "  [--view-frames DIR --view-stride 1..4096 --view-window --view-auto --view-readback] requires Main probe.\n"
@@ -154,7 +155,7 @@ int main(int argc, char** argv) {
         bool route_probe=false;
         bool snap_probe=false, sound_probe=false, stand_after=false, main_probe=false;
         bool audio_probe=false,audio_args=false,audio_jump=false,audio_gain=false,audio_pan=false;
-        bool audio_choose_first=false,audio_option_seen=false,audio_rate=false;
+        bool audio_choose_first=false,audio_option_seen=false,audio_rate=false,audio_native_controls=false;
         std::optional<std::uint16_t> audio_drain_ms;
         odh_host::BhavAudioConfig audio_config;
         std::vector<std::string> animation_extra;
@@ -192,6 +193,12 @@ int main(int argc, char** argv) {
             }
             else if (option == "--audio-caller-args" && !audio_args) {
                 audio_args=audio_option_seen=true;audio_config.caller_arguments=true;
+            }
+            else if (option == "--audio-native-controls" && !audio_native_controls && n+2<argc) {
+                audio_native_controls=audio_option_seen=true;
+                std::array<std::int32_t,2> values{};
+                for(auto& value:values)value=audio_number<std::int32_t>(argv[++n]);
+                audio_config.native_controls=values;
             }
             else if (option == "--audio-jump" && !audio_jump && n+1<argc) {
                 audio_jump=audio_option_seen=true;const std::string value=argv[++n];
@@ -458,6 +465,7 @@ int main(int argc, char** argv) {
         struct ObservedSound {
             odh::SoundRequest request;std::string status;
             std::optional<odh::HitArguments> arguments;
+            std::optional<odh_host::BhavNativeControlReceipt> native_controls;
         };
         std::vector<ObservedSound> sound_requests;
         bool sound_events_truncated=false,sound_event_limit_reached=false;
@@ -478,11 +486,14 @@ int main(int argc, char** argv) {
                 return {};
             },sound_sink,[&](const odh::SoundRequest& request,const std::string& status) {
                 std::optional<odh::HitArguments> arguments;
+                std::optional<odh_host::BhavNativeControlReceipt> native_controls;
 #ifdef ODH_HAVE_SDL_AUDIO
-                if(audio_service && (status=="submitted" || status=="backend_rejected"))
+                if(audio_service && (status=="submitted" || status=="backend_rejected")){
                     arguments=audio_service->last_arguments();
+                    native_controls=audio_service->last_native_controls();
+                }
 #endif
-                if(sound_requests.size()<4096)sound_requests.push_back({request,status,arguments});
+                if(sound_requests.size()<4096)sound_requests.push_back({request,status,arguments,native_controls});
                 else sound_events_truncated=true;
                 if(sound_requests.size()==4096)sound_event_limit_reached=true;
             }):odh::VmPrimitive{};
@@ -753,6 +764,16 @@ int main(int argc, char** argv) {
                     std::cout<<",\"hit_arguments\":";
                     if(e.arguments)std::cout<<'['<<(*e.arguments)[0]<<','<<(*e.arguments)[1]<<','<<(*e.arguments)[2]<<']';
                     else std::cout<<"null";
+                }
+                if(audio_native_controls){
+                    std::cout<<",\"hit_native_controls\":{";
+                    for(std::size_t i=0;i<odh_host::native_control_receipt_ids.size();++i){
+                        if(i)std::cout<<',';
+                        std::cout<<'"'<<static_cast<unsigned>(odh_host::native_control_receipt_ids[i])<<"\":";
+                        if(e.native_controls && (*e.native_controls)[i])std::cout<<*(*e.native_controls)[i];
+                        else std::cout<<"null";
+                    }
+                    std::cout<<'}';
                 }
                 std::cout<<'}';
             }

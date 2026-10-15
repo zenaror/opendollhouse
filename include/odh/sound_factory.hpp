@@ -21,5 +21,6 @@ ResolvedHitEvent resolve_hit_event(
 std::unique_ptr<SoundThreadInstance> make_hit_sound(
     const HitFile&, const Hot&, const SoundRequest&, const SoundSourceBinding&,
     HitChooser, HitNoteBackend, std::unique_ptr<SoundThreadLifetime>,
-    HitThreadLimits, HitJumpOperand, HitArguments, SoundEventFactoryLimits = {});
+    HitThreadLimits, HitJumpOperand, HitArguments, SoundEventFactoryLimits = {},
+    std::optional<HitNativeControls> = {});
 }

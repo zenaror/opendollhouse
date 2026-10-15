@@ -31,8 +31,10 @@ struct Fixture {
                          const odh::HotTrack* track = nullptr, std::uint32_t start = 16,
                          odh::HitJumpOperand operand = odh::HitJumpOperand::FreeSoHeuristic,
                          const odh::HitSourceFieldReader& reader = {},
-                         std::optional<odh::HitArguments> args = {}) const {
-        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand, reader, args);
+                         std::optional<odh::HitArguments> args = {},
+                         std::optional<odh::HitNativeControls> controls = {}) const {
+        return odh::select_hit_note(hit, hot, start, vars, chooser, limits, track, operand, reader,
+                                    args, std::move(controls));
     }
 };
 template<class F> void rejected(F&& operation, const char* reason) {
@@ -114,6 +116,33 @@ int main() { try {
                 (take ? p.trace[1].branch_pc == f.hot.track_data[0x122] : !p.trace[1].branch_pc), "taken branch target remapping recorded");
         require(p.steps == p.trace.size() && p.trace.back().opcode == 2 && p.pc == p.trace.back().pc, "first NoteOn counted/traced without audio effect");
         require(p.registers[p.note_destination] == 0, "NoteOn destination not written");
+    }
+    for (unsigned op = 62; op <= 67; ++op) for (const std::int32_t pan : {-512, 0, 512}) {
+        Fixture f;
+        f.branch(static_cast<std::uint8_t>(op), 0x122);
+        f.note(200, 6);
+        f.target(0x122, f.pc());
+        f.note(100, 7);
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        const odh::HitArguments raw{{5, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, raw, 1024, pan);
+        const auto p = f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls);
+        const bool taken = predicate(op, pan);
+        require(p.initial_controls && p.initial_controls->initial_zero_flag == (pan == 0) &&
+                p.initial_controls->initial_sign_flag == (pan < 0) &&
+                p.trace[0].zero_flag == (pan == 0) && p.trace[0].sign_flag == (pan < 0) &&
+                p.trace[0].branch_taken == taken &&
+                p.patch_id == (taken ? 100U : 200U),
+                "first native branch consumes final spatial pan flags");
+        if (op == 62 && pan == 0) {
+            const auto legacy = f.run({}, {}, &track);
+            require(!legacy.initial_controls && !legacy.trace[0].zero_flag &&
+                    !legacy.trace[0].sign_flag && legacy.trace[0].branch_taken == false &&
+                    legacy.patch_id == 200,
+                    "omitted native profile retains legacy clear initial flags");
+        }
     }
     {
         Fixture f; f.emit({4, 2, 255, 6, 3, 2, 14, 3}); f.note();
@@ -249,6 +278,110 @@ int main() { try {
         require(p.patch_id == 200 && p.locals[static_cast<std::size_t>(dest - 16)] == 999 && p.trace[1].patch_replaced == false, "failed patch lookup preserves previous valid patch while storing invalid ID");
         Fixture no_patch; no_patch.load(static_cast<std::uint8_t>(dest), 999); no_patch.emit({2, 3});
         rejected([&] { no_patch.run(); }, "NoteOn cannot use nonexistent patch");
+    }
+    {
+        Fixture f; f.emit({14, 19, 6, 4, 18, 5, 18, 200, 0, 0, 0, 2, 5});
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 777; track.ducking_priority = 4;
+        const odh::HitArguments raw{{-7, 0, 0}};
+        auto controls = odh::build_native_hit_controls(track, raw, 900, 600);
+        const auto p = f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls);
+        require(p.initial_controls && p.initial_controls->locals[18 - 16] == 777 &&
+                p.initial_controls->locals[19 - 16] == 900 &&
+                p.initial_controls->locals[20 - 16] == 600,
+                "initial receipt snapshots native controls before first instruction");
+        require(p.initial_arguments == raw && p.registers[1] == -7 && p.registers[2] == 0 &&
+                p.registers[3] == 0 && p.trace[0].opcode == 14 && !p.trace[0].zero_flag,
+                "raw registers remain unchanged and first script sees post-spatial extvol");
+        require(p.patch_id == 100 && p.locals[18 - 16] == 200 &&
+                !p.trace[2].patch_replaced && p.trace[2].write_location == 18,
+                "native write18 changes volume without selecting matching patch200");
+        require(controls.locals[18 - 16] == 777,
+                "owned initial state and caller's controls remain independent of runtime writes");
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, odh::HitArguments{{-7, 1, 0}}, controls); },
+                 "mismatched raw tuple rejected before execution");
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, {}, controls); }, "native profile requires explicit raw tuple");
+        track.arg_type = 1;
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls); }, "native profile rejects different track style");
+        track.arg_type = 2;
+        track.volume = 778;
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls); }, "native profile rejects different track volume");
+        track.volume = 777;
+        auto inconsistent = controls;
+        inconsistent.initial_zero_flag = true;
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, inconsistent); }, "tampered initial flags reject before script");
+        const auto rejects_mutation = [&](const odh::HitNativeControls& mutated) {
+            rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                                 {}, raw, mutated); },
+                     "mutated native startup snapshot rejects before script");
+        };
+        inconsistent = controls; inconsistent.locals[16 - 16] = 1; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[17 - 16].reset(); rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[19 - 16] = 899; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[46 - 16] = 0; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[47 - 16] = -8; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[50 - 16] = 200; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[48 - 16] = 0; rejects_mutation(inconsistent);
+        odh::HitNativeControllerValues controllers{};
+        controllers[18 - 17] = 56;
+        controllers[25 - 17] = -40;
+        const auto overridden = odh::build_native_hit_controls(track, raw, 900, 600, controllers);
+        const auto with_controllers = f.run({}, {}, &track, 16,
+                                            odh::HitJumpOperand::FreeSoHeuristic,
+                                            {}, raw, overridden);
+        require(with_controllers.initial_controls->locals[18 - 16] == 56 &&
+                with_controllers.initial_controls->locals[25 - 16] == -40,
+                "valid controller overrides for volume and ducking priority remain accepted");
+        track.volume = 0x80000000U;
+        track.ducking_priority = 0x80000000U;
+        const auto defaults_after_unset = odh::build_native_hit_controls(track, raw, 900, 600);
+        const auto with_unset_track = f.run({}, {}, &track, 16,
+                                             odh::HitJumpOperand::FreeSoHeuristic,
+                                             {}, raw, defaults_after_unset);
+        require(with_unset_track.initial_controls->locals[18 - 16] == 1024 &&
+                with_unset_track.initial_controls->locals[25 - 16] == 0 &&
+                with_unset_track.initial_controls->raw_track_volume ==
+                    std::numeric_limits<std::int32_t>::min() &&
+                with_unset_track.initial_controls->raw_track_ducking_priority ==
+                    std::numeric_limits<std::int32_t>::min(),
+                "Selection accepts unset Track controls and sees proven bank defaults");
+    }
+    {
+        Fixture f; f.emit({14, 48, 2, 5});
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        const odh::HitArguments raw{{0, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls); }, "unknown native ID48 read cannot invent zero");
+        Fixture initialized; initialized.load(50, 200); initialized.emit({14, 50, 2, 5});
+        const auto p = initialized.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                                       {}, raw, controls);
+        require(p.patch_id == 200 && p.trace[0].patch_replaced == true &&
+                p.locals[50 - 16] == 200,
+                "native script write50 retains patch side effect and makes local readable");
+        Fixture chosen; chosen.hot.hitlists[77].ids = {100};
+        chosen.emit({14, 50, 2, 5});
+        track.hitlist_id = 77; track.patch_id = 0;
+        const auto zero_patch_controls = odh::build_native_hit_controls(track, raw, 1024, 512);
+        int choices = 0;
+        const auto selected = chosen.run([&](auto, const auto&) { ++choices; return 0U; },
+                                         {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                                         {}, raw, zero_patch_controls);
+        require(choices == 1 && selected.patch_id == 100 && selected.initial_choice &&
+                selected.locals[50 - 16] == 0 && selected.initial_controls->locals[50 - 16] == 0 &&
+                selected.trace[0].zero_flag,
+                "raw track patch50 remains zero while initial list chooser selects patch100 once");
+        rejected([&] { chosen.run([&](auto, const auto&) { ++choices; return 0U; },
+                                  {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                                  {}, raw, controls); }, "mismatched raw patch profile rejects before chooser");
+        require(choices == 1, "invalid native profile has no chooser effect");
     }
     {
         Fixture f; f.branch(13, 0x122); f.emit({255}); f.target(0x122, f.pc()); f.note();

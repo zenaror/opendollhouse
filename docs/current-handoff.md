@@ -1,73 +1,100 @@
 # Continuidade atual
 
-Retomada autorizada da meta integral OpenDollhouse. OMM não está disponível
-nesta sessão; este checkpoint precisa ser sincronizado com ela quando o
-conector voltar. Não declarar OMM atualizada. Ler AGENTS.md, este arquivo,
-docs/architecture.md e as evidências recentes antes de continuar.
+A meta integral OpenDollhouse permanece autorizada, com Linux funcional e
+verificável primeiro; New 3DS, Vita e Android seguem como restrições e etapas
+futuras, sem validação funcional nesta fase. Leia `AGENTS.md`,
+`docs/architecture.md` e as evidências ligadas abaixo antes da próxima unidade.
+OMM está indisponível nesta sessão: este checkpoint ainda precisa ser mesclado
+com o handoff do escopo `OpenDollhouse` quando o conector voltar, usando o
+`expected_sha256` atual. Não declarar OMM sincronizada.
 
-Base anterior:cae292fe12a86543fbead39c133e2b9e37c24021 (áudio no loop BHAV).
-Novo checkpoint: HOT overrides signed e derivação bruta caller/evento;
-identificar hash com git log. Evidências em hit-caller-resolution-validation.md,
-hit-native-caller-arguments.md e novo hit-native-controls-evidence.md.
-Core/parser Sol alto, revisão Luna alto, pesquisa estática difícil Astra alto;
-principal integrou probe/testes/receipts/docs. OpenCode/IA local removidos;
-usuário quer delegação por complexidade. OMM indisponível, não declarar sync.
+## Checkpoint de 2026-10-15
 
-HotEvent.argument_overrides (apósreason) guarda CSV2/3/4 como optional<int32>.
-Omitido final/zero explícito são0conhecido; vazio/símbolo/overflow sãoausentes
-com reason, não zero adivinhado. Sextocampo sem interpretação. Contagens e
-budgets preservados; metadatafixa extra não éRSS. resolve_hit_arguments aplica
-cada override nãozero à sua posição; play_sound_arguments usa [source16,0,0].
-Não implementa wrappercache-2, ArgStyle ou DSP.
+Base publicada e remote `main` verificado: `67123f4` (resolução dos argumentos
+brutos PlaySound/HOT). A unidade seguinte implementa a inicialização opcional
+ArgStyle 2 de controles HIT antes do primeiro tick. O SHA desta unidade deve
+ser identificado com `git log` após sua publicação; este texto não antecipa
+um commit. O caminho silencioso e o perfil legado continuam preservados.
 
---audio-caller-args é alternativa mutuamenteexclusiva a --audio-args R1 R2 R3.
-Modo ainda opt-in, com Jump/chooser/Q15 explícitos, sem gainespacial automático.
-Factory recebe request.source selecionado pelo BHAV e validado pelo binding;
-resolução bounded do event precede copia/lookup. JSON profile.argument_mode
-play_sound_caller,argsnull; cada sound_request.hit_arguments guarda tripla da
-submissão ou nullse não chegou àresolução. Sem stale em recursofaltante.
-OverrideR1 não transfereowner/binding; queryde sourcefora do perfil falha, semalias.
-O caminho silencioso não muda. PcmHitOwner/transporte compartilhado mantêm
-lifetime/refusals/cleanup. Opcode69 continua unsupported semhandler, semfakegroup.
+`HotEvent.argument_overrides` mantém CSV 2/3/4 assinados; resolução por palavra
+substitui só overrides não zero. `play_sound_arguments` usa a origem int16
+resolvida pelo caller, formando `[source,0,0]`; não usa a antiga tripla manual
+`[source,1024,0]`. O modo de probe `--audio-caller-args` é explícito e separado
+em [hit-caller-resolution-validation.md](hit-caller-resolution-validation.md)
+e [hit-native-caller-arguments.md](hit-native-caller-arguments.md).
 
-Testes finais:112 configurados,111pass/1X11skip Debug e ASan/UBSan, LSan off.
-75checks recursos,11resolvedor + CLIcom caller/stacksource, signedoverrides,
-origem sobrescrita/guard, unresolved, semstale e exclusãoopções. CLI repetido
-nos doisbuilds após ampliar o caso de overrideR1. SemSDL/X11 passam4checks
-registrados recursos/argumentos/CLI silencioso/recusaáudio. Logs
-reports/hit-caller-{build,build-asan}-ctest.log, cli{,-asan}-final.log e noaudio-*.
-Cena nativa cadeira usa --audio-caller-args (semtriplamanual), deriva[2,0,0]
-de chair_sit_metal/source2 e HOTzerooverrides. Debug/ASAN:30208frames consumidos,
-94dispatches/662ticks, semfault. PCMdrained/HITpending explícito, semticksfake.
-Controles unidade/centro, Literal32 e escolha0 continuamdiagnósticos.
-Recibos/comando em reports/hit-caller-chair-*.json.
+O novo `build_native_hit_controls` recebe Track ArgStyle 2 resolvido, tripla
+bruta e extvol/pan espaciais explícitos. Inicializa o banco comprovado 16–47,
+Track.volume 18, ducking_priority 25 e patch bruto 50. `INT32_MIN` em volume ou
+duckpri preserva o default do banco; não se extrapola essa regra a patch 50.
+Depois instala R2/R3 em 19/20, R1 em 47, isplaying 46=1 e os controles
+espaciais finais em 19/20. O último setter de pan determina zero/sign antes do
+primeiro bytecode. O recibo próprio e a máscara de valores desconhecidos são
+validados antes do chooser. Escrita nativa em 18 altera volume, não patch;
+escrita em 50 conserva rebinding. Sem perfil opcional, o alias legado 18/50 e
+flags iniciais falsos permanecem. Contrato, prova estática e limites em
+[hit-native-controls-validation.md](hit-native-controls-validation.md) e
+[hit-native-controls-evidence.md](hit-native-controls-evidence.md).
 
-Pesquisa nova: HSM IDs17priority/18vol/19extvol/20pan/21pitch; ID16h4 nãoéArgStyle.
-TrackVolume->ID18. Defaults32/1024/1024/512/3600 e controllerunset0x80000000.
-ArgStyle2 instala rawargs+defaults/controllers, guardaR2/R3 em19/20, pausa;
-caller sobrescreve19/20 com dadosespaciais e sóentão ativa/enfileira. Primeira
-instrução deveria enxergar controles póssetters, R2/R3raw continuam0. Issoainda
-NÃO estáimplementado automaticamente. Composição observada extvol*group/1024,
-vol*external/1024, duckhalfcondicional (IMUL32/IDIV), semprovaescalaQ15.
-VAs/identidades/limites/provider/visão em hit-native-controls-evidence.md.
+A camada de áudio do probe continua opcional: uma fila/sink PCM compartilhada,
+thread e owner por requisição, sem fechar o dispositivo por nota. HIT e PCM
+avançam em polls explícitos nas fronteiras do probe; o drain final só bombeia
+PCM e nunca simula ticks extras de World/Main. Não há conversão automática dos
+controles raw em Q15, nem derivação geométrica, grupos globais ou provider
+compartilhado. Os dados do jogo e o executable original permanecem externos;
+nenhum original foi modificado.
 
-Próximo: inicialização raw de controles antes do primeirotick, com controller/
-defaults e recibos; resolver contexto espacial, sharedprovider e escala backend
-semconfundir rawargs comDSP. Depois grupos/owners/dedup/relógiogeral do lote,
-loops/CallReturn e campos4/13/14. Não alias source12, não bypassMain ou reInit.
-Diagnóstico de drain ainda só bombeia PCM, não HIT/World; JSON separa
-pcm_drained_hit_pending de complete/pending_output/faulted/drain_timeout.
-Savedframes105/137/queues/clock ainda dormentes, sem reInit; câmera/picking,
-input/lote mínimo, SLOT8/failuretrees/needs/inventory/save, SDK/CC e ports
-continuam na meta integral. Linux primeiro, Simitone/submoduleTS1 principal.
+## Validação e limites do resultado
 
-Originais externos e refs/reports/builds preservados. Artefatos de build na
-raiz e antigos runners não versionados continuam sem integração. Mixer antigo
-inválido preservado em reports/mixer-before-takeover; substituído pelo core
-validado, não é referência de arquitetura;
-não git add -A, não cleanup genérico. Checkout/remote devem ser revalidados.
+Debug e ASan/UBSan oficiais configuraram 113 testes: 112 passaram, um teste
+X11 foi pulado pelo ambiente, zero falhas (14,42 s e 26,33 s). LSan ficou
+desativado. A configuração sem SDL/X11 passou 7/7 testes selecionados.
+Core direto com warnings-as-errors passou 70 checks de controles, 944 de
+seleção e 61 de thread; o factory possui 52 checks no build integrado.
+Logs `reports/hit-native-controls-build-{configure,build,ctest}.log`,
+`reports/hit-native-controls-build-asan-{configure,build,ctest}.log` e
+`reports/hit-native-controls-build-noaudio-{configure,build,ctest}.log`.
 
-Quando OMM voltar: get_handoff no scope OpenDollhouse, mesclar novo checkpoint
-com fontes existentes preservando questões/história e usar expected_sha256
-atual. Histórico anterior está na OMM e no handoff datado de2026-10-14,
-que é um snapshot anterior e não substitui este estado mais recente.
+Na fixture Linux `chair_sit_metal`, `--audio-caller-args` produziu `[2,0,0]`.
+`--audio-native-controls 1024 512` mostrou IDs 17=32, 18=1024, 19=1024,
+20=512, 21=3600, 25=10, 46=1, 47=2, 50=0 em Debug e ASan. Ambos registraram
+94 dispatches BHAV, 662 ticks World, 664 polls de áudio e 30.208 frames PCM
+renderizados/submetidos/consumidos, sem fault. O estado é
+`pcm_drained_hit_pending`: PCM drenado e HIT ainda ativo; não é áudio físico
+comprovado nem conclusão da thread. A comparação retida marca VM/World/trace
+iguais ao baseline do caller, excluindo o relatório de áudio. Ver
+`reports/hit-native-controls-chair-{debug,asan,comparison,command}.json` e
+[hit-native-controls-validation.md](hit-native-controls-validation.md).
+Esses resultados de fixture/host Linux não provam equivalência ao executável
+original ou funcionamento dos ports.
+
+## Próximas unidades
+
+Pesquisar primeiro a semântica **nativa** do opcode 69, ObjectID, identidade
+real dos grupos, criação/deduplicação e ownership antes de implementar uma
+política. No Simitone pinado (`4906db3`; submódulo FreeSO `f86bbd3`),
+`TSOClient/tso.sound/HITInterpreter.cs:651-663` só trata operando zero com
+`thread.KillVocals()`; outros IDs são um TODO de ObjectID, não um registro
+funcional. `HITThread.cs:183-193` para notas da própria thread.
+`HITVM.cs:159-180,207-211,254-280` faz reutilização global por evento no
+ramo TS1; `tso.simantics/Primitives/VMPlaySound.cs:21-55` deduplica por nome no
+owner, enquanto ODH ainda cria uma thread por submissão. `HITVM.cs:112-126`,
+`HITThread.cs:98-102` e `Client/Simitone/Simitone.Client/SimitoneGame.cs:286-301`
+mostram um domínio/ordem de ticks de áudio que não se deve confundir com ticks
+World ou host drain. Tudo isso é comportamento da referência, não prova da
+implementação nativa. O callback `kill_group(uint8_t)` de ODH segue explícito;
+sem handler, opcode 69 falha em vez de inventar grupo vazio.
+
+Investigar ainda os providers espaciais, agregação, grupo/ducking e escala real
+do backend antes de converter vol/extvol/pan raw em DSP. A evidência estática
+conhecida e suas lacunas estão em
+[hit-native-controls-evidence.md](hit-native-controls-evidence.md). Outros
+marcos da meta integral continuam: saved frames/queues/clock (incluindo
+105/137), continuação Main sem reinit, câmera/picking, input e lote Linux,
+SLOT/failure trees/needs/inventory/save, SDK/CC e depois os ports. Não usar
+áudio para contornar gates de VM ou descartar simulação fora da tela.
+
+Preservar originais externos, refs pinadas, reports, builds e artefatos antigos.
+Não usar `git add -A` nem limpeza genérica. Verificar checkout/remote antes
+de publicar. Quando OMM retornar, mesclar este checkpoint com a história lá
+preservada, sem substituir evidência mais antiga por resultados de fixture.

@@ -46,7 +46,8 @@ ResolvedHitEvent resolve_hit_event(const HitFile& hit,const Hot& hot,const Sound
 std::unique_ptr<SoundThreadInstance> make_hit_sound(const HitFile& hit,const Hot& hot,
     const SoundRequest& request,const SoundSourceBinding& binding,HitChooser chooser,
     HitNoteBackend backend,std::unique_ptr<SoundThreadLifetime> owner,HitThreadLimits limits,
-    HitJumpOperand operand,HitArguments args,SoundEventFactoryLimits factory_limits) {
+    HitJumpOperand operand,HitArguments args,SoundEventFactoryLimits factory_limits,
+    std::optional<HitNativeControls> native_controls) {
     StopOnFailure cleanup{owner};
     if(!owner)fail("backend lifetime owner required");
     const auto current=binding.refresh();
@@ -57,7 +58,7 @@ std::unique_ptr<SoundThreadInstance> make_hit_sound(const HitFile& hit,const Hot
     HitSourceFieldReader reader=[binding](std::int32_t source,std::int32_t field){return binding.read(source,field);};
     std::array<std::int32_t,29> unused{}; // Reader replaces these values, never a fallback.
     auto thread=std::make_unique<HitThread>(hit,hot,resolved.start_pc,unused,std::move(chooser),
-        std::move(backend),limits,resolved.initial_track,operand,std::move(reader),args);
+        std::move(backend),limits,resolved.initial_track,operand,std::move(reader),args,std::move(native_controls));
     // Initial SetTrack's chooser can mutate the World through other aliases.
     if(!binding.valid())fail("source removed during initialization");
     return std::make_unique<SoundThreadInstance>(std::move(thread),std::move(owner));

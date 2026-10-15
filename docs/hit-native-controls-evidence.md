@@ -1,7 +1,8 @@
 # Controles HIT antes da execução do script
 
-Evidência estática de2026-10-15, ainda sem implementação automática dessas
-camadas. Mesma imagem analisada de hit-native-caller-arguments.md:
+Evidência estática de2026-10-15. A inicialização com entradas espaciais explícitas
+está sendo integrada; derivação geométrica e escala do backend continuam abertas.
+Mesma imagem analisada de hit-native-caller-arguments.md:
 SHA2566e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2,
 base0x400000 e offset=VA-base nos endereços citados dessa imagem. Equivalência
 ao outro arquivo executável não comprovada. Nenhum executável foi executado;
@@ -17,21 +18,45 @@ ID16 já é locals[0], IDs18/19/20 são locals[2/3/4].
 ## Defaults e Track
 
 0x57cac1 cria banco global de31 valores a partir de ID17, base0x6f68f8 e
-payload0x6f6914. Escritas0x57cb33–0x57cb51 estabelecem priority32,vol1024,
-extvol1024,pan512,pitch3600. Alocação nativa de registros cobre IDs1–16
-(0x57da20–0x57da4b); não confundir layout físico com IDs do interpretador.
+payload0x6f6914. O construtor0x580629 preenche inicialmente com INT32_MIN,
+mas o startup0x57cb33–0x57cc0a sobrescreve todos os31 valores. Banco final,
+em ordem de ID17 até47:
+
+```text
+32,1024,1024,512,3600,0,0,0,0,0,0,100,10000,0,0,0,
+0,0,0,0,0,0,1,0,0,0,0,0,0,0,0
+```
+
+EBX é zerado em0x57ca4e e preservado para os stores zero. O store0x57cc10
+em0x6f6990 já está fora do banco. Alocação nativa de registros cobre IDs1–16
+(0x57da20–0x57da4b); o allocator0x580558 zera todos em0x580586–0x580591.
+Isso prova estado fresco, não reset de threads reutilizadas. Não confundir
+layout físico com IDs do interpretador.
 
 Parser Track0x57b921 recebe registro de0x57b0f6, associado à string0x6cf440.
 Terceiro campo CSV vai para EBX em0x57b9ed–0x57b9f2 e argumento3 do construtor
-em0x57bb2d. Construtor0x57d7ed–0x57d7f4 escreve ID18=Track.volume.
+em0x57bb2d. Construtor0x57d7ed–0x57d7f4 escreve ID18=Track.volume;
+0x57d7e1–0x57d7e8 escreve ID25=Track.ducking_priority. A assinatura observada
+é trackID,name,volume,ArgStyle,duckpri,group,Spl,hitlist/entry,patch.
 Banco de controller usa0x80000000 como unset; getter vtable+0xb4 é0x57d8f5.
 Inicialização0x57dd98–0x57dde8 copia defaults/controllers sem copiar o sentinela.
+Isso também vale para os valores de Track.volume/ducking_priority armazenados
+nesse banco: se forem0x80000000, a comparação0x57dda9/0x57dddb salta ao
+próximo ID e preserva defaults18=1024/25=0. Não instalar INT32_MIN nesses
+locals só porque a palavra bruta de Track possui esses bits. A regra não
+estabelece por si só o tratamento de ID50, fora do banco17–47.
+O controller ID50 retém Track.patch_id bruto: store0x57d791–0x57d794 no
+controller e0x57f979–0x57f981 no thread. Um hitlist pode escolher outra patch;
+essa escolha não prova que ID50 deixou de ser zero. Spl aparece no controller
+ID57, mas a visibilidade completa desse valor no thread ainda não foi provada.
 
 ## ArgStyle2: ordem antes do primeiro tick
 
 1. Argumentos brutos vão para IDs1–3; defaults/controllers são instalados.
 2. 0x57de08–0x57de1b armazena argumento2 em ID19 e argumento3 em ID20.
-3. 0x57de27 armazena argumento1 no campo de origem por0x57c257.
+3. 0x57de27 armazena argumento1 em ID47, source, por0x57c257. O endereço
+   this+0xb0 corresponde a payload this+0x38+(47-17)*4; não é banco separado.
+   0x57deab–0x57debe escreve ID46,isplaying=1.
 4. Final do initializer0x57decf chama vtable+0x58 ->0x57df27, pausando e
    retirando da fila de execução.
 5. Caller0x5738ee ->0x57d873 sobrescreve ID19 com extvol espacial calculado.
@@ -44,6 +69,23 @@ zero nesse caller. R2zero não significa ganho final zero. Escritor0x57e150 pode
 redirecionar ao provider compartilhado; local0x57e191 grava valor/flags e
 recalcula controles para IDs18–20. Stores diretos de inicialização por0x5805fa
 não executam esses efeitos. Shared provider ainda exige contrato próprio.
+
+O escritor local também define zero/positive/sign em0x57e199–0x57e1be antes
+de armazenar ou recalcular. Como o setter de pan é o último antes de ativar,
+o estado fresco com provider próprio entra no script com zero=(pan==0),
+positive=(pan>0), sign=(pan<0). O interpretador ODH representa zero/sign.
+Manter ambos falsos erra o caso pan=0. A ativação verificada muda pausa/fila,
+sem reescrever esses flags. Provider compartilhado/reutilização não cobertos.
+
+ID18 é volume no perfil nativo: escrita0x57e1ea–0x57e20c recalcula controles.
+Rebinding de patch usa ID50, pelo caminho0x57e2e1–0x57e331. O alias histórico
+18/50 do perfil FreeSO deve continuar restrito ao perfil legado.
+
+O Track3410 chair_sit_metal tem volume1024,ArgStyle2,duckpri10,group1,Spl20,
+patch0 e hitlist tkd_chair_sit_metal. Portanto sua inicialização deve guardar
+ID25=10 e ID50=0 mesmo quando a escolha inicial seleciona uma XA não zero.
+Trechos adicionais e identidade reverificada em
+reports/hit-native-controls-init-selected.asm.txt.
 
 ## Composição e fronteira com o backend
 

@@ -17,7 +17,8 @@ public:
     Selection(const HitFile& file, const Hot& resources, std::uint32_t start,
               const std::array<std::int32_t, 29>& vars, const HitChooser& choice,
               const HitSelectionLimits& bounds, HitJumpOperand operand, const HitSourceFieldReader& reader,
-              std::optional<HitArguments> args)
+              std::optional<HitArguments> args, const HotTrack* track,
+              std::optional<HitNativeControls> native_controls)
         : hit(file), hot(resources), object_vars(vars), chooser(choice), limits(bounds), jump_operand(operand), source_reader(reader), pc(start) {
         if (operand != HitJumpOperand::FreeSoHeuristic && operand != HitJumpOperand::Literal32)
             fail("unsupported Jump operand profile");
@@ -30,6 +31,46 @@ public:
         plan.registers[1] = 12;
         plan.initial_arguments = args;
         if(args) for(std::size_t n=0;n<args->size();++n) plan.registers[n+1]=(*args)[n];
+        if (native_controls) {
+            if (!args || *args != native_controls->raw_arguments)
+                fail("native controls require matching explicit raw arguments");
+            if (!track || !track->arg_type || *track->arg_type != 2 || !track->volume ||
+                !track->ducking_priority || !track->patch_id ||
+                !track->unsupported_reason.empty() ||
+                signed_bits(*track->volume) != native_controls->raw_track_volume ||
+                signed_bits(*track->ducking_priority) != native_controls->raw_track_ducking_priority ||
+                signed_bits(*track->patch_id) != native_controls->raw_track_patch)
+                fail("native controls require matching resolved ArgStyle 2 track");
+            for (std::size_t id = 16; id <= 47; ++id)
+                if (!native_controls->locals[id - 16])
+                    fail("native controls omit initialized local " + std::to_string(id));
+            if (!native_controls->locals[50 - 16])
+                fail("native controls omit initialized patch local 50");
+            for (std::size_t id = 48; id <= 69; ++id)
+                if (id != 50 && native_controls->locals[id - 16])
+                    fail("native controls invent unknown local " + std::to_string(id));
+            if (*native_controls->locals[16 - 16] != 0 ||
+                *native_controls->locals[19 - 16] != native_controls->spatial_external_volume ||
+                *native_controls->locals[20 - 16] != native_controls->spatial_pan ||
+                *native_controls->locals[46 - 16] != 1 ||
+                *native_controls->locals[47 - 16] != (*args)[0] ||
+                *native_controls->locals[50 - 16] != native_controls->raw_track_patch)
+                fail("native controls have inconsistent post-initialization locals");
+            if (native_controls->initial_zero_flag != (native_controls->spatial_pan == 0) ||
+                native_controls->initial_sign_flag != (native_controls->spatial_pan < 0))
+                fail("native controls have inconsistent final pan and initial flags");
+            for (std::size_t i = 0; i < plan.locals.size(); ++i) {
+                if (native_controls->locals[i]) {
+                    plan.locals[i] = *native_controls->locals[i];
+                    local_known[i] = true;
+                }
+            }
+            zero = native_controls->initial_zero_flag;
+            sign = native_controls->initial_sign_flag;
+            plan.zero_flag = zero;
+            plan.sign_flag = sign;
+            plan.initial_controls = std::move(native_controls);
+        }
     }
     const HitNotePlan& run(const HotTrack* track, const HitNoteBackend* backend = nullptr,
                     std::uint32_t note_limit = 0) {
@@ -226,6 +267,7 @@ private:
     bool zero = false, sign = false;
     std::optional<std::uint32_t> list, patch;
     HitNotePlan plan;
+    std::array<bool, 54> local_known{};
     HitSelectionTrace current;
     bool ended = false, finished = false;
     std::vector<std::uint64_t> notes;
@@ -264,18 +306,23 @@ private:
     }
     std::int32_t read(std::uint8_t location) const {
         variable(location);
+        if (plan.initial_controls && location >= 16 && !local_known[location - 16])
+            fail("uninitialized native HIT local " + std::to_string(location));
         return location < 16 ? plan.registers[location] : plan.locals[location - 16];
     }
     void write(std::uint8_t location, std::int32_t value) {
         variable(location);
-        if (location == 0x12 || location == 50) {
+        if (location == 50 || (location == 0x12 && !plan.initial_controls)) {
             const auto id = static_cast<std::uint32_t>(value);
             const bool exists = hot.patches.find(id) != hot.patches.end();
             current.patch_replaced = exists;
             if (exists) patch = id;
         }
         if (location < 16) plan.registers[location] = value;
-        else plan.locals[location - 16] = value;
+        else {
+            plan.locals[location - 16] = value;
+            local_known[location - 16] = true;
+        }
         current.write_location = location;
         current.write_value = value;
     }
@@ -337,8 +384,10 @@ struct HitThread::Impl {
     Impl(const HitFile& hit, const Hot& hot, std::uint32_t start,
          const std::array<std::int32_t,29>& vars, HitChooser chooser,
          HitNoteBackend output, HitThreadLimits limits, const HotTrack* track,
-         HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args)
-        : execution(hit,hot,start,vars,chooser,limits.execution,operand,reader,args),
+         HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args,
+         std::optional<HitNativeControls> native_controls)
+        : execution(hit,hot,start,vars,chooser,limits.execution,operand,reader,args,track,
+                    std::move(native_controls)),
           backend(std::move(output)), note_limit(limits.notes) {
         if (!backend.start || !backend.status) throw FormatError("HIT thread requires start/status callbacks");
         if (!note_limit || note_limit > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
@@ -349,9 +398,10 @@ struct HitThread::Impl {
 HitThread::HitThread(const HitFile& hit, const Hot& hot, std::uint32_t start,
                      const std::array<std::int32_t,29>& vars, HitChooser chooser,
                      HitNoteBackend backend, HitThreadLimits limits, const HotTrack* track,
-                     HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args)
+                     HitJumpOperand operand, HitSourceFieldReader reader, std::optional<HitArguments> args,
+                     std::optional<HitNativeControls> native_controls)
     : impl_(std::make_unique<Impl>(hit,hot,start,vars,std::move(chooser),std::move(backend),limits,
-                                   track,operand,std::move(reader),args)) {}
+                                   track,operand,std::move(reader),args,std::move(native_controls))) {}
 HitThread::~HitThread() = default;
 HitThreadTick HitThread::tick() {
     auto& p = *impl_;
@@ -389,7 +439,9 @@ HitNotePlan select_hit_note(const HitFile& hit, const Hot& hot, std::uint32_t st
                            const std::array<std::int32_t, 29>& vars,
                            const HitChooser& chooser, const HitSelectionLimits& limits,
                            const HotTrack* track, HitJumpOperand jump_operand,
-                           const HitSourceFieldReader& source_reader, std::optional<HitArguments> args) {
-    return Selection(hit, hot, start, vars, chooser, limits, jump_operand, source_reader, args).run(track);
+                           const HitSourceFieldReader& source_reader, std::optional<HitArguments> args,
+                           std::optional<HitNativeControls> native_controls) {
+    return Selection(hit, hot, start, vars, chooser, limits, jump_operand, source_reader,
+                     args, track, std::move(native_controls)).run(track);
 }
 }

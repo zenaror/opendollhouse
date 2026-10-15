@@ -44,6 +44,7 @@ struct BhavAudio::Impl {
     bool drain_output_empty=false,drain_timed_out=false,stopped_pumping=false;
     std::string diagnostic;
     std::optional<odh::HitArguments> last_arguments;
+    std::optional<BhavNativeControlReceipt> last_native_controls;
 
     Impl(odh::World& world_value,BhavAudioConfig config_value)
       :world(world_value),config(std::move(config_value)),
@@ -53,20 +54,31 @@ struct BhavAudio::Impl {
        catalog(config.sources),sink(config.output_rate),transport(sink),
        threads(world,[this](const odh::SoundRequest& request,const odh::SoundSourceBinding& binding){
            auto arguments=config.arguments;
+           std::optional<odh::ResolvedHitEvent> resolved;
+           if(config.caller_arguments || config.native_controls)
+               resolved=odh::resolve_hit_event(hit,hot,request);
            if(config.caller_arguments){
-               // Validate event name/profile before its bounded copy and lookup.
-               odh::resolve_hit_event(hit,hot,request);
+               // Resolution validated the name before this bounded copy.
                auto name=request.name;
                for(auto& c:name)if(c>='A' && c<='Z')c=static_cast<char>(c-'A'+'a');
                arguments=odh::play_sound_arguments(hot.events.at(name),request.source);
            }
            last_arguments=arguments;
+           std::optional<odh::HitNativeControls> native_controls;
+           if(config.native_controls){
+               native_controls=odh::build_native_hit_controls(*resolved->initial_track,arguments,
+                   (*config.native_controls)[0],(*config.native_controls)[1]);
+               BhavNativeControlReceipt receipt{};
+               for(std::size_t i=0;i<receipt.size();++i)
+                   receipt[i]=native_controls->locals[native_control_receipt_ids[i]-16];
+               last_native_controls=receipt;
+           }
            odh::HitChooser first=[](std::uint32_t,const std::vector<std::uint32_t>& choices){
                if(choices.empty())throw odh::FormatError("diagnostic chooser received empty HIT list");
                return std::size_t{0};
            };
            return make_xa_hit_sound(hit,hot,request,binding,transport,catalog,std::move(first),
-               config.controls,{},config.jump,arguments,{});
+               config.controls,{},config.jump,arguments,{},{},std::move(native_controls));
        }){}
 
     void note_error(const std::exception& error){
@@ -89,14 +101,18 @@ BhavAudio::BhavAudio(odh::World& world,BhavAudioConfig config)
 BhavAudio::~BhavAudio()=default;
 bool BhavAudio::submit(const odh::SoundRequest& request){
     impl_->last_arguments.reset();
+    impl_->last_native_controls.reset();
     try{
         if(impl_->threads.submit(request)){++impl_->submitted;return true;}
+        impl_->last_native_controls.reset();
         ++impl_->rejected;return false;
     }catch(const std::exception& error){
+        impl_->last_native_controls.reset();
         ++impl_->rejected;++impl_->submit_errors;impl_->note_error(error);return false;
     }
 }
 std::optional<odh::HitArguments> BhavAudio::last_arguments() const {return impl_->last_arguments;}
+std::optional<BhavNativeControlReceipt> BhavAudio::last_native_controls() const {return impl_->last_native_controls;}
 void BhavAudio::simulation_tick(){
     ++impl_->scheduler_ticks;
     try{
@@ -143,6 +159,8 @@ void BhavAudio::emit_json(std::ostream& out,std::uint64_t simulation_ticks) cons
        <<",\"args\":";
     if(a.config.caller_arguments)out<<"null";
     else out<<'['<<a.config.arguments[0]<<','<<a.config.arguments[1]<<','<<a.config.arguments[2]<<']';
+    if(a.config.native_controls)out<<",\"native_controls\":{\"profile\":\"fresh_argstyle2_partial\",\"extvol\":"
+        <<(*a.config.native_controls)[0]<<",\"pan\":"<<(*a.config.native_controls)[1]<<'}';
     out<<",\"jump\":"<<quote(a.config.jump==odh::HitJumpOperand::Literal32?"literal32":"free-so")
        <<",\"chooser\":\"first\",\"gain_q15\":"<<a.config.controls.gain_q15
        <<",\"pan_q15\":"<<a.config.controls.pan_q15<<",\"rate\":"<<a.config.output_rate

@@ -52,7 +52,11 @@ diagnóstica em [bhav-audio-validation.md](bhav-audio-validation.md), com argume
 e controles explícitos; a cena construída da cadeira pode emitir PCM dos dados
 nativos pelo loop existente. Derivação bruta do caller/evento opcional em
 [hit-caller-resolution-validation.md](hit-caller-resolution-validation.md).
-ArgStyle/controles antes do script, precedência/descoberta,
+O perfil opcional fresco ArgStyle2 instala controles brutos antes do primeiro
+script em [hit-native-controls-validation.md](hit-native-controls-validation.md),
+com entradas espaciais explícitas, defaults/controllers e flags iniciais.
+Locais desconhecidos falham ao serem lidos; o estado bruto não aplica DSP.
+Geometria e agregação espaciais, provider compartilhado, precedência/descoberta,
 grupos/owners/ganho espacial e scheduler geral do lote permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,

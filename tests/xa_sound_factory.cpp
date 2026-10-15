@@ -47,9 +47,10 @@ int main(int argc,char** argv){try{
     hot.patches[300]={"absent","absent.xa",false,false};
     odh::World world;world.create(1,odh::EntityKind::avatar,{0,66,0,0});world.create(2,odh::EntityKind::object);
     Sink sink;odh::PcmTransport transport(sink,{1024,8,8,32});
+    std::optional<odh::HitNativeControls> native_controls;
     odh::SoundThreadCollection collection(world,[&](const auto& request,const auto& binding){
         return odh_host::make_xa_hit_sound(hit,hot,request,binding,transport,catalog,{}, {}, {},
-            odh::HitJumpOperand::Literal32,odh::HitArguments{{12,0,0}},{});
+            odh::HitJumpOperand::Literal32,odh::HitArguments{{12,0,0}},{},{},native_controls);
     });
     unsigned submissions=0;
     auto primitive=odh::sound_primitive(world,[](const auto&,auto id)->std::optional<odh::SoundEvent>{
@@ -92,5 +93,35 @@ int main(int argc,char** argv){try{
     run(2,2);require(collection.tick().faulted==1 && transport.usage().handles==1,
         "loader allowance failed to enforce aggregate PCM budget");
     transport.release(occupied);
+    // Native volume is available to the very first bytecode read. Copy it to
+    // patch50, then write18=100: that later control write must not bind patch100.
+    hot.tracks[7].arg_type=2;hot.tracks[7].volume=200;hot.tracks[7].ducking_priority=10;
+    native_controls=odh::build_native_hit_controls(hot.tracks[7],{{12,0,0}},1024,512);
+    hit.bytes.resize(16);hit.bytes.insert(hit.bytes.end(),{6,50,18,5,18,100,0,0,0,2,5,11,12});
+    run(2,1);
+    require(collection.size()==1 && !transport.usage().handles,"native factory executed before first tick");
+    require(collection.tick().active==1 && transport.usage().handles==1,"native factory did not start one note");
+    transport.tick();
+    require(sink.samples.front()==2048 && sink.samples[1]==2048,
+        "factory lost initial native volume or retained legacy patch18 alias");
+    world.remove(2);
+    require(collection.tick().owner_invalid==1 && !transport.usage().handles && !transport.usage().pcm_bytes,
+        "native owner cancellation retained audio resources");
+    world.create(2,odh::EntityKind::object);
+    // Reject an incompatible track before any note acquisition. Previously
+    // built controls cannot bypass the constructor profile gate.
+    odh::SoundRequest request;request.source=2;request.name="fixture";
+    request.source_variables=odh::sound_source_variables(*world.find(2));
+    bool rejected=false;
+    hot.tracks[7].arg_type=1;
+    try { collection.submit(request); } catch(const odh::FormatError&) { rejected=true; }
+    require(rejected && !collection.size() && !transport.usage().handles && !transport.usage().pcm_bytes,
+        "unsupported native factory profile did not reject with clean resources");
+    hot.tracks[7].arg_type=2;
+    native_controls->raw_arguments[0]=13;
+    rejected=false;
+    try { collection.submit(request); } catch(const odh::FormatError&) { rejected=true; }
+    require(rejected && !collection.size() && !transport.usage().handles && !transport.usage().pcm_bytes,
+        "late native tuple rejection retained factory resources");
     std::cout<<checks<<" BHAV->XA factory->owned HIT notes->shared PCM lifecycle checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

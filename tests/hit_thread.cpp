@@ -36,6 +36,8 @@ int main() { try {
         require(handle == 42, "stable owned handle queried"); ++queries; return status;
     };
     odh::HitThread t(f.hit,f.hot,16,f.vars,{},backend);
+    require(!t.state().zero_flag && !t.state().sign_flag && !t.state().initial_controls,
+            "legacy thread starts with clear flags and no native receipt");
     require(t.tick() == odh::HitThreadTick::yielded && t.pc() == 24,
             "active WaitSamp rewinds PC to opcode and yields");
     require(starts == 1 && t.state().registers[5] == 0 && t.notes_started() == 1,
@@ -125,6 +127,62 @@ int main() { try {
     odh::HitThread trace(e.hit,e.hot,16,e.vars,{},backend,limits);
     rejects([&] { trace.tick(); });
     require(starts == before_starts, "trace budget checked before note effect");
+    {
+        Fixture native{14, 19, 5, 18, 200, 0, 0, 0, 2, 5, 12};
+        native.hot.patches[200] = {"other", "other.xa", false, false};
+        native.hot.hitlists[77].ids = {100};
+        odh::HotTrack track;
+        track.hitlist_id = 77; track.patch_id = 0; track.arg_type = 2;
+        track.volume = 700; track.ducking_priority = 3;
+        const odh::HitArguments raw{{5, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, raw, 900, 500);
+        int native_choices = 0, native_starts = 0;
+        auto native_backend = backend;
+        native_backend.start = [&](std::uint32_t patch)->std::optional<std::uint64_t> {
+            require(patch == 100, "script write18 cannot switch selected native patch");
+            ++native_starts; return 314;
+        };
+        native_backend.status = [](std::uint64_t) { return odh::HitNoteStatus::complete; };
+        odh::HitThread thread(native.hit, native.hot, 16, native.vars,
+            [&](std::uint32_t list, const auto& ids) {
+                require(list == 77 && ids == std::vector<std::uint32_t>({100}),
+                        "native initial track invokes correct chooser");
+                ++native_choices; return 0U;
+            }, native_backend, {}, &track, odh::HitJumpOperand::FreeSoHeuristic, {}, raw, controls);
+        require(native_choices == 1 && native_starts == 0 && thread.state().steps == 0 &&
+                thread.state().trace.empty() && !thread.state().zero_flag && !thread.state().sign_flag &&
+                thread.state().initial_controls->locals[18 - 16] == 700 &&
+                thread.state().initial_controls->locals[19 - 16] == 900 &&
+                thread.state().initial_controls->locals[25 - 16] == 3 &&
+                thread.state().initial_controls->locals[50 - 16] == 0 &&
+                thread.state().patch_id == 0,
+                "native state and one initial choice exist before first tick without script effects");
+        require(thread.tick() == odh::HitThreadTick::yielded && native_choices == 1 &&
+                native_starts == 1 && thread.state().registers[1] == 5 &&
+                thread.state().registers[2] == 0 && thread.state().registers[3] == 0 &&
+                thread.state().trace[0].opcode == 14 &&
+                thread.state().locals[18 - 16] == 200 &&
+                thread.state().initial_controls->locals[18 - 16] == 700,
+                "first native tick reads post-spatial controls; receipt stays immutable");
+        thread.tick();
+        require(thread.tick() == odh::HitThreadTick::complete && native_choices == 1,
+                "native startup does not reselect track on later ticks");
+    }
+    for (const std::int32_t pan : {-512, 0, 512}) {
+        Fixture native{12};
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        const odh::HitArguments raw{{1, 0, 0}};
+        auto controls = odh::build_native_hit_controls(track, raw, 1024, pan);
+        odh::HitThread thread(native.hit, native.hot, 16, native.vars, {}, backend,
+                              {}, &track, odh::HitJumpOperand::FreeSoHeuristic, {}, raw, controls);
+        require(thread.state().steps == 0 && thread.state().trace.empty() &&
+                thread.state().zero_flag == (pan == 0) &&
+                thread.state().sign_flag == (pan < 0) &&
+                thread.state().initial_controls->initial_zero_flag == (pan == 0) &&
+                thread.state().initial_controls->initial_sign_flag == (pan < 0),
+                "native thread exposes final-pan flags in receipt before first tick");
+    }
     // Reentrancy cannot be suppressed by a callback to continue effects.
     odh::HitThread* self = nullptr;
     auto recursive = backend;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "odh/hit_resources.hpp"
+#include "odh/hit_controls.hpp"
 
 namespace odh {
 // Only the Jump operand interpretation changes. Literal32 is supported by
@@ -53,6 +53,7 @@ struct HitNotePlan {
     std::optional<std::uint32_t> active_hitlist;
     std::optional<HitChoice> initial_choice;
     std::optional<HitArguments> initial_arguments;
+    std::optional<HitNativeControls> initial_controls;
     std::array<std::int32_t, 16> registers{};
     std::array<std::int32_t, 54> locals{};
     std::vector<HitSelectionTrace> trace;
@@ -64,8 +65,13 @@ struct HitNotePlan {
 // Offline, bounded primary-FreeSO TS1 selection profile, not an audio backend
 // or proof of original-game semantics. start_pc is an already resolved code
 // address. Registers/local variables begin zero, except register 1 = 12.
-// Explicit initial_args instead seed registers1,2,3 from the owned tuple;
-// every other initial register/local and zero/sign flag stays unchanged.
+// Explicit initial_args instead seed registers1,2,3 from the owned tuple.
+// Optional native_controls is a separate, owned ArgStyle 2 pre-script local
+// snapshot built with explicit spatial inputs. It requires matching initial
+// arguments and track; unknown native locals reject reads until written. Its
+// final pan setter seeds zero/sign flags before the first bytecode instruction.
+// Without it, all other initial registers/locals and flags retain the legacy
+// zero/FreeSO selection profile.
 // GetSrcDataField reads object_vars[field] directly: field 20 is index 20,
 // FreeSO neatness/10, not index 14 (age). The caller supplies all 29 values.
 // If source_reader is supplied, it replaces that lookup and receives BOTH
@@ -83,8 +89,8 @@ struct HitNotePlan {
 // a zero byte skips three target bytes, a nonzero byte leaves PC at the target.
 // Literal32 instead always consumes a four-byte ID and remaps it directly;
 // it never reads a register or probes/skips the destination's first bytes.
-// Writes to 0x12 and decimal 50 replace the selected patch only when it exists
-// in HOT, preserving the previous patch on a failed lookup, as in FreeSO.
+// Legacy writes to 0x12 and decimal 50 can replace the selected patch. In the
+// explicit native-controls profile, ID 18 is volume only; ID 50 remains patch.
 // optional initial_track applies SetTrack's initial hitlist/patch selection;
 // an explicit zero patch with a nonzero list invokes chooser before bytecode.
 // The plan stops before NoteOn's audio effect and destination write. WaitSamp,
@@ -97,5 +103,6 @@ HitNotePlan select_hit_note(const HitFile&, const Hot&, std::uint32_t start_pc,
                            const HotTrack* initial_track = nullptr,
                            HitJumpOperand jump_operand = HitJumpOperand::FreeSoHeuristic,
                            const HitSourceFieldReader& source_reader = {},
-                           std::optional<HitArguments> initial_args = {});
+                           std::optional<HitArguments> initial_args = {},
+                           std::optional<HitNativeControls> native_controls = {});
 }

@@ -54,12 +54,13 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     hit.write_bytes(hit_header + bytes([2, 5, 11, 12]))
     xa.write_bytes(b"XAI\0" + struct.pack("<IHHIIHH", 112, 1, 1, 8000, 16000, 2, 16) + (b"\0" + b"\x11" * 14) * 2)
 
-    def write_owner(flags=12, yes=254, event_ids=(1,)):
+    def write_owner(flags=12, yes=254, event_ids=(1,), second_sound=False):
         instructions = b"".join(struct.pack("<HBB", 23, n + 1 if n + 1 < len(event_ids) else yes, 255) + bytes([event, 0, 0, 0, flags, 0, 0, 0]) for n, event in enumerate(event_ids))
         routine = struct.pack("<HHBBHHH", 0x8002, len(event_ids), 0, 4, 0, 0, 0) + instructions
         owner.write_bytes(far([(b"owner.iff", iff([
             chunk(b"BHAV", 4096, routine), chunk(b"SLOT", 128, slots + storage + route),
             chunk(b"OBJD", 16808, prefix), chunk(b"FWAV", 1, b"fixture\0"),
+            *([chunk(b"FWAV", 2, b"bad\0")] if second_sound else []),
         ]))]))
 
     write_owner()
@@ -97,6 +98,7 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     # Drain pumps the existing transport only, never simulates a HIT completion.
     assert audio["threads"]["completed"] == 0 and audio["threads"]["active"] == 1
     assert all(hashlib.sha256(path.read_bytes()).digest() == digest for path, digest in identities.items())
+    assert "native_controls" not in audio["profile"] and "hit_native_controls" not in report["sound_requests"][0]
     assert audio["profile"]["argument_mode"] == "explicit_tuple"
     assert report["sound_requests"][0]["hit_arguments"] == [1, 1024, 0]
     caller_profile = ["--audio-caller-args", *profile[4:]]
@@ -134,13 +136,64 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     report = json.loads(result.stdout)
     assert result.returncode == 0 and report["sound_requests"][0]["hit_arguments"] == [1, 0, 0]
     assert report["sound_requests"][1]["status"] == "missing_resource" and report["sound_requests"][1]["hit_arguments"] is None
+    # Native controls are opt-in, raw, and separate from unchanged DSP Q15.
+    native_profile = caller_profile + ["--audio-native-controls", "1024", "512"]
+    native_hot = hot_text.replace("7=0,entry,1024,0,0,0,0,@none,9", "7=0,entry,1024,2,10,0,0,@none,9")
+    hot.write_text(native_hot)
+    write_owner(flags=14, event_ids=(1, 2))
+    result = run(resources + native_profile + ["--audio-drain-ms", "1000"])
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    first, missing = report["sound_requests"]
+    expected = {"17": 32, "18": 1024, "19": 1024, "20": 512, "21": 3600, "25": 10, "46": 1, "47": 2, "50": 9}
+    assert first["hit_native_controls"] == expected and first["hit_arguments"] == [2, 0, 0]
+    assert first["source"] == 2 and first["status"] == "submitted"
+    assert missing["status"] == "missing_resource" and all(v is None for v in missing["hit_native_controls"].values())
+    audio = report["audio_probe"]
+    assert audio["profile"]["native_controls"] == {"profile": "fresh_argstyle2_partial", "extvol": 1024, "pan": 512}
+    assert audio["profile"]["gain_q15"] == 32768 and audio["profile"]["pan_q15"] == 0
+    assert audio["playback_state"] == "pcm_drained_hit_pending" and audio["simulation_ticks"] == 0
+    assert audio["scheduler_ticks"] == 1 and not audio["pcm"]["failed"]
+    # Raw patch local50 remains zero when the chooser selects patch9 from a list.
+    list_hot = native_hot.replace("0x9=0x10", "0x1=0x10").replace("@none,9", "@1,0") + "[GlobalHitList]\n1=9\n"
+    hot.write_text(list_hot)
+    write_owner(flags=14)
+    result = run(resources + native_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report["audio_probe"]["pcm"]["rendered"] >= 56
+    assert report["sound_requests"][0]["hit_native_controls"] == dict(expected, **{"50": 0})
+    hot.write_text(native_hot)
+    # Full signed int32 inputs are raw controls, never clamped as Q15.
+    write_owner()
+    result = run(resources + caller_profile + ["--audio-native-controls", "-2147483648", "2147483647"])
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report["sound_requests"][0]["hit_native_controls"]["19"] == -2147483648
+    assert report["sound_requests"][0]["hit_native_controls"]["20"] == 2147483647
+    # A later submit that fails the profile gate must not reuse a receipt.
+    hot.write_text(native_hot.replace("[Track]", "bad=1,8,0,0,0,0\n[Track]\n8=0,entry,1024,1,10,0,0,@none,9"))
+    write_owner(event_ids=(1, 2), second_sound=True)
+    result = run(resources + native_profile)
+    report = json.loads(result.stdout)
+    first, rejected = report["sound_requests"]
+    assert result.returncode == 3 and first["status"] == "submitted" and first["hit_native_controls"]["19"] == 1024
+    assert rejected["status"] == "backend_rejected" and all(v is None for v in rejected["hit_native_controls"].values())
+    write_owner(event_ids=(1, 1))
+    # Unsupported ArgStyle rejects every request before first tick/decode.
+    hot.write_text(native_hot.replace(",1024,2,10,", ",1024,1,10,"))
+    result = run(resources + native_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 3 and report["audio_probe"]["requests"]["submit_errors"] == 2
+    assert report["audio_probe"]["pcm"]["rendered"] == 0 and report["audio_probe"]["threads"]["active"] == 0
+    assert all(all(v is None for v in event["hit_native_controls"].values()) for event in report["sound_requests"])
+    assert "ArgStyle 2" in report["audio_probe"]["diagnostic"]
+    hot.write_text(hot_text)
     write_owner()
     result = run(resources + profile)
     audio = json.loads(result.stdout)["audio_probe"]
     assert result.returncode == 0 and audio["playback_state"] == "pending_output"
     assert not audio["host_drain"]["requested"] and not audio["host_drain"]["output_empty"]
     assert audio["host_drain"]["polls"] == 0 and audio["scheduler_ticks"] == 1
-    for bad in [resources, profile, resources + profile + ["--audio-rate", "7999"], resources + profile + ["--audio-drain-ms", "5001"], resources + profile + ["--audio-args", "0", "0", "0"], resources + profile + ["--audio-caller-args"], resources + caller_profile + ["--audio-args", "0", "0", "0"]]:
+    for bad in [resources + profile + ["--audio-native-controls", "0"], resources + profile + ["--audio-native-controls", "2147483648", "0"], resources + profile + ["--audio-native-controls", "0", "0", "--audio-native-controls", "0", "0"], resources, profile, resources + profile + ["--audio-rate", "7999"], resources + profile + ["--audio-drain-ms", "5001"], resources + profile + ["--audio-args", "0", "0", "0"], resources + profile + ["--audio-caller-args"], resources + caller_profile + ["--audio-args", "0", "0", "0"]]:
         result = run(bad)
         assert result.returncode == 2 and not result.stdout, (bad, result.returncode, result.stdout, result.stderr)
     hit.write_bytes(hit_header + bytes([69, 1, 2, 5, 11, 12]))

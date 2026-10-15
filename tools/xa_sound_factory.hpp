@@ -15,5 +15,5 @@ std::unique_ptr<odh::SoundThreadInstance> make_xa_hit_sound(
     const odh::SoundSourceBinding&,odh::PcmTransport&,const XaPatchCatalog&,
     odh::HitChooser,odh::PcmControls,odh::HitThreadLimits,odh::HitJumpOperand,
     odh::HitArguments,std::function<void(std::uint8_t)> kill_group,
-    odh::SoundEventFactoryLimits = {});
+    odh::SoundEventFactoryLimits = {}, std::optional<odh::HitNativeControls> = {});
 }

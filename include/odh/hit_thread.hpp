@@ -33,7 +33,8 @@ public:
               HitChooser, HitNoteBackend, HitThreadLimits = {},
               const HotTrack* initial_track = nullptr,
               HitJumpOperand = HitJumpOperand::FreeSoHeuristic,
-              HitSourceFieldReader = {}, std::optional<HitArguments> = {});
+              HitSourceFieldReader = {}, std::optional<HitArguments> = {},
+              std::optional<HitNativeControls> = {});
     ~HitThread();
     HitThread(const HitThread&) = delete;
     HitThread& operator=(const HitThread&) = delete;
