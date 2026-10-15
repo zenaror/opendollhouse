@@ -47,8 +47,9 @@ pela saída não podem ser retirados. O chamador deve descartar todos os buffers
 anteriores ao rewind; a API não fornece tokens de época. Controles novos afetam
 renderizações futuras e podem ser aplicados aos pendentes mediante esse flush.
 
-Ainda falta um transport/backend reutilizável que faça essa coordenação e
-possua o dispositivo compartilhado, separado dos lifetimes individuais HIT.
+O transporte reutilizável posterior faz essa coordenação com dispositivo
+compartilhado em [pcm-transport-validation.md](pcm-transport-validation.md).
+Backend/lifetimes HIT reutilizáveis ainda pendentes.
 
 ## Evidência
 

@@ -343,6 +343,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Factory de eventos, tracks e inicialização HIT](docs/sound-factory-validation.md)
 - [Catálogo XA com fontes FAR/avulsas e proveniência](docs/xa-patch-catalog-validation.md)
 - [Mixer PCM portátil, limites e consumo por nota](docs/pcm-mixer-validation.md)
+- [Transporte PCM compartilhado e cancelamento na saída Linux](docs/pcm-transport-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)
