@@ -56,6 +56,10 @@ O perfil opcional fresco ArgStyle2 instala controles brutos antes do primeiro
 script em [hit-native-controls-validation.md](hit-native-controls-validation.md),
 com entradas espaciais explícitas, defaults/controllers e flags iniciais.
 Locais desconhecidos falham ao serem lidos; o estado bruto não aplica DSP.
+Nesse perfil, opcode69 também falha explicitamente: o callback legado recebe
+um byte de grupo, enquanto a evidência nativa exige resolução de variável,
+registro por TrackID, fade e retry por Clock. O contrato investigado está em
+[hit-native-group-kill-evidence.md](hit-native-group-kill-evidence.md).
 Geometria e agregação espaciais, provider compartilhado, precedência/descoberta,
 grupos/owners/ganho espacial e scheduler geral do lote permanecem pendentes.
 

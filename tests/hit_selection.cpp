@@ -144,6 +144,42 @@ int main() { try {
                     "omitted native profile retains legacy clear initial flags");
         }
     }
+    for (const std::uint8_t operand : {std::uint8_t{0}, std::uint8_t{1}}) {
+        Fixture f; f.emit({69, operand}); f.note();
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        const odh::HitArguments raw{{1, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
+        bool refused = false;
+        try {
+            f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic, {}, raw, controls);
+        } catch (const odh::FormatError& error) {
+            const std::string message = error.what();
+            refused = message.find("native opcode 69 requires controller registry") != std::string::npos &&
+                      message.find("cursor 18") != std::string::npos;
+        }
+        require(refused, "native offline opcode69 rejects after consuming operand with explicit missing-contract diagnostic");
+        const auto legacy = f.run();
+        require(legacy.sequence_group_kills == std::vector<std::uint8_t>({operand}) &&
+                legacy.trace[0].sequence_group_kill == operand,
+                "omitted native controls preserve legacy offline group request and trace");
+    }
+    {
+        Fixture f; f.emit({69});
+        odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
+        track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        const odh::HitArguments raw{{1, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
+        bool truncated = false;
+        try {
+            f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic, {}, raw, controls);
+        } catch (const odh::FormatError& error) {
+            const std::string message = error.what();
+            truncated = message.find("address outside HIT code region") != std::string::npos &&
+                        message.find("cursor 17") != std::string::npos;
+        }
+        require(truncated, "native opcode69 missing operand retains truncated-bytecode diagnostic");
+    }
     {
         Fixture f; f.emit({4, 2, 255, 6, 3, 2, 14, 3}); f.note();
         const auto p = f.run();

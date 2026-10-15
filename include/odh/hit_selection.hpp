@@ -70,6 +70,8 @@ struct HitNotePlan {
 // snapshot built with explicit spatial inputs. It requires matching initial
 // arguments and track; unknown native locals reject reads until written. Its
 // final pan setter seeds zero/sign flags before the first bytecode instruction.
+// With native_controls, opcode 69 explicitly fails even if a legacy group
+// callback exists; native controller registry, fade/retry and Clock are absent.
 // Without it, all other initial registers/locals and flags retain the legacy
 // zero/FreeSO selection profile.
 // GetSrcDataField reads object_vars[field] directly: field 20 is index 20,

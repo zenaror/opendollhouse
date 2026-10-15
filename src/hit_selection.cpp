@@ -200,6 +200,8 @@ public:
             case 68: load_list(static_cast<std::uint32_t>(read(byte()))); break;
             case 69: {
                 const auto group = byte();
+                if (plan.initial_controls)
+                    fail("native opcode 69 requires controller registry, fade/retry scheduling and Clock; legacy group callback is unsupported");
                 if (plan.sequence_group_kills.size() >= limits.group_kills) fail("sequence-group request budget exhausted");
                 if (backend) {
                     if (!backend->kill_group) fail("sequence-group effect requires backend callback");

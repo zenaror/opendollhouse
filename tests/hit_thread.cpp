@@ -102,7 +102,50 @@ int main() { try {
     auto groups = backend; groups.kill_group = [&](std::uint8_t value) { require(value == 7,"group operand retained"); ++kills; };
     odh::HitThread grouped(group.hit,group.hot,16,group.vars,{},groups);
     grouped.tick(); grouped.tick();
-    require(kills == 1, "group request actually applied once");
+    require(kills == 1 && grouped.state().sequence_group_kills == std::vector<std::uint8_t>({7}) &&
+            grouped.state().trace[0].sequence_group_kill == 7,
+            "legacy group request applies once and retains its trace");
+    odh::HotTrack group_track; group_track.hitlist_id = 0; group_track.patch_id = 100;
+    group_track.arg_type = 2; group_track.volume = 1024; group_track.ducking_priority = 0;
+    const odh::HitArguments group_raw{{1, 0, 0}};
+    const auto group_controls = odh::build_native_hit_controls(group_track, group_raw, 1024, 512);
+    int native_group_effects = 0;
+    auto native_groups = backend;
+    native_groups.kill_group = [&](std::uint8_t) { ++native_group_effects; };
+    for (const std::uint8_t operand : {std::uint8_t{0}, std::uint8_t{1}}) {
+        Fixture native_group{69, operand, 12};
+        odh::HitThread native(native_group.hit, native_group.hot, 16, native_group.vars,
+                              {}, native_groups, {}, &group_track, odh::HitJumpOperand::FreeSoHeuristic,
+                              {}, group_raw, group_controls);
+        bool refused = false;
+        try { native.tick(); }
+        catch (const odh::FormatError& error) {
+            const std::string message = error.what();
+            refused = message.find("native opcode 69 requires controller registry") != std::string::npos &&
+                      message.find("cursor 18") != std::string::npos;
+        }
+        require(refused && native.faulted() && native.pc() == 18 && native.state().steps == 1 &&
+                native.state().trace.empty() && native.state().sequence_group_kills.empty() &&
+                native_group_effects == 0,
+                "native opcode69 rejects after operand without invoking legacy callback or recording effect");
+        rejects([&] { native.tick(); });
+        require(native.pc() == 18 && native_group_effects == 0,
+                "native opcode69 fault is latched without callback retry or cursor advance");
+    }
+    Fixture truncated_group{69};
+    odh::HitThread truncated_native(truncated_group.hit, truncated_group.hot, 16,
+                                    truncated_group.vars, {}, native_groups, {}, &group_track,
+                                    odh::HitJumpOperand::FreeSoHeuristic, {}, group_raw, group_controls);
+    bool missing_operand = false;
+    try { truncated_native.tick(); }
+    catch (const odh::FormatError& error) {
+        const std::string message = error.what();
+        missing_operand = message.find("address outside HIT code region") != std::string::npos &&
+                          message.find("cursor 17") != std::string::npos;
+    }
+    require(missing_operand && truncated_native.faulted() && truncated_native.pc() == 17 &&
+            native_group_effects == 0,
+            "truncated native opcode69 faults on missing operand before native gate or callback");
     Fixture unsupported{7};
     odh::HitThread unknown(unsupported.hit,unsupported.hot,16,unsupported.vars,{},backend);
     rejects([&] { unknown.tick(); });

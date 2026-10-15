@@ -10,11 +10,10 @@ com o handoff do escopo `OpenDollhouse` quando o conector voltar, usando o
 
 ## Checkpoint de 2026-10-15
 
-Base publicada e remote `main` verificado: `67123f4` (resolução dos argumentos
-brutos PlaySound/HOT). A unidade seguinte implementa a inicialização opcional
-ArgStyle 2 de controles HIT antes do primeiro tick. O SHA desta unidade deve
-ser identificado com `git log` após sua publicação; este texto não antecipa
-um commit. O caminho silencioso e o perfil legado continuam preservados.
+Base local `2604e86` (inicialização opcional ArgStyle 2 de controles HIT antes
+do primeiro tick). O gate posterior de opcode 69 no perfil nativo está
+implementado e validado; identificar o SHA publicado com `git log`.
+O caminho silencioso e o perfil legado continuam preservados.
 
 `HotEvent.argument_overrides` mantém CSV 2/3/4 assinados; resolução por palavra
 substitui só overrides não zero. `play_sound_arguments` usa a origem int16
@@ -36,6 +35,15 @@ flags iniciais falsos permanecem. Contrato, prova estática e limites em
 [hit-native-controls-validation.md](hit-native-controls-validation.md) e
 [hit-native-controls-evidence.md](hit-native-controls-evidence.md).
 
+No perfil com `initial_controls`, opcode 69 agora consome o byte de operando e
+falha antes de invocar o callback legado ou registrar um efeito. O operando
+truncado ainda produz erro de bytecode; `HitThread` fixa a falha, sem retry.
+Sem esse perfil, callback e trace legados permanecem. Esta recusa temporária
+evita atribuir ao byte a semântica FreeSO de grupo no perfil nativo; **não**
+implementa o opcode do jogo. A [pesquisa estática nativa](hit-native-group-kill-evidence.md)
+aponta localização de variável, registry de controllers e caminhos de
+fade/retry/Clock, que exigem contrato próprio antes de qualquer efeito.
+
 A camada de áudio do probe continua opcional: uma fila/sink PCM compartilhada,
 thread e owner por requisição, sem fechar o dispositivo por nota. HIT e PCM
 avançam em polls explícitos nas fronteiras do probe; o drain final só bombeia
@@ -54,6 +62,15 @@ seleção e 61 de thread; o factory possui 52 checks no build integrado.
 Logs `reports/hit-native-controls-build-{configure,build,ctest}.log`,
 `reports/hit-native-controls-build-asan-{configure,build,ctest}.log` e
 `reports/hit-native-controls-build-noaudio-{configure,build,ctest}.log`.
+Essas contagens oficiais pertencem à base `2604e86`. Para o gate posterior,
+testes diretos C++20 com warnings-as-errors e ASan/UBSan passaram 949 checks
+de seleção e 68 de thread; LSan ficou desligado sob ptrace. `git diff --check`
+passou. Os builds oficiais do gate configuraram 113 testes: Debug passou 112,
+com um skip X11 e zero falhas (12,90 s); ASan/UBSan teve os mesmos 112 passes,
+um skip e zero falhas (25,56 s). Sem SDL/X11, 7/7 testes selecionados passaram
+(0,63 s). Logs em `reports/hit-native-group-gate-build-{build,ctest}.log`,
+`reports/hit-native-group-gate-build-asan-{build,ctest}.log` e
+`reports/hit-native-group-gate-build-noaudio-{build,ctest}.log`.
 
 Na fixture Linux `chair_sit_metal`, `--audio-caller-args` produziu `[2,0,0]`.
 `--audio-native-controls 1024 512` mostrou IDs 17=32, 18=1024, 19=1024,
@@ -68,11 +85,25 @@ iguais ao baseline do caller, excluindo o relatório de áudio. Ver
 Esses resultados de fixture/host Linux não provam equivalência ao executável
 original ou funcionamento dos ports.
 
+O probe da mesma cadeira foi repetido em Debug e ASan com o comando exato da
+base `2604e86`: recibos, requisições, estado e trace VM/World permaneceram
+idênticos ao checkpoint anterior. Em ambos, foram 662 ticks World, 664 polls,
+30.208 frames PCM consumidos e `pcm_drained_hit_pending`. A comparação está em
+`reports/hit-native-group-gate-chair-comparison.json`; comando e recibos em
+`reports/hit-native-group-gate-chair-{command,debug,asan}.json`. Essa fixture
+não exerce opcode 69 nativo; o gate continua uma recusa explícita temporária,
+não uma implementação da operação nativa.
+
 ## Próximas unidades
 
-Pesquisar primeiro a semântica **nativa** do opcode 69, ObjectID, identidade
-real dos grupos, criação/deduplicação e ownership antes de implementar uma
-política. No Simitone pinado (`4906db3`; submódulo FreeSO `f86bbd3`),
+Concluir a prova da semântica **nativa** do opcode 69, identidade do controller
+no registry, ownership, método de término/reset, fade/retry e Clock antes de
+implementar uma política. Não conectar `kill_group(uint8_t)` nem introduzir um
+cancelamento de notas como substituto do método nativo; parar apenas PCM não
+reproduz reset de controller/binding e notificação ao manager. Registrar
+endereços, limites e conclusões na
+[pesquisa do opcode 69](hit-native-group-kill-evidence.md). No Simitone pinado
+(`4906db3`; submódulo FreeSO `f86bbd3`),
 `TSOClient/tso.sound/HITInterpreter.cs:651-663` só trata operando zero com
 `thread.KillVocals()`; outros IDs são um TODO de ObjectID, não um registro
 funcional. `HITThread.cs:183-193` para notas da própria thread.
@@ -82,8 +113,9 @@ owner, enquanto ODH ainda cria uma thread por submissão. `HITVM.cs:112-126`,
 `HITThread.cs:98-102` e `Client/Simitone/Simitone.Client/SimitoneGame.cs:286-301`
 mostram um domínio/ordem de ticks de áudio que não se deve confundir com ticks
 World ou host drain. Tudo isso é comportamento da referência, não prova da
-implementação nativa. O callback `kill_group(uint8_t)` de ODH segue explícito;
-sem handler, opcode 69 falha em vez de inventar grupo vazio.
+implementação nativa. O callback `kill_group(uint8_t)` de ODH segue explícito
+apenas no perfil legado; no perfil com controles nativos, opcode 69 falha
+mesmo se houver handler.
 
 Investigar ainda os providers espaciais, agregação, grupo/ducking e escala real
 do backend antes de converter vol/extvol/pan raw em DSP. A evidência estática

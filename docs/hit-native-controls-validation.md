@@ -57,9 +57,23 @@ aciona esses efeitos de escrita.
 Sem o argumento opcional, o perfil legado permanece: registradores/locals
 zerados, exceto R1=12, flags zero/sign falsos, e o alias histórico de escrita
 18/50 para patch. O novo perfil não altera limites de instruções, trace,
-escolhas, notas ou grupos existentes. Seu estado adicional tem tamanho fixo:
+escolhas ou notas existentes. Seu estado adicional tem tamanho fixo:
 54 locals opcionais e 31 entradas opcionais de controller; não há crescimento
 por nota ou por tick nessa inicialização.
+
+## Gate temporário do opcode 69
+
+Com `initial_controls`, opcode 69 consome o byte de operando e falha
+explicitamente antes do orçamento de solicitações, do callback legado e do
+trace de efeito. Isso preserva o diagnóstico de bytecode truncado quando o
+operando falta. `HitThread` fixa a falha e não tenta o efeito novamente em
+ticks posteriores. Sem `initial_controls`, as solicitações offline e o
+callback/trace legados continuam como antes. O gate não implementa a operação
+nativa: o byte é uma localização de variável e a execução depende de registry
+de controllers, fade/retry e Clock que ODH ainda não modela. A
+[pesquisa estática do opcode 69](hit-native-group-kill-evidence.md) registra a
+evidência e seus limites; não interpretar o nome legado `kill_group` como
+semântica nativa comprovada.
 
 ## Verificação direta
 
@@ -92,7 +106,19 @@ g++ -std=c++17 -Wall -Wextra -Wpedantic -Wconversion -Werror -Iinclude src/hit_s
 O último comando depende dos arquivos `.a` pré-existentes nesse checkout; os
 builds integrados abaixo recompilaram o código atualizado.
 
-## Integração Linux verificada
+O gate posterior foi testado diretamente em C++20 com warnings-as-errors:
+949 checks de seleção e 68 de thread passaram. Operandos 0 e 1 sob o perfil
+nativo rejeitam mesmo com callback presente, sem efeito, registro ou retry;
+o cursor consome o operando e fica estável após a falha. O operando truncado
+mantém o diagnóstico de bytecode incompleto. O perfil legado continua a
+executar seu callback e a registrar o trace. ASan/UBSan também passou nos
+mesmos dois testes com `detect_leaks=0` pela restrição de ptrace/LSan deste
+runner. Os arquivos de seleção alterados foram recompilados diretamente; o
+teste de seleção ligou bibliotecas estáticas existentes do checkout. A
+validação oficial integrada do gate está registrada separadamente abaixo; as
+contagens seguintes da primeira integração pertencem à base `2604e86`.
+
+## Integração Linux verificada — base `2604e86`
 
 Build e CTest Debug configuraram 113 testes: 112 passaram, um teste de janela
 X11 foi pulado pelo ambiente, sem falhas (14,42 s). ASan/UBSan teve o mesmo
@@ -117,6 +143,28 @@ do som ou progresso adicional da VM. A comparação retida em
 anterior de VM e World iguais ao baseline do caller, excluindo o relatório de
 áudio. Comando e recibos ficam em `reports/hit-native-controls-chair-command.json`
 e `reports/hit-native-controls-chair-{debug,asan}.json`.
+
+## Integração Linux verificada — gate posterior
+
+O build e CTest oficiais do gate configuraram 113 testes em Debug: 112
+passaram, o teste de janela X11 foi pulado pelo ambiente e nenhum falhou
+(12,90 s). ASan/UBSan repetiu 112 passes e o mesmo skip sem falhas (25,56 s);
+LSan permaneceu desligado. Sem SDL/X11, passaram os 7 testes selecionados
+(0,63 s). Os logs são
+`reports/hit-native-group-gate-build-{build,ctest}.log`,
+`reports/hit-native-group-gate-build-asan-{build,ctest}.log` e
+`reports/hit-native-group-gate-build-noaudio-{build,ctest}.log`.
+
+O probe `chair_sit_metal` foi repetido em Debug e ASan com o comando exato da
+base `2604e86`. Ambos passaram; recibos de controles, requisições, estado e
+trace VM/World ficaram iguais aos da base, conforme
+`reports/hit-native-group-gate-chair-comparison.json`. Permaneceram 662 ticks
+World, 664 polls de áudio, 30.208 frames PCM consumidos e
+`pcm_drained_hit_pending`. Comando e recibos estão em
+`reports/hit-native-group-gate-chair-command.json` e
+`reports/hit-native-group-gate-chair-{debug,asan}.json`. Essa cena não executa
+o opcode 69 nativo; confirma regressão da rota de áudio já exercitada, não
+semântica implementada para o opcode.
 
 Esses são resultados de fixture/host Linux, não execução nativa original nem
 prova de áudio físico ou de fidelidade em 3DS/Vita/Android. Extvol e pan do
