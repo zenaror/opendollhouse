@@ -71,30 +71,26 @@ Na imagem nativa, o cleanup de `cXObject` chama a remoção da fonte; remoção
 normal, fontes especiais e refresh estão descritos na evidência estática de
 contribuições. Isso não significa que o runtime ODH esteja integrado a esse
 ciclo.
-O builder fresh agora conhece o banco 50–62, incluindo interrupt55=0 e Spl57,
-e há uma primitiva local para atualizar argumentos/controles sem reset quando
-55=0 e 53=0. Contrato e verificação estão em
-[hit-native-retrigger-validation.md](hit-native-retrigger-validation.md); a
-pesquisa estática e sua auditoria estão em
-[hit-native-retrigger-evidence.md](hit-native-retrigger-evidence.md).
-A primitiva não implementa admissão, scheduler ou restart quando55!=0, e não
-representa os bytes/ponteiro internos de lifecycle do original. A nova pesquisa
-estática mostra que a integração precisa primeiro representar o banco persistente
-1–16 (incluindo ID16; R4–R16 não são reiniciados), a execução com scheduler/Clock
-e o binding de áudio corrente. Só depois deve entrar o manager persistente por
-HOTTrackID, mantendo geração de World e binding PCM distintos. Veja
-[controller, áudio corrente e Clock](hit-native-controller-lifecycle-evidence.md).
-Não usar `HitThread::tick` completo como sinal de término nativo nem mapear o
-controller a uma thread de `SoundThreadCollection` por pedido. A pesquisa é
-estática, não uma integração ODH nem prova de comportamento de backend.
+O builder fresh conhece os bancos HIT e `HitThread` já oferece uma atualização
+local sem reset, descrita em [hit-native-retrigger-validation.md](hit-native-retrigger-validation.md).
+A implementação seguinte é um `NativeHitController` portátil com bancos
+separados 1–16, 17–47 e 50–62, execução pelo Clock explícito e callbacks para
+o binding de áudio corrente. Contratos, subconjunto de opcodes e limites estão
+em [hit-native-controller-validation.md](hit-native-controller-validation.md);
+a pesquisa estática correspondente está em
+[hit-native-controller-execution-evidence.md](hit-native-controller-execution-evidence.md).
 
-Ainda faltam definir a cadência real do Clock, gates/callers, provider
-compartilhado, reuso de ObjectID e registro/teardown, além de implementar os
-caminhos de stop/restart documentados e fechar os efeitos internos do backend.
-Não deduplicar por nome nem criar registry de ticket por admissão. Geometria e
-agregação espaciais, grupos/owners/ganho e scheduler geral do lote permanecem
-pendentes. Resultados Linux anteriores não comprovam compatibilidade nem
-validam New 3DS, Vita ou Android.
+O controller não integra o manager persistente por HOTTrackID, World ou host de
+aúdio do probe. O caller ainda precisa resolver admissão, entrypoint e gates,
+manter os tempos de vida e fornecer a cadência do Clock. Call7/pilha aninhada,
+opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
+IDs não entram no subconjunto. Não tratar conclusão de binding/nota como término
+do controller, usar `HitThread::tick` como equivalência de lifecycle, ou mapear
+este objeto a uma thread por pedido. Core direto (82 checks), CTest e oráculo sintético
+passaram; métricas, logs e limites atualizados estão em
+[hit-native-controller-validation.md](hit-native-controller-validation.md). Não
+houve probe da cadeira ou teste de backend físico. Resultados Linux não comprovam
+compatibilidade nem validam New 3DS, Vita ou Android.
 
 A tabela portátil `odh_hit_source_contributions` agora armazena pares raw
 `(TrackID, R1)` com capacidade ODH explícita e oferece agregação pura de

@@ -1,134 +1,56 @@
 # Continuidade atual
 
-A meta integral do OpenDollhouse continua: primeira versão funcional e
-verificável no Linux, com New 3DS, Vita e Android como etapas futuras e sem
-validação funcional desses ports. Leia `AGENTS.md`, `docs/architecture.md` e
-as notas de validação desta unidade antes de continuar.
+Meta integral: primeira versão funcional e verificável no Linux; New 3DS, Vita
+e Android são etapas futuras com validação própria. ODH exige dados do jogo
+fornecidos pelo usuário, sem dependência do executável original ou checagem de
+CD. Preservar os milestones de leitores, VM, cena/interação, tempo e save; os
+resultados Linux não comprovam compatibilidade dos ports.
 
-A OMM voltou. O papel `project-base` e o handoff foram consultados; o remoto
-`main` e o checkout publicados foram confirmados em `ae5b19b`. A evidência de retrigger
-foi importada na OMM em
-`sources/OpenDollhouse/checkpoints/hit-native-retrigger-evidence-84a66b2-2026-10-15.md`
-(SHA256 `46531342d7d5ed4388bfd7295dc810bfce6941daaf33b38ede42376a9e4745cb`).
-O handoff antigo foi preservado na OMM em
-`sources/OpenDollhouse/checkpoints/handoff-before-native-retrigger-2026-10-15.md`
-(SHA256 `6bbd63677c8a9e9645d4d3d547030c931d01a50077d5ff8091dbc5fdde821124`).
-Antes de atualizar o handoff OMM, consultar seu `expected_sha256` vigente e
-usá-lo na escrita condicional. Verificar separadamente a revisão Git publicada.
-A revisão desta unidade é a do commit que contém este arquivo; conferir no
-handoff OMM qual foi o último checkpoint sincronizado.
+A OMM foi consultada no escopo `OpenDollhouse`; o resumo atual já referencia
+`f5ab084`. O handoff anterior não trazia os metadados de revisão, portanto seu
+`freshness` era `not_verified`. Nos checkpoints, registrar `repository`
+(`opendollhouse`), `branch` e `git_revision` no handoff, com o `expected_sha256`
+vigente. Confirmar por `get_handoff` com `observed_repository` e
+`observed_revision`. SHA do handoff e HEAD Git são identidades distintas;
+`freshness.matches` não comprova testes, árvore limpa ou backup remoto.
 
-## Pesquisa estática de lifecycle HIT — base `ae5b19b`
+## Controller HIT nativo — base `f5ab084`
 
-A unidade atual é pesquisa estática somente, sem mudança de runtime ou novos
-testes. Evidência e bytes selecionados estão em
-[hit-native-controller-lifecycle-evidence.md](hit-native-controller-lifecycle-evidence.md)
-e `reports/hit-native-controller-lifecycle-selected.asm.txt` (SHA256
-`868abd859374a778a039ceef38fd8c2ed6d1c21b2d8929802d4f446e13484308`). A
-auditoria confirmou 1.300 linhas, 3.969 bytes, 22 destinos de vtable e 8
-entradas de opcode; recibo
-`reports/hit-native-controller-lifecycle-verification.json` (SHA256
-`bd00026bdd87c0332ea945d9ab8719767972a458ffc1df3d3cd0eb51938c25a0`). A nota
-de evidência tem SHA256
-`97e177093c8a546d5d69ae2d797d9a53657aa8cd5c35ed3d86850e7f4233387f`. A revisão
-independente dos caminhos selecionados terminou sem ressalvas materiais.
+`NativeHitController` executa um subconjunto HIT portátil com bancos próprios
+1–16, 17–47 e 50–62, Clock explícito e callbacks sobre o binding de áudio
+corrente. O caller fornece `entry_pc` já resolvido; `hitlist_id` não zero da
+HOT é aceito sem chooser e sem sobrescrever ID50. Contrato, limites e
+verificação estão em
+[hit-native-controller-validation.md](hit-native-controller-validation.md).
+A evidência estática que orientou o recorte está em
+[hit-native-controller-execution-evidence.md](hit-native-controller-execution-evidence.md);
+a auditoria conferiu 535 linhas, 1.594 bytes, oito entradas de opcode e
+mapeamento PE (nota SHA256 `635e6f322f12efe922b3143872c5c4f0da58ca8573129d0005f6c8749707154f`;
+relatório SHA256 `f0171402d4637498e9ada7449c7aec0303faa59e1d66eed97cd7c7f05048d9a8`). Nenhum executável original foi rodado.
 
-Os handlers nativos usam o binding de áudio corrente: NoteOn2 lê o byte literal
-e não grava handle em variável; WaitSamp11 consulta áudio+70 e, se ativo, faz
-retry de PC com deadline `Clock+2`, enquanto inativo continua no mesmo poll.
-End/Return com pilha vazia solicita +34; com controller e áudio ativos, arma
-fade (40=0, 41=19, 42=100, 45=1, +1cf=1), sem alterar PC/deadline, e o script
-pode prosseguir no mesmo poll. Sem áudio ativo, o caminho chama +38. Stop libera
-o binding mas preserva o controller/TrackID. Não traduzir conclusão de nota em
-fim do controller.
+Core direto passou 82 checks com `-Werror -Wconversion -Wsign-conversion` e
+ASan/UBSan. CTest Debug: 115 configurados, 114 passaram, um skip X11, zero
+falhas (6,97 s); ASan/UBSan: mesmos resultados (13,10 s), LSan desligado;
+sem SDL/X11: 9/9 (0,66 s). Oráculo Python independente: 6.331 casos Debug e
+6.331 ASan, incluindo aritmética/fade signed 32-bit, INT32_MIN, igualdade e
+flags. Logs e recibos estão descritos na validação.
 
-A sequência de implementação agora é: banco persistente 1–16 (inclui ID16;
-R4–R16 preservados no restart), execução/scheduler com Clock e binding corrente
-de áudio; depois, manager por HOTTrackID. Não reutilizar `HitThread::tick`
-completo como `Ended` nativo nem representar o manager como coleção de threads
-por pedido. Detalhes, condições e limites estão na evidência. A pesquisa não
-rodou testes/build/runtime. As contagens CTest e fixture citadas no checkpoint
-`ae5b19b` pertencem à implementação anterior, sobre a base `84a66b2`; não foram
-repetidas nesta pesquisa e não comprovam execução dos novos contratos nativos.
+Não houve probe da cadeira nem teste de backend físico porque a classe ainda
+não está integrada ao host de áudio. O controller não implementa vozes/DSP,
+cadência externa, manager persistente HOTTrackID, integração World, provider
+espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
+áudio físico, compatibilidade com o original ou ports.
 
-## Runtime anterior — checkpoint `ae5b19b`
+## Próximos passos
 
-Sobre a base `84a66b2`, o checkpoint `ae5b19b` amplia o builder fresh de controles
-nativos e adiciona uma primitiva local para atualização de argumentos/controles
-sem reset. A descrição completa, testes e limites estão em
-[hit-native-retrigger-validation.md](hit-native-retrigger-validation.md); a
-prova estática está em
-[hit-native-retrigger-evidence.md](hit-native-retrigger-evidence.md).
+Concluir integração com adapter do host de áudio e manager persistente por
+HOTTrackID, mantendo geração de World e binding PCM separados. Preservar gates
+de admissão, ownership por fonte e teardown; não deduplicar por nome nem criar
+ticket por admissão. Fechar backend/provider antes de alegar lifecycle completo.
+A meta Linux também inclui saved frames/queues/Clock (105/137), Main sem reinit,
+câmera/picking, input, lote com SLOT/failure trees/needs/inventory/save e
+SDK/CC. Consulte os documentos de validação e evidência anteriores para
+histórico de contratos, testes e proveniência.
 
-`build_native_hit_controls` exige ArgStyle 2 e volume, ducking priority, patch
-e Spl resolvidos. Instala defaults em 16–47 e 50–62; o segundo banco tem 52=120,
-57=20 e zero nos demais IDs. Sentinelas raw de patch/Spl ficam no recibo e
-mantêm valores efetivos 50=0/57=20; zero explícito continua zero. IDs 48/49 e
-63–69 ficam desconhecidos. `HitPatchMode::raw` é o default compatível com o
-perfil legado; factory/host escolhem `native_controller` para o perfil nativo.
-A escolha inicial de hitlist não sobrescreve ID50.
-
-`update_native_active_unpaused` requer uma thread nativa em execução e IDs 55 e
-53 conhecidos e zero. O caller responde pelo estado e gates externos. A
-primitiva limpa 45, atualiza R1–R3, 19/20 e flags zero/sign, preservando PC,
-trace, notas/handles, orçamento, recibo, 47 e 50. Não representa `+0x1cf` ou
-`+0xc8`, nem executa chooser, binding, provider, backend ou Clock. Ela não
-implementa o manager persistente, admissão, lifecycle ou os outros ramos de
-retrigger. Não deduplicar por nome nem criar ticket por admissão.
-
-Opcode 69 continua com gate explícito no perfil `initial_controls`; o callback
-legado permanece no perfil legado. A tabela de fontes `(TrackID, R1)` também
-segue como fundação portátil, ainda sem integração ao manager/World/áudio. Os
-contratos e históricos correspondentes estão em
-[hit-native-controls-validation.md](hit-native-controls-validation.md),
-[hit-source-contributions-validation.md](hit-source-contributions-validation.md)
-e [hit-native-track-identity-evidence.md](hit-native-track-identity-evidence.md).
-
-## Validação e limites
-
-Checks diretos C++17 com warnings-as-errors passaram: 74 de controles, 965 de
-seleção e 108 de thread; ASan/UBSan passou nos mesmos três executáveis. LSan
-ficou desligado sob ptrace. Factory passou 76 checks diretos, XA 56; a suite
-focada `sound_event_factory`, `xa_sound_factory` e `bhav_audio_cli` passou 3/3
-(5,01 s). Logs da suite focada em
-`reports/hit-native-retrigger-factory-{configure,build,ctest,repeat}.log`.
-
-Os CTests oficiais configuraram 114 casos: Debug passou 113, um teste X11 foi
-pulado e zero falharam (7,03 s). ASan/UBSan teve os mesmos 113 passes e um skip
-(13,18 s); LSan permaneceu desligado. Sem SDL/X11 passaram 8/8 testes (0,62 s).
-Logs em `reports/hit-native-retrigger-{build,build-asan,build-noaudio}-{configure,build,ctest}.log`.
-
-O probe `chair_sit_metal` passou em Debug e ASan/UBSan: 94 dispatches, 662
-ticks World, 664 polls de áudio e 30.208 frames PCM renderizados, submetidos
-e consumidos; HIT terminou pendente/ativo, sem fault. A comparação JSON indica
-VM, World, requisições e traces iguais ao baseline do gate; o relatório de
-áudio também coincide, exceto pelo tempo de drain medido por relógio de parede.
-Não é comparação byte a byte das amostras PCM. Ver
-`reports/hit-native-retrigger-chair-{command,debug,asan}.json`,
-`reports/hit-native-retrigger-chair-comparison.json` e o manifesto
-`reports/hit-native-retrigger-validation.json`.
-
-A fixture não exercita a primitiva de atualização ativa nem sentinelas no asset
-real; esses casos têm regressões sintéticas. A auditoria estática conferiu 934
-linhas, 2.917 bytes e 11 destinos de vtable em
-`reports/hit-native-retrigger-verification.json`; o executável original não
-foi executado. A revisão do core/factory e da nota estática terminou sem defeito
-material. `git diff --check` passou.
-
-## Próximas unidades
-
-Preservar como pendentes saved frames 105/137 e a fila/Clock dormantes; cobrir
-separadamente sem confundir polls de áudio com ticks de World.
-
-Antes do manager HOTTrackID, modelar o banco persistente 1–16, o scheduler/Clock
-e o binding de áudio corrente. Depois integrar o manager por HOTTrackID, com
-geração de World e binding PCM separados, e ligar a primitiva aos gates reais.
-Fechar admissão, fonte/provider, remoção/reuso de ObjectID, registro/teardown,
-pausa e restart com `interrupt55!=0` antes de atribuir lifecycle completo. O
-builder fresh já cobre 50–62.
-
-A meta Linux mais ampla ainda inclui saved frames/queues/Clock (incluindo
-105/137), continuação de Main sem reinit, câmera/picking, input, lote com SLOT/failure trees/needs/
-inventory/save e SDK/CC; depois, ports com validação própria. Preservar dados
-comerciais, saves, referências upstream, relatórios e builds existentes. Não
-usar `git add -A` nem limpeza genérica.
+Preservar originais, saves, refs pinadas, relatórios, builds, runners antigos e
+artefatos da raiz. Não usar `git add -A` nem limpeza genérica.
