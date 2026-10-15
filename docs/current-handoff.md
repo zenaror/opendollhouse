@@ -10,10 +10,16 @@ com o handoff do escopo `OpenDollhouse` quando o conector voltar, usando o
 
 ## Checkpoint de 2026-10-15
 
-Base local `2604e86` (inicialização opcional ArgStyle 2 de controles HIT antes
-do primeiro tick). O gate posterior de opcode 69 no perfil nativo está
-implementado e validado; identificar o SHA publicado com `git log`.
+Base publicada `a322f42` (gate de opcode 69 com `initial_controls`), sobre
+`2604e86` (inicialização opcional ArgStyle 2 de controles HIT antes do primeiro
+tick). A unidade atual é pesquisa estática da identidade/ciclo de TrackID,
+sem mudanças em código ou testes. A evidência está em
+[hit-native-track-identity-evidence.md](hit-native-track-identity-evidence.md).
 O caminho silencioso e o perfil legado continuam preservados.
+Revisão independente e conferência de 4.554 bytes em 1.619 linhas do assembly
+selecionado passaram. Recibo em
+`reports/hit-native-track-identity-verification.json`; validação de proveniência
+estática, sem novo build ou teste de runtime nesta unidade.
 
 `HotEvent.argument_overrides` mantém CSV 2/3/4 assinados; resolução por palavra
 substitui só overrides não zero. `play_sound_arguments` usa a origem int16
@@ -96,13 +102,25 @@ não uma implementação da operação nativa.
 
 ## Próximas unidades
 
-Concluir a prova da semântica **nativa** do opcode 69, identidade do controller
-no registry, ownership, método de término/reset, fade/retry e Clock antes de
-implementar uma política. Não conectar `kill_group(uint8_t)` nem introduzir um
-cancelamento de notas como substituto do método nativo; parar apenas PCM não
-reproduz reset de controller/binding e notificação ao manager. Registrar
-endereços, limites e conclusões na
-[pesquisa do opcode 69](hit-native-group-kill-evidence.md). No Simitone pinado
+Pesquisa estática confirmou que o parser HOT cria e registra um controller
+por TrackID; evento tipo 1 consulta/reutiliza esse objeto, sem alocar no lookup.
+Um multimap separado mantém fontes `(TrackID, R1)` e agrega seus valores. A
+admissão pode recusar antes de atualizar; o initializer pode escrever R1–R3
+antes de escolher retomar, manter PC/bancos ou reinicializar. Os loops de reset
+observados cobrem apenas IDs 17–47 e 50–62, preservando R1–R3 em 1–3. Remover
+fontes não apaga o controller. Endereços, limites e lacunas estão em
+[identidade/ciclo de TrackID](hit-native-track-identity-evidence.md), em conjunto
+com a [pesquisa do opcode 69](hit-native-group-kill-evidence.md).
+
+A unidade permanece estática. Antes de implementar, fechar os callers de
+remoção de fontes, política para IDs especiais/reuso de ObjectID e destruição
+World, registro/reload quando ativo, contador do controller e domínio/limpeza do
+índice do opcode 69, além de teardown/restart e pausas. O desenho futuro requer
+manager persistente indexado por HOTTrackID, separado da geração de World e do
+binding PCM. Não introduzir registry de ticket por admissão nem deduplicação por
+nome. Não conectar `kill_group(uint8_t)` nem substituir o método nativo por
+cancelamento de notas: parar PCM não reproduz reset do controller/binding e
+notificação ao manager. No Simitone pinado
 (`4906db3`; submódulo FreeSO `f86bbd3`),
 `TSOClient/tso.sound/HITInterpreter.cs:651-663` só trata operando zero com
 `thread.KillVocals()`; outros IDs são um TODO de ObjectID, não um registro

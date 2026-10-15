@@ -351,6 +351,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Evidência estática dos controles HIT e ordem de inicialização](docs/hit-native-controls-evidence.md)
 - [Controles HIT brutos antes do primeiro tick e perfil ArgStyle2](docs/hit-native-controls-validation.md)
 - [Opcode HIT 69 nativo: registro de tracks, fade e relógio](docs/hit-native-group-kill-evidence.md)
+- [Identidade e ciclo de TrackID no HIT nativo](docs/hit-native-track-identity-evidence.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)

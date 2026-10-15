@@ -60,8 +60,20 @@ Nesse perfil, opcode69 também falha explicitamente: o callback legado recebe
 um byte de grupo, enquanto a evidência nativa exige resolução de variável,
 registro por TrackID, fade e retry por Clock. O contrato investigado está em
 [hit-native-group-kill-evidence.md](hit-native-group-kill-evidence.md).
-Geometria e agregação espaciais, provider compartilhado, precedência/descoberta,
-grupos/owners/ganho espacial e scheduler geral do lote permanecem pendentes.
+Pesquisa estática posterior confirmou que o parser HOT cria e registra um
+controller por TrackID, que o dispatch de evento tipo 1 procura/reutiliza esse
+objeto e que um multimap separado mantém contribuições `(TrackID, R1)`.
+Admission pode recusar antes da atualização; inicialização pode atualizar
+controles sem reiniciar PC/bancos, e remoção de fontes não equivale à destruição
+do controller. Isso não define ownership por pedido nem o ciclo completo de
+remoção/reload. Ver [identidade e ciclo de TrackID](hit-native-track-identity-evidence.md).
+O próximo limite de pesquisa é fechar callers de remoção, teardown/restart e
+pausas antes de desenhar um manager persistente indexado por HOTTrackID,
+separando geração de World e vínculo PCM. Não deduplicar por nome nem criar
+registro de ticket por admissão. Geometria e agregação espaciais, provider
+compartilhado, precedência/descoberta, grupos/owners/ganho espacial e scheduler
+geral do lote permanecem pendentes. Esta evidência é estática; não acrescenta
+validação de runtime, compatibilidade ou ports.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem
