@@ -34,8 +34,9 @@ Revisões de referência identificadas em 2026-10-13:
 Em 2026-10-15, o usuário adicionou `../referencias/The Sims Legacy Collection`
 e identificou sua origem como a edição Steam lançada em 2025. Essa origem é
 relato do usuário; ainda não foi verificada por manifesto ou versão de produto.
-A árvore estava mudando durante a primeira inspeção, portanto não há inventário
-fechado nem confirmação de instalação completa.
+A primeira inspeção ocorreu durante a cópia. Após o usuário informar sua
+conclusão, um novo inventário encontrou metadados estáveis antes/depois da
+comparação. Isso registra a árvore fornecida, sem verificar um manifesto Steam.
 
 Uma comparação SHA256 limitada encontrou identidade byte a byte nos três
 arquivos `Downloads/BirthdayCake/` presentes nas duas instalações:
@@ -48,6 +49,10 @@ arquivos `Downloads/BirthdayCake/` presentes nas duas instalações:
 
 Isso permite reutilizar esses recursos em comparações futuras, mas não comprova
 equivalência das demais tabelas, do motor ou das instalações completas.
+
+O inventário posterior está em
+[legacy-reference-validation.md](legacy-reference-validation.md): os 81 arquivos
+HIT/HOT/HSM comuns são idênticos; quatro dos cinco FAR amostrados diferem.
 
 Usar essa edição como referência comparativa de formatos, recursos e rotinas.
 A instalação `../referencias/The Sims` continua sendo a base das evidências

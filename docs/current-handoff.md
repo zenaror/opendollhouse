@@ -17,8 +17,11 @@ vigente. Confirmar por `get_handoff` com `observed_repository` e
 ## Referência adicional recebida em 2026-10-15
 
 `../referencias/The Sims Legacy Collection` foi fornecida pelo usuário como
-edição Steam de 2025. A primeira inspeção ocorreu com a árvore ainda mudando;
-revalidar a cópia antes de fechar inventário ou identificar executáveis.
+edição Steam de 2025. Após confirmação humana do fim da cópia, o inventário
+registrou 10.406 arquivos e metadados estáveis antes/depois. Os 81 HIT/HOT/HSM
+comuns têm SHA256 iguais; quatro dos cinco FAR amostrados diferem. Identidade
+PE32 x86 do executável e limites da comparação estão em
+[legacy-reference-validation.md](legacy-reference-validation.md).
 Consultar [referências](references.md#referência-comercial-adicional-legacy-collection).
 Ela complementa a instalação anterior; a prioridade de desenvolvimento e a
 proveniência das evidências já registradas permanecem.
