@@ -1,8 +1,9 @@
 # Argumentos do caller nativo de PlaySound
 
 Análise estática de2026-10-15, sem executar o binário ou alterar dados/Ghidra.
-Contextualiza o modo diagnóstico de áudio; a regra abaixo ainda não está
-implementada automaticamente no runtime. Não adotar os antigos argumentos de
+Contextualiza o modo diagnóstico de áudio. A regra bruta abaixo já pode ser
+usada por --audio-caller-args; ver hit-caller-resolution-validation.md.
+Não adotar os antigos argumentos de
 fixture[origem,1024,0] como defaults do caller.
 
 ## Identidade e método
@@ -61,9 +62,9 @@ registro0x5724f5. Alocação/cópia0x576bb5/0x577039 produz este layout:
 |5|+0x24|Armazenado, sem interpretação concluída|
 
 A substituição é independente por componente: override não zero substitui
-caller; zero conserva caller. O read_hot atual ainda só tipa os campos0/1.
-Próxima implementação deve preservar/resolver2–4 explicitamente com limites e
-diagnósticos; não converter simbolismo ausente em valores adivinhados.
+caller; zero conserva caller. O read_hot agora também preserva/resolve2–4 com
+sinal e diagnóstico para campos não resolvidos. O sexto campo segue sem
+interpretação; não converter simbolismo ausente em valores adivinhados.
 
 HOT linha5036: hungry_sated_vox=kSndobPlay,3979,0,0,0,0;
 equate kSndobPlay=1 na654. Para esse registro resolvido, a tripla continua

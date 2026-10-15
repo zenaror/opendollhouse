@@ -50,7 +50,9 @@ XA em [pcm-hit-owner-validation.md](pcm-hit-owner-validation.md), com execução
 BHAV sintética ligada à coleção/transporte. O probe BHAV tem integração Linux
 diagnóstica em [bhav-audio-validation.md](bhav-audio-validation.md), com argumentos
 e controles explícitos; a cena construída da cadeira pode emitir PCM dos dados
-nativos pelo loop existente. Derivação do caller/ArgStyle, precedência/descoberta,
+nativos pelo loop existente. Derivação bruta do caller/evento opcional em
+[hit-caller-resolution-validation.md](hit-caller-resolution-validation.md).
+ArgStyle/controles antes do script, precedência/descoberta,
 grupos/owners/ganho espacial e scheduler geral do lote permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,

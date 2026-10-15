@@ -3,7 +3,7 @@
 odh-bhav pode enviar suas solicitações reais de PlaySound ao pipeline
 HOT/HIT -> catálogo XA -> owners por thread -> transporte -> saída Linux.
 O modo silencioso anterior permanece disponível. Este novo modo é diagnóstico:
-argumentos, controles e política de escolha são explícitos, sem afirmar que
+modo dos argumentos, controles e política de escolha são explícitos, sem afirmar que
 representam a inicialização ou ganho espacial completos do jogo.
 
 ## Opções e agendamento
@@ -22,9 +22,13 @@ Acrescentar ao perfil existente --sound-probe/animation/world:
 [--audio-drain-ms 1..5000]
 ```
 
+Alternativa posterior: --audio-caller-args no lugar da tripla manual, com
+resolução bruta da origem/HOT em hit-caller-resolution-validation.md. Controles
+espaciais/ArgStyle continuam explícitos ou pendentes conforme esse documento.
+
 Todos os seletores de perfil são obrigatórios, exceto rate (formato de saída
-44100 padrão) e drain. Não há argumentos de caller inferidos nem conversão de
-Volume/SampleRate ou flags pan/zoom do PlaySound para DSP. Esses campos continuam
+44100 padrão) e drain. A escolha entre tripla manual e caller/HOT é obrigatória. Não há
+conversão de Volume/SampleRate ou flags pan/zoom do PlaySound para DSP. Esses campos continuam
 nos recibos das solicitações. Jump e escolha determinística permanecem perfis
 diagnósticos. Sem callback para grupos: opcode69 falha, sem registry vazio
 inventado. Loops e demais perfis não implementados são rejeitados.
@@ -94,6 +98,6 @@ Resultados detalhados de PCM e estado final permanecem nesses recibos; tempos
 de consumo dependem do host. Dados comerciais externos somente para leitura.
 
 Não é retomada de saved Main, relógio fiel, ganho espacial, áudio original ou
-hardware portátil. Próximo: derivação de argumentos do caller/evento e camadas
-ArgStyle/controles comprovadas; evidência estática nova em
+hardware portátil. A derivação bruta do caller/evento está implementada como opção; próximas
+camadas são ArgStyle/controles comprovados. Evidência estática em
 [hit-native-caller-arguments.md](hit-native-caller-arguments.md).

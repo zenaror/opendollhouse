@@ -81,12 +81,29 @@ void unresolved(std::string& reason, Text label) {
     if (!reason.empty()) reason += "; ";
     reason += "unresolved symbol: "; reason += label;
 }
+void unsupported(std::string& reason, const char* detail) {
+    if (!reason.empty()) reason += "; ";
+    reason += detail;
+}
 std::optional<std::uint32_t> equate(Text s, const Hot& hot, std::string& reason) {
     std::int32_t n;
     if (number(s, n)) return static_cast<std::uint32_t>(n);
     const auto found = hot.equates.find(std::string(s));
     if (found != hot.equates.end()) return static_cast<std::uint32_t>(found->second);
     unresolved(reason, s); return {};
+}
+std::optional<std::int32_t> signed_equate(Text s, const Hot& hot, std::string& reason) {
+    if(s.empty()){unsupported(reason,"empty EventMapping argument override");return {};}
+    std::int32_t n;
+    if(number(s,n))return n;
+    const auto found=hot.equates.find(std::string(s));
+    if(found!=hot.equates.end())return found->second;
+    auto digits=s;
+    if(!digits.empty() && digits.front()=='-')digits.remove_prefix(1);
+    if(!digits.empty() && std::all_of(digits.begin(),digits.end(),[](char c){return c>='0'&&c<='9';}))
+        unsupported(reason,"out-of-range EventMapping argument override");
+    else unresolved(reason,s);
+    return {};
 }
 std::optional<std::uint32_t> symbol(Text s, const Hsm* hsm, std::string& reason) {
     std::uint32_t n;
@@ -172,6 +189,8 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits) 
             HotEvent event;
             event.event_type = equate(fields[0], result, event.unsupported_reason);
             event.track_id = fields.size() > 1 ? equate(fields[1], result, event.unsupported_reason) : std::optional<std::uint32_t>{0};
+            for(std::size_t n=0;n<event.argument_overrides.size();++n)
+                if(fields.size()>n+2)event.argument_overrides[n]=signed_equate(fields[n+2],result,event.unsupported_reason);
             if (!event.unsupported_reason.empty()) ++result.unsupported_records;
             overwrite(result.events, lower(key), std::move(event), result);
         } else if (section == "Track") {

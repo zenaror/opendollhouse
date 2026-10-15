@@ -10,6 +10,7 @@ struct BhavAudioConfig {
     std::string hsm_path,hot_path,hit_path;
     std::vector<XaPatchSource> sources;
     odh::HitArguments arguments{};
+    bool caller_arguments=false; // Resolved World source + nonzero HOT overrides.
     odh::HitJumpOperand jump=odh::HitJumpOperand::FreeSoHeuristic;
     odh::PcmControls controls{};
     std::uint32_t output_rate=44100;
@@ -25,6 +26,8 @@ public:
     BhavAudio(const BhavAudio&)=delete;
     BhavAudio& operator=(const BhavAudio&)=delete;
     bool submit(const odh::SoundRequest&);
+    // Tuple prepared for the latest submit attempt, if resolution got that far.
+    std::optional<odh::HitArguments> last_arguments() const;
     // Call once after each existing VM/playback scheduling boundary.
     void simulation_tick();
     // Host-only PCM pump after simulation. Never ticks World, VM or HIT threads.

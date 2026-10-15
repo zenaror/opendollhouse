@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
                      "  [--main-probe [--hold-ticks 0..4096]] requires --stand-after; constructed live chair Main.\n"
                      "  [--animation-extra ENTRY.bcf] repeat up to 16; explicit same-FAR collections.\n"
                      "  [--sound-probe] requires --animation-probe; FWAV requests are silent by default.\n"
-                     "  [--audio-probe HSM HOT HIT --audio-args R1 R2 R3 --audio-jump free-so|literal32\n"
+                     "  [--audio-probe HSM HOT HIT (--audio-args R1 R2 R3|--audio-caller-args) --audio-jump free-so|literal32\n"
                      "   --audio-gain-q15 0..32768 --audio-pan-q15 -32768..32768 --audio-choose-first\n"
                      "   (--audio-far FILE|--audio-xa FILE)... [--audio-rate 8000..192000]\n"
                      "   [--audio-drain-ms 1..5000]] requires --sound-probe and Linux SDL audio.\n"
@@ -189,6 +189,9 @@ int main(int argc, char** argv) {
             else if (option == "--audio-args" && !audio_args && n+3<argc) {
                 audio_args=audio_option_seen=true;
                 for(auto& value:audio_config.arguments)value=audio_number<std::int32_t>(argv[++n]);
+            }
+            else if (option == "--audio-caller-args" && !audio_args) {
+                audio_args=audio_option_seen=true;audio_config.caller_arguments=true;
             }
             else if (option == "--audio-jump" && !audio_jump && n+1<argc) {
                 audio_jump=audio_option_seen=true;const std::string value=argv[++n];
@@ -452,7 +455,10 @@ int main(int argc, char** argv) {
             config.window=view_window;config.automatic=view_auto;config.readback=view_readback;
             view=std::make_unique<ProbeView>(std::move(config));
         }
-        struct ObservedSound {odh::SoundRequest request;std::string status;};
+        struct ObservedSound {
+            odh::SoundRequest request;std::string status;
+            std::optional<odh::HitArguments> arguments;
+        };
         std::vector<ObservedSound> sound_requests;
         bool sound_events_truncated=false,sound_event_limit_reached=false;
 #ifdef ODH_HAVE_SDL_AUDIO
@@ -471,7 +477,12 @@ int main(int argc, char** argv) {
                 if(selected!=global_sounds.end())return selected->second;
                 return {};
             },sound_sink,[&](const odh::SoundRequest& request,const std::string& status) {
-                if(sound_requests.size()<4096)sound_requests.push_back({request,status});
+                std::optional<odh::HitArguments> arguments;
+#ifdef ODH_HAVE_SDL_AUDIO
+                if(audio_service && (status=="submitted" || status=="backend_rejected"))
+                    arguments=audio_service->last_arguments();
+#endif
+                if(sound_requests.size()<4096)sound_requests.push_back({request,status,arguments});
                 else sound_events_truncated=true;
                 if(sound_requests.size()==4096)sound_event_limit_reached=true;
             }):odh::VmPrimitive{};
@@ -737,7 +748,13 @@ int main(int argc, char** argv) {
                     <<",\"pan\":"<<(r.pan?"true":"false")<<",\"zoom\":"<<(r.zoom?"true":"false")
                     <<",\"loop\":"<<(r.loop?"true":"false")<<",\"sample_rate\":"<<r.sample_rate
                     <<",\"flags\":"<<static_cast<unsigned>(r.flags)<<",\"volume\":"<<static_cast<unsigned>(r.volume)
-                    <<",\"status\":"<<quote(e.status)<<'}';
+                    <<",\"status\":"<<quote(e.status);
+                if(audio_probe){
+                    std::cout<<",\"hit_arguments\":";
+                    if(e.arguments)std::cout<<'['<<(*e.arguments)[0]<<','<<(*e.arguments)[1]<<','<<(*e.arguments)[2]<<']';
+                    else std::cout<<"null";
+                }
+                std::cout<<'}';
             }
             std::cout<<']';
 #ifdef ODH_HAVE_SDL_AUDIO

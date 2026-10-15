@@ -1,6 +1,7 @@
 #include "bhav_audio.hpp"
 #include "linux_pcm_sink.hpp"
 #include "xa_sound_factory.hpp"
+#include "odh/hit_arguments.hpp"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,7 @@ struct BhavAudio::Impl {
     std::uint64_t drain_elapsed_ms=0,drain_polls=0;
     bool drain_output_empty=false,drain_timed_out=false,stopped_pumping=false;
     std::string diagnostic;
+    std::optional<odh::HitArguments> last_arguments;
 
     Impl(odh::World& world_value,BhavAudioConfig config_value)
       :world(world_value),config(std::move(config_value)),
@@ -50,12 +52,21 @@ struct BhavAudio::Impl {
        hit(read_resource(config.hit_path,[](const auto& view){return odh::read_hit(view);})),
        catalog(config.sources),sink(config.output_rate),transport(sink),
        threads(world,[this](const odh::SoundRequest& request,const odh::SoundSourceBinding& binding){
+           auto arguments=config.arguments;
+           if(config.caller_arguments){
+               // Validate event name/profile before its bounded copy and lookup.
+               odh::resolve_hit_event(hit,hot,request);
+               auto name=request.name;
+               for(auto& c:name)if(c>='A' && c<='Z')c=static_cast<char>(c-'A'+'a');
+               arguments=odh::play_sound_arguments(hot.events.at(name),request.source);
+           }
+           last_arguments=arguments;
            odh::HitChooser first=[](std::uint32_t,const std::vector<std::uint32_t>& choices){
                if(choices.empty())throw odh::FormatError("diagnostic chooser received empty HIT list");
                return std::size_t{0};
            };
            return make_xa_hit_sound(hit,hot,request,binding,transport,catalog,std::move(first),
-               config.controls,{},config.jump,config.arguments,{});
+               config.controls,{},config.jump,arguments,{});
        }){}
 
     void note_error(const std::exception& error){
@@ -77,6 +88,7 @@ BhavAudio::BhavAudio(odh::World& world,BhavAudioConfig config)
     :impl_(std::make_unique<Impl>(world,std::move(config))){}
 BhavAudio::~BhavAudio()=default;
 bool BhavAudio::submit(const odh::SoundRequest& request){
+    impl_->last_arguments.reset();
     try{
         if(impl_->threads.submit(request)){++impl_->submitted;return true;}
         ++impl_->rejected;return false;
@@ -84,6 +96,7 @@ bool BhavAudio::submit(const odh::SoundRequest& request){
         ++impl_->rejected;++impl_->submit_errors;impl_->note_error(error);return false;
     }
 }
+std::optional<odh::HitArguments> BhavAudio::last_arguments() const {return impl_->last_arguments;}
 void BhavAudio::simulation_tick(){
     ++impl_->scheduler_ticks;
     try{
@@ -126,8 +139,11 @@ void BhavAudio::emit_json(std::ostream& out,std::uint64_t simulation_ticks) cons
                                a.drain_output_empty ? "complete" : "pending_output";
     out<<"{\"profile\":{\"hsm\":"<<quote(a.config.hsm_path)
        <<",\"hot\":"<<quote(a.config.hot_path)<<",\"hit\":"<<quote(a.config.hit_path)
-       <<",\"args\":["<<a.config.arguments[0]<<','<<a.config.arguments[1]<<','<<a.config.arguments[2]
-       <<"],\"jump\":"<<quote(a.config.jump==odh::HitJumpOperand::Literal32?"literal32":"free-so")
+       <<",\"argument_mode\":"<<quote(a.config.caller_arguments?"play_sound_caller":"explicit_tuple")
+       <<",\"args\":";
+    if(a.config.caller_arguments)out<<"null";
+    else out<<'['<<a.config.arguments[0]<<','<<a.config.arguments[1]<<','<<a.config.arguments[2]<<']';
+    out<<",\"jump\":"<<quote(a.config.jump==odh::HitJumpOperand::Literal32?"literal32":"free-so")
        <<",\"chooser\":\"first\",\"gain_q15\":"<<a.config.controls.gain_q15
        <<",\"pan_q15\":"<<a.config.controls.pan_q15<<",\"rate\":"<<a.config.output_rate
        <<",\"sources\":[";

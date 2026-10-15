@@ -347,6 +347,8 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Ownership de notas HIT e integração da factory XA com BHAV](docs/pcm-hit-owner-validation.md)
 - [Áudio diagnóstico no loop BHAV Linux](docs/bhav-audio-validation.md)
 - [Evidência estática dos argumentos nativos de PlaySound](docs/hit-native-caller-arguments.md)
+- [Resolução HOT/caller e uso no probe](docs/hit-caller-resolution-validation.md)
+- [Evidência estática dos controles HIT e ordem de inicialização](docs/hit-native-controls-evidence.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)

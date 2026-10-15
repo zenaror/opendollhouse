@@ -54,8 +54,9 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     hit.write_bytes(hit_header + bytes([2, 5, 11, 12]))
     xa.write_bytes(b"XAI\0" + struct.pack("<IHHIIHH", 112, 1, 1, 8000, 16000, 2, 16) + (b"\0" + b"\x11" * 14) * 2)
 
-    def write_owner(flags=12, yes=254):
-        routine = struct.pack("<HHBBHHH", 0x8002, 1, 0, 4, 0, 0, 0) + struct.pack("<HBB", 23, yes, 255) + bytes([1, 0, 0, 0, flags, 0, 0, 0])
+    def write_owner(flags=12, yes=254, event_ids=(1,)):
+        instructions = b"".join(struct.pack("<HBB", 23, n + 1 if n + 1 < len(event_ids) else yes, 255) + bytes([event, 0, 0, 0, flags, 0, 0, 0]) for n, event in enumerate(event_ids))
+        routine = struct.pack("<HHBBHHH", 0x8002, len(event_ids), 0, 4, 0, 0, 0) + instructions
         owner.write_bytes(far([(b"owner.iff", iff([
             chunk(b"BHAV", 4096, routine), chunk(b"SLOT", 128, slots + storage + route),
             chunk(b"OBJD", 16808, prefix), chunk(b"FWAV", 1, b"fixture\0"),
@@ -96,12 +97,50 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     # Drain pumps the existing transport only, never simulates a HIT completion.
     assert audio["threads"]["completed"] == 0 and audio["threads"]["active"] == 1
     assert all(hashlib.sha256(path.read_bytes()).digest() == digest for path, digest in identities.items())
+    assert audio["profile"]["argument_mode"] == "explicit_tuple"
+    assert report["sound_requests"][0]["hit_arguments"] == [1, 1024, 0]
+    caller_profile = ["--audio-caller-args", *profile[4:]]
+    for flags, source in [(12, 1), (14, 2)]:
+        write_owner(flags=flags)
+        result = run(resources + caller_profile + ["--audio-drain-ms", "1000"])
+        report = json.loads(result.stdout)
+        assert result.returncode == 0 and report["sound_requests"][0]["source"] == source
+        assert report["sound_requests"][0]["hit_arguments"] == [source, 0, 0]
+        assert report["audio_probe"]["profile"]["argument_mode"] == "play_sound_caller"
+        assert report["audio_probe"]["profile"]["args"] is None
+    hot.write_text(hot_text.replace("fixture=1,7,0,0,0,0", "fixture=1,7,0,-7,2147483647,0"))
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report["sound_requests"][0]["hit_arguments"] == [2, -7, 2147483647]
+    hot.write_text(hot_text.replace("fixture=1,7,0,0,0,0", "fixture=1,7,5,0,0,0"))
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report["sound_requests"][0]["hit_arguments"] == [5, 0, 0]
+    assert report["sound_requests"][0]["source"] == 2  # Override does not change ownership.
+    hit.write_bytes(hit_header + bytes([72, 6, 1, 2, 2, 5, 11, 12]))
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 3 and report["audio_probe"]["threads"]["faulted"] == 1
+    assert report["audio_probe"]["pcm"]["rendered"] == 0  # No alias back to owner/source2.
+    hit.write_bytes(hit_header + bytes([2, 5, 11, 12]))
+    hot.write_text(hot_text.replace("fixture=1,7,0,0,0,0", "fixture=1,7,0,missing,0,0"))
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 3 and report["sound_requests"][0]["hit_arguments"] is None
+    assert report["audio_probe"]["requests"]["submit_errors"] == 1 and report["audio_probe"]["pcm"]["rendered"] == 0
+    hot.write_text(hot_text)
+    write_owner(event_ids=(1, 2))
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report["sound_requests"][0]["hit_arguments"] == [1, 0, 0]
+    assert report["sound_requests"][1]["status"] == "missing_resource" and report["sound_requests"][1]["hit_arguments"] is None
+    write_owner()
     result = run(resources + profile)
     audio = json.loads(result.stdout)["audio_probe"]
     assert result.returncode == 0 and audio["playback_state"] == "pending_output"
     assert not audio["host_drain"]["requested"] and not audio["host_drain"]["output_empty"]
     assert audio["host_drain"]["polls"] == 0 and audio["scheduler_ticks"] == 1
-    for bad in [resources, profile, resources + profile + ["--audio-rate", "7999"], resources + profile + ["--audio-drain-ms", "5001"], resources + profile + ["--audio-args", "0", "0", "0"]]:
+    for bad in [resources, profile, resources + profile + ["--audio-rate", "7999"], resources + profile + ["--audio-drain-ms", "5001"], resources + profile + ["--audio-args", "0", "0", "0"], resources + profile + ["--audio-caller-args"], resources + caller_profile + ["--audio-args", "0", "0", "0"]]:
         result = run(bad)
         assert result.returncode == 2 and not result.stdout, (bad, result.returncode, result.stdout, result.stderr)
     hit.write_bytes(hit_header + bytes([69, 1, 2, 5, 11, 12]))

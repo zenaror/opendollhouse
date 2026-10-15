@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/formats.hpp"
+#include <array>
 #include <map>
 
 namespace odh {
@@ -27,6 +28,9 @@ Hsm read_hsm(const View&, const HitResourceLimits& = {});
 struct HotEvent {
     std::optional<std::uint32_t> event_type, track_id;
     std::string unsupported_reason;
+    // EventMapping CSV fields 2..4. Omitted trailing words are known zero;
+    // explicitly empty, unresolved or out-of-range words remain unknown.
+    std::array<std::optional<std::int32_t>,3> argument_overrides{{0,0,0}};
 };
 struct HotTrack {
     std::optional<std::uint32_t> subroutine_offset, hitlist_id, patch_id;

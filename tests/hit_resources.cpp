@@ -84,6 +84,11 @@ int main() { try {
     require(resources.events.at("hungry").event_type == 1 && resources.events.at("hungry").track_id == 3979 &&
             resources.events.at("stop").track_id == 0 && !resources.events.at("broken").event_type,
             "event lookup folds ASCII case and retains unresolved equates");
+    require(resources.events.at("hungry").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{0,0,0}} &&
+            resources.events.at("stop").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{0,0,0}},
+            "explicit zeros and omitted trailing EventMapping words are known zero");
     require(resources.hitlists.at(1291).ids == std::vector<std::uint32_t>{3212,2756,2757,3981,2249},
             "ordered hitlist range expansion");
     require(resources.hitlists.at(20016).raw == "Sax_Symbol" && resources.hitlists.at(20016).ids.empty() &&
@@ -112,6 +117,55 @@ int main() { try {
     rejects([&] { hot("[GlobalHitList]\n1=1-2\n1=3\n", nullptr, limits); }, "expansion budget");
     limits = {}; limits.records = 1;
     rejects([&] { hot("[Unknown]\na=1\nb=2\n", nullptr, limits); }, "record budget");
+
+    const auto signed_events=hot(
+        "[EventMappingEquate]\nkLow=-2147483648\nkHigh=2147483647\n"
+        "[EventMapping]\n"
+        "negative=1,2,kLow,0,kHigh,uninterpreted\n"
+        "omitted=1,2\n"
+        "partial=1,2,-17\n"
+        "literal=1,2,-2147483648,0,2147483647\n"
+        "empty=1,2,,0,0\n"
+        "empty_third=1,2,4,,0\n"
+        "empty_fourth=1,2,4,0,\n"
+        "unresolved=1,2,missing,0,0\n"
+        "overflow=1,2,2147483648,0,0\n"
+        "underflow=1,2,-2147483649,0,0\n"
+        "overwrite=1,2,missing\n"
+        "overwrite=1,2,-4,0,5\n");
+    require(signed_events.events.at("negative").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{-2147483647-1,0,2147483647}} &&
+            signed_events.events.at("negative").unsupported_reason.empty(),
+            "signed equates preserve int32 extremes and sixth word remains uninterpreted");
+    require(signed_events.events.at("omitted").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{0,0,0}},
+            "missing override suffix is known zero");
+    require(signed_events.events.at("partial").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{-17,0,0}} &&
+            signed_events.events.at("literal").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{-2147483647-1,0,2147483647}},
+            "partial row and signed literal extremes resolve without unsigned conversion");
+    for(const auto* key:{"empty","unresolved","overflow","underflow"}){
+        const auto& event=signed_events.events.at(key);
+        require(!event.argument_overrides[0] && !event.unsupported_reason.empty() &&
+                event.argument_overrides[1]==0 && event.argument_overrides[2]==0,
+                "explicit bad override remains unknown, while other words stay known");
+    }
+    require(!signed_events.events.at("empty_third").argument_overrides[1] &&
+            !signed_events.events.at("empty_fourth").argument_overrides[2] &&
+            !signed_events.events.at("empty_third").unsupported_reason.empty() &&
+            !signed_events.events.at("empty_fourth").unsupported_reason.empty(),
+            "explicit empty fields three and four remain unknown independently");
+    require(signed_events.events.at("overwrite").argument_overrides==
+                std::array<std::optional<std::int32_t>,3>{{-4,0,5}} &&
+            signed_events.events.at("overwrite").unsupported_reason.empty() &&
+            signed_events.duplicate_records==1 && signed_events.unsupported_records==7 &&
+            signed_events.records==14,
+            "overwritten argument row replaces all words but keeps historical row counts");
+    limits={};limits.records=2;
+    rejects([&]{hot("[EventMapping]\na=1,2,3,4,5\nb=1,2,3,4,5\nc=1,2,3,4,5\n",nullptr,limits);},"record budget");
+    limits={};limits.line_bytes=12;
+    rejects([&]{hot("[EventMapping]\na=1,2,3,4,5\n",nullptr,limits);},"line budget");
 
     const auto plain = binary();
     require(hit(plain).bytes == std::vector<std::uint8_t>(plain.begin(), plain.end()) &&
