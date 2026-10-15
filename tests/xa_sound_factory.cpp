@@ -96,6 +96,7 @@ int main(int argc,char** argv){try{
     // Native volume is available to the very first bytecode read. Copy it to
     // patch50, then write18=100: that later control write must not bind patch100.
     hot.tracks[7].arg_type=2;hot.tracks[7].volume=200;hot.tracks[7].ducking_priority=10;
+    hot.tracks[7].sound_pressure_level=0;
     native_controls=odh::build_native_hit_controls(hot.tracks[7],{{12,0,0}},1024,512);
     hit.bytes.resize(16);hit.bytes.insert(hit.bytes.end(),{6,50,18,5,18,100,0,0,0,2,5,11,12});
     run(2,1);
@@ -110,7 +111,7 @@ int main(int argc,char** argv){try{
     world.create(2,odh::EntityKind::object);
     // Reject an incompatible track before any note acquisition. Previously
     // built controls cannot bypass the constructor profile gate.
-    odh::SoundRequest request;request.source=2;request.name="fixture";
+    odh::SoundRequest request{};request.source=2;request.name="fixture";
     request.source_variables=odh::sound_source_variables(*world.find(2));
     bool rejected=false;
     hot.tracks[7].arg_type=1;
@@ -123,5 +124,23 @@ int main(int argc,char** argv){try{
     try { collection.submit(request); } catch(const odh::FormatError&) { rejected=true; }
     require(rejected && !collection.size() && !transport.usage().handles && !transport.usage().pcm_bytes,
         "late native tuple rejection retained factory resources");
+    // Unset native patch chooses a real XA from the list, without inventing
+    // a resource for 0x80000000 or decoding during construction.
+    hot.tracks[7].patch_id=0x80000000u;hot.tracks[7].hitlist_id=1;
+    hot.hitlists[1]={{100},{},{}};
+    native_controls=odh::build_native_hit_controls(hot.tracks[7],{{12,0,0}},1024,512);
+    hit.bytes.resize(16);hit.bytes.insert(hit.bytes.end(),{2,5,11,12});
+    auto binding=*odh::SoundSourceBinding::bind(world,request);
+    unsigned choices=0;
+    auto instance=odh_host::make_xa_hit_sound(hit,hot,request,binding,transport,catalog,
+        [&](auto,const auto& ids){++choices;require(ids==std::vector<std::uint32_t>{100},"native XA list inputs");return std::size_t{0};},
+        {},{},odh::HitJumpOperand::Literal32,odh::HitArguments{{12,0,0}},{},{},native_controls);
+    require(choices==1 && !transport.usage().handles && !transport.usage().pcm_bytes &&
+        native_controls->locals[50-16]==0 && *hot.tracks[7].patch_id==0x80000000u,
+        "native XA sentinel resolution mutated metadata or decoded eagerly");
+    require(instance->tick()==odh::HitThreadTick::yielded && transport.usage().handles==1,
+        "native XA sentinel did not start selected asset");
+    instance.reset();
+    require(!transport.usage().handles && !transport.usage().pcm_bytes,"native XA sentinel cleanup retained resources");
     std::cout<<checks<<" BHAV->XA factory->owned HIT notes->shared PCM lifecycle checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

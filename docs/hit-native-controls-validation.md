@@ -1,9 +1,10 @@
 # Validação dos controles HIT nativos antes do primeiro tick
 
-Checkpoint local de 2026-10-15. Esta unidade adiciona um perfil opcional de
-inicialização bruta ArgStyle 2 ao seletor e à thread HIT. O perfil instalado
-descreve valores visíveis ao primeiro script; não converte controles em ganho
-ou pan do backend. A base da interpretação é a [evidência estática da imagem
+Checkpoint iniciado em 2026-10-15 e ampliado sobre a base publicada `84a66b2`.
+O perfil opcional de inicialização bruta ArgStyle 2 descreve valores visíveis
+ao primeiro script; sua extensão recente cobre defaults fresh do banco 50–62 e
+uma primitiva separada de atualização ativa sem reset. O estado bruto não
+converte controles em ganho ou pan do backend. A base da interpretação é a [evidência estática da imagem
 Sims.exe fornecida](hit-native-controls-evidence.md), sem execução do jogo
 original e sem equivalência comprovada ao outro executável fornecido.
 
@@ -13,32 +14,34 @@ original e sem equivalência comprovada ao outro executável fornecido.
 spatial_pan, controllers)` é puro e devolve `HitNativeControls` próprio. As três
 posições de `raw_arguments` são os valores assinados de R1/R2/R3; as duas
 entradas espaciais são valores brutos fornecidos pelo caller. O builder exige
-ArgStyle 2 e `Track.volume`, `Track.ducking_priority` e `Track.patch_id`
-resolvidos. A conversão das palavras de Track para int32 preserva o padrão de
-bits sem depender de conversão C++ fora da faixa assinada. O banco opcional de
-controllers tem 31 posições para IDs 17–47; ausência ou `INT32_MIN` significa
-unset e não substitui o valor anterior.
+ArgStyle 2 e `Track.volume`, `Track.ducking_priority`, `Track.patch_id` e
+`Track.Spl` resolvidos. A conversão das palavras de Track para int32 preserva o
+padrão de bits. O banco opcional de controllers tem 31 posições para IDs
+17–47; ausência ou `INT32_MIN` significa unset e não substitui o valor anterior.
 
 A ordem implementada é:
 
 1. ID 16 começa conhecido em zero. Os 31 IDs 17–47 recebem o banco completo
    de defaults evidenciado. Os valores não zero são 17=32, 18=1024, 19=1024,
    20=512, 21=3600, 28=100, 29=10000 e 39=1; os demais desse banco são zero.
-2. `Track.volume` escreve ID 18 e `Track.ducking_priority` escreve ID 25 quando
-   diferem de `INT32_MIN`. Se unset, o recibo conserva a palavra bruta mas ID 18
-   mantém o default 1024 e ID 25 mantém zero. `Track.patch_id` bruto escreve
-   ID 50 sem aplicar essa regra de sentinel. Overrides de controller não unset
-   podem substituir IDs 17–47, inclusive 18 e 25.
+2. IDs 50–62 recebem defaults fresh: todos zero, exceto ID 52=120 e ID 57=20.
+   `Track.volume` e `Track.ducking_priority` escrevem IDs 18 e 25 quando
+   diferentes de `INT32_MIN`; caso unset, seus defaults são mantidos.
+   `Track.patch_id` e `Track.Spl` escrevem IDs 50 e 57 quando não sentinelas.
+   O recibo conserva os bits raw mesmo quando são `INT32_MIN`, mas os locals
+   mantêm os defaults fresh (50=0, 57=20). Zero explícito substitui o default.
+   Overrides de controller não unset substituem IDs 17–47.
 3. ArgStyle 2 escreve R2 em ID 19, R3 em ID 20, R1 em ID 47 e `isplaying=1`
    em ID 46. R1/R2/R3 continuam intactos nos registradores 1–3.
 4. O caller fornece extvol espacial final em ID 19 e pan espacial final em
    ID 20. O último setter estabelece os flags iniciais `zero=(pan==0)` e
    `sign=(pan<0)` antes da primeira instrução. ODH não modela o flag positive.
 
-O valor inicial de ID 50 continua sendo o `Track.patch_id` bruto: pode ser zero
-mesmo quando o chooser inicial seleciona uma patch não zero. A escolha inicial
-continua sendo feita uma única vez pela regra atual de SetTrack, em variável
-separada do local 50. Instalar controles não executa bytecode, NoteOn,
+O valor efetivo inicial de ID 50 é `Track.patch_id`, exceto que sua sentinela
+`INT32_MIN` mantém o default zero; pode ser zero mesmo quando o chooser inicial
+seleciona uma patch não zero. A escolha inicial continua sendo feita uma única
+vez pela regra atual de SetTrack, sem sobrescrever o local 50. Instalar controles
+não executa bytecode, NoteOn,
 callbacks de backend nem efeitos de escrita de patch. `HitNotePlan` guarda
 `initial_arguments` e `initial_controls` próprios; seus flags e locals já são
 consultáveis em `HitThread::state()` antes do primeiro `tick()`.
@@ -46,9 +49,10 @@ consultáveis em `HitThread::state()` antes do primeiro `tick()`.
 `select_hit_note` e `HitThread` aceitam o perfil como último argumento opcional.
 O construtor exige a tupla explícita de argumentos e Track ArgStyle 2
 correspondentes antes de invocar o chooser. O snapshot público é verificado:
-IDs 16–47 e 50 devem estar conhecidos; IDs 48/49 e 51–69 devem permanecer
-desconhecidos; IDs 16, 19, 20, 46, 47 e 50 devem corresponder aos stores finais.
-Os outros valores de 17–47 podem variar por controller. Leitura de um local
+IDs 16–47 e 50–62 devem estar conhecidos; IDs 48/49 e 63–69 devem permanecer
+desconhecidos. IDs 16, 19, 20, 46, 47, 50, 52 e 57 devem corresponder aos
+defaults/overlays e stores finais. Os outros valores de 17–47 podem variar por
+controller. Leitura de um local
 nativo ainda desconhecido falha até que o script o escreva. Uma escrita nativa
 em ID 18 altera volume, sem selecionar patch; a escrita em ID 50 conserva a
 substituição de patch quando há correspondência no HOT. O estado inicial não
@@ -75,7 +79,10 @@ de controllers, fade/retry e Clock que ODH ainda não modela. A
 evidência e seus limites; não interpretar o nome legado `kill_group` como
 semântica nativa comprovada.
 
-## Verificação direta
+## Verificação direta — unidade inicial
+
+Os totais abaixo são da implementação inicial do perfil e do gate, preservados
+como resultados históricos; os checks do retrigger estão separados mais abaixo.
 
 Compilação separada em C++17 com `-Wall -Wextra -Wpedantic -Wconversion
 -Werror` passou nos testes sintéticos: 70 checks de builder,
@@ -117,6 +124,50 @@ runner. Os arquivos de seleção alterados foram recompilados diretamente; o
 teste de seleção ligou bibliotecas estáticas existentes do checkout. A
 validação oficial integrada do gate está registrada separadamente abaixo; as
 contagens seguintes da primeira integração pertencem à base `2604e86`.
+
+## Contrato ampliado — banco fresh e atualização sem reset
+
+Auditoria estática posterior confirmou o banco fresh 50–62 e o ramo de
+atualização de controller ativo, não pausado e com `interrupt`55=0. O builder
+agora exige `Track.Spl` resolvido e inclui o campo raw no recibo. O banco 50–62
+começa todo em zero, exceto 52=120 e 57=20; `Track.patch_id` e `Track.Spl`
+substituem 50 e 57 quando não são `INT32_MIN`. Se a palavra raw é a sentinela,
+ela continua no recibo, enquanto o valor efetivo conserva 50=0 ou 57=20. Um
+valor explícito zero é preservado. A mask known atual é IDs 16–47 e 50–62;
+48/49 e 63–69 permanecem desconhecidos. O initializer HOT que não resolve Spl
+é recusado antes do chooser/backend.
+
+`HitPatchMode::raw` continua sendo o modo padrão de `resolve_hit_event` e
+preserva a interpretação legada literal de patch IDs. O factory escolhe
+`native_controller` quando recebe `initial_controls`; nesse modo, patch
+`INT32_MIN` é efetiva zero e a seleção inicial pode usar a hitlist sem alterar
+metadata nem local50. Esse modo é explícito no factory e no host.
+
+`HitThread::update_native_active_unpaused(raw, spatial_external_volume,
+spatial_pan)` é uma primitiva de estado para um controller que o caller já
+admitiu. O caller valida a fase e os gates externos; a primitiva só verifica
+perfil nativo em execução, ID55 conhecido e zero, e ID53 conhecido e zero
+(provider próprio no domínio representado). Ela limpa ID45, grava R1–R3 e os
+controles espaciais em 19/20 e atualiza os flags zero/sign. Preserva PC, trace,
+handles/notas, orçamento, recibo de inicialização, source47 e patch50. Não
+representa o byte +`0x1cf` nem o ponteiro de provider +`0xc8` do original e não
+é replay completo de `0x57dc59`. Não executa chooser, binding, provider ou DSP,
+nem implementa o agendamento/Clock do controller. Pausa e restart
+`interrupt55!=0` não são cobertos. Falhas de pré-condição rejeitam antes da
+mutação. Reentrada durante `tick` marca falha; se SourceReader ou chooser
+engolir a exceção, a verificação após o callback ainda aborta antes de novas
+escritas ou início de nota.
+
+Os checks diretos desta extensão passaram em C++17 com warnings-as-errors:
+74 de controles, 965 de seleção e 108 de thread; ASan/UBSan passou nos mesmos
+três executáveis. LSan permaneceu desativado por ptrace. A auditoria associada
+conferiu 934 linhas, 2.917 bytes de instruções e 11 destinos de vtable; recibo
+em `reports/hit-native-retrigger-verification.json`. O executável original
+não foi executado. CTest global e fixture desta unidade estão registrados em
+[hit-native-retrigger-validation.md](hit-native-retrigger-validation.md).
+Contrato completo e lacunas em
+[hit-native-retrigger-validation.md](hit-native-retrigger-validation.md) e
+[evidência estática do retrigger](hit-native-retrigger-evidence.md).
 
 ## Integração Linux verificada — base `2604e86`
 

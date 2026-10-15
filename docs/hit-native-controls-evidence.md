@@ -45,10 +45,14 @@ nesse banco: se forem0x80000000, a comparação0x57dda9/0x57dddb salta ao
 próximo ID e preserva defaults18=1024/25=0. Não instalar INT32_MIN nesses
 locals só porque a palavra bruta de Track possui esses bits. A regra não
 estabelece por si só o tratamento de ID50, fora do banco17–47.
-O controller ID50 retém Track.patch_id bruto: store0x57d791–0x57d794 no
-controller e0x57f979–0x57f981 no thread. Um hitlist pode escolher outra patch;
-essa escolha não prova que ID50 deixou de ser zero. Spl aparece no controller
-ID57, mas a visibilidade completa desse valor no thread ainda não foi provada.
+O store0x57d791–0x57d794 conserva Track.patch_id bruto na metadata do
+controller; ele não basta para inferir o valor efetivo no thread. A pesquisa
+posterior de [defaults 50–62 e retrigger](hit-native-retrigger-evidence.md)
+comprovou o fallback pelo getter: patch sentinela resulta em ID50=0 e Spl
+sentinela em ID57=20; zero explícito permanece zero. Isso corrige a hipótese
+inicial de copiar patch bruto também quando unset. O binding escreve o valor
+efetivo em0x57f979–0x57f981. Um hitlist pode escolher outra patch sem substituir
+ID50 pelo resultado dessa escolha.
 
 ## ArgStyle2: ordem antes do primeiro tick
 

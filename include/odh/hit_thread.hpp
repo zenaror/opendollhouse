@@ -41,6 +41,17 @@ public:
     // Throws on unsupported/malformed/budget/backend failure; latches fault,
     // so a later call cannot retry effects or masquerade as completion.
     HitThreadTick tick();
+    // Primitive for the already admitted, active, unpaused native ArgStyle 2
+    // controller with interrupt ID 55 clear and its own provider (ID 53 zero).
+    // The caller establishes those external controller/admission/group gates;
+    // this method cannot infer them from HIT ticks or isplaying ID 46. Updates
+    // raw R1..R3, clears fade ID 45, then sets spatial IDs 19/20 and flags.
+    // No scheduler, Clock, backend, chooser, binding or provider effect runs.
+    // Ordinary precondition rejection leaves state and fault latch unchanged;
+    // callback reentry latches fault just like reentrant tick.
+    void update_native_active_unpaused(const HitArguments& raw,
+                                       std::int32_t spatial_external_volume,
+                                       std::int32_t spatial_pan);
     std::uint32_t pc() const;
     bool bytecode_ended() const;
     bool faulted() const;

@@ -107,6 +107,7 @@ int main() { try {
             "legacy group request applies once and retains its trace");
     odh::HotTrack group_track; group_track.hitlist_id = 0; group_track.patch_id = 100;
     group_track.arg_type = 2; group_track.volume = 1024; group_track.ducking_priority = 0;
+    group_track.sound_pressure_level = 20;
     const odh::HitArguments group_raw{{1, 0, 0}};
     const auto group_controls = odh::build_native_hit_controls(group_track, group_raw, 1024, 512);
     int native_group_effects = 0;
@@ -176,7 +177,7 @@ int main() { try {
         native.hot.hitlists[77].ids = {100};
         odh::HotTrack track;
         track.hitlist_id = 77; track.patch_id = 0; track.arg_type = 2;
-        track.volume = 700; track.ducking_priority = 3;
+        track.volume = 700; track.ducking_priority = 3; track.sound_pressure_level = 20;
         const odh::HitArguments raw{{5, 0, 0}};
         const auto controls = odh::build_native_hit_controls(track, raw, 900, 500);
         int native_choices = 0, native_starts = 0;
@@ -215,6 +216,7 @@ int main() { try {
         Fixture native{12};
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
         const odh::HitArguments raw{{1, 0, 0}};
         auto controls = odh::build_native_hit_controls(track, raw, 1024, pan);
         odh::HitThread thread(native.hit, native.hot, 16, native.vars, {}, backend,
@@ -225,6 +227,234 @@ int main() { try {
                 thread.state().initial_controls->initial_zero_flag == (pan == 0) &&
                 thread.state().initial_controls->initial_sign_flag == (pan < 0),
                 "native thread exposes final-pan flags in receipt before first tick");
+    }
+    {
+        odh::HotTrack track;
+        track.hitlist_id = 0; track.patch_id = 100; track.arg_type = 2;
+        track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
+        const odh::HitArguments initial{{1, 2, 3}};
+        const auto controls = odh::build_native_hit_controls(track, initial, 1024, 512);
+        for (const std::int32_t pan : {0, -512, 512}) {
+            // Script writes fade45, source47 and patch50, starts one note,
+            // then waits. An active update must not restart that script.
+            Fixture active_wait{5,45,1,0,0,0,5,47,99,0,0,0,
+                           5,50,200,0,0,0,2,5,11};
+            active_wait.hot.patches[200] = {"second", "second.xa", false, false};
+            active_wait.hot.patches[300] = {"third", "third.xa", false, false};
+            const auto wait_pc = static_cast<std::uint32_t>(active_wait.hit.bytes.size() - 1);
+            active_wait.hit.bytes.insert(active_wait.hit.bytes.end(),
+                                    {static_cast<std::uint8_t>(pan == 0 ? 62 : 65),
+                                     0x23, 0x01, 0, 0,
+                                     5,50,100,0,0,0,2,6,12});
+            active_wait.hot.track_data[0x123] = static_cast<std::uint32_t>(active_wait.hit.bytes.size());
+            active_wait.hit.bytes.insert(active_wait.hit.bytes.end(), {5,50,44,1,0,0,2,7,12});
+            int starts = 0, queries = 0;
+            auto note_status = odh::HitNoteStatus::active;
+            odh::HitNoteBackend output;
+            output.start = [&](std::uint32_t)->std::optional<std::uint64_t> {
+                ++starts; return static_cast<std::uint64_t>(900 + starts);
+            };
+            output.status = [&](std::uint64_t) { ++queries; return note_status; };
+            odh::HitThread thread(active_wait.hit, active_wait.hot, 16, active_wait.vars,
+                                  {}, output, {}, &track,
+                                  odh::HitJumpOperand::FreeSoHeuristic, {}, initial, controls);
+            require(thread.tick() == odh::HitThreadTick::yielded &&
+                    thread.pc() == wait_pc && thread.notes_started() == 1 &&
+                    thread.state().locals[45 - 16] == 1 &&
+                    thread.state().locals[47 - 16] == 99 &&
+                    thread.state().locals[50 - 16] == 200 && starts == 1,
+                    "fixture reaches an active WaitSamp after observable native writes");
+            const auto steps = thread.state().steps;
+            const auto trace_size = thread.state().trace.size();
+            const auto old_queries = queries;
+            const odh::HitArguments updated{{7, -8, 9}};
+            thread.update_native_active_unpaused(updated, 777, pan);
+            require(thread.pc() == wait_pc && thread.state().steps == steps &&
+                    thread.state().trace.size() == trace_size &&
+                    thread.notes_started() == 1 && starts == 1 && queries == old_queries &&
+                    thread.state().patch_id == 200 &&
+                    thread.state().registers[1] == 7 &&
+                    thread.state().registers[2] == -8 &&
+                    thread.state().registers[3] == 9 &&
+                    thread.state().locals[45 - 16] == 0 &&
+                    thread.state().locals[19 - 16] == 777 &&
+                    thread.state().locals[20 - 16] == pan &&
+                    thread.state().locals[47 - 16] == 99 &&
+                    thread.state().locals[50 - 16] == 200 &&
+                    thread.state().locals[53 - 16] == 0 &&
+                    thread.state().initial_arguments == initial &&
+                    thread.state().initial_controls->locals[19 - 16] == 1024 &&
+                    thread.state().initial_controls->locals[20 - 16] == 512 &&
+                    thread.state().zero_flag == (pan == 0) &&
+                    thread.state().sign_flag == (pan < 0),
+                    "active update changes only proven live raw/spatial state and preserves note, chooser and budget");
+            require(thread.tick() == odh::HitThreadTick::yielded &&
+                    thread.pc() == wait_pc && starts == 1,
+                    "active note keeps waiting without another NoteOn");
+            note_status = odh::HitNoteStatus::complete;
+            require(thread.tick() == odh::HitThreadTick::yielded &&
+                    thread.pc() == wait_pc + 1,
+                    "completed note releases WaitSamp after active update");
+            const auto before_branch = thread.state().trace.size();
+            require(thread.tick() == odh::HitThreadTick::yielded && starts == 2 &&
+                    thread.state().trace[before_branch].branch_taken ==
+                        (pan <= 0) &&
+                    thread.state().patch_id == (pan <= 0 ? 300U : 100U),
+                    "next branch consumes updated pan flags without replaying prior bytecode");
+        }
+        Fixture legacy{2,5,11};
+        odh::HitNoteBackend output;
+        output.start = [](std::uint32_t)->std::optional<std::uint64_t> { return 1; };
+        output.status = [](std::uint64_t) { return odh::HitNoteStatus::active; };
+        odh::HitThread old(legacy.hit, legacy.hot, 16, legacy.vars, {}, output);
+        rejects([&] { old.update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+        require(!old.faulted() && old.pc() == 16 && old.state().steps == 0,
+                "legacy profile rejection has no state or fault effect");
+        for (const std::uint8_t gate : {std::uint8_t{53}, std::uint8_t{55}}) {
+            Fixture gated{5,gate,1,0,0,0,2,5,11};
+            odh::HitThread blocked(gated.hit, gated.hot, 16, gated.vars, {}, output,
+                                   {}, &track, odh::HitJumpOperand::FreeSoHeuristic,
+                                   {}, initial, controls);
+            blocked.tick();
+            const auto pc = blocked.pc();
+            const auto steps = blocked.state().steps;
+            rejects([&] { blocked.update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+            require(!blocked.faulted() && blocked.pc() == pc &&
+                    blocked.state().steps == steps &&
+                    blocked.state().registers[1] == 1 &&
+                    blocked.state().locals[gate - 16] == 1 &&
+                    blocked.state().locals[45 - 16] == 0,
+                    "interrupt or shared-provider path rejects before mutation or fault latch");
+        }
+        Fixture ended{12};
+        odh::HitThread done(ended.hit, ended.hot, 16, ended.vars, {}, output,
+                            {}, &track, odh::HitJumpOperand::FreeSoHeuristic,
+                            {}, initial, controls);
+        done.tick();
+        rejects([&] { done.update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+        require(!done.faulted() && done.bytecode_ended() &&
+                done.state().registers[1] == 1,
+                "ended native thread rejects an active update without poisoning state");
+        done.tick();
+        rejects([&] { done.update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+        require(!done.faulted(), "completed native thread also rejects without fault latch");
+        Fixture limited{2,5,11};
+        odh::HitThreadLimits tight;
+        tight.execution.instructions = 2;
+        odh::HitThread cumulative(limited.hit, limited.hot, 16, limited.vars,
+                                   {}, output, tight, &track,
+                                   odh::HitJumpOperand::FreeSoHeuristic,
+                                   {}, initial, controls);
+        cumulative.tick();
+        cumulative.update_native_active_unpaused({{4, 5, 6}}, 7, 8);
+        require(cumulative.state().steps == 2 && cumulative.state().trace.size() == 2,
+                "active update retains consumed instruction and trace budget");
+        rejects([&] { cumulative.tick(); });
+        require(cumulative.faulted() && cumulative.notes_started() == 1,
+                "active update cannot reset cumulative instruction admission");
+        Fixture faulty{7};
+        odh::HitThread broken(faulty.hit, faulty.hot, 16, faulty.vars, {}, output,
+                              {}, &track, odh::HitJumpOperand::FreeSoHeuristic,
+                              {}, initial, controls);
+        rejects([&] { broken.tick(); });
+        rejects([&] { broken.update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+        require(broken.faulted() && broken.state().registers[1] == 1,
+                "faulted native thread cannot be updated or replayed");
+    }
+    {
+        Fixture note{2,5,11};
+        odh::HotTrack track;
+        track.hitlist_id = 0; track.patch_id = 100; track.arg_type = 2;
+        track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
+        const odh::HitArguments initial{{1, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, initial, 1024, 512);
+        odh::HitThread* current = nullptr;
+        int starts = 0;
+        odh::HitNoteBackend output;
+        output.start = [&](std::uint32_t)->std::optional<std::uint64_t> {
+            ++starts;
+            rejects([&] { current->update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+            return 123;
+        };
+        output.status = [](std::uint64_t) { return odh::HitNoteStatus::active; };
+        odh::HitThread thread(note.hit, note.hot, 16, note.vars, {}, output,
+                              {}, &track, odh::HitJumpOperand::FreeSoHeuristic,
+                              {}, initial, controls);
+        current = &thread;
+        rejects([&] { thread.tick(); });
+        require(thread.faulted() && thread.notes_started() == 0 && starts == 1 &&
+                thread.state().registers[1] == 1 &&
+                thread.state().locals[19 - 16] == 1024 &&
+                thread.state().locals[20 - 16] == 512,
+                "swallowed reentrant update latches fault before any update or note acknowledgement");
+    }
+    {
+        Fixture read_then_note{72,4,1,2,2,5,11};
+        odh::HotTrack track;
+        track.hitlist_id = 0; track.patch_id = 100; track.arg_type = 2;
+        track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
+        const odh::HitArguments initial{{1, 2, 0}};
+        const auto controls = odh::build_native_hit_controls(track, initial, 1024, 512);
+        odh::HitThread* current = nullptr;
+        int starts = 0, reads = 0;
+        odh::HitNoteBackend output;
+        output.start = [&](std::uint32_t)->std::optional<std::uint64_t> {
+            ++starts; return 123;
+        };
+        output.status = [](std::uint64_t) { return odh::HitNoteStatus::active; };
+        odh::HitSourceFieldReader reader = [&](std::int32_t, std::int32_t) {
+            ++reads;
+            rejects([&] { current->update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+            return std::optional<std::int32_t>{99};
+        };
+        odh::HitThread thread(read_then_note.hit, read_then_note.hot, 16,
+                              read_then_note.vars, {}, output, {}, &track,
+                              odh::HitJumpOperand::FreeSoHeuristic, reader,
+                              initial, controls);
+        current = &thread;
+        rejects([&] { thread.tick(); });
+        require(thread.faulted() && reads == 1 && starts == 0 &&
+                thread.notes_started() == 0 && thread.state().registers[4] == 0 &&
+                thread.state().registers[1] == 1 &&
+                thread.state().locals[19 - 16] == 1024 &&
+                thread.state().locals[20 - 16] == 512,
+                "swallowed update reentry inside source reader aborts before write or backend start");
+    }
+    {
+        Fixture choose_then_note{39,5,2,6,11};
+        choose_then_note.hot.hitlists[77].ids = {200};
+        choose_then_note.hot.patches[200] = {"other", "other.xa", false, false};
+        odh::HotTrack track;
+        track.hitlist_id = 77; track.patch_id = 100; track.arg_type = 2;
+        track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
+        const odh::HitArguments initial{{1, 0, 0}};
+        const auto controls = odh::build_native_hit_controls(track, initial, 1024, 512);
+        odh::HitThread* current = nullptr;
+        int choices = 0, starts = 0;
+        odh::HitNoteBackend output;
+        output.start = [&](std::uint32_t)->std::optional<std::uint64_t> {
+            ++starts; return 123;
+        };
+        output.status = [](std::uint64_t) { return odh::HitNoteStatus::active; };
+        odh::HitChooser chooser = [&](std::uint32_t, const auto&) {
+            ++choices;
+            rejects([&] { current->update_native_active_unpaused({{4, 5, 6}}, 7, 8); });
+            return std::size_t{0};
+        };
+        odh::HitThread thread(choose_then_note.hit, choose_then_note.hot, 16,
+                              choose_then_note.vars, chooser, output, {}, &track,
+                              odh::HitJumpOperand::FreeSoHeuristic, {},
+                              initial, controls);
+        current = &thread;
+        rejects([&] { thread.tick(); });
+        require(thread.faulted() && choices == 1 && starts == 0 &&
+                thread.notes_started() == 0 && thread.state().registers[5] == 0 &&
+                thread.state().registers[1] == 1,
+                "swallowed update reentry inside chooser aborts before write or backend start");
     }
     // Reentrancy cannot be suppressed by a callback to continue effects.
     odh::HitThread* self = nullptr;

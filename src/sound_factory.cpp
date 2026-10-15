@@ -10,7 +10,9 @@ struct StopOnFailure {
 };
 }
 ResolvedHitEvent resolve_hit_event(const HitFile& hit,const Hot& hot,const SoundRequest& request,
-                                   SoundEventFactoryLimits limits) {
+                                   SoundEventFactoryLimits limits,HitPatchMode patch_mode) {
+    if(patch_mode!=HitPatchMode::raw && patch_mode!=HitPatchMode::native_controller)
+        fail("invalid patch mode");
     if(!limits.event_name_bytes || limits.event_name_bytes>65536)fail("invalid event name budget");
     if(request.loop)fail("loop request outside supported profile");
     if(request.name.empty() || request.name.size()>limits.event_name_bytes ||
@@ -36,8 +38,10 @@ ResolvedHitEvent resolve_hit_event(const HitFile& hit,const Hot& hot,const Sound
         if(list==hot.hitlists.end() || list->second.ids.empty() || !list->second.unsupported_reason.empty())
             fail("initial hitlist missing, empty or unsupported");
     }
-    if(*track.patch_id) {
-        const auto patch=hot.patches.find(*track.patch_id);
+    const auto patch_id=patch_mode==HitPatchMode::native_controller && *track.patch_id==0x80000000u
+        ? 0u : *track.patch_id;
+    if(patch_id) {
+        const auto patch=hot.patches.find(patch_id);
         if(patch==hot.patches.end())fail("initial patch missing in HOT");
         if(patch->second.looped)fail("looped initial patch outside supported profile");
     } else if(!*track.hitlist_id)fail("track has neither initial patch nor hitlist");
@@ -54,7 +58,8 @@ std::unique_ptr<SoundThreadInstance> make_hit_sound(const HitFile& hit,const Hot
     if(!request.source_variables || !current || !binding.read(request.source,0) ||
        current->generation!=request.source_variables->generation ||
        current->profile!=request.source_variables->profile)fail("source binding does not match submission");
-    const auto resolved=resolve_hit_event(hit,hot,request,factory_limits);
+    const auto resolved=resolve_hit_event(hit,hot,request,factory_limits,
+        native_controls ? HitPatchMode::native_controller : HitPatchMode::raw);
     HitSourceFieldReader reader=[binding](std::int32_t source,std::int32_t field){return binding.read(source,field);};
     std::array<std::int32_t,29> unused{}; // Reader replaces these values, never a fallback.
     auto thread=std::make_unique<HitThread>(hit,hot,resolved.start_pc,unused,std::move(chooser),

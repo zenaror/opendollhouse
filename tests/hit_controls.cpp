@@ -19,11 +19,13 @@ int main() { try {
     track.volume = 777;
     track.ducking_priority = 9;
     track.patch_id = 200;
+    track.sound_pressure_level = 30;
     const std::array<std::int32_t, 3> raw{{-1, 0, 1024}};
     const auto plain = odh::build_native_hit_controls(track, raw, 888, 444);
     require(plain.raw_arguments == raw && plain.raw_track_volume == 777 &&
             plain.raw_track_ducking_priority == 9 && plain.locals[25 - 16] == 9 &&
             plain.raw_track_patch == 200 && plain.locals[50 - 16] == 200 &&
+            plain.raw_track_sound_pressure_level == 30 && plain.locals[57 - 16] == 30 &&
             plain.spatial_external_volume == 888 && plain.spatial_pan == 444 &&
             !plain.initial_zero_flag && !plain.initial_sign_flag,
             "builder owns raw arguments and explicit track/spatial inputs");
@@ -41,7 +43,11 @@ int main() { try {
             plain.locals[39 - 16] == 1, "additional proven nonzero bank defaults installed");
     for (std::size_t id = 16; id <= 47; ++id)
         require(plain.locals[id - 16].has_value(), "every proven native startup control is known");
-    for (std::size_t id = 48; id <= 69; ++id) if (id != 50)
+    for (std::size_t id = 50; id <= 62; ++id)
+        require(plain.locals[id - 16].has_value(), "every proven fresh second-bank control is known");
+    require(plain.locals[52 - 16] == 120 && plain.locals[55 - 16] == 0 &&
+            plain.locals[53 - 16] == 0, "second-bank defaults include speed and active-update gates");
+    for (std::size_t id = 48; id <= 69; ++id) if (id < 50 || id > 62)
         require(!plain.locals[id - 16], "unproven later locals stay unknown");
     odh::HitNativeControllerValues controllers{};
     controllers[0] = std::numeric_limits<std::int32_t>::min(); // ID 17 unset.
@@ -76,17 +82,25 @@ int main() { try {
             "valid later controllers override defaults after unset Track fields");
     track.ducking_priority = 9;
     track.patch_id = 0x80000000U;
+    track.sound_pressure_level = 0x80000000U;
     const auto raw_patch = odh::build_native_hit_controls(track, raw, 0, 0);
     require(raw_patch.raw_track_patch == std::numeric_limits<std::int32_t>::min() &&
-            raw_patch.locals[50 - 16] == std::numeric_limits<std::int32_t>::min(),
-            "Track.patch_id retains raw sentinel-shaped bits without bank unset inference");
+            raw_patch.locals[50 - 16] == 0 &&
+            raw_patch.raw_track_sound_pressure_level == std::numeric_limits<std::int32_t>::min() &&
+            raw_patch.locals[57 - 16] == 20,
+            "Track patch/Spl sentinels retain raw metadata and preserve fresh bank defaults");
     track.patch_id = 200;
+    track.sound_pressure_level = 0;
+    require(odh::build_native_hit_controls(track, raw, 0, 0).locals[57 - 16] == 0,
+            "resolved Spl zero overrides fresh default twenty");
     track.volume.reset(); rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
     track.volume = 0;
     track.patch_id.reset(); rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
     track.patch_id = 200;
     track.ducking_priority.reset(); rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
     track.ducking_priority = 9;
+    track.sound_pressure_level.reset(); rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
+    track.sound_pressure_level = 30;
     track.arg_type.reset(); rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
     track.arg_type = 1; rejects([&] { odh::build_native_hit_controls(track, raw, 0, 0); });
     track.arg_type = 2; track.unsupported_reason = "unresolved field";

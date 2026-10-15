@@ -35,27 +35,43 @@ public:
             if (!args || *args != native_controls->raw_arguments)
                 fail("native controls require matching explicit raw arguments");
             if (!track || !track->arg_type || *track->arg_type != 2 || !track->volume ||
-                !track->ducking_priority || !track->patch_id ||
+                !track->ducking_priority || !track->patch_id || !track->sound_pressure_level ||
                 !track->unsupported_reason.empty() ||
                 signed_bits(*track->volume) != native_controls->raw_track_volume ||
                 signed_bits(*track->ducking_priority) != native_controls->raw_track_ducking_priority ||
-                signed_bits(*track->patch_id) != native_controls->raw_track_patch)
+                signed_bits(*track->patch_id) != native_controls->raw_track_patch ||
+                signed_bits(*track->sound_pressure_level) !=
+                    native_controls->raw_track_sound_pressure_level)
                 fail("native controls require matching resolved ArgStyle 2 track");
             for (std::size_t id = 16; id <= 47; ++id)
                 if (!native_controls->locals[id - 16])
                     fail("native controls omit initialized local " + std::to_string(id));
-            if (!native_controls->locals[50 - 16])
-                fail("native controls omit initialized patch local 50");
-            for (std::size_t id = 48; id <= 69; ++id)
-                if (id != 50 && native_controls->locals[id - 16])
+            for (std::size_t id = 50; id <= 62; ++id)
+                if (!native_controls->locals[id - 16])
+                    fail("native controls omit initialized local " + std::to_string(id));
+            for (const std::size_t id : {48U, 49U})
+                if (native_controls->locals[id - 16])
                     fail("native controls invent unknown local " + std::to_string(id));
+            for (std::size_t id = 63; id <= 69; ++id)
+                if (native_controls->locals[id - 16])
+                    fail("native controls invent unknown local " + std::to_string(id));
+            const auto normalized = [](std::int32_t raw, std::int32_t fallback) {
+                return raw == std::numeric_limits<std::int32_t>::min() ? fallback : raw;
+            };
             if (*native_controls->locals[16 - 16] != 0 ||
                 *native_controls->locals[19 - 16] != native_controls->spatial_external_volume ||
                 *native_controls->locals[20 - 16] != native_controls->spatial_pan ||
                 *native_controls->locals[46 - 16] != 1 ||
                 *native_controls->locals[47 - 16] != (*args)[0] ||
-                *native_controls->locals[50 - 16] != native_controls->raw_track_patch)
+                *native_controls->locals[50 - 16] !=
+                    normalized(native_controls->raw_track_patch, 0) ||
+                *native_controls->locals[57 - 16] !=
+                    normalized(native_controls->raw_track_sound_pressure_level, 20) ||
+                *native_controls->locals[52 - 16] != 120)
                 fail("native controls have inconsistent post-initialization locals");
+            for (std::size_t id = 51; id <= 62; ++id)
+                if (id != 52 && id != 57 && *native_controls->locals[id - 16] != 0)
+                    fail("native controls have inconsistent fresh bank defaults");
             if (native_controls->initial_zero_flag != (native_controls->spatial_pan == 0) ||
                 native_controls->initial_sign_flag != (native_controls->spatial_pan < 0))
                 fail("native controls have inconsistent final pan and initial flags");
@@ -218,7 +234,9 @@ public:
                 variable(dest);
                 std::int32_t value;
                 if(source_reader) {
+                    check_callback_fault();
                     const auto result=source_reader(source,field);
+                    check_callback_fault();
                     if(!result) fail("GetSrcDataField lookup failed for source " + std::to_string(source) + " field " + std::to_string(field));
                     value=*result;
                 } else {
@@ -250,9 +268,29 @@ public:
         }
     }
     void start(const HotTrack* track) { if (track) initialize(*track); }
+    void bind_callback_fault(const bool* fault) { callback_fault = fault; }
     std::uint32_t cursor() const { return pc; }
     bool bytecode_ended() const { return ended; }
     bool complete() const { return finished; }
+    void update_native_active_unpaused(const HitArguments& raw,
+                                       std::int32_t spatial_external_volume,
+                                       std::int32_t spatial_pan) {
+        if (!plan.initial_controls || ended || finished)
+            fail("native active update requires a running native-controls thread");
+        if (!local_known[55 - 16] || plan.locals[55 - 16] != 0)
+            fail("native active update requires interrupt ID 55 clear");
+        if (!local_known[53 - 16] || plan.locals[53 - 16] != 0)
+            fail("native active update requires own-provider ID 53 zero");
+        // This is the proven no-reset path after the external admission/group
+        // gates. Direct stores avoid script-write patch/trace side effects.
+        plan.locals[45 - 16] = 0;
+        for (std::size_t i = 0; i < raw.size(); ++i) plan.registers[i + 1] = raw[i];
+        plan.locals[19 - 16] = spatial_external_volume;
+        plan.locals[20 - 16] = spatial_pan;
+        flags(spatial_pan);
+        plan.zero_flag = zero;
+        plan.sign_flag = sign;
+    }
     std::size_t note_count() const { return notes.size(); }
     const HitNotePlan& state() const { return plan; }
 private:
@@ -263,6 +301,7 @@ private:
     const HitSelectionLimits limits;
     HitJumpOperand jump_operand;
     const HitSourceFieldReader source_reader;
+    const bool* callback_fault = nullptr;
     std::uint32_t pc;
     std::optional<std::uint32_t> instruction_pc;
     std::uint64_t code_end = 0;
@@ -273,6 +312,10 @@ private:
     HitSelectionTrace current;
     bool ended = false, finished = false;
     std::vector<std::uint64_t> notes;
+    void check_callback_fault() const {
+        if (callback_fault && *callback_fault)
+            fail("HIT thread reentrant callback fault");
+    }
     bool last_active(const HitNoteBackend& backend) const {
         if (notes.empty()) return false;
         switch (backend.status(notes.back())) {
@@ -353,7 +396,9 @@ private:
         // Snapshot entries across callback invocation; callback may not mutate
         // resource aliases; no borrowed entry is accessed after the callback.
         const auto ids = found->second.ids;
+        check_callback_fault();
         const auto index = chooser(*list, ids);
+        check_callback_fault();
         if (index >= ids.size()) fail("chooser returned an out-of-range index");
         return {*list, ids[index], index};
     }
@@ -361,7 +406,9 @@ private:
         if (!track.unsupported_reason.empty()) fail("unsupported initial HOT track: " + track.unsupported_reason);
         if (!track.hitlist_id || !track.patch_id) fail("initial HOT track has unresolved hitlist/patch");
         if (*track.hitlist_id != 0) load_list(*track.hitlist_id);
-        auto id = *track.patch_id;
+        auto id = plan.initial_controls
+            ? static_cast<std::uint32_t>(*plan.initial_controls->locals[50 - 16])
+            : *track.patch_id;
         if (id == 0 && list) {
             plan.initial_choice = choose();
             id = plan.initial_choice->patch_id;
@@ -394,6 +441,7 @@ struct HitThread::Impl {
         if (!backend.start || !backend.status) throw FormatError("HIT thread requires start/status callbacks");
         if (!note_limit || note_limit > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
             throw FormatError("HIT thread invalid note budget");
+        execution.bind_callback_fault(&fault);
         execution.start(track);
     }
 };
@@ -413,16 +461,19 @@ HitThreadTick HitThread::tick() {
     try {
         HitNoteBackend guarded;
         guarded.start = [&p](std::uint32_t patch) {
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
             const auto result = p.backend.start(patch);
             if (p.fault) throw FormatError("HIT thread reentrant callback fault");
             return result;
         };
         guarded.status = [&p](std::uint64_t handle) {
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
             const auto result = p.backend.status(handle);
             if (p.fault) throw FormatError("HIT thread reentrant callback fault");
             return result;
         };
         if (p.backend.kill_group) guarded.kill_group = [&p](std::uint8_t group) {
+            if (p.fault) throw FormatError("HIT thread reentrant callback fault");
             p.backend.kill_group(group);
             if (p.fault) throw FormatError("HIT thread reentrant callback fault");
         };
@@ -431,6 +482,14 @@ HitThreadTick HitThread::tick() {
         if (p.fault) throw FormatError("HIT thread reentrant callback fault");
         return p.execution.complete() ? HitThreadTick::complete : HitThreadTick::yielded;
     } catch (...) { p.ticking = false; p.fault = true; throw; }
+}
+void HitThread::update_native_active_unpaused(const HitArguments& raw,
+                                              std::int32_t spatial_external_volume,
+                                              std::int32_t spatial_pan) {
+    auto& p = *impl_;
+    if (p.fault) throw FormatError("HIT thread is faulted");
+    if (p.ticking) { p.fault = true; throw FormatError("HIT thread reentrant native active update"); }
+    p.execution.update_native_active_unpaused(raw, spatial_external_volume, spatial_pan);
 }
 std::uint32_t HitThread::pc() const { return impl_->execution.cursor(); }
 bool HitThread::bytecode_ended() const { return impl_->execution.bytecode_ended(); }

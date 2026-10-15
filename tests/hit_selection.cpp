@@ -125,6 +125,7 @@ int main() { try {
         f.note(100, 7);
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
         const odh::HitArguments raw{{5, 0, 0}};
         const auto controls = odh::build_native_hit_controls(track, raw, 1024, pan);
         const auto p = f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
@@ -148,6 +149,7 @@ int main() { try {
         Fixture f; f.emit({69, operand}); f.note();
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
         const odh::HitArguments raw{{1, 0, 0}};
         const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
         bool refused = false;
@@ -168,6 +170,7 @@ int main() { try {
         Fixture f; f.emit({69});
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
         const odh::HitArguments raw{{1, 0, 0}};
         const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
         bool truncated = false;
@@ -319,6 +322,7 @@ int main() { try {
         Fixture f; f.emit({14, 19, 6, 4, 18, 5, 18, 200, 0, 0, 0, 2, 5});
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 777; track.ducking_priority = 4;
+        track.sound_pressure_level = 30;
         const odh::HitArguments raw{{-7, 0, 0}};
         auto controls = odh::build_native_hit_controls(track, raw, 900, 600);
         const auto p = f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
@@ -364,6 +368,20 @@ int main() { try {
         inconsistent = controls; inconsistent.locals[47 - 16] = -8; rejects_mutation(inconsistent);
         inconsistent = controls; inconsistent.locals[50 - 16] = 200; rejects_mutation(inconsistent);
         inconsistent = controls; inconsistent.locals[48 - 16] = 0; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[52 - 16] = 0; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[55 - 16] = 1; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[57 - 16] = 31; rejects_mutation(inconsistent);
+        inconsistent = controls; inconsistent.locals[63 - 16] = 0; rejects_mutation(inconsistent);
+        track.sound_pressure_level = 31;
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls); },
+                 "changed Track.Spl rejects a stale native snapshot");
+        track.sound_pressure_level = 30;
+        track.sound_pressure_level.reset();
+        rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                             {}, raw, controls); },
+                 "missing Track.Spl rejects before execution");
+        track.sound_pressure_level = 30;
         odh::HitNativeControllerValues controllers{};
         controllers[18 - 17] = 56;
         controllers[25 - 17] = -40;
@@ -392,6 +410,7 @@ int main() { try {
         Fixture f; f.emit({14, 48, 2, 5});
         odh::HotTrack track; track.hitlist_id = 0; track.patch_id = 100;
         track.arg_type = 2; track.volume = 1024; track.ducking_priority = 0;
+        track.sound_pressure_level = 20;
         const odh::HitArguments raw{{0, 0, 0}};
         const auto controls = odh::build_native_hit_controls(track, raw, 1024, 512);
         rejected([&] { f.run({}, {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
@@ -414,10 +433,29 @@ int main() { try {
                 selected.locals[50 - 16] == 0 && selected.initial_controls->locals[50 - 16] == 0 &&
                 selected.trace[0].zero_flag,
                 "raw track patch50 remains zero while initial list chooser selects patch100 once");
+        track.patch_id = 0x80000000U;
+        const auto sentinel_patch_controls = odh::build_native_hit_controls(track, raw, 1024, 512);
+        const auto sentinel_selected = chosen.run([&](auto, const auto&) { ++choices; return 0U; },
+                                                  {}, &track, 16,
+                                                  odh::HitJumpOperand::FreeSoHeuristic,
+                                                  {}, raw, sentinel_patch_controls);
+        require(choices == 2 && sentinel_selected.patch_id == 100 &&
+                sentinel_selected.initial_choice && sentinel_selected.locals[50 - 16] == 0 &&
+                sentinel_selected.initial_controls->raw_track_patch ==
+                    std::numeric_limits<std::int32_t>::min(),
+                "unset raw patch uses normalized local50 zero and one initial hitlist choice");
+        track.patch_id = 0;
+        track.sound_pressure_level.reset();
+        rejected([&] { chosen.run([&](auto, const auto&) { ++choices; return 0U; },
+                                  {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
+                                  {}, raw, zero_patch_controls); },
+                 "missing Spl rejects before an initial chooser callback");
+        require(choices == 2, "missing Spl has no chooser effect");
+        track.sound_pressure_level = 20;
         rejected([&] { chosen.run([&](auto, const auto&) { ++choices; return 0U; },
                                   {}, &track, 16, odh::HitJumpOperand::FreeSoHeuristic,
                                   {}, raw, controls); }, "mismatched raw patch profile rejects before chooser");
-        require(choices == 1, "invalid native profile has no chooser effect");
+        require(choices == 2, "invalid native profile has no chooser effect");
     }
     {
         Fixture f; f.branch(13, 0x122); f.emit({255}); f.target(0x122, f.pc()); f.note();

@@ -56,7 +56,8 @@ struct BhavAudio::Impl {
            auto arguments=config.arguments;
            std::optional<odh::ResolvedHitEvent> resolved;
            if(config.caller_arguments || config.native_controls)
-               resolved=odh::resolve_hit_event(hit,hot,request);
+               resolved=odh::resolve_hit_event(hit,hot,request,{},config.native_controls
+                   ? odh::HitPatchMode::native_controller : odh::HitPatchMode::raw);
            if(config.caller_arguments){
                // Resolution validated the name before this bounded copy.
                auto name=request.name;

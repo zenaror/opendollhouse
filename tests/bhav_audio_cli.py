@@ -162,6 +162,32 @@ with tempfile.TemporaryDirectory(prefix="odh-bhav-audio-") as folder:
     report = json.loads(result.stdout)
     assert result.returncode == 0 and report["audio_probe"]["pcm"]["rendered"] >= 56
     assert report["sound_requests"][0]["hit_native_controls"] == dict(expected, **{"50": 0})
+    # Native patch sentinel is unset even without a resource at 0x80000000.
+    # Both argument modes keep the effective patch receipt distinct from choice.
+    hot.write_text(list_hot.replace("@1,0", "@1,-2147483648"))
+    for args_profile, arguments in [(native_profile, [2, 0, 0]),
+                                    (profile + ["--audio-native-controls", "1024", "512"], [1, 1024, 0])]:
+        result = run(resources + args_profile)
+        report = json.loads(result.stdout)
+        event = report["sound_requests"][0]
+        assert result.returncode == 0 and event["status"] == "submitted", (result.stdout, result.stderr)
+        assert event["hit_native_controls"] == dict(expected, **{"47": arguments[0], "50": 0})
+        assert event["hit_arguments"] == arguments and event["source"] == 2
+        assert report["audio_probe"]["pcm"]["rendered"] >= 56
+        assert report["audio_probe"]["profile"]["gain_q15"] == 32768
+        assert report["audio_probe"]["profile"]["pan_q15"] == 0
+    # Legacy raw mode still requires that literal patch resource.
+    result = run(resources + caller_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 3 and report["sound_requests"][0]["status"] == "backend_rejected"
+    assert report["audio_probe"]["pcm"]["rendered"] == 0
+    # Unresolved Spl is not equivalent to an explicit native unset sentinel.
+    hot.write_text(native_hot.replace(",2,10,0,0,@none", ",2,10,0,@missing_spl,@none"))
+    result = run(resources + native_profile)
+    report = json.loads(result.stdout)
+    assert result.returncode == 3 and report["sound_requests"][0]["status"] == "backend_rejected"
+    assert all(v is None for v in report["sound_requests"][0]["hit_native_controls"].values())
+    assert report["audio_probe"]["pcm"]["rendered"] == 0 and report["audio_probe"]["threads"]["active"] == 0
     hot.write_text(native_hot)
     # Full signed int32 inputs are raw controls, never clamped as Q15.
     write_owner()

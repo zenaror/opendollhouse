@@ -67,16 +67,27 @@ Admission pode recusar antes da atualização; inicialização pode atualizar
 controles sem reiniciar PC/bancos, e remoção de fontes não equivale à destruição
 do controller. Isso não define ownership por pedido nem o ciclo completo de
 remoção/reload. Ver [identidade e ciclo de TrackID](hit-native-track-identity-evidence.md).
-O cleanup de cXObject já foi ligado à remoção de sua fonte; remoção normal,
-fontes especiais e refresh estão descritos na evidência de contribuições.
-O próximo passo é o ciclo persistente por HOTTrackID, com banco de controles
-e fases de execução/PCM separados. Restam defaults completos 50–62 (incluindo
-interrupt55), reativação/teardown, pausa e cadência dos callers para integrar
-esse ciclo ao World. Não deduplicar por nome nem criar
-registro de ticket por admissão. Geometria e agregação espaciais, provider
-compartilhado, precedência/descoberta, grupos/owners/ganho espacial e scheduler
-geral do lote permanecem pendentes. Esta evidência é estática; não acrescenta
-validação de runtime, compatibilidade ou ports.
+Na imagem nativa, o cleanup de `cXObject` chama a remoção da fonte; remoção
+normal, fontes especiais e refresh estão descritos na evidência estática de
+contribuições. Isso não significa que o runtime ODH esteja integrado a esse
+ciclo.
+O builder fresh agora conhece o banco 50–62, incluindo interrupt55=0 e Spl57,
+e há uma primitiva local para atualizar argumentos/controles sem reset quando
+55=0 e 53=0. Contrato e verificação estão em
+[hit-native-retrigger-validation.md](hit-native-retrigger-validation.md); a
+pesquisa estática e sua auditoria estão em
+[hit-native-retrigger-evidence.md](hit-native-retrigger-evidence.md). A
+primitiva não implementa admissão, scheduler (incluindo pausa/Clock) ou restart
+quando55!=0, e não representa os bytes/ponteiro internos de lifecycle do
+original. O próximo passo é integrar um manager persistente por HOTTrackID,
+com geração de World e binding PCM separados, e ligar a atualização às
+condições externas corretas. Fechar cadência/gates de callers, provider
+compartilhado, reuso de ObjectID, registro ativo, teardown e os demais ramos
+antes de ampliar o lifecycle. Não deduplicar por nome nem criar registry de
+ticket por admissão. Geometria/agregação
+espaciais, grupos/owners/ganho e scheduler geral do lote permanecem pendentes.
+Os resultados Linux desta unidade não comprovam compatibilidade nem validam
+New 3DS, Vita ou Android.
 
 A tabela portátil `odh_hit_source_contributions` agora armazena pares raw
 `(TrackID, R1)` com capacidade ODH explícita e oferece agregação pura de

@@ -34,9 +34,11 @@ struct Fixture {
         return b;
     }
     auto binding(){return *odh::SoundSourceBinding::bind(world,request);}
-    auto make(odh::HitChooser chooser={},odh::HitThreadLimits limits={}){
+    auto make(odh::HitChooser chooser={},odh::HitThreadLimits limits={},
+              std::optional<odh::HitNativeControls> controls={}){
         return odh::make_hit_sound(hit,hot,request,binding(),std::move(chooser),backend(),
-            std::make_unique<Owner>(c),limits,odh::HitJumpOperand::FreeSoHeuristic,odh::HitArguments{{1,20,0}});
+            std::make_unique<Owner>(c),limits,odh::HitJumpOperand::FreeSoHeuristic,odh::HitArguments{{1,20,0}},
+            {},std::move(controls));
     }
 };
 template<class F>void invalid(F mutate){Fixture f;mutate(f);rejects([&]{odh::resolve_hit_event(f.hit,f.hot,f.request);});}
@@ -51,6 +53,12 @@ int main(){try{
         rejects([&]{odh::resolve_hit_event(f.hit,f.hot,f.request,{65537});});
         rejects([&]{odh::resolve_hit_event(f.hit,f.hot,f.request,{6});});
         require(odh::resolve_hit_event(f.hit,f.hot,f.request,{7}).start_pc==16,"name exact budget accepted");
+        f.request.name.clear();f.hot.events.clear();
+        std::string diagnostic;
+        try { odh::resolve_hit_event(f.hit,f.hot,f.request,{0},static_cast<odh::HitPatchMode>(99)); }
+        catch(const odh::FormatError& e) { diagnostic=e.what(); }
+        require(diagnostic=="sound factory: invalid patch mode" && !f.c.starts && !f.c.choices,
+            "unknown patch mode rejected before other validation/resources");
     }
     invalid([](auto& f){f.request.name="";});
     invalid([](auto& f){f.request.name=std::string("fi\0xture",8);});
@@ -78,6 +86,35 @@ int main(){try{
     invalid([](auto& f){f.hot.tracks[7].hitlist_id=9;});
     invalid([](auto& f){f.hot.tracks[7].hitlist_id=9;f.hot.hitlists[9]={};});
     invalid([](auto& f){f.hot.tracks[7].hitlist_id=9;f.hot.hitlists[9]={{100},"","unsupported"};});
+    {
+        Fixture f;auto& track=f.hot.tracks[7];track.patch_id=0x80000000u;
+        rejects([&]{odh::resolve_hit_event(f.hit,f.hot,f.request);});
+        f.hot.patches[0x80000000u]={"raw","raw.xa",false,false};
+        const auto raw=odh::resolve_hit_event(f.hit,f.hot,f.request);
+        require(raw.initial_track==&track && *track.patch_id==0x80000000u,"raw mode preserves high-bit patch resource");
+        auto raw_instance=f.make();raw_instance->tick();
+        require(f.c.patch==0x80000000u && f.c.starts==1,"legacy factory plays high-bit patch literally");
+        raw_instance.reset();
+        rejects([&]{odh::resolve_hit_event(f.hit,f.hot,f.request,{},odh::HitPatchMode::native_controller);});
+        track.hitlist_id=9;f.hot.hitlists[9]={{200},{},{}};
+        f.hot.patches.erase(0x80000000u);
+        const auto resolved=odh::resolve_hit_event(f.hit,f.hot,f.request,{},odh::HitPatchMode::native_controller);
+        require(resolved.initial_track==&track && resolved.start_pc==16 && *track.patch_id==0x80000000u,
+            "native resolution borrows unchanged metadata and accepts unset patch with list");
+        track.arg_type=2;track.volume=1024;track.ducking_priority=0;track.sound_pressure_level=0x80000000u;
+        const auto controls=odh::build_native_hit_controls(track,{{1,20,0}},1024,512);
+        require(controls.locals[50-16]==0 && controls.locals[57-16]==20,"native fresh effective patch/Spl defaults");
+        auto instance=f.make([&](auto id,const auto& ids){
+            require(id==9 && ids==std::vector<std::uint32_t>{200},"native chooser receives real list only");
+            ++f.c.choices;return std::size_t{0};
+        },{},controls);
+        require(f.c.choices==1 && f.c.starts==1,"native initialization chooses without eager backend start");
+        instance->tick();require(f.c.starts==2 && f.c.patch==200,"native unset patch selects existing resource");
+        instance.reset();require(f.c.stops==2,"raw and native instances release lifetime once each");
+        track.sound_pressure_level.reset();
+        rejects([&]{f.make([&](auto,const auto&){++f.c.choices;return std::size_t{0};},{},controls);});
+        require(f.c.stops==3 && f.c.choices==1 && f.c.starts==2,"missing Spl rejects before chooser/backend with cleanup");
+    }
     {
         Fixture f;f.hot.tracks[7].patch_id=0;f.hot.tracks[7].hitlist_id=9;f.hot.hitlists[9]={{100,200},{},{}};
         require(odh::resolve_hit_event(f.hit,f.hot,f.request).track_id==7 && !f.c.choices,"zero patch with list is deferred selection");
