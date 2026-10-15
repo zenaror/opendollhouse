@@ -57,9 +57,9 @@ uma segunda tentativa. O chamador deve observar failed e tratar HIT como falha,
 não promover estado de nota ainda ativo a conclusão bem-sucedida.
 
 Destrutor tenta pause/clear antes de liberar o mixer, sem lançar. Owners de
-notas não devem possuir/destruir o dispositivo compartilhado. Ainda falta uma
-classe reutilizável de backend/lifetime HIT que registre todas as notas por
-thread e coordene esse ownership na integração do jogo.
+notas não devem possuir/destruir o dispositivo compartilhado. A integração
+ao loop do jogo permanece pendente. A classe posterior reutilizável de backend/lifetime HIT
+está em [pcm-hit-owner-validation.md](pcm-hit-owner-validation.md).
 
 ## Evidência
 

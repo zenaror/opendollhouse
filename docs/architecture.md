@@ -45,8 +45,10 @@ Mixer portátil com orçamento PCM agregado, handles por nota e confirmação de
 consumo em [pcm-mixer-validation.md](pcm-mixer-validation.md), validado isoladamente
 com HIT e duas XA nativas em SDL dummy. Transporte compartilhado, prefixos e
 cancelamento em [pcm-transport-validation.md](pcm-transport-validation.md), com
-sink Linux opcional e core independente de SDL. Precedência/descoberta, backend
-HIT com ownership por thread e ligação ao loop principal permanecem pendentes.
+sink Linux opcional e core independente de SDL. Ownership por thread e factory
+XA em [pcm-hit-owner-validation.md](pcm-hit-owner-validation.md), com execução
+BHAV sintética ligada à coleção/transporte. Precedência/descoberta, serviço com
+grupos/owners/ganho espacial e ligação ao loop principal permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

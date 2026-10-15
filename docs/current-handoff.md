@@ -5,48 +5,52 @@ nesta sessão; este checkpoint precisa ser sincronizado com ela quando o
 conector voltar. Não declarar OMM atualizada. Ler AGENTS.md, este arquivo,
 docs/architecture.md e as evidências recentes antes de continuar.
 
-Base anterior:8a34ab03e2e09913fef4f06bbfdb3b1a2abaf6de (mixer PCM).
-Novo checkpoint: PcmTransport portátil + LinuxPcmSink compartilhado;
-identificar hash com git log. Evidência em pcm-transport-validation.md.
-Catálogo/mixer anteriores seguem descritos nos seus documentos. Usuário
-removeu OpenCode e descartou IA local; não invocar. Pediu coordenação com
-subagentes/modelo/esforço conforme complexidade. Nesta unidade: implementação
-Sol alto, revisão Luna alto e pesquisa TS1 Luna médio; integração pelo principal.
+Base anterior:a2267da0a2fc1c194c4053bdefd8d71be672291d (transporte PCM).
+Novo checkpoint: PcmHitOwner e make_xa_hit_sound; identificar hash com git log.
+Evidência em pcm-hit-owner-validation.md. Core por subagente Sol alto,
+revisão independente por Luna alto; principal integrou factory, BHAV e testes.
+Usuário pediu delegação por complexidade/modelo/esforço. OpenCode foi removido,
+IA local descartada; não invocar. OMM ainda indisponível.
 
-Catálogo recebe fontes FAR/loose explícitas; basename ASCII/slashes,
-ambiguidades sem precedência adivinhada, limites globais de índice/nomes,
-decoder bounded por entrada e proveniência. Sem extração/cache de PCM.
-Allowances só reduzem orçamento do decoder; mixer cobra vector.capacity.
+PcmHitOwner é lifetime por thread HIT; transport, catálogo/HOT/HIT/World e
+capturas vivem mais que ele. Backend captura owner estável por ponteiro;
+callbacks nunca podem sobreviver ao owner. Lista de handles prealocada1..256,
+limite lifetime (não recicla completos). Loader recebe allowance PCM corrente;
+helper host usa catálogo no NoteOn, sem decode/áudio durante construção.
+Somente handles próprios são consultáveis; rendered ainda é HITactive,
+consumido ou explicitamente parado vira inativo/complete enquantoowner vivo.
+Ownerstop ou sinkfailed vira HITfailed. Grupo só por callback explícito;
+nenhum efeito após falha do sink. Stop noexcept libera todas as notas mesmo
+se um flush falhar; não fecha dispositivo compartilhado.
 
-PcmTransport possui mixer e buffer fixo, empresta sink exclusivo estéreo.
-Ctor recusa fila preenchida; tick não espera, preserva prefixos parciais,
-commita só aceitos e acknowledge=submitted-queued. rendered ainda é HITactive.
-Cancelamento: pause como barreira, acknowledge antes de clear, descartar sobra,
-stop/release e rewind das sobreviventes; próximo tick reinicia saída.
-Falha do sink trava transporte, pause/clear best effort, sem retomada implícita;
-stop/release liberam alvo mesmo se flush lançar erro. Backend HIT futuro deve
-observar failed; state ativo não pode virar sucesso artificial.
+Transporte mantém prefixos, consumo e cancelamento pause/ack/clear/rewind;
+falha trava saída, sem recuperação implícita, cleanup por alvo ainda funciona.
+Catálogo FAR/loose explícito, basename ASCII/slashes e rejeição de ambiguidades;
+allowance só reduz decoder, mixer cobra vector.capacity. Sem cache/precedência
+adivinhada; fontes externas imutáveis e sizecheck não é checksum de conteúdo.
 
-Testes finais:108 configurados,107pass/1X11skip em Debug e ASan/UBSan,
-LSan off.110checks transport e teste Linux SDLdummy com remoção World da
-foreground, flush de fila+retido, sobrevivente continua no dispositivo.
-Build separado SDL_AUDIO/X11 OFF passa110checks do core.
-Duas XA nativas2756/3212 com factory/World construído:109568frames,
-FNV1a64le8bca194e939e6a8d igual nos dois builds e ao mixer anterior;
-instância completa, stoponce, PCM/handles liberados. Args[1,1024,0],
-Literal32, choices0/0 e grupo1 vazio explícitos. Sem audibilidade/original/
-Main/hardware. Verificador/recibos reports/pcm-transport-native*, SHA no doc.
-Logs reports/pcm-transport-build{,-asan}-{final,ctest}.log.
-Revisão independente encontrou cleanup pós-falha de flush e confirmou correção.
+Testes finais:110 configurados,109pass/1X11skip Debug e ASan/UBSan, LSan off.
+44checks owner e45integração host: VM BHAVopcode23->FWAVcallback->coleção->
+HOT/HIT->catálogoXA->PCM, duas origens, partialqueue, remoção e sobrevivente,
+cleanup de conclusão, asset ausente e budget insuficiente. Dados sintéticos.
+Novos testes passam também com SDL_AUDIO/X11 OFF. Revisão achou grupoexecutado
+após sinkfailed; corrigido, testado e relido independentemente.
+Verificador nativo usa helper/owner reais com XA2756/3212,44100stereoSDLdummy;
+109568frames/FNV1a64le8bca194e939e6a8d igual em Debug/ASAN e checkpointanterior.
+Foregroundhandle liberado com instância; background sobrevive até cleanup.
+Args[1,1024,0], Literal32, choices0/0 e grupo1vazio explícitos. Worldconstruído,
+sem audibilidade/original/Main/hardware. Verificador/recibos reports/pcm-owner-native*,
+SHA no doc. Logs reports/pcm-owner-build{,-asan}-{final,ctest}.log.
 
-Próximo: backend/lifetime HIT reutilizável por thread sobre PcmTransport,
-registrando/liberando todas as notas sem fechar sink compartilhado; integrar
-sound_primitive/coleção ao loopWorld sem bypass. Referência TS1 conferida:
-VMPlaySound não aplica operand.Volume/SampleRate nesse caminho; HITVM cria
-thread sem callerargs, R1=12/R2=R3=0 (ODH já tem default). Não usar fixture
-[1,1024,0] como default real. Ver paths/linhas no doc de transporte.
-Ainda gates: gain/pan espacial, callerargs/ArgStyle/unidades/controllers,
-loops/CallReturn/owners/dedup/globalgroup69 e campos4/13/14.
+Próximo: serviço de som com ticks no loopWorld, gain/pan espacial e política
+comprovada de owner/grupo/dedup; depois demais profiles/HITinstructions.
+Ainda não ligar Main com sucesso artificial ou adotar argumentos de fixture
+como callerreal. VMPlaySound referência não aplica operand.Volume/SampleRate;
+HITVM inicia R1=12,R2=R3=0, ODH já tem default. Callback no binário analisado usa sourceID, ao contrário do
+GetSrcDataField que ignora src no Simitone: preservar evidência
+RE existente em hit-source-callback/hit-invocation-validation, não alias source12.
+Ainda gates: callerargs/ArgStyle/unidades/controllers, loops/CallReturn,
+ownerscompartilhados/globalgroup69 e campos4/13/14.
 Savedframes105/137/queues/clock ainda dormentes, sem reInit; câmera/picking,
 input/lote mínimo, SLOT8/failuretrees/needs/inventory/save, SDK/CC e ports
 continuam na meta integral. Linux primeiro, Simitone/submoduleTS1 principal.
