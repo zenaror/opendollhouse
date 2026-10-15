@@ -76,18 +76,25 @@ e há uma primitiva local para atualizar argumentos/controles sem reset quando
 55=0 e 53=0. Contrato e verificação estão em
 [hit-native-retrigger-validation.md](hit-native-retrigger-validation.md); a
 pesquisa estática e sua auditoria estão em
-[hit-native-retrigger-evidence.md](hit-native-retrigger-evidence.md). A
-primitiva não implementa admissão, scheduler (incluindo pausa/Clock) ou restart
-quando55!=0, e não representa os bytes/ponteiro internos de lifecycle do
-original. O próximo passo é integrar um manager persistente por HOTTrackID,
-com geração de World e binding PCM separados, e ligar a atualização às
-condições externas corretas. Fechar cadência/gates de callers, provider
-compartilhado, reuso de ObjectID, registro ativo, teardown e os demais ramos
-antes de ampliar o lifecycle. Não deduplicar por nome nem criar registry de
-ticket por admissão. Geometria/agregação
-espaciais, grupos/owners/ganho e scheduler geral do lote permanecem pendentes.
-Os resultados Linux desta unidade não comprovam compatibilidade nem validam
-New 3DS, Vita ou Android.
+[hit-native-retrigger-evidence.md](hit-native-retrigger-evidence.md).
+A primitiva não implementa admissão, scheduler ou restart quando55!=0, e não
+representa os bytes/ponteiro internos de lifecycle do original. A nova pesquisa
+estática mostra que a integração precisa primeiro representar o banco persistente
+1–16 (incluindo ID16; R4–R16 não são reiniciados), a execução com scheduler/Clock
+e o binding de áudio corrente. Só depois deve entrar o manager persistente por
+HOTTrackID, mantendo geração de World e binding PCM distintos. Veja
+[controller, áudio corrente e Clock](hit-native-controller-lifecycle-evidence.md).
+Não usar `HitThread::tick` completo como sinal de término nativo nem mapear o
+controller a uma thread de `SoundThreadCollection` por pedido. A pesquisa é
+estática, não uma integração ODH nem prova de comportamento de backend.
+
+Ainda faltam definir a cadência real do Clock, gates/callers, provider
+compartilhado, reuso de ObjectID e registro/teardown, além de implementar os
+caminhos de stop/restart documentados e fechar os efeitos internos do backend.
+Não deduplicar por nome nem criar registry de ticket por admissão. Geometria e
+agregação espaciais, grupos/owners/ganho e scheduler geral do lote permanecem
+pendentes. Resultados Linux anteriores não comprovam compatibilidade nem
+validam New 3DS, Vita ou Android.
 
 A tabela portátil `odh_hit_source_contributions` agora armazena pares raw
 `(TrackID, R1)` com capacidade ODH explícita e oferece agregação pura de

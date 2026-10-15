@@ -352,6 +352,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Controles HIT brutos antes do primeiro tick e perfil ArgStyle2](docs/hit-native-controls-validation.md)
 - [Verificação do retrigger nativo e defaults 50–62](docs/hit-native-retrigger-validation.md)
 - [Evidência estática do retrigger HIT nativo](docs/hit-native-retrigger-evidence.md)
+- [Lifecycle nativo: execução, áudio corrente e Clock](docs/hit-native-controller-lifecycle-evidence.md)
 - [Opcode HIT 69 nativo: registro de tracks, fade e relógio](docs/hit-native-group-kill-evidence.md)
 - [Identidade e ciclo de TrackID no HIT nativo](docs/hit-native-track-identity-evidence.md)
 - [Tabela portátil de contribuições HIT por TrackID](docs/hit-source-contributions-validation.md)

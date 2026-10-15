@@ -6,8 +6,7 @@ validação funcional desses ports. Leia `AGENTS.md`, `docs/architecture.md` e
 as notas de validação desta unidade antes de continuar.
 
 A OMM voltou. O papel `project-base` e o handoff foram consultados; o remoto
-`main` e o checkout publicados foram confirmados em `84a66b2`, e os hashes dos
-13 arquivos cobertos pela validação continuam iguais. A evidência de retrigger
+`main` e o checkout publicados foram confirmados em `ae5b19b`. A evidência de retrigger
 foi importada na OMM em
 `sources/OpenDollhouse/checkpoints/hit-native-retrigger-evidence-84a66b2-2026-10-15.md`
 (SHA256 `46531342d7d5ed4388bfd7295dc810bfce6941daaf33b38ede42376a9e4745cb`).
@@ -19,9 +18,42 @@ usá-lo na escrita condicional. Verificar separadamente a revisão Git publicada
 A revisão desta unidade é a do commit que contém este arquivo; conferir no
 handoff OMM qual foi o último checkpoint sincronizado.
 
-## Checkpoint de 2026-10-15
+## Pesquisa estática de lifecycle HIT — base `ae5b19b`
 
-Base publicada `84a66b2`. Esta unidade amplia o builder fresh de controles
+A unidade atual é pesquisa estática somente, sem mudança de runtime ou novos
+testes. Evidência e bytes selecionados estão em
+[hit-native-controller-lifecycle-evidence.md](hit-native-controller-lifecycle-evidence.md)
+e `reports/hit-native-controller-lifecycle-selected.asm.txt` (SHA256
+`868abd859374a778a039ceef38fd8c2ed6d1c21b2d8929802d4f446e13484308`). A
+auditoria confirmou 1.300 linhas, 3.969 bytes, 22 destinos de vtable e 8
+entradas de opcode; recibo
+`reports/hit-native-controller-lifecycle-verification.json` (SHA256
+`bd00026bdd87c0332ea945d9ab8719767972a458ffc1df3d3cd0eb51938c25a0`). A nota
+de evidência tem SHA256
+`97e177093c8a546d5d69ae2d797d9a53657aa8cd5c35ed3d86850e7f4233387f`. A revisão
+independente dos caminhos selecionados terminou sem ressalvas materiais.
+
+Os handlers nativos usam o binding de áudio corrente: NoteOn2 lê o byte literal
+e não grava handle em variável; WaitSamp11 consulta áudio+70 e, se ativo, faz
+retry de PC com deadline `Clock+2`, enquanto inativo continua no mesmo poll.
+End/Return com pilha vazia solicita +34; com controller e áudio ativos, arma
+fade (40=0, 41=19, 42=100, 45=1, +1cf=1), sem alterar PC/deadline, e o script
+pode prosseguir no mesmo poll. Sem áudio ativo, o caminho chama +38. Stop libera
+o binding mas preserva o controller/TrackID. Não traduzir conclusão de nota em
+fim do controller.
+
+A sequência de implementação agora é: banco persistente 1–16 (inclui ID16;
+R4–R16 preservados no restart), execução/scheduler com Clock e binding corrente
+de áudio; depois, manager por HOTTrackID. Não reutilizar `HitThread::tick`
+completo como `Ended` nativo nem representar o manager como coleção de threads
+por pedido. Detalhes, condições e limites estão na evidência. A pesquisa não
+rodou testes/build/runtime. As contagens CTest e fixture citadas no checkpoint
+`ae5b19b` pertencem à implementação anterior, sobre a base `84a66b2`; não foram
+repetidas nesta pesquisa e não comprovam execução dos novos contratos nativos.
+
+## Runtime anterior — checkpoint `ae5b19b`
+
+Sobre a base `84a66b2`, o checkpoint `ae5b19b` amplia o builder fresh de controles
 nativos e adiciona uma primitiva local para atualização de argumentos/controles
 sem reset. A descrição completa, testes e limites estão em
 [hit-native-retrigger-validation.md](hit-native-retrigger-validation.md); a
@@ -88,12 +120,12 @@ material. `git diff --check` passou.
 Preservar como pendentes saved frames 105/137 e a fila/Clock dormantes; cobrir
 separadamente sem confundir polls de áudio com ticks de World.
 
-Integrar um manager persistente indexado por HOTTrackID, separando geração de
-World e binding PCM, e só então ligar a primitiva aos gates e estado reais do
-controller. Fechar admissão, fonte/provider, remoção/reuso de ObjectID,
-registro e teardown, pausa e restart com `interrupt55!=0`, Clock e os demais
-caminhos antes de atribuir lifecycle completo. O builder fresh já cobre
-50–62; não é uma pendência desta unidade.
+Antes do manager HOTTrackID, modelar o banco persistente 1–16, o scheduler/Clock
+e o binding de áudio corrente. Depois integrar o manager por HOTTrackID, com
+geração de World e binding PCM separados, e ligar a primitiva aos gates reais.
+Fechar admissão, fonte/provider, remoção/reuso de ObjectID, registro/teardown,
+pausa e restart com `interrupt55!=0` antes de atribuir lifecycle completo. O
+builder fresh já cobre 50–62.
 
 A meta Linux mais ampla ainda inclui saved frames/queues/Clock (incluindo
 105/137), continuação de Main sem reinit, câmera/picking, input, lote com SLOT/failure trees/needs/
