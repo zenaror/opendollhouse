@@ -35,6 +35,8 @@ int main(int argc,char** argv){try{
     const auto usage=catalog.usage();
     require(usage.sources==1 && usage.entries==2 && usage.xa_entries==1,"bounded full FAR index, only XA candidates");
     auto asset=catalog.load(hot,1);
+    rejects([&]{catalog.load(hot,1,5);});rejects([&]{catalog.load(hot,1,0);});
+    require(catalog.load(hot,1,6).audio.samples==asset.audio.samples,"caller admission allowance accepts exact PCM budget");
     require(asset.audio.samples==std::vector<std::int16_t>({4096,8192,12288}),"exact declared PCM samples, not block padding");
     require(asset.audio.sample_rate==22050 && asset.audio.channels==1 && asset.audio.remaining_bytes==4,"decode metadata/tail");
     require(asset.key=="case.xa" && asset.entry=="Voice\\Case.XA" && asset.offset==16 && asset.length==pcm.size()+4 && asset.source.path==a,"archive provenance retained");
@@ -67,6 +69,7 @@ int main(int argc,char** argv){try{
     }
     XaPatchCatalogLimits bounds;
     bounds.audio.pcm_bytes=5;XaPatchCatalog small(one,bounds);rejects([&]{small.load(hot,1);});
+    rejects([&]{small.load(hot,1,1000);});
     bounds={};bounds.audio.input_bytes=pcm.size()+3;XaPatchCatalog short_input(one,bounds);rejects([&]{short_input.load(hot,1);});
     bounds={};bounds.sources=0;rejects([&]{XaPatchCatalog bad(one,bounds);});
     bounds={};bounds.entries=1;rejects([&]{XaPatchCatalog bad(one,bounds);});

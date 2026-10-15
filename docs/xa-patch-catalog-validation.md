@@ -39,8 +39,11 @@ O limite de entrada XA vale para a entrada selecionada, não o container FAR.
 
 Contagem de records limita metadata; name_bytes é contabilidade lógica,
 não RSS ou capacidade de allocators. PCM devolvido pertence ao chamador e
-não é contabilizado globalmente depois do retorno: mixer/cache precisarão
-de orçamento agregado próprio. Nada disso prova viabilidade em consoles.
+não é contabilizado globalmente depois do retorno. O mixer mantém seu orçamento
+agregado próprio em [pcm-mixer-validation.md](pcm-mixer-validation.md).
+load(hot,id,allowance) permite reduzir o limite PCM do decoder à capacidade
+disponível do chamador antes da alocação; não pode ampliar o limite configurado.
+Nada disso prova viabilidade em consoles.
 
 ## CLI
 
@@ -52,14 +55,15 @@ produz WAV/extração. Erros retornam2 sem recibo JSON de sucesso.
 
 ## Evidência
 
-Teste C++ com31 checks e wrapper CLI Python, apenas fixtures sintéticas:
+Teste C++ com35 checks e wrapper CLI Python, apenas fixtures sintéticas:
 FAR/loose, PCM exato, trimming/tail, basename/case/slashes, proveniência,
 duplicatas em ambas ordens/dentro do mesmo FAR/misturando fontes,
 unrelated duplicates, invalid patch/name/extension, budgets agregados,
 input/PCM limits, malformed XA, mudança de tamanho e cwd, PCM owned.
+Allowance inclui zero, menor/exato e limite configurado não ampliável.
 CLI confere argumentos, metadata, erro ambíguo e SHA input preservado.
 
-Suítes finais Debug e ASan/UBSan:104 configurados,103 aprovados,um X11
+Suítes atuais Debug e ASan/UBSan:106 configurados,105 aprovados,um X11
 ignorado pelo ambiente; sem warnings. LSan não validado (detect_leaks=0).
 
 SoundData.far nativo:2965 entradas,2909 XA. Patch3212 encontrada pelo filename
@@ -86,7 +90,8 @@ Consumo da fila não prova audibilidade/DAC, playback original ou Main retomado.
 
 OMM indisponível nesta sessão. Estado para sincronizar está em
 current-handoff.md. Originais, refs, reports e artefatos antigos preservados.
-Pendentes: orçamento PCM agregado/mixer, diretórios/precedência/formatos não XA,
+Mixer isolado já validado em pcm-mixer-validation.md. Pendentes: backend
+compartilhado/cancelamento, diretórios/precedência/formatos não XA,
 integração do loopWorld, caller arguments/units/ArgStyle/controllers, loops e
 outras partes da meta integral. Não usar reInit ou sucesso artificial para
 contornar os gates de Main.

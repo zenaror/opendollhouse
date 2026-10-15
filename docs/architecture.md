@@ -29,8 +29,8 @@ Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
 ao PulseAudio estão em [linux-audio-validation.md](linux-audio-validation.md).
 Probe XA->PCM Linux com cursor e fila limitada em
-[xa-play-validation.md](xa-play-validation.md). Ligação a eventos HIT, mixer
-e ligação ao scheduler do jogo continuam pendentes. Lifecycle HIT portátil
+[xa-play-validation.md](xa-play-validation.md). A ligação ao scheduler do jogo
+continua pendente. Lifecycle HIT portátil
 inicial (NoteOn/WaitSamp/End) e integração isolada com PCM estão em
 [hit-thread-validation.md](hit-thread-validation.md); isso ainda não retoma Main.
 Leitura viva dos bancos da origem usa ligação protegida por ID/geração em
@@ -41,7 +41,10 @@ Factory de perfil HOT/bytecode explícito em
 [sound-factory-validation.md](sound-factory-validation.md), validada também com
 recursos nativos e estado World construído. Catálogo host de patches XA em
 FAR/arquivos explícitos em [xa-patch-catalog-validation.md](xa-patch-catalog-validation.md).
-Precedência/descoberta, ligação ao loop principal e mixer permanecem pendentes.
+Mixer portátil com orçamento PCM agregado, handles por nota e confirmação de
+consumo em [pcm-mixer-validation.md](pcm-mixer-validation.md), validado isoladamente
+com HIT e duas XA nativas em SDL dummy. Precedência/descoberta, transport/backend
+compartilhado com cancelamento e ligação ao loop principal permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

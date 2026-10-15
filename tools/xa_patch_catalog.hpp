@@ -29,7 +29,9 @@ struct XaPatchAsset {
 class XaPatchCatalog {
 public:
     explicit XaPatchCatalog(const std::vector<XaPatchSource>&, XaPatchCatalogLimits = {});
-    XaPatchAsset load(const odh::Hot&,std::uint32_t patch_id) const;
+    // Optional admission allowance only lowers configured PCM decode budget.
+    XaPatchAsset load(const odh::Hot&,std::uint32_t patch_id,
+                      std::optional<std::uint64_t> pcm_allowance = {}) const;
     XaPatchCatalogUsage usage() const {return usage_;}
 private:
     struct Source {XaPatchSource source;std::uint64_t size;};

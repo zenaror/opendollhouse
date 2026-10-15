@@ -60,7 +60,7 @@ XaPatchCatalog::XaPatchCatalog(const std::vector<XaPatchSource>& inputs,XaPatchC
         }
     }
 }
-XaPatchAsset XaPatchCatalog::load(const odh::Hot& hot,std::uint32_t id) const {
+XaPatchAsset XaPatchCatalog::load(const odh::Hot& hot,std::uint32_t id,std::optional<std::uint64_t> allowance) const {
     const auto patch=hot.patches.find(id);if(patch==hot.patches.end())fail("patch ID absent in HOT");
     auto normalized=key(patch->second.filename);
     const auto found=index_.find(normalized);if(found==index_.end())fail("XA basename absent in supplied sources");
@@ -69,7 +69,9 @@ XaPatchAsset XaPatchCatalog::load(const odh::Hot& hot,std::uint32_t id) const {
     std::ifstream stream(source.source.path,std::ios::binary);if(!stream)fail("cannot reopen indexed source");
     const auto size=std::filesystem::file_size(source.source.path);
     if(size!=source.size)fail("source size changed after indexing");
-    auto audio=odh::read_xa(odh::View(stream,size).subview(entry.offset,entry.length),limits_.audio);
+    auto bounds=limits_.audio;
+    if(allowance && *allowance<bounds.pcm_bytes)bounds.pcm_bytes=*allowance;
+    auto audio=odh::read_xa(odh::View(stream,size).subview(entry.offset,entry.length),bounds);
     return {id,std::move(normalized),source.source,entry.entry,entry.offset,entry.length,std::move(audio)};
 }
 }
