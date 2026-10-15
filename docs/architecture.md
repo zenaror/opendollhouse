@@ -39,8 +39,9 @@ Coleção portátil com ticks explícitos, capacidade limitada e cancelamento po
 remoção/IDreuse em [sound-thread-collection-validation.md](sound-thread-collection-validation.md).
 Factory de perfil HOT/bytecode explícito em
 [sound-factory-validation.md](sound-factory-validation.md), validada também com
-recursos nativos e estado World construído. Loader genérico de patch/XA,
-ligação ao loop principal e mixer permanecem pendentes.
+recursos nativos e estado World construído. Catálogo host de patches XA em
+FAR/arquivos explícitos em [xa-patch-catalog-validation.md](xa-patch-catalog-validation.md).
+Precedência/descoberta, ligação ao loop principal e mixer permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

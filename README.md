@@ -341,6 +341,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Origem de som ligada ao World com geração e leitura viva](docs/sound-source-binding-validation.md)
 - [Coleção de threads de som e cancelamento por remoção do dono](docs/sound-thread-collection-validation.md)
 - [Factory de eventos, tracks e inicialização HIT](docs/sound-factory-validation.md)
+- [Catálogo XA com fontes FAR/avulsas e proveniência](docs/xa-patch-catalog-validation.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)
