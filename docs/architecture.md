@@ -47,8 +47,11 @@ com HIT e duas XA nativas em SDL dummy. Transporte compartilhado, prefixos e
 cancelamento em [pcm-transport-validation.md](pcm-transport-validation.md), com
 sink Linux opcional e core independente de SDL. Ownership por thread e factory
 XA em [pcm-hit-owner-validation.md](pcm-hit-owner-validation.md), com execução
-BHAV sintética ligada à coleção/transporte. Precedência/descoberta, serviço com
-grupos/owners/ganho espacial e ligação ao loop principal permanecem pendentes.
+BHAV sintética ligada à coleção/transporte. O probe BHAV tem integração Linux
+diagnóstica em [bhav-audio-validation.md](bhav-audio-validation.md), com argumentos
+e controles explícitos; a cena construída da cadeira pode emitir PCM dos dados
+nativos pelo loop existente. Derivação do caller/ArgStyle, precedência/descoberta,
+grupos/owners/ganho espacial e scheduler geral do lote permanecem pendentes.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

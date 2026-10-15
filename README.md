@@ -345,6 +345,8 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Mixer PCM portátil, limites e consumo por nota](docs/pcm-mixer-validation.md)
 - [Transporte PCM compartilhado e cancelamento na saída Linux](docs/pcm-transport-validation.md)
 - [Ownership de notas HIT e integração da factory XA com BHAV](docs/pcm-hit-owner-validation.md)
+- [Áudio diagnóstico no loop BHAV Linux](docs/bhav-audio-validation.md)
+- [Evidência estática dos argumentos nativos de PlaySound](docs/hit-native-caller-arguments.md)
 - [Reset de postura e loops persistentes](docs/reset-validation.md)
 - [Snap de direção e retorno do BHAV da cadeira](docs/facing-validation.md)
 - [Sequência de sentar e levantar no mesmo mundo](docs/stand-validation.md)

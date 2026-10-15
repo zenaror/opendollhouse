@@ -7,7 +7,9 @@
 #include "odh/sleep.hpp"
 #include "resource.hpp"
 #include "probe_view.hpp"
+#include "bhav_audio.hpp"
 
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -46,6 +48,13 @@ std::uint16_t identifier(const std::string& text) {
     const auto value = std::stoull(text, &end, hex ? 16 : 10);
     if (end != text.size() || value > 65535) throw odh::FormatError("invalid routine ID");
     return static_cast<std::uint16_t>(value);
+}
+template<class T>T audio_number(const std::string& text) {
+    T value{};
+    const auto parsed=std::from_chars(text.data(),text.data()+text.size(),value);
+    if(text.empty() || parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size())
+        throw odh::FormatError("invalid decimal audio profile value");
+    return value;
 }
 void load(const std::string& path, const std::string& name, odh::RoutineSet& routines,
           bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr,
@@ -129,7 +138,11 @@ int main(int argc, char** argv) {
                      "  [--stand-after] requires reset, sound, animation and snap probes; legacy selected OBJD Stand.\n"
                      "  [--main-probe [--hold-ticks 0..4096]] requires --stand-after; constructed live chair Main.\n"
                      "  [--animation-extra ENTRY.bcf] repeat up to 16; explicit same-FAR collections.\n"
-                     "  [--sound-probe] requires --animation-probe; silent FWAV requests, no audio backend.\n"
+                     "  [--sound-probe] requires --animation-probe; FWAV requests are silent by default.\n"
+                     "  [--audio-probe HSM HOT HIT --audio-args R1 R2 R3 --audio-jump free-so|literal32\n"
+                     "   --audio-gain-q15 0..32768 --audio-pan-q15 -32768..32768 --audio-choose-first\n"
+                     "   (--audio-far FILE|--audio-xa FILE)... [--audio-rate 8000..192000]\n"
+                     "   [--audio-drain-ms 1..5000]] requires --sound-probe and Linux SDL audio.\n"
                      "  [--view TEXTURES.far --view-skeleton ENTRY NAME --view-part ENTRY NAME BMF TEXTURE]\n"
                      "  [--view-frames DIR --view-stride 1..4096 --view-window --view-auto --view-readback] requires Main probe.\n"
                      "Default: structural dump. --run: bounded VM probe without world services.\n";
@@ -140,6 +153,10 @@ int main(int argc, char** argv) {
         bool world_probe = false, autonomous = false;
         bool route_probe=false;
         bool snap_probe=false, sound_probe=false, stand_after=false, main_probe=false;
+        bool audio_probe=false,audio_args=false,audio_jump=false,audio_gain=false,audio_pan=false;
+        bool audio_choose_first=false,audio_option_seen=false,audio_rate=false;
+        std::optional<std::uint16_t> audio_drain_ms;
+        odh_host::BhavAudioConfig audio_config;
         std::vector<std::string> animation_extra;
         std::optional<std::string> view_textures,view_frames;
         std::optional<std::pair<std::string,std::string>> view_skeleton;
@@ -165,6 +182,41 @@ int main(int argc, char** argv) {
             else if (option == "--world-probe" && !world_probe) world_probe = true;
             else if (option == "--route-probe" && !route_probe) route_probe=true;
             else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
+            else if (option == "--audio-probe" && !audio_probe && n+3<argc) {
+                audio_probe=audio_option_seen=true;
+                audio_config.hsm_path=argv[++n];audio_config.hot_path=argv[++n];audio_config.hit_path=argv[++n];
+            }
+            else if (option == "--audio-args" && !audio_args && n+3<argc) {
+                audio_args=audio_option_seen=true;
+                for(auto& value:audio_config.arguments)value=audio_number<std::int32_t>(argv[++n]);
+            }
+            else if (option == "--audio-jump" && !audio_jump && n+1<argc) {
+                audio_jump=audio_option_seen=true;const std::string value=argv[++n];
+                if(value=="literal32")audio_config.jump=odh::HitJumpOperand::Literal32;
+                else if(value!="free-so")throw odh::FormatError("invalid audio Jump profile");
+            }
+            else if (option == "--audio-gain-q15" && !audio_gain && n+1<argc) {
+                audio_gain=audio_option_seen=true;
+                audio_config.controls.gain_q15=audio_number<std::uint32_t>(argv[++n]);
+            }
+            else if (option == "--audio-pan-q15" && !audio_pan && n+1<argc) {
+                audio_pan=audio_option_seen=true;
+                audio_config.controls.pan_q15=audio_number<std::int32_t>(argv[++n]);
+            }
+            else if (option == "--audio-choose-first" && !audio_choose_first)
+                audio_choose_first=audio_option_seen=true;
+            else if (option == "--audio-far" && n+1<argc && audio_config.sources.size()<16) {
+                audio_option_seen=true;audio_config.sources.push_back({argv[++n],odh_host::XaSourceKind::far});
+            }
+            else if (option == "--audio-xa" && n+1<argc && audio_config.sources.size()<16) {
+                audio_option_seen=true;audio_config.sources.push_back({argv[++n],odh_host::XaSourceKind::loose});
+            }
+            else if (option == "--audio-rate" && !audio_rate && n+1<argc) {
+                audio_rate=audio_option_seen=true;audio_config.output_rate=audio_number<std::uint32_t>(argv[++n]);
+            }
+            else if (option == "--audio-drain-ms" && !audio_drain_ms && n+1<argc) {
+                audio_option_seen=true;audio_drain_ms=audio_number<std::uint16_t>(argv[++n]);
+            }
             else if (option == "--main-probe" && !main_probe) main_probe=true;
             else if (option == "--hold-ticks" && !hold_ticks && n+1<argc) hold_ticks=identifier(argv[++n]);
             else if (option == "--stand-after" && !stand_after) stand_after=true;
@@ -196,6 +248,17 @@ int main(int argc, char** argv) {
             (post_ticks && (!reset_entry || *post_ticks>4096)) ||
             (main_probe && !stand_after) || (hold_ticks && (!main_probe || *hold_ticks>4096)) ||
             (!animation_extra.empty() && !animation) || (stand_after && (!reset_entry || !sound_probe || !snap_probe || !animation))) throw odh::FormatError("invalid constructed-world options");
+        if((audio_option_seen && !audio_probe) || (audio_probe &&
+           (!sound_probe || !audio_args || !audio_jump || !audio_gain || !audio_pan || !audio_choose_first ||
+            audio_config.hsm_path.empty() || audio_config.hot_path.empty() || audio_config.hit_path.empty() ||
+            audio_config.sources.empty() || audio_config.controls.gain_q15>32768 ||
+            audio_config.controls.pan_q15< -32768 || audio_config.controls.pan_q15>32768 ||
+            audio_config.output_rate<8000 || audio_config.output_rate>192000 ||
+            (audio_drain_ms && (!*audio_drain_ms || *audio_drain_ms>5000)))))
+            throw odh::FormatError("invalid explicit audio probe profile");
+#ifndef ODH_HAVE_SDL_AUDIO
+        if(audio_probe)throw odh::FormatError("audio probe requires Linux SDL audio build");
+#endif
         if((view_textures&&(!main_probe||!view_skeleton||view_parts.empty()||(!view_frames&&!view_window)))||
            (!view_textures&&(view_frames||view_window||view_skeleton||view_stride||!view_parts.empty()))||
            (view_auto&&!view_window)||(view_readback&&!view_window)||(view_stride&&(!*view_stride||*view_stride>4096))||
@@ -392,6 +455,14 @@ int main(int argc, char** argv) {
         struct ObservedSound {odh::SoundRequest request;std::string status;};
         std::vector<ObservedSound> sound_requests;
         bool sound_events_truncated=false,sound_event_limit_reached=false;
+#ifdef ODH_HAVE_SDL_AUDIO
+        std::unique_ptr<odh_host::BhavAudio> audio_service;
+        if(audio_probe)audio_service=std::make_unique<odh_host::BhavAudio>(world,std::move(audio_config));
+#endif
+        odh::SoundSink sound_sink;
+#ifdef ODH_HAVE_SDL_AUDIO
+        if(audio_service)sound_sink=[&](const odh::SoundRequest& request){return audio_service->submit(request);};
+#endif
         const auto sound_handler=sound_probe?odh::sound_primitive(world,
             [&](const odh::VmFrame&,std::uint16_t id)->std::optional<odh::SoundEvent> {
                 auto selected=private_sounds.find(id);
@@ -399,7 +470,7 @@ int main(int argc, char** argv) {
                 selected=global_sounds.find(id);
                 if(selected!=global_sounds.end())return selected->second;
                 return {};
-            },{},[&](const odh::SoundRequest& request,const std::string& status) {
+            },sound_sink,[&](const odh::SoundRequest& request,const std::string& status) {
                 if(sound_requests.size()<4096)sound_requests.push_back({request,status});
                 else sound_events_truncated=true;
                 if(sound_requests.size()==4096)sound_event_limit_reached=true;
@@ -451,7 +522,7 @@ int main(int argc, char** argv) {
         if(animation && !playback->bind(vm))throw odh::FormatError("cannot bind animation probe");
         vm.start(key,world_probe ? odh::VmContext{1,2,2} : odh::VmContext{},
                  {static_cast<std::int16_t>(autonomous ? 1 : 0)});
-        std::cout << "{\"evidence\":" << quote(sound_probe?"ODH_VM_constructed_route_snap_silent_animation_sound_requests_world":animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
+        std::cout << "{\"evidence\":" << quote(audio_probe?"ODH_VM_diagnostic_explicit_XA_PCM_audio_world":sound_probe?"ODH_VM_constructed_route_snap_silent_animation_sound_requests_world":animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
                                                        route_probe?"ODH_VM_constructed_route_world":
                                                        world_probe ? "ODH_VM_constructed_world" : "ODH_VM_probe_without_world");
         if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
@@ -511,6 +582,9 @@ int main(int argc, char** argv) {
             status=vm.status();
             if(actor_enabled&&(status==odh::VmStatus::running || status==odh::VmStatus::waiting))status=run_probe();
             pump_main();
+#ifdef ODH_HAVE_SDL_AUDIO
+            if(audio_service)audio_service->simulation_tick();
+#endif
             if(view)view->draw(world,*playback,*definition.slots,ticks,phase);
             return true;
         };
@@ -518,6 +592,9 @@ int main(int argc, char** argv) {
             const auto begin_tick=ticks;
             if(!main_failed()&&(!view||(!view->quit()&&!view->failed())))status=run_probe();
             pump_main();
+#ifdef ODH_HAVE_SDL_AUDIO
+            if(audio_service)audio_service->simulation_tick();
+#endif
             while(route_probe && status==odh::VmStatus::waiting && ticks<4096 &&
                   total_steps()<10000 && !main_failed() && !animation_event_limit_reached && !sound_event_limit_reached && (!view||(!view->quit()&&!view->failed())))
                 world_tick();
@@ -559,6 +636,9 @@ int main(int argc, char** argv) {
               (!view||ticks<4096) && (!view||(!view->quit()&&!view->failed())) && (!main_probe || total_steps()<10000) && !animation_event_limit_reached && !sound_event_limit_reached) {
             if(world_tick())++post_ticks_run;
         }
+#ifdef ODH_HAVE_SDL_AUDIO
+        if(audio_service)audio_service->drain(audio_drain_ms.value_or(0));
+#endif
         if(view)view->draw(world,*playback,*definition.slots,ticks,phase,true);
         std::cout << "],\"status\":" << quote(odh::vm_status_name(status))
                   << ",\"diagnostic\":" << quote(vm.diagnostic()) << ",\"steps\":" << vm.steps() << ",\"total_steps\":" << total_steps()
@@ -647,7 +727,7 @@ int main(int argc, char** argv) {
             else std::cout<<"null";
         }
         if(sound_probe) {
-            std::cout<<",\"sound_backend\":\"none\",\"sound_code_owner\":{\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<'}'
+            std::cout<<",\"sound_backend\":"<<quote(audio_probe?"linux_pcm_diagnostic":"none")<<",\"sound_code_owner\":{\"archive\":"<<quote(argv[1])<<",\"entry\":"<<quote(argv[2])<<'}'
                 <<",\"sound_event_limit_reached\":"<<(sound_event_limit_reached?"true":"false")
                 <<",\"sound_events_truncated\":"<<(sound_events_truncated?"true":"false")<<",\"sound_requests\":[";
             for(std::size_t n=0;n<sound_requests.size();++n) {
@@ -660,6 +740,9 @@ int main(int argc, char** argv) {
                     <<",\"status\":"<<quote(e.status)<<'}';
             }
             std::cout<<']';
+#ifdef ODH_HAVE_SDL_AUDIO
+            if(audio_service){std::cout<<",\"audio_probe\":";audio_service->emit_json(std::cout,ticks);}
+#endif
         }
         if(main_probe) {
             const auto scene=view&&view->failed()?"view_fault":view&&ticks>=4096?"budget_exhausted":main_vm->status()==odh::VmStatus::fault || status==odh::VmStatus::fault?"fault":
@@ -682,6 +765,9 @@ int main(int argc, char** argv) {
         if(view)std::cout<<",\"view\":"<<view->report();
         std::cout<<"}\n";
         if(view&&view->failed()){std::cerr<<"odh-bhav view: "<<view->diagnostic()<<'\n';return 2;}
+#ifdef ODH_HAVE_SDL_AUDIO
+        if(audio_service && audio_service->unhealthy())return 3;
+#endif
         if(view&&view->quit())return 0; // Explicit user close; JSON retains incomplete VM state.
         if(view&&ticks>=4096)return 3;
         if(main_probe && (main_failed() || total_steps()>=10000))return 3;
