@@ -151,7 +151,10 @@ o mesmo par não cria uma segunda entrada. A fonte é o R1 após overrides do
 evento, não necessariamente o source original recebido do caller.
 
 `0x57488f` agrega as entradas do TrackID e consulta dados por fonte via
-`0x57320a`; ausência produz volume0/pan512. Esta unidade não define a escala
+`0x57320a`; uma lista vazia produz volume0/pan512. Fonte positiva que não
+resolve não tem esse fallback: o caller reutiliza temporários residuais,
+como detalhado em [contribuições de fontes](hit-native-source-contributions-evidence.md).
+Esta unidade não define a escala
 DSP nem reimplementa geometria. `0x57462e` percorre o multimap, apaga cada
 entrada cuja fonte coincide e chama `0x5747dc` para o TrackID afetado.
 Se não restam contribuições, este chama +`0x34` (parada gradual); se restam,

@@ -67,13 +67,26 @@ Admission pode recusar antes da atualização; inicialização pode atualizar
 controles sem reiniciar PC/bancos, e remoção de fontes não equivale à destruição
 do controller. Isso não define ownership por pedido nem o ciclo completo de
 remoção/reload. Ver [identidade e ciclo de TrackID](hit-native-track-identity-evidence.md).
-O próximo limite de pesquisa é fechar callers de remoção, teardown/restart e
-pausas antes de desenhar um manager persistente indexado por HOTTrackID,
-separando geração de World e vínculo PCM. Não deduplicar por nome nem criar
+O cleanup de cXObject já foi ligado à remoção de sua fonte; remoção normal,
+fontes especiais e refresh estão descritos na evidência de contribuições.
+O próximo passo é o ciclo persistente por HOTTrackID, com banco de controles
+e fases de execução/PCM separados. Restam defaults completos 50–62 (incluindo
+interrupt55), reativação/teardown, pausa e cadência dos callers para integrar
+esse ciclo ao World. Não deduplicar por nome nem criar
 registro de ticket por admissão. Geometria e agregação espaciais, provider
 compartilhado, precedência/descoberta, grupos/owners/ganho espacial e scheduler
 geral do lote permanecem pendentes. Esta evidência é estática; não acrescenta
 validação de runtime, compatibilidade ou ports.
+
+A tabela portátil `odh_hit_source_contributions` agora armazena pares raw
+`(TrackID, R1)` com capacidade ODH explícita e oferece agregação pura de
+amostras completas, com wrap de 32 bits. O contrato e seus limites estão em
+[hit-source-contributions-validation.md](hit-source-contributions-validation.md);
+a comparação estática com o original está em
+[hit-native-source-contributions-evidence.md](hit-native-source-contributions-evidence.md).
+Essa API ainda não integra o controller persistente, o World ou o áudio. Ela
+não valida grupos, geometria/provider, compatibilidade ou funcionamento nos
+ports.
 
 A VM inicial deverá interpretar os BHAVs. Entidades, roteamento, ocupação,
 autonomia, necessidades, relacionamentos e serviços de famílias não se reduzem

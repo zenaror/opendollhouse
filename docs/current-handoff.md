@@ -10,16 +10,20 @@ com o handoff do escopo `OpenDollhouse` quando o conector voltar, usando o
 
 ## Checkpoint de 2026-10-15
 
-Base publicada `a322f42` (gate de opcode 69 com `initial_controls`), sobre
-`2604e86` (inicialização opcional ArgStyle 2 de controles HIT antes do primeiro
-tick). A unidade atual é pesquisa estática da identidade/ciclo de TrackID,
-sem mudanças em código ou testes. A evidência está em
-[hit-native-track-identity-evidence.md](hit-native-track-identity-evidence.md).
+Base publicada `ce8b327` (pesquisa estática da identidade/ciclo de TrackID),
+sobre o gate de opcode 69 `a322f42` e a inicialização opcional ArgStyle 2 de
+controles HIT `2604e86`. A unidade atual implementa uma biblioteca
+portátil de contribuições por TrackID e seu teste CTest; ela ainda não está
+integrada ao controller persistente, ao World ou ao áudio. Contrato, limites e
+validação em [hit-source-contributions-validation.md](hit-source-contributions-validation.md);
+comparação estática em
+[hit-native-source-contributions-evidence.md](hit-native-source-contributions-evidence.md).
 O caminho silencioso e o perfil legado continuam preservados.
-Revisão independente e conferência de 4.554 bytes em 1.619 linhas do assembly
-selecionado passaram. Recibo em
+Na base de pesquisa `ce8b327`, revisão independente e conferência de 4.554
+bytes em 1.619 linhas do assembly selecionado passaram. Recibo em
 `reports/hit-native-track-identity-verification.json`; validação de proveniência
-estática, sem novo build ou teste de runtime nesta unidade.
+estática, sem build ou teste de runtime naquela unidade. A validação do novo
+componente está registrada abaixo; identificar seu SHA publicado com `git log`.
 
 `HotEvent.argument_overrides` mantém CSV 2/3/4 assinados; resolução por palavra
 substitui só overrides não zero. `play_sound_arguments` usa a origem int16
@@ -59,6 +63,29 @@ compartilhado. Os dados do jogo e o executable original permanecem externos;
 nenhum original foi modificado.
 
 ## Validação e limites do resultado
+
+Na unidade de contribuições por TrackID, testes diretos C++17 com
+warnings-as-errors e ASan/UBSan passaram 529 checks; LSan ficou desligado sob
+ptrace. CTest Debug configurou 114 testes: 113 passaram, um skip X11, zero
+falhas (13,01 s). ASan/UBSan teve os mesmos resultados (25,28 s), com LSan
+desligado; sem SDL/X11, 8/8 passaram (0,62 s). Logs configure/build/CTest em
+`reports/hit-source-contributions-{build,build-asan,build-noaudio}-{configure,build,ctest}.log`.
+O teste registrado é `hit_source_contributions`.
+
+O oráculo Python independente conferiu 20.263 casos em Debug e outros 20.263
+em ASan/UBSan, incluindo palavras signed de 32 bits, wraps, divisão truncada,
+um trap `INT32_MIN / -1` esperado e amostras até 65.536 (seed `0x57488f`).
+Recibo em `reports/hit-source-contributions-oracle-verification.json`, com
+script/driver nos arquivos adjacentes `hit-source-contributions-oracle.py` e
+`hit-source-contributions-oracle-driver.cpp`.
+
+Auditoria estática independente confirmou 1.367 linhas e 3.684 bytes de
+instruções da imagem identificada; relatório em
+`reports/hit-native-source-contributions-verification.json`. O executável
+original não foi executado. O componente e esses checks não validam integração
+de runtime, áudio do World, semântica de grupo, compatibilidade ou ports. Não
+foi rodado novo probe da cadeira, pois a API ainda não está integrada ao host
+de áudio/World.
 
 Debug e ASan/UBSan oficiais configuraram 113 testes: 112 passaram, um teste
 X11 foi pulado pelo ambiente, zero falhas (14,42 s e 26,33 s). LSan ficou
@@ -102,6 +129,10 @@ não uma implementação da operação nativa.
 
 ## Próximas unidades
 
+A revisão independente do core/API, do preflight de cópia e do texto da
+evidência estática está concluída, sem ressalvas materiais após a correção
+que desativou copy/move para preservar a reserva de armazenamento.
+
 Pesquisa estática confirmou que o parser HOT cria e registra um controller
 por TrackID; evento tipo 1 consulta/reutiliza esse objeto, sem alocar no lookup.
 Um multimap separado mantém fontes `(TrackID, R1)` e agrega seus valores. A
@@ -112,13 +143,19 @@ fontes não apaga o controller. Endereços, limites e lacunas estão em
 [identidade/ciclo de TrackID](hit-native-track-identity-evidence.md), em conjunto
 com a [pesquisa do opcode 69](hit-native-group-kill-evidence.md).
 
-A unidade permanece estática. Antes de implementar, fechar os callers de
-remoção de fontes, política para IDs especiais/reuso de ObjectID e destruição
-World, registro/reload quando ativo, contador do controller e domínio/limpeza do
-índice do opcode 69, além de teardown/restart e pausas. O desenho futuro requer
-manager persistente indexado por HOTTrackID, separado da geração de World e do
-binding PCM. Não introduzir registry de ticket por admissão nem deduplicação por
-nome. Não conectar `kill_group(uint8_t)` nem substituir o método nativo por
+A nova tabela portátil é somente a camada de dados e aritmética; não substitui
+um manager persistente indexado por HOTTrackID, separado da geração de World e
+do binding PCM, nem implementa efeitos entre remoções. O cleanup de cXObject
+já envia seu ID int16 à remoção; -1 é uma fonte exata, não wildcard; fonte
+não positiva recebe controles centrais no provider, e refresh não remove pares.
+Essas provas estão na nova evidência de contribuições. Próximo: ciclo de
+controller persistente com fases de execução/PCM, começando pelos defaults
+completos 50–62 (interrupt55) e atualização de argumentos sem perder PC/bancos.
+Para integração geral ainda restam cadência/gates dos callers, reuso de
+ObjectID no World, registro/reload ativo, contador do controller e domínio/
+limpeza do índice do opcode69, além de reativação/teardown e pausa. Não introduzir registry
+de ticket por admissão nem deduplicação por nome. Não conectar
+`kill_group(uint8_t)` nem substituir o método nativo por
 cancelamento de notas: parar PCM não reproduz reset do controller/binding e
 notificação ao manager. No Simitone pinado
 (`4906db3`; submódulo FreeSO `f86bbd3`),
