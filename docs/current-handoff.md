@@ -14,6 +14,15 @@ vigente. Confirmar por `get_handoff` com `observed_repository` e
 `observed_revision`. SHA do handoff e HEAD Git são identidades distintas;
 `freshness.matches` não comprova testes, árvore limpa ou backup remoto.
 
+## Referência adicional recebida em 2026-10-15
+
+`../referencias/The Sims Legacy Collection` foi fornecida pelo usuário como
+edição Steam de 2025. A primeira inspeção ocorreu com a árvore ainda mudando;
+revalidar a cópia antes de fechar inventário ou identificar executáveis.
+Consultar [referências](references.md#referência-comercial-adicional-legacy-collection).
+Ela complementa a instalação anterior; a prioridade de desenvolvimento e a
+proveniência das evidências já registradas permanecem.
+
 ## Controller HIT nativo — base `f5ab084`
 
 `NativeHitController` executa um subconjunto HIT portátil com bancos próprios

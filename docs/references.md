@@ -29,6 +29,35 @@ Revisões de referência identificadas em 2026-10-13:
 
 ## Checkouts locais de consulta
 
+### Referência comercial adicional: Legacy Collection
+
+Em 2026-10-15, o usuário adicionou `../referencias/The Sims Legacy Collection`
+e identificou sua origem como a edição Steam lançada em 2025. Essa origem é
+relato do usuário; ainda não foi verificada por manifesto ou versão de produto.
+A árvore estava mudando durante a primeira inspeção, portanto não há inventário
+fechado nem confirmação de instalação completa.
+
+Uma comparação SHA256 limitada encontrou identidade byte a byte nos três
+arquivos `Downloads/BirthdayCake/` presentes nas duas instalações:
+
+| Arquivo | SHA256 em ambas |
+|---|---|
+| `bcakesnd.HIT` | `1acbbcdbd62207b82d91de4b9c7606c18d83e3121b27d11a50e6970df10257a4` |
+| `bcakesnd.hot` | `eacae1faac6b3c1edffbe59e43b9dc5d3bdb4da2688dd9a6f9818f147ccd1d00` |
+| `bcakesnd.hsm` | `082b4e97bef77612fbc264c236710326952262bdb1212a10d6152aab91e43a61` |
+
+Isso permite reutilizar esses recursos em comparações futuras, mas não comprova
+equivalência das demais tabelas, do motor ou das instalações completas.
+
+Usar essa edição como referência comparativa de formatos, recursos e rotinas.
+A instalação `../referencias/The Sims` continua sendo a base das evidências
+anteriores. Endereços, hashes e contratos obtidos de uma edição não se aplicam
+automaticamente à outra: registrar o arquivo e sua identidade em cada análise.
+Preservar ambas as instalações externas, sem executar ou modificar seus
+binários durante consultas estáticas. Nenhum recurso comercial entra no Git.
+
+### Fontes de terceiros
+
 Por solicitação do usuário, as fontes estão materializadas em `refs/upstream/`,
 ignorada pelo Git do ODH. Consultar primeiro esses arquivos com `rg` e ler
 somente os trechos necessários. Usar conector/web quando o material não estiver
