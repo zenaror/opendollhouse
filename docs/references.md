@@ -96,6 +96,14 @@ extenso, por isso devem ser evitadas.
 
 ## Proveniência anterior
 
+Consulta adicional de 2026-10-17: a issue8 e o fork comunitário alexjyong foram
+avaliados em [auditoria de referências](reference-audit-2026-10-17.md).
+O fork está isolado em `refs/upstream/Simitone-alexjyong`, revisão
+`e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`; seu gitlink FreeSO
+`7e76c1960252ddd033d8937d5edb47d326f5b69c` não foi materializado.
+Lacunas de Simitone/forks devem ser investigadas nos recursos e no executável
+original identificado, sem transformar ausências de terceiros em limites ODH.
+
 A pesquisa inicial também consultou links `master`; esse conjunto não foi
 arquivado como snapshot integral. As revisões acima permitem consultas futuras
 fixas, mas não provam que cada excerpt anterior veio dessas mesmas revisões.

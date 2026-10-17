@@ -55,6 +55,13 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+Orientação humana de 2026-10-17: lacunas do Simitone exigem investigação dos
+dados e executável originais; o roadmap de terceiros não limita o objetivo
+ODH. A issue8 e o fork alexjyong, com clone e revisão próprios, estão em
+[auditoria de referências](reference-audit-2026-10-17.md). O fork tem caminhos
+Linux/Legacy e melhorias de frontend úteis para comparação; nenhuma alegação
+de fidelidade decorre deles. Seu FreeSO ainda não foi materializado/auditado.
+
 A extensão Call7 adiciona resolvedor explícito de chave DWORD para PC e pilha
 limitada, compartilhada por Return8/End12. Stop limpa a pilha; restart ativo
 ID55 preserva seus retornos. Isso não implementa população/precedência do mapa
