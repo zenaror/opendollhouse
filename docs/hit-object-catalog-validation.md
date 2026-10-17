@@ -132,9 +132,11 @@ em `corpus/validation.json` e `corpus/EVIDENCE.txt`.
 
 O manager persistente por TrackID continua pendente. Ele precisará usar esse
 namespace global, manter contribuições e fila separadas, aplicar admissão,
-group gate e geração World, e fornecer Clock explícito. O controller atual
-ainda valida patches no HOT recebido; não é correto ligá-lo a um resultado
-global presumindo que todas as patches sejam locais àquele HOT.
+group gate e geração World, e fornecer Clock explícito. O perfil local do
+controller valida patches no HOT recebido; não é correto ligá-lo a um resultado
+global presumindo que todas as patches sejam locais. A continuação implementa
+um perfil explícito de [binding global e registry compartilhado](hit-global-patch-binding-validation.md),
+ainda separado do host.
 
 A [pesquisa do registro de grupos](hit-native-group-registry-evidence.md)
 identificou escritores69/71, leitor73 e opcode70 sem ação, mas ainda não

@@ -110,6 +110,17 @@ namespace de Patch não é contrato nativo. O lookup local anterior de
 `HitEntryCatalog::resolve_event` continua explícito para diagnósticos.
 Ordem, ownership e limites do índice global estão em
 [hit-object-catalog-validation.md](hit-object-catalog-validation.md).
+
+`NativeHitController` oferece agora `NativeHitPatchSource::global_catalog`,
+separado do perfil local padrão. A inicialização distingue Patch adquirida,
+zero, ausente e tipo incorreto sem voltar ao HOT local. Dois callbacks de
+controles preservam a aplicação antes/depois de copiar o ID26 efetivo da
+Patch. O `NativeHitPatchRegistry` possui um backend por Patch ativa/geração,
+com referências de binding e recurso separadas e views protegidas por geração.
+Pausa solicita Stop; resume não reinicia áudio. O adapter concreto e o
+manager ainda precisam ligar essa infraestrutura ao host Linux, às fontes
+World e ao Clock. Contratos, capacidades e validação em
+[hit-global-patch-binding-validation.md](hit-global-patch-binding-validation.md).
 O [backend nativo de áudio](hit-native-engine-backend-evidence.md) inspecionado
 para buffers na pausa e não reinicia áudio no slot de retomada. Wrappers da
 mesma patch podem compartilhar esse backend. Ainda falta integrar um adapter

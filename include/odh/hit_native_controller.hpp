@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/hit_code_target.hpp"
+#include "odh/hit_object_catalog.hpp"
 #include "odh/hit_selection.hpp"
 #include <cstdint>
 #include <functional>
@@ -8,6 +9,8 @@
 #include <vector>
 
 namespace odh {
+
+struct NativeHitState;
 
 // One externally owned current audio binding. These callbacks describe requests
 // at the HIT/controller boundary; they do not promise a voice count or DSP scale.
@@ -30,6 +33,26 @@ struct NativeHitAudio {
     std::function<void()> pause_current;
     std::function<void()> resume_current;
     std::function<void(std::uint8_t id, std::int32_t raw)> raw_control;
+    // Global-Patch profile only. bind_global_patch acquires the winning Patch,
+    // applies the first raw-control phase, then returns its effective ID26.
+    // apply_global_controls performs the second phase after ID26 is stored.
+    // Each state argument is a copied snapshot valid only for that call. The
+    // same strong exception and reentry rules as bind apply to these callbacks.
+    std::function<std::int32_t(const NativeHitPatchRef&, const NativeHitState&)>
+        bind_global_patch = {};
+    std::function<void(const NativeHitState&)> apply_global_controls = {};
+};
+
+struct NativeHitPatchSource {
+    enum class Scope { local_hot, global_catalog };
+    Scope scope = Scope::local_hot;
+    // Borrowed; this and its underlying HOT/HIT resources must remain immutable
+    // and outlive the controller and every callback using a Patch reference.
+    const NativeHitObjectCatalog* catalog = nullptr;
+};
+
+enum class NativeHitBindingOutcome {
+    not_attempted, zero, acquired, missing, wrong_kind
 };
 
 struct NativeHitLimits {
@@ -78,6 +101,7 @@ struct NativeHitState {
     bool sign = false;
     bool faulted = false;
     bool native_diagnostic_stop = false; // Last stop was native diagnostic; cleared on restart.
+    NativeHitBindingOutcome last_binding_outcome = NativeHitBindingOutcome::not_attempted;
 };
 
 enum class NativeHitPoll { inactive, paused, waiting, progressed, stopped, diagnostic_stopped };
@@ -122,7 +146,8 @@ public:
                         NativeHitAudio, NativeHitLimits = {},
                         const HitNativeControllerValues& overrides = {},
                         NativeHitCallResolver call_resolver = {},
-                        NativeHitResourceResolver resource_resolver = {});
+                        NativeHitResourceResolver resource_resolver = {},
+                        NativeHitPatchSource patch_source = {});
     NativeHitController(const NativeHitController&) = delete;
     NativeHitController& operator=(const NativeHitController&) = delete;
 
@@ -153,6 +178,7 @@ private:
     NativeHitLimits limits_;
     NativeHitCallResolver call_resolver_;
     NativeHitResourceResolver resource_resolver_;
+    NativeHitPatchSource patch_source_;
     NativeHitState state_;
     std::vector<NativeHitTrace> trace_;
     std::vector<HitCodeTarget> call_stack_;

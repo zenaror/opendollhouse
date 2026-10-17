@@ -53,6 +53,38 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+O controller já oferece perfil `NativeHitPatchSource::global_catalog`, com
+Patch de outra origem e outcomes zero/adquirida/ausente/tipo incorreto. A
+inicialização global libera o binding anterior antes do lookup e pode seguir
+ativa sem wrapper; tipo incorreto faz stop diagnóstico seguro e depois o
+initializer restaura entrada/deadline/ID46/ativo. Há dois callbacks de aplicação
+de controles, antes e depois da cópia do ID26 efetivo da Patch. A escrita
+pública ID50 e timed opcode1 continuam fora do subconjunto. Contrato em
+[hit-global-patch-binding-validation.md](hit-global-patch-binding-validation.md)
+e [evidência dos resultados](hit-native-binding-outcomes-evidence.md).
+
+`NativeHitPatchRegistry` agora possui backend por Patch ativa/geração, com
+BindingLease/ResourceLease separados, factory externa RAII e views protegidas
+por geração. Pausa chama Stop, resume não faz áudio; recursos são pedidos
+explicitamente. Último release aposenta geração; Stop tardio não toca geração
+nova. Os limites padrão64/256/256 e hard cap65536 são política ODH. No host,
+armazenamento fixo padrão21.176 bytes exclui backends/capturas/allocator.
+Revisão corrigiu overflow de releases adiados por tokens aposentados; regressão
+`{1,1,1}` confirma cleanup. Registry deve sobreviver a todos os leases.
+
+Fonte final: controller154 checks, registry55, integração29; CTest Debug e
+ASan/UBSan120 configurados,119 aprovados,1 skip X11,0 falhas (15,42/25,87 s),
+LSan desligado. Sem SDL/X11 três testes selecionados passaram. Auditoria PE
+independente conferiu25 recortes/4.070 bytes. Recibos em
+`reports/hit-global-patch-binding/`. O driver integrado ainda é sintético;
+não há adapter DSP/PCM físico nem manager persistente/World/admissão no host.
+
+Quatro probes Classic/Legacy × Debug/ASan+UBSan passaram:4.168 candidatos
+por caso,423 adquiridos,3.744 zero,1 ausente; sem falha de binding/cleanup
+ou recursos vivos. Birthday continua na falha esperada69. Driver sintético
+ID26=0 apenas quando adquire; sem áudio físico. Hashes e receipts em
+`reports/hit-global-patch-binding/{validation.json,corpus/summary.json}`.
+
 O `NativeHitObjectCatalog`, agora em `HitResourceBank::objects()`, resolve
 TrackID pelo namespace global compartilhado de Track/Patch. O parser nativo
 conserva registros na ordem literal das linhas, incluindo duplicatas, e
@@ -65,7 +97,7 @@ permanece local ao HOT; não o transportar para o manager como autoridade.
 Contrato, testes e recibos em
 [hit-object-catalog-validation.md](hit-object-catalog-validation.md).
 
-Validação atual: recursos111, objetos27, banco19 checks; suites Debug e
+Checkpoint anterior do catálogo: recursos111, objetos27, banco19 checks; suites Debug e
 ASan/UBSan 118 configurados,117 aprovados,1skip X11,0falhas (14,80/26,22 s).
 Após última mudança da cobrança no banco, cinco testes focais recompilados
 passaram nas duas configs; sem SDL/X11 cinco selecionados também passaram.
@@ -74,9 +106,9 @@ Auditoria independente: 50 recortes,7.146 bytes. Corpus em quatro probes:
 9 eventos usam Track de outro HOT,1 mudaHIT/PC na ordem diagnóstica. Recibos
 `reports/hit-object-catalog/`; ordem não é prova de enumeração original.
 
-Para integrar o controller a esse resultado, ainda precisa retirar sua
-validação local de patches em favor do namespace global e representar backend
-compartilhado por PatchID. A [pesquisa de ownership](hit-native-backend-ownership-evidence.md)
+Para integrar ao host, usar o perfil global e o registry compartilhado;
+o perfil local padrão permanece para diagnósticos anteriores. A
+[pesquisa de ownership](hit-native-backend-ownership-evidence.md)
 demonstrou um contador para os dois aliases espaciais e desequilíbrio de
 releases no caminho estático; não copiar esse uso potencial de memória
 liberada para ODH. A [pesquisa do registry](hit-native-group-registry-evidence.md)

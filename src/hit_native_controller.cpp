@@ -27,12 +27,14 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
         std::int32_t volume, std::int32_t pan, NativeHitAudio audio,
         NativeHitLimits limits, const HitNativeControllerValues& overrides,
         NativeHitCallResolver call_resolver,
-        NativeHitResourceResolver resource_resolver)
+        NativeHitResourceResolver resource_resolver,
+        NativeHitPatchSource patch_source)
     : hit_(hit), hot_(hot), track_(track), overrides_(overrides),
       initial_args_(args), initial_volume_(volume), initial_pan_(pan),
       audio_(std::move(audio)), limits_(limits),
       call_resolver_(std::move(call_resolver)),
-      resource_resolver_(std::move(resource_resolver)), entry_(entry_pc),
+      resource_resolver_(std::move(resource_resolver)),
+      patch_source_(patch_source), entry_(entry_pc),
       active_hit_(&hit) {
     require(!call_resolver_ || !resource_resolver_,
             "native HIT accepts only one Call7 resolver profile");
@@ -42,9 +44,19 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
             limits_.trace_entries && limits_.trace_entries <= 65536 &&
             limits_.call_depth && limits_.call_depth <= 256,
             "native HIT limits outside supported bounds");
-    require(audio_.bind && audio_.active && audio_.note_on && audio_.stop_current &&
+    require(audio_.active && audio_.note_on && audio_.stop_current &&
             audio_.release_binding && audio_.pause_current && audio_.resume_current &&
             audio_.raw_control, "native HIT requires complete current-binding callbacks");
+    require((patch_source_.scope == NativeHitPatchSource::Scope::local_hot &&
+             patch_source_.catalog == nullptr) ||
+            (patch_source_.scope == NativeHitPatchSource::Scope::global_catalog &&
+             patch_source_.catalog != nullptr),
+            "native HIT patch source profile is invalid");
+    if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot)
+        require(static_cast<bool>(audio_.bind), "native HIT local patch bind callback is required");
+    else
+        require(audio_.bind_global_patch && audio_.apply_global_controls,
+                "native HIT global patch callbacks are required");
     require(track.hitlist_id.has_value(),
             "native HIT requires resolved HOT entry metadata");
     const auto initial = build_native_hit_controls(track_, args, volume, pan, overrides_);
@@ -65,8 +77,9 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
     state_.pc = entry_;
     set_flags(args[2]);
     const auto patch = static_cast<std::uint32_t>(state_.controls_50_62[0]);
-    require(!patch || hot_.patches.find(patch) != hot_.patches.end(),
-            "native HIT initial patch ID is unresolved");
+    if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot)
+        require(!patch || hot_.patches.find(patch) != hot_.patches.end(),
+                "native HIT initial patch ID is unresolved");
     trace_.reserve(limits_.trace_entries);
     call_stack_.reserve(limits_.call_depth);
 }
@@ -148,7 +161,46 @@ void NativeHitController::write(std::uint8_t id, std::int32_t value) {
 }
 void NativeHitController::bind_current() {
     const auto patch = static_cast<std::uint32_t>(state_.controls_50_62[0]);
-    if (!patch) return;
+    if (!patch) {
+        state_.last_binding_outcome = NativeHitBindingOutcome::zero;
+        return;
+    }
+    if (patch_source_.scope == NativeHitPatchSource::Scope::global_catalog) {
+        // The object namespace is shared by Track and Patch. A winning Track
+        // masks even a same-ID Patch in the originating HOT.
+        const auto object = patch_source_.catalog->lookup_object(patch);
+        if (!object) {
+            state_.last_binding_outcome = NativeHitBindingOutcome::missing;
+            return;
+        }
+        if (object->kind != HotObjectKind::patch) {
+            // Model the native diagnostic's internal stop without attempting
+            // an unsafe release through the Track object. The initializer
+            // continues afterward and restores its active execution state.
+            stop_impl();
+            state_.last_binding_outcome = NativeHitBindingOutcome::wrong_kind;
+            return;
+        }
+        const NativeHitPatchRef ref{patch, object->group, object->line, object->patch};
+        const NativeHitState first_snapshot = state_;
+        check_live();
+        const auto effective_id26 = audio_.bind_global_patch(ref, first_snapshot);
+        state_.binding = true;
+        if (state_.faulted) {
+            try { audio_.stop_current(); } catch (...) {}
+            try { audio_.release_binding(); } catch (...) {}
+            state_.binding = false;
+            throw FormatError("native HIT bind callback reentered controller mutation");
+        }
+        state_.last_binding_outcome = NativeHitBindingOutcome::acquired;
+        // This initializer-only writer stores the Patch getter's value and
+        // updates flags. It does not enable public HIT writes to ID26.
+        state_.controls_17_47[26 - 17] = effective_id26;
+        set_flags(effective_id26);
+        const NativeHitState second_snapshot = state_;
+        callback([&] { audio_.apply_global_controls(second_snapshot); });
+        return;
+    }
     require(hot_.patches.find(patch) != hot_.patches.end(), "native HIT patch unavailable");
     check_live();
     audio_.bind(patch); // Strong exception guarantee belongs to the adapter.
@@ -161,6 +213,7 @@ void NativeHitController::bind_current() {
         state_.binding = false;
         throw FormatError("native HIT bind callback reentered controller mutation");
     }
+    state_.last_binding_outcome = NativeHitBindingOutcome::acquired;
 }
 void NativeHitController::release_current() {
     if (!state_.binding) return;
@@ -259,8 +312,9 @@ void NativeHitController::restart(const HitArguments& args, std::int32_t volume,
     const auto fresh = build_native_hit_controls(track_, args, volume, pan, overrides_);
     require(*fresh.locals[53 - 16] == 0, "native HIT restart requires own provider");
     const auto patch = static_cast<std::uint32_t>(*fresh.locals[50 - 16]);
-    require(!patch || hot_.patches.find(patch) != hot_.patches.end(),
-            "native HIT restart patch unavailable");
+    if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot)
+        require(!patch || hot_.patches.find(patch) != hot_.patches.end(),
+                "native HIT restart patch unavailable");
     update_args_clear(args);
     for (std::uint32_t id = 17; id <= 47; ++id)
         state_.controls_17_47[id - 17] = *fresh.locals[id - 16];
@@ -271,11 +325,21 @@ void NativeHitController::restart(const HitArguments& args, std::int32_t volume,
     state_.controls_17_47[46 - 17] = 0; // Final initializer writer runs after bind.
     stop_and_release();
     try {
-        active_hit_ = &hit_;
-        code_end_ = validate_target({&hit_, entry_});
-        state_.pc = entry_;
-        state_.deadline = clock;
+        if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot) {
+            active_hit_ = &hit_;
+            code_end_ = validate_target({&hit_, entry_});
+            state_.pc = entry_;
+            state_.deadline = clock;
+        }
         bind_current();
+        if (patch_source_.scope == NativeHitPatchSource::Scope::global_catalog) {
+            // A wrong-kind diagnostic reset PC/deadline during binding. The
+            // native initializer ignores the bind result and reinstates them.
+            active_hit_ = &hit_;
+            code_end_ = validate_target({&hit_, entry_});
+            state_.pc = entry_;
+            state_.deadline = clock;
+        }
         state_.controls_17_47[46 - 17] = 1;
         set_flags(1);
         state_.active = true;

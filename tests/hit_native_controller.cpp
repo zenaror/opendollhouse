@@ -1,6 +1,7 @@
 #include "odh/hit_native_controller.hpp"
 #include <algorithm>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -55,6 +56,12 @@ struct Audio {
 };
 odh::HitArguments args(std::int32_t a = 1, std::int32_t b = 2, std::int32_t c = 3) {
     return {{a, b, c}};
+}
+odh::Hot native_hot(const std::string& text) {
+    std::istringstream stream(text);
+    odh::Hsm symbols;
+    return odh::read_hot(odh::View(stream, text.size()), &symbols, {},
+                         odh::HotReadProfile::native_entry_map);
 }
 }
 
@@ -839,6 +846,221 @@ try {
             rollback.count("bind:100") == 1 && rollback.count("stop") == 1 &&
             rollback.count("release") == 1,
             "activation failure rolls back owned binding and latches execution fault");
+
+    // The selected event, winning Track, entry HIT and winning Patch each
+    // originate in a different group. The local HOT carries a shadow Patch
+    // that must never supply the global binding.
+    Fixture global_code{2,7,5,55,1,0,0,0,9,1};
+    auto event_hot = native_hot("[EventMapping]\nglobal=1,7\n");
+    auto track_hot = native_hot(
+        "[Track]\n7=0,global,1024,2,0,0,20,300,80\n");
+    auto entry_hot = native_hot("[TrackData]\n300=16\n");
+    auto patch_hot = native_hot(
+        "[Patch]\n80=0,remote,\"remote.xa\",0,0\n");
+    event_hot.patches[80] = {"local-shadow", "local.xa", false, false};
+    event_hot.patches[81] = {"missing-shadow", "missing.xa", false, false};
+    const std::vector<odh::HitEntryGroup> global_groups{
+        {&global_code.hit, &event_hot}, {&global_code.hit, &track_hot},
+        {&global_code.hit, &entry_hot}, {&global_code.hit, &patch_hot}};
+    const odh::HitEntryCatalog global_entries(global_groups);
+    const odh::NativeHitObjectCatalog global_objects(global_groups, global_entries);
+    const auto global_event = global_objects.resolve_global_track_event(0, "global");
+    require(global_event.event_group == 0 && global_event.track.object.group == 1 &&
+            global_event.track.entry.file == &global_code.hit &&
+            global_event.track.entry.pc == 16 &&
+            global_objects.lookup_patch(80)->group == 3,
+            "global event, Track, entry and Patch retain separate origins");
+    const odh::NativeHitPatchSource global_source{
+        odh::NativeHitPatchSource::Scope::global_catalog, &global_objects};
+    Audio global_audio;
+    auto global_callbacks = global_audio.callbacks();
+    global_callbacks.bind = {}; // Global profile has no numeric-ID fallback.
+    std::vector<std::string> global_phases;
+    global_callbacks.bind_global_patch =
+        [&](const odh::NativeHitPatchRef& ref, const odh::NativeHitState& snapshot) {
+            require(ref.id == 80 && ref.group == 3 &&
+                    ref.patch == &patch_hot.patches.at(80) &&
+                    snapshot.controls_17_47[26 - 17] != 77,
+                    "first global phase sees winning Patch and pre-getter ID26");
+            global_phases.push_back("first");
+            return 77;
+        };
+    global_callbacks.apply_global_controls = [&](const odh::NativeHitState& snapshot) {
+        require(snapshot.controls_17_47[26 - 17] == 77 && snapshot.positive &&
+                snapshot.binding,
+                "second global phase sees getter-derived ID26 and acquired binding");
+        global_phases.push_back("second");
+    };
+    rejects([&] {
+        odh::NativeHitController no_catalog(global_code.hit, event_hot,
+            *global_event.track.object.track, 16, args(), 100, 512,
+            global_callbacks, {}, {}, {}, {},
+            {odh::NativeHitPatchSource::Scope::global_catalog, nullptr});
+    });
+    require(global_audio.events.empty() && global_phases.empty(),
+            "invalid global source rejects before any audio callback");
+    odh::NativeHitController global_controller(*global_event.track.entry.file,
+        event_hot, *global_event.track.object.track, global_event.track.entry.pc,
+        args(), 100, 512, global_callbacks, {}, {}, {}, {}, global_source);
+    require(global_phases.empty() && global_audio.events.empty() &&
+            global_controller.state().last_binding_outcome ==
+                odh::NativeHitBindingOutcome::not_attempted,
+            "global constructor is a pure staged snapshot");
+    global_controller.activate(1);
+    require(global_phases == std::vector<std::string>({"first", "second"}) &&
+            global_controller.state().binding &&
+            global_controller.state().controls_17_47[26 - 17] == 77 &&
+            global_controller.state().last_binding_outcome ==
+                odh::NativeHitBindingOutcome::acquired &&
+            global_audio.count("bind:80") == 0,
+            "global binding uses winning Patch callback and two control phases");
+    require(global_controller.poll(1) == odh::NativeHitPoll::progressed &&
+            global_audio.count("note:7") == 1,
+            "global acquired binding executes NoteOn through current audio view");
+    global_controller.retrigger(args(9), 100, 512, 4);
+    require(global_phases.size() == 4 && global_audio.count("release") == 1 &&
+            global_controller.state().last_binding_outcome ==
+                odh::NativeHitBindingOutcome::acquired,
+            "ID55 restart reacquires the same global Patch after releasing old binding");
+
+    auto zero_track = *global_event.track.object.track;
+    zero_track.patch_id = 0;
+    Audio zero_global_audio;
+    auto zero_global_callbacks = zero_global_audio.callbacks();
+    zero_global_callbacks.bind_global_patch = global_callbacks.bind_global_patch;
+    zero_global_callbacks.apply_global_controls = global_callbacks.apply_global_controls;
+    odh::NativeHitController zero_global(global_code.hit, event_hot, zero_track, 16,
+        args(), 100, 512, zero_global_callbacks, {}, {}, {}, {}, global_source);
+    zero_global.activate(1);
+    require(zero_global.state().active && !zero_global.state().binding &&
+            zero_global.state().last_binding_outcome == odh::NativeHitBindingOutcome::zero &&
+            global_phases.size() == 4,
+            "global Patch ID zero has no lookup or backend phases");
+
+    auto missing_track = *global_event.track.object.track;
+    missing_track.patch_id = 81;
+    Audio missing_audio;
+    auto missing_callbacks = missing_audio.callbacks();
+    missing_callbacks.bind_global_patch = global_callbacks.bind_global_patch;
+    missing_callbacks.apply_global_controls = global_callbacks.apply_global_controls;
+    odh::NativeHitController missing(global_code.hit, event_hot, missing_track, 16,
+        args(), 100, 512, missing_callbacks, {}, {}, {}, {}, global_source);
+    missing.activate(3);
+    require(missing.state().active && !missing.state().binding &&
+            missing.state().controls_50_62[0] == 81 && missing.state().pc == 16 &&
+            missing.state().deadline == 3 &&
+            missing.state().last_binding_outcome == odh::NativeHitBindingOutcome::missing &&
+            missing_audio.events.empty(),
+            "missing global Patch keeps requested ID50 and active initializer state");
+    require(missing.poll(3) == odh::NativeHitPoll::progressed &&
+            missing_audio.count("note:7") == 0,
+            "missing global Patch executes bytecode without a wrapper");
+
+    auto track_shadow = native_hot(
+        "[Track]\n80=0,mask,1024,2,0,0,20,300,0\n");
+    const std::vector<odh::HitEntryGroup> shadow_groups{
+        {&global_code.hit, &event_hot}, {&global_code.hit, &track_hot},
+        {&global_code.hit, &entry_hot}, {&global_code.hit, &patch_hot},
+        {&global_code.hit, &track_shadow}};
+    const odh::HitEntryCatalog shadow_entries(shadow_groups);
+    const odh::NativeHitObjectCatalog shadow_objects(shadow_groups, shadow_entries);
+    const odh::NativeHitPatchSource shadow_source{
+        odh::NativeHitPatchSource::Scope::global_catalog, &shadow_objects};
+    Audio wrong_audio;
+    auto wrong_callbacks = wrong_audio.callbacks();
+    wrong_callbacks.bind_global_patch = global_callbacks.bind_global_patch;
+    wrong_callbacks.apply_global_controls = global_callbacks.apply_global_controls;
+    odh::NativeHitController wrong(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512, wrong_callbacks,
+        {}, {}, {}, {}, shadow_source);
+    wrong.activate(5);
+    require(wrong.state().active && !wrong.state().binding &&
+            wrong.state().controls_50_62[0] == 0 && wrong.state().pc == 16 &&
+            wrong.state().deadline == 5 && wrong.state().call_depth == 0 &&
+            wrong.state().controls_17_47[46 - 17] == 1 &&
+            wrong.state().last_binding_outcome == odh::NativeHitBindingOutcome::wrong_kind &&
+            wrong_audio.events.empty() && global_phases.size() == 4,
+            "winning Track triggers internal stop then initializer continues without fallback");
+    Fixture wrong_stack_code{7,1,0,0,0,9,1,5,55,1,0,0,0,9,1};
+    Audio wrong_stack_audio;
+    auto wrong_stack_callbacks = wrong_stack_audio.callbacks();
+    wrong_stack_callbacks.bind_global_patch = global_callbacks.bind_global_patch;
+    wrong_stack_callbacks.apply_global_controls = global_callbacks.apply_global_controls;
+    odh::NativeHitController wrong_stack(wrong_stack_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        wrong_stack_callbacks, {}, {},
+        [](std::uint32_t key) -> std::optional<std::uint32_t> {
+            if (key == 1) return 23;
+            return std::nullopt;
+        }, {}, shadow_source);
+    wrong_stack.activate(1);
+    require(wrong_stack.poll(1) == odh::NativeHitPoll::progressed &&
+            wrong_stack.state().call_depth == 1 &&
+            wrong_stack.state().controls_50_62[55 - 50] == 1,
+            "wrong-kind controller can retain a Call7 frame until restart");
+    wrong_stack.retrigger(args(9), 100, 512, 4);
+    require(wrong_stack.state().active && wrong_stack.state().call_depth == 0 &&
+            wrong_stack.state().pc == 16 && wrong_stack.state().deadline == 4 &&
+            wrong_stack.state().last_binding_outcome ==
+                odh::NativeHitBindingOutcome::wrong_kind,
+            "wrong-kind internal stop clears inherited Call7 frames before continuing");
+
+    Audio global_reentry_audio;
+    auto global_reentry_callbacks = global_reentry_audio.callbacks();
+    odh::NativeHitController* global_reentry_ptr = nullptr;
+    global_reentry_callbacks.bind_global_patch =
+        [&](const odh::NativeHitPatchRef&, const odh::NativeHitState&) {
+            try { global_reentry_ptr->pause(); } catch (const odh::FormatError&) {}
+            return 1;
+        };
+    global_reentry_callbacks.apply_global_controls = [](const odh::NativeHitState&) {};
+    odh::NativeHitController global_reentry(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        global_reentry_callbacks, {}, {}, {}, {}, global_source);
+    global_reentry_ptr = &global_reentry;
+    rejects([&] { global_reentry.activate(1); });
+    require(global_reentry.state().faulted && !global_reentry.state().binding &&
+            global_reentry_audio.count("stop") == 1 &&
+            global_reentry_audio.count("release") == 1,
+            "swallowed global bind reentry tears down acquired Patch");
+    Audio global_first_fail_audio;
+    auto global_first_fail_callbacks = global_first_fail_audio.callbacks();
+    bool external_first_binding = false;
+    global_first_fail_callbacks.bind_global_patch =
+        [&](const odh::NativeHitPatchRef&, const odh::NativeHitState&) -> std::int32_t {
+            external_first_binding = true;
+            external_first_binding = false; // Callback keeps its strong guarantee.
+            throw std::runtime_error("first phase failed");
+        };
+    global_first_fail_callbacks.apply_global_controls = [](const odh::NativeHitState&) {};
+    odh::NativeHitController global_first_fail(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        global_first_fail_callbacks, {}, {}, {}, {}, global_source);
+    bool first_failed = false;
+    try { global_first_fail.activate(1); }
+    catch (const std::runtime_error&) { first_failed = true; }
+    require(first_failed && global_first_fail.state().faulted &&
+            !global_first_fail.state().binding && !external_first_binding &&
+            global_first_fail_audio.count("stop") == 0 &&
+            global_first_fail_audio.count("release") == 0,
+            "throwing first global phase leaves no acquired binding");
+    Audio global_second_fail_audio;
+    auto global_second_fail_callbacks = global_second_fail_audio.callbacks();
+    global_second_fail_callbacks.bind_global_patch =
+        [](const odh::NativeHitPatchRef&, const odh::NativeHitState&) { return 8; };
+    global_second_fail_callbacks.apply_global_controls =
+        [](const odh::NativeHitState&) { throw std::runtime_error("second phase failed"); };
+    odh::NativeHitController global_second_fail(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        global_second_fail_callbacks, {}, {}, {}, {}, global_source);
+    bool second_failed = false;
+    try { global_second_fail.activate(1); }
+    catch (const std::runtime_error&) { second_failed = true; }
+    require(second_failed && global_second_fail.state().faulted &&
+            !global_second_fail.state().binding &&
+            global_second_fail_audio.count("stop") == 1 &&
+            global_second_fail_audio.count("release") == 1,
+            "second global control phase failure tears down acquired binding");
 
     std::cout << "native HIT controller: " << checks << " checks passed\n";
     return 0;
