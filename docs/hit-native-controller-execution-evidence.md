@@ -73,6 +73,13 @@ o subconjunto deve recusar7; não substituir essa resolução por salto direto.
 Nesse escopo, 8/12 suportam apenas a pilha vazia, explicitamente; não alegar
 cobertura de retorno aninhado sem Call ou entrada de pilha válida.
 
+Extensão de 2026-10-17: o controller passou a aceitar um resolvedor explícito
+do caller para Call7 e a manter pilha limitada. Isso remove a recusa de7 quando
+há mapa fornecido, sem estabelecer a origem/precedência do mapa do manager.
+O contrato e a validação posteriores estão em
+[hit-native-call-validation.md](hit-native-call-validation.md); a descrição
+acima preserva o recorte e as limitações da investigação original.
+
 ## Parada gradual e flags
 
 End com pilha vazia e opcode27 chamam+34. Com áudio corrente ativo,

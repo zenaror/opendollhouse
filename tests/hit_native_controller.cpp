@@ -248,10 +248,143 @@ try {
     odh::NativeHitController unsupported(bad.hit,bad.hot,bad.track,16,args(),100,512,b.callbacks());
     unsupported.activate(1);
     rejects([&] { unsupported.poll(1); });
-    require(unsupported.state().faulted, "unsupported Call7 faults without invented target");
+    require(unsupported.state().faulted && unsupported.state().call_depth == 0,
+            "Call7 without resolver faults without inventing a target");
     const auto effect_count = b.events.size();
     rejects([&] { unsupported.stop(); });
     require(b.events.size() == effect_count, "fault prevents later backend effects");
+
+    // The DWORDs are lookup keys, deliberately different from the bytecode
+    // offsets 28 and 36. Both native return opcodes pop the same LIFO stack.
+    Fixture nested{7,0x12,0x34,0x56,0x78, 2,3, 12,
+                   0,0,0,0,
+                   7,0xdd,0xcc,0xbb,0xaa, 2,2, 8,
+                   2,1, 12};
+    Audio na;
+    std::vector<std::uint32_t> keys;
+    odh::NativeHitCallResolver resolve_nested = [&](std::uint32_t key)
+            -> std::optional<std::uint32_t> {
+        keys.push_back(key);
+        if (key == 0x78563412U) return 28;
+        if (key == 0xaabbccddU) return 36;
+        return std::nullopt;
+    };
+    odh::NativeHitController nc(nested.hit,nested.hot,nested.track,16,args(),100,512,
+                                na.callbacks(),{}, {},resolve_nested);
+    nc.activate(1);
+    require(nc.poll(1) == odh::NativeHitPoll::stopped && !nc.state().faulted &&
+            nc.state().call_depth == 0 && nc.trace().size() == 8,
+            "nested Call7 and both return opcodes finish through LIFO stack");
+    require(keys == std::vector<std::uint32_t>({0x78563412U,0xaabbccddU}) &&
+            na.count("note:1") == 1 && na.count("note:2") == 1 &&
+            na.count("note:3") == 1 &&
+            nc.trace()[0].next_pc == 28 && nc.trace()[1].next_pc == 36 &&
+            nc.trace()[3].next_pc == 33 && nc.trace()[5].next_pc == 21,
+            "Call7 resolves full DWORD keys and returns to post-operand PCs");
+
+    Fixture pending_call{7,1,0,0,0, 8, 0,0,0,0,0,0,
+                         5,55,1,0,0,0, 5,4,2,0,0,0, 9,4, 8};
+    Audio pa;
+    bool resolve_to_return = false;
+    odh::NativeHitController pending(pending_call.hit,pending_call.hot,pending_call.track,
+        16,args(),100,512,pa.callbacks(),{}, {},
+        [&](std::uint32_t key) -> std::optional<std::uint32_t> {
+            if (key == 1) return resolve_to_return ? 42U : 28U;
+            return std::nullopt;
+        });
+    pending.activate(1);
+    require(pending.poll(1) == odh::NativeHitPoll::progressed &&
+            pending.state().call_depth == 1 && pending.state().pc == 42,
+            "wait inside callee retains return cursor");
+    pending.pause();
+    pending.retrigger(args(),100,512,2);
+    require(pending.state().call_depth == 1 && pending.state().pc == 42,
+            "paused retrigger keeps call stack and execution PC");
+    pending.retrigger(args(),100,512,3);
+    require(pending.state().call_depth == 1 && pending.state().pc == 16,
+            "active ID55 restart resets PC but retains return stack");
+    resolve_to_return = true;
+    require(pending.poll(3) == odh::NativeHitPoll::stopped &&
+            pending.state().call_depth == 0 && pending.trace().size() == 8 &&
+            pending.trace()[5].opcode == 8 && pending.trace()[6].opcode == 8,
+            "return after restart consumes the inherited frame after the new frame");
+    pending.stop();
+    require(pending.state().call_depth == 0 && pending.state().pc == 16,
+            "stop clears saved return cursors");
+
+    Fixture absent_key{7,9,0,0,0};
+    Audio ak;
+    odh::NativeHitController missing_key(absent_key.hit,absent_key.hot,absent_key.track,
+        16,args(),100,512,ak.callbacks(),{}, {},
+        [](std::uint32_t) -> std::optional<std::uint32_t> { return std::nullopt; });
+    missing_key.activate(1);
+    rejects([&] { missing_key.poll(1); });
+    require(missing_key.state().faulted && missing_key.state().call_depth == 0,
+            "missing resolver key faults before pushing a return cursor");
+    Audio ia;
+    odh::NativeHitController invalid_target(absent_key.hit,absent_key.hot,absent_key.track,
+        16,args(),100,512,ia.callbacks(),{}, {},
+        [](std::uint32_t) -> std::optional<std::uint32_t> { return 15; });
+    invalid_target.activate(1);
+    rejects([&] { invalid_target.poll(1); });
+    require(invalid_target.state().faulted && invalid_target.state().call_depth == 0,
+            "out-of-region Call7 target faults before push");
+    Fixture truncated_call{7,1,2,3};
+    Audio ta;
+    unsigned lookups = 0;
+    odh::NativeHitController truncated_target(truncated_call.hit,truncated_call.hot,
+        truncated_call.track,16,args(),100,512,ta.callbacks(),{}, {},
+        [&](std::uint32_t) -> std::optional<std::uint32_t> { ++lookups; return 16; });
+    truncated_target.activate(1);
+    rejects([&] { truncated_target.poll(1); });
+    require(truncated_target.state().faulted && lookups == 0 &&
+            truncated_target.state().call_depth == 0,
+            "truncated Call7 operand faults before resolver invocation");
+
+    Fixture recursive{7,1,0,0,0};
+    Audio ra;
+    odh::NativeHitLimits shallow;
+    shallow.call_depth = 2;
+    odh::NativeHitController bounded_call(recursive.hit,recursive.hot,recursive.track,
+        16,args(),100,512,ra.callbacks(),shallow, {},
+        [](std::uint32_t) -> std::optional<std::uint32_t> { return 16; });
+    bounded_call.activate(1);
+    rejects([&] { bounded_call.poll(1); });
+    require(bounded_call.state().faulted && bounded_call.state().call_depth == 2 &&
+            bounded_call.trace().size() == 2,
+            "recursive Call7 faults at preallocated depth budget");
+    Audio da;
+    odh::NativeHitLimits diagnostic_depth;
+    diagnostic_depth.call_depth = 128;
+    odh::NativeHitController diagnostic_call(recursive.hit,recursive.hot,recursive.track,
+        16,args(),100,512,da.callbacks(),diagnostic_depth, {},
+        [](std::uint32_t) -> std::optional<std::uint32_t> { return 16; });
+    diagnostic_call.activate(1);
+    require(diagnostic_call.poll(1) == odh::NativeHitPoll::diagnostic_stopped &&
+            diagnostic_call.state().instructions == 102 &&
+            diagnostic_call.state().call_depth == 0 &&
+            !diagnostic_call.state().faulted,
+            "native post-102 diagnostic stop clears pending call frames");
+    shallow.call_depth = 0;
+    rejects([&] {
+        odh::NativeHitController invalid_limit(recursive.hit,recursive.hot,recursive.track,
+            16,args(),100,512,ra.callbacks(),shallow);
+    });
+
+    Audio resolver_audio;
+    odh::NativeHitController* resolver_ptr = nullptr;
+    odh::NativeHitController resolver_reentry(absent_key.hit,absent_key.hot,absent_key.track,
+        16,args(),100,512,resolver_audio.callbacks(),{}, {},
+        [&](std::uint32_t) -> std::optional<std::uint32_t> {
+            try { resolver_ptr->pause(); } catch (const odh::FormatError&) {}
+            return 16;
+        });
+    resolver_ptr = &resolver_reentry;
+    resolver_reentry.activate(1);
+    rejects([&] { resolver_reentry.poll(1); });
+    require(resolver_reentry.state().faulted && resolver_reentry.state().call_depth == 0 &&
+            resolver_reentry.trace().empty(),
+            "swallowed resolver reentry faults before changing call stack or PC");
 
     Fixture callback_code{2,5,9,4};
     Audio cb;

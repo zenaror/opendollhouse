@@ -3,6 +3,7 @@
 #include "odh/hit_selection.hpp"
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace odh {
@@ -34,7 +35,14 @@ struct NativeHitLimits {
     std::uint32_t instructions_total = 4096;
     std::uint32_t instructions_per_poll = 256;
     std::uint32_t trace_entries = 4096;
+    std::uint32_t call_depth = 64;
 };
+
+// Resolves the DWORD operand of Call7 to a bytecode offset. An absent key
+// returns nullopt. Captured references and their backing map must outlive the
+// controller. The caller supplies this map explicitly; HOT/ENTP precedence is
+// not inferred here. The callback must not mutate the controller or HIT/HOT.
+using NativeHitCallResolver = std::function<std::optional<std::uint32_t>(std::uint32_t key)>;
 
 struct NativeHitTrace {
     std::uint32_t pc = 0;
@@ -50,6 +58,7 @@ struct NativeHitState {
     std::uint32_t pc = 0;
     std::uint32_t deadline = 0;
     std::uint32_t instructions = 0;
+    std::uint32_t call_depth = 0;
     bool active = false;
     bool paused = true;
     bool binding = false;
@@ -79,8 +88,9 @@ enum class NativeHitPoll { inactive, paused, waiting, progressed, stopped, diagn
 // Clock is uint32; a poll
 // with its high bit set takes the native default diagnostic/stop path after
 // fade handling. Deadline addition retains uint32 wrap and zero.
-// Supported bytecode: NoteOn2, LoadL5, Return8, Wait9, WaitSamp11, End12,
-// StopRequest27. Other opcodes and unmodelled variable side effects fault.
+// Supported bytecode: NoteOn2, LoadL5, Call7 with an explicit resolver,
+// Return8, Wait9, WaitSamp11, End12, StopRequest27. Other opcodes and
+// unmodelled variable side effects fault.
 // Timed-NoteOn1 is excluded, so the native +194 deadline remains zero here.
 // The default native diagnostic after instruction 102 stops the controller;
 // lower configured ODH safety budgets can instead fault before that point.
@@ -93,7 +103,8 @@ public:
                         std::uint32_t entry_pc, const HitArguments& raw_args,
                         std::int32_t spatial_volume, std::int32_t spatial_pan,
                         NativeHitAudio, NativeHitLimits = {},
-                        const HitNativeControllerValues& overrides = {});
+                        const HitNativeControllerValues& overrides = {},
+                        NativeHitCallResolver call_resolver = {});
     NativeHitController(const NativeHitController&) = delete;
     NativeHitController& operator=(const NativeHitController&) = delete;
 
@@ -121,8 +132,10 @@ private:
     std::int32_t initial_pan_ = 0;
     NativeHitAudio audio_;
     NativeHitLimits limits_;
+    NativeHitCallResolver call_resolver_;
     NativeHitState state_;
     std::vector<NativeHitTrace> trace_;
+    std::vector<std::uint32_t> call_stack_;
     std::uint32_t entry_ = 0;
     std::uint32_t code_end_ = 0;
     bool busy_ = false;

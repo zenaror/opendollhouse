@@ -25,10 +25,12 @@ void require(bool condition, const char* why) {
 NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
         const HotTrack& track, std::uint32_t entry_pc, const HitArguments& args,
         std::int32_t volume, std::int32_t pan, NativeHitAudio audio,
-        NativeHitLimits limits, const HitNativeControllerValues& overrides)
+        NativeHitLimits limits, const HitNativeControllerValues& overrides,
+        NativeHitCallResolver call_resolver)
     : hit_(hit), hot_(hot), track_(track), overrides_(overrides),
       initial_args_(args), initial_volume_(volume), initial_pan_(pan),
-      audio_(std::move(audio)), limits_(limits), entry_(entry_pc) {
+      audio_(std::move(audio)), limits_(limits),
+      call_resolver_(std::move(call_resolver)), entry_(entry_pc) {
     require(hit.major_version == 1 && (hit.minor_version == 0 || hit.minor_version == 8),
             "native HIT requires supported HIT 1.0/1.8");
     require(hit.bytes.size() <= std::numeric_limits<std::uint32_t>::max(), "native HIT too large");
@@ -38,7 +40,8 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
     validate_pc(entry_);
     require(limits_.instructions_total && limits_.instructions_total <= 1000000 &&
             limits_.instructions_per_poll && limits_.instructions_per_poll <= 10000 &&
-            limits_.trace_entries && limits_.trace_entries <= 65536,
+            limits_.trace_entries && limits_.trace_entries <= 65536 &&
+            limits_.call_depth && limits_.call_depth <= 256,
             "native HIT limits outside supported bounds");
     require(audio_.bind && audio_.active && audio_.note_on && audio_.stop_current &&
             audio_.release_binding && audio_.pause_current && audio_.resume_current &&
@@ -66,6 +69,7 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
     require(!patch || hot_.patches.find(patch) != hot_.patches.end(),
             "native HIT initial patch ID is unresolved");
     trace_.reserve(limits_.trace_entries);
+    call_stack_.reserve(limits_.call_depth);
 }
 
 void NativeHitController::enter() {
@@ -179,6 +183,8 @@ void NativeHitController::stop_impl() {
     state_.controls_50_62[0] = 0;
     state_.pc = entry_;
     state_.deadline = 0;
+    call_stack_.clear();
+    state_.call_depth = 0;
     set_flags(0);
 }
 void NativeHitController::request_stop() {
@@ -322,10 +328,29 @@ NativeHitPoll NativeHitController::poll(std::uint32_t clock) {
                 write(id, value);
                 break;
             }
+            case 7: {
+                const auto key = word();
+                require(static_cast<bool>(call_resolver_),
+                        "native HIT Call7 requires a caller-supplied resolver");
+                check_live();
+                const auto target = call_resolver_(key);
+                check_live(); // A resolver may swallow a reentrant mutation error.
+                require(target.has_value(), "native HIT Call7 key is unresolved");
+                validate_pc(*target);
+                require(call_stack_.size() < limits_.call_depth,
+                        "native HIT call depth exhausted");
+                call_stack_.push_back(state_.pc);
+                state_.call_depth = static_cast<std::uint32_t>(call_stack_.size());
+                state_.pc = *target;
+                break;
+            }
             case 8: case 12:
-                // This profile has no Call7, hence the native return stack is
-                // necessarily empty. End/Return both request +34.
-                request_stop();
+                if (call_stack_.empty()) request_stop();
+                else {
+                    state_.pc = call_stack_.back();
+                    call_stack_.pop_back();
+                    state_.call_depth = static_cast<std::uint32_t>(call_stack_.size());
+                }
                 break;
             case 9: {
                 const auto value = read(byte());

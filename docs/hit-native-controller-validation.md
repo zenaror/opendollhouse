@@ -53,9 +53,14 @@ DSP, compartilhamento de buffers ou semântica interna do backend.
 
 ## Bytecode e limites
 
-O subconjunto implementa opcodes 2, 5, 8, 9, 11, 12 e 27: NoteOn literal,
-LoadL, retorno/fim com pilha vazia, Wait, WaitSamp e solicitação de stop. Call7
-e pilha de retorno sintética não são implementados. Opcode1 é recusado; assim,
+O subconjunto implementa opcodes 2, 5, 7, 8, 9, 11, 12 e 27: NoteOn literal,
+LoadL, chamada por chave, retorno/fim, Wait, WaitSamp e solicitação de stop.
+Call7 exige um resolvedor explícito fornecido pelo caller e usa pilha limitada;
+8 e 12 retiram o último retorno ou solicitam stop se a pilha estiver vazia.
+O mapa e a precedência do manager continuam pendentes. A extensão posterior,
+incluindo preservação da pilha no restart ativo, está em
+[hit-native-call-validation.md](hit-native-call-validation.md).
+Opcode1 é recusado; assim,
 o deadline nativo separado em +194 permanece zero. Escritas e efeitos de
 variáveis ficam limitados aos locais comprovados; outros opcodes, destinos ou
 efeitos não modelados falham explicitamente. Alguns IDs ainda recebem metadata
@@ -69,7 +74,7 @@ segurança. Esses limites e estados são distintos.
 
 ## Verificação
 
-Os checks diretos do core passaram 82 casos com `-Werror`, `-Wconversion` e
+No checkpoint inicial `0ce6cb2`, os checks diretos do core passaram 82 casos com `-Werror`, `-Wconversion` e
 `-Wsign-conversion`; ASan/UBSan passou pelos mesmos checks. Os CTests oficiais
 configuraram 115 casos: Debug passou 114, um teste X11 foi pulado e zero
 falharam (6,97 s). ASan/UBSan teve os mesmos 114 passes e um skip (13,10 s),

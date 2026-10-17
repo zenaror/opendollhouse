@@ -82,8 +82,11 @@ a pesquisa estática correspondente está em
 
 O controller não integra o manager persistente por HOTTrackID, World ou host de
 aúdio do probe. O caller ainda precisa resolver admissão, entrypoint e gates,
-manter os tempos de vida e fornecer a cadência do Clock. Call7/pilha aninhada,
-opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
+manter os tempos de vida e fornecer a cadência do Clock. Call7 agora recebe um
+resolvedor explícito de chave para PC e usa pilha limitada; a origem/precedência
+do mapa do manager ainda não está implementada. Contrato e testes em
+[hit-native-call-validation.md](hit-native-call-validation.md).
+Opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
 IDs não entram no subconjunto. Não tratar conclusão de binding/nota como término
 do controller, usar `HitThread::tick` como equivalência de lifecycle, ou mapear
 este objeto a uma thread por pedido. Core direto (82 checks), CTest e oráculo sintético
