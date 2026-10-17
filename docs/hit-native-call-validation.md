@@ -5,6 +5,14 @@ Call7 com um mapa fornecido pelo caller e permite que Return8 e End12 retornem
 de chamadas aninhadas. Ela não resolve automaticamente o catálogo nativo do
 manager nem amplia os opcodes de áudio e de grupo já suportados.
 
+Extensão posterior nesta data: a investigação do loader demonstrou que o valor
+nativo é um ponteiro para um dos buffers HIT independentes. O controller agora
+também aceita `NativeHitResourceResolver` com `{HitFile*, PC}` e guarda essa
+identidade nos retornos e no trace. O resolvedor local abaixo permanece como
+perfil explícito compatível com os testes anteriores. A resolução global e o
+novo perfil HOT estão em
+[hit-native-entry-map-validation.md](hit-native-entry-map-validation.md).
+
 ## Proveniência e alcance
 
 A evidência nativa é a leitura estática de `../referencias/The Sims/Sims.exe`,
@@ -35,11 +43,13 @@ O handler Call7 em VA `0x57e6bf`, offset de arquivo `0x17e6bf`, lê os quatro
 bytes seguintes como DWORD little-endian completo, sem reduzir a chave a
 8 ou 16 bits. Avança o PC em quatro bytes; o endereço imediatamente após o
 operando é o retorno. `0x57d0a9` (offset `0x17d0a9`) consulta a chave no mapa
-`manager+0x168` por `0x582457`, lê o DWORD associado e entrega esse offset de
+`manager+0x168` por `0x582457`, lê o DWORD associado e entrega esse ponteiro de
 bytecode como destino. O handler só então coloca o retorno na lista `+0x1a8`
 e instala o destino no PC. O operando não é endereço absoluto.
 
-O HOT CSV7 `@symbol` do track é armazenado em `controller+0x31c`; o initializer
+O HOT CSV7 `@symbol` do track é armazenado em `this+0x31c`; o initializer
+acessa esse objeto através de `controller+0xc4`, inicializado como self no
+construtor e passível de apontar para um owner compartilhado. O initializer
 usa essa chave no mesmo mapa para definir PC e loop-PC. Isso não equivale a
 escolher inicialmente uma patch ou hitlist: o binding inicial usa ID50.
 `NativeHitController` continua recebendo `entry_pc` já resolvido pelo caller;
@@ -112,11 +122,13 @@ executado; não houve teste de áudio físico ou de consoles.
 
 ## Lacuna do manager
 
-Os bytes provam lookup em `manager+0x168`, mas não mostram de onde e com qual
-precedência esse mapa é populado entre HOT `TrackData`, HIT ENTP e grupos de
-recursos. O parser ODH conserva `Hot::track_data` e `HitFile::entry_points`
-separadamente. A escolha explícita do caller para esta unidade evita atribuir
-ao executável original uma regra de merge ainda não demonstrada. Faltam também
+Na investigação inicial, faltava provar a origem do mapa. A
+[pesquisa posterior do loader](hit-native-entry-map-evidence.md) demonstrou
+`TrackData` com substituição da última definição processada e buffers HIT
+independentes. Não foi observado merge ENTP nesse caminho; a ordem automática
+dos grupos continua pendente. O parser ODH conserva `Hot::track_data` e
+`HitFile::entry_points` separadamente. A escolha explícita da ordem pelo caller
+evita atribuir ao executável original uma regra de descoberta não demonstrada. Faltam também
 o teto nativo da pilha e a semântica completa de falha do hash quando a chave
 não existe. Esses pontos limitam alegações de fidelidade do manager, mas não
 impedem o subconjunto portátil com mapa explícito e limites ODH declarados.

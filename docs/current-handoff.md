@@ -55,6 +55,22 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+O `HitEntryCatalog` agora conserva arquivo HIT e PC por chave global. Grupos
+posteriores na ordem fornecida substituem os anteriores, com recibos limitados.
+`NativeHitResourceResolver` e frames de retorno permitem chamadas entre HITs,
+sem trocar o HOT/track/binding do evento. O leitor precisa de
+`HotReadProfile::native_entry_map` explícito para esse fluxo; o padrão legado
+permanece. A investigação provou buffers independentes e o caminho TrackData,
+não concatenação nem merge ENTP. Contratos e resultados atuais em
+[hit-native-entry-map-validation.md](hit-native-entry-map-validation.md),
+com [bytes do loader](hit-native-entry-map-evidence.md).
+
+Rastrear a ordem automática do loader `0x5d8632` e as raízes `+0xd0` antes
+de escolher precedência para importação. O adapter PCM ainda depende do
+backend concreto de áudio; a [pesquisa de pausa](hit-native-binding-pause-evidence.md)
+localizou o dispatch por binding, mas não os corpos dos slots ou efeitos em
+PCM já enfileirado. Não encaminhar pausa de um binding ao sink compartilhado.
+
 Orientação humana de 2026-10-17: lacunas do Simitone exigem investigação dos
 dados e executável originais; o roadmap de terceiros não limita o objetivo
 ODH. A issue8 e o fork alexjyong, com clone e revisão próprios, estão em
@@ -62,10 +78,10 @@ ODH. A issue8 e o fork alexjyong, com clone e revisão próprios, estão em
 Linux/Legacy e melhorias de frontend úteis para comparação; nenhuma alegação
 de fidelidade decorre deles. Seu FreeSO ainda não foi materializado/auditado.
 
-A extensão Call7 adiciona resolvedor explícito de chave DWORD para PC e pilha
+A extensão inicial Call7 adicionou resolvedor explícito de chave DWORD para PC e pilha
 limitada, compartilhada por Return8/End12. Stop limpa a pilha; restart ativo
 ID55 preserva seus retornos. Isso não implementa população/precedência do mapa
-do manager. Resultados e limites em
+do manager. Foi ampliada pelo catálogo acima. Resultados históricos e limites em
 [hit-native-call-validation.md](hit-native-call-validation.md).
 
 Concluir integração com adapter do host de áudio e manager persistente por

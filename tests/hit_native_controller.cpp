@@ -386,6 +386,183 @@ try {
             resolver_reentry.trace().empty(),
             "swallowed resolver reentry faults before changing call stack or PC");
 
+    // Three distinct HIT buffers deliberately have executable code at PC16.
+    // Calls switch only bytecode identity: the originating HOT patch and banks
+    // remain attached to the controller throughout the nested return chain.
+    Fixture resource_a{7,1,0,0,0, 2,3, 12};
+    Fixture resource_b{7,2,0,0,0, 2,2, 8};
+    Fixture resource_c{2,1, 12};
+    Audio cross_audio;
+    odh::NativeHitResourceResolver cross_resolve = [&](std::uint32_t key)
+            -> std::optional<odh::HitCodeTarget> {
+        if (key == 1) return odh::HitCodeTarget{&resource_b.hit,16};
+        if (key == 2) return odh::HitCodeTarget{&resource_c.hit,16};
+        return std::nullopt;
+    };
+    odh::NativeHitController cross(resource_a.hit,resource_a.hot,resource_a.track,
+        16,args(),100,512,cross_audio.callbacks(),{}, {},{},cross_resolve);
+    require(&cross.current_hit() == &resource_a.hit,
+            "prepared resource-aware controller starts at its entry HIT");
+    cross.activate(1);
+    require(cross.poll(1) == odh::NativeHitPoll::stopped &&
+            cross.trace().size() == 8 && cross.state().call_depth == 0 &&
+            &cross.current_hit() == &resource_a.hit,
+            "nested cross-resource Call7/Return8/End12 restores the initial HIT");
+    require(cross.trace()[0].source == &resource_a.hit &&
+            cross.trace()[0].next_source == &resource_b.hit &&
+            cross.trace()[0].pc == 16 && cross.trace()[0].next_pc == 16 &&
+            cross.trace()[1].source == &resource_b.hit &&
+            cross.trace()[1].next_source == &resource_c.hit &&
+            cross.trace()[3].source == &resource_c.hit &&
+            cross.trace()[3].next_source == &resource_b.hit &&
+            cross.trace()[5].source == &resource_b.hit &&
+            cross.trace()[5].next_source == &resource_a.hit,
+            "trace distinguishes same PC across resources and each return transition");
+    require(cross_audio.count("note:1") == 1 && cross_audio.count("note:2") == 1 &&
+            cross_audio.count("note:3") == 1 && cross_audio.count("bind:100") == 1 &&
+            cross.state().persistent[0] == 1,
+            "cross-resource execution retains originating track binding and control bank");
+
+    Fixture suspended_a{7,1,0,0,0}; // Saved return PC21 equals its code end.
+    Fixture suspended_b{9,1, 8};
+    Audio suspended_audio;
+    odh::NativeHitController suspended(suspended_a.hit,suspended_a.hot,suspended_a.track,
+        16,args(),100,512,suspended_audio.callbacks(),{}, {},{},
+        [&](std::uint32_t) -> std::optional<odh::HitCodeTarget> {
+            return odh::HitCodeTarget{&suspended_b.hit,16};
+        });
+    suspended.activate(1);
+    const auto entry_flags = std::array<bool,3>{suspended.state().zero,
+        suspended.state().positive,suspended.state().sign};
+    require(suspended.poll(1) == odh::NativeHitPoll::progressed &&
+            &suspended.current_hit() == &suspended_b.hit &&
+            suspended.state().controls_50_62[0] == 100 &&
+            std::array<bool,3>{suspended.state().zero,suspended.state().positive,
+                               suspended.state().sign} == entry_flags,
+            "cross-resource Call leaves patch bank and arithmetic flags unchanged");
+    rejects([&] { suspended.poll(2); });
+    require(suspended.state().faulted && suspended.trace().size() == 3 &&
+            suspended.trace()[2].source == &suspended_b.hit &&
+            suspended.trace()[2].next_source == &suspended_a.hit &&
+            suspended.state().pc == 21 && suspended.state().call_depth == 0,
+            "return to code end succeeds and only the subsequent fetch faults");
+
+    Fixture inherited_a{7,1,0,0,0, 8};
+    Fixture inherited_c{5,55,1,0,0,0, 9,1, 8};
+    bool restart_route = false;
+    Audio inherited_audio;
+    odh::NativeHitController inherited(inherited_a.hit,inherited_a.hot,inherited_a.track,
+        16,args(),100,512,inherited_audio.callbacks(),{}, {},{},
+        [&](std::uint32_t key) -> std::optional<odh::HitCodeTarget> {
+            if (key == 1) return odh::HitCodeTarget{&inherited_c.hit,restart_route ? 24U : 16U};
+            if (key == 2) return odh::HitCodeTarget{&inherited_c.hit,16};
+            return std::nullopt;
+        });
+    inherited.activate(1);
+    // First route A -> C waits with one A frame. Restart retains that frame;
+    // a second call into C returns through a newly pushed A frame, then the
+    // inherited A frame. A separate A -> B -> C case below proves a B frame.
+    require(inherited.poll(1) == odh::NativeHitPoll::progressed &&
+            &inherited.current_hit() == &inherited_c.hit &&
+            inherited.state().pc == 24 && inherited.state().call_depth == 1,
+            "cross-resource wait leaves its active HIT and caller frame intact");
+    inherited.retrigger(args(),100,512,2);
+    require(&inherited.current_hit() == &inherited_a.hit &&
+            inherited.state().pc == 16 && inherited.state().call_depth == 1,
+            "ID55 restart restores entry HIT and PC while retaining frames");
+    restart_route = true;
+    require(inherited.poll(2) == odh::NativeHitPoll::stopped &&
+            &inherited.current_hit() == &inherited_a.hit &&
+            inherited.state().call_depth == 0,
+            "post-restart returns consume both new and inherited resource frames");
+
+    Fixture frame_a{7,1,0,0,0, 8};
+    Fixture frame_b{7,2,0,0,0, 8};
+    Fixture frame_c{5,55,1,0,0,0, 9,1, 8};
+    bool route_after_restart = false;
+    Audio frame_audio;
+    odh::NativeHitController frame_chain(frame_a.hit,frame_a.hot,frame_a.track,
+        16,args(),100,512,frame_audio.callbacks(),{}, {},{},
+        [&](std::uint32_t key) -> std::optional<odh::HitCodeTarget> {
+            if (key == 1) return route_after_restart ? odh::HitCodeTarget{&frame_c.hit,24}
+                                                     : odh::HitCodeTarget{&frame_b.hit,16};
+            if (key == 2) return odh::HitCodeTarget{&frame_c.hit,16};
+            return std::nullopt;
+        });
+    frame_chain.activate(1);
+    require(frame_chain.poll(1) == odh::NativeHitPoll::progressed &&
+            frame_chain.state().call_depth == 2 &&
+            &frame_chain.current_hit() == &frame_c.hit,
+            "two resource identities remain in nested pending frames");
+    frame_chain.retrigger(args(),100,512,2);
+    route_after_restart = true;
+    require(frame_chain.poll(2) == odh::NativeHitPoll::stopped &&
+            frame_chain.trace()[6].source == &frame_a.hit &&
+            frame_chain.trace()[6].next_source == &frame_b.hit &&
+            frame_chain.trace()[7].source == &frame_b.hit &&
+            frame_chain.trace()[7].next_source == &frame_a.hit &&
+            frame_chain.state().call_depth == 0,
+            "inherited frame restores the intermediate HIT after restart");
+    frame_chain.stop();
+    require(&frame_chain.current_hit() == &frame_a.hit &&
+            frame_chain.state().pc == 16 && frame_chain.state().call_depth == 0,
+            "explicit stop resets resource, PC and saved frames");
+
+    Fixture target_source{7,9,0,0,0};
+    Fixture target_valid{8};
+    Fixture target_bad_version{8}; target_bad_version.hit.major_version = 2;
+    Fixture target_empty{};
+    Fixture target_entp{8,8}; target_entp.hit.entry_table_offset = 17;
+    Fixture target_bad_region{8}; target_bad_region.hit.entry_table_offset = 30;
+    std::vector<odh::HitCodeTarget> bad_targets = {
+        {nullptr,16}, {&target_bad_version.hit,16}, {&target_empty.hit,16},
+        {&target_entp.hit,17}, {&target_bad_region.hit,16},
+        {&target_valid.hit,0}, {&target_valid.hit,17}
+    };
+    for (const auto bad_target : bad_targets) {
+        Audio target_audio;
+        odh::NativeHitController invalid_resource(target_source.hit,target_source.hot,
+            target_source.track,16,args(),100,512,target_audio.callbacks(),{}, {},{},
+            [bad_target](std::uint32_t) -> std::optional<odh::HitCodeTarget> {
+                return bad_target;
+            });
+        invalid_resource.activate(1);
+        rejects([&] { invalid_resource.poll(1); });
+        require(invalid_resource.state().faulted && invalid_resource.trace().empty() &&
+                invalid_resource.state().call_depth == 0 &&
+                &invalid_resource.current_hit() == &target_source.hit,
+                "invalid resource target faults before switching HIT or saving return");
+    }
+    Audio no_target_audio;
+    odh::NativeHitController no_resource(target_source.hit,target_source.hot,
+        target_source.track,16,args(),100,512,no_target_audio.callbacks(),{}, {},{},
+        [](std::uint32_t) -> std::optional<odh::HitCodeTarget> { return std::nullopt; });
+    no_resource.activate(1);
+    rejects([&] { no_resource.poll(1); });
+    require(no_resource.state().call_depth == 0 && no_resource.trace().empty(),
+            "missing resource key faults before pushing a return");
+    rejects([&] {
+        odh::NativeHitController ambiguous(target_source.hit,target_source.hot,
+            target_source.track,16,args(),100,512,no_target_audio.callbacks(),{}, {},
+            [](std::uint32_t) -> std::optional<std::uint32_t> { return 16; },
+            [](std::uint32_t) -> std::optional<odh::HitCodeTarget> { return std::nullopt; });
+    });
+    Audio resource_reentry_audio;
+    odh::NativeHitController* resource_reentry_ptr = nullptr;
+    odh::NativeHitController resource_reentry(target_source.hit,target_source.hot,
+        target_source.track,16,args(),100,512,resource_reentry_audio.callbacks(),{}, {},{},
+        [&](std::uint32_t) -> std::optional<odh::HitCodeTarget> {
+            try { resource_reentry_ptr->pause(); } catch (const odh::FormatError&) {}
+            return odh::HitCodeTarget{&target_valid.hit,16};
+        });
+    resource_reentry_ptr = &resource_reentry;
+    resource_reentry.activate(1);
+    rejects([&] { resource_reentry.poll(1); });
+    require(resource_reentry.state().faulted && resource_reentry.trace().empty() &&
+            resource_reentry.state().call_depth == 0 &&
+            &resource_reentry.current_hit() == &target_source.hit,
+            "swallowed resource resolver reentry faults before resource switch");
+
     Fixture callback_code{2,5,9,4};
     Audio cb;
     odh::NativeHitController* ptr = nullptr;

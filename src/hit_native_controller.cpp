@@ -26,18 +26,17 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
         const HotTrack& track, std::uint32_t entry_pc, const HitArguments& args,
         std::int32_t volume, std::int32_t pan, NativeHitAudio audio,
         NativeHitLimits limits, const HitNativeControllerValues& overrides,
-        NativeHitCallResolver call_resolver)
+        NativeHitCallResolver call_resolver,
+        NativeHitResourceResolver resource_resolver)
     : hit_(hit), hot_(hot), track_(track), overrides_(overrides),
       initial_args_(args), initial_volume_(volume), initial_pan_(pan),
       audio_(std::move(audio)), limits_(limits),
-      call_resolver_(std::move(call_resolver)), entry_(entry_pc) {
-    require(hit.major_version == 1 && (hit.minor_version == 0 || hit.minor_version == 8),
-            "native HIT requires supported HIT 1.0/1.8");
-    require(hit.bytes.size() <= std::numeric_limits<std::uint32_t>::max(), "native HIT too large");
-    const auto end = hit.entry_table_offset.value_or(hit.bytes.size());
-    require(end <= hit.bytes.size() && end > 16, "native HIT has invalid code region");
-    code_end_ = static_cast<std::uint32_t>(end);
-    validate_pc(entry_);
+      call_resolver_(std::move(call_resolver)),
+      resource_resolver_(std::move(resource_resolver)), entry_(entry_pc),
+      active_hit_(&hit) {
+    require(!call_resolver_ || !resource_resolver_,
+            "native HIT accepts only one Call7 resolver profile");
+    code_end_ = validate_target({&hit, entry_});
     require(limits_.instructions_total && limits_.instructions_total <= 1000000 &&
             limits_.instructions_per_poll && limits_.instructions_per_poll <= 10000 &&
             limits_.trace_entries && limits_.trace_entries <= 65536 &&
@@ -84,12 +83,25 @@ void NativeHitController::leave() noexcept { busy_ = false; }
 void NativeHitController::check_live() const {
     if (state_.faulted) throw FormatError("native HIT controller is faulted");
 }
+std::uint32_t NativeHitController::validate_target(HitCodeTarget target) {
+    require(target.file != nullptr, "native HIT Call7 target has no resource");
+    const auto& hit = *target.file;
+    require(hit.major_version == 1 && (hit.minor_version == 0 || hit.minor_version == 8),
+            "native HIT requires supported HIT 1.0/1.8");
+    require(hit.bytes.size() <= std::numeric_limits<std::uint32_t>::max(),
+            "native HIT too large");
+    const auto end = hit.entry_table_offset.value_or(hit.bytes.size());
+    require(end <= hit.bytes.size() && end > 16, "native HIT has invalid code region");
+    require(target.pc >= 16 && target.pc < end,
+            "native HIT PC outside bytecode region");
+    return static_cast<std::uint32_t>(end);
+}
 void NativeHitController::validate_pc(std::uint32_t pc) const {
     require(pc >= 16 && pc < code_end_, "native HIT PC outside bytecode region");
 }
 std::uint8_t NativeHitController::byte() {
     validate_pc(state_.pc);
-    return hit_.bytes[state_.pc++];
+    return active_hit_->bytes[state_.pc++];
 }
 std::uint32_t NativeHitController::word() {
     std::uint32_t value = 0;
@@ -181,6 +193,8 @@ void NativeHitController::stop_impl() {
     state_.controls_17_47[45 - 17] = 0;
     state_.controls_17_47[46 - 17] = 0;
     state_.controls_50_62[0] = 0;
+    active_hit_ = &hit_;
+    code_end_ = validate_target({&hit_, entry_});
     state_.pc = entry_;
     state_.deadline = 0;
     call_stack_.clear();
@@ -257,6 +271,8 @@ void NativeHitController::restart(const HitArguments& args, std::int32_t volume,
     state_.controls_17_47[46 - 17] = 0; // Final initializer writer runs after bind.
     stop_and_release();
     try {
+        active_hit_ = &hit_;
+        code_end_ = validate_target({&hit_, entry_});
         state_.pc = entry_;
         state_.deadline = clock;
         bind_current();
@@ -313,6 +329,7 @@ NativeHitPoll NativeHitController::poll(std::uint32_t clock) {
                     "native HIT instruction budget exhausted");
             require(trace_.size() < limits_.trace_entries, "native HIT trace budget exhausted");
             const auto start = state_.pc;
+            const auto* source = active_hit_;
             const auto op = byte();
             ++state_.instructions;
             ++in_poll;
@@ -330,25 +347,36 @@ NativeHitPoll NativeHitController::poll(std::uint32_t clock) {
             }
             case 7: {
                 const auto key = word();
-                require(static_cast<bool>(call_resolver_),
+                require(static_cast<bool>(call_resolver_) || static_cast<bool>(resource_resolver_),
                         "native HIT Call7 requires a caller-supplied resolver");
                 check_live();
-                const auto target = call_resolver_(key);
+                std::optional<HitCodeTarget> target;
+                if (resource_resolver_) target = resource_resolver_(key);
+                else if (const auto local = call_resolver_(key))
+                    target = HitCodeTarget{active_hit_, *local};
                 check_live(); // A resolver may swallow a reentrant mutation error.
                 require(target.has_value(), "native HIT Call7 key is unresolved");
-                validate_pc(*target);
+                const auto target_end = validate_target(*target);
                 require(call_stack_.size() < limits_.call_depth,
                         "native HIT call depth exhausted");
-                call_stack_.push_back(state_.pc);
+                call_stack_.push_back({active_hit_, state_.pc});
                 state_.call_depth = static_cast<std::uint32_t>(call_stack_.size());
-                state_.pc = *target;
+                active_hit_ = target->file;
+                code_end_ = target_end;
+                state_.pc = target->pc;
                 break;
             }
             case 8: case 12:
                 if (call_stack_.empty()) request_stop();
                 else {
-                    state_.pc = call_stack_.back();
+                    const auto frame = call_stack_.back();
                     call_stack_.pop_back();
+                    active_hit_ = frame.file;
+                    // Return addresses are allowed to equal the code end;
+                    // the next byte fetch checks their validity.
+                    code_end_ = static_cast<std::uint32_t>(
+                        frame.file->entry_table_offset.value_or(frame.file->bytes.size()));
+                    state_.pc = frame.pc;
                     state_.call_depth = static_cast<std::uint32_t>(call_stack_.size());
                 }
                 break;
@@ -366,7 +394,7 @@ NativeHitPoll NativeHitController::poll(std::uint32_t clock) {
             case 27: request_stop(); break;
             default: throw FormatError("unsupported native HIT opcode " + std::to_string(op));
             }
-            trace_.push_back({start, state_.pc, op});
+            trace_.push_back({start, state_.pc, op, source, active_hit_});
             if (in_poll == 102) {
                 state_.native_diagnostic_stop = true;
                 stop_impl();

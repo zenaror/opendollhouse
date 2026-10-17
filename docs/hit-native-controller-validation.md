@@ -57,7 +57,12 @@ O subconjunto implementa opcodes 2, 5, 7, 8, 9, 11, 12 e 27: NoteOn literal,
 LoadL, chamada por chave, retorno/fim, Wait, WaitSamp e solicitação de stop.
 Call7 exige um resolvedor explícito fornecido pelo caller e usa pilha limitada;
 8 e 12 retiram o último retorno ou solicitam stop se a pilha estiver vazia.
-O mapa e a precedência do manager continuam pendentes. A extensão posterior,
+A extensão com `HitEntryCatalog` e `NativeHitResourceResolver` conserva arquivo
+e PC por alvo/frame; a ordem dos grupos é fornecida explicitamente. A origem
+TrackData e os buffers independentes foram rastreados no original; a ordem
+automática de descoberta ainda está pendente. Contrato e verificação atuais em
+[hit-native-entry-map-validation.md](hit-native-entry-map-validation.md).
+A extensão inicial,
 incluindo preservação da pilha no restart ativo, está em
 [hit-native-call-validation.md](hit-native-call-validation.md).
 Opcode1 é recusado; assim,

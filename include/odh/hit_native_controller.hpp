@@ -1,5 +1,6 @@
 #pragma once
 
+#include "odh/hit_code_target.hpp"
 #include "odh/hit_selection.hpp"
 #include <cstdint>
 #include <functional>
@@ -44,10 +45,19 @@ struct NativeHitLimits {
 // not inferred here. The callback must not mutate the controller or HIT/HOT.
 using NativeHitCallResolver = std::function<std::optional<std::uint32_t>(std::uint32_t key)>;
 
+// Resource-aware alternative to NativeHitCallResolver. A resolved target owns
+// neither its HitFile nor its bytes; every returned file must remain immutable
+// and outlive this controller, including any saved return frames. Supply only
+// one of the two resolver profiles. No HOT, ENTP or patch switching is implied.
+using NativeHitResourceResolver =
+    std::function<std::optional<HitCodeTarget>(std::uint32_t key)>;
+
 struct NativeHitTrace {
     std::uint32_t pc = 0;
     std::uint32_t next_pc = 0;
     std::uint8_t opcode = 0;
+    const HitFile* source = nullptr;
+    const HitFile* next_source = nullptr;
 };
 
 struct NativeHitState {
@@ -97,6 +107,13 @@ enum class NativeHitPoll { inactive, paused, waiting, progressed, stopped, diagn
 // All execution/callback faults latch; no later mutator produces effects.
 // Exceptional teardown of a binding acquired during a failing operation is
 // still attempted to avoid leaking that external resource.
+// A resource resolver changes only the active bytecode file and PC. The entry
+// file, HOT track, banks and audio binding retain their original identity.
+// Each target is checked against that file's HIT 1.0/1.8 code region before a
+// frame is pushed. Return cursors are checked only when fetched. Call stack
+// and trace storage are preallocated to the configured bounded limits (default
+// 64 frames and 4096 traces, maxima 256 and 65536). Each frame adds a borrowed
+// file pointer beside its PC; each trace adds source and next-source pointers.
 class NativeHitController {
 public:
     NativeHitController(const HitFile&, const Hot&, const HotTrack&,
@@ -104,7 +121,8 @@ public:
                         std::int32_t spatial_volume, std::int32_t spatial_pan,
                         NativeHitAudio, NativeHitLimits = {},
                         const HitNativeControllerValues& overrides = {},
-                        NativeHitCallResolver call_resolver = {});
+                        NativeHitCallResolver call_resolver = {},
+                        NativeHitResourceResolver resource_resolver = {});
     NativeHitController(const NativeHitController&) = delete;
     NativeHitController& operator=(const NativeHitController&) = delete;
 
@@ -121,6 +139,7 @@ public:
 
     const NativeHitState& state() const noexcept { return state_; }
     const std::vector<NativeHitTrace>& trace() const noexcept { return trace_; }
+    const HitFile& current_hit() const noexcept { return *active_hit_; }
 
 private:
     const HitFile& hit_;
@@ -133,17 +152,20 @@ private:
     NativeHitAudio audio_;
     NativeHitLimits limits_;
     NativeHitCallResolver call_resolver_;
+    NativeHitResourceResolver resource_resolver_;
     NativeHitState state_;
     std::vector<NativeHitTrace> trace_;
-    std::vector<std::uint32_t> call_stack_;
+    std::vector<HitCodeTarget> call_stack_;
     std::uint32_t entry_ = 0;
     std::uint32_t code_end_ = 0;
+    const HitFile* active_hit_ = nullptr;
     bool busy_ = false;
     bool ever_activated_ = false;
 
     void enter();
     void leave() noexcept;
     void check_live() const;
+    static std::uint32_t validate_target(HitCodeTarget target);
     void validate_pc(std::uint32_t pc) const;
     std::uint8_t byte();
     std::uint32_t word();

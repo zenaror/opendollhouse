@@ -31,6 +31,15 @@ template<class T> T required_number(Text s, const char* what, int base = 10) {
     if (!number(s, result, base)) throw FormatError(std::string("invalid ") + what);
     return result;
 }
+std::uint32_t native_track_data_number(Text s, const char* what) {
+    s = trim(s);
+    const bool prefix = s.size() >= 2 && s[0] == '0' &&
+        (s[1] == 'x' || s[1] == 'X');
+    const bool hex_digit = std::any_of(s.begin(), s.end(), [](char c) {
+        return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+    return required_number<std::uint32_t>(s, what, prefix || hex_digit ? 16 : 10);
+}
 std::string text_input(const View& view, const HitResourceLimits& limits) {
     if (view.size() > limits.input_bytes || view.size() > limits.text_bytes ||
         view.size() > std::numeric_limits<std::size_t>::max())
@@ -156,7 +165,11 @@ Hsm read_hsm(const View& view, const HitResourceLimits& limits) {
     return result;
 }
 
-Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits) {
+Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
+             HotReadProfile profile) {
+    if (profile != HotReadProfile::simitone_local &&
+        profile != HotReadProfile::native_entry_map)
+        throw FormatError("unsupported HOT read profile");
     const auto input = text_input(view, limits);
     Hot result; result.logical_bytes = view.size();
     std::string section;
@@ -181,9 +194,20 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits) 
                 option = required_number<std::int32_t>(value, "HOT option");
             } else ++result.unknown_records;
         } else if (section == "TrackData") {
-            const auto id = required_number<std::uint32_t>(key, "HOT hexadecimal track ID", 16);
-            const auto offset = required_number<std::uint32_t>(value, "HOT hexadecimal track offset", 16);
-            if (!result.track_data.emplace(id, offset).second) throw FormatError("duplicate HOT TrackData ID");
+            const auto id = profile == HotReadProfile::native_entry_map
+                ? native_track_data_number(key, "HOT native TrackData ID")
+                : required_number<std::uint32_t>(key, "HOT hexadecimal track ID", 16);
+            const auto offset = profile == HotReadProfile::native_entry_map
+                ? native_track_data_number(value, "HOT native TrackData offset")
+                : required_number<std::uint32_t>(value, "HOT hexadecimal track offset", 16);
+            const auto inserted = result.track_data.emplace(id, offset);
+            if (!inserted.second) {
+                if (profile == HotReadProfile::simitone_local)
+                    throw FormatError("duplicate HOT TrackData ID");
+                inserted.first->second = offset;
+                ++result.duplicate_records;
+                ++result.track_data_replacements;
+            }
         } else if (section == "EventMapping") {
             const auto fields = csv(value);
             HotEvent event;
@@ -196,7 +220,9 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits) 
         } else if (section == "Track") {
             const auto id = required_number<std::uint32_t>(key, "HOT track ID");
             const auto fields = csv(value);
-            if (fields.size() < 9 || fields[7].empty() || fields[7].front() != '@') throw FormatError("malformed HOT track fields");
+            if (fields.size() < 9 || fields[7].empty() ||
+                (profile == HotReadProfile::simitone_local && fields[7].front() != '@'))
+                throw FormatError("malformed HOT track fields");
             HotTrack track;
             track.subroutine_label = std::string(fields[1]);
             track.volume = equate(fields[2], result, track.unsupported_reason);
@@ -204,28 +230,67 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits) 
             track.ducking_priority = equate(fields[4], result, track.unsupported_reason);
             track.control_group = equate(fields[5], result, track.unsupported_reason);
             track.sound_pressure_level = equate(fields[6], result, track.unsupported_reason);
-            track.hitlist_id = symbol(fields[7].substr(1), hsm, track.unsupported_reason);
-            track.patch_id = equate(fields[8], result, track.unsupported_reason);
-            for (const auto candidate : {track.hitlist_id, track.patch_id}) if (candidate && *candidate != 0) {
-                const auto found = result.track_data.find(*candidate);
-                if (found != result.track_data.end()) track.subroutine_offset = found->second;
+            // Native CSV7 accepts @symbol, a digit-start numeric key or a
+            // known HOT equate. The global catalog resolves its bytecode PC.
+            if (fields[7].front() == '@')
+                track.hitlist_id = symbol(fields[7].substr(1), hsm, track.unsupported_reason);
+            else if (fields[7].front() >= '0' && fields[7].front() <= '9')
+                track.hitlist_id = native_track_data_number(fields[7], "HOT native Track CSV7");
+            else {
+                const auto found = result.equates.find(std::string(fields[7]));
+                if (found != result.equates.end())
+                    track.hitlist_id = static_cast<std::uint32_t>(found->second);
+                else unresolved(track.unsupported_reason, fields[7]);
             }
-            if (!track.subroutine_offset) {
-                if (!track.unsupported_reason.empty()) track.unsupported_reason += "; ";
-                track.unsupported_reason += "missing TrackData bytecode offset";
+            track.patch_id = equate(fields[8], result, track.unsupported_reason);
+            if (profile == HotReadProfile::simitone_local) {
+                for (const auto candidate : {track.hitlist_id, track.patch_id})
+                    if (candidate && *candidate != 0) {
+                        const auto found = result.track_data.find(*candidate);
+                        if (found != result.track_data.end())
+                            track.subroutine_offset = found->second;
+                    }
+                if (!track.subroutine_offset) {
+                    if (!track.unsupported_reason.empty()) track.unsupported_reason += "; ";
+                    track.unsupported_reason += "missing TrackData bytecode offset";
+                }
             }
             if (!track.unsupported_reason.empty()) ++result.unsupported_records;
             overwrite(result.tracks, id, std::move(track), result);
         } else if (section == "Patch") {
             const auto id = required_number<std::uint32_t>(key, "HOT patch ID");
-            const auto fields = csv(value);
-            if (fields.size() < 5 || fields[2].size() < 2 || fields[2].front() != '"' || fields[2].back() != '"')
-                throw FormatError("malformed HOT patch fields/filename");
             HotPatch patch;
-            patch.name = std::string(fields[1]);
-            patch.filename = std::string(fields[2].substr(1, fields[2].size() - 2));
-            patch.looped = required_number<std::int32_t>(fields[3], "HOT loop flag") != 0;
-            patch.piano = required_number<std::int32_t>(fields[4], "HOT piano flag") != 0;
+            if (profile == HotReadProfile::simitone_local) {
+                const auto fields = csv(value);
+                if (fields.size() < 5 || fields[2].size() < 2 ||
+                    fields[2].front() != '"' || fields[2].back() != '"')
+                    throw FormatError("malformed HOT patch fields/filename");
+                patch.name = std::string(fields[1]);
+                patch.filename = std::string(fields[2].substr(1, fields[2].size() - 2));
+                patch.looped = required_number<std::int32_t>(fields[3], "HOT loop flag") != 0;
+                patch.piano = required_number<std::int32_t>(fields[4], "HOT piano flag") != 0;
+            } else {
+                // The native callback splits the first two comma fields, then
+                // scans for quotes. Everything before the first quote after
+                // field 1 is skipped, including GuineaPig's extra name field.
+                const auto first = value.find(',');
+                const auto second = first == Text::npos ? Text::npos : value.find(',', first + 1);
+                const auto open = second == Text::npos ? Text::npos : value.find('"', second + 1);
+                const auto close = open == Text::npos ? Text::npos : value.find('"', open + 1);
+                if (close == Text::npos) throw FormatError("malformed HOT native patch filename");
+                patch.name = std::string(trim(value.substr(first + 1, second - first - 1)));
+                patch.ignored_pre_filename = std::string(value.substr(second + 1, open - second - 1));
+                patch.filename = std::string(value.substr(open + 1, close - open - 1));
+                auto suffix = trim(value.substr(close + 1));
+                if (suffix.empty() || suffix.front() != ',')
+                    throw FormatError("malformed HOT native patch flags");
+                suffix.remove_prefix(1);
+                const auto flags = csv(suffix);
+                if (flags.size() < 2) throw FormatError("malformed HOT native patch flags");
+                // The native boolean transform accepts exactly the value 1.
+                patch.looped = required_number<std::int32_t>(flags[0], "HOT loop flag") == 1;
+                patch.piano = required_number<std::int32_t>(flags[1], "HOT piano flag") == 1;
+            }
             overwrite(result.patches, id, std::move(patch), result);
         } else if (section == "GlobalHitList") {
             const auto id = required_number<std::uint32_t>(key, "HOT hitlist ID");

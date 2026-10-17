@@ -83,9 +83,13 @@ a pesquisa estática correspondente está em
 O controller não integra o manager persistente por HOTTrackID, World ou host de
 aúdio do probe. O caller ainda precisa resolver admissão, entrypoint e gates,
 manter os tempos de vida e fornecer a cadência do Clock. Call7 agora recebe um
-resolvedor explícito de chave para PC e usa pilha limitada; a origem/precedência
-do mapa do manager ainda não está implementada. Contrato e testes em
-[hit-native-call-validation.md](hit-native-call-validation.md).
+resolvedor explícito de chave para arquivo HIT e PC e usa pilha limitada com
+identidade de recurso. O `HitEntryCatalog` indexa `TrackData` de grupos em ordem
+fornecida pelo caller; definições posteriores substituem as anteriores. O perfil
+HOT `native_entry_map` não exige resolução local e conta substituições internas;
+o perfil Simitone continua como padrão. A ordem automática nativa dos grupos
+ainda não está estabelecida. Contrato e testes em
+[hit-native-entry-map-validation.md](hit-native-entry-map-validation.md).
 Opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
 IDs não entram no subconjunto. Não tratar conclusão de binding/nota como término
 do controller, usar `HitThread::tick` como equivalência de lifecycle, ou mapear

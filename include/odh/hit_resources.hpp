@@ -41,6 +41,9 @@ struct HotTrack {
 struct HotPatch {
     std::string name, filename; // Unquoted filename bytes; original slashes preserved.
     bool looped = false, piano = false;
+    // Native Patch scan discards bytes between the second comma and the first
+    // quote. Retain them for provenance when that prefix contains extra data.
+    std::string ignored_pre_filename{};
 };
 struct HotHitlist {
     std::vector<std::uint32_t> ids;
@@ -55,16 +58,25 @@ struct Hot {
     std::map<std::string, std::int32_t> equates;
     std::optional<std::int32_t> version, load_priority;
     std::uint64_t logical_bytes = 0, records = 0, duplicate_records = 0;
+    std::uint64_t track_data_replacements = 0;
     std::uint64_t unsupported_records = 0, unknown_records = 0;
 };
-// HOT dictionary rows overwrite within this file (counted), as in FreeSO;
-// duplicate TrackData rejects (FreeSO Add). No cross-file precedence is chosen.
+enum class HotReadProfile { simitone_local, native_entry_map };
+// HOT dictionary rows overwrite within this file (counted), as in FreeSO.
+// The default Simitone-local profile rejects duplicate TrackData and infers a
+// local subroutine_offset, marking a missing local offset unsupported. The
+// native-entry-map profile retains input-order last-wins TrackData rows and
+// leaves entry resolution to a caller's explicit cross-resource catalog;
+// track_data_replacements counts only duplicate TrackData rows in that profile.
+// Neither profile chooses cross-file precedence or emulates native parse faults.
 // Decimal fields use HOT equates; @labels use ASCII-lower HSM lookup. Unresolved
 // symbols remain optional and carry a reason, never an invented numeric zero.
-// Entry offset follows TrackData hitlist then patch precedence. The explicit
-// subroutine label is retained, not used as a source-level bytecode fallback.
+// Under the local profile, entry offset follows TrackData hitlist then patch
+// precedence. The explicit subroutine label is retained, not used as a
+// source-level bytecode fallback.
 // logical_bytes counts serialized input extent, not C++ allocation footprint.
-Hot read_hot(const View&, const Hsm* = nullptr, const HitResourceLimits& = {});
+Hot read_hot(const View&, const Hsm* = nullptr, const HitResourceLimits& = {},
+             HotReadProfile = HotReadProfile::simitone_local);
 
 struct HitFile {
     std::uint32_t major_version = 0, minor_version = 0;

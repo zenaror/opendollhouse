@@ -20,9 +20,11 @@ auto hsm(const std::string& bytes, odh::HitResourceLimits limits = {}) {
     std::istringstream stream(bytes);
     return odh::read_hsm(odh::View(stream, bytes.size()), limits);
 }
-auto hot(const std::string& bytes, const odh::Hsm* symbols = nullptr, odh::HitResourceLimits limits = {}) {
+auto hot(const std::string& bytes, const odh::Hsm* symbols = nullptr,
+         odh::HitResourceLimits limits = {},
+         odh::HotReadProfile profile = odh::HotReadProfile::simitone_local) {
     std::istringstream stream(bytes);
-    return odh::read_hot(odh::View(stream, bytes.size()), symbols, limits);
+    return odh::read_hot(odh::View(stream, bytes.size()), symbols, limits, profile);
 }
 auto hit(const std::string& bytes, odh::HitResourceLimits limits = {}) {
     std::istringstream stream(bytes);
@@ -95,7 +97,8 @@ int main() { try {
             !resources.hitlists.at(20016).unsupported_reason.empty() &&
             !resources.hitlists.at(221).unsupported_reason.empty(), "symbolic and empty hitlists retain unsupported state");
     require(resources.patches.at(3212).name == "sigh_last" && resources.patches.at(3212).filename == "with,comma.xa" &&
-            resources.patches.at(3212).looped && !resources.patches.at(3212).piano && resources.duplicate_records == 1,
+            resources.patches.at(3212).looped && !resources.patches.at(3212).piano &&
+            resources.duplicate_records == 1 && resources.track_data_replacements == 0,
             "HOT within-file overwrite counted and quoted comma preserved");
     require(resources.logical_bytes == table.size() && resources.version == 1 && resources.load_priority == 2 &&
             resources.unknown_records == 1 && resources.unsupported_records == 4, "HOT metadata and record classification");
@@ -108,6 +111,93 @@ int main() { try {
     rejects([] { hot("[GlobalHitList]\n1=1--2\n"); });
     rejects([] { hot("[GlobalHitList]\n1=4294967296\n"); });
     rejects([] { hot("[TrackData]\n0x1=0x10\n0x1=0x11\n"); }, "duplicate");
+    const auto native = odh::HotReadProfile::native_entry_map;
+    const auto native_rows = hot(
+        "[TrackData]\n10=10\n0x10=0x10\n1A=2f\n0X10=0X11\n"
+        "4294967295=4294967295\na=F\n", nullptr, {}, native);
+    require(native_rows.track_data.at(10) == 15 && native_rows.track_data.at(16) == 17 &&
+            native_rows.track_data.at(26) == 47 &&
+            native_rows.track_data.at(4294967295U) == 4294967295U,
+            "native TrackData chooses decimal unless 0x prefix or A-F digit selects hex");
+    require(native_rows.track_data.size() == 4 && native_rows.records == 6 &&
+            native_rows.duplicate_records == 2 && native_rows.track_data_replacements == 2,
+            "native repeated TrackData keys replace values in input order and count each row");
+    const auto native_track = hot(
+        "[Track]\n1=0,Label,1024,2,0,0,20,@500,100\n"
+        "2=0,Label,1024,2,0,0,20,@missing,100\n"
+        "[TrackData]\n600=20\n", nullptr, {}, native);
+    require(native_track.tracks.at(1).hitlist_id == 500 &&
+            native_track.tracks.at(1).patch_id == 100 &&
+            !native_track.tracks.at(1).subroutine_offset &&
+            native_track.tracks.at(1).unsupported_reason.empty(),
+            "native track keeps a globally resolved entry key without local TrackData");
+    require(!native_track.tracks.at(2).hitlist_id &&
+            !native_track.tracks.at(2).unsupported_reason.empty() &&
+            native_track.unsupported_records == 1,
+            "native profile still rejects unresolved required track metadata");
+    const auto native_numeric_tracks = hot(
+        "[Track]\n"
+        "1=0,one,1024,2,0,1,20,0x410,100\n"
+        "2=0,two,1024,2,0,1,20,10,100\n"
+        "3=0,three,1024,2,0,1,20,1A,100\n"
+        "4=0,four,1024,2,0,1,20,4294967295,100\n",
+        nullptr, {}, native);
+    require(native_numeric_tracks.tracks.at(1).hitlist_id == 1040 &&
+            native_numeric_tracks.tracks.at(2).hitlist_id == 10 &&
+            native_numeric_tracks.tracks.at(3).hitlist_id == 26 &&
+            native_numeric_tracks.tracks.at(4).hitlist_id == 4294967295U &&
+            native_numeric_tracks.unsupported_records == 0,
+            "native Track CSV7 accepts numeric first-digit uint32 keys with observed base rule");
+    const auto native_equates = hot(
+        "[EventMappingEquate]\nknown=1234\n"
+        "[Track]\n1=0,one,1024,2,0,1,20,known,100\n"
+        "2=0,two,1024,2,0,1,20,absent,100\n"
+        "3=0,three,1024,2,0,1,20,-1,100\n", nullptr, {}, native);
+    require(native_equates.tracks.at(1).hitlist_id == 1234 &&
+            native_equates.tracks.at(1).unsupported_reason.empty() &&
+            !native_equates.tracks.at(2).hitlist_id &&
+            !native_equates.tracks.at(2).unsupported_reason.empty() &&
+            !native_equates.tracks.at(3).hitlist_id &&
+            !native_equates.tracks.at(3).unsupported_reason.empty() &&
+            native_equates.unsupported_records == 2,
+            "native CSV7 uses known HOT equates and keeps unknown names unsupported");
+    rejects([] { hot("[Track]\n1=0,one,1024,2,0,1,20,0x410,100\n"); },
+            "malformed HOT track fields");
+    for (const auto* key : {"0x", "0x100000000", "4294967296", "2G"})
+        rejects([&] {
+            hot(std::string("[Track]\n1=0,one,1024,2,0,1,20,") + key +
+                ",100\n", nullptr, {}, native);
+        }, "HOT native Track CSV7");
+    const auto native_patch = hot(
+        "[Patch]\n1=0,normal,\"dir,normal.xa\",1,2,0\n"
+        "2=0,extra,uninterpreted,\"dir,extra.xa\",2,1,0\n",
+        nullptr, {}, native);
+    require(native_patch.patches.at(1).name == "normal" &&
+            native_patch.patches.at(1).filename == "dir,normal.xa" &&
+            native_patch.patches.at(1).ignored_pre_filename.empty() &&
+            native_patch.patches.at(1).looped && !native_patch.patches.at(1).piano &&
+            native_patch.patches.at(2).name == "extra" &&
+            native_patch.patches.at(2).filename == "dir,extra.xa" &&
+            native_patch.patches.at(2).ignored_pre_filename == "uninterpreted," &&
+            !native_patch.patches.at(2).looped && native_patch.patches.at(2).piano,
+            "native Patch scans quoted filename after optional ignored prefix and reads following flags");
+    rejects([] { hot("[Patch]\n1=0,extra,uninterpreted,\"file.xa\",1,0\n"); },
+            "malformed HOT patch fields");
+    rejects([&] { hot("[Patch]\n1=0,name,missing_quotes,1,0\n", nullptr, {}, native); },
+            "native patch filename");
+    rejects([&] { hot("[Patch]\n1=0,name,\"unterminated,1,0\n", nullptr, {}, native); },
+            "native patch filename");
+    rejects([&] { hot("[Patch]\n1=0,name,\"file.xa\",1\n", nullptr, {}, native); },
+            "native patch flags");
+    rejects([&] { hot("[Patch]\n1=0,name,\"file.xa\" junk,1,0\n", nullptr, {}, native); },
+            "native patch flags");
+    for (const auto* row : {"4294967296=1", "1=4294967296", "0x100000000=1",
+                            "1=0x100000000", "0x=1", "1=2G", "-1=2", "1=-2"})
+        rejects([&] { hot(std::string("[TrackData]\n") + row + "\n", nullptr, {}, native); },
+                "native TrackData");
+    rejects([&] {
+        hot(std::string("x\0", 2), nullptr, {}, static_cast<odh::HotReadProfile>(255));
+    }, "profile");
     rejects([] { hot("[Track]\n1=0,no,1,0,0,0,0,no_at,0\n"); });
     rejects([] { hot("[Patch]\n1=0,n,unquoted,0,0\n"); });
     rejects([] { hot("[Patch]\n1=0,n,\"unfinished,0,0\n"); });

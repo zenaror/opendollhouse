@@ -204,3 +204,9 @@ Esta extensão acrescenta ao relatório somente os stores de+31c e o helper
 de entry; o lookup `0x582457` já consta da seleção anterior. A fonte e seu
 SHA256 permanecem os mesmos. SHA256 do relatório antes desta extensão:
 `d91670be9386f2c95827fc23672056a58ae8c02b3904a2cf51cd802dbf3207d6`.
+
+Precisão acrescentada na investigação do loader: o initializer acessa esse
+objeto via `controller+0xc4`, que o construtor inicializa como self, e o valor
+do mapa é um ponteiro para um buffer HIT mais offset, não um PC global de
+arquivo. Chamadas podem atravessar buffers. A origem do mapa e os limites da
+precedência estão em [mapa nativo](hit-native-entry-map-evidence.md).
