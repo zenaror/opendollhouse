@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/hit_entry_catalog.hpp"
+#include "odh/hit_object_catalog.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@ struct HitResourceBankLimits {
     std::uint64_t symbol_records = 65536; // Raw HSM rows, including duplicates.
     std::size_t symbol_entries = 32768; // Unique, case-sensitive names.
     std::uint64_t symbol_name_bytes = 1024 * 1024; // Unique name byte lengths.
+    HitObjectCatalogLimits objects{};
 };
 
 struct HitResourceBankUsage {
@@ -39,7 +41,7 @@ struct HitResourceBankUsage {
 // last-wins values, while a HOT's resolved numeric fields keep the HSM
 // snapshot available when that HOT was parsed. first_lines are local line
 // numbers from the first group defining each exact name, not global offsets.
-// Borrowed pointers obtained from hit(), hot() or entries() require the bank
+// Borrowed pointers obtained from hit(), hot(), entries() or objects() require the bank
 // to stay alive. Noncopyable/nonmovable so paired HIT addresses remain stable.
 class HitResourceBank {
 public:
@@ -54,6 +56,7 @@ public:
     const Hot& hot(std::size_t index) const;
     const Hsm& symbols() const noexcept { return symbols_; }
     const HitEntryCatalog& entries() const noexcept { return *entries_; }
+    const NativeHitObjectCatalog& objects() const noexcept { return *objects_; }
     const HitResourceBankUsage& usage() const noexcept { return usage_; }
 
 private:
@@ -61,6 +64,7 @@ private:
     std::vector<OwnedGroup> groups_;
     Hsm symbols_;
     std::unique_ptr<HitEntryCatalog> entries_;
+    std::unique_ptr<NativeHitObjectCatalog> objects_;
     HitResourceBankUsage usage_;
 };
 

@@ -181,9 +181,10 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
         throw FormatError("unsupported HOT read profile");
     const auto input = text_input(view, limits);
     Hot result; result.logical_bytes = view.size();
+    if (profile == HotReadProfile::native_entry_map) result.native_object_order.emplace();
     std::string section;
     std::uint64_t expanded = 0;
-    lines(input, limits, [&](Text line, std::uint64_t) {
+    lines(input, limits, [&](Text line, std::uint64_t line_no) {
         if (line.empty() || line.front() == ';' || line.front() == '#') return;
         if (line.front() == '[') {
             if (line.back() != ']') throw FormatError("malformed HOT section");
@@ -227,7 +228,10 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
             if (!event.unsupported_reason.empty()) ++result.unsupported_records;
             overwrite(result.events, lower(key), std::move(event), result);
         } else if (section == "Track") {
-            const auto id = required_number<std::uint32_t>(key, "HOT track ID");
+            const auto id = profile == HotReadProfile::native_entry_map
+                ? native_track_data_number(key, "HOT native Track ID")
+                : required_number<std::uint32_t>(key, "HOT track ID");
+            if (profile == HotReadProfile::native_entry_map && !id) return;
             const auto fields = csv(value);
             if (fields.size() < 9 || fields[7].empty() ||
                 (profile == HotReadProfile::simitone_local && fields[7].front() != '@'))
@@ -266,9 +270,14 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
                 }
             }
             if (!track.unsupported_reason.empty()) ++result.unsupported_records;
+            if (result.native_object_order)
+                result.native_object_order->push_back({HotObjectKind::track, id, line_no});
             overwrite(result.tracks, id, std::move(track), result);
         } else if (section == "Patch") {
-            const auto id = required_number<std::uint32_t>(key, "HOT patch ID");
+            const auto id = profile == HotReadProfile::native_entry_map
+                ? native_track_data_number(key, "HOT native Patch ID")
+                : required_number<std::uint32_t>(key, "HOT patch ID");
+            if (profile == HotReadProfile::native_entry_map && !id) return;
             HotPatch patch;
             if (profile == HotReadProfile::simitone_local) {
                 const auto fields = csv(value);
@@ -301,9 +310,13 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
                 patch.looped = required_number<std::int32_t>(flags[0], "HOT loop flag") == 1;
                 patch.piano = required_number<std::int32_t>(flags[1], "HOT piano flag") == 1;
             }
+            if (result.native_object_order)
+                result.native_object_order->push_back({HotObjectKind::patch, id, line_no});
             overwrite(result.patches, id, std::move(patch), result);
         } else if (section == "GlobalHitList") {
-            const auto id = required_number<std::uint32_t>(key, "HOT hitlist ID");
+            const auto id = profile == HotReadProfile::native_entry_map
+                ? native_track_data_number(key, "HOT native GlobalHitList ID")
+                : required_number<std::uint32_t>(key, "HOT hitlist ID");
             auto list = hitlist(value, expanded, limits);
             if (!list.unsupported_reason.empty()) ++result.unsupported_records;
             overwrite(result.hitlists, id, std::move(list), result);

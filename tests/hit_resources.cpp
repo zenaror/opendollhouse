@@ -116,6 +116,36 @@ int main() { try {
     rejects([] { hot("[GlobalHitList]\n1=4294967296\n"); });
     rejects([] { hot("[TrackData]\n0x1=0x10\n0x1=0x11\n"); }, "duplicate");
     const auto native = odh::HotReadProfile::native_entry_map;
+    const auto ordered_objects = hot(
+        "[Track]\n0=ignored\n0x10=0,first,1024,2,0,0,20,500,0\n"
+        "[Patch]\n0=ignored\n16=0,patch,\"p.xa\",0,0\n"
+        "[Track]\n1A=0,other,1024,2,0,0,20,500,0\n"
+        "16=0,last,1024,2,0,0,20,500,0\n"
+        "[GlobalHitList]\n0=1\n0x10=2\n", nullptr, {}, native);
+    require(ordered_objects.native_object_order &&
+            ordered_objects.native_object_order->size() == 4 &&
+            ordered_objects.native_object_order->at(0).kind == odh::HotObjectKind::track &&
+            ordered_objects.native_object_order->at(0).id == 16 &&
+            ordered_objects.native_object_order->at(0).line == 3 &&
+            ordered_objects.native_object_order->at(1).kind == odh::HotObjectKind::patch &&
+            ordered_objects.native_object_order->at(1).id == 16 &&
+            ordered_objects.native_object_order->at(1).line == 6 &&
+            ordered_objects.native_object_order->at(2).id == 26 &&
+            ordered_objects.native_object_order->at(3).id == 16,
+            "native Track/Patch receipts preserve literal order and local lines");
+    require(ordered_objects.records == 8 && ordered_objects.duplicate_records == 1 &&
+            ordered_objects.tracks.size() == 2 && !ordered_objects.tracks.count(0) &&
+            ordered_objects.tracks.at(16).subroutine_label == "last" &&
+            ordered_objects.patches.size() == 1 && !ordered_objects.patches.count(0) &&
+            ordered_objects.hitlists.count(0) && ordered_objects.hitlists.count(16),
+            "native zero Track/Patch keys skip before payload parsing; hitlist zero is independent");
+    require(!hot("[TrackData]\n1=10\n").native_object_order &&
+            hot("", nullptr, {}, native).native_object_order.has_value(),
+            "native empty object order is distinct from unrecorded legacy parse");
+    rejects([&] { hot("[Patch]\n4294967296=ignored\n", nullptr, {}, native); },
+            "native Patch ID");
+    rejects([&] { hot("[Track]\n4294967296=ignored\n", nullptr, {}, native); },
+            "native Track ID");
     const auto native_names = hsm("Foo 10\nfoo 20\nFoo 30\n123 444\n", {},
                                   odh::HsmReadProfile::native_namespace);
     require(native_names.records == 4 && native_names.duplicate_names == 1 &&

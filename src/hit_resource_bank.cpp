@@ -19,6 +19,7 @@ void charge(std::uint64_t& total, std::uint64_t amount, std::uint64_t limit,
 HitResourceBank::HitResourceBank(const std::vector<HitResourceGroupInput>& input,
                                  HitResourceBankLimits limits) {
     if (input.empty() || !limits.catalog.groups || input.size() > limits.catalog.groups ||
+        !limits.objects.groups || input.size() > limits.objects.groups ||
         !limits.source_bytes || !limits.symbol_records || !limits.symbol_entries ||
         !limits.symbol_name_bytes)
         fail("invalid group or bank budget");
@@ -51,6 +52,7 @@ HitResourceBank::HitResourceBank(const std::vector<HitResourceGroupInput>& input
 
     groups_.reserve(input.size());
     usage_.groups = input.size();
+    std::uint64_t object_records = 0;
     for (const auto& group : input) {
         auto local_hsm = read_hsm(group.hsm, limits.per_file,
                                   HsmReadProfile::native_namespace);
@@ -79,6 +81,8 @@ HitResourceBank::HitResourceBank(const std::vector<HitResourceGroupInput>& input
         auto hit_file = read_hit(group.hit, limits.per_file);
         auto hot_file = read_hot(group.hot, &symbols_, limits.per_file,
                                  HotReadProfile::native_entry_map);
+        charge(object_records, hot_file.native_object_order->size(),
+               limits.objects.object_records, "object record budget exceeded");
         groups_.push_back(OwnedGroup{std::move(hit_file), std::move(hot_file)});
     }
     symbols_.records = usage_.symbol_records;
@@ -90,6 +94,7 @@ HitResourceBank::HitResourceBank(const std::vector<HitResourceGroupInput>& input
     for (const auto& group : groups_)
         paired.push_back(HitEntryGroup{&group.hit, &group.hot});
     entries_ = std::make_unique<HitEntryCatalog>(paired, limits.catalog);
+    objects_ = std::make_unique<NativeHitObjectCatalog>(paired, *entries_, limits.objects);
 }
 
 const HitFile& HitResourceBank::hit(std::size_t index) const {

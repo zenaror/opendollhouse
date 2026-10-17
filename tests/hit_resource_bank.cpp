@@ -62,7 +62,8 @@ const std::string& second_hot() {
         "[EventMapping]\nnew=1,9\ncross=1,10\nshared=1,11\n"
         "[Track]\n9=0,new,1024,2,0,0,20,@Foo,0\n"
         "10=0,cross,1024,2,0,0,20,@foo,0\n"
-        "11=0,shared,1024,2,0,0,20,@Shared,0\n";
+        "11=0,shared,1024,2,0,0,20,@Shared,0\n"
+        "7=0,replacement,1024,2,0,0,20,@Foo,500\n";
     return value;
 }
 std::unique_ptr<odh::HitResourceBank> build(odh::HitResourceBankLimits limits = {}) {
@@ -109,6 +110,16 @@ int main() { try {
             bank->entries().resolve_event(1, "cross").entry.file == &bank->hit(0) &&
             bank->entries().resolve_event(1, "shared").entry.pc == 22,
             "entry catalog resolves keys across owned HIT groups after streams die");
+    const auto global_old = bank->objects().resolve_global_track_event(0, "old");
+    require(global_old.event == &bank->hot(0).events.at("old") &&
+            global_old.track.object.group == 1 &&
+            global_old.track.object.track == &bank->hot(1).tracks.at(7) &&
+            global_old.track.entry_key == 200 &&
+            global_old.track.entry.file == &bank->hit(1) &&
+            bank->objects().lookup_patch(500)->patch == &bank->hot(0).patches.at(500) &&
+            bank->objects().usage().object_records == 6 &&
+            bank->objects().usage().collision_records == 1,
+            "owned global objects resolve event, replacement Track and Patch from distinct groups");
 
     const auto old = bank->entries().resolve_event(0, "old");
     unsigned binds = 0;
@@ -149,6 +160,10 @@ int main() { try {
     rejects([&] { build(limits); }, "symbol name byte budget");
     limits = {}; limits.catalog.track_data_rows = 4;
     rejects([&] { build(limits); }, "aggregate budget");
+    limits = {}; limits.objects.object_records = 5;
+    rejects([&] { build(limits); }, "object record budget");
+    limits = {}; limits.objects.groups = 1;
+    rejects([&] { build(limits); }, "group or bank budget");
     rejects([&] { bank->hit(2); }, "group index");
     rejects([&] { bank->hot(2); }, "group index");
 

@@ -52,6 +52,12 @@ struct HotHitlist {
     std::vector<std::uint32_t> ids;
     std::string raw, unsupported_reason;
 };
+enum class HotObjectKind { track, patch };
+struct HotObjectRegistration {
+    HotObjectKind kind;
+    std::uint32_t id;
+    std::uint64_t line;
+};
 struct Hot {
     std::map<std::uint32_t, std::uint32_t> track_data;
     std::map<std::string, HotEvent> events;
@@ -63,6 +69,12 @@ struct Hot {
     std::uint64_t logical_bytes = 0, records = 0, duplicate_records = 0;
     std::uint64_t track_data_replacements = 0;
     std::uint64_t unsupported_records = 0, unknown_records = 0;
+    // Engaged only by native_entry_map, including for an empty HOT. Preserves
+    // literal Track/Patch registration order, duplicates and local source lines.
+    // ID zero is skipped by both native callbacks; GlobalHitList has a separate
+    // native map and never enters this sequence. Metadata maps retain only the
+    // final row of each kind/key, so this is not a replay of intermediate objects.
+    std::optional<std::vector<HotObjectRegistration>> native_object_order;
 };
 enum class HotReadProfile { simitone_local, native_entry_map };
 // HOT dictionary rows overwrite within this file (counted), as in FreeSO.

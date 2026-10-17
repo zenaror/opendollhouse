@@ -69,6 +69,12 @@ da entrada corrente como origem; o relatório preserva essa irregularidade.
 
 ## Retenção e fronteira externa
 
+A continuação em [ownership do backend](hit-native-backend-ownership-evidence.md)
+rastreia o caso de alias `patch+0xe0 == patch+0xe4`, seu contador e os releases,
+além do namespace global de Track/Patch usado no binding. As observações
+abaixo delimitam o primeiro recorte; a continuação preserva as lacunas de
+retenção externa e não comprova um adapter PCM completo.
+
 As factories criam novos backends a cada chamada, mas `0x580229` apenas copia
 os ponteiros da patch para o wrapper. Wrappers da mesma patch podem observar
 o mesmo backend. Os contadores da patch controlam inicialização e carga dos

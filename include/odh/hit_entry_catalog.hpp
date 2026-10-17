@@ -63,7 +63,10 @@ public:
 
     std::optional<HitCodeTarget> lookup(std::uint32_t key) const noexcept;
     // Event registration/group choice is explicit. This only resolves the
-    // type-1 event, HOT track and its entry key; it does not choose a patch,
+    // type-1 event and Track from that same selected HOT, then its global
+    // entry key. Native global Track/Patch replacement instead belongs to
+    // NativeHitObjectCatalog::resolve_global_track_event. This local lookup
+    // does not choose a patch,
     // hitlist, group admission, or source. The returned metadata is borrowed.
     ResolvedNativeHitEvent resolve_event(std::size_t event_group,
                                          std::string_view name,

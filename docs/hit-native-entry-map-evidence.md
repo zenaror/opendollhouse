@@ -6,6 +6,12 @@ HIT mais um offset local**, e uma definição posterior da mesma chave substitui
 a anterior. O mapa é compartilhado pelo manager; os buffers HIT são separados.
 A ordem completa de descoberta dos arquivos permanece sem prova.
 
+Continuação posterior: [ordem de descoberta](hit-native-load-order-evidence.md)
+identificou raízes na ordem de chamada e arquivos na ordem da API Win32.
+O [catálogo global de objetos](hit-object-catalog-validation.md) separa
+o EventMapping local do Track vencedor no namespace compartilhado Track/Patch;
+o mapa TrackData documentado aqui continua uma estrutura distinta.
+
 ## Proveniência e reprodução
 
 Alvo externo: `../referencias/The Sims/Sims.exe`, SHA256

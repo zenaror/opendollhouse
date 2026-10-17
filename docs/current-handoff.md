@@ -53,6 +53,37 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+O `NativeHitObjectCatalog`, agora em `HitResourceBank::objects()`, resolve
+TrackID pelo namespace global compartilhado de Track/Patch. O parser nativo
+conserva registros na ordem literal das linhas, incluindo duplicatas, e
+ignora chaves zero de Track/Patch antes do payload. GlobalHitList usa outro
+mapa. Chaves desses três callbacks usam o helper numérico nativo; o perfil
+legado fica inalterado. `resolve_global_track_event` mantém três origens:
+EventMapping escolhido, Track vencedor e HIT da entrada. Patch também é
+global e pode ter outra origem. O lookup anterior de `entries().resolve_event`
+permanece local ao HOT; não o transportar para o manager como autoridade.
+Contrato, testes e recibos em
+[hit-object-catalog-validation.md](hit-object-catalog-validation.md).
+
+Validação atual: recursos111, objetos27, banco19 checks; suites Debug e
+ASan/UBSan 118 configurados,117 aprovados,1skip X11,0falhas (14,80/26,22 s).
+Após última mudança da cobrança no banco, cinco testes focais recompilados
+passaram nas duas configs; sem SDL/X11 cinco selecionados também passaram.
+Auditoria independente: 50 recortes,7.146 bytes. Corpus em quatro probes:
+21.831 registros/21.809 chaves,19 substituições de mesmo tipo e3 entre tipos;
+9 eventos usam Track de outro HOT,1 mudaHIT/PC na ordem diagnóstica. Recibos
+`reports/hit-object-catalog/`; ordem não é prova de enumeração original.
+
+Para integrar o controller a esse resultado, ainda precisa retirar sua
+validação local de patches em favor do namespace global e representar backend
+compartilhado por PatchID. A [pesquisa de ownership](hit-native-backend-ownership-evidence.md)
+demonstrou um contador para os dois aliases espaciais e desequilíbrio de
+releases no caminho estático; não copiar esse uso potencial de memória
+liberada para ODH. A [pesquisa do registry](hit-native-group-registry-evidence.md)
+confirmou escritores69/71 e leitor73; opcode70 não espera. Restam domínio
+semântico dos índices, provider compartilhado e invariantes de reload/remoção.
+Nenhum desses opcodes foi habilitado nesta unidade.
+
 O `HitEntryCatalog` agora conserva arquivo HIT e PC por chave global. Grupos
 posteriores na ordem fornecida substituem os anteriores, com recibos limitados.
 `NativeHitResourceResolver` e frames de retorno permitem chamadas entre HITs,

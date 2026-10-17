@@ -177,6 +177,11 @@ parar um track apaga toda referência a seu TrackID.
 
 ## Contrato mínimo e próxima unidade
 
+Continuação em [registro compartilhado de grupos](hit-native-group-registry-evidence.md):
+escritores69/71, leitor73, opcode70 sem ação e capacidade física da região
+foram rastreados. Ainda faltam domínio semântico e invariantes completos de
+lifetime/provider; portanto o gate descrito abaixo permanece.
+
 O perfil nativo deve recusar explicitamente opcode69 até existir um caminho
 com localização de variável, valor resolvido, identidade de TrackID, registro
 compartilhado e resultado continue/retry no domínio correto de clock. O

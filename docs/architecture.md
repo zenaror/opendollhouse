@@ -100,11 +100,24 @@ de cada nome exato; cada HOT retém os números resolvidos quando foi lido. Os s
 entrada só precisam viver durante a construção. Limites por arquivo e
 agregados não medem toda a memória alocada; contrato e validação em
 [hit-resource-bank-validation.md](hit-resource-bank-validation.md).
+
+O banco também possui `NativeHitObjectCatalog` em `objects()`. Track e Patch
+compartilham um namespace de chaves no original; o leitor nativo conserva
+registros por linha para que colisões entre tipos sigam a ordem processada.
+`resolve_global_track_event` separa HOT do EventMapping, HOT do Track vencedor
+e HIT da entrada. A Patch pode vir de outro HOT; usar o HOT do Track como
+namespace de Patch não é contrato nativo. O lookup local anterior de
+`HitEntryCatalog::resolve_event` continua explícito para diagnósticos.
+Ordem, ownership e limites do índice global estão em
+[hit-object-catalog-validation.md](hit-object-catalog-validation.md).
 O [backend nativo de áudio](hit-native-engine-backend-evidence.md) inspecionado
 para buffers na pausa e não reinicia áudio no slot de retomada. Wrappers da
 mesma patch podem compartilhar esse backend. Ainda falta integrar um adapter
 com ownership e conversão de controles comprovados; não presumir pausa por
-congelamento de cursor nem exclusividade por controller.
+congelamento de cursor nem exclusividade por controller. A
+[pesquisa de ownership](hit-native-backend-ownership-evidence.md) identificou
+um caminho espacial com dois aliases, um crédito explícito e dois releases;
+o desequilíbrio estático não é reproduzido como política de memória ODH.
 Opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
 IDs não entram no subconjunto. Não tratar conclusão de binding/nota como término
 do controller, usar `HitThread::tick` como equivalência de lifecycle, ou mapear
