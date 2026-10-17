@@ -67,3 +67,12 @@ saved frames/Clock; autonomia, globais, expansões e save exigem gates próprios
 As fontes originais permanecem externas e preservadas. A Legacy é comparação
 de outra edição; seus endereços não substituem os da imagem anteriormente
 estudada. O fork não altera automaticamente as revisões principais fixadas.
+
+A continuação desta pesquisa também identificou o [namespace HSM global,
+sensível a caixa e com última definição exata](hit-native-hsm-namespace-evidence.md),
+a [enumeração Win32 sem sort interno](hit-native-load-order-evidence.md) e
+o [backend concreto de áudio](hit-native-engine-backend-evidence.md). Seu
+slot de pausa para buffers, e o de retomada não reinicia reprodução. São
+contratos extraídos da imagem identificada, sem depender de o Simitone
+implementar esses caminhos. O banco proprietário e seus limites estão em
+[hit-resource-bank-validation.md](hit-resource-bank-validation.md).

@@ -19,11 +19,14 @@ struct Hsm {
     std::map<std::string, std::uint64_t> first_lines;
     std::uint64_t logical_bytes = 0, records = 0, duplicate_names = 0;
 };
+enum class HsmReadProfile { simitone_local, native_namespace };
 // logical_bytes is the complete serialized input extent, including BOM, line
 // endings and duplicates; it is not the C++ allocation footprint.
-// ASCII case folding only. First occurrence wins, matching the pinned FreeSO
-// HSM profile; duplicate rows consume the same text and record budgets.
-Hsm read_hsm(const View&, const HitResourceLimits& = {});
+// The default Simitone-local profile folds ASCII and keeps the first duplicate.
+// Native namespace preserves name bytes and replaces exact duplicate values.
+// Both profiles count duplicate rows and keep the first source line.
+Hsm read_hsm(const View&, const HitResourceLimits& = {},
+             HsmReadProfile = HsmReadProfile::simitone_local);
 
 struct HotEvent {
     std::optional<std::uint32_t> event_type, track_id;
@@ -69,7 +72,9 @@ enum class HotReadProfile { simitone_local, native_entry_map };
 // leaves entry resolution to a caller's explicit cross-resource catalog;
 // track_data_replacements counts only duplicate TrackData rows in that profile.
 // Neither profile chooses cross-file precedence or emulates native parse faults.
-// Decimal fields use HOT equates; @labels use ASCII-lower HSM lookup. Unresolved
+// Decimal fields use HOT equates. Simitone-local @labels use ASCII-lower HSM
+// lookup (and retain numeric fallback); native @labels use exact HSM names,
+// including digit-only names, without numeric fallback. Unresolved
 // symbols remain optional and carry a reason, never an invented numeric zero.
 // Under the local profile, entry offset follows TrackData hitlist then patch
 // precedence. The explicit subroutine label is retained, not used as a

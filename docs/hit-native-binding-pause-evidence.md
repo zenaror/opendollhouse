@@ -36,6 +36,13 @@ de amostras PCM. Confundir as duas produziria uma política de áudio inventada.
 
 ## Evidência preservada e próximos destinos
 
+Continuação posterior: a [investigação do engine/backend
+concreto](hit-native-engine-backend-evidence.md) identificou essas vtables e
+corpos. Na implementação encontrada, a pausa para buffers e a retomada é
+uma operação vazia de áudio; isso substitui qualquer hipótese de retomada
+automática do cursor. As pendências abaixo descrevem o limite deste primeiro
+recorte; ownership completo, callbacks e efeitos físicos continuam em aberto.
+
 `reports/hit-native-binding-pause/selected.asm.txt` contém bytes, VAs,
 offsets e entradas de vtables; `findings.txt` registra a cadeia completa.
 Uma auditoria independente comparou 263 linhas de instrução e os slots

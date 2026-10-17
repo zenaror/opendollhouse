@@ -4,7 +4,9 @@ Unidade de 2026-10-17 sobre `0a3faf5`. O `HitEntryCatalog` e a extensão de
 `NativeHitController` representam o mapa nativo como chave → arquivo HIT e PC
 local, sem concatenar arquivos. A [evidência estática do loader](hit-native-entry-map-evidence.md)
 demonstra buffers independentes, mapa global e substituição por `TrackData`.
-A ordem completa de descoberta dos grupos no original permanece pendente.
+A pesquisa posterior identificou a [ordem de chamada das raízes e enumeração
+Win32](hit-native-load-order-evidence.md), sem determinar uma ordem concreta
+de arquivos em execução ou impor uma ordenação Linux como nativa.
 
 ## Leitura e catálogo
 

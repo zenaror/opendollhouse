@@ -114,11 +114,13 @@ std::optional<std::int32_t> signed_equate(Text s, const Hot& hot, std::string& r
     else unresolved(reason,s);
     return {};
 }
-std::optional<std::uint32_t> symbol(Text s, const Hsm* hsm, std::string& reason) {
+std::optional<std::uint32_t> symbol(Text s, const Hsm* hsm, std::string& reason,
+                                    HotReadProfile profile) {
     std::uint32_t n;
-    if (number(s, n)) return n;
+    if (profile == HotReadProfile::simitone_local && number(s, n)) return n;
     if (hsm) {
-        const auto found = hsm->constants.find(lower(s));
+        const auto found = hsm->constants.find(profile == HotReadProfile::native_entry_map
+            ? std::string(s) : lower(s));
         if (found != hsm->constants.end()) return static_cast<std::uint32_t>(found->second);
     }
     unresolved(reason, s); return {};
@@ -147,7 +149,10 @@ HotHitlist hitlist(Text text, std::uint64_t& total, const HitResourceLimits& lim
 }
 }
 
-Hsm read_hsm(const View& view, const HitResourceLimits& limits) {
+Hsm read_hsm(const View& view, const HitResourceLimits& limits, HsmReadProfile profile) {
+    if (profile != HsmReadProfile::simitone_local &&
+        profile != HsmReadProfile::native_namespace)
+        throw FormatError("unsupported HSM read profile");
     const auto input = text_input(view, limits);
     Hsm result; result.logical_bytes = view.size();
     lines(input, limits, [&](Text line, std::uint64_t line_no) {
@@ -155,12 +160,16 @@ Hsm read_hsm(const View& view, const HitResourceLimits& limits) {
         record(result.records, limits);
         const auto separator = line.find_first_of(" \t");
         if (separator == Text::npos) throw FormatError("HSM row lacks value");
-        const auto name = lower(line.substr(0, separator));
+        const auto name = profile == HsmReadProfile::native_namespace
+            ? std::string(line.substr(0, separator)) : lower(line.substr(0, separator));
         auto rest = trim(line.substr(separator));
         const auto end = rest.find_first_of(" \t");
         const auto value = required_number<std::int32_t>(rest.substr(0, end), "HSM signed constant");
-        if (!result.constants.emplace(name, value).second) ++result.duplicate_names;
-        else result.first_lines.emplace(name, line_no);
+        const auto inserted = result.constants.emplace(name, value);
+        if (!inserted.second) {
+            ++result.duplicate_names;
+            if (profile == HsmReadProfile::native_namespace) inserted.first->second = value;
+        } else result.first_lines.emplace(name, line_no);
     });
     return result;
 }
@@ -233,7 +242,8 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
             // Native CSV7 accepts @symbol, a digit-start numeric key or a
             // known HOT equate. The global catalog resolves its bytecode PC.
             if (fields[7].front() == '@')
-                track.hitlist_id = symbol(fields[7].substr(1), hsm, track.unsupported_reason);
+                track.hitlist_id = symbol(fields[7].substr(1), hsm,
+                                          track.unsupported_reason, profile);
             else if (fields[7].front() >= '0' && fields[7].front() <= '9')
                 track.hitlist_id = native_track_data_number(fields[7], "HOT native Track CSV7");
             else {

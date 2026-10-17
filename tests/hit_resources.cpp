@@ -16,9 +16,10 @@ template<class F> void rejects(F action, const std::string& reason = {}) {
     }
     require(rejected, "malformed or over-budget HIT resource rejects explicitly");
 }
-auto hsm(const std::string& bytes, odh::HitResourceLimits limits = {}) {
+auto hsm(const std::string& bytes, odh::HitResourceLimits limits = {},
+         odh::HsmReadProfile profile = odh::HsmReadProfile::simitone_local) {
     std::istringstream stream(bytes);
-    return odh::read_hsm(odh::View(stream, bytes.size()), limits);
+    return odh::read_hsm(odh::View(stream, bytes.size()), limits, profile);
 }
 auto hot(const std::string& bytes, const odh::Hsm* symbols = nullptr,
          odh::HitResourceLimits limits = {},
@@ -53,6 +54,9 @@ int main() { try {
     rejects([] { hsm("label 2147483648\n"); });
     rejects([] { hsm("label -2147483649\n"); });
     rejects([] { hsm(std::string("a 1\0", 4)); }, "NUL");
+    rejects([] {
+        hsm(std::string("a 1\0", 4), {}, static_cast<odh::HsmReadProfile>(255));
+    }, "profile");
     auto limits = odh::HitResourceLimits{};
     limits.records = 1;
     rejects([&] { hsm("a 1\na 2\n", limits); }, "record budget");
@@ -112,6 +116,41 @@ int main() { try {
     rejects([] { hot("[GlobalHitList]\n1=4294967296\n"); });
     rejects([] { hot("[TrackData]\n0x1=0x10\n0x1=0x11\n"); }, "duplicate");
     const auto native = odh::HotReadProfile::native_entry_map;
+    const auto native_names = hsm("Foo 10\nfoo 20\nFoo 30\n123 444\n", {},
+                                  odh::HsmReadProfile::native_namespace);
+    require(native_names.records == 4 && native_names.duplicate_names == 1 &&
+            native_names.constants.size() == 3 &&
+            native_names.constants.at("Foo") == 30 &&
+            native_names.constants.at("foo") == 20 &&
+            native_names.constants.at("123") == 444 &&
+            native_names.first_lines.at("Foo") == 1 &&
+            native_names.first_lines.at("foo") == 2,
+            "native HSM preserves exact case, last duplicate value and first source lines");
+    const auto native_labels = hot(
+        "[Track]\n"
+        "1=0,one,1024,2,0,1,20,@Foo,100\n"
+        "2=0,two,1024,2,0,1,20,@foo,100\n"
+        "3=0,three,1024,2,0,1,20,@FOO,100\n"
+        "4=0,four,1024,2,0,1,20,@123,100\n"
+        "5=0,five,1024,2,0,1,20,123,100\n",
+        &native_names, {}, native);
+    require(native_labels.tracks.at(1).hitlist_id == 30 &&
+            native_labels.tracks.at(2).hitlist_id == 20 &&
+            !native_labels.tracks.at(3).hitlist_id &&
+            !native_labels.tracks.at(3).unsupported_reason.empty() &&
+            native_labels.tracks.at(4).hitlist_id == 444 &&
+            native_labels.tracks.at(5).hitlist_id == 123 &&
+            native_labels.unsupported_records == 1,
+            "native HOT @labels use exact HSM names, even digit-only names; bare digits stay numeric");
+    require(!hot("[Track]\n1=0,one,1024,2,0,1,20,@123,100\n",
+                 nullptr, {}, native).tracks.at(1).hitlist_id,
+            "native @digit token without HSM symbol does not fall back to a number");
+    const auto default_names = hsm("Foo 10\nfoo 20\nFoo 30\n");
+    require(hot("[TrackData]\n10=16\n[Track]\n1=0,one,1024,2,0,1,20,@Foo,100\n",
+                &default_names).tracks.at(1).hitlist_id == 10 &&
+            hot("[TrackData]\n123=16\n[Track]\n1=0,one,1024,2,0,1,20,@123,100\n")
+                .tracks.at(1).hitlist_id == 123,
+            "default HSM/HOT profile retains ASCII-folded first-wins behavior");
     const auto native_rows = hot(
         "[TrackData]\n10=10\n0x10=0x10\n1A=2f\n0X10=0X11\n"
         "4294967295=4294967295\na=F\n", nullptr, {}, native);
@@ -122,10 +161,11 @@ int main() { try {
     require(native_rows.track_data.size() == 4 && native_rows.records == 6 &&
             native_rows.duplicate_records == 2 && native_rows.track_data_replacements == 2,
             "native repeated TrackData keys replace values in input order and count each row");
+    const auto native_digits = hsm("500 500\n", {}, odh::HsmReadProfile::native_namespace);
     const auto native_track = hot(
         "[Track]\n1=0,Label,1024,2,0,0,20,@500,100\n"
         "2=0,Label,1024,2,0,0,20,@missing,100\n"
-        "[TrackData]\n600=20\n", nullptr, {}, native);
+        "[TrackData]\n600=20\n", &native_digits, {}, native);
     require(native_track.tracks.at(1).hitlist_id == 500 &&
             native_track.tracks.at(1).patch_id == 100 &&
             !native_track.tracks.at(1).subroutine_offset &&

@@ -6,9 +6,7 @@ fornecidos pelo usuário, sem dependência do executável original ou checagem d
 CD. Preservar os milestones de leitores, VM, cena/interação, tempo e save; os
 resultados Linux não comprovam compatibilidade dos ports.
 
-A OMM foi consultada no escopo `OpenDollhouse`; o resumo atual já referencia
-`f5ab084`. O handoff anterior não trazia os metadados de revisão, portanto seu
-`freshness` era `not_verified`. Nos checkpoints, registrar `repository`
+A OMM é consultada no escopo `OpenDollhouse`. Nos checkpoints, registrar `repository`
 (`opendollhouse`), `branch` e `git_revision` no handoff, com o `expected_sha256`
 vigente. Confirmar por `get_handoff` com `observed_repository` e
 `observed_revision`. SHA do handoff e HEAD Git são identidades distintas;
@@ -40,7 +38,7 @@ a auditoria conferiu 535 linhas, 1.594 bytes, oito entradas de opcode e
 mapeamento PE (nota SHA256 `635e6f322f12efe922b3143872c5c4f0da58ca8573129d0005f6c8749707154f`;
 relatório SHA256 `f0171402d4637498e9ada7449c7aec0303faa59e1d66eed97cd7c7f05048d9a8`). Nenhum executável original foi rodado.
 
-Core direto passou 82 checks com `-Werror -Wconversion -Wsign-conversion` e
+Na base histórica, o core direto passou 82 checks com `-Werror -Wconversion -Wsign-conversion` e
 ASan/UBSan. CTest Debug: 115 configurados, 114 passaram, um skip X11, zero
 falhas (6,97 s); ASan/UBSan: mesmos resultados (13,10 s), LSan desligado;
 sem SDL/X11: 9/9 (0,66 s). Oráculo Python independente: 6.331 casos Debug e
@@ -65,11 +63,35 @@ não concatenação nem merge ENTP. Contratos e resultados atuais em
 [hit-native-entry-map-validation.md](hit-native-entry-map-validation.md),
 com [bytes do loader](hit-native-entry-map-evidence.md).
 
-Rastrear a ordem automática do loader `0x5d8632` e as raízes `+0xd0` antes
-de escolher precedência para importação. O adapter PCM ainda depende do
-backend concreto de áudio; a [pesquisa de pausa](hit-native-binding-pause-evidence.md)
-localizou o dispatch por binding, mas não os corpos dos slots ou efeitos em
-PCM já enfileirado. Não encaminhar pausa de um binding ao sink compartilhado.
+A [ordem do loader](hit-native-load-order-evidence.md) foi rastreada: raízes
+na ordem de chamada, arquivos na ordem devolvida por Win32, HSM/HIT/HOT por
+grupo. Não há sort interno no caminho estudado; ordenar no Linux é política
+ODH e pode alterar qual chave repetida vence. O namespace HSM global usa
+nomes exatos e substituição pela última definição; HOT guarda números já
+resolvidos. O `HitResourceBank` agora possui recursos e catálogo com endereços
+estáveis e entrada em ordem explícita; os streams podem ser fechados após a
+construção. Contrato, orçamento e recibos em
+[hit-resource-bank-validation.md](hit-resource-bank-validation.md).
+
+Unidade atual: leitor106 checks, banco16 checks estritos; revisão independente
+sem defeito concreto. CTest Debug e ASan/UBSan: 117 configurados por rodada,
+116 aprovados, um skip X11, zero falhas (13,99/27,31 s), LSan desligado.
+Sem SDL/X11: quatro testes selecionados aprovados. Quatro probes com dados
+Classic/Legacy em Debug/ASan passaram após fechar os streams: 27 grupos,
+13.207 registros HSM/8.431 nomes/4.776 substituições. O evento de aniversário
+continua chegando à falha esperada do opcode69, sem efeitos de áudio. Recibos
+em `reports/hit-resource-bank/`; auditoria estática conferiu 75 intervalos e
+31 hashes de recortes. Isso não valida áudio físico ou jogo completo.
+
+A [pesquisa do backend concreto](hit-native-engine-backend-evidence.md)
+supersede a hipótese de pausa por cursor: o slot de pausa para buffers, e o
+de retomada retorna sucesso sem reiniciá-los. Wrappers da mesma patch podem
+compartilhar backend. Nenhum adapter novo foi implementado nesta unidade;
+callbacks, ownership completo, streaming, controles e PCM já enfileirado
+ainda precisam de contrato. Não encaminhar pausa de um binding ao sink
+compartilhado. Integrar catálogo/banco ao manager persistente por TrackID,
+contribuições e World; opcode69 continua pendente. Preservar os gates Linux
+savedframes/Clock/Main, filas/interação, lote e save.
 
 Orientação humana de 2026-10-17: lacunas do Simitone exigem investigação dos
 dados e executável originais; o roadmap de terceiros não limita o objetivo

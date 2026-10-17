@@ -81,19 +81,34 @@ a pesquisa estática correspondente está em
 [hit-native-controller-execution-evidence.md](hit-native-controller-execution-evidence.md).
 
 O controller não integra o manager persistente por HOTTrackID, World ou host de
-aúdio do probe. O caller ainda precisa resolver admissão, entrypoint e gates,
+áudio do probe. O caller ainda precisa resolver admissão, entrypoint e gates,
 manter os tempos de vida e fornecer a cadência do Clock. Call7 agora recebe um
 resolvedor explícito de chave para arquivo HIT e PC e usa pilha limitada com
 identidade de recurso. O `HitEntryCatalog` indexa `TrackData` de grupos em ordem
 fornecida pelo caller; definições posteriores substituem as anteriores. O perfil
 HOT `native_entry_map` não exige resolução local e conta substituições internas;
-o perfil Simitone continua como padrão. A ordem automática nativa dos grupos
-ainda não está estabelecida. Contrato e testes em
+o perfil Simitone continua como padrão. A descoberta nativa percorre raízes na
+ordem de chamada e arquivos na ordem devolvida por Win32, sem sort interno.
+Isso não determina uma ordem concreta de arquivos no Linux; uma sequência
+explícita preserva a precedência escolhida. Contrato e testes em
 [hit-native-entry-map-validation.md](hit-native-entry-map-validation.md).
+
+O `HitResourceBank` possui os HIT/HOT, mantém estáveis seus endereços e
+constrói o catálogo depois de acumular HSM → HIT → HOT em cada grupo.
+O perfil HSM `native_namespace` preserva caixa e mantém a última definição
+de cada nome exato; cada HOT retém os números resolvidos quando foi lido. Os streams de
+entrada só precisam viver durante a construção. Limites por arquivo e
+agregados não medem toda a memória alocada; contrato e validação em
+[hit-resource-bank-validation.md](hit-resource-bank-validation.md).
+O [backend nativo de áudio](hit-native-engine-backend-evidence.md) inspecionado
+para buffers na pausa e não reinicia áudio no slot de retomada. Wrappers da
+mesma patch podem compartilhar esse backend. Ainda falta integrar um adapter
+com ownership e conversão de controles comprovados; não presumir pausa por
+congelamento de cursor nem exclusividade por controller.
 Opcode1/+194, backend de vozes/DSP, provider espacial e comportamento geral de
 IDs não entram no subconjunto. Não tratar conclusão de binding/nota como término
 do controller, usar `HitThread::tick` como equivalência de lifecycle, ou mapear
-este objeto a uma thread por pedido. Core direto (82 checks), CTest e oráculo sintético
+este objeto a uma thread por pedido. Core direto inicial (82 checks), CTest e oráculo sintético
 passaram; métricas, logs e limites atualizados estão em
 [hit-native-controller-validation.md](hit-native-controller-validation.md). Não
 houve probe da cadeira ou teste de backend físico. Resultados Linux não comprovam
