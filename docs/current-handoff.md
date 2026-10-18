@@ -67,7 +67,8 @@ LSanoff; noSDL/X11 só5selecionados pass. Oracle20.324 casos sem divergência;
 auditoria PE25recortes/2.131bytes. Corpus4 Classic/Legacy×Debug/ASanUBSan:
 423 aquisições por caso sem falhas,26hashesfonte porreceipt conferidos.
 Os vencedoresPatch têm ID43/26 falsos17.503/ausentes1;ID27 falsos17.480/
-ausentes24. Dados não comprovam truebranches; sintéticos os cobrem.
+ausentes24. Dados não comprovam valores true. O parsing desses valores tem testes
+sintéticos; seus efeitos físicos de preload/backend continuam pendentes.
 Recibos em `reports/hit-native-audio-controls/validation.json` e `corpus/`.
 
 
