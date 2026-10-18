@@ -1,4 +1,5 @@
 #include "xa_patch_catalog.hpp"
+#include "odh/hit_object_catalog.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -40,6 +41,23 @@ int main(int argc,char** argv){try{
     require(asset.audio.samples==std::vector<std::int16_t>({4096,8192,12288}),"exact declared PCM samples, not block padding");
     require(asset.audio.sample_rate==22050 && asset.audio.channels==1 && asset.audio.remaining_bytes==4,"decode metadata/tail");
     require(asset.key=="case.xa" && asset.entry=="Voice\\Case.XA" && asset.offset==16 && asset.length==pcm.size()+4 && asset.source.path==a,"archive provenance retained");
+    odh::Hot global_hot, shadow_hot;
+    global_hot.patches[90]={"global","global\\Voice\\CASE.XA",false,false};
+    shadow_hot.patches[90]={"shadow","missing.xa",false,false};
+    const odh::NativeHitPatchRef global_ref{90,3,42,&global_hot.patches.at(90)};
+    rejects([&]{catalog.load(shadow_hot,90);});
+    const auto global_asset=catalog.load(global_ref);
+    require(global_asset.patch_id==90 && global_asset.audio.samples==asset.audio.samples &&
+            global_asset.entry==asset.entry,"global Patch metadata wins over local shadow");
+    require(catalog.load(global_ref,6).audio.samples==asset.audio.samples,
+            "global Patch uses the same exact admission allowance");
+    rejects([&]{catalog.load(global_ref,5);});
+    rejects([&]{catalog.load(odh::NativeHitPatchRef{90,3,42,nullptr});});
+    rejects([&]{catalog.load(odh::NativeHitPatchRef{0,3,42,&global_hot.patches.at(90)});});
+    global_hot.patches[90].filename=""; rejects([&]{catalog.load(global_ref);});
+    global_hot.patches[90].filename="global\\Voice\\CASE.XA";
+    require(catalog.usage().name_bytes==usage.name_bytes && catalog.usage().entries==usage.entries,
+            "global lookup does not alter source index budgets");
     hot.patches[1].filename="unrelated/prefix/CASE.Xa";
     require(catalog.load(hot,1).audio.samples==asset.audio.samples,"both slash styles and case folded basename");
     XaPatchCatalog files({{loose,XaSourceKind::loose}});
@@ -55,6 +73,7 @@ int main(int argc,char** argv){try{
         XaPatchCatalog duplicate(reverse?std::vector<XaPatchSource>{{b,XaSourceKind::far},{a,XaSourceKind::far}}:
             std::vector<XaPatchSource>{{a,XaSourceKind::far},{b,XaSourceKind::far}});
         rejects([&]{duplicate.load(hot,1);});
+        rejects([&]{duplicate.load(global_ref);});
     }
     XaPatchCatalog mixed({{a,XaSourceKind::far},{loose,XaSourceKind::loose}});
     rejects([&]{mixed.load(hot,1);});
@@ -69,6 +88,7 @@ int main(int argc,char** argv){try{
     }
     XaPatchCatalogLimits bounds;
     bounds.audio.pcm_bytes=5;XaPatchCatalog small(one,bounds);rejects([&]{small.load(hot,1);});
+    rejects([&]{small.load(global_ref);});
     rejects([&]{small.load(hot,1,1000);});
     bounds={};bounds.audio.input_bytes=pcm.size()+3;XaPatchCatalog short_input(one,bounds);rejects([&]{short_input.load(hot,1);});
     bounds={};bounds.sources=0;rejects([&]{XaPatchCatalog bad(one,bounds);});

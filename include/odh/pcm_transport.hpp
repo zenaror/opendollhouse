@@ -33,6 +33,11 @@ public:
     PcmTransport& operator=(const PcmTransport&)=delete;
 
     PcmNoteHandle add(XaAudio&& audio,PcmControls controls={});
+    PcmNoteHandle load_reusable(XaAudio&& audio,PcmControls controls={});
+    // Both operations synchronize the shared sink at its consumed-frame
+    // boundary. Replay begins at sample zero; rate change preserves phase.
+    void replay(PcmNoteHandle handle,PcmReplayOptions options);
+    void set_frequency(PcmNoteHandle handle,std::uint32_t frequency_hz);
     PcmNoteState state(PcmNoteHandle handle) const;
     void controls(PcmNoteHandle handle,PcmControls controls);
     void stop(PcmNoteHandle handle);

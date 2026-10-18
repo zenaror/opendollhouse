@@ -53,6 +53,25 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+Unidade de PCM reutilizável: load move/charge uma vez, replay usa mesmohandle,
+stop/completion retêm PCM até release; loop e taxa efetiva explícitos. Troca
+de taxa ancora na fase consumida usando taxa antiga. Lookup XA agora aceita
+NativeHitPatchRef global e não depende do HOT local. Contrato e limites em
+[hit-reusable-pcm-validation.md](hit-reusable-pcm-validation.md).
+A [pesquisa do backend comum](hit-native-common-backend-evidence.md) fechou
+classificador físico vs recurso virtual, preload/dirty, perda de pan/frequência,
+NoteOn pre-controller38/post-Patch38 e loop latch. O adapter/callback matrix
+completo ainda falta; não reaplicar controles nem inferir streaming por tamanho FAR.
+Fonte final: mixer101/transporte152/catalog46/integração13 checks. Debug e
+ASan/UBSan122cfg/121pass+1skipX11/0fail (15,84/26,78s), LSanoff;
+semSDL/X11 só4selecionados pass. Oracle10.392/0, auditoria20ranges/4.320bytes.
+Quatro probes Classic/Legacy×Debug/ASanUBSan Patch3212:54.296frames,
+108.592bytes PCM retidos em1handle, replay/fase/loop/release pass, inputs82
+hashes preservados por edição. Sink sintético, sem áudio físico. Recibos
+`reports/hit-reusable-pcm/validation.json` e `native-*.json`.
+
+
+
 Nova unidade de controles pré-wrapper: helper A portátil calcula ganho com
 mul32/divisões sequenciais, grupo/duck explícitos e seleção pan/posição; helper B
 combina local21/Patch21 antes do DSP. Perfil global exige callback de snapshot

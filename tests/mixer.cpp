@@ -103,5 +103,88 @@ int main(){try{
         auto input=audio({1});rejects([&]{maxnotes.add(std::move(input));});
         require(input.samples.size()==1,"full registry preserves failed source");
     }
+    {
+        PcmMixer m(8000,{6,1,4,8});
+        auto pcm=audio({1000,2000,3000});
+        const auto h=m.load_reusable(std::move(pcm));
+        require(pcm.samples.empty() && m.state(h)==PcmNoteState::stopped &&
+                m.usage().pcm_bytes==6 && m.usage().active==0,
+                "reusable load moves PCM once, charges budget, and does not play");
+        auto extra=audio({7});rejects([&]{m.load_reusable(std::move(extra));});
+        require(extra.samples==std::vector<std::int16_t>{7},"full reusable registry leaves input unmoved");
+        m.replay(h,{8000,false});
+        require(render(m,2)==stereo({1000,2000}),"first reusable playback");
+        rejects([&]{m.replay(h,{8000,false});});
+        rejects([&]{m.set_frequency(h,4000);});
+        require(m.state(h)==PcmNoteState::active,"pending-boundary rejection preserves playback");
+        m.commit(2);m.acknowledge(2);m.stop(h);
+        require(m.state(h)==PcmNoteState::stopped && m.usage().pcm_bytes==6,
+                "stop retains reusable PCM budget and handle");
+        m.replay(h,{8000,false});
+        require(render(m,3)==stereo({1000,2000,3000}),"replay restarts same handle at sample zero");
+        m.commit(3);m.acknowledge(5);
+        require(m.state(h)==PcmNoteState::complete && m.usage().pcm_bytes==6,
+                "acknowledged completion retains reusable PCM");
+        m.replay(h,{8000,false});require(render(m,1)==stereo({1000}),
+                "completed reusable handle can replay without source copy");
+        m.release(h);require(!m.usage().pcm_bytes && !m.usage().handles,
+                "release alone frees reusable PCM and record");
+        rejects([&]{m.replay(h,{8000,false});});
+        const auto next=m.load_reusable(std::move(extra));
+        require(next!=h,"reused record gets distinct monotonic handle");m.release(next);
+    }
+    {
+        PcmMixer loop(8000,{64,2,8,8});
+        const auto h=loop.load_reusable(audio({0,3000}));
+        loop.replay(h,{4000,true});
+        require(render(loop,6)==stereo({0,1500,3000,1500,0,1500}),
+                "rational loop interpolates across circular seam");
+        loop.commit(6);loop.acknowledge(3);loop.rewind_pending();
+        require(render(loop,3)==stereo({1500,0,1500}) &&
+                loop.state(h)==PcmNoteState::active,
+                "loop rewind restores modular fractional phase and stays active");
+        loop.stop(h);require(loop.usage().pcm_bytes==4,"loop stop retains source");
+        loop.release(h);require(!loop.usage().pcm_bytes,"loop release frees source");
+        const auto empty=loop.load_reusable(audio({}));
+        loop.rewind_pending();loop.replay(empty,{8000,true});
+        require(loop.state(empty)==PcmNoteState::complete && !loop.usage().active,
+                "empty reusable loop completes instead of spinning");
+        loop.release(empty);
+    }
+    {
+        PcmMixer m(8000);const auto h=m.load_reusable(audio({0,1000,2000,3000,4000}));
+        rejects([&]{m.replay(h,{99,false});});
+        rejects([&]{m.replay(h,{192001,false});});
+        require(m.state(h)==PcmNoteState::stopped,"invalid replay rate leaves source stopped");
+        m.replay(h,{4000,false});
+        require(render(m,4)==stereo({0,500,1000,1500}),"initial half-rate phase");
+        m.commit(4);m.acknowledge(2);m.rewind_pending();
+        m.set_frequency(h,8000);
+        require(render(m,4)==stereo({1000,2000,3000,4000}),
+                "mid-play rate change anchors at consumed old-rate source phase");
+        m.commit(4);m.acknowledge(6);
+        require(m.state(h)==PcmNoteState::complete && m.usage().pcm_bytes==10,
+                "new finite endpoint uses remaining source at changed rate");
+        m.release(h);
+        const auto one_shot=m.add(audio({1}));
+        rejects([&]{m.replay(one_shot,{8000,false});});
+        rejects([&]{m.set_frequency(one_shot,8000);});
+        m.release(one_shot);
+    }
+    {
+        PcmMixer m(8000);const auto h=m.load_reusable(audio({0,1000}));
+        m.replay(h,{4000,false});
+        require(render(m,4)==stereo({0,500,1000,1000}) &&
+                m.state(h)==PcmNoteState::rendered,
+                "finite note can render completely before backend consumption");
+        m.commit(4);m.acknowledge(1);
+        rejects([&]{m.set_frequency(h,8000);});
+        require(m.state(h)==PcmNoteState::rendered && m.usage().pcm_bytes==4,
+                "direct rendered-pending rate change rejects before corrupting old phase");
+        m.rewind_pending();m.set_frequency(h,8000);
+        require(render(m,2)==stereo({500,1000}),
+                "rendered rewind uses old rate before anchoring new frequency");
+        m.release(h);
+    }
     std::cout<<checks<<" portable PCM mixer checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -2,6 +2,8 @@
 #include "odh/hit_resources.hpp"
 #include "odh/xa_audio.hpp"
 
+namespace odh { struct NativeHitPatchRef; }
+
 namespace odh_host {
 enum class XaSourceKind { far, loose };
 struct XaPatchSource { std::string path; XaSourceKind kind; };
@@ -32,6 +34,10 @@ public:
     // Optional admission allowance only lowers configured PCM decode budget.
     XaPatchAsset load(const odh::Hot&,std::uint32_t patch_id,
                       std::optional<std::uint64_t> pcm_allowance = {}) const;
+    // Use the winning borrowed global Patch metadata directly. The source
+    // catalog must outlive this call; no local HOT lookup or fallback occurs.
+    XaPatchAsset load(const odh::NativeHitPatchRef&,
+                      std::optional<std::uint64_t> pcm_allowance = {}) const;
     XaPatchCatalogUsage usage() const {return usage_;}
 private:
     struct Source {XaPatchSource source;std::uint64_t size;};
@@ -43,5 +49,7 @@ private:
     std::string key(const std::string&) const;
     void charge(std::uint64_t);
     void add(std::size_t,std::string,std::uint64_t,std::uint64_t);
+    XaPatchAsset load_filename(const std::string&,std::uint32_t,
+                               std::optional<std::uint64_t>) const;
 };
 }

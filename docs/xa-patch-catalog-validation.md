@@ -96,3 +96,7 @@ integração do loopWorld, caller arguments/units/ArgStyle/controllers, loops e
 outras partes da meta integral. Não usar reInit ou sucesso artificial para
 contornar os gates de Main.
 
+
+A [continuação global/reutilizável](hit-reusable-pcm-validation.md) acrescenta
+`load(NativeHitPatchRef,allowance)` e novas verificações. Os totais anteriores
+permanecem como evidência histórica; o catálogo ainda não decide streaming.

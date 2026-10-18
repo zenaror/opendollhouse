@@ -36,6 +36,26 @@ void PcmTransport::fail_closed() noexcept {
 PcmNoteHandle PcmTransport::add(XaAudio&& audio,PcmControls controls){
     ensure_ready();return mixer_.add(std::move(audio),controls);
 }
+PcmNoteHandle PcmTransport::load_reusable(XaAudio&& audio,PcmControls controls){
+    ensure_ready();return mixer_.load_reusable(std::move(audio),controls);
+}
+void PcmTransport::replay(PcmNoteHandle handle,PcmReplayOptions options){
+    ensure_ready();mixer_.validate_replay(handle,options); // Reject before sink I/O.
+    if(mixer_.usage().rendered_frame>mixer_.usage().consumed_frame){
+        flush_pending();mixer_.rewind_pending();
+    }
+    mixer_.replay(handle,options);
+}
+void PcmTransport::set_frequency(PcmNoteHandle handle,std::uint32_t frequency_hz){
+    ensure_ready();mixer_.validate_frequency(handle,frequency_hz); // Reject before sink I/O.
+    const auto state=mixer_.state(handle);
+    if((state==PcmNoteState::active || state==PcmNoteState::rendered) &&
+       mixer_.usage().rendered_frame>mixer_.usage().consumed_frame){
+        flush_pending();
+        mixer_.rewind_pending(); // Restore old-rate phase before changing rate.
+    }
+    mixer_.set_frequency(handle,frequency_hz);
+}
 PcmNoteState PcmTransport::state(PcmNoteHandle handle) const{return mixer_.state(handle);}
 PcmMixerUsage PcmTransport::usage() const{return mixer_.usage();}
 std::uint64_t PcmTransport::available_pcm_bytes() const{return mixer_.available_pcm_bytes();}
@@ -73,7 +93,7 @@ void PcmTransport::stop(PcmNoteHandle handle){
     if(mixer_.usage().rendered_frame>mixer_.usage().consumed_frame){
         try{flush_pending();}
         catch(...){mixer_.stop(handle);throw;}
-        mixer_.stop(handle);mixer_.rewind_pending();
+        mixer_.rewind_pending();mixer_.stop(handle);
     }else mixer_.stop(handle);
 }
 void PcmTransport::release(PcmNoteHandle handle){
@@ -82,7 +102,7 @@ void PcmTransport::release(PcmNoteHandle handle){
        mixer_.usage().rendered_frame>mixer_.usage().consumed_frame){
         try{flush_pending();}
         catch(...){mixer_.release(handle);throw;}
-        mixer_.release(handle);mixer_.rewind_pending();
+        mixer_.rewind_pending();mixer_.release(handle);
     }else mixer_.release(handle);
 }
 void PcmTransport::submit_retained(){

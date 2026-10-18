@@ -756,6 +756,10 @@ if(BUILD_TESTING)
     target_link_libraries(odh-xa-sound-factory-tests PRIVATE odh_xa_sound_factory)
     add_test(NAME xa_sound_factory COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/xa_sound_factory.py $<TARGET_FILE:odh-xa-sound-factory-tests>)
+    add_executable(odh-native-patch-pcm-tests tests/native_patch_pcm.cpp)
+    target_link_libraries(odh-native-patch-pcm-tests PRIVATE odh_xa_patch_catalog odh_hit_native_controller odh_hit_patch_registry odh_pcm_transport)
+    add_test(NAME native_patch_pcm COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_patch_pcm.py $<TARGET_FILE:odh-native-patch-pcm-tests>)
     add_executable(odh-xa-patch-catalog-tests tests/xa_patch_catalog.cpp)
     target_link_libraries(odh-xa-patch-catalog-tests PRIVATE odh_xa_patch_catalog)
     add_test(NAME xa_patch_catalog COMMAND ${Python3_EXECUTABLE}

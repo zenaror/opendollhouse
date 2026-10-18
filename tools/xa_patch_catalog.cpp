@@ -1,4 +1,5 @@
 #include "xa_patch_catalog.hpp"
+#include "odh/hit_object_catalog.hpp"
 #include <filesystem>
 #include <fstream>
 
@@ -62,7 +63,16 @@ XaPatchCatalog::XaPatchCatalog(const std::vector<XaPatchSource>& inputs,XaPatchC
 }
 XaPatchAsset XaPatchCatalog::load(const odh::Hot& hot,std::uint32_t id,std::optional<std::uint64_t> allowance) const {
     const auto patch=hot.patches.find(id);if(patch==hot.patches.end())fail("patch ID absent in HOT");
-    auto normalized=key(patch->second.filename);
+    return load_filename(patch->second.filename,id,allowance);
+}
+XaPatchAsset XaPatchCatalog::load(const odh::NativeHitPatchRef& ref,
+                                  std::optional<std::uint64_t> allowance) const {
+    if(!ref.id || !ref.patch)fail("invalid global Patch reference");
+    return load_filename(ref.patch->filename,ref.id,allowance);
+}
+XaPatchAsset XaPatchCatalog::load_filename(const std::string& filename,std::uint32_t id,
+                                           std::optional<std::uint64_t> allowance) const {
+    auto normalized=key(filename);
     const auto found=index_.find(normalized);if(found==index_.end())fail("XA basename absent in supplied sources");
     const auto& entry=found->second;if(entry.count!=1)fail("ambiguous XA basename");
     const auto& source=sources_[entry.source];

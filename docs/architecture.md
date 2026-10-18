@@ -218,3 +218,9 @@ entrega snapshots completos nos setters19/20, com pedido A-only; registry
 preserva placement antes gain e pitch separado. Patch43/26/27 são opcionais
 preservados pelo parser nativo, e valores ausentes não viram defaults implícitos.
 Backends concretos ainda precisam implementar despacho e transformações DSP.
+
+O transporte possui [recursos PCM reutilizáveis](hit-reusable-pcm-validation.md)
+com orçamento até release, replay no mesmo handle, loop e mudança de taxa por
+fase consumida. O loader aceita Patch global diretamente. Essas operações dão
+base ao backend compartilhado, mas source classifier, dirty/preload, controles
+perdidos, loop latch e callback matrix nativos ainda exigem o adapter concreto.

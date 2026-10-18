@@ -5,6 +5,7 @@ namespace odh {
 using PcmNoteHandle=std::uint64_t;
 enum class PcmNoteState { active, rendered, complete, stopped };
 struct PcmControls {std::uint32_t gain_q15=32768;std::int32_t pan_q15=0;};
+struct PcmReplayOptions {std::uint32_t frequency_hz;bool loop;};
 struct PcmMixerLimits {
     std::uint64_t pcm_bytes=4*1024*1024;
     std::uint32_t notes=64,block_frames=1024,pending_frames=8192;
@@ -23,6 +24,20 @@ public:
     // Moves PCM only after validation/admission. Charges vector capacity, not
     // just size, until completion/stop/release; failed admission leaves input.
     PcmNoteHandle add(XaAudio&&,PcmControls = {});
+    // Moves PCM once into a stopped handle. Stop and acknowledged completion
+    // retain its immutable PCM and budget charge; only release frees it.
+    PcmNoteHandle load_reusable(XaAudio&&,PcmControls = {});
+    // Replays a reusable handle from sample zero. Caller must first discard
+    // pending output (including other notes) and rewind_pending if needed.
+    // The rate is an effective source-frame rate, 100..192000 Hz; the caller
+    // owns any native frequency conversion/clamp. Empty PCM completes at once.
+    void validate_replay(PcmNoteHandle,PcmReplayOptions) const;
+    void replay(PcmNoteHandle,PcmReplayOptions);
+    // Changes rate without seeking. While playing, pending output must first
+    // be consumed/discarded and rewound at the OLD rate. The current cursor
+    // becomes the new phase anchor. Does not change the loop flag.
+    void validate_frequency(PcmNoteHandle,std::uint32_t frequency_hz) const;
+    void set_frequency(PcmNoteHandle,std::uint32_t frequency_hz);
     PcmNoteState state(PcmNoteHandle) const;
     void controls(PcmNoteHandle,PcmControls);
     void stop(PcmNoteHandle); // Future samples only; already mixed data persists.
@@ -48,6 +63,9 @@ private:
         PcmControls controls{};
         std::uint64_t bytes=0,start=0,end=0,frame=0;
         std::uint32_t fraction=0;
+        bool reusable=false,loop=false;
+        std::uint32_t frequency_hz=0,anchor_fraction=0;
+        std::uint64_t anchor_time=0,anchor_frame=0;
     };
     std::uint32_t rate_;
     PcmMixerLimits limits_;
@@ -56,5 +74,7 @@ private:
     Note& find(PcmNoteHandle);
     const Note& find(PcmNoteHandle) const;
     void free_pcm(Note&);
+    PcmNoteHandle admit(XaAudio&&,PcmControls,bool reusable);
+    std::uint64_t duration(const Note&,std::uint32_t frequency_hz) const;
 };
 }

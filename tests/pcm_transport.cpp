@@ -221,5 +221,87 @@ int main(){try{
         sink.throw_query=false;sink.throw_pause=false;
         transport.release(note);
     }
+    {
+        FakeSink sink;PcmTransport transport(sink,{32,2,4,8});
+        auto pcm=audio({1000,2000,3000,4000,5000,6000});
+        const auto shared=transport.load_reusable(std::move(pcm));
+        const auto survivor=transport.add(audio({10,20,30,40,50,60}));
+        require(pcm.samples.empty() && transport.state(shared)==PcmNoteState::stopped &&
+                transport.usage().pcm_bytes==24,"reusable source admitted once beside other note");
+        transport.replay(shared,{8000,false});transport.tick();sink.consume(2);
+        transport.replay(shared,{8000,false});
+        require(sink.queued().empty() && transport.usage().consumed_frame==2 &&
+                transport.usage().pcm_bytes==24,"active replay clears pending shared mix without copying PCM");
+        transport.tick();
+        require(sink.queued()==std::vector<std::int16_t>({1030,1030,2040,2040,3050,3050,4060,4060}),
+                "replayed handle starts at zero while survivor continues at consumed frame");
+        sink.consume(1);transport.stop(shared);
+        require(transport.state(shared)==PcmNoteState::stopped &&
+                transport.usage().pcm_bytes==24,"stop retains reusable resource and survivor");
+        transport.tick();
+        require(sink.queued()[0]==40 && sink.queued()[1]==40,
+                "survivor continues after shared handle stop");
+        transport.release(shared);transport.release(survivor);
+        require(!transport.usage().pcm_bytes && !transport.usage().handles,
+                "release frees shared and one-shot resources");
+    }
+    {
+        FakeSink sink;sink.capacity=2;sink.max_accept=2;
+        PcmTransport transport(sink,{32,2,4,8});
+        const auto shared=transport.load_reusable(audio({100,200,300,400}));
+        const auto survivor=transport.add(audio({1,2,3,4}));
+        transport.replay(shared,{8000,false});transport.tick();
+        require(transport.usage().rendered_frame==4 && transport.usage().submitted_frame==2,
+                "replay fixture has queued prefix and retained suffix");
+        sink.consume(1);transport.replay(shared,{8000,false});
+        require(transport.usage().rendered_frame==1 &&
+                transport.usage().submitted_frame==1 &&
+                transport.usage().consumed_frame==1 && sink.queued().empty(),
+                "replay drops accepted tail and retained suffix together");
+        transport.tick();
+        require(sink.queued()==std::vector<std::int16_t>({102,102,203,203}),
+                "replay after partial queue preserves survivor phase");
+        transport.release(shared);transport.release(survivor);
+    }
+    {
+        FakeSink sink;PcmTransport transport(sink,{32,2,4,8});
+        const auto shared=transport.load_reusable(audio({0,1000,2000,3000,4000}));
+        const auto clears=sink.clears;
+        rejects([&]{transport.replay(shared,{99,false});});
+        rejects([&]{transport.replay(shared,{192001,false});});
+        rejects([&]{transport.set_frequency(shared,0);});
+        rejects([&]{transport.replay(999,{8000,false});});
+        require(sink.clears==clears && !transport.failed() &&
+                transport.state(shared)==PcmNoteState::stopped,
+                "invalid replay/frequency/handle reject before sink I/O");
+        transport.replay(shared,{4000,false});transport.tick();sink.consume(2);
+        transport.set_frequency(shared,8000);
+        require(sink.queued().empty() && transport.usage().consumed_frame==2,
+                "rate change flushes rendered tail at old-rate consumed phase");
+        transport.tick();
+        require(sink.queued()==std::vector<std::int16_t>({1000,1000,2000,2000,3000,3000,4000,4000}),
+                "transport rate change preserves current source position");
+        sink.consume(4);transport.tick();
+        require(transport.state(shared)==PcmNoteState::complete &&
+                transport.usage().pcm_bytes==10,
+                "acknowledged changed-rate completion retains reusable PCM");
+        transport.release(shared);
+    }
+    {
+        FakeSink sink;PcmTransport transport(sink,{2,1,4,8});
+        auto oversized=audio({1,2});
+        rejects([&]{transport.load_reusable(std::move(oversized));});
+        require(oversized.samples==std::vector<std::int16_t>({1,2}) &&
+                !transport.usage().handles,"reusable budget rejection leaves source untouched");
+        const auto shared=transport.load_reusable(audio({7}));
+        transport.replay(shared,{8000,true});transport.tick();
+        require(transport.state(shared)==PcmNoteState::active &&
+                transport.usage().pcm_bytes==2,"loop retains one bounded PCM resource");
+        sink.throw_pause=true;rejects([&]{transport.replay(shared,{8000,true});});
+        require(transport.failed(),"replay sink failure latches fail-closed transport");
+        sink.throw_pause=false;transport.release(shared);
+        require(!transport.usage().handles && !transport.usage().pcm_bytes,
+                "failed replay still permits resource cleanup");
+    }
     std::cout<<checks<<" portable PCM transport checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}
