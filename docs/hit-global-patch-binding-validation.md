@@ -159,3 +159,8 @@ Ainda faltam o adapter de áudio concreto, manager persistente por TrackID,
 admissão, contribuições/generation World, cadência de Clock e integração do
 host. Opcode69 continua recusado e o cenário de aniversário não é concluído.
 Não há alegação de compatibilidade integral, áudio físico ou execução nos ports.
+
+A continuação [controles antes do wrapper](hit-native-audio-controls-validation.md)
+adiciona pedidos tipados e torna obrigatório o snapshot de escrita19/20 no
+perfil global, preservando callbacks numéricos do perfil local. Os resultados
+acima continuam sendo o checkpoint histórico desta unidade de binding.

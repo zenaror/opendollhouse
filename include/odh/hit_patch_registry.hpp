@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/hit_object_catalog.hpp"
+#include "odh/hit_native_audio_controls.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +26,15 @@ public:
     virtual void note_on() = 0;
     virtual void stop() = 0;
     virtual void raw_control(std::uint8_t id, std::int32_t raw) = 0;
+    // Raw arguments at the native wrapper boundary, before its DSP transforms.
+    // Unsupported operations fail explicitly; legacy test backends need not
+    // claim that accepting a HIT register write implements these controls.
+    virtual void set_pan(std::int32_t) { throw FormatError("native Patch pan unsupported"); }
+    virtual void set_position(const std::array<std::int32_t,3>&) {
+        throw FormatError("native Patch position unsupported");
+    }
+    virtual void set_gain(std::int32_t) { throw FormatError("native Patch gain unsupported"); }
+    virtual void set_pitch(std::int32_t) { throw FormatError("native Patch pitch unsupported"); }
 };
 
 using NativeHitPatchBackendFactory =
@@ -133,6 +143,10 @@ public:
     void pause(NativeHitPatchView);  // Native concrete backend pause is Stop.
     void resume(NativeHitPatchView); // Native concrete backend resume does no audio work.
     void raw_control(NativeHitPatchView, std::uint8_t id, std::int32_t raw);
+    // Placement precedes gain, as in helper A. Pitch is a separate helper B;
+    // ID19/20 writes must not implicitly invoke it.
+    void apply_spatial_gain(NativeHitPatchView, const NativeHitSpatialGainRequest&);
+    void apply_pitch(NativeHitPatchView, NativeHitPitchRequest);
 
     NativeHitPatchRegistryUsage usage() const;
     // sizeof(registry) plus fixed slot/pending arrays; excludes backend

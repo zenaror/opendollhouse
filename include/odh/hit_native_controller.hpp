@@ -41,6 +41,11 @@ struct NativeHitAudio {
     std::function<std::int32_t(const NativeHitPatchRef&, const NativeHitState&)>
         bind_global_patch = {};
     std::function<void(const NativeHitState&)> apply_global_controls = {};
+    // Global profile: post-store snapshot for the native A-only recalculation
+    // triggered by ID19/20. No Patch-ID26 copy or B/pitch update is implied.
+    // Required in this profile; numeric raw_control belongs to local mode.
+    std::function<void(std::uint8_t trigger_id, const NativeHitState&)>
+        apply_global_control_write = {};
 };
 
 struct NativeHitPatchSource {

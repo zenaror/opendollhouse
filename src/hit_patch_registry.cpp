@@ -236,6 +236,27 @@ void NativeHitPatchRegistry::raw_control(NativeHitPatchView view,
     guard.check_reentry();
 }
 
+void NativeHitPatchRegistry::apply_spatial_gain(
+        NativeHitPatchView view, const NativeHitSpatialGainRequest& request) {
+    Guard guard(*this);
+    auto& backend = *require_current(view).backend;
+    using Placement = NativeHitPlacement;
+    require(request.placement == Placement::pan || request.placement == Placement::position,
+            "native Patch placement request invalid");
+    if (request.placement == Placement::pan) backend.set_pan(request.pan_raw);
+    else backend.set_position(request.position_raw);
+    guard.check_reentry();
+    backend.set_gain(request.gain_raw);
+    guard.check_reentry();
+}
+
+void NativeHitPatchRegistry::apply_pitch(
+        NativeHitPatchView view, NativeHitPitchRequest request) {
+    Guard guard(*this);
+    require_current(view).backend->set_pitch(request.argument_raw);
+    guard.check_reentry();
+}
+
 NativeHitPatchRegistryUsage NativeHitPatchRegistry::usage() const {
     auto& self = const_cast<NativeHitPatchRegistry&>(*this);
     Guard guard(self);

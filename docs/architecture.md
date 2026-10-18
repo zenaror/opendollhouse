@@ -211,3 +211,10 @@ Riscos principais: oclusão fiel na PICA200; serviços implícitos em BHAV; orde
 resolução; persistência e viagens; diferenças de edições/expansões; picos de
 decodificação. Fora da tela pode-se descartar representação gráfica, preservando
 estado e comportamento das entidades.
+
+O cálculo pré-wrapper dos controles nativos está separado da saída PCM:
+[contrato e validação](hit-native-audio-controls-validation.md). O perfil global
+entrega snapshots completos nos setters19/20, com pedido A-only; registry
+preserva placement antes gain e pitch separado. Patch43/26/27 são opcionais
+preservados pelo parser nativo, e valores ausentes não viram defaults implícitos.
+Backends concretos ainda precisam implementar despacho e transformações DSP.

@@ -309,6 +309,17 @@ Hot read_hot(const View& view, const Hsm* hsm, const HitResourceLimits& limits,
                 // The native boolean transform accepts exactly the value 1.
                 patch.looped = required_number<std::int32_t>(flags[0], "HOT loop flag") == 1;
                 patch.piano = required_number<std::int32_t>(flags[1], "HOT piano flag") == 1;
+                // The original callback passes five booleans to the Patch
+                // constructor. This parser preserves present suffix fields;
+                // it does not emulate sscanf behavior for missing arguments.
+                const auto optional_native_flag = [&](std::size_t index, const char* what)
+                        -> std::optional<bool> {
+                    if (index >= flags.size()) return std::nullopt;
+                    return required_number<std::int32_t>(flags[index], what) == 1;
+                };
+                patch.native_id43 = optional_native_flag(2, "HOT native Patch ID43 flag");
+                patch.native_id26 = optional_native_flag(3, "HOT native Patch ID26 flag");
+                patch.native_id27 = optional_native_flag(4, "HOT native Patch ID27 flag");
             }
             if (result.native_object_order)
                 result.native_object_order->push_back({HotObjectKind::patch, id, line_no});

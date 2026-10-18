@@ -246,11 +246,62 @@ int main() { try {
             native_patch.patches.at(1).filename == "dir,normal.xa" &&
             native_patch.patches.at(1).ignored_pre_filename.empty() &&
             native_patch.patches.at(1).looped && !native_patch.patches.at(1).piano &&
+            native_patch.patches.at(1).native_id43 == false &&
+            !native_patch.patches.at(1).native_id26 &&
+            !native_patch.patches.at(1).native_id27 &&
             native_patch.patches.at(2).name == "extra" &&
             native_patch.patches.at(2).filename == "dir,extra.xa" &&
             native_patch.patches.at(2).ignored_pre_filename == "uninterpreted," &&
             !native_patch.patches.at(2).looped && native_patch.patches.at(2).piano,
             "native Patch scans quoted filename after optional ignored prefix and reads following flags");
+    const auto native_extra_flags = hot(
+        "[Patch]\n"
+        "1=0,first,\"a.xa\",1,0,1,0,2,ignored-tail\n"
+        "2=0,second,\"b.xa\",0,1,0,1,-2\n"
+        "3=0,short,\"c.xa\",0,0\n"
+        "4=0,one-extra,\"d.xa\",0,0,1\n"
+        "5=0,two-extra,\"e.xa\",0,0,0,1\n",
+        nullptr, {}, native);
+    require(native_extra_flags.patches.at(1).native_id43 == true &&
+            native_extra_flags.patches.at(1).native_id26 == false &&
+            native_extra_flags.patches.at(1).native_id27 == false &&
+            native_extra_flags.patches.at(2).native_id43 == false &&
+            native_extra_flags.patches.at(2).native_id26 == true &&
+            native_extra_flags.patches.at(2).native_id27 == false,
+            "present native Patch flags 3..5 use exact one with zero, two and negative false");
+    require(!native_extra_flags.patches.at(3).native_id43 &&
+            !native_extra_flags.patches.at(3).native_id26 &&
+            !native_extra_flags.patches.at(3).native_id27 &&
+            native_extra_flags.patches.at(4).native_id43 == true &&
+            !native_extra_flags.patches.at(4).native_id26 &&
+            !native_extra_flags.patches.at(4).native_id27 &&
+            native_extra_flags.patches.at(5).native_id43 == false &&
+            native_extra_flags.patches.at(5).native_id26 == true &&
+            !native_extra_flags.patches.at(5).native_id27,
+            "omitted native suffix flags remain unknown, including partial rows");
+    const auto duplicate_patch_flags = hot(
+        "[Patch]\n9=0,first,\"first.xa\",0,0,1,1,1\n"
+        "9=0,last,\"last.xa\",0,0\n", nullptr, {}, native);
+    require(duplicate_patch_flags.duplicate_records == 1 &&
+            duplicate_patch_flags.patches.at(9).name == "last" &&
+            !duplicate_patch_flags.patches.at(9).native_id43 &&
+            !duplicate_patch_flags.patches.at(9).native_id26 &&
+            !duplicate_patch_flags.patches.at(9).native_id27,
+            "last native Patch row replaces earlier optional flags without carrying them forward");
+    const auto local_extra_flags = hot(
+        "[Patch]\n1=0,local,\"local.xa\",2,-1,1,1,1\n");
+    require(local_extra_flags.patches.at(1).looped &&
+            local_extra_flags.patches.at(1).piano &&
+            !local_extra_flags.patches.at(1).native_id43 &&
+            !local_extra_flags.patches.at(1).native_id26 &&
+            !local_extra_flags.patches.at(1).native_id27,
+            "Simitone local profile keeps nonzero first flags and no native metadata");
+    for (const auto* suffix : {"0,0,,1,1", "0,0,2G,1,1",
+                               "0,0,1,2147483648,1", "0,0,1,1,"})
+        rejects([&] {
+            hot(std::string("[Patch]\n1=0,invalid,\"invalid.xa\",") + suffix +
+                "\n", nullptr, {}, native);
+        }, "HOT native Patch ID");
     rejects([] { hot("[Patch]\n1=0,extra,uninterpreted,\"file.xa\",1,0\n"); },
             "malformed HOT patch fields");
     rejects([&] { hot("[Patch]\n1=0,name,missing_quotes,1,0\n", nullptr, {}, native); },

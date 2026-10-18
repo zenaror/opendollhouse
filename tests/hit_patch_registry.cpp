@@ -61,7 +61,7 @@ struct Recorder {
     bool null_factory = false;
     bool throw_load = false;
     bool throw_clear = false;
-    std::function<void()> on_factory, on_load, on_note, on_stop;
+    std::function<void()> on_factory, on_load, on_note, on_stop, on_pan;
 
     unsigned count(const std::string& event) const {
         unsigned result = 0;
@@ -104,6 +104,20 @@ public:
     void raw_control(std::uint8_t id, std::int32_t raw) override {
         recorder_.events.push_back("raw:" + std::to_string(id_) + ":" +
                                    std::to_string(id) + ":" + std::to_string(raw));
+    }
+    void set_pan(std::int32_t raw) override {
+        recorder_.events.push_back("pan:" + std::to_string(raw));
+        if (recorder_.on_pan) recorder_.on_pan();
+    }
+    void set_position(const std::array<std::int32_t,3>& raw) override {
+        recorder_.events.push_back("position:" + std::to_string(raw[0]) + ":" +
+                                   std::to_string(raw[1]) + ":" + std::to_string(raw[2]));
+    }
+    void set_gain(std::int32_t raw) override {
+        recorder_.events.push_back("gain:" + std::to_string(raw));
+    }
+    void set_pitch(std::int32_t raw) override {
+        recorder_.events.push_back("pitch:" + std::to_string(raw));
     }
 private:
     Recorder& recorder_;
@@ -373,6 +387,39 @@ int main() { try {
             !tiny.usage().cleanup_failed &&
             retired_tokens.destroyed == 5,
             "retired tokens cannot fill pending queue and drop a live binding release");
+
+    Recorder controls;
+    odh::NativeHitPatchRegistry control_registry(*fixture.objects, factory(controls));
+    auto control_binding = control_registry.acquire(10);
+    const auto control_view = control_binding.view();
+    controls.events.clear();
+    const odh::NativeHitSpatialGainRequest pan_request{odh::NativeHitPlacement::pan, -3, 512, {{4,5,6}}};
+    control_registry.apply_spatial_gain(control_view, pan_request);
+    control_registry.apply_pitch(control_view, {-500});
+    control_registry.apply_spatial_gain(control_view,
+        {odh::NativeHitPlacement::position, 2048, 999, {{-1,2,3}}});
+    require(controls.events == std::vector<std::string>{
+        "pan:512", "gain:-3", "pitch:-500", "position:-1:2:3", "gain:2048"},
+        "typed wrapper controls retain raw values and placement-before-gain order");
+    const auto control_count = controls.events.size();
+    rejects([&] { control_registry.apply_spatial_gain(control_view,
+        {static_cast<odh::NativeHitPlacement>(99), 0, 0, {{0,0,0}}}); });
+    require(controls.events.size() == control_count, "invalid placement has no backend effect");
+    controls.on_pan = [] { throw std::runtime_error("pan failed"); };
+    throws([&] { control_registry.apply_spatial_gain(control_view, pan_request); });
+    require(controls.events.back() == "pan:512" && controls.events.size() == control_count+1,
+        "placement failure prevents gain from being issued");
+    controls.on_pan = [&] {
+        try { control_registry.apply_pitch(control_view, {77}); }
+        catch (const odh::FormatError&) {}
+    };
+    rejects([&] { control_registry.apply_spatial_gain(control_view, pan_request); });
+    require(controls.events.back() == "pan:512" && controls.events.size() == control_count+2,
+        "swallowed placement callback reentry prevents the subsequent gain call");
+    controls.on_pan = {};
+    control_binding.reset();
+    rejects([&] { control_registry.apply_spatial_gain(control_view, pan_request); });
+    rejects([&] { control_registry.apply_pitch(control_view, {77}); });
 
     std::cout << "hit patch registry: " << checks << " checks, sizeof(view)="
               << sizeof(odh::NativeHitPatchView) << ", sizeof(registry)="

@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -37,7 +38,7 @@ std::unique_ptr<odh::HitResourceBank> bank() {
         "8=0,two,1024,2,0,0,20,301,90\n"
         "[Patch]\n90=0,shadow,\"local.xa\",0,0\n",
         "[TrackData]\n300=16\n301=16\n",
-        "[Patch]\n90=0,global,\"global.xa\",0,0\n"
+        "[Patch]\n90=0,global,\"global.xa\",0,0,0,0,0\n"
     };
     std::vector<std::unique_ptr<std::istringstream>> streams;
     std::vector<odh::HitResourceGroupInput> input;
@@ -52,6 +53,10 @@ std::unique_ptr<odh::HitResourceBank> bank() {
 struct Trace {
     bool playing = false;
     unsigned notes = 0, stops = 0, loads = 0, clears = 0, destroyed = 0;
+    unsigned placement_calls = 0, gain_calls = 0, pitch_calls = 0;
+    std::int32_t gain = 0, pan = 0, pitch = 0;
+    std::array<std::int32_t,3> position{};
+    std::vector<std::string> controls;
 };
 class Backend final : public odh::NativeHitPatchBackend {
 public:
@@ -62,7 +67,21 @@ public:
     bool active() const override { return trace_->playing; }
     void note_on() override { ++trace_->notes; trace_->playing = true; }
     void stop() override { ++trace_->stops; trace_->playing = false; }
-    void raw_control(std::uint8_t, std::int32_t) override {}
+    void raw_control(std::uint8_t, std::int32_t) override {
+        throw odh::FormatError("numeric controls must not handle global writes");
+    }
+    void set_pan(std::int32_t raw) override {
+        ++trace_->placement_calls; trace_->pan = raw; trace_->controls.push_back("pan");
+    }
+    void set_position(const std::array<std::int32_t,3>& raw) override {
+        ++trace_->placement_calls; trace_->position = raw; trace_->controls.push_back("position");
+    }
+    void set_gain(std::int32_t raw) override {
+        ++trace_->gain_calls; trace_->gain = raw; trace_->controls.push_back("gain");
+    }
+    void set_pitch(std::int32_t raw) override {
+        ++trace_->pitch_calls; trace_->pitch = raw; trace_->controls.push_back("pitch");
+    }
 private:
     std::shared_ptr<Trace> trace_;
 };
@@ -85,6 +104,23 @@ struct Endpoint {
         try { registry.stop(old); } catch (...) {}
         resource.reset(); // May have been retired by final Patch release.
     }
+    static odh::NativeHitSpatialGainInputs spatial(const odh::NativeHitState& state) {
+        // Test-only effective getter provider: explicit fresh parent values.
+        auto get = [&](unsigned id, std::int32_t parent) {
+            const auto raw = state.controls_17_47[id - 17];
+            return raw == std::numeric_limits<std::int32_t>::min() ? parent : raw;
+        };
+        return {{get(18,1024), get(19,1024), get(25,0), get(26,0),
+                 {{get(30,0), get(31,0), get(32,0)}}},
+                state.controls_17_47[20 - 17], std::nullopt, 0};
+    }
+    void apply(odh::NativeHitPatchView view, const odh::NativeHitState& state) {
+        // Explicit test providers: no group, duck threshold0, effective Patch21=3600.
+        // These do not claim immutable metadata or a physical DSP policy.
+        registry.apply_spatial_gain(view,
+            odh::compose_native_hit_spatial_gain(spatial(state)));
+        registry.apply_pitch(view, odh::compose_native_hit_pitch({state, 3600}));
+    }
     odh::NativeHitAudio audio() {
         odh::NativeHitAudio result{};
         result.active = [this] { return registry.active(binding.view()); };
@@ -93,8 +129,10 @@ struct Endpoint {
         result.release_binding = [this] { release(); };
         result.pause_current = [this] { registry.pause(binding.view()); };
         result.resume_current = [this] { registry.resume(binding.view()); };
-        result.raw_control = [this](std::uint8_t id, std::int32_t value) {
-            registry.raw_control(binding.view(), id, value);
+        result.apply_global_control_write = [this](std::uint8_t id, const odh::NativeHitState& state) {
+            require(id == 19 || id == 20, "global snapshot identifies the A-only setter");
+            registry.apply_spatial_gain(binding.view(),
+                odh::compose_native_hit_spatial_gain(spatial(state)));
         };
         result.bind_global_patch = [this](const odh::NativeHitPatchRef& patch,
                                          const odh::NativeHitState& state) {
@@ -103,12 +141,15 @@ struct Endpoint {
             require(!binding, "old binding is released before acquiring a new one");
             auto acquired = registry.acquire(patch.id);
             if (fail_first_phase) throw odh::FormatError("synthetic first-phase failure");
+            require(patch.patch->native_id26.has_value(), "native HOT retains Patch ID26");
             phases.push_back(state.controls_17_47[26 - 17]);
+            apply(acquired.view(), state);
             binding = std::move(acquired); // Commit only after the phase can no longer throw.
-            return std::int32_t{0}; // Explicit synthetic Patch runtime ID26.
+            return static_cast<std::int32_t>(*patch.patch->native_id26);
         };
         result.apply_global_controls = [this](const odh::NativeHitState& state) {
             phases.push_back(state.controls_17_47[26 - 17]);
+            apply(binding.view(), state);
         };
         return result;
     }
@@ -138,12 +179,17 @@ int main() { try {
         *one.track.object.track, one.track.entry.pc, {{1,0,0}}, 100, 512,
         a.audio(), limits, overrides, {}, {}, source);
     odh::NativeHitController second(*two.track.entry.file, resources->hot(1),
-        *two.track.object.track, two.track.entry.pc, {{2,0,0}}, 100, 512,
+        *two.track.object.track, two.track.entry.pc, {{2,0,0}}, 200, 256,
         b.audio(), limits, overrides, {}, {}, source);
     require(generations.empty(), "constructing controllers acquires no backend");
     first.activate(1); a.resource = registry.load_resources(a.binding);
     require(first.poll(1) == odh::NativeHitPoll::progressed && generations[0]->playing,
             "NoteOn and WaitSamp act on the shared registry backend");
+    require(generations[0]->controls == std::vector<std::string>{
+                "position","gain","pitch","pan","gain","pitch","pan","gain","pan","gain"} &&
+            generations[0]->gain == 100 && generations[0]->pan == 512 &&
+            generations[0]->pitch == 3600 && generations[0]->pitch_calls == 2,
+            "pre/post ID26 phases and A-only spatial setters preserve wrapper request order");
     const auto old_view = a.binding.view();
     second.activate(2); b.resource = registry.load_resources(b.binding);
     require(generations.size() == 1 && registry.usage().bindings == 2 &&
@@ -153,6 +199,9 @@ int main() { try {
     require(a.phases == std::vector<std::int32_t>{7,0} && a.phases == b.phases &&
             first.state().controls_17_47[26 - 17] == 0,
             "bind phases observe controller ID26 then effective Patch ID26");
+    require(generations[0]->gain == 200 && generations[0]->pan == 256 &&
+            generations[0]->pitch_calls == 4 && generations[0]->gain_calls == 8,
+            "second controller overwrites controls observed through the same shared backend");
     second.poll(2); first.pause();
     const auto notes = generations[0]->notes;
     first.resume(3);
@@ -191,6 +240,20 @@ int main() { try {
             !failed.binding && registry.usage().bindings == 0 &&
             generations.size() == 4 && generations[3]->destroyed == 1,
             "first-phase failure rolls back the temporary lease before the controller faults");
+    Endpoint fallback(registry);
+    odh::NativeHitController fallback_controller(*one.track.entry.file, resources->hot(1),
+        *one.track.object.track, one.track.entry.pc, {{1,0,0}},
+        std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::min(),
+        fallback.audio(), limits, overrides, {}, {}, source);
+    fallback_controller.activate(13);
+    require(fallback_controller.state().controls_17_47[19 - 17] ==
+                std::numeric_limits<std::int32_t>::min() &&
+            generations.back()->gain == 1024 && generations.back()->pan ==
+                std::numeric_limits<std::int32_t>::min(),
+            "effective getter fallback changes gain while raw local pan remains sentinel");
+    fallback_controller.stop();
+    require(registry.usage().live_patches == 0 && !registry.usage().cleanup_failed,
+            "fallback control case releases its shared generation");
     std::cout << checks << " global Patch/controller/registry checks passed\n";
     return 0;
 } catch (const std::exception& error) {

@@ -53,6 +53,25 @@ espacial nem admissão. Os casos novos são sintéticos/host; não reivindicam
 
 ## Próximos passos
 
+Nova unidade de controles pré-wrapper: helper A portátil calcula ganho com
+mul32/divisões sequenciais, grupo/duck explícitos e seleção pan/posição; helper B
+combina local21/Patch21 antes do DSP. Perfil global exige callback de snapshot
+para escritas19/20, sem fallback numérico; elas recalculam A somente. Registry
+encaminha placement antes gain e pitch separado. Parser nativo conserva flags
+Patch43/26/27 opcionais, sem transformar ausência em falso conhecido.
+Contrato e cobertura em [hit-native-audio-controls-validation.md](hit-native-audio-controls-validation.md).
+O adapter de áudio físico e providers efetivos ainda faltam.
+Fonte final:119 checks recursos/163 controller/64 registry/51 integração e6
+grupos helper. Debug eASan/UBSan121cfg/120pass+1skipX11/0fail (16,00/30,80s),
+LSanoff; noSDL/X11 só5selecionados pass. Oracle20.324 casos sem divergência;
+auditoria PE25recortes/2.131bytes. Corpus4 Classic/Legacy×Debug/ASanUBSan:
+423 aquisições por caso sem falhas,26hashesfonte porreceipt conferidos.
+Os vencedoresPatch têm ID43/26 falsos17.503/ausentes1;ID27 falsos17.480/
+ausentes24. Dados não comprovam truebranches; sintéticos os cobrem.
+Recibos em `reports/hit-native-audio-controls/validation.json` e `corpus/`.
+
+
+
 O controller já oferece perfil `NativeHitPatchSource::global_catalog`, com
 Patch de outra origem e outcomes zero/adquirida/ausente/tipo incorreto. A
 inicialização global libera o binding anterior antes do lookup e pode seguir

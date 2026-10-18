@@ -47,6 +47,10 @@ struct Audio {
             [&] { events.push_back("resume"); },
             [&](std::uint8_t id, std::int32_t value) {
                 events.push_back("raw:" + std::to_string(id) + ":" + std::to_string(value));
+            }, {}, {},
+            [&](std::uint8_t id, const odh::NativeHitState& snapshot) {
+                events.push_back("snapshot:" + std::to_string(id) + ":" +
+                    std::to_string(snapshot.controls_17_47[id - 17]));
             }
         };
     }
@@ -876,6 +880,12 @@ try {
     auto global_callbacks = global_audio.callbacks();
     global_callbacks.bind = {}; // Global profile has no numeric-ID fallback.
     std::vector<std::string> global_phases;
+    std::vector<std::pair<std::uint8_t, odh::NativeHitState>> global_writes;
+    global_callbacks.raw_control = {}; // Global writes require the full snapshot.
+    global_callbacks.apply_global_control_write =
+        [&](std::uint8_t id, const odh::NativeHitState& snapshot) {
+            global_writes.emplace_back(id, snapshot);
+        };
     global_callbacks.bind_global_patch =
         [&](const odh::NativeHitPatchRef& ref, const odh::NativeHitState& snapshot) {
             require(ref.id == 80 && ref.group == 3 &&
@@ -914,6 +924,21 @@ try {
                 odh::NativeHitBindingOutcome::acquired &&
             global_audio.count("bind:80") == 0,
             "global binding uses winning Patch callback and two control phases");
+    require(global_writes.size() == 2 && global_writes[0].first == 19 &&
+            global_writes[0].second.controls_17_47[19 - 17] == 100 &&
+            global_writes[0].second.controls_17_47[20 - 17] == 3 &&
+            global_writes[1].first == 20 &&
+            global_writes[1].second.controls_17_47[20 - 17] == 512 &&
+            global_writes[1].second.controls_17_47[26 - 17] == 77 &&
+            global_writes[1].second.binding && global_writes[1].second.positive,
+            "global control writes receive separate complete post-store snapshots");
+    auto missing_snapshot_callback = global_callbacks;
+    missing_snapshot_callback.apply_global_control_write = {};
+    rejects([&] {
+        odh::NativeHitController incomplete(global_code.hit, event_hot,
+            *global_event.track.object.track, 16, args(), 100, 512,
+            missing_snapshot_callback, {}, {}, {}, {}, global_source);
+    });
     require(global_controller.poll(1) == odh::NativeHitPoll::progressed &&
             global_audio.count("note:7") == 1,
             "global acquired binding executes NoteOn through current audio view");
@@ -1061,6 +1086,42 @@ try {
             global_second_fail_audio.count("stop") == 1 &&
             global_second_fail_audio.count("release") == 1,
             "second global control phase failure tears down acquired binding");
+
+    Audio snapshot_failure_audio;
+    auto snapshot_failure_callbacks = global_callbacks;
+    snapshot_failure_callbacks.stop_current = [&] { snapshot_failure_audio.events.push_back("stop"); };
+    snapshot_failure_callbacks.release_binding = [&] { snapshot_failure_audio.events.push_back("release"); };
+    snapshot_failure_callbacks.apply_global_control_write =
+        [](std::uint8_t, const odh::NativeHitState&) {
+            throw std::runtime_error("snapshot control failed");
+        };
+    odh::NativeHitController snapshot_failure(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        snapshot_failure_callbacks, {}, {}, {}, {}, global_source);
+    bool snapshot_failed = false;
+    try { snapshot_failure.activate(1); }
+    catch (const std::runtime_error&) { snapshot_failed = true; }
+    require(snapshot_failed && snapshot_failure.state().faulted &&
+            !snapshot_failure.state().binding && snapshot_failure_audio.count("stop") == 1 &&
+            snapshot_failure_audio.count("release") == 1,
+            "global control snapshot failure releases the acquired binding");
+    Audio snapshot_reentry_audio;
+    auto snapshot_reentry_callbacks = global_callbacks;
+    odh::NativeHitController* snapshot_reentry_ptr = nullptr;
+    snapshot_reentry_callbacks.stop_current = [&] { snapshot_reentry_audio.events.push_back("stop"); };
+    snapshot_reentry_callbacks.release_binding = [&] { snapshot_reentry_audio.events.push_back("release"); };
+    snapshot_reentry_callbacks.apply_global_control_write =
+        [&](std::uint8_t, const odh::NativeHitState&) {
+            try { snapshot_reentry_ptr->pause(); } catch (const odh::FormatError&) {}
+        };
+    odh::NativeHitController snapshot_reentry(global_code.hit, event_hot,
+        *global_event.track.object.track, 16, args(), 100, 512,
+        snapshot_reentry_callbacks, {}, {}, {}, {}, global_source);
+    snapshot_reentry_ptr = &snapshot_reentry;
+    rejects([&] { snapshot_reentry.activate(1); });
+    require(snapshot_reentry.state().faulted && !snapshot_reentry.state().binding &&
+            snapshot_reentry_audio.count("stop") == 0 && snapshot_reentry_audio.count("release") == 1,
+            "swallowed snapshot callback reentry faults and tears down its binding");
 
     std::cout << "native HIT controller: " << checks << " checks passed\n";
     return 0;

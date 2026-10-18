@@ -358,6 +358,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Banco proprietário HIT/HOT e namespace HSM nativo](docs/hit-resource-bank-validation.md)
 - [Objetos globais HIT: Track/Patch, colisões e origens distintas](docs/hit-object-catalog-validation.md)
 - [Binding global de Patch e backend compartilhado por geração](docs/hit-global-patch-binding-validation.md)
+- [Controles nativos de áudio antes do wrapper](docs/hit-native-audio-controls-validation.md).
 - [Ordem de descoberta dos grupos no executável original](docs/hit-native-load-order-evidence.md)
 - [Backend original: pausa, retomada e compartilhamento](docs/hit-native-engine-backend-evidence.md)
 - [Opcode HIT 69 nativo: registro de tracks, fade e relógio](docs/hit-native-group-kill-evidence.md)

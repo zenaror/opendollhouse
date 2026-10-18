@@ -45,17 +45,17 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
             limits_.call_depth && limits_.call_depth <= 256,
             "native HIT limits outside supported bounds");
     require(audio_.active && audio_.note_on && audio_.stop_current &&
-            audio_.release_binding && audio_.pause_current && audio_.resume_current &&
-            audio_.raw_control, "native HIT requires complete current-binding callbacks");
+            audio_.release_binding && audio_.pause_current && audio_.resume_current, "native HIT requires complete current-binding callbacks");
     require((patch_source_.scope == NativeHitPatchSource::Scope::local_hot &&
              patch_source_.catalog == nullptr) ||
             (patch_source_.scope == NativeHitPatchSource::Scope::global_catalog &&
              patch_source_.catalog != nullptr),
             "native HIT patch source profile is invalid");
     if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot)
-        require(static_cast<bool>(audio_.bind), "native HIT local patch bind callback is required");
+        require(audio_.bind && audio_.raw_control, "native HIT local patch callbacks are required");
     else
-        require(audio_.bind_global_patch && audio_.apply_global_controls,
+        require(audio_.bind_global_patch && audio_.apply_global_controls &&
+                audio_.apply_global_control_write,
                 "native HIT global patch callbacks are required");
     require(track.hitlist_id.has_value(),
             "native HIT requires resolved HOT entry metadata");
@@ -156,8 +156,14 @@ void NativeHitController::write(std::uint8_t id, std::int32_t value) {
     else if (id <= 47) state_.controls_17_47[id - 17] = value;
     else state_.controls_50_62[id - 50] = value;
     set_flags(value);
-    if ((id == 19 || id == 20) && state_.binding)
-        callback([&] { audio_.raw_control(id, value); });
+    if ((id == 19 || id == 20) && state_.binding) {
+        if (patch_source_.scope == NativeHitPatchSource::Scope::global_catalog) {
+            const NativeHitState snapshot = state_;
+            callback([&] { audio_.apply_global_control_write(id, snapshot); });
+        } else {
+            callback([&] { audio_.raw_control(id, value); });
+        }
+    }
 }
 void NativeHitController::bind_current() {
     const auto patch = static_cast<std::uint32_t>(state_.controls_50_62[0]);

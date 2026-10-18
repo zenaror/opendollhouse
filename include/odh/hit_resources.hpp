@@ -47,6 +47,14 @@ struct HotPatch {
     // Native Patch scan discards bytes between the second comma and the first
     // quote. Retain them for provenance when that prefix contains extra data.
     std::string ignored_pre_filename{};
+    // Native HOT suffix flags 3..5 feed Patch IDs 43, 26 and 27, respectively.
+    // ODH retains only fields actually present in that row: nullopt means the
+    // suffix field was absent, not a proven native runtime default. These are
+    // unset for the simitone_local profile. Trailing placement preserves older
+    // four- and five-field aggregate initializers.
+    std::optional<bool> native_id43{};
+    std::optional<bool> native_id26{};
+    std::optional<bool> native_id27{};
 };
 struct HotHitlist {
     std::vector<std::uint32_t> ids;
