@@ -38,6 +38,16 @@ int main() {
          require(p.x==24 && p.y==12 && p.direction==2 && movements==20,"arrives and faces object");
          require(f.world.find(1)->person_data[37]==64 && f.vm.status()==odh::VmStatus::returned_true &&
                  !f.routing.active(),"arrival updates route flags and completes exact wait");}
+        {Fixture f;f.world.set_position(1,{24,12,1,0});f.start();
+         require(f.vm.status()==odh::VmStatus::waiting&&f.routing.active(),"validated start at SLOT goal creates turn-only route");
+         require(f.routing.tick(1)&&f.vm.status()==odh::VmStatus::returned_true&&!f.routing.active(),
+                 "validated turn-only route completes without movement");
+         const auto* actor=f.world.find(1);
+         require(actor->position->x==24&&actor->position->y==12&&actor->position->direction==2&&actor->person_data[37]==64,
+                 "turn-only route preserves position and applies facing/entry flags");}
+        {Fixture f;f.world.set_position(1,{24,12,1,0});f.grid.block({24,12});f.start();
+         require(f.vm.status()==odh::VmStatus::returned_false&&!f.routing.active(),
+                 "coincident but blocked SLOT goal is rejected before turn-only shortcut");}
         {Fixture f;f.start();f.vm.start(odh::routine_key(4096),{1,2,2});
          require(!f.routing.tick(1) && f.world.find(1)->position->x==4 && !f.routing.active(),"restart cancels before movement");
          require(f.vm.status()==odh::VmStatus::running && f.vm.steps()==0,"old job cannot complete new invocation");}

@@ -1,4 +1,5 @@
 #include "odh/routing.hpp"
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 
@@ -59,7 +60,17 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto step=(n&1)?diagonal:radius;
         goals.push_back({target->position->x+headings[n].x*step,target->position->y+headings[n].y*step});
     }
-    auto path=find_route(grid_,{actor->position->x,actor->position->y},goals);
+    const RoutePoint start{actor->position->x,actor->position->y};
+    RoutePath path{RouteStatus::invalid_input,{},0,0};
+    if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
+        // Simitone validates candidate SLOT positions before AttemptWalk can
+        // take its TURN_ONLY shortcut. Require equivalent evidence from the
+        // supplied clearance grid; coincidence alone does not prove a valid
+        // destination.
+        if(!grid_.contains(start)) path={RouteStatus::invalid_input,{},0,0};
+        else if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
+        else path={RouteStatus::found,{start},0,0};
+    }else path=find_route(grid_,start,goals);
     if(path.status==RouteStatus::budget_exhausted) return unsupported("routing search budget exhausted");
     if(path.status==RouteStatus::invalid_input) return unsupported("routing start outside walkable grid");
     if(path.status==RouteStatus::no_path) {diagnostic_="no path in supplied clearance grid";return {PrimitiveDisposition::goto_false,{}};}

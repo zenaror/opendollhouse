@@ -44,15 +44,23 @@ Uma unidade de movimento por tick, inclusive diagonal, é velocidade ODH
 provisória; não é tempo/velocidade de caminhada TS1 comprovados.
 
 A máscara da malha é fornecida explicitamente e deve considerar clearance.
-Não há carregamento ou cálculo dos footprints originais. Busca é síncrona;
+O atalho sem movimento (`start == goal`) só é aceito quando a célula também
+está dentro da malha e livre; coincidência geométrica não valida destino.
+Na revisão local de Simitone, `VMSlotParser.VerifyAndAddLocation` valida
+raycast/ocupação antes de `VMRoutingFrame.AttemptWalk` usar `TURN_ONLY`.
+Isso justifica exigir validação do goal antes do atalho, mas não prova que a
+malha ODH atual modele toda a política nativa. Não há carregamento ou cálculo
+dos footprints originais. Busca é síncrona;
 limite esgotado é diagnóstico, não retorno false de destino inalcançável.
 Obstáculo novo cancela; replanejamento, concorrência entre Sims, portais e
 reservas de destino ainda precisam ser implementados.
 
 ## Evidência
 
-CTest12/12 passou em Debug e ASan/UBSan. A suíte routing tem 39 checks em
-mundos construídos: espera/avanço, relógio, chegada, restart, obstáculo novo,
+CTest12/12 passou em Debug e ASan/UBSan no checkpoint anterior. No checkout
+atual, `odh-routing-tests` passa 43 checks e `odh-route-tests` 71 checks; são
+malhas/mundos construídos, não validação do lote nativo. Cobrem espera/avanço,
+relógio, chegada, restart, obstáculo novo,
 entidade movida/removida/recriada, profiles unsupported, nível, outro VM e
 reentrada. A CLI usa FAR/IFF/BHAV/SLOT sintéticos para testar a integração.
 LSan permanece não validado (`detect_leaks=0`, ptrace).

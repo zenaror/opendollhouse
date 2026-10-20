@@ -13,23 +13,30 @@ int cardinal_direction(RoutePoint a,RoutePoint b) {
     return -1;
 }
 }
-RouteGrid::RouteGrid(std::uint32_t width,std::uint32_t height,std::size_t limit):width_(width),height_(height) {
+RouteGrid::RouteGrid(std::uint32_t width,std::uint32_t height,std::size_t limit,RoutePoint origin)
+    :width_(width),height_(height),origin_(origin) {
     const auto cells=static_cast<std::uint64_t>(width)*height;
     if(!width || !height || width>32767 || height>32767 || cells>limit ||
-       cells>std::numeric_limits<std::uint32_t>::max()/14U)
+       cells>std::numeric_limits<std::uint32_t>::max()/14U ||
+       static_cast<std::int64_t>(origin.x)+width-1>std::numeric_limits<std::int32_t>::max() ||
+       static_cast<std::int64_t>(origin.y)+height-1>std::numeric_limits<std::int32_t>::max())
         throw std::invalid_argument("route grid exceeds dimensions or cell budget");
     blocked_.resize(static_cast<std::size_t>(cells));walls_.resize(blocked_.size());
 }
 bool RouteGrid::contains(RoutePoint p) const {
-    return p.x>=0 && p.y>=0 && static_cast<std::uint32_t>(p.x)<width_ && static_cast<std::uint32_t>(p.y)<height_;
+    const auto x=static_cast<std::int64_t>(p.x)-origin_.x;
+    const auto y=static_cast<std::int64_t>(p.y)-origin_.y;
+    return x>=0 && y>=0 && static_cast<std::uint64_t>(x)<width_ && static_cast<std::uint64_t>(y)<height_;
 }
 std::size_t RouteGrid::index(RoutePoint p) const {
     if(!contains(p)) throw std::out_of_range("route point outside grid");
-    return static_cast<std::size_t>(p.y)*width_+static_cast<std::size_t>(p.x);
+    return static_cast<std::size_t>(static_cast<std::int64_t>(p.y)-origin_.y)*width_+
+           static_cast<std::size_t>(static_cast<std::int64_t>(p.x)-origin_.x);
 }
 RoutePoint RouteGrid::point(std::size_t n) const {
     if(n>=cells()) throw std::out_of_range("route index outside grid");
-    return {static_cast<std::int32_t>(n%width_),static_cast<std::int32_t>(n/width_)};
+    return {static_cast<std::int32_t>(static_cast<std::int64_t>(origin_.x)+static_cast<std::int64_t>(n%width_)),
+            static_cast<std::int32_t>(static_cast<std::int64_t>(origin_.y)+static_cast<std::int64_t>(n/width_))};
 }
 bool RouteGrid::block(RoutePoint p,bool value) {
     if(!contains(p)) return false;
@@ -73,19 +80,45 @@ RoutePath find_route(const RouteGrid& grid,RoutePoint start,const std::vector<Ro
     if(!any) return result;
     constexpr auto infinity=std::numeric_limits<std::uint32_t>::max();
     std::vector<std::uint32_t> distance(grid.cells(),infinity);
-    std::vector<std::size_t> parent(grid.cells(),grid.cells());
-    using Entry=std::pair<std::uint32_t,std::size_t>;
+    // A predecessor is one of the eight adjacent steps, not a size_t cell
+    // index. This keeps the largest per-cell scratch compact on 32/64-bit hosts.
+    std::vector<std::uint8_t> parent_direction(grid.cells(),0xFF);
+    // RouteGrid bounds the cell count below uint32 max, so pack (cost,index)
+    // into one 64-bit key. This preserves deterministic cost/index ordering
+    // without the padding of pair<uint32_t,size_t> on 64-bit hosts.
+    using Entry=std::uint64_t;
+    const auto entry_key=[](std::uint32_t cost,std::size_t index) {
+        return (std::uint64_t(cost)<<32)|static_cast<std::uint32_t>(index);
+    };
     std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> frontier;
     if(limits.frontier==0) {result.status=RouteStatus::budget_exhausted;return result;}
-    const auto first=grid.index(start);distance[first]=0;frontier.push({0,first});
+    const auto first=grid.index(start);distance[first]=0;frontier.push(entry_key(0,first));
     while(!frontier.empty()) {
         const auto entry=frontier.top();frontier.pop();
-        const auto n=entry.second;
-        if(closed[n] || entry.first!=distance[n]) continue;
+        const auto entry_cost=static_cast<std::uint32_t>(entry>>32);
+        const auto n=static_cast<std::size_t>(static_cast<std::uint32_t>(entry));
+        if(closed[n] || entry_cost!=distance[n]) continue;
         if(result.expanded>=limits.expanded) {result.status=RouteStatus::budget_exhausted;return result;}
         closed[n]=1;++result.expanded;
         if(target[n]) {
-            for(auto at=n;at!=grid.cells();at=parent[at]) result.points.push_back(grid.point(at));
+            auto at=n;
+            for(std::size_t chain=0;chain<grid.cells();++chain) {
+                result.points.push_back(grid.point(at));
+                if(at==first) break;
+                const auto direction=parent_direction[at];
+                if(direction>=directions.size()) {
+                    result.points.clear();result.status=RouteStatus::invalid_input;return result;
+                }
+                const auto current=grid.point(at);
+                const RoutePoint previous{current.x-directions[direction].x,current.y-directions[direction].y};
+                if(!grid.contains(previous)) {
+                    result.points.clear();result.status=RouteStatus::invalid_input;return result;
+                }
+                at=grid.index(previous);
+            }
+            if(!(result.points.back()==start)) {
+                result.points.clear();result.status=RouteStatus::invalid_input;return result;
+            }
             std::reverse(result.points.begin(),result.points.end());
             result.cost=distance[n];result.status=RouteStatus::found;return result;
         }
@@ -99,7 +132,7 @@ RoutePath find_route(const RouteGrid& grid,RoutePoint start,const std::vector<Ro
             const auto candidate=distance[n]+cost;
             if(candidate>=distance[m]) continue;
             if(frontier.size()>=limits.frontier) {result.status=RouteStatus::budget_exhausted;return result;}
-            distance[m]=candidate;parent[m]=n;frontier.push({candidate,m});
+            distance[m]=candidate;parent_direction[m]=static_cast<std::uint8_t>(d);frontier.push(entry_key(candidate,m));
         }
     }
     return result;

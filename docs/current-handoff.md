@@ -54,11 +54,16 @@ A ação House07 4097→4100→4099 alcança Routing45; o Main host ainda não l
 serviço nesse caminho. O controller roteia com Global.iff SLOT100/tipo3/data1,
 mas não existe conversor de arquivos de arquitetura/objetos do lote para a
 malha de clearance. House07 tem 64x64 tiles; a resolução de 1/16 tile do World
-resultaria em 1024x1024 células para o lote todo, acima do limite padrão e com
-custo relevante de memória. O limite atual de 262144 células no RouteGrid usa
-ao menos 16 MiB de arrays fixos em Linux64, antes de frontier/path; não ampliar
-sem orçamento explícito. Uma diagonal segment16 no piso1, x31/y30, deve resultar
-em `unsupported_geometry` até o rasterizador diagonal existir. O opcode15 da
+resultaria em 1024x1024 células para o lote todo, acima do limite padrão. O
+checkpoint antigo usava 16 bytes/célula em Linux64: 4 MiB no limite 262144 e
+16 MiB no lote inteiro. As alterações locais atuais reduzem os arrays fixos a
+9 bytes/célula (2,25 MiB no limite e 9 MiB no lote inteiro), mais até 2 MiB de
+frontier e memória do caminho no limite padrão. São contas de buffers máximos,
+não RSS medido. Uma diagonal segment16 no piso1, x31/y30, deve resultar em
+`unsupported_geometry` até o rasterizador diagonal existir. O atalho `start ==
+goal` agora exige célula livre dentro da malha; o Simitone valida disponibilidade
+do slot antes de entrar em `TURN_ONLY`, mas essa condição ainda não é fornecida
+por um adaptador do lote no Main host. O opcode15 da
 BHAV4099 só aparece após RouteEntryFlags fora de 1/4/16/64 ou Snap46 false;
 payload do BHAV é idêntico entre The Sims original e Legacy, mas a semântica
 desse opcode no executável original permanece desconhecida. Na referência
