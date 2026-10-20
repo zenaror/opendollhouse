@@ -6,6 +6,36 @@ fornecidos pelo usuário, sem dependência do executável original ou checagem d
 CD. Preservar os milestones de leitores, VM, cena/interação, tempo e save; os
 resultados Linux não comprovam compatibilidade dos ports.
 
+## Incremento atual — manager HIT por `TrackID`
+
+O trabalho posterior ao checkpoint de áudio adicionou `HitTrackManager` como
+orquestrador sintético de controllers registrados explicitamente. Um controller
+é criado na fronteira de registro, nunca por Play; Play resolve evento→Track→
+entrada global, aplica overrides, gates e contribuições; refresh/remove aplica
+agregados ou fade sem apagar o controller. Recusas de lookup/registro antes de
+efeitos são recuperáveis. O ajuste de `service+0x114` permanece apenas em
+refresh/remove; o Play inicial usa o agregado bruto.
+
+Cobertura final: receipt
+`reports/hit-track-manager-20261020/validation.json` SHA256
+`4a5bff2329e0fb5ac706c648e437719c580b023f161292c5502b54eeff04ec92`.
+Debug e ASan/UBSan executaram o CTest do manager, cada um com 38/38 casos e
+98 checks, sem falhas ou skips. Cinco CTests companheiros por gate foram
+reutilizados explicitamente, sem rerun; os logs/receipts pré-fix continuam
+preservados. Revisão independente aprovou o recorte.
+
+Limites: os providers são sintéticos; a unidade não liga o manager a World,
+gerações, scheduler/Clock, áudio físico, DSP/streaming ou runtime jogável. O
+contrato e a matriz estão em
+[validação do manager HIT](hit-track-manager-validation.md). Próximo caminho
+para Linux jogável: criar um host `odh-game` com diretório de dados configurável
+e sessão de lote que possua World/VM, ticks explícitos, janela/entrada e
+renderização. A triagem Simitone localizou o fluxo TS1 de seleção de casa e
+inicialização em `TS1GameScreen.cs`; ele serve como referência de lifecycle,
+não como prova de comportamento original nem licença para importar caminhos
+herdados de FreeSO/TSO. Depois do app que carrega e mostra lote, fechar
+interação sentar/levantar, tempo/necessidades e persistência ODH.
+
 ## Checkpoint atual — `afc836a` (2026-10-20)
 
 O commit publicado implementa a ordem externa do NoteOn global: getter efetivo

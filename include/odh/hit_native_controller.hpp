@@ -192,6 +192,17 @@ public:
     // resumes before consulting ID55. Inactive or active ID55!=0 restarts.
     void retrigger(const HitArguments& raw_args, std::int32_t spatial_volume,
                    std::int32_t spatial_pan, std::uint32_t clock);
+    // Type1 caller boundary: the initializer's external group gate may return
+    // early, but the caller still writes spatial controls and activates. This
+    // also accepts a prepared controller that has never been activated. The
+    // bool is an explicitly resolved gate, not an inferred HOT/group policy.
+    void dispatch_type1(const HitArguments& raw_args, std::int32_t spatial_volume,
+                        std::int32_t spatial_pan, std::uint32_t clock,
+                        bool initializer_enabled);
+    // Source-table effects. Neither call changes the contribution table;
+    // request_fade_stop uses the same gradual-stop path as native +0x34.
+    void set_spatial_controls(std::int32_t volume, std::int32_t pan);
+    void request_fade_stop();
     void stop(); // Deactivates binding but retains controller and TrackID state.
 
     const NativeHitState& state() const noexcept { return state_; }
@@ -244,6 +255,8 @@ private:
     void update_args_clear(const HitArguments&);
     void write_spatial(std::int32_t, std::int32_t);
     void restart(const HitArguments&, std::int32_t, std::int32_t, std::uint32_t);
+    void dispatch_type1_impl(const HitArguments&, std::int32_t, std::int32_t,
+                             std::uint32_t, bool);
 };
 
 } // namespace odh

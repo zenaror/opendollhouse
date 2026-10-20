@@ -537,6 +537,17 @@ void NativeHitController::retrigger(const HitArguments& args, std::int32_t volum
         throw FormatError("native HIT retrigger requires prior activation");
     }
     try {
+        dispatch_type1_impl(args, volume, pan, clock, true);
+        leave();
+    } catch (...) { state_.faulted = true; leave(); throw; }
+}
+void NativeHitController::dispatch_type1_impl(const HitArguments& args,
+        std::int32_t volume, std::int32_t pan, std::uint32_t clock,
+        bool initializer_enabled) {
+    if (!initializer_enabled) {
+        write_spatial(volume, pan);
+        resume_impl(clock);
+    } else {
         require(read(53) == 0, "native HIT shared provider unsupported");
         if (state_.active && state_.paused) {
             update_args_clear(args);
@@ -548,8 +559,31 @@ void NativeHitController::retrigger(const HitArguments& args, std::int32_t volum
             write_spatial(volume, pan);
             resume_impl(clock);
         } else {
+            ever_activated_ = true;
             restart(args, volume, pan, clock);
         }
+    }
+}
+void NativeHitController::dispatch_type1(const HitArguments& args,
+        std::int32_t volume, std::int32_t pan, std::uint32_t clock,
+        bool initializer_enabled) {
+    enter();
+    try {
+        dispatch_type1_impl(args, volume, pan, clock, initializer_enabled);
+        leave();
+    } catch (...) { state_.faulted = true; leave(); throw; }
+}
+void NativeHitController::set_spatial_controls(std::int32_t volume, std::int32_t pan) {
+    enter();
+    try {
+        write_spatial(volume, pan);
+        leave();
+    } catch (...) { state_.faulted = true; leave(); throw; }
+}
+void NativeHitController::request_fade_stop() {
+    enter();
+    try {
+        request_stop();
         leave();
     } catch (...) { state_.faulted = true; leave(); throw; }
 }
