@@ -133,3 +133,26 @@ vez de iniciar cada ação com start. As dependências alcançadas pelo Main rea
 (Sleep, RNG, scopes, MiscSTR156 e resources do avatar) ainda precisam de gates.
 O idle em pé, o lote mínimo funcional e a fidelidade visual continuam não
 validados. Não há evidência de consoles ou comparação com execução original.
+# Avaliação isolada de TestFunction
+
+Após a descoberta estática do TTAB/TTAs do objeto selecionado, `tools/saved_interactions.hpp`
+avalia os TestFunctions privados do mesmo recurso numa VM isolada. A VM recebe o
+`World` atual através de um callback de leitura; não recebe callback de escrita
+nem primitivas de serviço. Rotinas de outros owners, primitivas não tratadas,
+falhas de leitura e limites de execução resultam em `unsupported`, nunca em
+elegibilidade. O probe usa até 32 linhas por seleção, 128 instruções por teste e
+4.096 instruções no total; o argumento inicial é zero para a chamada manual.
+
+O teste 4098 da cadeira `DiningChairs.iff` foi executado pelo helper sobre um
+mundo sintético mínimo: cadeira vazia retornou elegível em 3 instruções; cadeira
+com o chamador no slot 0 também retornou elegível. Testes sintéticos verificam
+retorno falso, primitiva sem handler e orçamento zero. O harness `odh-bhav`
+separadamente confirma as ramificações do mesmo TestFunction com estados
+construídos. Estas são evidências da VM ODH e de um cenário construído, não uma
+prova de comportamento do executável original.
+
+Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
+essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
+Isso ainda não exibe um menu nem enfileira a ação. O próximo passo é selecionar
+apenas linhas `eligible`, carregar os owners exatos da ação e enfileirar na Main
+permanente, preservando a identidade/generation do avatar e objeto.

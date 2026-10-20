@@ -601,6 +601,7 @@ int main(int argc,char** argv) {
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
     std::optional<SavedObjectInteractions> render_interactions;
+    std::vector<SavedTestFunctionResult> render_test_results;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
@@ -716,10 +717,22 @@ int main(int argc,char** argv) {
             if(input.pause)window_paused=!window_paused;
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
-                render_interactions.reset();
+                render_interactions.reset();render_test_results.clear();
                 if(render_selection&&definition_index){
                     const auto* candidate=definition_index->unique(render_selection->guid);
-                    if(candidate)render_interactions=saved_object_interactions(*candidate);
+                    if(candidate){
+                        render_interactions=saved_object_interactions(*candidate);
+                        if(render_interactions->table&&render_interactions->table->status==odh::TtabStatus::decoded){
+                            const auto& rows=render_interactions->table->interactions;
+                            std::vector<std::uint16_t> tests;tests.reserve(std::min<std::size_t>(rows.size(),32));
+                            for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
+                            render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
+                                render_selection->id,tests,4096,128);
+                            for(std::size_t n=render_test_results.size();n<rows.size();++n)
+                                render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
+                                    "interaction row exceeds bounded click-time probe profile"});
+                        }
+                    }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 std::string title="OpenDollhouse Main preview: ";
@@ -1094,10 +1107,18 @@ int main(int argc,char** argv) {
             std::cout<<",\"interactions\":[";
             if(discovery.table)for(std::size_t n=0;n<discovery.table->interactions.size();++n){
                 if(n)std::cout<<',';const auto& row=discovery.table->interactions[n];
+                const auto* test=n<render_test_results.size()?&render_test_results[n]:nullptr;
                 std::cout<<"{\"action\":"<<row.action<<",\"test\":"<<row.test<<",\"flags\":"<<row.flags
                     <<",\"label_index\":"<<row.label_index<<",\"label\":";
                 if(n<discovery.row_labels.size()&&discovery.row_labels[n])std::cout<<json_bytes(*discovery.row_labels[n]);
                 else std::cout<<"null";
+                std::cout<<",\"eligibility_evidence\":\"isolated_read_only_ODH_VM\",\"eligibility\":";
+                if(!test)std::cout<<"\"unsupported\",\"test_steps\":0,\"test_diagnostic\":\"TestFunction not evaluated\"";
+                else {
+                    std::cout<<json_bytes(test->state==SavedTestFunctionResult::State::eligible?"eligible":
+                        test->state==SavedTestFunctionResult::State::ineligible?"ineligible":"unsupported")
+                        <<",\"test_steps\":"<<test->steps<<",\"test_diagnostic\":"<<json_bytes(test->diagnostic);
+                }
                 std::cout<<'}';
             }
             std::cout<<"]}";
