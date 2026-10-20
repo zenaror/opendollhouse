@@ -1,15 +1,17 @@
 #include "saved_wall_renderer.hpp"
+#include "architecture_material_resources.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <tuple>
+#include <set>
 
 namespace {
 using FaceKey=std::tuple<std::uint8_t,std::uint32_t,std::uint32_t,std::uint8_t>;
 using AssetKey=std::pair<std::string,std::string>;
-using FrameKey=std::tuple<std::string,std::string,std::uint16_t,std::uint32_t>;
+using FrameKey=std::tuple<bool,std::string,std::string,std::uint16_t,std::uint32_t>;
 constexpr std::uint64_t pixel_budget=1048576;
 struct Source {
     std::ifstream stream;
@@ -21,20 +23,7 @@ struct Source {
             entries=odh::far1_index(odh::View(stream,std::filesystem::file_size(path)),limits);}
     }
 };
-struct Asset {
-    std::vector<odh::Chunk> chunks;
-    const odh::Chunk* find(const std::string& type,std::uint16_t id)const {
-        const odh::Chunk* result=nullptr;
-        for(const auto& c:chunks)if(c.type==type&&c.id==id){
-            if(result)throw odh::FormatError("ambiguous saved wall resource chunk");
-            result=&c;}
-        return result;
-    }
-    const odh::View& require(const std::string& type,std::uint16_t id)const {
-        const auto* c=find(type,id);if(!c)throw odh::FormatError("missing saved wall "+type+" chunk");
-        return c->payload;
-    }
-};
+using Asset=ArchitectureMaterialAsset;
 std::int32_t integer(double value) {
     const auto v=std::trunc(value);
     if(!std::isfinite(v)||v<INT32_MIN||v>INT32_MAX)throw odh::FormatError("saved wall placement overflow");
@@ -143,6 +132,9 @@ std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture& a,
 struct SavedWallRenderer::Impl {
     const odh::DefinitionIndex& index;
     std::string global;
+    ArchitectureMaterialResources catalog;
+    std::map<std::uint16_t,Asset> external_assets;
+    std::set<std::string> source_paths;
     std::map<std::string,std::unique_ptr<Source>> sources;
     std::map<AssetKey,Asset> assets;
     struct Frame {odh::SprFrame image;std::uint16_t palette;bool palette_missing;};
@@ -150,17 +142,19 @@ struct SavedWallRenderer::Impl {
     std::map<std::pair<std::uint8_t,std::uint8_t>,odh::WallDepth> depths;
     std::map<std::uint8_t,odh::WallDepth> junction_depths;
     std::uint64_t chunks=0,pixels=0,bytes=0,provenance=0;
-    Impl(const std::string& path,const odh::DefinitionIndex& definitions):index(definitions),global(path){
+    Impl(const std::string& path,const odh::DefinitionIndex& definitions,const odh::ArchitectureResourceCatalog& resources)
+        :index(definitions),global(path),catalog(resources){
         asset(path,"");
     }
     Asset& asset(const std::string& path,const std::string& name){
         const AssetKey key{path,name};auto found=assets.find(key);if(found!=assets.end())return found->second;
-        if(path.size()>4096||assets.size()>=256||path.size()+name.size()>256*1024-provenance)
+        if(path.size()>4096||assets.size()+external_assets.size()>=256||path.size()+name.size()>256*1024-provenance)
             throw odh::FormatError("saved wall asset/provenance budget exceeded");
         auto source=sources.find(path);const bool direct=name.empty();
         if(source==sources.end()){
-            if(sources.size()>=16)throw odh::FormatError("saved wall source budget exceeded");
+            if(!source_paths.count(path)&&source_paths.size()>=16)throw odh::FormatError("saved wall source budget exceeded");
             source=sources.emplace(path,std::make_unique<Source>(path,direct)).first;
+            source_paths.insert(path);
         }
         if(source->second->direct!=direct)throw odh::FormatError("saved wall source type conflict");
         auto& s=*source->second;odh::View view(s.stream,std::filesystem::file_size(path));
@@ -173,8 +167,8 @@ struct SavedWallRenderer::Impl {
         const auto count=value.chunks.size();auto inserted=assets.emplace(key,std::move(value));
         chunks+=count;provenance+=path.size()+name.size();return inserted.first->second;
     }
-    const Frame& frame(const std::string& path,const std::string& name,Asset& a,std::uint16_t id,std::uint32_t number){
-        const FrameKey key{path,name,id,number};auto found=frames.find(key);if(found!=frames.end())return found->second;
+    const Frame& frame(const std::string& path,const std::string& name,Asset& a,std::uint16_t id,std::uint32_t number,bool external=false){
+        const FrameKey key{external,path,name,id,number};auto found=frames.find(key);if(found!=frames.end())return found->second;
         if(frames.size()>=4096)throw odh::FormatError("saved wall frame cache budget exceeded");
         const auto& raw=a.require("SPR#",id);const auto header=odh::read_spr_header(raw);
         const auto* palette_chunk=a.find("PALT",header.palette_id);
@@ -189,7 +183,8 @@ struct SavedWallRenderer::Impl {
         pixels+=count;bytes+=image_bytes;return inserted.first->second;
     }
 };
-SavedWallRenderer::SavedWallRenderer(const std::string& path,const odh::DefinitionIndex& index):impl_(std::make_unique<Impl>(path,index)){}
+SavedWallRenderer::SavedWallRenderer(const std::string& path,const odh::DefinitionIndex& index,
+    const odh::ArchitectureResourceCatalog& catalog):impl_(std::make_unique<Impl>(path,index,catalog)){}
 SavedWallRenderer::~SavedWallRenderer()=default;
 SavedWallRenderer::SavedWallRenderer(SavedWallRenderer&&) noexcept=default;
 SavedWallRenderer& SavedWallRenderer::operator=(SavedWallRenderer&&) noexcept=default;
@@ -253,9 +248,34 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
     }
     for(const auto& f:faces){
         if(f.orientation<2&&f.down&&f.door){result.omitted_doors.push_back(f);continue;}
-        if(f.pattern>=256)throw odh::FormatError("saved wall pattern requires unresolved external mapping");
-        const auto pid=static_cast<std::uint16_t>(1536+f.pattern+(camera.zoom-1)*256);
-        const auto& pattern=impl_->frame(impl_->global,"",globals,pid,f.orientation);
+        std::string pattern_source=impl_->global,pattern_asset,pattern_key;
+        Asset* paint=&globals;
+        static constexpr std::uint16_t dynamic_ids[]={1,1793,2049};
+        if(f.pattern>65533)throw odh::FormatError("saved wall pattern outside profile");
+        if(f.pattern>=256){
+            const auto& record=impl_->catalog.record(odh::ArchitectureResourceFamily::wall,f.pattern);
+            pattern_source=impl_->catalog.path(record);pattern_asset=record.source.entry_name;
+            // A separate cache namespace avoids collisions with masks and with
+            // duplicate FAR names whose catalog winner has an exact index.
+            pattern_key="architecture:"+std::to_string(record.source.entry_index)+":"+pattern_asset;
+            auto found=impl_->external_assets.find(f.pattern);
+            if(found==impl_->external_assets.end()){
+                if(impl_->assets.size()+impl_->external_assets.size()>=256||
+                   impl_->external_assets.size()>=16||
+                   pattern_source.size()+pattern_asset.size()>256*1024-impl_->provenance)
+                    throw odh::FormatError("saved wall external asset/provenance budget exceeded");
+                if(!impl_->source_paths.count(pattern_source)&&impl_->source_paths.size()>=16)
+                    throw odh::FormatError("saved wall source budget exceeded");
+                auto value=impl_->catalog.open(record,static_cast<std::uint32_t>(std::min<std::uint64_t>(4096,65536-impl_->chunks)));
+                impl_->source_paths.insert(pattern_source);
+                impl_->chunks+=value.chunks.size();impl_->provenance+=pattern_source.size()+pattern_asset.size();
+                found=impl_->external_assets.emplace(f.pattern,std::move(value)).first;
+            }
+            paint=&found->second;
+        }
+        const auto pid=f.pattern>=256?dynamic_ids[camera.zoom-1]:
+            static_cast<std::uint16_t>(1536+f.pattern+(camera.zoom-1)*256);
+        const auto& pattern=impl_->frame(pattern_source,pattern_key,*paint,pid,f.orientation,f.pattern>=256);
         std::string mask_source=impl_->global,mask_asset;
         Asset* resource=&globals;std::uint16_t mid=0;bool down_up_fallback=false;
         if(f.style.resource_guid){
@@ -304,16 +324,16 @@ SavedWallRenderResult SavedWallRenderer::render(const odh::SavedArchitecture& ar
         const auto back_depth=odh::project_world(camera,{3*tile[0]+b[0],3*tile[2],3*tile[1]+b[2]})[2];
         constexpr float front_delta=-3.6742346141747673f;
         layers.push_back({&pattern.image,mask?&mask->image:nullptr,&z->second,x,y,rect.w,rect.h,back_depth,front_delta});
-        if(impl_->global.size()+mask_source.size()+mask_asset.size()>256*1024-names)
+        if(pattern_source.size()+pattern_asset.size()+mask_source.size()+mask_asset.size()>256*1024-names)
             throw odh::FormatError("saved wall draw provenance budget exceeded");
-        names+=impl_->global.size()+mask_source.size()+mask_asset.size();
-        result.draws.push_back({f,impl_->global,mask_source,mask_asset,pid,pattern.palette,mid,
+        names+=pattern_source.size()+pattern_asset.size()+mask_source.size()+mask_asset.size();
+        result.draws.push_back({f,pattern_source,mask_source,mask_asset,pattern_asset,pid,pattern.palette,mid,
             mask?mask->palette:std::uint16_t{0},!mask,pattern.palette_missing,
             mask&&mask->palette_missing,x,y,rect.w,rect.h,back_depth,front_delta,down_up_fallback});
         if(!mask)++result.mask_fallbacks;
     }
     result.composite=odh::composite_wall_sprites(base,layers);
-    result.cached_assets=impl_->assets.size();result.cached_frames=impl_->frames.size();
+    result.cached_assets=impl_->assets.size()+impl_->external_assets.size();result.cached_frames=impl_->frames.size();
     result.cached_pixels=impl_->pixels;result.cached_frame_bytes=impl_->bytes;
     return result;
 }

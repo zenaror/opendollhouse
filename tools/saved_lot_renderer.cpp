@@ -4,6 +4,32 @@
 #include <algorithm>
 
 namespace {
+const odh::ArchitectureResourceCatalog& material_catalog(const std::optional<SavedLotMaterialOptions>& options) {
+    static const odh::ArchitectureResourceCatalog empty;
+    return options?options->catalog:empty;
+}
+template<class T>std::optional<std::vector<T>> crop_grid(const std::optional<std::vector<T>>& source,
+    std::uint32_t width,std::uint32_t height,std::uint32_t size) {
+    if(!source)return {};
+    if(source->size()!=std::size_t(width)*height)throw odh::FormatError("prepared render terrain extent mismatch");
+    std::vector<T> result;result.reserve(std::size_t(size)*size);
+    for(std::uint32_t y=0;y<size;++y)for(std::uint32_t x=0;x<size;++x)
+        result.push_back((*source)[std::size_t(y)*width+x]);
+    return result;
+}
+odh::SavedArchitecture render_snapshot(const odh::SavedArchitecture& raw,const odh::PreparedArchitecture& prepared) {
+    odh::SavedArchitecture result;result.width=prepared.width;result.height=prepared.height;result.advanced=raw.advanced;
+    for(std::size_t level=0;level<2;++level){
+        result.levels[level].floors=prepared.levels[level].floors;
+        result.levels[level].walls=prepared.levels[level].walls;
+    }
+    result.altitude=crop_grid(raw.altitude,raw.width,raw.height,prepared.width);
+    result.grass=crop_grid(raw.grass,raw.width,raw.height,prepared.width);
+    result.target_grass=crop_grid(raw.target_grass,raw.width,raw.height,prepared.width);
+    result.pools=crop_grid(raw.pools,raw.width,raw.height,prepared.width);
+    result.water=crop_grid(raw.water,raw.width,raw.height,prepared.width);
+    return result;
+}
 std::map<std::int16_t,std::array<float,2>> terrain_group_centers(const odh::SavedWorld& saved) {
     if(saved.records.size()>4096||saved.multitile_groups.size()>4096)
         throw odh::FormatError("live saved terrain group budget exceeded");
@@ -74,23 +100,39 @@ odh::GraphicsEntity SavedGraphicsResources::entity(const odh::World& world,std::
 
 SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
     const odh::SavedWorld& saved,const odh::DefinitionIndex& definitions,
-    const std::string& floors,const std::optional<std::string>& walls,SavedLotView view)
+    const std::string& floors,const std::optional<std::string>& walls,SavedLotView view,
+    const std::optional<SavedLotMaterialOptions>& materials)
     :architecture_(std::move(architecture)),saved_(saved),definitions_(definitions),graphics_(definitions),
-     view_(view),floors_(floors),objects_(definitions) {
+     view_(view),floors_(floors,material_catalog(materials)),objects_(definitions) {
     if(!saved_.world||view_.level<1||view_.level>2||
        (view_.terrain_theme&&unsigned(*view_.terrain_theme)>=8)||
        (view_.walls_down&&!walls))
         throw odh::FormatError("live saved lot World/view outside profile");
-    for(const auto& map:architecture_.maps)
-        if(!map.second.entries.empty()&&(map.first=="FLRm"||(walls&&map.first=="WALm")))
-            throw odh::FormatError("live saved lot custom materials require a resource resolver");
+    const auto* floor_map=selected_architecture_map(architecture_,"FLRm");
+    const auto* wall_map=selected_architecture_map(architecture_,"WALm");
+    if(materials){
+        const odh::ArchitectureMap empty;
+        const auto& catalog=materials->catalog;
+        aliases_=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,wall_map?*wall_map:empty,
+            catalog.floors(),catalog.walls(),materials->alias_limits);
+        // A missing name must not silently retain a byte and render a global
+        // material of the same number. Diagnostics remain available on success.
+        if(!aliases_->floor_map_complete()||(walls&&!aliases_->wall_map_complete()))
+            throw odh::FormatError("saved lot external material alias unresolved");
+        prepared_=odh::prepare_saved_architecture(architecture_.architecture,aliases_->aliases,
+            materials->preparation,materials->preparation_limits);
+        // Remap misses without declarations can represent global road/base
+        // patterns; they are preserved and exposed in preparation diagnostics.
+        prepared_render_=render_snapshot(architecture_.architecture,*prepared_);
+    }else if((floor_map&&!floor_map->entries.empty())||(walls&&wall_map&&!wall_map->entries.empty()))
+        throw odh::FormatError("live saved lot custom materials require a resource resolver");
     group_centers_=terrain_group_centers(saved_);
     for(const auto& record:saved_.records){
         const auto id=static_cast<std::int16_t>(record.saved.object_id);
         const auto* entity=saved_.world->find(id);
         if(entity&&entity->kind==odh::EntityKind::object)object_generations_.emplace(id,entity->generation);
     }
-    if(walls)walls_=std::make_unique<SavedWallRenderer>(*walls,definitions_);
+    if(walls)walls_=std::make_unique<SavedWallRenderer>(*walls,definitions_,material_catalog(materials));
 }
 
 odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
@@ -103,7 +145,7 @@ odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
     if(entity->kind==odh::EntityKind::object){
         const auto center=group_centers_.find(entity->id);if(center!=group_centers_.end())xy=center->second;
     }
-    graphics.tile_position[2]+=odh::terrain_interp_altitude(architecture_.architecture,xy[0],xy[1]);
+    graphics.tile_position[2]+=odh::terrain_interp_altitude(render_architecture(),xy[0],xy[1]);
     return graphics;
 }
 
@@ -112,22 +154,22 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     auto image=odh::rasterize(camera.width,camera.height,{},{});
     SavedLotFrame result;
     if(view_.terrain_theme){
-        auto surface=odh::terrain_surface(architecture_.architecture,camera,*view_.terrain_theme);
+        auto surface=odh::terrain_surface(render_architecture(),camera,*view_.terrain_theme);
         result.terrain_triangles=surface.triangles.size();
         result.terrain_reserved_bytes=surface.triangles.capacity()*sizeof(odh::RasterTriangle);
         odh::RasterOptions options;options.lighting=true;options.directional_up_light=true;options.vertex_colors=true;
         const odh::BitmapImage white{1,1,32,true,{{255,255,255,255}},0};
         image=odh::rasterize(camera.width,camera.height,surface.triangles,{white},options);
     }
-    auto floor=floors_.render(architecture_.architecture,camera,true,0,view_.level);
+    auto floor=floors_.render(render_architecture(),camera,true,0,view_.level);
     result.floor_draws=floor.draws.size();result.floor_triangles=floor.triangles;
     result.floor_texture_bytes=floor.texture_bytes;
     image=odh::merge_raster(image,floor.image);
     image=odh::merge_raster(image,avatar_frame);
     if(walls_){
         // Derive from current World banks and positions on every capture.
-        const auto appearance=saved_wall_appearance(saved_,definitions_,architecture_.architecture,true);
-        auto wall=walls_->render(architecture_.architecture,appearance.appearance,camera,image,
+        const auto appearance=saved_wall_appearance(saved_,definitions_,render_architecture(),true);
+        auto wall=walls_->render(render_architecture(),appearance.appearance,camera,image,
                                 true,0,odh::WallView{view_.level,view_.walls_down});
         result.wall_layers=wall.draws.size();result.wall_junctions=wall.junctions.size();
         result.wall_cached_frame_bytes=wall.cached_frame_bytes;
@@ -163,7 +205,7 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         auto position=graphics.tile_position;
         std::array<float,2> xy{static_cast<float>(anchor->position->x)/16,static_cast<float>(anchor->position->y)/16};
         const auto center=group_centers_.find(anchor->id);if(center!=group_centers_.end())xy=center->second;
-        position[2]+=odh::terrain_interp_altitude(architecture_.architecture,xy[0],xy[1]);
+        position[2]+=odh::terrain_interp_altitude(render_architecture(),xy[0],xy[1]);
         visuals.push_back({id,raw.saved.guid,*graphic,graphics.direction,position,raw.common.dynamic_sprite_flags});
     }
     // Walls have binary alpha and establish the opaque base before objects;

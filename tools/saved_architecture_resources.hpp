@@ -6,6 +6,19 @@ struct SavedArchitectureResource {
     odh::SavedArchitecture architecture;
     std::vector<std::pair<std::string,odh::ArchitectureMap>> maps;
 };
+// Simitone VMTS1ActivatorNew: Get<T>(1)?.Entries ?? Get<T>(0)?.Entries.
+// Existence wins, including empty ID1. Other IDs are retained but not selected.
+// Unlike IffFile.Get's first-match behavior, ambiguous selected IDs fail strictly.
+inline const odh::ArchitectureMap* selected_architecture_map(
+    const SavedArchitectureResource& resource,const std::string& type) {
+    const odh::ArchitectureMap* preferred=nullptr,*fallback=nullptr;
+    for(const auto& map:resource.maps)if(map.first==type){
+        auto** selected=map.second.chunk_id==1?&preferred:map.second.chunk_id==0?&fallback:nullptr;
+        if(selected){if(*selected)throw odh::FormatError("ambiguous selected architecture map ID");
+            *selected=&map.second;}
+    }
+    return preferred?preferred:fallback;
+}
 inline SavedArchitectureResource saved_architecture_resource(const std::string& path) {
     std::vector<odh::SavedArchitectureArray> arrays;SavedArchitectureResource result;
     std::set<std::pair<std::string,std::uint16_t>> ids;std::uint64_t encoded=0,decoded=0;

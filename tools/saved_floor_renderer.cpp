@@ -1,43 +1,60 @@
 #include "saved_floor_renderer.hpp"
+#include "architecture_material_resources.hpp"
 #include "odh/terrain.hpp"
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <string_view>
-namespace {
-const odh::View& unique(const std::vector<odh::Chunk>& chunks,std::string_view type,std::uint16_t id){
-    const odh::Chunk* found=nullptr;
-    for(const auto& c:chunks)if(c.type==type&&c.id==id){if(found)throw odh::FormatError("ambiguous floor resource chunk");found=&c;}
-    if(!found)throw odh::FormatError("floor resource chunk missing for ID "+std::to_string(id));
-    return found->payload;
-}
-}
+#include <set>
+#include <algorithm>
 struct SavedFloorRenderer::Impl {
-    std::ifstream stream;std::vector<odh::Chunk> chunks;
+    std::ifstream stream;ArchitectureMaterialAsset globals;
+    ArchitectureMaterialResources catalog;std::string global;
+    std::map<std::uint16_t,ArchitectureMaterialAsset> assets;
+    std::uint64_t chunks=0,names=0;
+    std::set<std::string> source_paths;
     struct Material {odh::BitmapImage texture;SavedFloorMaterial source;};
     std::map<std::pair<std::uint16_t,std::uint8_t>,Material> materials;std::uint64_t pixels=0;
-    explicit Impl(const std::string& path):stream(path,std::ios::binary){
+    Impl(const std::string& path,const odh::ArchitectureResourceCatalog& resources)
+        :stream(path,std::ios::binary),catalog(resources),global(path){
         if(path.size()>4096||!stream)throw odh::FormatError("floor resource path/open failure");
         odh::Limits limits;limits.iff_chunks=4096;
-        odh::iff_chunks(odh::View(stream,std::filesystem::file_size(path)),[&](const auto& c){chunks.push_back(c);},limits);
+        odh::iff_chunks(odh::View(stream,std::filesystem::file_size(path)),[&](const auto& c){globals.chunks.push_back(c);},limits);
+        chunks=globals.chunks.size();source_paths.insert(path);
     }
     const Material& material(std::uint16_t pattern,std::uint8_t zoom){
         const auto key=std::make_pair(pattern,zoom);auto found=materials.find(key);if(found!=materials.end())return found->second;
         if(materials.size()>=48)throw odh::FormatError("floor cache material budget exceeded");
-        const auto id=std::uint32_t{pattern}+std::uint32_t{zoom-1U}*256U;
-        if(id>65535||pattern==0||pattern>=256)throw odh::FormatError("floor global pattern outside profile");
-        const auto& raw=unique(chunks,"SPR2",static_cast<std::uint16_t>(id));
+        if(pattern==0||pattern>65533)throw odh::FormatError("floor pattern outside profile");
+        auto* asset=&globals;std::string path=global,name;
+        if(pattern>=256){
+            const auto& record=catalog.record(odh::ArchitectureResourceFamily::floor,pattern);
+            path=catalog.path(record);name=record.source.entry_name;
+            auto external=assets.find(pattern);
+            if(external==assets.end()){
+                if(assets.size()>=16||path.size()+name.size()>256*1024-names)
+                    throw odh::FormatError("floor external asset/provenance budget exceeded");
+                if(!source_paths.count(path)&&source_paths.size()>=16)
+                    throw odh::FormatError("floor source budget exceeded");
+                auto value=catalog.open(record,static_cast<std::uint32_t>(std::min<std::uint64_t>(4096,65536-chunks)));
+                source_paths.insert(path);chunks+=value.chunks.size();names+=path.size()+name.size();
+                external=assets.emplace(pattern,std::move(value)).first;
+            }
+            asset=&external->second;
+        }
+        const auto id=static_cast<std::uint16_t>((pattern>=256?1:pattern)+(zoom-1U)*256U);
+        const auto& raw=asset->require("SPR2",id);
         if(raw.le32(0)!=1000)throw odh::FormatError("floor SPR2 version unsupported");
-        const auto palette_id=static_cast<std::uint16_t>(raw.le32(8));auto palette=odh::read_palt(unique(chunks,"PALT",palette_id));
+        const auto palette_id=static_cast<std::uint16_t>(raw.le32(8));auto palette=odh::read_palt(asset->require("PALT",palette_id));
         odh::SpriteLimits bounds;bounds.pixels=static_cast<std::uint32_t>(1048576-pixels);
         auto frame=odh::read_spr2_frame(raw,0,palette,bounds);odh::BitmapLimits texture_limits;texture_limits.pixels=bounds.pixels;
         auto texture=odh::floor_texture(frame,texture_limits);const auto count=texture.pixels.size();
-        auto inserted=materials.emplace(key,Material{std::move(texture),{pattern,static_cast<std::uint16_t>(id),palette_id,0,0}});
+        auto inserted=materials.emplace(key,Material{std::move(texture),{pattern,static_cast<std::uint16_t>(id),palette_id,0,0,path,name}});
         inserted.first->second.source.width=inserted.first->second.texture.width;inserted.first->second.source.height=inserted.first->second.texture.height;
         pixels+=count;return inserted.first->second;
     }
 };
-SavedFloorRenderer::SavedFloorRenderer(const std::string& path):impl_(std::make_unique<Impl>(path)){}
+SavedFloorRenderer::SavedFloorRenderer(const std::string& path,const odh::ArchitectureResourceCatalog& catalog)
+    :impl_(std::make_unique<Impl>(path,catalog)){}
 SavedFloorRenderer::~SavedFloorRenderer()=default;
 SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,const odh::WorldProjection& camera,bool terrain,std::int32_t base_alt,std::uint8_t max_level){
     if(max_level<1||max_level>2)throw odh::FormatError("floor selected level outside profile");

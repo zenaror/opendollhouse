@@ -27,7 +27,9 @@ entrada, nome original, offset e tamanho. `catalog.sources[source_index]`
 identifica o caminho e se a origem é loose ou FAR1. Assim, os adapters podem
 reabrir o recurso necessário sem manter bytes comerciais na memória do
 catálogo. Para casar com FLRm/WALm, `floors()` e `walls()` projetam os recursos
-para `ArchitectureCatalogResource`, aceito pelo resolver existente.
+para `ArchitectureCatalogResource`, aceito pelo resolver existente. A
+[integração host](external-architecture-renderer-validation.md) aplica aliases e
+preparação ao lote e reabre os vencedores nos renderers de piso/parede.
 
 As limites cobrem fontes, caminhos, nomes, entradas de recurso e índice FAR1.
 FAR1 é validado com o parser comum; assinatura, versão, manifestos, limites ou

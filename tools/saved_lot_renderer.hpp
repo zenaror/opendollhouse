@@ -26,6 +26,14 @@ private:
     std::size_t records_=0;
 };
 
+// Explicit opt-in: resolve selected map ID1 (fallback ID0), prepare 64x64 and
+// crop terrain alongside material grids. The constructor copies bounded metadata.
+struct SavedLotMaterialOptions {
+    odh::ArchitectureResourceCatalog catalog;
+    odh::ArchitecturePreparationOptions preparation;
+    odh::ArchitectureAliasResolverLimits alias_limits;
+    odh::ArchitecturePreparationLimits preparation_limits;
+};
 struct SavedLotView {
     std::uint8_t level=1;
     bool walls_down=false;
@@ -62,7 +70,10 @@ class SavedLotRenderer {
 public:
     SavedLotRenderer(SavedArchitectureResource,const odh::SavedWorld&,
         const odh::DefinitionIndex&,const std::string& floors,
-        const std::optional<std::string>& walls,SavedLotView={});
+        const std::optional<std::string>& walls,SavedLotView={},
+        const std::optional<SavedLotMaterialOptions>& materials = {});
+    const std::optional<odh::ResolvedArchitectureAliases>& material_aliases() const{return aliases_;}
+    const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
     odh::GraphicsEntity avatar(std::int16_t id);
     SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,bool record_picks=false);
     // Last presented pixel ownership, revalidated against live generation,
@@ -71,6 +82,12 @@ public:
     const SavedLotView& view() const{return view_;}
 private:
     SavedArchitectureResource architecture_;
+    std::optional<odh::ResolvedArchitectureAliases> aliases_;
+    std::optional<odh::PreparedArchitecture> prepared_;
+    std::optional<odh::SavedArchitecture> prepared_render_;
+    const odh::SavedArchitecture& render_architecture() const {
+        return prepared_render_?*prepared_render_:architecture_.architecture;
+    }
     const odh::SavedWorld& saved_;
     const odh::DefinitionIndex& definitions_;
     SavedGraphicsResources graphics_;

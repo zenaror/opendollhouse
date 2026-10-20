@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/definition_index.hpp"
+#include "odh/architecture_resource_catalog.hpp"
 #include "odh/projection.hpp"
 #include "odh/wall_appearance.hpp"
 #include "odh/wall_sprite.hpp"
@@ -28,6 +29,7 @@ std::vector<SavedWallFace> saved_wall_faces(const odh::SavedArchitecture&,
 struct SavedWallDraw {
     SavedWallFace face;
     std::string pattern_source,mask_source,mask_asset;
+    std::string pattern_asset;
     std::uint16_t pattern_sprite,pattern_palette,mask_sprite=0,mask_palette=0;
     bool mask_fallback=false; // Missing selected SPR# mask: pattern alpha.
     bool pattern_palette_missing=false,mask_palette_missing=false;
@@ -55,7 +57,9 @@ struct SavedWallRenderResult {
     std::uint64_t cached_pixels=0,cached_frame_bytes=0;
 };
 // Explicit walls.iff + immutable DefinitionIndex, which must outlive renderer.
-// Global pattern0..255 only; missing patterns/frames or malformed masks fail.
+// Global pattern0..255 and explicit catalog dynamic paint IDs 256..65533.
+// Dynamic paint SPR# IDs are 1/1793/2049, with independent global/OBJD masks.
+// Missing patterns/frames or malformed masks fail.
 // Missing PALT follows FreeSO's explicit opaque black256 DEFAULT_PALT policy,
 // reported separately for pattern and mask. Empty source frames fail strictly;
 // FreeSO's empty-texture normalization is outside this adapter profile.
@@ -85,11 +89,12 @@ struct SavedWallRenderResult {
 // sites; Down uses the same sprite/depth maps and destination rectangles.
 // Junction and wall layers share all compositor budgets and decoded-frame cache.
 // No partial cutaway, thick-wall extensions, rooms/lighting,
-// resource remapping or claim of original/GPU equivalence. Terrain is optional.
+// claim of original/GPU equivalence. Terrain is optional.
 // Failure preserves inputs but may populate bounded resource cache.
 class SavedWallRenderer {
 public:
-    SavedWallRenderer(const std::string& walls_iff,const odh::DefinitionIndex&);
+    SavedWallRenderer(const std::string& walls_iff,const odh::DefinitionIndex&,
+        const odh::ArchitectureResourceCatalog& catalog = {});
     ~SavedWallRenderer();
     SavedWallRenderer(SavedWallRenderer&&) noexcept;
     SavedWallRenderer& operator=(SavedWallRenderer&&) noexcept;

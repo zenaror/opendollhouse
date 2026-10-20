@@ -36,8 +36,10 @@ limitado; Audio recebe eventos; Platform abstrai I/O, entrada e serviços.
 O preparo de arquitetura salva possui um tipo separado e grids limitados:
 [pisos/paredes preparados](prepared-architecture-validation.md) recebem aliases
 de recursos explícitos, flags térreas, road flip e crop antes da segmentação.
-A descoberta do catálogo, sua precedência e as entidades/portais vivos ainda
-faltam para transformar esses mapas e obstáculos candidatos em runtime de lote.
+O [catálogo explícito](architecture-resource-catalog.md) e a
+[integração de materiais externos no render](external-architecture-renderer-validation.md)
+resolvem arquivos loose/FAR e pintura por zoom. Entidades/portais vivos ainda
+faltam para transformar os obstáculos candidatos em runtime de lote.
 Os mapas FLRm/WALm podem ser ligados a catálogos explicitamente ordenados por
 [resolução de aliases](architecture-alias-validation.md); a descoberta e
 precedência dos próprios assets de instalação seguem externas a essa API.

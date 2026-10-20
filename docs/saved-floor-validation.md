@@ -23,10 +23,10 @@ extents, duplicatas e orçamento são validados antes de criar a saída. A
 interpretação usa row-major; a origem é column-major. Não aplica normalização
 arbitrária de estilos, road flip ou remapeamento de materiais.
 
-O host aceita somente materiais globais de floors.iff: SPR2v1000/frame0,
-ID=pattern+(zoom-1)*256, PALT default low16. FLRm não vazio falha até haver um
-resolvedor de materiais personalizados; WALm fica preservado, sem efeito
-visual. FloorCopy completa a textura por deslocamento circular de meia largura
+O caminho global usa floors.iff: SPR2v1000/frame0,
+ID=pattern+(zoom-1)*256, PALT default low16. A API host também aceita
+[catálogo externo e preparação FLRm/WALm](external-architecture-renderer-validation.md);
+o CLI cru continua exigindo globais. FloorCopy completa a textura por deslocamento circular de meia largura
 e meia altura, com padding transparente à direita em largura ímpar. O resultado
 precisa ser opaco; não modifica SPR2, índices ou Z originais.
 
