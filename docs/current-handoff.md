@@ -6,6 +6,24 @@ fornecidos pelo usuário, sem dependência do executável original ou checagem d
 CD. Preservar os milestones de leitores, VM, cena/interação, tempo e save; os
 resultados Linux não comprovam compatibilidade dos ports.
 
+## Checkpoint atual — `afc836a` (2026-10-20)
+
+O commit publicado implementa a ordem externa do NoteOn global: getter efetivo
+controller38, writer do wrapper `(38,1,0)` quando não zero, NoteOn, getter
+Patch38 vivo e A/B condicionados pelo valor pós-play, mesmo com resultado de
+play falso. Os seis providers ficam explícitos e o perfil local continua
+separado. A matriz tem 34 casos em lote; Debug, ASan/UBSan e sem SDL/X11
+passaram cada um com 6 CTests e 34/34 casos. LSan ficou desabilitado. A revisão
+independente não encontrou problemas no escopo.
+
+A investigação subsequente fechou o writer concreto: ele grava o banco local
+do wrapper em `wrapper+0x8c`, sem chamar o backend ou alterar flags do
+controller. Veja [a evidência do writer global NoteOn](hit-native-noteon-writer-evidence.md)
+e o relatório estático em `reports/hit-native-noteon-providers-20261020/`.
+Providers A/B, semântica global posterior de ID38, adapter físico e primeira
+versão Linux jogável continuam pendentes. Os testes feitos até aqui não
+demonstram áudio físico ou compatibilidade completa.
+
 A OMM é consultada no escopo `OpenDollhouse`. Nos checkpoints, registrar `repository`
 (`opendollhouse`), `branch` e `git_revision` no handoff, com o `expected_sha256`
 vigente. Confirmar por `get_handoff` com `observed_repository` e
@@ -61,7 +79,10 @@ NativeHitPatchRef global e não depende do HOT local. Contrato e limites em
 A [pesquisa do backend comum](hit-native-common-backend-evidence.md) fechou
 classificador físico vs recurso virtual, preload/dirty, perda de pan/frequência,
 NoteOn pre-controller38/post-Patch38 e loop latch. O adapter/callback matrix
-completo ainda falta; não reaplicar controles nem inferir streaming por tamanho FAR.
+externa foi implementada em `afc836a`; writer interno está documentado em
+[hit-native-noteon-writer-evidence.md](hit-native-noteon-writer-evidence.md).
+Providers físicos, DSP e streaming continuam pendentes; não reaplicar controles
+nem inferir streaming por tamanho FAR.
 Fonte final: mixer101/transporte152/catalog46/integração13 checks. Debug e
 ASan/UBSan122cfg/121pass+1skipX11/0fail (15,84/26,78s), LSanoff;
 semSDL/X11 só4selecionados pass. Oracle10.392/0, auditoria20ranges/4.320bytes.
