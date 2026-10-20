@@ -182,8 +182,25 @@ por capacidade. O preview instala um owner por recurso/ação, não por clique.
 O recurso da ação ainda não ganha handlers implícitos. A cadeia observada
 4097→4100→4099 entra em Routing opcode45; o Main host atual ainda não integra
 esse controller nesse caminho, então uma tentativa pode parar como `vm_fault`.
-O Simitone/FreeSO fixado registra opcode15 como `VMBreakPoint`; o código deixa
-“todo: check condition” e retorna GOTO_TRUE. Isso é comportamento daquela
-referência, não confirmação contra o executável ou os recursos do jogo original.
+Leitura somente estrutural de BHAV4099 em `Objects.far` nas instalações The Sims
+e Legacy Collection dá instruções idênticas; o payload SHA256 é
+`c6ab9b5eed558746c2997bd0f29d741ba9907e38062bbcfdb1cd2da86ea815f6`. Em PC2–5
+as comparações usam MyPersonData[37] contra Literals 1, 4, 16 e 64; falha em
+todas chega ao opcode15 em PC6. O PC14 opcode15 só é alcançado quando Snap46
+em PC13 retorna false. A referência Simitone mapeia scope18 como MyPersonData,
+scope7 como Literal e índice37 como `RouteEntryFlags` em
+`refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/Engine/Scopes/VMVariableScope.cs`
+e `Model/VMPersonDataVariable.cs`; nessa referência opcode15 é breakpoint.
+Isso identifica ramos e nomes de campos da referência, mas não executa nem
+estabelece a semântica do opcode15 no executável original. Comando reproduzível
+para a decodificação estrutural:
+
+```sh
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 4099
+```
+
+O PC normal após Route45 ainda requer interpretar corretamente RouteEntryFlags,
+executar Animation44 e avaliar Snap46. Ações adicionais, serviços e retorno
+sentar/levantar continuam em aberto.
 Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
 levantar continuam em aberto.

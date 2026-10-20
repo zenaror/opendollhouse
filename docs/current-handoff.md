@@ -55,10 +55,15 @@ serviço nesse caminho. O controller roteia com Global.iff SLOT100/tipo3/data1,
 mas não existe conversor de arquivos de arquitetura/objetos do lote para a
 malha de clearance. House07 tem 64x64 tiles; a resolução de 1/16 tile do World
 resultaria em 1024x1024 células para o lote todo, acima do limite padrão e com
-custo relevante de memória. Uma malha vazia não é fallback correto. O opcode15
-é registrado como VMBreakPoint no Simitone/FreeSO fixado, cuja condição está
-TODO e o handler retorna GOTO_TRUE; isso é evidência dessa referência, não do
-executável original. O opcode49 é NotifyOutOfIdle.
+custo relevante de memória. O limite atual de 262144 células no RouteGrid usa
+ao menos 16 MiB de arrays fixos em Linux64, antes de frontier/path; não ampliar
+sem orçamento explícito. Uma diagonal segment16 no piso1, x31/y30, deve resultar
+em `unsupported_geometry` até o rasterizador diagonal existir. O opcode15 da
+BHAV4099 só aparece após RouteEntryFlags fora de 1/4/16/64 ou Snap46 false;
+payload do BHAV é idêntico entre The Sims original e Legacy, mas a semântica
+desse opcode no executável original permanece desconhecida. Na referência
+Simitone os ramos usam scope18/MyPersonData e index37/RouteEntryFlags; opcode15
+está mapeado como breakpoint. O opcode49 é NotifyOutOfIdle.
 
 Build completa sem warnings e CTest atual: 128/128 aprovados, sem falhas; o
 gate `linux_window_backend` foi pulado pois `DISPLAY=:0` não tem servidor X
