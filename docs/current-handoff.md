@@ -28,13 +28,24 @@ Limites: os providers são sintéticos; a unidade não liga o manager a World,
 gerações, scheduler/Clock, áudio físico, DSP/streaming ou runtime jogável. O
 contrato e a matriz estão em
 [validação do manager HIT](hit-track-manager-validation.md). Próximo caminho
-para Linux jogável: criar um host `odh-game` com diretório de dados configurável
-e sessão de lote que possua World/VM, ticks explícitos, janela/entrada e
-renderização. A triagem Simitone localizou o fluxo TS1 de seleção de casa e
+para Linux jogável: conectar o host permanente `odh-person` ao renderer e criar
+uma cena Linux com diretório de dados configurável, seleção/restauração de lote,
+janela e entrada. A triagem Simitone localizou o fluxo TS1 de seleção de casa e
 inicialização em `TS1GameScreen.cs`; ele serve como referência de lifecycle,
 não como prova de comportamento original nem licença para importar caminhos
-herdados de FreeSO/TSO. Depois do app que carrega e mostra lote, fechar
+herdados de FreeSO/TSO. Depois da primeira cena com Main animado, fechar
 interação sentar/levantar, tempo/necessidades e persistência ODH.
+
+A investigação da lacuna Stand→idle está em
+[stand-continuation-investigation.md](stand-continuation-investigation.md).
+`odh-person` já mantém Main, `Sleep`, `InteractionQueue` e Playback no mesmo
+relógio e preserva conclusão/retomada de ação; não se deve duplicar esse
+scheduler. A saída sentada é específica ao probe `odh-bhav`, que termina a VM
+do avatar depois de Stand. O contrato CFP multi-FAR já foi implementado no
+`SceneRenderer` e revisado com testes sintéticos; ainda não está ligado ao
+`odh-person`. O próximo incremento deve fazer essa ligação preservando a
+identidade de Playback e então mostrar o Main animado em uma cena Linux. O host
+ainda não restaura o lote vivo, liga rota, posição ou janela/render.
 
 ## Checkpoint atual — `afc836a` (2026-10-20)
 

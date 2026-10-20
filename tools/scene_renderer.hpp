@@ -4,6 +4,7 @@
 #include "odh/compositor.hpp"
 #include "odh/projection.hpp"
 #include "odh/avatar_hands.hpp"
+#include <functional>
 #include <memory>
 
 struct SceneHandPart {
@@ -34,6 +35,12 @@ struct SceneState {
     odh::AvatarHands hands{};
 };
 
+// Must resolve the exact selected header, not merely an equal animation name.
+// The owned planes remain alive through the draw. An AnimationCatalog adapter
+// can return an aliasing shared_ptr over decode(selected)->planes, without a
+// second allocation, decode, or renderer sample ledger.
+using SceneCfpResolver = std::function<std::shared_ptr<const odh::CfpPlanes>(const odh::AnimationHeader&)>;
+
 // Bounded CPU host for one avatar and an optional single-part object's graphic.
 // Rig, raw meshes, textures and unique DGRP sprite frames are loaded once.
 // All hand variants count toward the same 16-part and resident asset budgets;
@@ -43,7 +50,7 @@ struct SceneState {
 // The host is move-only and not thread-safe. Original resources remain read-only.
 class SceneRenderer {
 public:
-    explicit SceneRenderer(const SceneConfig&);
+    explicit SceneRenderer(const SceneConfig&, SceneCfpResolver = {});
     ~SceneRenderer();
     SceneRenderer(SceneRenderer&&) noexcept;
     SceneRenderer& operator=(SceneRenderer&&) noexcept;
@@ -52,8 +59,10 @@ public:
 
     odh::CompositeFrame render(const SceneState&, const odh::WorldProjection&,
                                odh::RasterOptions = {});
-    std::uint64_t cache_samples() const; // Total decoded CFP float32 values.
-    std::size_t cache_clips() const;     // Unique cached CFP resources.
+    // Renderer-owned legacy cache only. An external resolver owns/accounts its
+    // cache; resolved planes are borrowed with shared ownership for each draw.
+    std::uint64_t cache_samples() const;
+    std::size_t cache_clips() const;
     std::uint64_t vertices() const;     // Resident real mesh vertices, all variants.
     std::uint64_t triangles() const;
     std::uint64_t texture_bytes() const; // Decoded RGBA.

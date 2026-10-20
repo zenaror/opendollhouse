@@ -83,6 +83,7 @@ struct SceneRenderer::Impl {
     };
     using SpriteKey = std::pair<std::uint16_t, std::uint32_t>;
     Archive animation_archive;
+    SceneCfpResolver cfp_resolver;
     odh::Skeleton skeleton;
     std::vector<odh::Mesh> meshes;
     std::vector<odh::BitmapImage> textures;
@@ -93,7 +94,7 @@ struct SceneRenderer::Impl {
     std::uint64_t sample_count = 0, vertex_count = 0, triangle_count = 0;
     std::uint64_t texture_size = 0, sprite_size = 0;
 
-    explicit Impl(const SceneConfig& config) : animation_archive(config.animation_far) {
+    explicit Impl(const SceneConfig& config, SceneCfpResolver resolver) : animation_archive(config.animation_far), cfp_resolver(std::move(resolver)) {
         if (config.parts.empty() || config.parts.size() > 16)
             throw odh::FormatError("scene renderer requires 1..16 avatar parts");
         const auto collection = odh::read_bcf_skeletons(animation_archive.exact(config.skeleton_entry));
@@ -227,7 +228,18 @@ struct SceneRenderer::Impl {
             image = odh::dgrp_image(*group, static_cast<std::uint8_t>(1U << state.object_direction), camera.zoom, camera.rotation);
             if (!image) throw odh::FormatError("scene renderer drawing direction/zoom missing");
         }
-        const auto* cfp = state.animation ? &planes(*state.animation) : nullptr;
+        // The provider is authoritative when installed: a rejection or missing
+        // result never falls back to the base rig archive. Keep its owner alive
+        // through sampling/rasterization without retaining a second CFP cache.
+        std::shared_ptr<const odh::CfpPlanes> external;
+        const odh::CfpPlanes* cfp = nullptr;
+        if (state.animation) {
+            if (cfp_resolver) {
+                external = cfp_resolver(*state.animation);
+                if (!external) throw odh::FormatError("scene renderer CFP resolver returned no planes");
+                cfp = external.get();
+            } else cfp = &planes(*state.animation);
+        }
         const auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
         std::vector<odh::RasterTriangle> triangles;
         triangles.reserve(static_cast<std::size_t>(triangle_count));
@@ -262,7 +274,7 @@ struct SceneRenderer::Impl {
     }
 };
 
-SceneRenderer::SceneRenderer(const SceneConfig& config) : impl_(std::make_unique<Impl>(config)) {}
+SceneRenderer::SceneRenderer(const SceneConfig& config, SceneCfpResolver resolver) : impl_(std::make_unique<Impl>(config,std::move(resolver))) {}
 SceneRenderer::~SceneRenderer() = default;
 SceneRenderer::SceneRenderer(SceneRenderer&&) noexcept = default;
 SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;

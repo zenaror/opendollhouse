@@ -45,6 +45,11 @@ public:
     AnimationCatalog& operator=(const AnimationCatalog&)=delete;
     std::shared_ptr<const CatalogAnimation> resolve(const std::string& internal_name);
     std::shared_ptr<const CatalogDecoded> decode(const std::string& internal_name);
+    // The selected header must be the live immutable object returned by this
+    // catalog (including an aliasing Playback handle). Identity maps directly
+    // to its recorded BCF/CFP source and entry; no second name lookup occurs.
+    // Copies and headers owned by another catalog reject, even with equal names.
+    std::shared_ptr<const CatalogDecoded> decode(const AnimationHeader& selected);
     CatalogUsage usage() const;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

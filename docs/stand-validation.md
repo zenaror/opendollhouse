@@ -105,6 +105,9 @@ original, áudio, rendering ou teste em hardware foi realizado.
 
 ## Referências e continuidade
 
+Investigação de continuidade da VM e proveniência do PE original em
+[stand-continuation-investigation.md](stand-continuation-investigation.md).
+
 FreeSO fixo `4c6b3e8f5835b228723caea3c9f683c62f244f73`, MPL2.0 declarada:
 [OBJD.cs](https://github.com/riperiperi/FreeSO/blob/4c6b3e8f5835b228723caea3c9f683c62f244f73/TSOClient/tso.files/Formats/IFF/Chunks/OBJD.cs),
 [VMRunFunctionalTree.cs](https://github.com/riperiperi/FreeSO/blob/4c6b3e8f5835b228723caea3c9f683c62f244f73/TSOClient/tso.simantics/Primitives/VMRunFunctionalTree.cs),
