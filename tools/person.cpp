@@ -27,6 +27,7 @@
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
 #include "saved_resources.hpp"
+#include "saved_interactions.hpp"
 #include "saved_lot_renderer.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
@@ -599,6 +600,7 @@ int main(int argc,char** argv) {
     std::unique_ptr<SavedGraphicsResources> render_graphics;
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
+    std::optional<SavedObjectInteractions> render_interactions;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
@@ -714,6 +716,11 @@ int main(int argc,char** argv) {
             if(input.pause)window_paused=!window_paused;
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
+                render_interactions.reset();
+                if(render_selection&&definition_index){
+                    const auto* candidate=definition_index->unique(render_selection->guid);
+                    if(candidate)render_interactions=saved_object_interactions(*candidate);
+                }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 std::string title="OpenDollhouse Main preview: ";
                 if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid)+
@@ -1068,7 +1075,34 @@ int main(int argc,char** argv) {
             <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
             <<",\"generation\":"<<(render_selection?std::to_string(render_selection->generation):"null")
             <<",\"tree_table_id\":"<<(render_selection?std::to_string(render_selection->tree_table_id):"null")
-            <<",\"interaction_requested\":false}"
+            <<",\"interaction_requested\":false,\"interaction_discovery\":";
+        if(!render_interactions)std::cout<<"null";
+        else {
+            const auto& discovery=*render_interactions;
+            const char* state=discovery.state==SavedObjectInteractions::State::no_tree_table_id?"no_tree_table_id":
+                discovery.state==SavedObjectInteractions::State::missing_ttab?"missing_ttab":"found";
+            std::cout<<"{\"evidence\":\"static_resource_lookup_only\",\"state\":"<<json_bytes(state)
+                <<",\"owner\":{\"source\":"<<json_bytes(discovery.source)<<",\"asset\":"<<json_bytes(discovery.asset)<<'}'
+                <<",\"table_id\":"<<discovery.table_id<<",\"labels_state\":"
+                <<json_bytes(discovery.labels.state==odh::StringTableState::decoded?"decoded":
+                    discovery.labels.state==odh::StringTableState::header_only?"header_only":"absent")
+                <<",\"ttab_status\":";
+            if(!discovery.table)std::cout<<"null";
+            else std::cout<<json_bytes(discovery.table->status==odh::TtabStatus::decoded?"decoded":
+                discovery.table->status==odh::TtabStatus::empty?"empty":
+                discovery.table->status==odh::TtabStatus::legacy_unsupported?"legacy_unsupported":"absent_payload");
+            std::cout<<",\"interactions\":[";
+            if(discovery.table)for(std::size_t n=0;n<discovery.table->interactions.size();++n){
+                if(n)std::cout<<',';const auto& row=discovery.table->interactions[n];
+                std::cout<<"{\"action\":"<<row.action<<",\"test\":"<<row.test<<",\"flags\":"<<row.flags
+                    <<",\"label_index\":"<<row.label_index<<",\"label\":";
+                if(n<discovery.row_labels.size()&&discovery.row_labels[n])std::cout<<json_bytes(*discovery.row_labels[n]);
+                else std::cout<<"null";
+                std::cout<<'}';
+            }
+            std::cout<<"]}";
+        }
+        std::cout<<'}'
             <<",\"lot\":";
         if(render_lot_evidence){const auto& lot=*render_lot_evidence;
             std::cout<<"{\"same_runtime_World\":true,\"selected_level\":"<<unsigned(render_lot_view.level)
