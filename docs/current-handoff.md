@@ -10,6 +10,13 @@ build dos consumidores passaram; `odh-saved-world` também leu House07 original
 com `Objects.far` e os dois IFFs de personagens sem erro. Veja
 [campos de colisão OBJD](object-collision-validation.md).
 
+O incremento local após `94c7dc7` adiciona `odh_collision`: cálculo dos bounds
+do OBJD com rotação/fallback de referência, ausência para HasZeroExtent/objetos
+contidos, box candidato do avatar ±3 e interseção estrita. `odh-collision-tests`
+tem 16 checks de fórmula, não de colisão no lote. Build completa e CTest
+129/129 passaram; a janela segue pulada sem DISPLAY. Ainda faltam validar floors,
+doors, rooms, objetos dinâmicos e política do avatar; não conectar Routing45.
+
 ## Main em lote restaurado (2026-10-20)
 
 `odh-person --saved-world-main` restaura House07 com `make_saved_world`,

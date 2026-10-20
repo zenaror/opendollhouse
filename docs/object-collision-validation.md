@@ -1,4 +1,4 @@
-# Campos de colisão OBJD
+# Campos e shape de colisão OBJD
 
 O leitor de metadados OBJD136/138 agora expõe `TileWidth` e `FootprintMask`
 quando o payload contém ambos os campos. Ele continua aceitando views curtas
@@ -12,12 +12,27 @@ Na tabela, TileWidth é o campo65, byte offset134; FootprintMask é o campo75,
 offset154, ambos após o DWORD de versão. O modelo de colisão em
 `VMGameObject.GetObstacle` usa os dois: TileWidth define metade da largura em
 unidades de 1/16 tile (zero usa o fallback de8) e FootprintMask ajusta os quatro
-limites depois da rotação. Esta leitura apenas preserva os valores binários;
-ainda não calcula obstáculos nem reproduz o fallback, flags, contenção ou
-colisões de grupo.
+limites depois da rotação. A leitura do OBJD preserva os valores binários sem
+validar a definição inteira.
 
-Testes sintéticos confirmam offsets, payload com campos presentes, view curta e
-truncada. Ainda falta comparar valores decodificados de objetos originais e
-Legacy e implementar a transformação para `VMEntityObstacle` com fixtures de
-rotação. Mesmo com isso, o validador de goal também terá de cobrir paredes,
-portas, piso, ocupação dinâmica e limites antes de habilitar Routing45 no Main.
+`odh_collision` agora reproduz essa fórmula de bounds, rotação para direções
+cardinais e fallback de TileWidth zero (`VMGameObject.cs:355–380`). Para
+diagonais, a referência `DirectionToWallOff` retorna zero (`VMEntity.cs:1515–1529`);
+a rotina preserva esse comportamento. O
+resultado é `present`, `absent` (HasZeroExtent ou contido) ou `unsupported`
+(dados incompletos/fora do perfil). A shape candidata do avatar é o retângulo
+centro±3 unidades usado por `VMAvatar.GetObstacle` (`VMAvatar.cs:985–1003`);
+interseção entre boxes segue a regra estrita de `VMObstacle.Intersects`
+(`VMObstacle.cs:121–124`), em que tocar bordas não colide.
+
+Isso ainda não reproduz regra integral de placement: flags de avatar/ghost,
+rooms, portas, floors, objetos ignorados, multitile e políticas de ocupação
+precisam ser aplicados pelo chamador. Não conectar ao roteamento antes dessas
+verificações.
+
+Testes sintéticos confirmam offsets, payload com campos presentes, view curta,
+truncamento, todas as oito direções, fallback zero-width, flags sem obstáculo,
+avatar ±3, coordenada inválida e a regra de interseção. Essa fórmula ainda não foi comparada
+valor a valor com uma execução FreeSO de oracle ou amostra completa de objetos
+originais/Legacy. O validador de goal ainda terá de cobrir paredes, portas,
+piso, ocupação dinâmica e limites antes de habilitar Routing45 no Main.
