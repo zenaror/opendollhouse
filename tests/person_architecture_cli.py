@@ -70,13 +70,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-architecture-') as folder:
     struct.pack_into('<H', definition, 14, 128)
     struct.pack_into('<I', definition, 28, 0x12345678)
     selected_iff = iff + iff_chunk('OBJD', 321, definition)
-    far(definition_archive, [('Selected.iff', selected_iff), ('ignored.bin', b'not an IFF')])
+    far(definition_archive, [('Selected.IFF', selected_iff), ('ignored.bin', b'not an IFF')])
     empty_definition = root / 'empty-definition.iff'
     empty_definition.write_bytes(iff)
     definition_args = list(args)
     definition_index = definition_args.index('--object-definition-file')
     definition_args[definition_index + 1] = str(empty_definition)
-    definition_args += ['--object-definition-entry', str(definition_archive), 'Selected.iff']
+    definition_args += ['--object-definition-entry', str(definition_archive), 'Selected.IFF']
 
     baseline = run()
     check('cannot open IFF file' in baseline, baseline)
@@ -84,6 +84,11 @@ with tempfile.TemporaryDirectory(prefix='odh-person-architecture-') as folder:
     # scanning ignored.bin as IFF would fail earlier with a different diagnostic.
     check(run(base=definition_args) == baseline,
           'selected FAR IFF was not isolated from unrelated non-IFF payloads')
+    archive_scan_args = list(args)
+    archive_scan_args[definition_index + 1] = str(empty_definition)
+    archive_scan_args += ['--object-definitions', str(definition_archive)]
+    check(run(base=archive_scan_args) == baseline,
+          'definition FAR did not scan .iff entries while skipping unrelated content')
     malformed_archive = root / 'malformed-selected.far'
     malformed_objd = bytearray(32)
     struct.pack_into('<I', malformed_objd, 0, 137)
@@ -103,14 +108,14 @@ with tempfile.TemporaryDirectory(prefix='odh-person-architecture-') as folder:
     non_iff_error = run(['--object-definition-entry', str(definition_archive), 'ignored.bin'],
                         base=definition_args[:-3])
     check('read outside resource' in non_iff_error, non_iff_error)
-    boundary_error = run(['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 15,
+    boundary_error = run(['--object-definition-entry', str(definition_archive), 'Selected.IFF'] * 15,
                          base=definition_args[:-3])
     check(boundary_error == baseline, boundary_error)
     check('definition source count exceeds bounded host profile' in run(
-        ['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 16,
+        ['--object-definition-entry', str(definition_archive), 'Selected.IFF'] * 16,
         base=definition_args[:-3]))
     check('archive/entry path outside bounded host profile' in run(
-        ['--object-definition-entry', '', 'Selected.iff'], base=definition_args[:-3]))
+        ['--object-definition-entry', '', 'Selected.IFF'], base=definition_args[:-3]))
     check('archive/entry path outside bounded host profile' in run(
         ['--object-definition-entry', str(definition_archive), 'x' * 4097],
         base=definition_args[:-3]))

@@ -151,6 +151,10 @@ de 16 fontes com `--object-definitions FAR` e `--object-definition-file IFF`;
 caminhos e nome da entrada têm limite de 4096 bytes. Nome de entrada ausente
 ou ambíguo falha. O caminho FAR continua protegido contra alias do frame de
 saída. Isso permite selecionar definições sem extrair a entrada para disco.
+Em `odh-person`, `--object-definitions FAR` indexa somente membros com sufixo
+`.iff` (sem diferenciar maiúsculas/minúsculas) e ignora outros tipos de membro;
+IFFs são validados normalmente. Isso permite usar FARs de expansão mistos sem
+extrair seus conteúdos.
 Essas opções
 também valem para a janela Main. Requerem as fontes explícitas e mantêm as
 recusas existentes de padrões customizados sem resolvedor, pools/água e

@@ -287,8 +287,11 @@ int main(int argc,char** argv) {
             if(!stream)throw odh::FormatError("cannot open explicit definition archive");
             const odh::View archive(stream,std::filesystem::file_size(source.path));
             odh::Limits limits;limits.far_entries=8192;limits.far_name_length=4096;limits.far_name_bytes=256*1024;
-            for(const auto& entry:odh::far1_index(archive,limits))
-                    add_iff(archive.subview(entry.offset,entry.length),source.path,entry.name);
+            for(const auto& entry:odh::far1_index(archive,limits)){
+                const auto name=fold(entry.name);
+                if(name.size()<4||name.compare(name.size()-4,4,".iff")!=0)continue;
+                add_iff(archive.subview(entry.offset,entry.length),source.path,entry.name);
+            }
         }
         definition_index.emplace(candidates);
     }
