@@ -1,5 +1,15 @@
 # Continuidade atual
 
+## Campos de colisão OBJD (2026-10-20)
+
+O leitor OBJD136/138 preserva `TileWidth` e `FootprintMask` quando ambos estão
+presentes nos offsets verificados pela ordem de campos Simitone/FreeSO; views
+curtas continuam válidas e deixam ambos ausentes. Isso ainda não os converte
+em obstáculos vivos nem habilita Routing45. Testes de offsets/truncamento e
+build dos consumidores passaram; `odh-saved-world` também leu House07 original
+com `Objects.far` e os dois IFFs de personagens sem erro. Veja
+[campos de colisão OBJD](object-collision-validation.md).
+
 ## Main em lote restaurado (2026-10-20)
 
 `odh-person --saved-world-main` restaura House07 com `make_saved_world`,

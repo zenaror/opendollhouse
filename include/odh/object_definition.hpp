@@ -11,12 +11,17 @@ struct ObjectDefinition {
     bool is_multitile;
     std::uint64_t header_extent, remaining_bytes;
     std::uint16_t tree_table_id = 0;
+    // Present only when the payload reaches the complete stable fields in the
+    // supported 136/138 layouts. Values are raw OBJD collision parameters.
+    std::optional<std::uint16_t> tile_width;
+    std::optional<std::uint16_t> footprint_mask;
 };
 
-// Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes). Values are owned
-// and raw, including unknown object types and the signed sub-index. The flag
+// Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes),
+// plus optional collision fields when their complete payload extent is present.
+// Values are owned and raw, including unknown object types and signed sub-index. The flag
 // only means MasterID != 0 according to the pinned FreeSO metadata mapping.
-// header_extent is the prefix read, not the complete OBJD header size.
+// header_extent is the highest inspected prefix extent, not full validation.
 // No complete-definition validation, instance decoding, or construction occurs.
 ObjectDefinition read_object_definition(const View&);
 

@@ -15,8 +15,20 @@ ObjectDefinition read_object_definition(const View& payload) {
         sub < 32768 ? static_cast<std::int32_t>(sub)
                     : static_cast<std::int32_t>(sub) - 65536);
     const auto master = prefix.le16(20);
-    return {version, prefix.le32(28), prefix.le16(18), master, signed_sub,
-            master != 0, extent, payload.size() - extent, prefix.le16(14)};
+    ObjectDefinition result{version, prefix.le32(28), prefix.le16(18), master, signed_sub,
+            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}};
+    // Simitone's pinned OBJD field order places TileWidth at field 65 and
+    // FootprintMask at field 75 (byte offsets 134/154 after the version word).
+    // Only expose the pair when both are present; shorter metadata views remain
+    // valid for callers that need only the stable 32-byte prefix.
+    constexpr std::uint64_t collision_extent=156;
+    if(payload.size()>=collision_extent) {
+        result.tile_width=payload.le16(134);
+        result.footprint_mask=payload.le16(154);
+        result.header_extent=collision_extent;
+        result.remaining_bytes=payload.size()-collision_extent;
+    }
+    return result;
 }
 
 } // namespace odh
