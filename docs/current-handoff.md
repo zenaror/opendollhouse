@@ -9,7 +9,10 @@ selecionado no catálogo multi-FAR e passa clip, frame e gestos ao renderer.
 Não cria `ObjmPersonState` nem escolhe animação por nome. A opção
 `--render-saved-avatar OBJECT_ID` valida GUID e tipo contra o recurso de pessoa
 carregado e projeta a posição/direção de ObjM salvo; esse dado não é inserido no
-World do VM.
+World do VM. `--render-window` acrescenta preview X11 paced a 25 Hz (cadência de
+apresentação, sem calibração de tempo original), usando o mesmo Playback/VM;
+P pausa, setas giram, +/- ajustam zoom e Escape fecha. Cliques não disparam
+interações.
 
 Validação com os arquivos externos da instalação original: os relatórios
 `reports/odh-person-main-first-sample-20261020.json`,
@@ -26,10 +29,11 @@ posição. Sete CTests focais passam e
 de que Main concluiu.
 
 Limites atuais: a posição ainda é projeção de apresentação, não posição viva no
-World; lote/arquitetura não são desenhados, não há janela ou entrada de usuário,
-a cena não é jogável e o Main ainda pode parar em opcode/comportamento não
+World; lote/arquitetura não são desenhados e não há entrada de usuário para
+gameplay. O preview X11 compila, mas o ambiente de validação atual não tem
+servidor DISPLAY acessível; a cena não é jogável e o Main ainda pode parar em opcode/comportamento não
 implementado. Próximo passo de maior valor: unir essa posição com o desenho do
-lote salvo e janela Linux, preservando o mesmo Playback/VM e sem clonar o World.
+lote salvo, preservando o mesmo Playback/VM e sem clonar o World.
 Só depois avançar para ações contínuas, tempo/necessidades e persistência ODH. Detalhes em
 [validação do frame do Main](person-main-render-validation.md).
 

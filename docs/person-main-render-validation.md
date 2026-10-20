@@ -20,6 +20,15 @@ apresentação e a entidade salva não é restaurada no World vivo da VM. A saí
 só é criada quando ainda não existe; continua sendo um caminho headless, sem
 janela ou controles.
 
+O modo `--render-window` apresenta samples sucessivos do mesmo Playback/VM em
+uma janela X11 opcional. `P` pausa, as setas giram a câmera, `+`/`-` ajustam
+zoom e Escape fecha. A taxa de 25 Hz serve apenas para apresentação e não está
+calibrada ao tempo original; clique não aciona jogo. Este host não tem servidor
+X acessível: a tentativa terminou com `X11: cannot open DISPLAY`. Portanto o
+caminho compila, mas a janela ainda precisa de validação visual em uma sessão
+X11 ativa. A compilação sem X11 também foi verificada e a opção retorna
+diagnóstico claro de backend ausente.
+
 ## Execução com dados originais
 
 Usou os arquivos externos preservados em `../referencias/The Sims`:

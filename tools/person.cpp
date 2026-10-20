@@ -24,12 +24,17 @@
 #include "json.hpp"
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
+#ifdef ODH_HAVE_X11
+#include "linux_window.hpp"
+#endif
 #include <iostream>
 #include <memory>
 #include <charconv>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#include <thread>
 
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;};
@@ -112,6 +117,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::optional<std::uint16_t> render_tick;
     std::optional<std::uint16_t> render_saved_id;
+    bool render_window=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
@@ -141,6 +147,7 @@ int main(int argc,char** argv) {
         else if(option=="--render-skeleton"&&!render_skeleton_entry&&n+2<argc){render_skeleton_entry=argv[n+1];render_skeleton_name=argv[n+2];n+=2;}
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
+        else if(option=="--render-window"&&!render_window){render_window=true;}
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
             definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
@@ -148,12 +155,16 @@ int main(int argc,char** argv) {
         }
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id;
+    if(render_window&&!ticks_set)ticks_limit=4096;
+    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id||render_window;
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
-       (render_requested&&(!render_output||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||!initialize||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)))||
-       (render_saved_id&&(!render_output||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
+       (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||!initialize||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
+       (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME]");
+#ifndef ODH_HAVE_X11
+    if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
+#endif
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -504,6 +515,9 @@ int main(int argc,char** argv) {
     std::optional<RenderEvidence> render_evidence;
     std::unique_ptr<SavedAppearanceResources> render_appearances;
     std::unique_ptr<SceneRenderer> render_renderer;
+#ifdef ODH_HAVE_X11
+    std::unique_ptr<odh_host::LinuxWindow> render_window_host;
+#endif
     odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
     std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
@@ -521,14 +535,16 @@ int main(int argc,char** argv) {
         render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
         presented_saved_id=*render_saved_id;presented_saved_guid=found->guid;
     }
-    if(render_output){
+    if(render_requested){
         if(!body_state||!body_state->body||!playback||!animation_catalog)
             throw odh::FormatError("person frame export requires initialized BodySTR and explicit AnimationCatalog");
-        if(render_output->empty()||render_output->size()>4096||render_output->find('\0')!=std::string::npos)
-            throw odh::FormatError("person frame output path outside bounded profile");
-        std::error_code path_error;
-        if(std::filesystem::exists(*render_output,path_error)||path_error)
-            throw odh::FormatError("person frame output must be a new file; existing output preserved");
+        if(render_output){
+            if(render_output->empty()||render_output->size()>4096||render_output->find('\0')!=std::string::npos)
+                throw odh::FormatError("person frame output path outside bounded profile");
+            std::error_code path_error;
+            if(std::filesystem::exists(*render_output,path_error)||path_error)
+                throw odh::FormatError("person frame output must be a new file; existing output preserved");
+        }
         render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
                                                                        *render_skeleton_entry,*render_skeleton_name);
         const auto scene_config=render_appearances->resolve_body(*body_state->body);
@@ -538,11 +554,15 @@ int main(int argc,char** argv) {
             return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
         };
         render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+#ifdef ODH_HAVE_X11
+        if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
+            "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
+#endif
     }
     std::uint64_t ticks=0;
     const auto capture_frame=[&]{
-        if(!render_output||render_evidence)return;
-        if(render_tick&&ticks!=*render_tick)return;
+        if(!render_requested||(!render_window&&render_evidence))return;
+        if(!render_window&&render_tick&&ticks!=*render_tick)return;
         const auto sample=playback->sample();if(!sample)return;
         const auto* sample_actor=world.find(sample->actor);
         if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=1)
@@ -550,12 +570,17 @@ int main(int argc,char** argv) {
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         const auto frame=render_renderer->render(scene_state,render_camera);
-        std::ofstream ppm(*render_output,std::ios::binary|std::ios::out);
-        if(!ppm)throw odh::FormatError("person frame output cannot be created");
-        ppm<<"P6\n"<<frame.image.width<<' '<<frame.image.height<<"\n255\n";
-        for(const auto& pixel:frame.image.pixels)for(unsigned channel=0;channel<3;++channel)
-            ppm.put(static_cast<char>(pixel[channel]));
-        ppm.close();if(!ppm)throw odh::FormatError("person frame output write failed");
+#ifdef ODH_HAVE_X11
+        if(render_window_host)render_window_host->present(frame.image);
+#endif
+        if(render_output){
+            std::ofstream ppm(*render_output,std::ios::binary|std::ios::out);
+            if(!ppm)throw odh::FormatError("person frame output cannot be created");
+            ppm<<"P6\n"<<frame.image.width<<' '<<frame.image.height<<"\n255\n";
+            for(const auto& pixel:frame.image.pixels)for(unsigned channel=0;channel<3;++channel)
+                ppm.put(static_cast<char>(pixel[channel]));
+            ppm.close();if(!ppm)throw odh::FormatError("person frame output write failed");
+        }
         const auto usage=animation_catalog->usage();
         render_evidence=RenderEvidence{sample->clip->name,sample->frame,sample->actor,ticks,
             sample->actor_generation,sample->vm_generation,usage.cfp_samples,render_renderer->vertices(),
@@ -570,8 +595,32 @@ int main(int argc,char** argv) {
     };
     execute();
     capture_frame();
-    while(!host_failed&&ticks<ticks_limit&&total_steps()<10000&&
-          (vm.status()==odh::VmStatus::waiting||vm.status()==odh::VmStatus::yielded)) {
+    bool window_paused=false,window_closed=false;
+    auto window_deadline=std::chrono::steady_clock::now();
+    while(!host_failed) {
+#ifdef ODH_HAVE_X11
+        if(render_window_host){
+            const auto input=render_window_host->poll();
+            if(input.quit){window_closed=true;break;}
+            if(input.pause)window_paused=!window_paused;
+            render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
+            const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
+            render_camera.zoom=static_cast<std::uint8_t>(zoom);
+            if(input.rotation||input.zoom||input.redraw)capture_frame();
+            const bool runtime_finished=ticks>=ticks_limit||total_steps()>=10000||
+                (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded);
+            if(runtime_finished&&!render_evidence)
+                throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
+            if(window_paused||runtime_finished){
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));window_deadline=std::chrono::steady_clock::now();continue;
+            }
+            // Preview pacing only; original wall-clock cadence is not established.
+            window_deadline+=std::chrono::milliseconds(40);
+            std::this_thread::sleep_until(window_deadline);
+        }else
+#endif
+        if(ticks>=ticks_limit||total_steps()>=10000||
+           (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded))break;
         ++ticks;
         if(!queue.tick(ticks)||!sleep.tick(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
         if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
@@ -588,9 +637,13 @@ int main(int argc,char** argv) {
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
     const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
-    if(render_output&&!render_evidence)
-        throw odh::FormatError(render_tick?"person frame export observed no live Playback sample at requested tick; no frame written":
-                               "person frame export observed no live Playback sample; no frame written");
+    if(render_requested&&!render_evidence){
+        if(render_window&&host_failed)throw odh::FormatError("person window preview host failed before a live Playback sample: "+host_diagnostic);
+        throw odh::FormatError(render_window?(window_closed?"person window preview closed before a live Playback sample was available":
+                                                              "person window preview ended before a live Playback sample was available"):
+            render_tick?"person frame export observed no live Playback sample at requested tick; no frame written":
+                        "person frame export observed no live Playback sample; no frame written");
+    }
     std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":"<<json_bytes(initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
@@ -838,7 +891,8 @@ int main(int argc,char** argv) {
     std::cout<<']';
     if(playback){
         std::cout<<",\"animation_profile\":"<<json_bytes(render_evidence?
-            "silent primary Playback with one headless presentation-frame export; runtime lot position absent; no audio or saved continuation":
+            (render_window?"silent primary Playback in paced X11 presentation window; saved position is presentation-only; no audio or saved continuation":
+             "silent primary Playback with one headless presentation-frame export; saved position is presentation-only; no audio or saved continuation"):
             "silent primary Playback; explicit FAR catalog and STR language1; no rig/render/audio or saved continuation")
             <<",\"animation_resolution_diagnostic\":"<<json_bytes(animation_resolution_diagnostic)
             <<",\"animation_progress\":";
@@ -861,7 +915,8 @@ int main(int argc,char** argv) {
     }
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
-        std::cout<<"{\"kind\":\"headless_Main_Playback_sample\",\"output\":"<<json_bytes(*render_output)
+        std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")
+            <<",\"window_clock\":"<<(render_window?json_bytes("preview_25Hz_unvalidated"):"null")
             <<",\"runtime_position_present\":false,\"presentation_position_source\":"<<json_bytes(presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
             <<",\"presentation_saved_object_id\":"<<(presented_saved_id?std::to_string(*presented_saved_id):"null")
             <<",\"presentation_saved_guid\":"<<(presented_saved_guid?std::to_string(*presented_saved_guid):"null")
