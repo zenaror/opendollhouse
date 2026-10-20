@@ -19,8 +19,10 @@ abertura. Este porte mantém esses tiles bloqueados e retorna sempre
 `complete=false`; nunca interpreta evidência de portal ausente como passagem
 livre.
 
-O resultado também herda a limitação de `GeometricRoomMap`: IDs de piso FLRm e
-flags não foram resolvidos. Assim, os retângulos são candidatos geométricos,
+Quando recebe o mapa cru de `generate_saved_room_map`, o resultado também herda
+a ausência do remapeamento de pisos/flags. O caminho de
+[arquitetura preparada](prepared-architecture-validation.md) trata essa etapa
+com aliases explícitos; ainda assim, os retângulos são candidatos geométricos,
 não obstáculos runtime completos, colisão autoritativa, espaço de rota livre ou
 aceitação de destino. Esta API não está conectada a Routing45 nem a uma consulta
 de movimento.

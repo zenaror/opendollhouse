@@ -1,4 +1,5 @@
 #include "odh/room_map.hpp"
+#include "odh/prepared_architecture.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -13,7 +14,8 @@ void add_unique(std::vector<std::uint16_t>& values, std::uint16_t value) {
     if (std::find(values.begin(), values.end(), value) == values.end()) values.push_back(value);
 }
 
-void spread_onto(const SavedArchitectureLevel& level, std::uint32_t width,
+template<class Level>
+void spread_onto(const Level& level, std::uint32_t width,
                  std::uint32_t x, std::uint32_t y, unsigned direction,
                  std::vector<std::uint32_t>& map, std::vector<SpreadItem>& spread,
                  std::uint16_t room, std::uint16_t expected, bool no_air,
@@ -75,8 +77,8 @@ void make_outside(std::vector<GeometricRoom>& rooms, std::uint16_t id) {
     }
 }
 
-void generate_level(const SavedArchitecture& architecture, std::uint8_t level_index,
-                    GeometricRoomMap& result, const RoomMapLimits& limits) {
+SavedArchitectureLevel candidate_level(const SavedArchitecture& architecture,
+                                        std::uint8_t level_index) {
     // VMTS1Activator.DecodeWalls/DecodeAdvWalls normalize saved styles before
     // GenerateMap. Diagonal styles also hold floor patterns and bypass this
     // style normalization; the shared-floor fallback below is independent.
@@ -109,6 +111,12 @@ void generate_level(const SavedArchitecture& architecture, std::uint8_t level_in
             if (active(architecture.water)) level.floors[index] = 65534;
         }
     }
+    return level;
+}
+
+template<class Level>
+void generate_level(const Level& level, std::uint8_t level_index,
+                    GeometricRoomMap& result, const RoomMapLimits& limits) {
     auto& map = result.levels[level_index];
     map.resize(std::size_t(result.width) * result.height);
     const bool no_floor_bad = result.rooms.size() > 1;
@@ -226,7 +234,33 @@ GeometricRoomMap generate_saved_room_map(const SavedArchitecture& architecture,
     result.height = architecture.height;
     result.rooms.emplace_back(); // VMArchitecture.RegenRoomMap dummy.
     for (std::uint8_t level = 0; level < result.levels.size(); ++level)
-        generate_level(architecture, level, result, limits);
+        generate_level(candidate_level(architecture, level), level, result, limits);
+    return result;
+}
+
+GeometricRoomMap generate_prepared_room_map(const PreparedArchitecture& architecture,
+                                           const RoomMapLimits& limits) {
+    if (!architecture.width || architecture.width != architecture.height || architecture.width > 64 ||
+        architecture.height > 64 || architecture.width > limits.dimension ||
+        architecture.height > limits.dimension)
+        throw std::runtime_error("prepared room map dimensions unsupported");
+    const auto cells = std::size_t(architecture.width) * architecture.height;
+    if (architecture.buildable.size() != cells)
+        throw std::runtime_error("prepared room map buildability extent mismatch");
+    for (const auto& level : architecture.levels) {
+        if (level.floors.size() != cells || level.walls.size() != cells)
+            throw std::runtime_error("prepared room map grid extent mismatch");
+        for (const auto& wall : level.walls)
+            if ((wall.segments & 0xc0U) || (wall.segments & any_diag) == any_diag)
+                throw std::runtime_error("prepared room map unsupported wall segments");
+    }
+    GeometricRoomMap result;
+    result.width = architecture.width;
+    result.height = architecture.height;
+    result.floor_resources_resolved = architecture.floor_aliases_resolved();
+    result.rooms.emplace_back();
+    for (std::uint8_t level = 0; level < result.levels.size(); ++level)
+        generate_level(architecture.levels[level], level, result, limits);
     return result;
 }
 } // namespace odh

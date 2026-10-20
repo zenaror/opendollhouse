@@ -7,6 +7,7 @@
 #include <vector>
 
 namespace odh {
+struct PreparedArchitecture;
 struct RoomMapLimits {
     std::uint32_t dimension = 64; // The supported profile never exceeds 64.
     std::size_t rooms = 32767; // Excludes reserved room 0; packed IDs use 15 bits.
@@ -25,8 +26,9 @@ struct GeometricRoom {
 };
 struct GeometricRoomMap {
     std::uint32_t width = 0, height = 0;
-    // Named floor resources/flags are unresolved. This is always a candidate
-    // geometric map over retained floor IDs, never a restored runtime room map.
+    // False for the raw saved API. The prepared API sets this only when every
+    // attempted floor-alias lookup was found; it does not prove catalog/name
+    // fidelity or a complete runtime room map. See preparation diagnostics.
     bool floor_resources_resolved = false;
     // Row major. Bits 0..15: first room, 16..30: second room; bit 31 marks
     // horizontal diagonals. Normal tiles repeat the same ID in both halves.
@@ -50,4 +52,10 @@ struct GeometricRoomMap {
 // No VMContext, objects, doors/portals, lighting, live obstacles, or routing.
 GeometricRoomMap generate_saved_room_map(
     const SavedArchitecture&, const RoomMapLimits& limits = {});
+
+// Flood-fill already prepared grids without repeating normalization, diagonal
+// fallback, remapping, overlays or crop. Geometry only: live entities, doors,
+// portal/lighting maps and runtime placement remain absent.
+GeometricRoomMap generate_prepared_room_map(
+    const PreparedArchitecture&, const RoomMapLimits& limits = {});
 } // namespace odh

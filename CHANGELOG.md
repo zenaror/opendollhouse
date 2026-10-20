@@ -7,6 +7,9 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Preparo limitado de pisos/paredes salvos com aliases explícitos, road flip,
+  flags e crop; o mapa de salas pode consumir os grids preparados sem repetir
+  conversões. Descoberta de recursos e portas/portais vivos seguem pendentes.
 - Composição CPU de terreno, pisos, paredes e avatar Main em House07 usando o
   mesmo World restaurado, com posição viva, resolução SLOT limitada e câmera
   acompanhando o avatar.
@@ -27,6 +30,9 @@ validação indicados por versão.
 
 ### Validação
 
+- Preparo de arquitetura: 88 checks sintéticos passaram; build Debug e suíte
+  de 133 CTests sem falhas, com janela X11 pulada por ausência de DISPLAY.
+  Catálogo externo, portas/portais e runtime do lote continuam pendentes.
 - Picking: composição, renderer de objetos/lote e CLIs passaram em cinco CTests;
   o sexto gate de eventos X11 foi pulado sem DISPLAY. A janela ainda exige
   validação visual e de entrada em uma sessão gráfica ativa. Build e CTest

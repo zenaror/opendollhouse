@@ -9,6 +9,8 @@ O resultado é um **candidato geométrico sobre IDs de piso retidos**, não o ma
 restaurado do runtime TS1. A resolução de nomes FLRm e o remapeamento de IDs
 de piso condicionado por flags em `RemapFloors` não são implementados; `floor_resources_resolved` é
 sempre falso. A segmentação pode mudar quando esse preparo for resolvido.
+O caminho separado `generate_prepared_room_map` consome grids já preparados;
+seu contrato está em [prepared-architecture-validation.md](prepared-architecture-validation.md).
 
 ## Referência e perfil implementado
 
