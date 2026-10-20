@@ -1,6 +1,6 @@
 # SPR# e recursos de paredes
 
-Checkpoint de 2026-10-14. O core `read_spr_header/read_spr_frame` e o probe
+Checkpoint de recursos de 2026-10-14. O core `read_spr_header/read_spr_frame` e o probe
 `odh-spr` decodificam os sprites legados SPR# necessários aos padrões e máscaras
 de paredes. O compositor da casa ainda não desenha paredes. Essa unidade prepara
 recursos reais para a próxima integração; não substitui paredes por quads lisos
@@ -136,10 +136,12 @@ serializados. Reconstruí-los não deve executar reInit nem filtrar só sprites
 visíveis. Renderer2D e RC têm precedência diferente entre style salvo e override,
 e algumas guardas RC são inconsistentes: não copiar esses lapsos automaticamente.
 
-Próxima etapa: ler o binding OBJD de WallStyle/SpriteID, reconstruir os overrides
-a partir do World salvo, compor padrões/máscaras e integrar geometria/profundidade,
-depois rooms/obstáculos/portais e execução/interação Linux. Não há parede renderizada,
-lote jogável ou resultado de consoles neste checkpoint.
+Na data deste checkpoint, binding OBJD, composição e integração ao lote ainda
+estavam pendentes. Foram implementados depois; consulte
+[paredes no snapshot salvo](saved-wall-validation.md) para a validação atual
+dessas etapas. O gargalo seguinte é topologia de cômodos, obstáculos/portais e
+execução/interação Linux. Este decoder de recursos isolado não prova lote jogável
+nem resultados de consoles.
 
 ## Reprodução
 

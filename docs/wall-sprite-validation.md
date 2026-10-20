@@ -1,9 +1,9 @@
 # Composição de sprites de parede
 
-Checkpoint 2026-10-14. `odh_wall_sprite` fornece uma primitiva CPU portátil para
-combinar padrão SPR#, máscara SPR# e mapa de profundidade gerado. Ainda falta
-integrá-la ao `odh-saved-scene`; essa unidade não desenha a arquitetura do lote
-nem executa a simulação salva.
+Checkpoint da primitiva CPU, 2026-10-14. `odh_wall_sprite` combina padrão
+SPR#, máscara SPR# e mapa de profundidade gerado. A integração posterior ao
+renderer do lote está documentada em [paredes no snapshot salvo](saved-wall-validation.md);
+esta página preserva o contrato e a validação isolada da primitiva.
 
 ## Referência e contrato
 
@@ -72,7 +72,6 @@ depth: `26eedb852b0f849dccac1fe7919d9206774613886d977cc6bb60fb83f3b44560`.
 Relatórios ignorados: `reports/wall-composition-native.cpp`,
 `verify-wall-composition.py`, `wall-composition-native-validation.json`, binários,
 exports `.rgba/.depth/.z` e imagem PPM. Nenhum recurso comercial entra no Git.
-Próxima unidade: resolver padrões/máscaras globais e objetos, orientar faces e
-projetar paredes do World salvo no mesmo espaço de profundidade de pisos,
-avatars e objetos; depois completar junções e recortes. A meta integral Linux
-funcional continua ativa.
+Próxima unidade após a composição isolada: topologia inicial de rooms e
+obstáculos/portais, necessária antes de usar paredes para validar destinos. A
+meta integral Linux funcional continua ativa.
