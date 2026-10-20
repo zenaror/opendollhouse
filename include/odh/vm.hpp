@@ -16,7 +16,8 @@ struct RoutineKey {
 using CodeOwner = std::uint32_t; // Resource identity; independent of World entity IDs.
 // Explicit resource set for one code owner. No implicit file precedence.
 using RoutineSet = std::map<RoutineKey, Bhav>;
-// Additional immutable owners contain only private/semiglobal routines.
+// Additional owners contain only private/semiglobal routines. They may be
+// appended at a host safe point, but an installed owner's routines never change.
 // Owner zero is reserved for the default set; global routines are shared there.
 using RoutineOwners = std::map<CodeOwner, RoutineSet>;
 RoutineKey routine_key(std::uint16_t id);
@@ -114,7 +115,7 @@ struct VmInteractionReturn {
     std::uint64_t run_generation;
 };
 
-// Host-independent, resumable instruction kernel. Owns an immutable routine set.
+// Host-independent, resumable instruction kernel. Owns immutable routine sets.
 // No scheduler, entities, queue, routing, animation, or clock is implied.
 class Vm {
 public:
@@ -127,6 +128,10 @@ public:
     VmStatus start(RoutineKey, VmContext = {}, const std::vector<std::int16_t>& args = {});
     VmStatus run(std::uint64_t instruction_budget,
                  const std::function<void(const VmTrace&)>& trace = {});
+    // Append one private/semiglobal resource owner at a host safe point. Existing
+    // owners and active VM state are preserved. Rejects owner zero, duplicates,
+    // invalid keys, capacity overflow, or calls made from inside run/callbacks.
+    bool install_owner(CodeOwner, RoutineSet routines);
     VmStatus status() const { return status_; }
     const std::string& diagnostic() const { return diagnostic_; }
     const std::vector<VmFrame>& stack() const { return stack_; }

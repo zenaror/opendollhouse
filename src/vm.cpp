@@ -61,6 +61,17 @@ Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits, VmPrimitive primit
         }
     }
 }
+bool Vm::install_owner(CodeOwner owner, RoutineSet routines) {
+    if (executing_ || owner == 0 || routines.empty() || owners_.find(owner) != owners_.end() ||
+        owners_.size() >= limits_.code_owners - 1) return false;
+    for (const auto& entry : routines) {
+        const auto expected = routine_key(entry.first.id);
+        if (entry.first.scope == RoutineScope::global || entry.first.scope != expected.scope)
+            return false;
+    }
+    owners_.emplace(owner, std::move(routines));
+    return true;
+}
 const Bhav* Vm::resolve(RoutineKey key, CodeOwner owner) const {
     if(owner!=0 && owners_.find(owner)==owners_.end())return nullptr;
     const auto& bank=(key.scope==RoutineScope::global || owner==0)?routines_:owners_.at(owner);

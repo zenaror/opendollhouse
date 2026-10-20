@@ -114,6 +114,52 @@ int main() {
         rejects([&]{odh::Vm invalid(base(),{},odh::VmLimits{64,4096,2},{},{{11,bank(1)},{22,bank(2)}});},"owner count includes default owner");
         odh::Vm exact(base(),{},odh::VmLimits{64,4096,2},{},{{11,bank(11)}});exact.start(key(4096),{1,2,2,11});
         require(exact.run(10)==odh::VmStatus::returned_true,"owner count at configured bound works");
+        // Append a saved object's private code while the permanent Main VM is
+        // parked on a service ticket; the resumed action uses the new owner.
+        auto action_bank=odh::RoutineSet{{key(4097),routine({call(4100)})},
+                                         {key(4100),routine({assign(0,55)})}};
+        bool reentrant_install=true;
+        odh::Vm* parked_ptr=nullptr;
+        const auto parked_primitive=[&](const auto&,const auto& instruction,const auto&,const auto&)
+            ->odh::PrimitiveOutcome {
+            if(instruction.opcode==17)return {odh::PrimitiveDisposition::wait,{}};
+            if(instruction.opcode==18) {
+                reentrant_install=parked_ptr->install_owner(12,action_bank);
+                return {odh::PrimitiveDisposition::call,{}, {},
+                    odh::VmCall{key(4097),{100,200,200,11},{0},odh::VmCallReturnMode::interaction_next_tick}};
+            }
+            return {};
+        };
+        odh::RoutineSet parked_root{{key(256),routine({call(17,1),call(18,1),assign(2,99)})}};
+        odh::Vm parked(parked_root,{},{},parked_primitive);parked_ptr=&parked;
+        require(parked.start(key(256),{100,100,100,0})==odh::VmStatus::running,"Main starts before owner load");
+        require(parked.run(1)==odh::VmStatus::waiting,"Main parks on an existing service ticket");
+        parked.temps()[7]=123;
+        const auto saved_frame=parked.stack().front();
+        const auto saved_ticket=parked.pending()->ticket;
+        const auto saved_generation=parked.run_generation();
+        const auto saved_steps=parked.steps();
+        require(parked.install_owner(11,action_bank),"new saved-object owner installs at a safe point");
+        require(parked.status()==odh::VmStatus::waiting&&parked.pending()->ticket==saved_ticket&&
+                parked.run_generation()==saved_generation&&parked.steps()==saved_steps&&parked.temps()[7]==123&&
+                parked.stack().size()==1&&parked.stack()[0].key.id==saved_frame.key.id&&
+                parked.stack()[0].pc==saved_frame.pc&&parked.stack()[0].context.code_owner==saved_frame.context.code_owner,
+                "owner installation preserves waiting Main frame, ticket, temps and generation");
+        require(!parked.install_owner(11,action_bank)&&!parked.install_owner(0,action_bank)&&
+                !parked.install_owner(13,{}),
+                "runtime owner installation rejects replacement, default and empty owners");
+        require(parked.complete(saved_ticket,true),"parked Main accepts its original completion");
+        require(parked.run(1)==odh::VmStatus::budget_exhausted&&parked.stack().size()==2&&
+                parked.stack()[1].context.code_owner==11,"resumed Main dispatches action in the new owner");
+        require(!reentrant_install,"owner installation from a VM primitive callback is rejected");
+        require(parked.run(10)==odh::VmStatus::yielded&&parked.temps()[0]==55&&
+                parked.interaction_return()&&parked.interaction_return()->code_owner==11,
+                "installed private action chain executes and returns under its owner");
+        odh::Vm bounded(parked_root,{},odh::VmLimits{64,4096,2});
+        require(bounded.install_owner(11,action_bank)&&!bounded.install_owner(12,action_bank),
+                "runtime owner capacity includes default owner zero");
+        require(!bounded.install_owner(13,{{{odh::RoutineScope::semiglobal,4096},routine({assign(0,1)})}}),
+                "runtime owner rejects mismatched routine scope atomically");
         // Owned program is immutable with respect to subsequent caller changes.
         auto external=bank(22);odh::Vm immutable(base(),{},{},{},{{22,external}});
         external[key(4097)]=routine({assign(0,999)});immutable.start(key(4096),{1,2,2,22});

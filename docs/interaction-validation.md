@@ -48,6 +48,15 @@ ordinárias dentro da ação continuam permitidas.
 sem percorrer sua branch. Isso permite reavaliar IdleForInput quando chega uma
 ação ou vence seu deadline. Reentry, tickets e índices inválidos são rejeitados.
 
+`Vm::install_owner(owner, routines)` permite anexar código privado/semiglobal
+de um recurso selecionado depois da criação da VM Main. A operação só ocorre
+fora de `run()`; owner zero, duplicatas, escopos inválidos e limite de owners
+são recusados. Ela nunca substitui uma rotina nem altera frames, PC, temporários,
+tickets, status ou geração. Os owners existentes permanecem imutáveis. O teste
+sintético estaciona Main em uma espera, instala código, completa o ticket
+original e executa uma chamada de ação em outro owner. Isso valida o mecanismo
+da VM; o host Linux ainda não carrega owners de objetos nem enfileira ações.
+
 Calls agora podem publicar uma escrita validada no frame do pai: IdleForInput
 precisa decrementar o argumento antes de instalar a ação. O kernel valida a
 escrita e o filho antes de publicar ambos. Usa o índice do pai depois de push,
@@ -97,6 +106,9 @@ após observar o resultado; não instala standing-loop no retorno.
   duas ações com resultados diferentes, countdown, deadline/sentinela, chegada
   durante espera, interrupt, Flags, reset/rebind, reciclagem de caller/alvo
   antes e durante ação, e faults sem falsa completion.
+- `odh-vm-owner-tests`:52 checks sintéticos, incluindo registro aditivo em Main
+  suspensa, rejeição de substituição/reentrada/escopo inválido/limite e execução
+  da cadeia privada 4097→4100 no owner instalado.
 - A revisão independente identificou a lacuna de geração do alvo ativo. Ela foi
   corrigida no gate de validação e coberta pelo teste que suspende antes do
   primeiro dispatch da ação, remove/recria o alvo e recusa mais execução.
@@ -128,8 +140,9 @@ limpeza administrativa completa (NonInterruptable, motive changes e flags de
 cancelamento), eligibility/routing, callback de conclusão e persistência seguem
 pendentes. Interrupt desta API só acorda Main idle, não cancela ação ativa.
 
-O host Linux deve passar a registrar os bancos por owner e usar esse fluxo em
-vez de iniciar cada ação com start. As dependências alcançadas pelo Main real
+O host Linux deve carregar os recursos exatos do objeto selecionado, chamar
+`install_owner` antes de enfileirar e usar esse fluxo em vez de iniciar cada
+ação com `start`. As dependências alcançadas pelo Main real
 (Sleep, RNG, scopes, MiscSTR156 e resources do avatar) ainda precisam de gates.
 O idle em pé, o lote mínimo funcional e a fidelidade visual continuam não
 validados. Não há evidência de consoles ou comparação com execução original.
