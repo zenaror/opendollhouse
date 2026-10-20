@@ -317,6 +317,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Campos de colisão do OBJD](docs/object-collision-validation.md)
 - [Geometria de rota sobre arquitetura salva](docs/route-geometry-validation.md)
 - [Segmentação geométrica de salas salvas](docs/room-map-validation.md)
+- [Candidatos geométricos de obstáculos por sala](docs/room-obstacles-validation.md)
 - [Validação do primeiro protótipo](docs/validation.md)
 - [Validação das tabelas de interação](docs/ttab-validation.md)
 - [Núcleo da VM e limites de validação](docs/vm-validation.md)
