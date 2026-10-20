@@ -61,11 +61,10 @@ bits de parede desconhecidos e ambas as diagonais num tile são rejeitados.
 Outros metadados salvos permanecem fora desta etapa: altitude, grama,
 contenção/objetos, iluminação, roofs, câmera e seleção da casa.
 
-O caller fornece os dicionários já resolvidos. Esta API ainda não escolhe os
-chunks FLRm/WALm 1/0, normaliza seus nomes ou descobre arquivos `.flr`/`.wll`.
-Na referência, `BuildFloorDict`/`BuildWallDict` usam o prefixo anterior ao
-primeiro ponto em minúsculas e sobrescrevem aliases em ordem somente quando o
-nome resolve (`VMTS1Activator.cs:482-507`). Essa construção será outra etapa.
+Os dicionários podem ser montados pela camada
+[de resolução FLRm/WALm](architecture-alias-validation.md). O caller ainda
+seleciona os chunks 1/0 e fornece catálogos explícitos; a descoberta dos
+arquivos `.flr`/`.wll` permanece fora da API.
 
 `WorldFloorProvider.InitTS1` e `WorldWallProvider.InitTS1` atribuem IDs dinâmicos
 a partir de 256 em ordem de enumeração, com sobrescrita de nomes duplicados.

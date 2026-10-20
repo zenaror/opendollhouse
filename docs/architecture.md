@@ -38,6 +38,9 @@ O preparo de arquitetura salva possui um tipo separado e grids limitados:
 de recursos explícitos, flags térreas, road flip e crop antes da segmentação.
 A descoberta do catálogo, sua precedência e as entidades/portais vivos ainda
 faltam para transformar esses mapas e obstáculos candidatos em runtime de lote.
+Os mapas FLRm/WALm podem ser ligados a catálogos explicitamente ordenados por
+[resolução de aliases](architecture-alias-validation.md); a descoberta e
+precedência dos próprios assets de instalação seguem externas a essa API.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta

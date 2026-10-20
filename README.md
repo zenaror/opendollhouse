@@ -318,6 +318,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Geometria de rota sobre arquitetura salva](docs/route-geometry-validation.md)
 - [Segmentação geométrica de salas salvas](docs/room-map-validation.md)
 - [Preparo de pisos/paredes salvos com aliases explícitos](docs/prepared-architecture-validation.md)
+- [Resolução explícita dos aliases FLRm/WALm](docs/architecture-alias-validation.md)
 - [Candidatos geométricos de obstáculos por sala](docs/room-obstacles-validation.md)
 - [Validação do primeiro protótipo](docs/validation.md)
 - [Validação das tabelas de interação](docs/ttab-validation.md)

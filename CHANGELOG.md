@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Resolução dos aliases FLRm/WALm contra catálogos de nomes explícitos e
+  ordenados, com IDs dentro da política ODH, diagnósticos de misses e duplicatas.
+  A descoberta de arquivos comerciais e a precedência dos providers seguem
+  externas à API.
 - Preparo limitado de pisos/paredes salvos com aliases explícitos, road flip,
   flags e crop; o mapa de salas pode consumir os grids preparados sem repetir
   conversões. Descoberta de recursos e portas/portais vivos seguem pendentes.
@@ -30,6 +34,9 @@ validação indicados por versão.
 
 ### Validação
 
+- Resolver FLRm/WALm: testes sintéticos de nomes, precedência, duplicatas,
+  misses, ASCII suportado, imutabilidade e limites. Catálogo de instalação e
+  equivalência com o jogo original não são afirmados.
 - Preparo de arquitetura: 88 checks sintéticos passaram; build Debug e suíte
   de 133 CTests sem falhas, com janela X11 pulada por ausência de DISPLAY.
   Catálogo externo, portas/portais e runtime do lote continuam pendentes.
