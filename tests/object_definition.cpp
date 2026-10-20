@@ -33,6 +33,7 @@ int main() {
         // fixtures that could accidentally validate a misaligned reader.
         std::string bytes(32, '\x5a');
         put32(bytes, 0, 138);
+        put16(bytes, 14, 128);
         put16(bytes, 18, 0xfedc);
         put16(bytes, 20, 0x9876);
         put16(bytes, 22, 0xffff);
@@ -40,6 +41,7 @@ int main() {
         auto metadata = read(bytes);
         check(metadata.version == 138 && metadata.object_type == 0xfedc);
         check(metadata.guid == 0xfedcba98 && metadata.master_id == 0x9876);
+        check(metadata.tree_table_id == 128);
         check(metadata.sub_index == -1 && metadata.is_multitile);
         check(metadata.header_extent == 32 && metadata.remaining_bytes == 0);
         // read() destroys its stream: metadata remains independently owned.
@@ -51,7 +53,8 @@ int main() {
             const auto parsed = read(profile);
             check(parsed.version == version && parsed.guid == 0xfedcba98 &&
                   parsed.object_type == 0xfedc && parsed.master_id == 0x9876 &&
-                  parsed.sub_index == -1 && parsed.is_multitile && parsed.header_extent == 32);
+                  parsed.sub_index == -1 && parsed.is_multitile && parsed.header_extent == 32 &&
+                  parsed.tree_table_id == 128);
             for (std::size_t size = 0; size < profile.size(); ++size)
                 check(rejects([&] { read(profile.substr(0, size)); }));
         }
@@ -73,6 +76,7 @@ int main() {
         metadata = read(bytes + tail);
         check(!metadata.is_multitile && metadata.sub_index == -1 && metadata.guid == 0);
         check(metadata.header_extent == 32 && metadata.remaining_bytes == tail.size());
+
         std::istringstream parent("prefix" + bytes + "suffix");
         metadata = odh::read_object_definition(odh::View(parent, 44).subview(6, 32));
         check(metadata.object_type == 0xfedc && metadata.remaining_bytes == 0);

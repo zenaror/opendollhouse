@@ -10,9 +10,10 @@ struct ObjectDefinition {
     std::int16_t sub_index;
     bool is_multitile;
     std::uint64_t header_extent, remaining_bytes;
+    std::uint16_t tree_table_id = 0;
 };
 
-// Explicit OBJD136/138 metadata profiles through GUID (32 bytes). Values are owned
+// Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes). Values are owned
 // and raw, including unknown object types and the signed sub-index. The flag
 // only means MasterID != 0 according to the pinned FreeSO metadata mapping.
 // header_extent is the prefix read, not the complete OBJD header size.

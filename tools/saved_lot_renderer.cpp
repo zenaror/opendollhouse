@@ -194,11 +194,14 @@ std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& 
     const auto* entity=saved_.world->find(id);
     if(identity==object_generations_.end()||!entity||entity->generation!=identity->second||
        entity->kind!=odh::EntityKind::object||!entity->definition)return {};
+    const auto* definition=definitions_.unique(entity->definition->guid);
+    if(!definition)return {};
     const auto record=std::find_if(saved_.records.begin(),saved_.records.end(),
         [&](const auto& raw){return raw.saved.object_id==token;});
     if(record==saved_.records.end()||record->saved.guid!=entity->definition->guid||!entity->position)return {};
     const odh::VmFrame context{odh::routine_key(4096),0,{id,id,id,0},{},{}};
     const auto hidden=saved_.world->read(context,3,34);
     if(!hidden||*hidden)return {};
-    return SavedObjectSelection{id,entity->definition->guid,entity->generation};
+    return SavedObjectSelection{id,entity->definition->guid,entity->generation,
+                                definition->definition.tree_table_id};
 }

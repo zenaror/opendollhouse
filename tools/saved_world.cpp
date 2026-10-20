@@ -24,8 +24,10 @@ int main(int argc,char** argv){try{
         <<",\"relationship_pairs\":"<<loaded->relationships->pair_count()<<",\"relationship_values\":"<<loaded->relationships->value_count()<<",\"records\":[";
     for(std::size_t n=0;n<loaded->records.size();++n){if(n)std::cout<<',';const auto& raw=loaded->records[n];
         const auto* entity=loaded->world->find(static_cast<std::int16_t>(raw.saved.object_id));
+        const auto* definition=index->unique(raw.saved.guid);
         std::cout<<"{\"id\":"<<entity->id<<",\"generation\":"<<entity->generation<<",\"kind\":"<<json_bytes(entity->kind==odh::EntityKind::avatar?"avatar":"object")
             <<",\"guid\":"<<entity->definition->guid<<",\"master_guid\":"<<(entity->definition->master_guid?std::to_string(*entity->definition->master_guid):"null")
+            <<",\"tree_table_id\":"<<(definition?std::to_string(definition->definition.tree_table_id):"null")
             <<",\"position\":";
         if(entity->position){const auto& p=*entity->position;std::cout<<"{\"x\":"<<p.x<<",\"y\":"<<p.y<<",\"level\":"<<p.level<<",\"direction\":"<<static_cast<unsigned>(p.direction)<<'}';}
         else std::cout<<"null";

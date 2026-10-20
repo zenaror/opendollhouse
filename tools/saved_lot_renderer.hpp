@@ -43,7 +43,12 @@ struct SavedLotFrame {
     std::uint64_t object_tested_samples=0,object_shaded_samples=0;
     std::uint64_t object_hidden=0,object_above_level=0,object_outside=0,object_removed=0;
 };
-struct SavedObjectSelection {std::int16_t id;std::uint32_t guid;std::uint64_t generation;};
+struct SavedObjectSelection {
+    std::int16_t id;
+    std::uint32_t guid;
+    std::uint64_t generation;
+    std::uint16_t tree_table_id;
+};
 // Borrow the live saved World and immutable definitions; both must outlive this
 // host renderer. Architecture owns its bounded decoded snapshot. Rendering does
 // not restore/clone a World, execute saved threads or change simulation state.

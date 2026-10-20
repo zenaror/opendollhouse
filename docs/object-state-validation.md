@@ -22,6 +22,18 @@ a MasterID não zero, inclusive SubIndex-1. Extent32 e cauda restante são
 informados; não é validação completa do OBJD ou execução de seu construtor.
 Outras versões são recusadas explicitamente neste reader.
 
+O perfil OBJD136/138 também expõe `TreeTableID` no offset14. A posição segue a
+ordem de campos do OBJD TS1 em Simitone,
+`refs/upstream/Simitone/FreeSO/Other/tools/SimsLib/SimsLib/IFF/OBJD.cs`.
+Isso documenta somente layout do formato: não prova presença de TTAB, elegibilidade
+de interação nem comportamento do executável original.
+
+O JSON de `odh-saved-world` inclui agora esse campo quando há uma definição GUID
+única. Na House07 original, cadeira ID128/GUID `0x26BFBB29` resolve
+`TreeTableID=128`; `odh-ttab` decodifica a tabela correspondente em
+`DiningChairs.iff` como v9 comprimida, uma linha com Action4097/Test4098.
+São ligações estruturais de recursos, não resultado de teste de elegibilidade.
+
 DefinitionIndex possui candidatos e proveniência de fontes declaradas.
 Limites padrão:8192 candidatos e256KiB cumulativos de nomes de fonte/asset,
 conferidos antes da cópia. GUID ausente, único e ambíguo são estados distintos.

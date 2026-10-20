@@ -17,6 +17,9 @@ validação indicados por versão.
 - Seleção de objeto por clique no preview Main com lote: o título informa ID e
   GUID. O buffer de seleção respeita alpha/profundidade; selecionar ainda não
   executa interações TTAB ou altera o World.
+- A identidade OBJD agora preserva `TreeTableID` e o preview/JSON o mostra para
+  o objeto selecionado, preparando a resolução explícita da TTAB sem alegar
+  elegibilidade.
 - Manager HIT persistente por `TrackID`, com registro explícito de controllers,
   resolução global de eventos e agregação de fontes.
 - Recusas de lookup e de capacidade antes de efeitos deixam controllers

@@ -16,7 +16,7 @@ ObjectDefinition read_object_definition(const View& payload) {
                     : static_cast<std::int32_t>(sub) - 65536);
     const auto master = prefix.le16(20);
     return {version, prefix.le32(28), prefix.le16(18), master, signed_sub,
-            master != 0, extent, payload.size() - extent};
+            master != 0, extent, payload.size() - extent, prefix.le16(14)};
 }
 
 } // namespace odh

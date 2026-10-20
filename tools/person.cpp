@@ -716,7 +716,8 @@ int main(int argc,char** argv) {
                 render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
                 ++render_selection_clicks;render_selection_tick=ticks;
                 std::string title="OpenDollhouse Main preview: ";
-                if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid);
+                if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid)+
+                    " TTAB "+std::to_string(render_selection->tree_table_id);
                 else title+="no object selected";
                 render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
             }
@@ -1066,6 +1067,7 @@ int main(int argc,char** argv) {
             <<",\"id\":"<<(render_selection?std::to_string(render_selection->id):"null")
             <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
             <<",\"generation\":"<<(render_selection?std::to_string(render_selection->generation):"null")
+            <<",\"tree_table_id\":"<<(render_selection?std::to_string(render_selection->tree_table_id):"null")
             <<",\"interaction_requested\":false}"
             <<",\"lot\":";
         if(render_lot_evidence){const auto& lot=*render_lot_evidence;

@@ -214,8 +214,8 @@ lote e cinco CTests (`saved_lot_renderer`, `saved_object_renderer`,
 ### Seleção de objetos no preview Main
 
 Com `--saved-world-main --render-floors ... --render-window`, Button1 seleciona
-o objeto sob o pixel do último frame apresentado. O título mostra ID/GUID ou
-`no object selected`. O backend retém o último clique drenado em cada `poll`,
+o objeto sob o pixel do último frame apresentado. O título mostra
+ID/GUID/TreeTableID ou `no object selected`. O backend retém o último clique drenado em cada `poll`,
 incluindo coordenadas fora do drawable; Space/Enter não inventam uma posição.
 O clique é resolvido antes de aplicar rotação/zoom que vieram no mesmo poll.
 
@@ -234,6 +234,8 @@ Não altera World, filas, VM ou RNG. O JSON `render.object_selection` registra
 cliques e a identidade escolhida no tick informado, com
 `interaction_requested:false`; `render.lot.object_pick_buffer_bytes` informa
 o custo da captura. Ainda não há TTAB, menu, cancelamento ou ação de gameplay.
+O `TreeTableID` exibido vem apenas do prefixo OBJD136/138 e não confirma que a
+TTAB exista no owner nem que sua ação passe em elegibilidade.
 
 Build focal sem warnings e cinco CTests executados passaram:
 `sprite_composition`, `saved_object_renderer`, `saved_lot_renderer`,

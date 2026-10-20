@@ -81,7 +81,7 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  check(near.image.depth[wall_pixel]<wall.image.depth[wall_pixel]);
  check(near.object_pick_ids.size()==empty.pixels.size()&&near.object_pick_ids[wall_pixel]==2);
  const auto picked=renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width));
- check(picked&&picked->id==2&&picked->guid==123&&picked->generation==world.find(2)->generation);
+ check(picked&&picked->id==2&&picked->guid==123&&picked->generation==world.find(2)->generation&&picked->tree_table_id==128);
  saved.records[0].saved.guid=124;check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));saved.records[0].saved.guid=123;
  check(world.write(f,3,34,1));check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));check(world.write(f,3,34,0));
  check(!renderer.pick(near,-1,0)&&!renderer.pick(near,0,-1)&&!renderer.pick(near,static_cast<std::int32_t>(camera.width),0)&&!renderer.pick(near,0,static_cast<std::int32_t>(camera.height)));
@@ -104,7 +104,7 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  rejects([&]{saved_wall_appearance(saved,definitions,architecture().architecture);});
  check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));check(world.set_position(2,{24,24,1,0}));rejects([&]{renderer.render(camera,empty);});check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));
 }
-odh::DefinitionCandidate candidate(const std::filesystem::path& path,std::uint32_t guid){return {path.string(),"",1,{138,guid,4,0,0,false,32,10}};}
+odh::DefinitionCandidate candidate(const std::filesystem::path& path,std::uint32_t guid){return {path.string(),"",1,{138,guid,4,0,0,false,32,10,128}};}
 void contained_checks(const Temp& temp,const std::filesystem::path& floors){
  const auto path=temp.p/"chair.iff";write(path,container_fixture(123));
  odh::DefinitionIndex definitions({candidate(path,123)});
