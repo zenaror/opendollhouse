@@ -23,10 +23,13 @@
 #include "resource.hpp"
 #include "json.hpp"
 #include "saved_tail_json.hpp"
+#include "saved_appearance.hpp"
 #include <iostream>
 #include <memory>
 #include <charconv>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;};
@@ -107,6 +110,8 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
+    std::optional<std::uint16_t> render_tick;
+    std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
         if(option=="--avatar"&&!avatar&&n+3<argc){avatar=Resource{argv[n+1],argv[n+2]};avatar_def=selector(argv[n+3]);n+=3;}
@@ -129,6 +134,11 @@ int main(int argc,char** argv) {
             animation_sources.emplace_back(argv[++n]);
             if(animation_sources.back().size()>4096)throw odh::FormatError("animation source path exceeds bounded host profile");
         }
+        else if(option=="--render-frame"&&!render_output&&n+1<argc){render_output=argv[++n];}
+        else if(option=="--render-animation-far"&&!render_animation_far&&n+1<argc){render_animation_far=argv[++n];}
+        else if(option=="--render-textures"&&!render_textures_far&&n+1<argc){render_textures_far=argv[++n];}
+        else if(option=="--render-skeleton"&&!render_skeleton_entry&&n+2<argc){render_skeleton_entry=argv[n+1];render_skeleton_name=argv[n+2];n+=2;}
+        else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
             definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
@@ -136,8 +146,11 @@ int main(int argc,char** argv) {
         }
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path)))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood NBRS_IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096]");
+    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick;
+    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
+       (render_requested&&(!render_output||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||!initialize||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)))||
+       (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS]]");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -478,14 +491,64 @@ int main(int argc,char** argv) {
         }
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{1,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
+    struct RenderEvidence {
+        std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
+        std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
+        std::uint64_t vertices=0,triangles=0,texture_bytes=0,shaded_samples=0;
+    };
+    std::optional<RenderEvidence> render_evidence;
+    std::unique_ptr<SavedAppearanceResources> render_appearances;
+    std::unique_ptr<SceneRenderer> render_renderer;
+    odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
+    if(render_output){
+        if(!body_state||!body_state->body||!playback||!animation_catalog)
+            throw odh::FormatError("person frame export requires initialized BodySTR and explicit AnimationCatalog");
+        if(render_output->empty()||render_output->size()>4096||render_output->find('\0')!=std::string::npos)
+            throw odh::FormatError("person frame output path outside bounded profile");
+        std::error_code path_error;
+        if(std::filesystem::exists(*render_output,path_error)||path_error)
+            throw odh::FormatError("person frame output must be a new file; existing output preserved");
+        render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
+                                                                       *render_skeleton_entry,*render_skeleton_name);
+        const auto scene_config=render_appearances->resolve_body(*body_state->body);
+        const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
+            auto decoded=animation_catalog->decode(selected);
+            const auto* planes=&decoded->planes;
+            return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
+        };
+        render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+    }
+    std::uint64_t ticks=0;
+    const auto capture_frame=[&]{
+        if(!render_output||render_evidence)return;
+        if(render_tick&&ticks!=*render_tick)return;
+        const auto sample=playback->sample();if(!sample)return;
+        const auto* sample_actor=world.find(sample->actor);
+        if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=1)
+            throw odh::FormatError("person frame sample actor identity is stale or outside this host");
+        SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
+        scene_state.hands=sample->hands;scene_state.avatar_direction=0;scene_state.avatar_tile={0,0,0};
+        const auto frame=render_renderer->render(scene_state,render_camera);
+        std::ofstream ppm(*render_output,std::ios::binary|std::ios::out);
+        if(!ppm)throw odh::FormatError("person frame output cannot be created");
+        ppm<<"P6\n"<<frame.image.width<<' '<<frame.image.height<<"\n255\n";
+        for(const auto& pixel:frame.image.pixels)for(unsigned channel=0;channel<3;++channel)
+            ppm.put(static_cast<char>(pixel[channel]));
+        ppm.close();if(!ppm)throw odh::FormatError("person frame output write failed");
+        const auto usage=animation_catalog->usage();
+        render_evidence=RenderEvidence{sample->clip->name,sample->frame,sample->actor,ticks,
+            sample->actor_generation,sample->vm_generation,usage.cfp_samples,render_renderer->vertices(),
+            render_renderer->triangles(),render_renderer->texture_bytes(),frame.image.shaded_samples};
+    };
     const auto total_steps=[&]{return startup_steps+vm.steps();};
-    std::uint64_t ticks=0;const auto execute=[&] {
+    const auto execute=[&] {
         if(host_failed)return;
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
         vm.run(total_steps()<10000?10000-total_steps():0,trace_in(initialize?"main":"root_probe"));
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
     };
     execute();
+    capture_frame();
     while(!host_failed&&ticks<ticks_limit&&total_steps()<10000&&
           (vm.status()==odh::VmStatus::waiting||vm.status()==odh::VmStatus::yielded)) {
         ++ticks;
@@ -498,11 +561,15 @@ int main(int argc,char** argv) {
             animation_events.push_back(event);animation_event_bytes+=bytes;
         });
         execute();
+        capture_frame();
     }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
     const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
+    if(render_output&&!render_evidence)
+        throw odh::FormatError(render_tick?"person frame export observed no live Playback sample at requested tick; no frame written":
+                               "person frame export observed no live Playback sample; no frame written");
     std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":"<<json_bytes(initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
@@ -514,7 +581,7 @@ int main(int argc,char** argv) {
         std::cout<<"{\"age\":"<<*state.body->age<<",\"gender\":";
         if(state.body->gender)std::cout<<*state.body->gender;else std::cout<<"null";
         std::cout<<",\"avatar_type\":"<<json_bytes(state.body->avatar_type)<<",\"body\":"<<json_bytes(state.body->body)<<",\"head\":"<<json_bytes(state.body->head)
-            <<",\"phenotype\":\"TS1 light reference policy\",\"appearance_resources_resolved\":false,\"selected_name\":"<<(state.selected_name?json_bytes(*state.selected_name):"null")
+            <<",\"phenotype\":\"TS1 light reference policy\",\"appearance_resources_resolved\":"<<(render_evidence?"true":"false")<<",\"selected_name\":"<<(state.selected_name?json_bytes(*state.selected_name):"null")
             <<",\"seed_before\":"<<*body_seed_before<<",\"seed_after\":"<<*body_seed_after<<",\"walk_table\":"<<state.global_walk_id<<",\"swim_table\":"<<state.global_swim_id<<",\"hands\":[";
         for(std::size_t n=0;n<6;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.body->hands[n]);}
         std::cout<<"],\"walk\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.walk[n]);}
@@ -749,7 +816,9 @@ int main(int argc,char** argv) {
         std::cout<<"{\"owner\":"<<f.context.code_owner<<",\"routine\":"<<f.key.id<<",\"pc\":"<<f.pc<<",\"caller\":"<<f.context.caller<<",\"callee\":"<<f.context.callee<<",\"stack_object\":"<<f.context.stack_object<<'}';}
     std::cout<<']';
     if(playback){
-        std::cout<<",\"animation_profile\":\"silent primary Playback; explicit FAR catalog and STR language1; no rig/render/audio or saved continuation\""
+        std::cout<<",\"animation_profile\":"<<json_bytes(render_evidence?
+            "silent primary Playback with one headless presentation-frame export; runtime lot position absent; no audio or saved continuation":
+            "silent primary Playback; explicit FAR catalog and STR language1; no rig/render/audio or saved continuation")
             <<",\"animation_resolution_diagnostic\":"<<json_bytes(animation_resolution_diagnostic)
             <<",\"animation_progress\":";
         const auto progress=playback->progress();
@@ -769,6 +838,16 @@ int main(int argc,char** argv) {
             std::cout<<"]}";
         }std::cout<<']';
     }
+    std::cout<<",\"render\":";
+    if(render_evidence){const auto& v=*render_evidence;
+        std::cout<<"{\"kind\":\"headless_Main_Playback_sample\",\"output\":"<<json_bytes(*render_output)
+            <<",\"runtime_position_present\":false,\"presentation_anchor\":[0,0,0],\"presentation_direction\":0"
+            <<",\"camera_center_tile\":[0,0,0.75],\"tick\":"<<v.tick<<",\"actor\":"<<v.actor<<",\"actor_generation\":"<<v.actor_generation
+            <<",\"vm_generation\":"<<v.vm_generation<<",\"clip\":"<<json_bytes(v.clip)<<",\"frame\":"<<v.frame
+            <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
+            <<",\"texture_bytes\":"<<v.texture_bytes<<",\"catalog_cfp_samples\":"<<v.cfp_samples
+            <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples<<'}';
+    }else std::cout<<"null";
     std::cout<<"}\n";
     return host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
  }catch(const std::exception& e){std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;}

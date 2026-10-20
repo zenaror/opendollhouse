@@ -44,17 +44,17 @@ struct Archive {
     odh::View view(const odh::FarEntry& e){return odh::View(stream,size).subview(e.offset,e.length);}
 };
 struct Named {std::string entry,name;};
-struct HandResource {std::string appearance,texture_map;};
-HandResource hand_resource(const std::string& raw) {
+struct AppearanceResource {std::string appearance,texture_map;};
+AppearanceResource body_resource(const std::string& raw,const char* kind) {
     bounded_name(raw);
     const auto comma=raw.find(',');
-    HandResource out{raw.substr(0,comma),comma==std::string::npos?std::string{}:raw.substr(comma+1)};
+    AppearanceResource out{raw.substr(0,comma),comma==std::string::npos?std::string{}:raw.substr(comma+1)};
     bounded_name(out.appearance);
     if(out.appearance.find_first_of("=;")!=std::string::npos)
-        throw odh::FormatError("BodySTR hand appearance syntax invalid");
+        throw odh::FormatError(std::string("BodySTR ")+kind+" appearance syntax invalid");
     if(comma!=std::string::npos) {
         if(out.texture_map.empty()||out.texture_map.find_first_of(",;")!=std::string::npos)
-            throw odh::FormatError("BodySTR hand requires one texture binding");
+            throw odh::FormatError(std::string("BodySTR ")+kind+" requires one texture binding");
         texture_override(out.texture_map);
     }
     return out;
@@ -116,6 +116,15 @@ struct SavedAppearanceResources::Impl {
             if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative part budget exceeded");
             out.parts.push_back({host.entry,host.name,mesh_entries[i],textures.select(texture+".bmp").name,hand});}
     }
+    void hands(SceneConfig& out,const std::array<AppearanceResource,6>& variants) {
+        for(std::size_t i=0;i<variants.size();++i) {
+            const bool right=(i%2)==1;
+            // Pinned FreeSO TS1 ReloadHandgroup takes right pointing/fist
+            // texture from RightHand.Idle but keeps each gesture's appearance.
+            part(out,variants[i].appearance,right?variants[1].texture_map:variants[i].texture_map,
+                 SceneHandPart{right,static_cast<odh::HandGesture>(i/2)});
+        }
+    }
     std::optional<SavedAnimationAppearance> animation(const std::string& raw) {
         if(raw.empty())return {};
         bounded_name(raw);auto semi=raw.find(';');if(semi==std::string::npos)throw odh::FormatError("saved animation missing fields");
@@ -143,17 +152,22 @@ SavedAppearance SavedAppearanceResources::resolve(const odh::ObjmPersonState& pe
     impl_->part(out.scene,person.left_hand.bytes,person.left_hand_texture.bytes);impl_->part(out.scene,person.right_hand.bytes,person.right_hand_texture.bytes);
     return out;
 }
+SceneConfig SavedAppearanceResources::resolve_body(const odh::AvatarBodyStrings& body) {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    const auto outfit=body_resource(body.body,"body"),head=body_resource(body.head,"head");
+    std::array<AppearanceResource,6> variants;
+    for(std::size_t i=0;i<variants.size();++i)variants[i]=body_resource(body.hands[i],"hand");
+    auto out=impl_->config;
+    impl_->part(out,outfit.appearance,outfit.texture_map);
+    impl_->part(out,head.appearance,head.texture_map);
+    impl_->hands(out,variants);
+    return out;
+}
 SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPersonState& person,const odh::AvatarBodyStrings& body) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
-    std::array<HandResource,6> variants;
-    for(std::size_t i=0;i<variants.size();++i)variants[i]=hand_resource(body.hands[i]);
+    std::array<AppearanceResource,6> variants;
+    for(std::size_t i=0;i<variants.size();++i)variants[i]=body_resource(body.hands[i],"hand");
     auto out=impl_->body_head_animation(person);
-    for(std::size_t i=0;i<variants.size();++i) {
-        const bool right=(i%2)==1;
-        // Pinned FreeSO TS1 ReloadHandgroup takes right pointing/fist texture
-        // from RightHand.Idle, while retaining each gesture's own appearance.
-        impl_->part(out.scene,variants[i].appearance,right?variants[1].texture_map:variants[i].texture_map,
-                    SceneHandPart{right,static_cast<odh::HandGesture>(i/2)});
-    }
+    impl_->hands(out.scene,variants);
     return out;
 }

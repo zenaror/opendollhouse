@@ -59,6 +59,29 @@ int main(){try{
  check(gesture_result.scene.parts[4].texture_entry=="override.bmp"&&gesture_result.scene.parts[6].texture_entry=="skinlgt.bmp"&&gesture_result.scene.parts[8].texture_entry=="unmatched.bmp");
  for(const auto i:{5,7,9})check(gesture_result.scene.parts[static_cast<std::size_t>(i)].texture_entry=="skinmed.bmp");
  check(p.left_hand.bytes=="unresolved-raw-left"&&p.right_hand.bytes=="unresolved-raw-right");
+ // The constructed BodySTR path needs no fabricated ObjmPersonState and does
+ // not resolve saved current/base animations or infer appearance defaults.
+ auto constructed=body;constructed.body="BODY,BODY=skinmed";constructed.head="head,HEAD-HEAD=override";
+ const auto body_before=constructed.body,head_before=constructed.head;const auto hands_before=constructed.hands;
+ auto direct=gestures.resolve_body(constructed);check(direct.parts.size()==10);
+ check(direct.animation_far==a.string()&&direct.textures_far==t.string()&&direct.skeleton_entry=="rig.bcf"&&direct.skeleton_name=="adult");
+ check(direct.object_far.empty()&&direct.object_entry.empty()&&direct.object_id==0);
+ check(direct.parts[0].appearance_entry=="unexpected-host.bcf"&&direct.parts[1].texture_entry=="skinmed.bmp"&&direct.parts[2].texture_entry=="unmatched.bmp"&&direct.parts[3].texture_entry=="override.bmp");
+ for(std::size_t i=0;i<6;++i){const auto& part=direct.parts[i+4];check(part.appearance_name==names[i]&&part.hand&&part.hand->right==(i%2==1)&&part.hand->gesture==static_cast<odh::HandGesture>(i/2));}
+ check(direct.parts[4].texture_entry=="override.bmp"&&direct.parts[6].texture_entry=="skinlgt.bmp"&&direct.parts[8].texture_entry=="unmatched.bmp");
+ for(const auto i:{5,7,9})check(direct.parts[static_cast<std::size_t>(i)].texture_entry=="skinmed.bmp");
+ check(constructed.body==body_before&&constructed.head==head_before&&constructed.hands==hands_before);
+ auto defaults=constructed;defaults.body="body";defaults.head="head";auto default_parts=gestures.resolve_body(defaults);
+ check(default_parts.parts[0].texture_entry=="unmatched.bmp"&&default_parts.parts[1].texture_entry=="skinlgt.bmp"&&default_parts.parts[2].texture_entry=="unmatched.bmp"&&default_parts.parts[3].texture_entry=="x.bmp");
+ for(std::size_t selected=0;selected<8;++selected){auto absent_body=constructed;if(selected==0)absent_body.body.clear();else if(selected==1)absent_body.head.clear();else absent_body.hands[selected-2].clear();rejects([&]{gestures.resolve_body(absent_body);});}
+ for(const auto& raw:std::vector<std::string>{",BODY=override","body,","body,BODY=","body,=override","body,BODY=override;other","body,BODY=override,extra","body=override","body;other",std::string(4097,'x'),std::string("body\0junk",9)}){
+     auto bad=constructed;bad.body=raw;rejects([&]{gestures.resolve_body(bad);});bad=constructed;bad.head=raw;rejects([&]{gestures.resolve_body(bad);});}
+ auto absent_body=constructed;absent_body.body="missing-body,BODY=override";rejects([&]{gestures.resolve_body(absent_body);});
+ absent_body=constructed;absent_body.head="missing-head";rejects([&]{gestures.resolve_body(absent_body);});
+ absent_body=constructed;absent_body.body="body,BODY=missing-texture";rejects([&]{gestures.resolve_body(absent_body);});
+ absent_body=constructed;absent_body.hands[2]="leftPoint,HAND=missing-texture";rejects([&]{gestures.resolve_body(absent_body);});
+ absent_body=constructed;absent_body.hands[2]="leftPoint,HAND=bad=second";rejects([&]{gestures.resolve_body(absent_body);});
+ for(int i=0;i<20;++i)check(gestures.resolve_body(constructed).parts[7].texture_entry=="skinmed.bmp");
  for(const auto& raw:std::vector<std::string>{"",",HAND=override","leftIdle,","leftIdle,HAND=","leftIdle,=override","leftIdle,HAND=override;other","leftIdle,HAND=override,extra","leftIdle=override","leftIdle;other",std::string(4097,'x'),std::string("leftIdle\0junk",13)}){auto bad=body;bad.hands[0]=raw;rejects([&]{gestures.resolve_gestures(p,bad);});}
  auto absent=body;absent.hands[2]="missing-gesture,HAND=override";rejects([&]{gestures.resolve_gestures(p,absent);});
  absent=body;absent.hands[2]="leftPoint,HAND=missing";rejects([&]{gestures.resolve_gestures(p,absent);});
@@ -68,9 +91,15 @@ int main(){try{
  // Repeated resolves keep identities stable; six variants share the same
  // cumulative 16-part ceiling as the old path.
  for(int i=0;i<20;++i)check(gestures.resolve_gestures(p,body).scene.parts[7].texture_entry=="skinmed.bmp");
+ auto exact_parts=entries;for(auto& entry:exact_parts)if(entry.first=="leftFist.bcf")entry.second=appearance("leftFist",std::vector<std::string>(7,"handmesh"));far(a,exact_parts);
+ SavedAppearanceResources at_limit(a.string(),t.string(),"rig.bcf","adult");check(at_limit.resolve_body(constructed).parts.size()==16);
  auto crowded=entries;for(auto& entry:crowded)if(entry.first=="leftFist.bcf")entry.second=appearance("leftFist",std::vector<std::string>(8,"handmesh"));far(a,crowded);
- SavedAppearanceResources bounded(a.string(),t.string(),"rig.bcf","adult");rejects([&]{bounded.resolve_gestures(p,body);});
+ SavedAppearanceResources bounded(a.string(),t.string(),"rig.bcf","adult");rejects([&]{bounded.resolve_gestures(p,body);});rejects([&]{bounded.resolve_body(constructed);});
  far(a,entries);p.left_hand.bytes=p.right_hand.bytes="hand";p.animation.bytes=p.base_animation.bytes="";
- entries.push_back({"duplicate.bcf",appearance("BODY",{"mesh0"})});far(a,entries);SavedAppearanceResources ambiguous(a.string(),t.string(),"rig.bcf","adult");rejects([&]{ambiguous.resolve(p);});
+ entries.push_back({"duplicate.bcf",appearance("BODY",{"mesh0"})});far(a,entries);SavedAppearanceResources ambiguous(a.string(),t.string(),"rig.bcf","adult");rejects([&]{ambiguous.resolve(p);});rejects([&]{ambiguous.resolve_body(constructed);});
+ entries.pop_back();far(a,entries);const auto duplicate_textures=dir.path/"duplicate-textures.far";
+ far(duplicate_textures,{{"unmatched.bmp",""},{"skinlgt.bmp",""},{"override.bmp",""},{"OVERRIDE.bmp",""},{"skinmed.bmp",""},{"x.bmp",""}});
+ SavedAppearanceResources ambiguous_texture(a.string(),duplicate_textures.string(),"rig.bcf","adult");rejects([&]{ambiguous_texture.resolve_body(constructed);});
+ SavedAppearanceResources moved_body(std::move(gestures));rejects([&]{gestures.resolve_body(constructed);});
  std::cout<<checks<<" saved appearance checks passed\n";
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

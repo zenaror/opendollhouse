@@ -27,6 +27,11 @@ public:
     SavedAppearanceResources(SavedAppearanceResources&&) noexcept;
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;
     SavedAppearance resolve(const odh::ObjmPersonState&);
+    // Construct visual parts directly from BodySTR body/head and six hand
+    // records, without a saved person or saved animation state. Each record is
+    // appearance[,label=texture]; all eight appearances are required. Reuses
+    // the same resource ambiguity, naming and cumulative 16-part limits.
+    SceneConfig resolve_body(const odh::AvatarBodyStrings&);
     // All six BodySTR 17..22 variants are required and tagged for SceneState.
     // Raw saved hand fields are not interpreted or changed by this opt-in path.
     SavedAppearance resolve_gestures(const odh::ObjmPersonState&, const odh::AvatarBodyStrings&);

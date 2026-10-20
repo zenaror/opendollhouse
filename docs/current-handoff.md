@@ -1,5 +1,33 @@
 # Continuidade atual
 
+## Integração inicial do Main com o renderer (2026-10-20)
+
+`odh-person` agora pode exportar um frame PPM headless usando o `PlaybackSample`
+vivo do Main. O caminho usa `AvatarBodyStrings` diretamente para resolver corpo,
+cabeça e seis variantes de mão, decodifica CFP pelo `AnimationHeader` exato
+selecionado no catálogo multi-FAR e passa clip, frame e gestos ao renderer.
+Não cria `ObjmPersonState`, não injeta posição no World e não escolhe animação
+por nome. A âncora `(0,0,0)` existe apenas para apresentação do frame.
+
+Validação com os arquivos externos da instalação original: os relatórios
+`reports/odh-person-main-first-sample-20261020.json` e
+`reports/odh-person-main-tick214-20261020.json` registram frames diferentes do
+Main (ticks 2 e 214). No tick 214 o clip foi
+`a2o-idle-neutral-trans-lstand-lhips`, frame 1.2; o frame usou 684 vértices,
+840 triângulos e 425.984 bytes de textura. Os PPMs são preservados em
+`reports/odh-person-main-*.ppm`. Sete CTests focais passam e
+`git diff --check` passa. A execução encerra em `waiting` ao esgotar o limite de
+214 ticks (código 3 esperado pelo host); não é falha de renderização nem prova
+de que Main concluiu.
+
+Limites atuais: ainda não há posição viva/restaurada no lote, janela ou entrada
+de usuário; a cena não é jogável e o Main ainda pode parar em opcode/comportamento
+não implementado. Próximo passo de maior valor: usar a infraestrutura de lote
+salvo existente para exibir o Sim na posição real com câmera e janela Linux,
+preservando o mesmo Playback/VM e adicionando entrada mínima. Só depois avançar
+para ações contínuas, tempo/necessidades e persistência ODH. Detalhes em
+[validação do frame do Main](person-main-render-validation.md).
+
 Meta integral: primeira versão funcional e verificável no Linux; New 3DS, Vita
 e Android são etapas futuras com validação própria. ODH exige dados do jogo
 fornecidos pelo usuário, sem dependência do executável original ou checagem de
@@ -41,11 +69,9 @@ A investigação da lacuna Stand→idle está em
 `odh-person` já mantém Main, `Sleep`, `InteractionQueue` e Playback no mesmo
 relógio e preserva conclusão/retomada de ação; não se deve duplicar esse
 scheduler. A saída sentada é específica ao probe `odh-bhav`, que termina a VM
-do avatar depois de Stand. O contrato CFP multi-FAR já foi implementado no
-`SceneRenderer` e revisado com testes sintéticos; ainda não está ligado ao
-`odh-person`. O próximo incremento deve fazer essa ligação preservando a
-identidade de Playback e então mostrar o Main animado em uma cena Linux. O host
-ainda não restaura o lote vivo, liga rota, posição ou janela/render.
+do avatar depois de Stand. O contrato CFP multi-FAR está integrado ao renderer
+e ao export headless do `odh-person`, mas não há ainda uma cena Linux interativa
+com lote vivo, rota, posição ou entrada de usuário.
 
 ## Checkpoint atual — `afc836a` (2026-10-20)
 
