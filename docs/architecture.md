@@ -38,7 +38,11 @@ O preparo de arquitetura salva possui um tipo separado e grids limitados:
 de recursos explícitos, flags térreas, road flip e crop antes da segmentação.
 O [catálogo explícito](architecture-resource-catalog.md) e a
 [integração de materiais externos no render](external-architecture-renderer-validation.md)
-resolvem arquivos loose/FAR e pintura por zoom. Entidades/portais vivos ainda
+resolvem arquivos loose/FAR e pintura por zoom. O
+[snapshot CLI de cena salva](saved-scene-external-architecture-validation.md)
+compõe pisos/paredes/objetos reais de House23 sem avatar e admite preview
+explícito de pisos sem restaurar World. O limite de retenção ainda bloqueia
+House30; pool/water também continua fora do render. Entidades/portais vivos ainda
 faltam para transformar os obstáculos candidatos em runtime de lote.
 Os mapas FLRm/WALm podem ser ligados a catálogos explicitamente ordenados por
 [resolução de aliases](architecture-alias-validation.md); a descoberta e

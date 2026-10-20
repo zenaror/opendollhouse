@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/saved_architecture.hpp"
+#include "odh/prepared_architecture.hpp"
 #include "resource.hpp"
 #include <set>
 struct SavedArchitectureResource {
@@ -37,4 +38,29 @@ inline SavedArchitectureResource saved_architecture_resource(const std::string& 
             }else result.maps.emplace_back(type,odh::read_architecture_map(bytes,chunk.id));
         },limits);});
     result.architecture=odh::interpret_saved_architecture(arrays);return result;
+}
+
+// Share the exact prepared material/terrain snapshot between saved-scene and
+// the live lot renderer. Preparation validates the 64x64 source and crop; these
+// optional terrain grids retain their original row-major coordinates.
+inline odh::SavedArchitecture prepared_render_architecture(
+    const odh::SavedArchitecture& raw,const odh::PreparedArchitecture& prepared) {
+    if(!prepared.width||prepared.width!=prepared.height||prepared.width>raw.width||prepared.height>raw.height)
+        throw odh::FormatError("prepared render dimensions outside source");
+    odh::SavedArchitecture result;result.width=prepared.width;result.height=prepared.height;result.advanced=raw.advanced;
+    for(std::size_t level=0;level<2;++level){
+        result.levels[level].floors=prepared.levels[level].floors;
+        result.levels[level].walls=prepared.levels[level].walls;
+    }
+    const auto crop=[&](const auto& source,auto& target){
+        if(!source)return;
+        if(source->size()!=std::size_t(raw.width)*raw.height)
+            throw odh::FormatError("prepared render terrain extent mismatch");
+        target.emplace();target->reserve(std::size_t(prepared.width)*prepared.height);
+        for(std::uint32_t y=0;y<prepared.height;++y)for(std::uint32_t x=0;x<prepared.width;++x)
+            target->push_back((*source)[std::size_t(y)*raw.width+x]);
+    };
+    crop(raw.altitude,result.altitude);crop(raw.grass,result.grass);crop(raw.target_grass,result.target_grass);
+    crop(raw.pools,result.pools);crop(raw.water,result.water);
+    return result;
 }

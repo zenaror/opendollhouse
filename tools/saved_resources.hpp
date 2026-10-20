@@ -24,7 +24,16 @@ inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::v
         if(!stream)throw odh::FormatError("cannot open definition archive");
         const odh::View archive(stream,std::filesystem::file_size(source.path));
         odh::Limits limits;limits.far_entries=8192;limits.far_name_bytes=256*1024;
-        for(const auto& entry:odh::far1_index(archive,limits))add(archive.subview(entry.offset,entry.length),source.path,entry.name);
+        for(const auto& entry:odh::far1_index(archive,limits)){
+            // Definition archives may also contain strings, textures and other
+            // non-IFF resources. Only the explicit IFF family is parsed; a
+            // malformed .iff still fails, and duplicate GUIDs stay ambiguous.
+            const auto extension=std::filesystem::path(entry.name).extension().string();
+            std::string folded=extension;
+            for(auto& c:folded)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');
+            if(folded!=".iff")continue;
+            add(archive.subview(entry.offset,entry.length),source.path,entry.name);
+        }
     }
     return std::make_unique<odh::DefinitionIndex>(candidates);
 }

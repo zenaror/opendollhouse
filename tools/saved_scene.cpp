@@ -5,6 +5,7 @@
 #include "saved_wall_renderer.hpp"
 #include "saved_wall_appearance.hpp"
 #include "saved_architecture_resources.hpp"
+#include "odh/architecture_resource_catalog.hpp"
 #include "odh/terrain.hpp"
 #include "odh/terrain_surface.hpp"
 #include "saved_tail_json.hpp"
@@ -15,6 +16,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <set>
 
 namespace {
@@ -46,17 +48,30 @@ void animation_json(std::ostream& out,const std::optional<SavedAnimationAppearan
 }
 }
 int main(int argc,char** argv){try{
-    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM --skeleton ENTRY NAME --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--walls WALLS_IFF] [--terrain-theme 0..7] [--level 1..2] [--wall-mode up|down] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
+    if(argc<5)throw odh::FormatError("usage: HOUSE_IFF ANIMATION_FAR TEXTURES_FAR OUTPUT_PPM [--skeleton ENTRY NAME] [--object-definitions FAR] [--object-definition-file IFF] [--neighborhood IFF] [--objects] [--floors FLOORS_IFF] [--walls WALLS_IFF] [--architecture-resource FILE] [--architecture-only (floors/terrain only; no World)] [--terrain-theme 0..7] [--level 1..2] [--wall-mode up|down] [--depth-output FILE] [--width N --height N --zoom N --rotation N]");
+    std::vector<odh::ArchitectureResourceSource> architecture_sources;
     std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path,walls_path;std::optional<odh::TerrainTheme> terrain_theme;bool draw_objects=false;std::uint8_t selected_level=2;bool walls_down=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
+    std::string skeleton_entry,skeleton_name,depth;std::optional<std::string> floors_path,walls_path;std::optional<odh::TerrainTheme> terrain_theme;bool draw_objects=false,architecture_only=false;std::uint8_t selected_level=2;bool walls_down=false;odh::WorldProjection camera;camera.width=640;camera.height=400;
     std::set<std::string> seen;
     for(int n=5;n<argc;++n){const std::string option=argv[n];
         auto need=[&](int count){if(argc-n-1<count)throw odh::FormatError("incomplete saved scene option");};
         if(option=="--object-definitions"||option=="--object-definition-file"){
             need(1);if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");
             sources.push_back({argv[++n],option=="--object-definition-file"});continue;}
+        if(option=="--architecture-resource"){
+            need(1);if(architecture_sources.size()>=256)throw odh::FormatError("architecture resource source count exceeds bounded host profile");
+            const std::string path=argv[++n];
+            if(path.empty()||path.size()>4096)throw odh::FormatError("architecture resource path outside bounded host profile");
+            auto extension=std::filesystem::path(path).extension().string();
+            for(auto& c:extension)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');
+            if(extension!=".far"&&extension!=".flr"&&extension!=".wll")
+                throw odh::FormatError("architecture resource requires an explicit .flr, .wll or .far file");
+            architecture_sources.push_back({path,extension==".far"?odh::ArchitectureResourceSourceKind::far1_archive:
+                odh::ArchitectureResourceSourceKind::loose_file});continue;
+        }
         if(!seen.insert(option).second)throw odh::FormatError("duplicate saved scene option");
-        if(option=="--objects")draw_objects=true;
+        if(option=="--architecture-only")architecture_only=true;
+        else if(option=="--objects")draw_objects=true;
         else if(option=="--floors"){need(1);floors_path=argv[++n];if(floors_path->empty())throw odh::FormatError("empty floor input");}
         else if(option=="--walls"){need(1);walls_path=argv[++n];if(walls_path->empty())throw odh::FormatError("empty wall input");}
         else if(option=="--level"){need(1);auto value=selector(argv[++n]);if(value<1||value>2)throw odh::FormatError("selected level outside profile");selected_level=static_cast<std::uint8_t>(value);}
@@ -72,8 +87,11 @@ int main(int argc,char** argv){try{
                 if(option=="--zoom")camera.zoom=static_cast<std::uint8_t>(value);else camera.rotation=static_cast<std::uint8_t>(value);}}
         else throw odh::FormatError("invalid saved scene option");
     }
-    if(sources.empty()||skeleton_entry.empty()||skeleton_name.empty()||std::string(argv[4]).empty())
-        throw odh::FormatError("saved scene requires definitions, skeleton and output");
+    if((!architecture_only&&sources.empty())||std::string(argv[4]).empty())
+        throw odh::FormatError("saved scene requires definitions and output");
+    if(architecture_only&&(!floors_path||draw_objects||walls_path||neighborhood||!sources.empty()||seen.count("--skeleton")))
+        throw odh::FormatError("--architecture-only requires --floors and excludes objects, walls, definitions, neighborhood and skeleton");
+    if(!architecture_sources.empty()&&!floors_path)throw odh::FormatError("--architecture-resource requires --floors");
     if(seen.count("--wall-mode")&&!walls_path)throw odh::FormatError("wall mode requires --walls");
     if(walls_path&&!floors_path)throw odh::FormatError("walls require --floors for shared terrain profile");
     if(terrain_theme&&!floors_path)throw odh::FormatError("terrain theme requires --floors");
@@ -81,19 +99,39 @@ int main(int argc,char** argv){try{
     if(neighborhood)inputs.push_back(*neighborhood);
     if(floors_path)inputs.push_back(*floors_path);
     if(walls_path)inputs.push_back(*walls_path);
+    for(const auto& source:architecture_sources)inputs.push_back(source.path);
     for(const auto& p:inputs){different(argv[4],p);if(!depth.empty())different(depth,p);}
     if(!depth.empty())different(argv[4],depth);
-    auto index=saved_definition_index(sources);auto records=saved_world_records(argv[1],*index);
-    std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
-    auto world=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
+    const auto catalog=odh::discover_architecture_resources(architecture_sources);
+    auto index=saved_definition_index(sources);
+    std::unique_ptr<odh::SavedWorld> world;
+    if(architecture_only){
+        // An explicitly empty render context does not claim restoration of the
+        // lot's entities. This mode never decodes, drops or rewrites ObjM state.
+        world=std::make_unique<odh::SavedWorld>();world->world=std::make_unique<odh::World>();
+    }else{
+        auto records=saved_world_records(argv[1],*index);
+        std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
+        world=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
+    }
     std::optional<SavedArchitectureResource> architecture;
+    std::optional<odh::ResolvedArchitectureAliases> aliases;
+    std::optional<odh::PreparedArchitecture> prepared;
     std::map<std::int16_t,std::array<float,2>> group_centers;
     if(floors_path){
         architecture=saved_architecture_resource(argv[1]);
-        for(const auto& map:architecture->maps)if(map.first=="FLRm"&&!map.second.entries.empty())
-            throw odh::FormatError("custom FLRm materials require a resource resolver");
-        if(walls_path)for(const auto& map:architecture->maps)if(map.first=="WALm"&&!map.second.entries.empty())
-            throw odh::FormatError("custom WALm materials require a resource resolver");
+        const auto* floor_map=selected_architecture_map(*architecture,"FLRm");
+        const auto* wall_map=selected_architecture_map(*architecture,"WALm");
+        if(!architecture_sources.empty()){
+            const odh::ArchitectureMap empty;
+            aliases=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,wall_map?*wall_map:empty,
+                catalog.floors(),catalog.walls());
+            if(!aliases->floor_map_complete()||(walls_path&&!aliases->wall_map_complete()))
+                throw odh::FormatError("saved scene external material alias unresolved");
+            prepared=odh::prepare_saved_architecture(architecture->architecture,aliases->aliases);
+            architecture->architecture=prepared_render_architecture(architecture->architecture,*prepared);
+        }else if((floor_map&&!floor_map->entries.empty())||(walls_path&&wall_map&&!wall_map->entries.empty()))
+            throw odh::FormatError("saved scene custom materials require --architecture-resource");
         // Bounded no-overflow subset of the reference's short-coordinate group
         // average. Saved raw coordinates are retained, including absent members.
         std::map<std::int16_t,const odh::SavedWorldEntity*> by_id;
@@ -122,13 +160,17 @@ int main(int argc,char** argv){try{
     };
     struct Actor {const odh::SavedWorldEntity* saved;odh::GraphicsEntity graphics;SavedAppearance appearance;};
     std::vector<Actor> actors;std::vector<std::int16_t> outside,above_avatars;
-    SavedAppearanceResources resources(argv[2],argv[3],skeleton_entry,skeleton_name);
+    std::unique_ptr<SavedAppearanceResources> resources;
     for(const auto& r:world->records){if(!r.tail.person)continue;
         auto id=static_cast<std::int16_t>(r.saved.object_id);
         if(!world->world->find(id)->position){outside.push_back(id);continue;}
         if(world->world->find(id)->position->level>selected_level){above_avatars.push_back(id);continue;}
         if(actors.size()>=16)throw odh::FormatError("saved scene avatar budget exceeded");
-        actors.push_back({&r,odh::graphics_entity(*world->world,id),resources.resolve(*r.tail.person)});
+        if(!resources){
+            if(skeleton_entry.empty()||skeleton_name.empty())throw odh::FormatError("positioned saved avatars require --skeleton ENTRY NAME");
+            resources=std::make_unique<SavedAppearanceResources>(argv[2],argv[3],skeleton_entry,skeleton_name);
+        }
+        actors.push_back({&r,odh::graphics_entity(*world->world,id),resources->resolve(*r.tail.person)});
         actors.back().graphics.tile_position[2]+=elevation(id);
     }
     if(actors.empty()&&!draw_objects&&!floors_path)throw odh::FormatError("saved scene has no positioned avatars");
@@ -140,8 +182,14 @@ int main(int argc,char** argv){try{
             ++count;camera.center_tile[0]+=static_cast<float>(e->position->x)/16-.5f;camera.center_tile[1]+=static_cast<float>(e->position->y)/16-.5f;
             camera.center_tile[2]+=static_cast<float>(e->position->level-1)*2.95f+elevation(e->id);
         }
-        if(!count)throw odh::FormatError("saved scene has no positioned visible entities");
-        for(auto& c:camera.center_tile)c/=static_cast<float>(count);
+        if(count)for(auto& c:camera.center_tile)c/=static_cast<float>(count);
+        else if(architecture){
+            // Empty lots have no entity anchor. Use the decoded lot extent;
+            // this leaves all source coordinates and World records untouched.
+            camera.center_tile={static_cast<float>(architecture->architecture.width-1)/2,
+                static_cast<float>(architecture->architecture.height-1)/2,0};
+            camera.center_tile[2]=odh::terrain_interp_altitude(architecture->architecture,camera.center_tile[0],camera.center_tile[1]);
+        }else throw odh::FormatError("saved scene has no positioned visible entities");
     }
     odh::RasterOptions options;options.lighting=true;
     odh::RasterFrame image=odh::rasterize(camera.width,camera.height,{}, {},options);
@@ -153,22 +201,28 @@ int main(int argc,char** argv){try{
         image=odh::rasterize(camera.width,camera.height,terrain_geometry->triangles,{white},ground_options);
     }
     std::optional<SavedFloorResult> floor_result;
-    if(floors_path){SavedFloorRenderer renderer(*floors_path);floor_result=renderer.render(architecture->architecture,camera,true,0,selected_level);
+    if(floors_path){SavedFloorRenderer renderer(*floors_path,catalog);floor_result=renderer.render(architecture->architecture,camera,true,0,selected_level);
         if(terrain_geometry){image=odh::merge_raster(image,floor_result->image);floor_result->image=odh::RasterFrame{};}
         else image=std::move(floor_result->image);
     }
     std::optional<SavedWallRenderResult> wall_result;
     if(walls_path){
         auto appearance=saved_wall_appearance(*world,*index,architecture->architecture);
-        SavedWallRenderer renderer(*walls_path,*index);
+        SavedWallRenderer renderer(*walls_path,*index,catalog);
         wall_result=renderer.render(architecture->architecture,appearance.appearance,camera,image,true,0,odh::WallView{selected_level,walls_down});
         image=std::move(wall_result->composite.image);
     }
-    std::ostringstream report;report<<std::setprecision(17)<<"{\"evidence\":"<<json_bytes(draw_objects?"ODH_saved_World_avatar_object_CPU_snapshot":"ODH_saved_World_avatar_CPU_snapshot")<<",\"house\":"<<json_bytes(argv[1])
-       <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"objects_rendered\":"<<(draw_objects?"true":"false")<<",\"original_visual_equivalence\":false"
+    std::ostringstream report;report<<std::setprecision(17)<<"{\"evidence\":"<<json_bytes(architecture_only?"ODH_saved_architecture_only_CPU_snapshot":draw_objects?"ODH_saved_World_avatar_object_CPU_snapshot":"ODH_saved_World_avatar_CPU_snapshot")<<",\"house\":"<<json_bytes(argv[1])
+       <<",\"world_entities_restored\":"<<(architecture_only?"false":"true")<<",\"architecture_only\":"<<(architecture_only?"true":"false")<<",\"saved_threads_restored\":false,\"architecture_loaded\":false,\"objects_rendered\":"<<(draw_objects?"true":"false")<<",\"original_visual_equivalence\":false"
        <<",\"entities\":"<<world->records.size()<<",\"avatars_rendered\":"<<actors.size()<<",\"out_of_world_avatars\":";
     odh_tools::saved_bank(report,outside);report<<",\"center_tile\":";odh_tools::saved_bank(report,camera.center_tile);
-    report<<",\"architecture_decoded\":"<<(architecture?"true":"false")
+    report<<",\"architecture_resources\":"<<architecture_sources.size()
+          <<",\"architecture_prepared\":"<<(prepared?"true":"false")
+          <<",\"floor_map_resolved\":"<<(aliases?aliases->diagnostics.floor_map_resolved:0)
+          <<",\"wall_map_resolved\":"<<(aliases?aliases->diagnostics.wall_map_resolved:0)
+          <<",\"floor_alias_lookups_missing\":"<<(prepared?prepared->diagnostics.floor_alias_misses:0)
+          <<",\"wall_alias_lookups_missing\":"<<(prepared?prepared->diagnostics.wall_alias_misses:0)
+          <<",\"architecture_decoded\":"<<(architecture?"true":"false")
           <<",\"floors_rendered\":"<<(floor_result?"true":"false")
           <<",\"walls_rendered\":"<<(wall_result?"true":"false")<<",\"grass_surface_rendered\":"<<(terrain_geometry?"true":"false")
           <<",\"grass_blades_rendered\":false,\"terrain_theme\":"<<(terrain_theme?std::to_string(unsigned(*terrain_theme)):"null")
@@ -182,7 +236,7 @@ int main(int argc,char** argv){try{
           <<(architecture?json_bytes("FreeSO_byte1_times10_bilinear_BaseAlt0_bounded_group_average"):"null")
           <<",\"floor_materials\":[";
     if(floor_result)for(std::size_t n=0;n<floor_result->materials.size();++n){if(n)report<<',';const auto& m=floor_result->materials[n];
-        report<<"{\"pattern\":"<<m.pattern<<",\"sprite_id\":"<<m.sprite_id<<",\"palette_id\":"<<m.palette_id<<",\"width\":"<<m.width<<",\"height\":"<<m.height<<'}';}
+        report<<"{\"pattern\":"<<m.pattern<<",\"sprite_id\":"<<m.sprite_id<<",\"palette_id\":"<<m.palette_id<<",\"width\":"<<m.width<<",\"height\":"<<m.height<<",\"source\":"<<json_bytes(m.source)<<",\"asset\":"<<json_bytes(m.asset)<<'}';}
     report<<"],\"floor_draws\":[";
     if(floor_result)for(std::size_t n=0;n<floor_result->draws.size();++n){if(n)report<<',';const auto& d=floor_result->draws[n];
         report<<"{\"x\":"<<d.x<<",\"y\":"<<d.y<<",\"level\":"<<unsigned(d.level)<<",\"pattern\":"<<d.pattern

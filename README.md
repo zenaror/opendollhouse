@@ -134,12 +134,12 @@ e zoning externos; Main e Init atravessam suas primeiras consultas de lote.
 Inicialização completa e carregamento da casa como simulação seguem pendentes.
 A [importação de entidades salvas](docs/saved-world-validation.md), com
 `odh-saved-world`, agora cria um World próprio com IDs, bancos, posições,
-contenção e relacionamentos. Os scripts salvos permanecem dormentes; arquitetura
-e renderização completa desse lote ainda não estão integradas.
+contenção e relacionamentos. Os scripts salvos permanecem dormentes; a execução
+do lote completo ainda está pendente.
 O [host de avatares salvos](docs/saved-avatar-render-validation.md),
 `odh-saved-scene`, renderiza corpo/cabeça/mãos e o frame salvo dos dois avatares
-reais de House07 nas posições do World, em uma imagem CPU estática. Arquitetura
-e threads do lote continuam pendentes. Com `--objects`, o
+reais de House07 nas posições do World, em uma imagem CPU estática. A execução
+das threads do lote continua pendente. Com `--objects`, o
 [host compõe os objetos salvos](docs/saved-object-architecture-validation.md),
 incluindo contenção por SLOT e gráficos dinâmicos. `odh-architecture` decodifica
 as grades de piso/parede e mapas de recursos. Com `--floors FLOORS_IFF`, o
@@ -152,6 +152,11 @@ Com `--walls WALLS_IFF` (junto de `--floors`), o
 [snapshot de paredes erguidas](docs/saved-wall-validation.md) aplica padrões e
 máscaras reais de portas/janelas, com depth compartilhado e
 [junções reais](docs/saved-wall-cap-validation.md).
+Com `--architecture-resource FILE` repetível, o
+[snapshot resolve FLRm/WALm externos](docs/saved-scene-external-architecture-validation.md)
+e renderiza lotes sem avatar; House23 foi verificada com pisos, paredes e objetos
+reais. `--architecture-only --floors` oferece preview explícito de pisos sem
+restaurar World. Os limites de retenção e o guard de pool/water permanecem ativos.
 `--level 1|2 --wall-mode up|down` seleciona o
 [andar e as paredes abaixadas](docs/wall-view-validation.md); cutaway por
 proximidade e visibilidade runtime seguem pendentes.

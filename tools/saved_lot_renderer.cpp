@@ -8,28 +8,6 @@ const odh::ArchitectureResourceCatalog& material_catalog(const std::optional<Sav
     static const odh::ArchitectureResourceCatalog empty;
     return options?options->catalog:empty;
 }
-template<class T>std::optional<std::vector<T>> crop_grid(const std::optional<std::vector<T>>& source,
-    std::uint32_t width,std::uint32_t height,std::uint32_t size) {
-    if(!source)return {};
-    if(source->size()!=std::size_t(width)*height)throw odh::FormatError("prepared render terrain extent mismatch");
-    std::vector<T> result;result.reserve(std::size_t(size)*size);
-    for(std::uint32_t y=0;y<size;++y)for(std::uint32_t x=0;x<size;++x)
-        result.push_back((*source)[std::size_t(y)*width+x]);
-    return result;
-}
-odh::SavedArchitecture render_snapshot(const odh::SavedArchitecture& raw,const odh::PreparedArchitecture& prepared) {
-    odh::SavedArchitecture result;result.width=prepared.width;result.height=prepared.height;result.advanced=raw.advanced;
-    for(std::size_t level=0;level<2;++level){
-        result.levels[level].floors=prepared.levels[level].floors;
-        result.levels[level].walls=prepared.levels[level].walls;
-    }
-    result.altitude=crop_grid(raw.altitude,raw.width,raw.height,prepared.width);
-    result.grass=crop_grid(raw.grass,raw.width,raw.height,prepared.width);
-    result.target_grass=crop_grid(raw.target_grass,raw.width,raw.height,prepared.width);
-    result.pools=crop_grid(raw.pools,raw.width,raw.height,prepared.width);
-    result.water=crop_grid(raw.water,raw.width,raw.height,prepared.width);
-    return result;
-}
 std::map<std::int16_t,std::array<float,2>> terrain_group_centers(const odh::SavedWorld& saved) {
     if(saved.records.size()>4096||saved.multitile_groups.size()>4096)
         throw odh::FormatError("live saved terrain group budget exceeded");
@@ -123,7 +101,7 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
             materials->preparation,materials->preparation_limits);
         // Remap misses without declarations can represent global road/base
         // patterns; they are preserved and exposed in preparation diagnostics.
-        prepared_render_=render_snapshot(architecture_.architecture,*prepared_);
+        prepared_render_=prepared_render_architecture(architecture_.architecture,*prepared_);
     }else if((floor_map&&!floor_map->entries.empty())||(walls&&wall_map&&!wall_map->entries.empty()))
         throw odh::FormatError("live saved lot custom materials require a resource resolver");
     group_centers_=terrain_group_centers(saved_);
