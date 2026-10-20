@@ -879,6 +879,26 @@ try {
     Audio global_audio;
     auto global_callbacks = global_audio.callbacks();
     global_callbacks.bind = {}; // Global profile has no numeric-ID fallback.
+    global_callbacks.note_on = {}; // No local NoteOn fallback either.
+    // Explicit zero/zero getter fixture. The full varying-value matrix lives
+    // in hit_global_note_on; these binding tests do not implement providers.
+    global_callbacks.global_note_on = {
+        [](const odh::NativeHitState&) { return std::int32_t{0}; },
+        [](std::uint8_t, std::int32_t, std::int32_t) {
+            throw std::runtime_error("unexpected wrapper write in zero-ID38 fixture");
+        },
+        [&](std::uint8_t value) {
+            global_audio.events.push_back("note:" + std::to_string(value));
+            return true;
+        },
+        [] { return std::int32_t{0}; },
+        [](const odh::NativeHitState&) {
+            throw std::runtime_error("unexpected A in zero-ID38 fixture");
+        },
+        [](const odh::NativeHitState&) {
+            throw std::runtime_error("unexpected B in zero-ID38 fixture");
+        }
+    };
     std::vector<std::string> global_phases;
     std::vector<std::pair<std::uint8_t, odh::NativeHitState>> global_writes;
     global_callbacks.raw_control = {}; // Global writes require the full snapshot.

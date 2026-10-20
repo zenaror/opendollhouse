@@ -124,9 +124,12 @@ antes/depois e preservados. Relatórios em `reports/hit-reusable-pcm/`, com
 A evidência agora confirma que pan/frequência sem buffer podem ser perdidos,
 preload não limpa dirty e o primeiro play pode recriar o buffer. NoteOn consulta
 controller38 antes do play, pode escrever wrapper38, e consulta Patch38 vivo
-DEPOIS para decidir A/B, independente de sucesso do play. O perfil global atual
-ainda não representa essa matriz completa; não anunciar opcode2/streaming
-completos ou aplicar pan/pitch guardados automaticamente após todo load.
+DEPOIS para decidir A/B, independente de sucesso do play. No checkpoint desta
+unidade (`bcc0ed2`) essa matriz ainda estava pendente. A
+[unidade posterior de NoteOn global](hit-global-note-on-validation.md) representa
+a ordem externa com callbacks explícitos; os providers e o adapter físico
+ainda precisam implementar os efeitos. Não anunciar opcode2/streaming completos
+ou aplicar pan/pitch guardados automaticamente após todo load.
 Getters mutáveis, buffers lógicos/dirty, source classifier, loop latch,
 transformações DSP, streaming e adapter concreto continuam pendentes.
 O manager persistente por TrackID, Clock/World e a política de trace/instruções

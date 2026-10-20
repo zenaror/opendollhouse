@@ -44,7 +44,7 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
             limits_.trace_entries && limits_.trace_entries <= 65536 &&
             limits_.call_depth && limits_.call_depth <= 256,
             "native HIT limits outside supported bounds");
-    require(audio_.active && audio_.note_on && audio_.stop_current &&
+    require(audio_.active && audio_.stop_current &&
             audio_.release_binding && audio_.pause_current && audio_.resume_current, "native HIT requires complete current-binding callbacks");
     require((patch_source_.scope == NativeHitPatchSource::Scope::local_hot &&
              patch_source_.catalog == nullptr) ||
@@ -52,7 +52,8 @@ NativeHitController::NativeHitController(const HitFile& hit, const Hot& hot,
              patch_source_.catalog != nullptr),
             "native HIT patch source profile is invalid");
     if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot)
-        require(audio_.bind && audio_.raw_control, "native HIT local patch callbacks are required");
+        require(audio_.bind && audio_.raw_control && audio_.note_on,
+                "native HIT local patch callbacks are required");
     else
         require(audio_.bind_global_patch && audio_.apply_global_controls &&
                 audio_.apply_global_control_write,
@@ -144,6 +145,33 @@ bool NativeHitController::audio_active() {
     const bool result = audio_.active();
     check_live();
     return result;
+}
+void NativeHitController::note_on_current(std::uint8_t literal) {
+    if (!state_.binding) return;
+    if (patch_source_.scope == NativeHitPatchSource::Scope::local_hot) {
+        callback([&] { audio_.note_on(literal); });
+        return;
+    }
+    const auto& note = audio_.global_note_on;
+    require(note.controller_id38 && note.wrapper_write && note.wrapper_note_on &&
+            note.patch_id38 && note.controller_a && note.controller_b,
+            "native HIT global NoteOn callbacks are required");
+    std::int32_t controller_id38 = 0;
+    const NativeHitState before = state_;
+    callback([&] { controller_id38 = note.controller_id38(before); });
+    if (controller_id38 != 0)
+        callback([&] { note.wrapper_write(38, 1, 0); });
+    // The opcode does not consume the wrapper's AL result. In particular,
+    // false must not suppress the live Patch getter or the A/B recalculation.
+    callback([&] { (void)note.wrapper_note_on(literal); });
+    std::int32_t patch_id38 = 0;
+    callback([&] { patch_id38 = note.patch_id38(); });
+    if (patch_id38 != 0) {
+        const NativeHitState a_snapshot = state_;
+        callback([&] { note.controller_a(a_snapshot); });
+        const NativeHitState b_snapshot = state_;
+        callback([&] { note.controller_b(b_snapshot); });
+    }
 }
 void NativeHitController::write(std::uint8_t id, std::int32_t value) {
     // This whitelist avoids pretending that arbitrary public HIT writers have
@@ -406,7 +434,7 @@ NativeHitPoll NativeHitController::poll(std::uint32_t clock) {
             switch (op) {
             case 2: {
                 const auto literal = byte();
-                if (state_.binding) callback([&] { audio_.note_on(literal); });
+                note_on_current(literal);
                 break;
             }
             case 5: {

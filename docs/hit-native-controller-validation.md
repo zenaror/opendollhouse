@@ -51,6 +51,15 @@ continua permitido depois de um fault; os faults de execução/callback ficam
 fixados e impedem novos efeitos comuns. A API não define quantidade de vozes,
 DSP, compartilhamento de buffers ou semântica interna do backend.
 
+No perfil `global_catalog`, NoteOn2 agora usa a
+[sequência global explícita](hit-global-note-on-validation.md): getter público
+38 do controller, writer do wrapper se não zero, NoteOn do wrapper, getter
+38 do Patch vivo depois do play e A/B separados se esse último valor não
+for zero. O callback local `note_on` não serve de fallback. O pacote completo
+de seis callbacks é exigido antes do primeiro efeito de um NoteOn com binding;
+programas que não chegam a esse caminho não precisam inventar providers.
+Getters, writer e efeitos A/B concretos continuam responsabilidade do provider.
+
 ## Bytecode e limites
 
 O subconjunto implementa opcodes 2, 5, 7, 8, 9, 11, 12 e 27: NoteOn literal,

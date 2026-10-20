@@ -166,9 +166,11 @@ normalizes the low byte of loop, which the common backend reads as a byte;
 the upper bytes of the pushed register are not necessarily zero. The opcode's
 literal NoteOn argument is not used for this loop decision.
 
-A callback matrix for a portable global adapter remains future work: it must
-represent controller getter 38, wrapper writer 38, ordered backend calls and
-live post-NoteOn Patch getter 38, including their effects. A single Boolean
+At research checkpoint `bcc0ed2`, the portable global callback matrix was
+pending. The subsequent [global NoteOn validation](hit-global-note-on-validation.md)
+implements the outer controller ordering through explicit provider callbacks.
+Those providers must still supply effective getters, the wrapper writer,
+the wrapper's ordered backend operations and A/B effects. A single Boolean
 play callback plus precomputed metadata does not express this entire contract.
 
 ## Loop is latched within a configured source

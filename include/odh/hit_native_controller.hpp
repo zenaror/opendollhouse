@@ -12,6 +12,29 @@ namespace odh {
 
 struct NativeHitState;
 
+// Ordered operations for global-Patch NoteOn2. The provider resolves the
+// controller's public getter (including any fallback) and the current Patch's
+// public getter independently; neither is inferred from a raw bank or HOT.
+// wrapper_write receives the exact native arguments (38, 1, 0). Its effects
+// belong to the wrapper provider, not to a generic PCM/streaming switch.
+// wrapper_note_on includes the wrapper's own backend operations and returns
+// its play result; NoteOn2 ignores that result and still reads Patch ID38.
+// When that live post-play value is nonzero, controller_a then controller_b
+// run with separate copied snapshots. These are the native A/B recalculations,
+// not aliases for the bind phases or ID19/20 setters.
+// All six callbacks must be present before a bound global NoteOn2 executes.
+// A callback may change external Patch/wrapper/provider state, but must not
+// reenter controller mutation or modify the immutable HIT/HOT/catalog data.
+struct NativeHitGlobalNoteOn {
+    std::function<std::int32_t(const NativeHitState&)> controller_id38;
+    std::function<void(std::uint8_t id, std::int32_t value, std::int32_t argument)>
+        wrapper_write;
+    std::function<bool(std::uint8_t literal)> wrapper_note_on;
+    std::function<std::int32_t()> patch_id38;
+    std::function<void(const NativeHitState&)> controller_a;
+    std::function<void(const NativeHitState&)> controller_b;
+};
+
 // One externally owned current audio binding. These callbacks describe requests
 // at the HIT/controller boundary; they do not promise a voice count or DSP scale.
 // bind must provide the strong exception guarantee: if it throws, it has left
@@ -27,7 +50,7 @@ struct NativeHitState;
 struct NativeHitAudio {
     std::function<void(std::uint32_t patch_id)> bind;
     std::function<bool()> active;
-    std::function<void(std::uint8_t literal)> note_on;
+    std::function<void(std::uint8_t literal)> note_on; // Local-HOT profile only.
     std::function<void()> stop_current;
     std::function<void()> release_binding;
     std::function<void()> pause_current;
@@ -46,6 +69,10 @@ struct NativeHitAudio {
     // Required in this profile; numeric raw_control belongs to local mode.
     std::function<void(std::uint8_t trigger_id, const NativeHitState&)>
         apply_global_control_write = {};
+    // Required when NoteOn2 encounters an acquired global binding. Missing
+    // callbacks fault before the first NoteOn getter/writer/play effect;
+    // the local note_on callback is never a fallback for the global sequence.
+    NativeHitGlobalNoteOn global_note_on = {};
 };
 
 struct NativeHitPatchSource {
@@ -205,6 +232,7 @@ private:
     void set_flags(std::int32_t value) noexcept;
     void callback(const std::function<void()>& fn);
     bool audio_active();
+    void note_on_current(std::uint8_t literal);
     void bind_current();
     void release_current();
     void stop_and_release();

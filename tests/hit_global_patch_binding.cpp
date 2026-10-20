@@ -124,7 +124,24 @@ struct Endpoint {
     odh::NativeHitAudio audio() {
         odh::NativeHitAudio result{};
         result.active = [this] { return registry.active(binding.view()); };
-        result.note_on = [this](std::uint8_t value) { registry.note_on(binding.view(), value); };
+        // Explicit zero/zero ID38 fixture providers, not production getters.
+        result.global_note_on = {
+            [](const odh::NativeHitState&) { return std::int32_t{0}; },
+            [](std::uint8_t, std::int32_t, std::int32_t) {
+                throw odh::FormatError("unexpected wrapper write in zero-ID38 fixture");
+            },
+            [this](std::uint8_t value) {
+                registry.note_on(binding.view(), value);
+                return true; // Synthetic backend's explicit result.
+            },
+            [] { return std::int32_t{0}; },
+            [](const odh::NativeHitState&) {
+                throw odh::FormatError("unexpected A in zero-ID38 fixture");
+            },
+            [](const odh::NativeHitState&) {
+                throw odh::FormatError("unexpected B in zero-ID38 fixture");
+            }
+        };
         result.stop_current = [this] { registry.stop(binding.view()); };
         result.release_binding = [this] { release(); };
         result.pause_current = [this] { registry.pause(binding.view()); };
