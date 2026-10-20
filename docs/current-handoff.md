@@ -30,12 +30,16 @@ testadas e 27.588 sombreadas. Recibo/PPM ignorados:
 O frame CPU foi inspecionado; isso não valida gameplay ou aparência equivalente
 ao original.
 
-O incremento posterior a `e325706` adiciona seleção de objetos por Button1 no
-preview Main com lote. O último clique drenado preserva coordenadas do drawable;
+Os incrementos `bb2db4e` e `281a972`, posteriores a `e325706`, adicionam seleção
+de objetos por Button1 no preview Main com lote e preservam `TreeTableID` do
+OBJD136/138 no pick e JSON. House07 original confirma cadeira128/GUID
+`0x26BFBB29`/TreeTableID128; sua TTAB128 em `DiningChairs.iff` decodifica uma
+linha Action4097/Test4098. Isso ainda não calcula elegibilidade nem executa ação.
+O último clique drenado preserva coordenadas do drawable;
 o buffer opt-in de IDs usa o mesmo passe alpha/depth dos sprites, com no máximo
 um uint16 por pixel (2 MiB no teto; 153.600 bytes em 320x240). Zero denota cenário.
 O clique usa o último frame apresentado, antes de aplicar rotação/zoom agregados,
-e revalida geração, GUID e Hidden vivos. O título mostra ID/GUID ou seleção vazia;
+e revalida geração, GUID e Hidden vivos. O título mostra ID/GUID/TreeTableID ou seleção vazia;
 o JSON inclui `render.object_selection`. Não descobre TTAB nem enfileira ação.
 Build focal/completo sem warnings e o CTest completo passaram (127 configurados,
 zero falhas); o gate X11 foi pulado sem DISPLAY. Logo, picking CPU é verificado
