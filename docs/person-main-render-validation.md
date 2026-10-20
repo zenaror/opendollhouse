@@ -133,7 +133,17 @@ or a claim of simulation fidelity.
 O caminho `--saved-world-main` pode receber `--render-floors FLOORS_IFF` e,
 opcionalmente, `--render-walls WALLS_IFF`, `--render-level 1|2`,
 `--render-wall-mode up|down` e `--render-terrain-theme 0..7`. O nível padrão é
-1 e as paredes começam em modo `up`; tema de terreno é explícito. Essas opções
+1 e as paredes começam em modo `up`; tema de terreno é explícito.
+`--architecture-resource FILE` pode ser repetido para fornecer cada arquivo
+`.flr`, `.wll` ou `.far` na ordem de precedência desejada. Exige `--render-floors`,
+aceita até 256 fontes explícitas e caminhos não vazios de até 4096 bytes; não
+percorre diretórios. A ordem chega a `discover_architecture_resources` e o
+catálogo alimenta `SavedLotMaterialOptions` do lote. O output de frame é
+verificado contra todos esses inputs por caminho canônico/equivalência,
+incluindo symlinks/hardlinks. Sem essa opção, o caminho global é preservado.
+Contrato de mapas, preparação e recursos por zoom está na
+[validação de materiais externos](external-architecture-renderer-validation.md).
+Essas opções
 também valem para a janela Main. Requerem as fontes explícitas e mantêm as
 recusas existentes de padrões customizados sem resolvedor, pools/água e
 recursos fora dos perfis dos renderizadores.

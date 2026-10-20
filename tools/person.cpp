@@ -59,6 +59,11 @@ struct Loaded {
     std::optional<odh::Glob> glob;
     std::optional<std::uint16_t> object_type;
 };
+void different_render_path(const std::string& output,const std::string& input) {
+    if(std::filesystem::weakly_canonical(output)==std::filesystem::weakly_canonical(input)||
+       (std::filesystem::exists(output)&&std::filesystem::exists(input)&&std::filesystem::equivalent(output,input)))
+        throw odh::FormatError("person frame output aliases an input");
+}
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
 Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={},bool startup=false) {
     Loaded result;
@@ -129,6 +134,7 @@ int main(int argc,char** argv) {
     std::optional<Resource> avatar,semi,globals,action;
     std::vector<std::pair<std::string,bool>> definition_sources;
     std::vector<std::string> animation_sources;
+    std::vector<odh::ArchitectureResourceSource> architecture_sources;
     std::optional<std::string> lot_path,zoning_path,neighborhood_path;
     std::optional<std::uint16_t> lot_id;
     std::optional<std::uint64_t> seed;
@@ -162,6 +168,18 @@ int main(int argc,char** argv) {
             animation_sources.emplace_back(argv[++n]);
             if(animation_sources.back().size()>4096)throw odh::FormatError("animation source path exceeds bounded host profile");
         }
+        else if(option=="--architecture-resource"&&n+1<argc){
+            if(architecture_sources.size()>=256)
+                throw odh::FormatError("architecture resource source count exceeds bounded host profile");
+            const std::string path=argv[++n];
+            if(path.empty()||path.size()>4096)
+                throw odh::FormatError("architecture resource path outside bounded host profile");
+            const auto extension=fold(std::filesystem::path(path).extension().string());
+            if(extension!=".far"&&extension!=".flr"&&extension!=".wll")
+                throw odh::FormatError("architecture resource requires an explicit .flr, .wll or .far file");
+            architecture_sources.push_back({path,extension==".far"?
+                odh::ArchitectureResourceSourceKind::far1_archive:odh::ArchitectureResourceSourceKind::loose_file});
+        }
         else if(option=="--render-frame"&&!render_output&&n+1<argc){render_output=argv[++n];}
         else if(option=="--render-animation-far"&&!render_animation_far&&n+1<argc){render_animation_far=argv[++n];}
         else if(option=="--render-textures"&&!render_textures_far&&n+1<argc){render_textures_far=argv[++n];}
@@ -192,6 +210,8 @@ int main(int argc,char** argv) {
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(render_window&&!ticks_set)ticks_limit=4096;
+    if(!architecture_sources.empty()&&!render_floors)
+        throw odh::FormatError("--architecture-resource requires --render-floors");
     if((render_floors&&(!saved_world_main||render_floors->empty()||render_floors->size()>4096))||
        (render_walls&&(!render_floors||render_walls->empty()||render_walls->size()>4096))||
        (render_level_set&&!render_floors)||(render_wall_mode_set&&!render_walls)||
@@ -203,10 +223,29 @@ int main(int argc,char** argv) {
        (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
+    if(render_output){
+        // Treat every supplied resource as input before catalog or payload reads.
+        // Canonical paths and equivalent files cover lexical/symlink/hardlink aliases.
+        std::vector<std::string> inputs;
+        for(const auto* resource:{&avatar,&semi,&globals,&action})
+            if(*resource)inputs.push_back((*resource)->archive);
+        for(const auto& source:definition_sources)inputs.push_back(source.first);
+        inputs.insert(inputs.end(),animation_sources.begin(),animation_sources.end());
+        for(const auto& source:architecture_sources)inputs.push_back(source.path);
+        for(const auto* path:{&lot_path,&zoning_path,&neighborhood_path,&render_animation_far,
+                             &render_textures_far,&render_floors,&render_walls})
+            if(*path)inputs.push_back(**path);
+        for(const auto& input:inputs)different_render_path(*render_output,input);
+    }
+    std::optional<SavedLotMaterialOptions> render_materials;
+    if(!architecture_sources.empty()){
+        render_materials.emplace();
+        render_materials->catalog=odh::discover_architecture_resources(architecture_sources);
+    }
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -735,7 +774,7 @@ int main(int argc,char** argv) {
         render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
         if(render_floors){
             render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
-                *restored_world,*definition_index,*render_floors,render_walls,render_lot_view);
+                *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
         }else if(saved_world_main)render_graphics=std::make_unique<SavedGraphicsResources>(*definition_index);
         if(saved_world_main){
             const auto graphics=render_lot?render_lot->avatar(runtime_avatar_id):render_graphics->entity(world,runtime_avatar_id);

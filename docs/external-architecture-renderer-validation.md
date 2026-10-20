@@ -29,8 +29,15 @@ separado recebe os pisos/paredes preparados e o mesmo crop superior esquerdo
 de altitude, grass, target grass, pools e water. As posições/estados do World
 continuam vivos. Não há reconstrução de portais, rooms ou iluminação.
 Sem options, permanece o caminho cru global anterior; mapas selecionados não
-vazios exigem o resolvedor. Os CLIs existentes continuam exigindo globais;
-a escolha de fontes/precedência de instalação é trabalho do chamador.
+vazios exigem o resolvedor. O caminho `odh-person --saved-world-main --render-floors ...` aceita
+`--architecture-resource FILE` repetido para cada fonte `.flr`, `.wll` ou `.far`,
+com extensão case-insensitive. O parser permite 256 fontes, caminhos não vazios
+de até 4096 bytes, e exige `--render-floors`. A ordem é passada diretamente ao
+catalogador: fontes posteriores vencem por nome/família; não há recursão nem
+varredura automática. Todas as fontes entram nas verificações de aliases do
+arquivo `--render-frame`, incluindo symlinks/hardlinks. Sem o argumento novo,
+a invocação usa o caminho global anterior. Os demais CLIs continuam exigindo
+globais; a seleção de fontes/precedência de instalação cabe ao chamador.
 
 ## Recursos e máscaras
 
@@ -105,3 +112,16 @@ Validação desta unidade em 2026-10-20: build Debug completo com ASan/UBSan,
 DISPLAY (135 executados). O teste novo passou 31677 checks sintéticos; os
 quatro testes de renderizadores também passaram depois da revisão final da
 cache de frames. Os números não medem compatibilidade com dados comerciais.
+
+O teste `person_architecture_cli` cobre o parser e a catalogação real de fontes
+IFF/FAR sintéticas por subprocesso, com uma falha posterior deliberada de
+OBJD/definition ausente. Valida ordem, famílias/extensões, arquivos ausentes ou
+FAR inválido, falta de `--render-floors`, limite 256/257, tamanho de caminho e
+preservação dos inputs quando o output é alias lexical/symlink/hardlink. Esse
+teste verifica a fronteira CLI/catálogo e erros determinísticos; a prova de
+pintura e composição continua no teste C++ sintético de render acima.
+
+Follow-up CLI de 2026-10-20: build Debug com ASan/UBSan sem warnings,
+`person_architecture_cli` com 87 checks e suíte completa com 137 CTests
+registrados, 136 executados, zero falhas e o backend X11 pulado sem DISPLAY.
+O mesmo limite de LeakSanitizer/ptrace acima permanece explícito.

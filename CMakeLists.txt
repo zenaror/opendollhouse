@@ -881,6 +881,8 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/slot_cli.py $<TARGET_FILE:odh-slot>)
     add_test(NAME bhav_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/bhav_cli.py $<TARGET_FILE:odh-bhav>)
+    add_test(NAME person_architecture_cli COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/person_architecture_cli.py $<TARGET_FILE:odh-person>)
     add_test(NAME person_animation_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/person_animation_cli.py $<TARGET_FILE:odh-person>)
     add_test(NAME xa_audio_cli COMMAND ${Python3_EXECUTABLE}
