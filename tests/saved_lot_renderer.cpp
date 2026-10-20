@@ -1,4 +1,5 @@
 #include "saved_lot_renderer.hpp"
+#include "saved_wall_appearance.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -43,6 +44,59 @@ std::string container_fixture(std::uint32_t guid,std::uint16_t type=0,bool dupli
  b+=chunk("SLOT",128,slot);if(duplicate)b+=chunk("SLOT",128,slot);return b;
 }
 void write(const std::filesystem::path& path,const std::string& data){std::ofstream file(path,std::ios::binary);file<<data;if(!file)throw std::runtime_error("container fixture write failed");}
+odh::DefinitionCandidate candidate(const std::filesystem::path&,std::uint32_t);
+std::string object_fixture(const odh::WorldProjection& camera,std::size_t pixel){
+ std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');
+ std::string objd(216,'\0');set(objd,0,138);set(objd,6,10,2);set(objd,8,2,2);set(objd,18,4,2);set(objd,28,123);set(objd,40,128,2);
+ set(objd,128,5,2);set(objd,130,1,2);b+=chunk("OBJD",1,objd);
+ std::string pal(19,'\0');set(pal,0,1);set(pal,4,1);pal[16]=static_cast<char>(210);pal[17]=10;pal[18]=20;b+=chunk("PALT",7,pal);
+ std::string spr(32,'\0');set(spr,0,1000);set(spr,4,1);set(spr,8,7);set(spr,12,16);set(spr,16,1,2);set(spr,18,1,2);set(spr,20,7);
+ spr+=word(8)+word((2<<13)|1)+std::string("\0\0\20\0",4)+word(5<<13);b+=chunk("SPR2",5,spr);
+ for(unsigned i=0;i<2;++i){
+  odh::DgrpSprite sprite{};sprite.object_offset_bits[2]=bits(i?-50.f:50.f);
+  odh::Spr2Frame frame{};frame.width=frame.height=1;
+  const auto p=odh::place_sprite(camera,sprite,frame,{1,1,0},0);
+  const auto target_x=static_cast<std::int32_t>(pixel%camera.width),target_y=static_cast<std::int32_t>(pixel/camera.width);
+  sprite.x=target_x-p.x;sprite.y=target_y-p.y;
+  const auto adjusted=odh::place_sprite(camera,sprite,frame,{1,1,0},0);
+  sprite.x+=target_x-adjusted.x;sprite.y+=target_y-adjusted.y;
+  std::string group(50,'\0');set(group,0,20004,2);set(group,2,1);set(group,6,1);set(group,10,camera.zoom);set(group,14,1);set(group,18,5);
+  set(group,26,static_cast<std::uint32_t>(sprite.x));set(group,30,static_cast<std::uint32_t>(sprite.y));set(group,34,sprite.object_offset_bits[2]);b+=chunk("DGRP",static_cast<std::uint16_t>(10+i),group);
+ }
+ std::string slot(86,'\0');set(slot,4,10);slot.replace(8,4,"TOLS");set(slot,12,1);set(slot,18,bits(8));b+=chunk("SLOT",128,slot);
+ return b;
+}
+void object_checks(const Temp& temp,const std::filesystem::path& floors,const std::filesystem::path& walls,
+                   const odh::WorldProjection& camera,std::size_t wall_pixel){
+ const auto path=temp.p/"object.iff";write(path,object_fixture(camera,wall_pixel));
+ odh::DefinitionIndex definitions({candidate(path,123)});odh::SavedWorld saved;saved.world=std::make_unique<odh::World>();auto& world=*saved.world;
+ std::array<std::int16_t,68> words{};check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));
+ check(world.set_position(2,{24,24,1,0}));odh::SavedWorldEntity record{};record.saved.object_id=2;record.saved.guid=123;record.common.dynamic_sprite_flags={1};saved.records.push_back(record);
+ auto a=architecture();a.architecture.levels[0].walls[5]={1,0,1,0,1,0,0,0};
+ SavedLotRenderer renderer(std::move(a),saved,definitions,floors.string(),walls.string());
+ const auto empty=odh::rasterize(camera.width,camera.height,{},{});const odh::VmFrame f{odh::routine_key(4096),0,{2,2,2,0},{},{}};
+ check(world.write(f,3,34,1));const auto wall=renderer.render(camera,empty);check(wall.objects==0&&wall.object_hidden==1);
+ check(world.write(f,3,34,0));const auto near=renderer.render(camera,empty);
+ check(near.objects==1&&near.object_layers==1&&near.object_shaded_samples==1&&near.object_cached_frame_bytes==6);
+ check(near.image.depth[wall_pixel]<wall.image.depth[wall_pixel]);
+ constexpr unsigned alpha=16*255/31;const std::array<std::uint8_t,4> color{210,10,20,255};
+ for(unsigned c=0;c<3;++c)check(near.image.pixels[wall_pixel][c]==(color[c]*alpha+wall.image.pixels[wall_pixel][c]*(255-alpha)+127)/255);
+ // A nearer translucent object must blend over the wall, not over the floor.
+ // Changing Graphic live selects the far DGRP at the same pixel and is hidden.
+ check(world.write(f,3,0,1));const auto far=renderer.render(camera,empty);check(far.objects==1&&far.object_shaded_samples==0&&far.image.pixels==wall.image.pixels);
+ check(world.write(f,3,0,0));check(world.set_position(2,{24,24,2,0}));check(renderer.render(camera,empty).object_above_level==1);
+ check(world.set_position(2,{32,24,1,0}));check(renderer.render(camera,empty).image.pixels!=near.image.pixels);
+ check(world.create_saved_entity(3,odh::EntityKind::object,123,{},{},{},words,{},1));check(world.set_position(3,{24,24,1,0}));
+ check(world.set_position(2,{24,24,2,0}));check(world.attach(3,0,2));
+ const auto contained=renderer.render(camera,empty);check(contained.objects==1&&contained.object_above_level==0);
+ check(world.set_position(3,{24,24,2,0}));check(renderer.render(camera,empty).object_above_level==1);check(world.detach(3,0));
+ check(world.set_position(2,{24,24,1,0}));check(world.write(f,3,8,1024));SavedLotView down;down.walls_down=true;
+ auto cut=architecture();cut.architecture.levels[0].walls[5]={1,0,1,0,1,0,0,0};SavedLotRenderer cutaway(std::move(cut),saved,definitions,floors.string(),walls.string(),down);
+ rejects([&]{cutaway.render(camera,empty);});check(world.write(f,3,8,0));
+ check(world.remove(2));check(renderer.render(camera,empty).object_removed==1);
+ rejects([&]{saved_wall_appearance(saved,definitions,architecture().architecture);});
+ check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));check(world.set_position(2,{24,24,1,0}));rejects([&]{renderer.render(camera,empty);});
+}
 odh::DefinitionCandidate candidate(const std::filesystem::path& path,std::uint32_t guid){return {path.string(),"",1,{138,guid,4,0,0,false,32,10}};}
 void contained_checks(const Temp& temp,const std::filesystem::path& floors){
  const auto path=temp.p/"chair.iff";write(path,container_fixture(123));
@@ -131,6 +185,7 @@ int main(){try{
  check(walled.render(camera,live).image.pixels[wall_pixel]==live.pixels[wall_pixel]);
  live.depth[wall_pixel]=wall_frame.image.depth[wall_pixel]+1;
  check(walled.render(camera,live).image.pixels[wall_pixel]==wall_frame.image.pixels[wall_pixel]);
+ object_checks(temp,path,walls,camera,wall_pixel);
  auto custom=architecture();custom.maps.push_back({"FLRm",{}});custom.maps.back().second.entries.push_back({});
  rejects([&]{SavedLotRenderer r(std::move(custom),saved,definitions,path.string(),{},view);});
  odh::SavedWorld missing;rejects([&]{SavedLotRenderer r(architecture(),missing,definitions,path.string(),{},view);});

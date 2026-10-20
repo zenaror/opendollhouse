@@ -161,20 +161,42 @@ enquadramento `Z + 0.75`. Fixtures cobrem avatar salvo anexado sem flag runtime
 inválidos e limites por cache/acumulados. Contêineres aninhados continuam fora
 do perfil de `graphics_entity`.
 
-A ordem de composição é terreno/floors, raster do avatar vivo e sprites de
-paredes/junções. Todos usam câmera/profundidade compartilhadas; a comparação
-de profundidade mantém a superfície mais próxima. Submeter paredes depois do
-avatar permite que alpha de paredes mais próximas use a cor do avatar como
-fundo. A composição mantém os perfis CPU já documentados em
+A ordem de composição é terreno/floors, raster do avatar vivo, sprites de
+paredes/junções e sprites dos objetos salvos. Todos usam câmera/profundidade
+compartilhadas. O perfil atual de paredes só aceita alpha binário e produz
+superfícies opacas; elas estabelecem a cor/profundidade antes dos objetos.
+Assim um objeto translúcido mais próximo mistura sua cor sobre a parede,
+enquanto um objeto atrás da parede é rejeitado pelo teste de profundidade.
+Inverter esses dois passes perderia a cor da parede atrás de um objeto
+translúcido. A composição mantém os perfis CPU já documentados em
 `saved-floor-validation.md`, `saved-wall-validation.md` e
 `terrain-surface-validation.md`; não estabelece equivalência GPU/original.
 
 O JSON `render.lot` informa nível, tema, contagens de geometria/floors/paredes,
-bytes de recursos e amostras dos sprites de paredes. `render.shaded_samples`
-agora inclui os rasters de terreno, pisos e avatar; amostras de parede ficam
-nos campos próprios, seguindo o contrato do compositor. Outros avatares e
-objetos ainda não são submetidos nesse caminho e aparecem explicitamente
+bytes de recursos e amostras dos sprites de paredes/objetos. `render.shaded_samples`
+inclui os rasters de terreno, pisos e avatar; amostras de sprites ficam
+nos campos próprios, seguindo o contrato do compositor. Outros avatares
+continuam sem ser submetidos nesse caminho e aparecem explicitamente
 como `false`, mesmo que continuem preservados na simulação restaurada.
+
+Os objetos são extraídos dos registros do mesmo `SavedWorld`; Graphic e Hidden
+são lidos dos bancos vivos em cada captura, junto da posição/direção e do
+contêiner resolvido por SLOT. A seleção de story e altitude usa o contêiner
+efetivo e o centro multitile salvo quando aplicável. Os recursos passam pelo
+`SavedObjectRenderer`, conservando seus budgets e recusas SPR#/sem Z/DGRP
+ausente ou ambíguo. Os counters discriminam objetos submetidos, camadas,
+bytes de frames, amostras, ocultos, fora do mundo, acima do nível e removidos.
+O `HideForCutaway` no nível cortado continua recusado até existir ocupação de
+paredes runtime. Remoções deixam de contribuir à aparência viva de paredes;
+o helper estático continua estrito por padrão. Reuso de um ID salvo com outra
+geração é recusado antes de devolver um frame.
+
+Limites deste incremento: as flags dinâmicas de sprites e os centros de grupos
+multitile continuam sendo snapshots do save; criação de novos objetos e
+movimento runtime de grupos exigem atualização do renderer. A ordem entre
+objetos e camadas DGRP segue a submissão salva e o perfil imediato de alpha/Z
+do compositor existente, sem ordenação global de transparência por fragmento.
+Não se afirma equivalência com o pipeline GPU ou com o jogo original.
 
 O CTest `saved_lot_renderer` usa IFFs sintéticos: valida consulta de posição e
 direção após movimento no mesmo World, nível/altitude, recusa de ator/viewport
@@ -182,10 +204,15 @@ inválidos e oclusão de pixels à frente/atrás dos pisos e paredes. Os testes
 CLI rejeitam combinações incompletas e valores de view fora do perfil. Isso
 verifica a integração CPU e os limites declarados, sem provar gameplay,
 seleção, continuidade das filas salvas, áudio ou aparência do jogo original.
+O incremento de objetos acrescenta regressões de Graphic/Hidden/posição vivos,
+nível herdado do contêiner, alpha diante e atrás da parede, remoção/reuso de
+ID e recusa de cutaway incompleto. Build focal de `odh-person` e do teste de
+lote e cinco CTests (`saved_lot_renderer`, `saved_object_renderer`,
+`saved_wall_renderer`, `person_animation_cli`, `person_cli`) passaram.
 
 ### Probe com recursos de House07
 
-O probe final usou a instalação local com House07, LotZoning, Neighborhood,
+O probe atualizado usou a instalação local com House07, LotZoning, Neighborhood,
 `floors.iff`, `walls.iff`, Animation.far e ExpansionShared.far. Aos 214 ticks,
 o Main ficou `waiting` sem falha de host: 308 instruções, cinco frames ativos e
 sample do avatar 105/GUID 850010198. A posição de captura foi
@@ -203,6 +230,15 @@ PNG de consulta visual local:
 ignorado pelo Git). O probe terminou com código 3 porque o limite explícito de
 214 ticks foi alcançado; o receipt identifica status VM `waiting`, sem falha
 do host.
+
+Após integrar objetos, o mesmo comando capturou 135 objetos em 166 camadas,
+6174198 bytes de frames decodificados, 130766 amostras testadas e 27588
+sombreadas. O receipt e PPM ignorados são
+`reports/odh-person-main-lot-house07-objects-tick214.json/.ppm`; SHA256 do PPM:
+`c14edf44b16cdfe5d80fb9fc7b1251606f027dc6d5af8a4656fd2ba62bb88309`.
+A imagem CPU foi inspecionada e mostra o avatar, objetos, paredes e lote
+compostos. O limite de 214 ticks ainda termina com código 3 esperado; não valida
+input, continuidade de interações ou fidelidade visual ao original.
 
 A reprodução precisa incluir o contexto de bairro. Sem `--neighborhood`, o
 Main falhou no primitive 31 de BHAV 8211 antes do sample; com Neighborhood e os
@@ -225,12 +261,12 @@ recursos acima, o caminho foi reproduzido. Os dois arquivos `User00000.iff` e
   --render-textures '../referencias/The Sims/GameData/Textures/Textures.far' \
   --render-skeleton adult-skeleton.cmx.bcf adult --render-saved-avatar 105 \
   --saved-world-main --render-tick 214 --ticks 214 \
-  --render-frame /tmp/house07-main-lot-tick214.ppm \
+  --render-frame /tmp/house07-main-lot-objects-tick214.ppm \
   --render-floors '../referencias/The Sims/GameData/floors.iff' \
   --render-walls '../referencias/The Sims/GameData/walls.iff' \
   --render-level 1 --render-wall-mode up --render-terrain-theme 0
 ```
 
-Esta evidência comprova captura CPU do Main sobre camadas do lote usando o
-mesmo World restaurado. Não mostra objetos nem o segundo avatar; não valida
+Esta evidência comprova captura CPU do Main sobre camadas do lote e objetos
+usando o mesmo World restaurado. Não mostra o segundo avatar; não valida
 X11, input físico, interações, recursos remapeados ou aparência original.

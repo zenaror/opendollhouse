@@ -2,6 +2,7 @@
 #include "saved_architecture_resources.hpp"
 #include "saved_floor_renderer.hpp"
 #include "saved_wall_renderer.hpp"
+#include "saved_object_renderer.hpp"
 #include "odh/graphics_state.hpp"
 #include "odh/saved_world.hpp"
 #include "odh/terrain_surface.hpp"
@@ -36,14 +37,19 @@ struct SavedLotFrame {
     std::uint64_t terrain_triangles=0,terrain_reserved_bytes=0;
     std::uint64_t wall_layers=0,wall_junctions=0,wall_cached_frame_bytes=0;
     std::uint64_t wall_tested_samples=0,wall_shaded_samples=0;
+    std::uint64_t objects=0,object_layers=0,object_cached_frame_bytes=0;
+    std::uint64_t object_tested_samples=0,object_shaded_samples=0;
+    std::uint64_t object_hidden=0,object_above_level=0,object_outside=0,object_removed=0;
 };
 // Borrow the live saved World and immutable definitions; both must outlive this
 // host renderer. Architecture owns its bounded decoded snapshot. Rendering does
 // not restore/clone a World, execute saved threads or change simulation state.
-// Ground/floors -> opaque live avatar raster -> alpha/depth wall sprites. This
-// order lets a nearer partially transparent wall blend over the avatar rather
-// than against a previously captured background. Other avatars/objects are not
-// submitted by this increment; their simulation state is retained in World.
+// Ground/floors -> opaque live avatar -> binary-alpha walls -> object sprites.
+// Objects can blend over nearer opaque scene surfaces while depth rejects
+// sprites behind them. Intra-object order retains SavedObjectRenderer's profile.
+// Dynamic sprite flags and group centers are snapshots; live logical position,
+// graphic, direction and visibility are read on every capture. New/reused object
+// identities require a renderer refresh. Other avatars remain in World.
 class SavedLotRenderer {
 public:
     SavedLotRenderer(SavedArchitectureResource,const odh::SavedWorld&,
@@ -58,7 +64,9 @@ private:
     const odh::DefinitionIndex& definitions_;
     SavedGraphicsResources graphics_;
     std::map<std::int16_t,std::array<float,2>> group_centers_;
+    std::map<std::int16_t,std::uint64_t> object_generations_;
     SavedLotView view_;
     SavedFloorRenderer floors_;
     std::unique_ptr<SavedWallRenderer> walls_;
+    SavedObjectRenderer objects_;
 };

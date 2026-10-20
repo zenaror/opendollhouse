@@ -13,10 +13,12 @@ struct SavedWallAppearance {
     std::vector<SavedWallAppearanceBinding> bindings;
     std::vector<odh::WallAppearanceInput> inputs;
 };
-inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,const odh::DefinitionIndex& index,const odh::SavedArchitecture& architecture){
+inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,const odh::DefinitionIndex& index,const odh::SavedArchitecture& architecture,bool allow_removed=false){
     if(!saved.world||saved.records.size()>4096)throw odh::FormatError("wall appearance saved World/record budget invalid");
     SavedWallAppearance out;std::map<std::uint32_t,std::size_t> bindings;std::uint64_t names=0;
     for(const auto& raw:saved.records){const auto id=static_cast<std::int16_t>(raw.saved.object_id);const auto* e=saved.world->find(id);
+        // Removed entities no longer contribute door/window appearance.
+        if(!e&&allow_removed)continue;
         if(!e||!e->definition)throw odh::FormatError("wall appearance saved entity unavailable");
         const odh::VmFrame frame{odh::routine_key(4096),0,{id,id,id,0},{},{}};
         const auto flag=saved.world->read(frame,3,40),placement=saved.world->read(frame,3,13);

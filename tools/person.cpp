@@ -1061,7 +1061,12 @@ int main(int argc,char** argv) {
                 <<",\"terrain_reserved_bytes\":"<<lot.terrain_reserved_bytes<<",\"wall_layers\":"<<lot.wall_layers
                 <<",\"wall_junctions\":"<<lot.wall_junctions<<",\"wall_cached_frame_bytes\":"<<lot.wall_cached_frame_bytes
                 <<",\"wall_tested_samples\":"<<lot.wall_tested_samples<<",\"wall_shaded_samples\":"<<lot.wall_shaded_samples
-                <<",\"other_avatars_rendered\":false,\"objects_rendered\":false,\"original_visual_equivalence\":false}";
+                <<",\"objects\":"<<lot.objects<<",\"object_layers\":"<<lot.object_layers
+                <<",\"object_cached_frame_bytes\":"<<lot.object_cached_frame_bytes
+                <<",\"object_tested_samples\":"<<lot.object_tested_samples<<",\"object_shaded_samples\":"<<lot.object_shaded_samples
+                <<",\"object_hidden\":"<<lot.object_hidden<<",\"object_above_level\":"<<lot.object_above_level
+                <<",\"object_outside\":"<<lot.object_outside<<",\"object_removed\":"<<lot.object_removed
+                <<",\"other_avatars_rendered\":false,\"objects_rendered\":true,\"original_visual_equivalence\":false}";
         }else std::cout<<"null";
         std::cout<<'}';
     }else std::cout<<"null";

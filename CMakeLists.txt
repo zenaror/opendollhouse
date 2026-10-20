@@ -325,7 +325,7 @@ target_link_libraries(odh_wall_junction PUBLIC odh_saved_architecture odh_wall_s
 target_link_libraries(odh_saved_wall_renderer PUBLIC odh_wall_junction)
 add_library(odh_saved_lot_renderer tools/saved_lot_renderer.cpp)
 target_include_directories(odh_saved_lot_renderer PUBLIC tools)
-target_link_libraries(odh_saved_lot_renderer PUBLIC odh_saved_world odh_saved_floor_renderer odh_saved_wall_renderer odh_graphics_state odh_terrain_surface odh_compositor)
+target_link_libraries(odh_saved_lot_renderer PUBLIC odh_saved_world odh_saved_floor_renderer odh_saved_wall_renderer odh_saved_object_renderer odh_graphics_state odh_terrain_surface odh_compositor)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_saved_lot_renderer PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()

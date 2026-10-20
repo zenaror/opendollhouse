@@ -5,20 +5,32 @@
 `odh-person --saved-world-main` restaura House07 com `make_saved_world`,
 seleciona o avatar 105 por GUID/User00000.iff e inicia um Main novo no mesmo
 World da VM/Playback. Threads e filas salvas continuam dormentes; não é uma
-retomada da simulação salva. `SavedLotRenderer` agora desenha terreno, pisos,
-avatar Main e paredes/junções nessa captura, sem construir outro World. A
-câmera acompanha a posição gráfica viva. Outras instâncias e objetos continuam
-no World, mas ainda não são desenhados.
+retomada da simulação salva. `SavedLotRenderer` desenha terreno, pisos,
+avatar Main, paredes/junções e objetos salvos nessa captura, sem construir
+outro World. A câmera acompanha a posição gráfica viva. Outros avatares
+continuam no World, mas ainda não são desenhados.
+
+O incremento posterior a `c1df46d` liga `SavedObjectRenderer` à mesma cena,
+lendo Graphic/Hidden/posição/direção vivos e SLOT do contêiner. Paredes
+binárias precedem objetos alpha, com depth comum. Objetos removidos deixam
+de desenhar e de fornecer aparência de parede; reuso de ID exige refresh do
+renderer. Flags dinâmicas e centros multitile permanecem snapshots; criação
+de objetos, movimento runtime de grupos e transparência global ordenada
+continuam pendentes. Cinco CTests focais e o CTest completo (127/127) passaram;
+`linux_window_backend` foi pulado sem DISPLAY.
 
 Com House07, Neighborhood e recursos locais externos, aos 214 ticks o VM está
 `waiting`, com 308 instruções e cinco frames ativos. A cena 320x240 usou 6.323
 triângulos de terreno, 1.365 de piso, 69 camadas de parede e 49 junções; o
-avatar usou 684 vértices/840 triângulos. Recibo e PPM locais ignorados:
-`reports/odh-person-main-lot-house07-tick214.json/.ppm`; CTest completo: 127/127
-passou e o backend X11 foi pulado sem DISPLAY. O PPM é uma renderização CPU com
-dados do jogo, não validação de aparência equivalente ao original.
+avatar usou 684 vértices/840 triângulos. O probe atualizado adiciona 135
+objetos, 166 camadas, 6.174.198 bytes de frames de sprite, 130.766 amostras
+testadas e 27.588 sombreadas. Recibo/PPM ignorados:
+`reports/odh-person-main-lot-house07-objects-tick214.json/.ppm`; SHA256 do PPM
+`c14edf44b16cdfe5d80fb9fc7b1251606f027dc6d5af8a4656fd2ba62bb88309`.
+O frame CPU foi inspecionado; isso não valida gameplay ou aparência equivalente
+ao original.
 
-Continuam pendentes: objetos/outros avatares visíveis, controle do jogador,
+Continuam pendentes: outros avatares visíveis, controle do jogador,
 seleção/interação, stacks salvas, áudio audível, serviços Main e validação em
 janela X11. Portanto, ainda não é um build jogável. Detalhes e hashes em
 [validação do Main restaurado](person-main-render-validation.md).

@@ -76,7 +76,7 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
     const odh::SavedWorld& saved,const odh::DefinitionIndex& definitions,
     const std::string& floors,const std::optional<std::string>& walls,SavedLotView view)
     :architecture_(std::move(architecture)),saved_(saved),definitions_(definitions),graphics_(definitions),
-     view_(view),floors_(floors) {
+     view_(view),floors_(floors),objects_(definitions) {
     if(!saved_.world||view_.level<1||view_.level>2||
        (view_.terrain_theme&&unsigned(*view_.terrain_theme)>=8)||
        (view_.walls_down&&!walls))
@@ -85,6 +85,11 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
         if(!map.second.entries.empty()&&(map.first=="FLRm"||(walls&&map.first=="WALm")))
             throw odh::FormatError("live saved lot custom materials require a resource resolver");
     group_centers_=terrain_group_centers(saved_);
+    for(const auto& record:saved_.records){
+        const auto id=static_cast<std::int16_t>(record.saved.object_id);
+        const auto* entity=saved_.world->find(id);
+        if(entity&&entity->kind==odh::EntityKind::object)object_generations_.emplace(id,entity->generation);
+    }
     if(walls)walls_=std::make_unique<SavedWallRenderer>(*walls,definitions_);
 }
 
@@ -121,7 +126,7 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     image=odh::merge_raster(image,avatar_frame);
     if(walls_){
         // Derive from current World banks and positions on every capture.
-        const auto appearance=saved_wall_appearance(saved_,definitions_,architecture_.architecture);
+        const auto appearance=saved_wall_appearance(saved_,definitions_,architecture_.architecture,true);
         auto wall=walls_->render(architecture_.architecture,appearance.appearance,camera,image,
                                 true,0,odh::WallView{view_.level,view_.walls_down});
         result.wall_layers=wall.draws.size();result.wall_junctions=wall.junctions.size();
@@ -130,5 +135,44 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         result.wall_shaded_samples=wall.composite.shaded_samples;
         image=std::move(wall.composite.image);
     }
+    std::vector<SavedObjectVisual> visuals;
+    for(const auto& raw:saved_.records){
+        const auto id=static_cast<std::int16_t>(raw.saved.object_id);
+        const auto identity=object_generations_.find(id);
+        if(identity==object_generations_.end())continue;
+        const auto* entity=saved_.world->find(id);
+        if(!entity){++result.object_removed;continue;}
+        if(entity->generation!=identity->second||entity->kind!=odh::EntityKind::object||
+           !entity->definition||entity->definition->guid!=raw.saved.guid)
+            throw odh::FormatError("live saved object identity changed; refresh renderer");
+        if(!entity->position){++result.object_outside;continue;}
+        const odh::VmFrame frame{odh::routine_key(4096),0,{id,id,id,0},{},{}};
+        const auto hidden=saved_.world->read(frame,3,34),graphic=saved_.world->read(frame,3,0);
+        if(!hidden||!graphic)throw odh::FormatError("live saved object visibility/graphic unavailable");
+        if(*hidden){++result.object_hidden;continue;}
+        const auto graphics=graphics_.entity(*saved_.world,id);
+        const auto* anchor=saved_.world->find(graphics.container?graphics.container:id);
+        if(!anchor||!anchor->position)throw odh::FormatError("live saved object graphics anchor unavailable");
+        if(anchor->position->level>view_.level){++result.object_above_level;continue;}
+        if(view_.walls_down&&anchor->position->level==view_.level){
+            const auto flags=saved_.world->read(frame,3,8);
+            if(!flags)throw odh::FormatError("live saved object cutaway flags unavailable");
+            if(static_cast<std::uint16_t>(*flags)&1024U)
+                throw odh::FormatError("HideForCutaway needs runtime wall occupancy reconstruction");
+        }
+        auto position=graphics.tile_position;
+        std::array<float,2> xy{static_cast<float>(anchor->position->x)/16,static_cast<float>(anchor->position->y)/16};
+        const auto center=group_centers_.find(anchor->id);if(center!=group_centers_.end())xy=center->second;
+        position[2]+=odh::terrain_interp_altitude(architecture_.architecture,xy[0],xy[1]);
+        visuals.push_back({id,raw.saved.guid,*graphic,graphics.direction,position,raw.common.dynamic_sprite_flags});
+    }
+    // Walls have binary alpha and establish the opaque base before objects;
+    // reversing these passes loses the wall color behind translucent objects.
+    auto objects=objects_.render(visuals,camera,image);
+    result.objects=objects.records.size();result.object_layers=objects.layers;
+    result.object_cached_frame_bytes=objects.cached_frame_bytes;
+    result.object_tested_samples=objects.composite.tested_samples;
+    result.object_shaded_samples=objects.composite.shaded_samples;
+    image=std::move(objects.composite.image);
     result.image=std::move(image);return result;
 }
