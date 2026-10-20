@@ -24,7 +24,7 @@ std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
     const auto max_proximity=raw_max_proximity==0?min_proximity:raw_max_proximity;
     const auto resolution=*slot->resolution;
     if(min_proximity<0 || max_proximity<0 || max_proximity<min_proximity || resolution<=0 ||
-       raw_max_proximity==min_proximity)
+       max_proximity==min_proximity)
         throw std::invalid_argument("reference SLOT lattice requires a valid ranged proximity profile");
     if(candidate_limit==0) throw std::invalid_argument("reference SLOT lattice candidate budget is zero");
 
@@ -50,6 +50,45 @@ std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
         }
     }
     return offsets;
+}
+std::vector<RoutePoint> filter_reference_slot_range_proximity(
+    const SlotTable& table,std::size_t type3_index,const std::vector<RoutePoint>& offsets) {
+    const auto* slot=slot_of_type(table,3,type3_index);
+    if(table.version!=10 || !slot || !slot->proximity || !slot->resolution || *slot->resolution<=0)
+        throw std::invalid_argument("reference SLOT proximity filter requires a version-10 type-3 range slot");
+    const auto min_proximity=(*slot->proximity)[0];
+    const auto raw_max_proximity=(*slot->proximity)[1];
+    const auto max_proximity=raw_max_proximity==0?min_proximity:raw_max_proximity;
+    if(min_proximity<0 || max_proximity<0 || max_proximity<=min_proximity)
+        throw std::invalid_argument("reference SLOT proximity filter requires a valid ranged proximity profile");
+
+    constexpr std::uint32_t fso_square=1U<<30;
+    const bool square=(slot->flags&fso_square)!=0;
+    const auto max=static_cast<std::uint64_t>(max_proximity);
+    const auto min=static_cast<std::uint64_t>(min_proximity);
+    // For integer-coordinate offsets, sqrt(n) <= max+0.5 is exactly
+    // n <= max^2+max; sqrt(n) >= min-0.5 is n >= min^2-min+1.
+    const auto max_squared=max*max+max;
+    const auto min_squared=min==0?0:min*min-min+1;
+    std::vector<RoutePoint> candidates;
+    candidates.reserve(offsets.size());
+    for(const auto point:offsets) {
+        const auto ax=point.x<0?static_cast<std::uint64_t>(-static_cast<std::int64_t>(point.x)):
+                                static_cast<std::uint64_t>(point.x);
+        const auto ay=point.y<0?static_cast<std::uint64_t>(-static_cast<std::int64_t>(point.y)):
+                                static_cast<std::uint64_t>(point.y);
+        std::uint64_t distance_squared=0;
+        if(square) distance_squared=std::max(ax,ay)*std::max(ax,ay);
+        else {
+            // Values beyond max+1 cannot survive the upper band. Reject them
+            // before squaring so the remaining unsigned sum cannot overflow.
+            if(ax>max+1 || ay>max+1) continue;
+            distance_squared=ax*ax+ay*ay;
+        }
+        if(distance_squared>=min_squared && distance_squared<=max_squared)
+            candidates.push_back(point);
+    }
+    return candidates;
 }
 bool Routing::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;

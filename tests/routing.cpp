@@ -19,6 +19,13 @@ void reference_slot_lattice_tests() {
     require(offsets.front()==odh::RoutePoint{-64,-64} && offsets[16]==odh::RoutePoint{-64,64} &&
             offsets[17]==odh::RoutePoint{-56,-64} && offsets.back()==odh::RoutePoint{64,64},
             "reference lattice preserves x-outer/y-inner inclusive order");
+    const auto proximity=odh::filter_reference_slot_range_proximity(table,8,offsets);
+    require(proximity.size()==204,"House07 proximity band filters the 289 offsets to 204 Euclidean candidates");
+    require(proximity.front()==odh::RoutePoint{-64,-8} && proximity.back()==odh::RoutePoint{64,8},
+            "proximity filtering preserves the source enumeration order");
+    auto square=table;square.records[9].flags|=(1U<<30);
+    const auto square_candidates=odh::filter_reference_slot_range_proximity(square,8,offsets);
+    require(square_candidates.size()==280,"FSOSquare uses the max-axis distance band");
     bool limited=false;
     try { (void)odh::enumerate_reference_slot_range_lattice(table,8,288); }
     catch(const std::length_error&) { limited=true; }
@@ -36,6 +43,10 @@ void reference_slot_lattice_tests() {
     try { (void)odh::enumerate_reference_slot_range_lattice(malformed,8); }
     catch(const std::invalid_argument&) { invalid=true; }
     require(invalid,"reference lattice rejects incomplete version profile");
+    invalid=false;malformed=table;malformed.records[9].proximity=std::array<std::int32_t,3>{16,0,16};
+    try { (void)odh::enumerate_reference_slot_range_lattice(malformed,8); }
+    catch(const std::invalid_argument&) { invalid=true; }
+    require(invalid,"max-zero fallback to min rejects a non-ranged profile");
 }
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;

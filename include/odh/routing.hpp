@@ -12,6 +12,11 @@ struct RouteMovement {std::uint64_t tick;std::int16_t entity;EntityPosition posi
 // scoring, or establish original The Sims 1 semantics.
 std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
     const SlotTable&,std::size_t type3_index,std::size_t candidate_limit=4096);
+// Applies only the pinned FreeSO proximity band (including its +/-0.5
+// tolerance and FSOSquare distance mode) to that lattice. Room, direction,
+// geometry, occupancy, score/RNG and original-game semantics remain unknown.
+std::vector<RoutePoint> filter_reference_slot_range_proximity(
+    const SlotTable&,std::size_t type3_index,const std::vector<RoutePoint>& offsets);
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {
