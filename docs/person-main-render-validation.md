@@ -87,3 +87,42 @@ lote, restauração completa do estado, continuidade sem falhas, áudio ou
 gameplay. O próximo milestone é renderizar o avatar na posição do lote carregado
 em uma janela Linux e introduzir entrada mínima sem criar outro scheduler nem
 substituir o VM/Main/Playback permanente do `odh-person`.
+
+## Main em World restaurado (2026-10-20)
+
+`--saved-world-main` restores House07 through `make_saved_world`, selects the
+saved avatar whose GUID matches `User00000.iff`, and starts a new Main entry
+using that same World. Saved BHAV stacks and action queues remain dormant; this
+is not continuation of the saved simulation. The body descriptor is derived
+without writing saved PersonData/motives or consuming RNG.
+
+The real-data probe includes `UserData/LotZoning.iff`, which Main needs for its
+zone lookup. Original resource files remain outside the repository. At 214
+ticks, Main is `waiting` with 308 VM steps and five active stack frames. The
+tick-214 sample renders the restored avatar at World position
+`[24.5,27.5,0]`, direction 3: clip `a2o-idle-neutral-mstand-look-1d`, frame
+25.2, 684 vertices, 840 triangles, 3,172 catalog CFP samples and 7,368 shaded
+samples. Its PPM is `reports/odh-person-restored-main-tick214.ppm`; JSON:
+`reports/odh-person-restored-main-tick214.json`.
+
+At the 4,096-tick limit, Main is still `waiting` with 4,358 VM steps and five
+active frames. It executes Main through timed animation, sound requests and
+head-seek state. Four FWAV requests resolved to `hungry_sated_vox`; the host
+reports them as `skipped_no_backend`, so this is silent simulation. The receipt
+is `reports/odh-person-restored-main-tick4096-looktowards.json`. Exit code 3
+means the requested tick budget ended; VM status is not faulted.
+
+To permit this progression, opcode 23 resolves FWAV entries from explicit actor,
+semiglobal and global resources. Opcode 22 mode 0 writes head-seek target/state
+fields following pinned FreeSO TS1 commit
+`4c6b3e8f5835b228723caea3c9f683c62f244f73`. Playback accepts carry-only
+and carry-plus-play modes by retaining the resolved carry resource; the renderer
+does not compose that carry pose yet. Body rotation/routing LookTowards modes
+remain unsupported. These reference-based behaviors are not independently
+confirmed against the original game.
+
+The frame contains only the avatar over a flat background. Saved threads remain
+dormant, sounds have no sink, the X11 preview has not been visually validated
+in this environment, and there is no player input or object selection. The
+4,096-tick run is stronger evidence of a live Main/VM path, not a playable build
+or a claim of simulation fidelity.

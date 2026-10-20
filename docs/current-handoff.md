@@ -1,6 +1,37 @@
 # Continuidade atual
 
-## Integração inicial do Main com o renderer (2026-10-20)
+## Continuação do Main no World salvo (2026-10-20)
+
+O protótipo local agora usa `--saved-world-main` para restaurar House07 com
+`make_saved_world`, selecionar o avatar 105 pela identidade GUID com
+`User00000.iff` e iniciar um Main novo no mesmo World da VM/Playback. O estado
+das threads e filas salvas continua dormente; não é retomar a execução salva.
+O perfil do personagem vem de um descriptor puro que não altera PersonData/
+motives salvos nem avança RNG.
+
+Com os dados originais externos e LotZoning carregado, o Main permaneceu em
+`waiting` por 4.096 ticks, 4.358 instruções e cinco frames de stack ativos. O
+avatar continuou produzindo amostras de animação e alterou seu estado runtime.
+Opcode 23 agora resolve FWAVs em fontes explícitas, mas não há sink de áudio;
+quatro pedidos `hungry_sated_vox` foram registrados como silenciosos. Opcode 22
+mode 0 grava o estado head-seek do Sim conforme o caminho TS1 da referência
+FreeSO fixa. Outros modos que exigem rotação/roteamento corporal continuam
+desativados. A animação carry é resolvida e retida, mas não é composta no frame.
+
+O frame tick214 foi renderizado na posição do World salvo
+`[24.5,27.5,0]`, direção3, com 684 vértices, 840 triângulos e 7.368 shaded
+samples. O quadro contém apenas o Sim em fundo plano. Recibos locais ignorados:
+`reports/odh-person-restored-main-tick214.json/.ppm` e
+`reports/odh-person-restored-main-tick4096-looktowards.json`. Build focal e
+9 CTests (Playback, LookTowards, som e CLI person) passaram; `git diff --check`
+passou.
+
+Próximos limites: threads salvas, áudio real, arquitetura/lote desenhado,
+roteamento para LookTowards corporal, interação via input/seleção e validação
+visual de X11. Este não é ainda um build jogável. Referência detalhada:
+[validação do Main restaurado](person-main-render-validation.md).
+
+## Checkpoint anterior — Main construído e posição projetada (2026-10-20)
 
 `odh-person` agora pode exportar um frame PPM headless usando o `PlaybackSample`
 vivo do Main. O caminho usa `AvatarBodyStrings` diretamente para resolver corpo,

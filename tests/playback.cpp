@@ -75,8 +75,12 @@ int main(){try{
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"event budget rejects before creating clip");}
     {Fixture f;f.a->motions[0].frames=1048577;f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"frame bound checked before progression");}
-    for(const auto flags:{16,17,128}){Fixture f(static_cast<std::uint8_t>(flags));f.start();
-        require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"unsupported carry/mode/flag faults");}
+    {Fixture f(16);f.start();require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.progress()&&f.player.carry_clip()==f.a,
+        "carry-only mode retains resolved resource without replacing primary Playback");}
+    {Fixture f(17);f.start();require(f.vm.status()==odh::VmStatus::waiting&&f.player.progress(),
+        "carry-and-play mode clears carry and starts primary Playback");}
+    {Fixture f(128);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),
+        "unknown animation flag remains unsupported");}
     {Fixture f(0,0,0,{},false);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"reset not falsely completed without explicit resolver");}
     for(const auto value:{1,2,0,-1,4}){Fixture f(0,0,0);f.world.set_person_data(1,0,static_cast<std::int16_t>(value));f.world.set_person_data(1,42,1);f.start();
      require(f.posture==((value==1||value==2)?value:3),"reset normalizes only other postures to standing loop3");
@@ -124,7 +128,7 @@ int main(){try{
      require(f.vm.status()==odh::VmStatus::returned_true&&!f.vm.pending()&&f.player.progress()->loop&&f.posture==2,"ID0 modes1 and2 use ordinary posture reset");}
     {Fixture f(0,0,1,{4096,0xffffffffU,10});f.a->motions[0].frames=0xffffffffU;f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"host frame limits cannot permit clips beyond signed reference frame range");}
-    {Fixture f(17,0,0);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"ID0 mode3 carry cancellation remains unsupported");}
+    {Fixture f(17,0,0);f.start();require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.progress(),"ID0 mode3 cancels carry without starting primary animation");}
     {Fixture f;f.a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"missing property service does not silently succeed");}
     {Fixture f;f.a.reset();f.start();require(f.vm.status()==odh::VmStatus::fault,"missing clip is explicit fault");}

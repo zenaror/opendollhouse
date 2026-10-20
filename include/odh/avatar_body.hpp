@@ -33,6 +33,10 @@ struct AvatarBodyDescriptor {
 // nonempty entries override walking only. Table identity is not inferred.
 // Absent body preserves age/gender and produces no name/outfit/phenotype update.
 // Rejects invalid tables/avatar banks before any World or RNG change.
+AvatarBodyDescriptor derive_avatar_body_descriptor(const World&,std::int16_t actor,
+    const RandomState&,const std::optional<AvatarBodyStrings>& body,
+    const StringTable& global_walk,const StringTable& global_swim,
+    const std::optional<StringTable>& object_walk={});
 AvatarBodyDescriptor apply_avatar_body(World&,std::int16_t actor,RandomState&,
     const std::optional<AvatarBodyStrings>& body,const StringTable& global_walk,
     const StringTable& global_swim,const std::optional<StringTable>& object_walk={});

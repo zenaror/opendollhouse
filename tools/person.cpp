@@ -19,11 +19,14 @@
 #include "odh/family.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
+#include "odh/sound.hpp"
+#include "odh/look_towards.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "json.hpp"
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
+#include "saved_resources.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
 #endif
@@ -90,6 +93,16 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
     if(result.binding&&result.binding->master_id!=0)throw odh::FormatError("multitile identity unsupported");
     return result;
 }
+std::map<std::uint16_t,odh::SoundEvent> load_sounds(const Resource& resource) {
+    std::map<std::uint16_t,odh::SoundEvent> result;
+    with_resource(resource,[&](const auto& view){
+        odh::iff_chunks(view,[&](const auto& chunk){
+            if(chunk.type=="FWAV"&&!result.emplace(chunk.id,odh::read_fwav(chunk.payload)).second)
+                throw odh::FormatError("ambiguous FWAV ID in explicit resource");
+        });
+    });
+    return result;
+}
 std::map<std::uint16_t,odh::StringTable> load_strings(const Resource& resource,const std::vector<std::uint16_t>& ids){
     std::map<std::uint16_t,odh::StringTable> result;
     with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
@@ -117,7 +130,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::optional<std::uint16_t> render_tick;
     std::optional<std::uint16_t> render_saved_id;
-    bool render_window=false;
+    bool render_window=false,saved_world_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
@@ -148,6 +161,7 @@ int main(int argc,char** argv) {
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
         else if(option=="--render-window"&&!render_window){render_window=true;}
+        else if(option=="--saved-world-main"&&!saved_world_main){saved_world_main=true;}
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
             definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
@@ -158,10 +172,11 @@ int main(int argc,char** argv) {
     if(render_window&&!ticks_set)ticks_limit=4096;
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id||render_window;
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
-       (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||!initialize||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
+       (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
+       (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -251,7 +266,7 @@ int main(int argc,char** argv) {
     struct GlobalRead {std::int16_t index,value;GlobalSource source;};
     std::vector<GlobalRead> global_reads;
     std::optional<odh::Ts1BootstrapGlobals> bootstrap_globals;
-    if(initialize)bootstrap_globals.emplace();
+    if(initialize||saved_world_main)bootstrap_globals.emplace();
     std::vector<odh::LotZoneResult> zoning_reads;
     std::optional<odh::Nbrs> nbrs;
     std::optional<odh::Ngbh> ngbh;
@@ -284,7 +299,7 @@ int main(int argc,char** argv) {
     }
     std::vector<odh::NeighborNext> neighbor_next;
     std::vector<odh::NeighborDataValue> neighbor_reads;
-    auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def,initialize);
+    auto person=load(*avatar,odh::RoutineScope::private_object,*avatar_def,initialize||saved_world_main);
     if(person.binding->version!=138||person.object_type!=2)throw odh::FormatError("person constructor profile requires OBJD138 ObjectType2");
     if(active_family&&(!odh::FamilyContext::contains(*active_family,person.binding->guid)||!neighbors->id_for_guid(person.binding->guid)))
         throw odh::FormatError("avatar GUID is not a bound member of selected FAMI");
@@ -298,10 +313,14 @@ int main(int argc,char** argv) {
     auto semi_data=load(*semi,odh::RoutineScope::semiglobal);
     person.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
     auto shared=load(*globals,odh::RoutineScope::global);
+    const auto person_sounds=load_sounds(*avatar);
+    const auto semiglobal_sounds=load_sounds(*semi);
+    const auto global_sounds=load_sounds(*globals);
     std::optional<odh::AvatarBodyStrings> body;
     std::optional<odh::StringTable> body_walk,body_swim,private_walk;
-    if(initialize){
-        if(!person.entry_points||person.entry_points->entries.size()<=8)throw odh::FormatError("startup requires entry points0/1/8");
+    if(initialize||saved_world_main){
+        if(initialize&&(!person.entry_points||person.entry_points->entries.size()<=8))throw odh::FormatError("startup requires entry points0/1/8");
+        if(!person.startup)throw odh::FormatError("avatar body derivation requires startup OBJD fields");
         auto strings=load_strings(*avatar,{person.startup->body_strings,150});
         const auto table=strings.find(person.startup->body_strings);
         if(table==strings.end())throw odh::FormatError("startup BodySTR absent");
@@ -313,7 +332,7 @@ int main(int argc,char** argv) {
         auto animation_strings=load_strings(*globals,{walk_id,swim_id});
         if(!animation_strings.count(walk_id)||!animation_strings.count(swim_id))throw odh::FormatError("startup global walk/swim STR# absent");
         body_walk=std::move(animation_strings.at(walk_id));body_swim=std::move(animation_strings.at(swim_id));
-        for(const auto id:{person.entry_points->entries[0].action,person.entry_points->entries[8].action})if(id>255){
+        if(initialize)for(const auto id:{person.entry_points->entries[0].action,person.entry_points->entries[8].action})if(id>255){
             const auto key=odh::routine_key(id);const auto& bank=key.scope==odh::RoutineScope::global?shared.routines:person.routines;
             if(!bank.count(key))throw odh::FormatError("startup routine absent from explicit owner");
         }
@@ -324,19 +343,37 @@ int main(int argc,char** argv) {
             throw odh::FormatError("action routine absent from explicit private owner");
         if(action_data->glob&&!action_data->glob->name.empty())throw odh::FormatError("action semiglobal not supplied by this host profile");
     }
-    odh::World world({},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
-    if(!world.create(1,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(1,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
-    if(person.entry_points&&!world.define_entry_points(1,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
-    // Explicit reference constructor subset, not completed native Init.
-    for(std::int16_t index=0;index<79;++index) {
-        if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
-        if(!world.declare_object_word(1,index,0))throw odh::FormatError("reference constructor object word failed");
+    std::unique_ptr<odh::SavedWorld> restored_world;
+    std::unique_ptr<odh::World> world_owner;
+    std::int16_t runtime_avatar_id=1;
+    if(saved_world_main){
+        if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
+        auto records=saved_world_records(*lot_path,*definition_index);
+        const auto saved=std::find_if(records.begin(),records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
+        if(saved==records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
+            throw odh::FormatError("selected saved World entity is not the matching person resource");
+        restored_world=odh::make_saved_world(records,*definition_index,neighbors?&*neighbors:nullptr);
+        runtime_avatar_id=static_cast<std::int16_t>(*render_saved_id);
+        world_owner=std::move(restored_world->world);
+        const auto* restored_avatar=world_owner->find(runtime_avatar_id);
+        if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
+            throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
+    }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
+    odh::World& world=*world_owner;
+    if(!saved_world_main){
+        if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(runtime_avatar_id,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
+        // Explicit reference constructor subset, not completed native Init.
+        for(std::int16_t index=0;index<79;++index) {
+            if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
+            if(!world.declare_object_word(runtime_avatar_id,index,0))throw odh::FormatError("reference constructor object word failed");
+        }
+        if(!world.declare_object_word(runtime_avatar_id,8,signed_word(flags.value_or(256))))throw odh::FormatError("flags fixture construction failed");
+        if(age&&!world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))throw odh::FormatError("age fixture construction failed");
     }
-    if(!world.declare_object_word(1,8,signed_word(flags.value_or(256))))throw odh::FormatError("flags fixture construction failed");
-    if(age&&!world.set_person_data(1,58,static_cast<std::int16_t>(*age)))throw odh::FormatError("age fixture construction failed");
+    if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     odh::TuningResources tuning_resources;
     tuning_resources.globals=std::move(shared.tuning);
-    tuning_resources.owners.emplace(1,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
+    tuning_resources.owners.emplace(runtime_avatar_id,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
     if(action)tuning_resources.owners.emplace(2,odh::TuningOwner{std::move(action_data->tuning),{},odh::TuningSemiState::absent});
     const odh::BconTuning tuning(std::move(tuning_resources));
     std::vector<odh::TuningValue> tuning_reads;
@@ -365,13 +402,13 @@ int main(int argc,char** argv) {
             return lot&&lot->write(index,value);}
         return world_memory.write(frame,scope,index,value);
     };
-    odh::RoutineOwners owners{{1,std::move(person.routines)}};
+    odh::RoutineOwners owners{{runtime_avatar_id,std::move(person.routines)}};
     if(action){owners.emplace(2,std::move(action_data->routines));
         if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");
         if(action_data->entry_points&&!world.define_entry_points(2,action_data->entry_points->entries))throw odh::FormatError("action entry point binding failed");}
     std::uint64_t rng_requests=0;
     odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
-    odh::Sleep sleep(world,[&]{++rng_requests;random.next(1);});odh::InteractionQueue queue(world,1);
+    odh::Sleep sleep(world,[&]{++rng_requests;random.next(1);});odh::InteractionQueue queue(world,runtime_avatar_id);
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
         if(random_reads.size()>=10000)throw odh::FormatError("random log exceeds bounded host profile");random_reads.push_back(value);
     });
@@ -416,7 +453,7 @@ int main(int argc,char** argv) {
             animation_table_ids.emplace(owner,base);
             private_animation_tables.emplace(owner,load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130}));
         };
-        bind_tables(1,*avatar,person);if(action)bind_tables(2,*action,*action_data);
+        bind_tables(runtime_avatar_id,*avatar,person);if(action)bind_tables(2,*action,*action_data);
     }
     const auto resolve_animation=[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id,std::optional<std::int16_t> posture)
         ->std::shared_ptr<const odh::AnimationHeader>{
@@ -457,6 +494,21 @@ int main(int argc,char** argv) {
         [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
         [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
     const auto animation_handler=playback?playback->primitive():odh::VmPrimitive{};
+    struct SoundRecord {odh::SoundRequest request;std::string status;};
+    std::vector<SoundRecord> sound_records;
+    const auto sound_handler=odh::sound_primitive(world,[&](const odh::VmFrame& frame,std::uint16_t id)
+        ->std::optional<odh::SoundEvent>{
+        const auto private_sound=person_sounds.find(id);
+        if(frame.context.code_owner==runtime_avatar_id&&private_sound!=person_sounds.end())return private_sound->second;
+        const auto semi_sound=semiglobal_sounds.find(id);
+        if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
+        const auto global_sound=global_sounds.find(id);
+        if(global_sound!=global_sounds.end())return global_sound->second;
+        return {};
+    },{},[&](const odh::SoundRequest& request,const std::string& status){
+        if(sound_records.size()<4096)sound_records.push_back({request,status});
+    });
+    const auto look_towards_handler=odh::look_towards_primitive(world);
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
@@ -467,6 +519,8 @@ int main(int argc,char** argv) {
         if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
         if(i.opcode==51&&inventory_handler)return inventory_handler(f,i,t,d);
         if(i.opcode==44&&animation_handler)return animation_handler(f,i,t,d);
+        if(i.opcode==23)return sound_handler(f,i,t,d);
+        if(i.opcode==22)return look_towards_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -482,7 +536,7 @@ int main(int argc,char** argv) {
     if(initialize){
         for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.entry_points->entries[0].action},{"dynamic_multitile",person.entry_points->entries[8].action}}){
             if(entry.second<=255){stages.push_back({entry.first,entry.second,odh::VmStatus::ready,0,"entry ID<=255 skipped by reference"});continue;}
-            vm.start(odh::routine_key(entry.second),{1,1,0,1},{0,0,0,0});
+            vm.start(odh::routine_key(entry.second),{runtime_avatar_id,runtime_avatar_id,0,static_cast<odh::CodeOwner>(runtime_avatar_id)},{0,0,0,0});
             vm.run(10000-startup_steps,trace_in(entry.first));
             stages.push_back({entry.first,entry.second,vm.status(),vm.steps(),vm.diagnostic()});
             if(vm.status()!=odh::VmStatus::returned_true&&vm.status()!=odh::VmStatus::returned_false){
@@ -494,18 +548,22 @@ int main(int argc,char** argv) {
     if(!host_failed){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
-        vm.start(odh::routine_key(root),{1,1,static_cast<std::int16_t>(initialize?0:1),1});
+        vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,static_cast<std::int16_t>(initialize?0:1),static_cast<odh::CodeOwner>(runtime_avatar_id)});
         if(initialize&&vm.status()!=odh::VmStatus::fault){
-            try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,1,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
+            try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
         }
-        if(initialize&&neighbors&&!host_failed&&vm.status()!=odh::VmStatus::fault){
+        else if(saved_world_main){
+            try{body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);}
+            catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
+        }
+        if(initialize&&!saved_world_main&&neighbors&&!host_failed&&vm.status()!=odh::VmStatus::fault){
             if(const auto id=neighbors->id_for_guid(person.binding->guid)){
-                try{inherited=odh::inherit_neighbor(world,1,*neighbors->by_id(*id),active_family?std::optional<std::uint16_t>{active_family->chunk_id}:std::nullopt);}
+                try{inherited=odh::inherit_neighbor(world,runtime_avatar_id,*neighbors->by_id(*id),active_family?std::optional<std::uint16_t>{active_family->chunk_id}:std::nullopt);}
                 catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
             }
         }
-        if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{1,2,2,2}))throw odh::FormatError(queue.diagnostic());
+        if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
     struct RenderEvidence {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
@@ -528,10 +586,17 @@ int main(int argc,char** argv) {
         if(found->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
             throw odh::FormatError("render saved avatar identity does not match the selected person resource");
         const auto& p=found->prefix;
-        if((p.x==-16&&p.y==-16)||p.x<0||p.y<0||p.x>32767||p.y>32767||(p.level!=1&&p.level!=2)||p.object_data[1]<0||p.object_data[1]>7)
-            throw odh::FormatError("render saved avatar has no supported lot position");
-        render_position={static_cast<float>(p.x)/16.0f,static_cast<float>(p.y)/16.0f,static_cast<float>(p.level-1)*2.95f};
-        render_direction=static_cast<std::uint8_t>(p.object_data[1]);
+        if(saved_world_main){
+            const auto* entity=world.find(runtime_avatar_id);
+            if(!entity||!entity->position)throw odh::FormatError("render saved avatar has no live restored World position");
+            render_position={static_cast<float>(entity->position->x)/16.0f,static_cast<float>(entity->position->y)/16.0f,static_cast<float>(entity->position->level-1)*2.95f};
+            render_direction=entity->position->direction;
+        }else{
+            if((p.x==-16&&p.y==-16)||p.x<0||p.y<0||p.x>32767||p.y>32767||(p.level!=1&&p.level!=2)||p.object_data[1]<0||p.object_data[1]>7)
+                throw odh::FormatError("render saved avatar has no supported lot position");
+            render_position={static_cast<float>(p.x)/16.0f,static_cast<float>(p.y)/16.0f,static_cast<float>(p.level-1)*2.95f};
+            render_direction=static_cast<std::uint8_t>(p.object_data[1]);
+        }
         render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
         presented_saved_id=*render_saved_id;presented_saved_guid=found->guid;
     }
@@ -565,7 +630,7 @@ int main(int argc,char** argv) {
         if(!render_window&&render_tick&&ticks!=*render_tick)return;
         const auto sample=playback->sample();if(!sample)return;
         const auto* sample_actor=world.find(sample->actor);
-        if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=1)
+        if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=runtime_avatar_id)
             throw odh::FormatError("person frame sample actor identity is stale or outside this host");
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
@@ -639,12 +704,26 @@ int main(int argc,char** argv) {
     const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
     if(render_requested&&!render_evidence){
         if(render_window&&host_failed)throw odh::FormatError("person window preview host failed before a live Playback sample: "+host_diagnostic);
-        throw odh::FormatError(render_window?(window_closed?"person window preview closed before a live Playback sample was available":
+        const std::string reason=render_window?(window_closed?"person window preview closed before a live Playback sample was available":
                                                               "person window preview ended before a live Playback sample was available"):
             render_tick?"person frame export observed no live Playback sample at requested tick; no frame written":
-                        "person frame export observed no live Playback sample; no frame written");
+                        "person frame export observed no live Playback sample; no frame written";
+        std::string failure=reason+" (VM status "+std::string(odh::vm_status_name(vm.status()))+
+            (vm.diagnostic().empty()?std::string{}:"; "+vm.diagnostic());
+        if(!trace.empty()){
+            const auto& last=trace.back();
+            failure+="; last instruction BHAV"+std::to_string(last.key.id)+" pc"+std::to_string(last.pc)+
+                " opcode"+std::to_string(last.instruction.opcode)+" operands[";
+            for(std::size_t n=0;n<last.instruction.operands.size();++n){
+                if(n)failure+=',';
+                failure+=std::to_string(last.instruction.operands[n]);
+            }
+            failure+=']';
+        }
+        throw odh::FormatError(failure+")");
     }
-    std::cout<<"{\"evidence\":\"ODH_native_BHAV_constructed_person_host\",\"initialization\":"<<json_bytes(initialize?
+    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"initialization\":"<<json_bytes(saved_world_main?
+        "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
         <<",\"startup_steps\":"<<startup_steps<<",\"startup_stages\":[";
@@ -656,7 +735,7 @@ int main(int argc,char** argv) {
         if(state.body->gender)std::cout<<*state.body->gender;else std::cout<<"null";
         std::cout<<",\"avatar_type\":"<<json_bytes(state.body->avatar_type)<<",\"body\":"<<json_bytes(state.body->body)<<",\"head\":"<<json_bytes(state.body->head)
             <<",\"phenotype\":\"TS1 light reference policy\",\"appearance_resources_resolved\":"<<(render_evidence?"true":"false")<<",\"selected_name\":"<<(state.selected_name?json_bytes(*state.selected_name):"null")
-            <<",\"seed_before\":"<<*body_seed_before<<",\"seed_after\":"<<*body_seed_after<<",\"walk_table\":"<<state.global_walk_id<<",\"swim_table\":"<<state.global_swim_id<<",\"hands\":[";
+            <<",\"seed_before\":"<<(body_seed_before?std::to_string(*body_seed_before):"null")<<",\"seed_after\":"<<(body_seed_after?std::to_string(*body_seed_after):"null")<<",\"walk_table\":"<<state.global_walk_id<<",\"swim_table\":"<<state.global_swim_id<<",\"hands\":[";
         for(std::size_t n=0;n<6;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.body->hands[n]);}
         std::cout<<"],\"walk\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.walk[n]);}
         std::cout<<"],\"swim\":[";for(std::size_t n=0;n<50;++n){if(n)std::cout<<',';std::cout<<json_bytes(state.swim[n]);}std::cout<<"]}";
@@ -693,7 +772,7 @@ int main(int argc,char** argv) {
         <<",\"avatar\":{\"resource_kind\":"<<json_bytes(avatar->standalone?"standalone_iff":"far_entry")
         <<",\"file\":"<<(avatar->standalone?json_bytes(avatar->archive):"null")
         <<",\"archive\":"<<(avatar->standalone?"null":json_bytes(avatar->archive))<<",\"entry\":"<<json_bytes(avatar->entry)
-        <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":1,\"main\":"<<avatar_main<<",\"objd_main\":"<<person.functions->main<<",\"root\":"<<root
+        <<",\"objd_id\":"<<*avatar_def<<",\"guid\":"<<person.binding->guid<<",\"owner\":"<<runtime_avatar_id<<",\"main\":"<<avatar_main<<",\"objd_main\":"<<person.functions->main<<",\"root\":"<<root
         <<",\"semiglobal_archive\":"<<json_bytes(semi->archive)<<",\"semiglobal_entry\":"<<json_bytes(semi->entry)<<",\"glob_name\":"<<json_bytes(person.glob->name)
         <<"},\"global\":{\"archive\":"<<json_bytes(globals->archive)<<",\"entry\":"<<json_bytes(globals->entry)<<"},\"trace\":[";
     for(std::size_t n=0;n<trace.size();++n){if(n)std::cout<<',';const auto& t=trace[n];
@@ -732,12 +811,12 @@ int main(int argc,char** argv) {
             <<",\"mapped_ids\":"<<objm->map_records.size()<<",\"blocks\":"<<objm->blocks.size()<<",\"owned_block_bytes\":"<<bytes
             <<",\"remaining_bytes\":"<<objm->remaining_bytes
             <<",\"known_reference_schema_decoded\":"<<(saved_tails&&std::all_of(saved_tails->begin(),saved_tails->end(),[](const auto& tail){return tail.has_value();})?"true":"false")
-            <<",\"instance_state_decoded\":false,\"world_entities_restored\":false}";
+            <<",\"instance_state_decoded\":false,\"world_entities_restored\":"<<(saved_world_main?"true":"false")<<"}";
     }else std::cout<<"null";
     std::cout<<",\"saved_object_prefixes\":";
     if(saved_prefixes){
         std::cout<<"{\"profile\":\"owned prefix snapshot; raw objt GUID mapping; OBJD and complete instance state unresolved\",\"objt_version\":"<<objt->version
-            <<",\"objt_entries\":"<<objt->entries.size()<<",\"world_entities_restored\":false,\"records\":[";
+            <<",\"objt_entries\":"<<objt->entries.size()<<",\"world_entities_restored\":"<<(saved_world_main?"true":"false")<<",\"records\":[";
         for(std::size_t n=0;n<saved_prefixes->size();++n){if(n)std::cout<<',';const auto& v=(*saved_prefixes)[n];const auto& p=v.prefix;
             std::cout<<"{\"object_id\":"<<v.object_id<<",\"type_id\":"<<v.type_id<<",\"guid\":"<<v.guid
                 <<",\"block_offset\":"<<p.block_offset<<",\"odd_offset\":"<<(p.odd_offset?"true":"false")
@@ -831,7 +910,7 @@ int main(int argc,char** argv) {
     std::cout<<",\"neighbor_next\":[";
     for(std::size_t n=0;n<neighbor_next.size();++n){if(n)std::cout<<',';const auto& value=neighbor_next[n];
         std::cout<<"{\"current\":"<<value.current<<",\"result\":"<<value.result<<",\"success\":"<<(value.success?"true":"false")<<'}';}
-    std::cout<<"],\"entity_population\":\"constructed actor and optional action target; saved lot entities not restored\",\"entity_next\":[";
+    std::cout<<"],\"entity_population\":"<<json_bytes(saved_world_main?"saved World restored; saved threads dormant":"constructed actor and optional action target; saved lot entities not restored")<<",\"entity_next\":[";
     for(std::size_t n=0;n<entity_next.size();++n){if(n)std::cout<<',';const auto& v=entity_next[n];
         std::cout<<"{\"caller\":"<<v.context.caller<<",\"stack_object\":"<<v.context.stack_object<<",\"owner\":"<<v.context.code_owner
             <<",\"guid\":"<<v.guid<<",\"mode\":"<<static_cast<unsigned>(v.mode)<<",\"current\":"<<v.current<<",\"result\":"<<(v.result?std::to_string(*v.result):"null")
@@ -842,7 +921,7 @@ int main(int argc,char** argv) {
             value.source==odh::NeighborDataSource::missing_neighbor_zero?"missing_neighbor_reference_zero":"absent_person_data_reference_zero";
         std::cout<<"{\"neighbor\":"<<value.neighbor<<",\"index\":"<<value.index<<",\"value\":"<<value.value<<",\"source\":"<<json_bytes(source)<<'}';}
     std::cout<<']';
-    const auto* actor=world.find(1);
+    const auto* actor=world.find(runtime_avatar_id);
     std::cout<<",\"relationship_state\":";
     if(relationships)std::cout<<"{\"profile\":\"TS1 runtime copy; multiplier1; original NBRS unchanged; object matrices are not restored from ObjM\",\"sources\":"<<relationships->source_count()
         <<",\"pairs\":"<<relationships->pair_count()<<",\"values\":"<<relationships->value_count()<<'}';
@@ -878,7 +957,7 @@ int main(int argc,char** argv) {
             <<",\"count\":"<<(v.count?std::to_string(*v.count):"null")<<'}';
     }
     std::cout<<']';
-    std::cout<<",\"constructor_profile\":\"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only\",\"flags_initial\":"<<flags.value_or(256)
+    std::cout<<",\"constructor_profile\":"<<json_bytes(saved_world_main?"imported saved World banks; no synthetic constructor writes":"FreeSO 4c6b3e8 subset; PersonData101/MotiveData16/Contained3; raw ObjectData0..78 except derived getters; World identity/container/slot only")<<",\"flags_initial\":"<<flags.value_or(256)
         <<",\"age_initial\":"<<age.value_or(0)<<",\"actor_state\":{\"flags\":"<<actor->object_words.at(8)<<",\"age\":"<<actor->person_data[58]
         <<",\"autonomy\":"<<actor->person_data[36]<<",\"weight\":"<<actor->object_words.at(27)<<",\"support_strength\":"<<actor->object_words.at(28)
         <<",\"rotation_notches\":"<<actor->object_words.at(23)<<",\"flag_field2\":"<<actor->object_words.at(40)<<",\"room_placement\":"<<actor->object_words.at(30)<<",\"hunger\":"<<actor->motives[7]<<",\"person_data\":[";
@@ -913,11 +992,16 @@ int main(int argc,char** argv) {
             std::cout<<"]}";
         }std::cout<<']';
     }
-    std::cout<<",\"render\":";
+    std::cout<<",\"sound_profile\":\"BHAV PlaySound opcode23 resolves explicit FWAV IDs; no audio sink, accepted requests are silent\",\"sound_events\":[";
+    for(std::size_t n=0;n<sound_records.size();++n){if(n)std::cout<<',';const auto& record=sound_records[n];
+        std::cout<<"{\"event_id\":"<<record.request.event_id<<",\"name\":"<<json_bytes(record.request.name)
+            <<",\"source\":"<<record.request.source<<",\"status\":"<<json_bytes(record.status)<<'}';
+    }
+    std::cout<<"],\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")
             <<",\"window_clock\":"<<(render_window?json_bytes("preview_25Hz_unvalidated"):"null")
-            <<",\"runtime_position_present\":false,\"presentation_position_source\":"<<json_bytes(presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
+            <<",\"runtime_position_present\":"<<(saved_world_main?"true":"false")<<",\"presentation_position_source\":"<<json_bytes(saved_world_main?"restored_World_entity_position":presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
             <<",\"presentation_saved_object_id\":"<<(presented_saved_id?std::to_string(*presented_saved_id):"null")
             <<",\"presentation_saved_guid\":"<<(presented_saved_guid?std::to_string(*presented_saved_guid):"null")
             <<",\"presentation_position\":["<<render_position[0]<<','<<render_position[1]<<','<<render_position[2]<<"],\"presentation_direction\":"<<unsigned(render_direction)

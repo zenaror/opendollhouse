@@ -13,10 +13,12 @@ O probe da cadeira tem preview X11 opcional ligado ao World/playback. Ainda
 faltam inicialização/encerramento fiel das poses, lote, persistência, serviços
 completos de simulação e validação em consoles.
 
-Plataformas pretendidas: New Nintendo 3DS, PlayStation Vita, Android e Linux.
-O primeiro alvo funcional é Linux, para permitir testes, depuração e comparação
-antes dos ports. O New 3DS continua orientando consumo, carregamento e decisões
-portáveis desde o início. Cada console exigirá validação própria em hardware.
+Plataformas planejadas: Linux primeiro; depois New Nintendo 3DS, PlayStation Vita
+e Android; Windows e macOS (Apple Silicon arm64 e Intel x86_64) ficam como alvos
+futuros. O New 3DS continua orientando consumo, carregamento e decisões
+portáveis desde o início. Cada console exige validação própria em hardware.
+Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão
+de CI ou máquinas dedicadas antes de qualquer declaração de suporte.
 
 ## Dados do jogo
 

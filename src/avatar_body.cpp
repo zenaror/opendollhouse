@@ -84,12 +84,13 @@ AvatarBodyStrings parse_avatar_body_strings(const StringTable& table) {
     result.raw_names=strings[11];result.names=split_names(result.raw_names);
     return result;
 }
-AvatarBodyDescriptor apply_avatar_body(World& world,std::int16_t actor,RandomState& random,
-    const std::optional<AvatarBodyStrings>& body,const StringTable& global_walk,
-    const StringTable& global_swim,const std::optional<StringTable>& object_walk) {
+AvatarBodyDescriptor derive_avatar_body_descriptor(const World& world,std::int16_t actor,
+    const RandomState& random,const std::optional<AvatarBodyStrings>& body,
+    const StringTable& global_walk,const StringTable& global_swim,
+    const std::optional<StringTable>& object_walk) {
     const auto* entity=world.find(actor);
-    if(!entity||entity->kind!=EntityKind::avatar||entity->person_data.size()<101||entity->motives.size()!=16)
-        throw FormatError("avatar body requires avatar PersonData[101] and Motives[16]");
+    if(!entity||entity->kind!=EntityKind::avatar||entity->person_data.size()<66||entity->motives.size()!=16)
+        throw FormatError("avatar body descriptor requires PersonData age/gender fields and Motives[16]");
     if(body)validate_body(*body);
     const auto walk=us_strings(global_walk),swim=us_strings(global_swim);
     const auto special=object_walk?us_strings(*object_walk):std::vector<std::string>{};
@@ -102,6 +103,17 @@ AvatarBodyDescriptor apply_avatar_body(World& world,std::int16_t actor,RandomSta
     for(std::size_t i=0;i<special.size();++i)if(!special[i].empty())result.walk[i]=special[i];
     auto candidate=random;
     if(body&&!body->names.empty())result.selected_name=body->names[static_cast<std::size_t>(candidate.next(body->names.size()))];
+    return result;
+}
+AvatarBodyDescriptor apply_avatar_body(World& world,std::int16_t actor,RandomState& random,
+    const std::optional<AvatarBodyStrings>& body,const StringTable& global_walk,
+    const StringTable& global_swim,const std::optional<StringTable>& object_walk) {
+    const auto* entity=world.find(actor);
+    if(!entity||entity->kind!=EntityKind::avatar||entity->person_data.size()<101||entity->motives.size()!=16)
+        throw FormatError("avatar body requires avatar PersonData[101] and Motives[16]");
+    auto result=derive_avatar_body_descriptor(world,actor,random,body,global_walk,global_swim,object_walk);
+    auto candidate=random;
+    if(body&&!body->names.empty())candidate.next(body->names.size());
     // These existing fixed-size banks have been checked above. Their setters
     // cannot allocate or fail, so every failure path precedes publication.
     if(body){world.set_person_data(actor,58,*body->age);if(body->gender)world.set_person_data(actor,65,*body->gender);}

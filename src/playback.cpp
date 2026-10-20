@@ -86,8 +86,8 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     if(executing_||!vm_||d.origin!=vm_)return unsupported("animation controller identity/reentry rejected");
     diagnostic_.clear();
     if(state_&&state_->vm_generation!=vm_->run_generation()){state_.reset();wait_.reset();}
-    const auto flags=i.operands[5];const auto mode=(flags&1U)|((flags>>3)&2U);
-    if(flags&0x88U)return unsupported("animation flags outside primary playback profile");
+    const auto flags=i.operands[5];auto mode=(flags&1U)|((flags>>3)&2U);
+    if(flags&0x80U)return unsupported("animation flags outside playback profile");
     auto id=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     std::uint32_t source=i.operands[4];
     if(flags&4U){if(id>=f.arguments.size())return unsupported("animation parameter index outside frame");
@@ -96,7 +96,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     if(!actor||actor->kind!=EntityKind::avatar)return unsupported("animation requires avatar caller");
     if(wait_)return unsupported("animation already has a pending wait");
     if(id==0){
-        if(mode==3)return unsupported("animation reset carry cancellation not implemented");
+        if(mode==3){carry_clip_.reset();return {PrimitiveDisposition::goto_true,{}};}
         // FreeSO 4c6b3e8: Posture=0, HeadSeekState=42. An absent hand slot
         // is unknown, not evidence that the carry backend can be skipped.
         if(actor->slots.empty()||actor->slots[0]!=0)return unsupported("animation reset requires explicitly empty avatar hand slot zero");
@@ -111,7 +111,13 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         state_=std::move(*next);hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
         return {PrimitiveDisposition::goto_true,{}};
     }
-    if(mode>=2)return unsupported("animation carry mode outside primary playback profile");
+    if(mode==3)carry_clip_.reset();
+    if(mode==2){
+        const auto clip=resolver_?resolver_(f,source,id):nullptr;
+        if(!clip)return unsupported("carry animation resource not supplied by explicit resolver");
+        carry_clip_=clip;
+        return {PrimitiveDisposition::goto_true,{}};
+    }
     const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
     const auto index=static_cast<std::size_t>((flags&32U)?i.operands[2]:0);
     if(mode==0&&index>=(bank==VmFrameBank::locals?f.locals.size():f.arguments.size()))return unsupported("animation event destination outside frame");

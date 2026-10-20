@@ -23,9 +23,9 @@ struct PlaybackSample {
     AvatarHands hands;
 };
 struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::size_t queued_events;bool end;bool loop=false;};
-// Silent primary animation controller. Resolver supplies explicit immutable
-// resource identity, including posture reset clips. No skeleton, render, audio,
-// hand gesture or carry backend is implied.
+// Silent animation controller. Resolver supplies explicit immutable resource
+// identity, including posture reset clips. Carry mode retains its resource but
+// is not composed by the renderer yet.
 class Playback {
 public:
     Playback(World& world,AnimationResolver resolver,PlaybackLimits limits={},AnimationResetResolver reset_resolver={}):
@@ -39,6 +39,9 @@ public:
     bool tick(std::uint64_t,const std::function<void(const PlaybackEvent&)>& observed={});
     void cancel(); // Explicit host cancellation clears clip and any matching wait (false).
     std::optional<PlaybackProgress> progress() const;
+    // Resolved carry resource retained by AnimMode 2; the renderer does not
+    // compose this secondary pose yet.
+    std::shared_ptr<const AnimationHeader> carry_clip() const {return carry_clip_;}
     // Read-only. Rejects stale actor/run/wait identity before the next tick;
     // terminal nonblocking loops remain valid while their VM run is unchanged.
     std::optional<PlaybackSample> sample() const;
@@ -61,6 +64,7 @@ private:
     World& world_;AnimationResolver resolver_;PlaybackLimits limits_;
     AnimationResetResolver reset_resolver_;
     Vm* vm_=nullptr;std::optional<State> state_;std::optional<Wait> wait_;
+    std::shared_ptr<const AnimationHeader> carry_clip_;
     struct HandsState {AvatarHands value;std::int16_t actor;std::uint64_t actor_generation,vm_generation;};
     std::optional<HandsState> hands_;
     std::optional<std::uint64_t> last_tick_;std::string diagnostic_;bool executing_=false;

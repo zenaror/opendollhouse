@@ -33,7 +33,18 @@ int main(){try{
     check(world.declare_object_word(1,8,234));
     for(std::int16_t i=0;i<16;++i)check(world.set_motive(1,i,-30));
     odh::RandomState random(123),expected(123);
+    const auto original_person=world.find(1)->person_data,original_motives=world.find(1)->motives;
+    const auto original_seed=random.seed();
+    const auto descriptor=odh::derive_avatar_body_descriptor(world,1,random,body,walk,swim,
+        table({"","private-run","private-back","private-extra"}));
+    check(random.seed()==original_seed&&world.find(1)->person_data==original_person&&world.find(1)->motives==original_motives);
     auto result=odh::apply_avatar_body(world,1,random,body,walk,swim,table({"","private-run","private-back","private-extra"}));
+    check(descriptor.body&&result.body&&descriptor.body->age==result.body->age&&descriptor.body->body==result.body->body&&descriptor.body->head==result.body->head);
+    check(descriptor.selected_name==result.selected_name&&descriptor.phenotype==result.phenotype);
+    check(descriptor.child==result.child&&descriptor.global_walk_id==result.global_walk_id&&descriptor.global_swim_id==result.global_swim_id);
+    check(descriptor.walk==result.walk&&descriptor.swim==result.swim);
+    odh::World compact_saved;check(compact_saved.create(42,odh::EntityKind::avatar,{0,80,3,16}));
+    check(odh::derive_avatar_body_descriptor(compact_saved,42,random,body,walk,swim).body->age==body.age);
     check(random.seed()==123&&!result.selected_name&&result.phenotype==odh::AvatarPhenotype::ts1_light);
     check(result.body&&result.body->body=="body_first"&&!result.child&&result.global_walk_id==150&&result.global_swim_id==158);
     check(result.walk[0]=="adult-walk"&&result.walk[1]=="private-run"&&result.walk[3]=="private-extra"&&result.walk[49].empty());

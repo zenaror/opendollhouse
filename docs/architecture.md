@@ -10,6 +10,14 @@ VM, renderização, interação e lote mínimo, não apenas o inspector host atu
 Os constraints do New 3DS continuam considerados na arquitetura; a execução em
 Linux não comprova viabilidade ou desempenho nos portáteis.
 
+Decisão de planejamento de 2026-10-20: após a primeira versão funcional Linux e
+os ports prioritários New 3DS/Vita/Android, manter Windows e macOS como alvos
+futuros de build. Incluir Windows desktop e macOS para Apple Silicon (arm64) e
+Intel (x86_64); toolchains, empacotamento e backends ainda precisam ser definidos.
+O usuário não dispõe de máquinas Windows ou Mac para validar essas builds; elas
+exigirão CI ou colaboradores com esses sistemas e não serão declaradas funcionais
+com base apenas na compilação Linux.
+
 Decisão de entrada de dados de 2026-10-14: o motor lê assets fornecidos pelo
 jogador, sem depender de executável original ou realizar checagem de CD.
 Priorizar a árvore de dados copiados/extraídos tanto no Linux quanto no
@@ -193,8 +201,13 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    exportação consumível pelo original.
 6. **Cobertura:** sistemas clássicos, expansões e conteúdo personalizado por
    cenários/versionamento; depois extensões e ferramentas.
-7. **Ports:** transportar o núcleo validado, implementar backends e controles
-   próprios; medir memória, CPU, renderização e carregamento em hardware real.
+7. **Ports prioritários:** transportar o núcleo validado para New 3DS, Vita e
+   Android, implementar backends e controles próprios; medir memória, CPU,
+   renderização e carregamento em hardware real.
+8. **Builds desktop futuras:** adicionar Windows e macOS arm64/x86_64 após a
+   base Linux e os ports prioritários. Definir toolchains e empacotamento e
+   validar em CI ou máquinas dedicadas; o usuário não tem equipamento para
+   testes manuais nesses sistemas.
 
 Primeira versão Linux candidata a teste: abrir um cenário controlado com recursos
 originais externos, exibir a cena, executar uma interação completa (sentar/levantar),
