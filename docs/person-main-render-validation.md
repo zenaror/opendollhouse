@@ -146,8 +146,8 @@ Contrato de mapas, preparação e recursos por zoom está na
 
 Para definições OBJD em FARs mistos, `--object-definition-entry FAR ENTRY`
 seleciona explicitamente uma única entrada IFF por nome; entradas não IFF do
-mesmo FAR não são abertas como IFF. A opção é repetível e compartilha um limite
-de 256 fontes com `--object-definitions FAR` e `--object-definition-file IFF`;
+mesmo FAR não são abertas como IFF. A opção é repetível e compartilha o limite
+de 16 fontes com `--object-definitions FAR` e `--object-definition-file IFF`;
 caminhos e nome da entrada têm limite de 4096 bytes. Nome de entrada ausente
 ou ambíguo falha. O caminho FAR continua protegido contra alias do frame de
 saída. Isso permite selecionar definições sem extrair a entrada para disco.

@@ -103,11 +103,11 @@ with tempfile.TemporaryDirectory(prefix='odh-person-architecture-') as folder:
     non_iff_error = run(['--object-definition-entry', str(definition_archive), 'ignored.bin'],
                         base=definition_args[:-3])
     check('read outside resource' in non_iff_error, non_iff_error)
-    boundary_error = run(['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 255,
+    boundary_error = run(['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 15,
                          base=definition_args[:-3])
     check(boundary_error == baseline, boundary_error)
     check('definition source count exceeds bounded host profile' in run(
-        ['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 256,
+        ['--object-definition-entry', str(definition_archive), 'Selected.iff'] * 16,
         base=definition_args[:-3]))
     check('archive/entry path outside bounded host profile' in run(
         ['--object-definition-entry', '', 'Selected.iff'], base=definition_args[:-3]))
