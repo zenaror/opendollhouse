@@ -107,6 +107,32 @@ World não é lido, mas as células pool/water fazem o renderizador retornar
 superfície também pode rejeitar antes). Não foi produzida uma cena completa de
 House30. House82 também encontra o guard de pool/water.
 
+Como controle de composição com personagens, House07 executa o mesmo CLI com
+`--objects --floors --walls`, dois avatares salvos, 182 entidades, 69 camadas de
+parede, 166 de objeto e 1424 triângulos. Os mapas FLRm/WALm selecionados estão
+vazios, portanto isso valida a composição conjunta no caminho normal, mas não
+aliases externos nessa mesma casa. PPM e depth foram mantidos somente em `/tmp`;
+SHA-256 do PPM: `a06bd65a0446822a409178ea49f7481be84ed6895e74a61b6137dc791b1806f1`.
+
+Comando reproduzível a partir da raiz do repositório:
+
+```sh
+./build/odh-saved-scene \
+  '../referencias/The Sims/UserData/Houses/House07.iff' \
+  '../referencias/The Sims/GameData/Animation/Animation.far' \
+  '../referencias/The Sims/GameData/Textures/Textures.far' \
+  /tmp/odh-house07-avatar-architecture.ppm \
+  --skeleton adult-skeleton.cmx.bcf adult \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
+  --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
+  --objects --floors '../referencias/The Sims/GameData/floors.iff' \
+  --walls '../referencias/The Sims/GameData/walls.iff' --level 1 --wall-mode up \
+  --depth-output /tmp/odh-house07-avatar-architecture.depth \
+  --width 1024 --height 768 --zoom 1 --rotation 0
+```
+
 ## Reprodução e cobertura sintética
 
 ```sh
