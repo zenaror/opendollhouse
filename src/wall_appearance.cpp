@@ -1,4 +1,5 @@
 #include "odh/wall_appearance.hpp"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <tuple>
@@ -45,5 +46,12 @@ WallAppearance derive_wall_appearance(const SavedArchitecture& a,const std::vect
         result.applications.push_back(application);
     }
     result.faces.reserve(faces.size());for(const auto& pair:faces)result.faces.push_back(pair.second);return result;
+}
+WallAppearance derive_wall_appearance_restore_order(const SavedArchitecture& a,
+    const std::vector<WallAppearanceInput>& inputs,std::size_t limit){
+    if(inputs.size()>limit||inputs.size()>4096)throw FormatError("wall appearance input/extent limit");
+    auto ordered=inputs;
+    std::sort(ordered.begin(),ordered.end(),[](const auto& lhs,const auto& rhs){return lhs.id<rhs.id;});
+    return derive_wall_appearance(a,ordered,limit);
 }
 }

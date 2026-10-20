@@ -1,5 +1,16 @@
 # Continuidade atual
 
+## Ordem de restauração de portas nas paredes (2026-10-20)
+
+O adapter `odh-wall-appearance` agora ordena uma cópia das entidades por
+ObjectID ascendente para aplicar escritas de estilo, seguindo o caminho de
+restauração documentado no Simitone: entidades ordenadas e replay sequencial de
+`PositionChange(Context,true)`. A API genérica permanece caller-ordered. O
+conflito sintético cobre uma escrita de porta seguida por clear em ObjectID
+maior. Isso representa apenas o estado inicial no perfil dessa revisão do
+Simitone; mudanças runtime posteriores e equivalência com o jogo original não
+estão provadas. Documentação: [associações arquitetônicas salvas](wall-appearance-validation.md).
+
 ## Campos de colisão OBJD (2026-10-20)
 
 O leitor OBJD136/138 preserva `TileWidth` e `FootprintMask` quando ambos estão

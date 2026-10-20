@@ -42,14 +42,22 @@ dinâmicos de sessão ou alterar OBJD. Preallocated styleIDs>=256 são rejeitado
 neste perfil; SpriteID0 é um campo real, não evidência de máscara disponível.
 Binding136 dinâmico sem sprite-base também falha explicitamente.
 
-A ordem de entrada é explícita: o adapter de save mantém ordem dos records.
-Última escrita de estilo vence. Uma janela não limpa um marcador Door anterior;
-uma porta o atualiza conforme style!=0, inclusive clear. O proprietário do estilo
-é separado do proprietário/generation do marcador Door para evitar misturar
-identidades. Não foi provado que essa ordem reproduza todas as reconstruções do
-original; o corpus nativo abaixo não apresentou conflitos. Saída ordenada por
-level/y/x/segment, com aplicações em ordem de entrada. Raw grids de paredes
-permanecem intactos: sem normalização de estilos base ou reconstrução de rooms.
+O adapter de restauração usa o perfil de ordem observado no Simitone
+`4906db3156616bfaffc10ce0963cf08062975fef` (com FreeSO
+`f86bbd34b2112296ed786741f640a0535886d180`): entidades são ordenadas por
+ObjectID ascendente e `PositionChange(Context,true)` reaplica as escritas de
+parede nessa ordem. Assim, em colisões, a última escrita de estilo vence. Uma
+janela não limpa um marcador Door anterior; uma porta o atualiza conforme
+style!=0, inclusive clear. O proprietário do estilo é separado do
+proprietário/generation do marcador Door para evitar misturar identidades. A
+API genérica continua aceitando ordem explícita do chamador; apenas o adapter de
+save seleciona o perfil de restauração Simitone. A lista de bindings do JSON
+continua na ordem dos records salvos; `applications` reflete a ordem ascendente
+de ObjectID usada nas escritas. Isso é evidência do caminho de restauração dessa
+revisão do Simitone, não prova do jogo original nem de reconstruções posteriores
+a movimentos/alterações runtime. Saída de faces ordenada por
+level/y/x/segment. Raw grids de paredes permanecem intactos: sem normalização de
+estilos base ou reconstrução de rooms.
 
 Limites: até4096 inputs, grades1..64 por eixo/duas stories, grids de paredes
 exatos. IDs positivos, GUID/generation não zero e sem duplicatas. A quantidade

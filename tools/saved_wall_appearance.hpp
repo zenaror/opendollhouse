@@ -40,5 +40,5 @@ inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,co
         }
         out.inputs.push_back(input);
     }
-    out.appearance=odh::derive_wall_appearance(architecture,out.inputs);return out;
+    out.appearance=odh::derive_wall_appearance_restore_order(architecture,out.inputs);return out;
 }

@@ -51,4 +51,10 @@ struct WallAppearance {
 // maps, normalize base styles, allocate dynamic IDs or load/replace missing masks.
 WallAppearance derive_wall_appearance(const SavedArchitecture&,
     const std::vector<WallAppearanceInput>&,std::size_t input_limit=4096);
+// Simitone's saved-lot restore inserts entities in ascending ObjectID order,
+// then replays PositionChange in that entity order. This profile sorts a copy
+// before applying the same pure wall-style writes; it does not model later
+// runtime movement or style changes.
+WallAppearance derive_wall_appearance_restore_order(const SavedArchitecture&,
+    const std::vector<WallAppearanceInput>&,std::size_t input_limit=4096);
 }
