@@ -31,8 +31,9 @@ odh::Spr2Frame sprite(std::uint16_t width = 1, std::uint16_t height = 1,
     return result;
 }
 odh::SpriteLayer layer(const odh::Spr2Frame& frame, std::int32_t x = 0,
-                       std::int32_t y = 0, float back = 0, float delta = 0, bool flip = false) {
-    return {&frame,x,y,back,delta,flip};
+                       std::int32_t y = 0, float back = 0, float delta = 0, bool flip = false,
+                       std::uint16_t owner = 0) {
+    return {&frame,x,y,back,delta,flip,owner};
 }
 } // namespace
 
@@ -92,6 +93,21 @@ int main() { try {
     require(transparent_behind.transparent_samples == 1 && transparent_behind.occluded_samples == 0,
             "transparent samples are discarded before depth test");
     auto partial = sprite(1,1,{255,0,0,128}); partial.flags = 7;
+    require(opaque.owner_ids.empty(),"ownership allocation is opt-in");
+    require(odh::composite_sprites(backdrop,{}, {},true).owner_ids==std::vector<std::uint16_t>{0},
+            "base scenery has no pick owner");
+    for(bool reversed:{false,true}) {
+        const auto near_pick=layer(partial,0,0,0,0,false,7),far_pick=layer(second,0,0,1,0,false,8);
+        const auto picked=odh::composite_sprites(backdrop,reversed?std::vector<odh::SpriteLayer>{near_pick,far_pick}:
+            std::vector<odh::SpriteLayer>{far_pick,near_pick},{},true);
+        require(picked.owner_ids==std::vector<std::uint16_t>{7},"nearest accepted fragment owns picking in either submission order");
+    }
+    require(odh::composite_sprites(geometry,{layer(solid,0,0,2,0,false,7)}, {},true).owner_ids==std::vector<std::uint16_t>{0},
+            "base geometry occludes a pick token");
+    require(odh::composite_sprites(backdrop,{layer(transparent,0,0,-1,0,false,7),layer(second,0,0,1,0,false,8)}, {},true).owner_ids==std::vector<std::uint16_t>{8},
+            "alpha zero never hides the farther pick token");
+    require(odh::composite_sprites(backdrop,{layer(solid,0,0,0,0,false,7),layer(second,0,0,0,0,false,8)}, {},true).owner_ids==std::vector<std::uint16_t>{7},
+            "pick ties preserve the same first fragment as color/depth");
     const auto partially_occluding = odh::composite_sprites(backdrop,
         {layer(partial,0,0,0),layer(second,0,0,1)});
     require(partially_occluding.image.pixels[0] == Pixel{128,0,127,255} &&

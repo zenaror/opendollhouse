@@ -14,6 +14,9 @@ validação indicados por versão.
   filtro de nível/contêiner e sprites alpha/Z sobre a cena opaca. Flags
   dinâmicas e centros multitile seguem o snapshot; novos objetos e reuso de
   identidade exigem atualização do renderer.
+- Seleção de objeto por clique no preview Main com lote: o título informa ID e
+  GUID. O buffer de seleção respeita alpha/profundidade; selecionar ainda não
+  executa interações TTAB ou altera o World.
 - Manager HIT persistente por `TrackID`, com registro explícito de controllers,
   resolução global de eventos e agregação de fontes.
 - Recusas de lookup e de capacidade antes de efeitos deixam controllers
@@ -21,6 +24,10 @@ validação indicados por versão.
 
 ### Validação
 
+- Picking: composição, renderer de objetos/lote e CLIs passaram em cinco CTests;
+  o sexto gate de eventos X11 foi pulado sem DISPLAY. A janela ainda exige
+  validação visual e de entrada em uma sessão gráfica ativa. Build e CTest
+  completos também passaram (127 configurados, X11 pulado, zero falhas).
 - Cinco CTests focais passaram para a integração de objetos: oclusão diante e
   atrás da parede, alpha, estado vivo, contenção/nível, remoção/reuso de ID e
   recusa de cutaway incompleto. Fixtures sintéticas, sem prova de gameplay.

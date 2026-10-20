@@ -33,6 +33,8 @@ struct SavedLotView {
 };
 struct SavedLotFrame {
     odh::RasterFrame image;
+    std::uint32_t pick_width=0,pick_height=0;
+    std::vector<std::uint16_t> object_pick_ids; // <=1Mi pixels, zero is scenery.
     std::uint64_t floor_draws=0,floor_triangles=0,floor_texture_bytes=0;
     std::uint64_t terrain_triangles=0,terrain_reserved_bytes=0;
     std::uint64_t wall_layers=0,wall_junctions=0,wall_cached_frame_bytes=0;
@@ -41,6 +43,7 @@ struct SavedLotFrame {
     std::uint64_t object_tested_samples=0,object_shaded_samples=0;
     std::uint64_t object_hidden=0,object_above_level=0,object_outside=0,object_removed=0;
 };
+struct SavedObjectSelection {std::int16_t id;std::uint32_t guid;std::uint64_t generation;};
 // Borrow the live saved World and immutable definitions; both must outlive this
 // host renderer. Architecture owns its bounded decoded snapshot. Rendering does
 // not restore/clone a World, execute saved threads or change simulation state.
@@ -56,7 +59,10 @@ public:
         const odh::DefinitionIndex&,const std::string& floors,
         const std::optional<std::string>& walls,SavedLotView={});
     odh::GraphicsEntity avatar(std::int16_t id);
-    SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar);
+    SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,bool record_picks=false);
+    // Last presented pixel ownership, revalidated against live generation,
+    // definition GUID and visibility; out-of-bounds/scenery/stale IDs select none.
+    std::optional<SavedObjectSelection> pick(const SavedLotFrame&,std::int32_t x,std::int32_t y) const;
     const SavedLotView& view() const{return view_;}
 private:
     SavedArchitectureResource architecture_;

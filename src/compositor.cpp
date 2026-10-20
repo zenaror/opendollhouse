@@ -73,7 +73,7 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
 
 CompositeFrame composite_sprites(const RasterFrame& base,
                                 const std::vector<SpriteLayer>& layers,
-                                CompositorLimits limits) {
+                                CompositorLimits limits, bool record_owners) {
     if(base.width == 0 || base.height == 0 || base.width > limits.width ||
        base.height > limits.height)
         throw FormatError("compositor base dimensions exceed limits or are zero");
@@ -109,7 +109,8 @@ CompositeFrame composite_sprites(const RasterFrame& base,
         tested_samples += candidates;
     }
 
-    CompositeFrame result{base, tested_samples, 0, 0, 0};
+    CompositeFrame result{base, tested_samples, 0, 0, 0, {}};
+    if(record_owners)result.owner_ids.assign(static_cast<std::size_t>(count),0);
     for(const auto& layer : layers) {
         const auto& sprite = *layer.frame;
         const auto box = bounds(layer, base);
@@ -136,6 +137,7 @@ CompositeFrame composite_sprites(const RasterFrame& base,
                          std::uint32_t{output[channel]}*(255-alpha) + 127)/255);
                 output[3] = 255;
                 result.image.depth[destination] = z;
+                if(record_owners)result.owner_ids[destination]=layer.owner_id;
                 ++result.shaded_samples;
             }
     }

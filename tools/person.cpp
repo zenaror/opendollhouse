@@ -598,6 +598,8 @@ int main(int argc,char** argv) {
     std::unique_ptr<SavedLotRenderer> render_lot;
     std::unique_ptr<SavedGraphicsResources> render_graphics;
     std::optional<SavedLotFrame> render_lot_evidence;
+    std::optional<SavedObjectSelection> render_selection;
+    std::uint64_t render_selection_clicks=0,render_selection_tick=0;
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
 #endif
@@ -653,7 +655,8 @@ int main(int argc,char** argv) {
         }
 #ifdef ODH_HAVE_X11
         if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
-            "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
+            render_lot?"OpenDollhouse Main preview: click selects object, P pause, arrows rotate, +/- zoom, Escape close":
+                       "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
     std::uint64_t ticks=0;
@@ -673,7 +676,7 @@ int main(int argc,char** argv) {
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         auto frame=render_renderer->render(scene_state,render_camera);
         if(render_lot){
-            auto lot=render_lot->render(render_camera,frame.image);
+            auto lot=render_lot->render(render_camera,frame.image,render_window);
             frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
 #ifdef ODH_HAVE_X11
@@ -709,6 +712,14 @@ int main(int argc,char** argv) {
             const auto input=render_window_host->poll();
             if(input.quit){window_closed=true;break;}
             if(input.pause)window_paused=!window_paused;
+            if(input.primary_click&&render_lot&&render_lot_evidence){
+                render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
+                ++render_selection_clicks;render_selection_tick=ticks;
+                std::string title="OpenDollhouse Main preview: ";
+                if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid);
+                else title+="no object selected";
+                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+            }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
@@ -1051,6 +1062,11 @@ int main(int argc,char** argv) {
             <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
             <<",\"texture_bytes\":"<<v.texture_bytes<<",\"catalog_cfp_samples\":"<<v.cfp_samples
             <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples
+            <<",\"object_selection\":{\"clicks\":"<<render_selection_clicks<<",\"tick\":"<<render_selection_tick
+            <<",\"id\":"<<(render_selection?std::to_string(render_selection->id):"null")
+            <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
+            <<",\"generation\":"<<(render_selection?std::to_string(render_selection->generation):"null")
+            <<",\"interaction_requested\":false}"
             <<",\"lot\":";
         if(render_lot_evidence){const auto& lot=*render_lot_evidence;
             std::cout<<"{\"same_runtime_World\":true,\"selected_level\":"<<unsigned(render_lot_view.level)
@@ -1066,6 +1082,7 @@ int main(int argc,char** argv) {
                 <<",\"object_tested_samples\":"<<lot.object_tested_samples<<",\"object_shaded_samples\":"<<lot.object_shaded_samples
                 <<",\"object_hidden\":"<<lot.object_hidden<<",\"object_above_level\":"<<lot.object_above_level
                 <<",\"object_outside\":"<<lot.object_outside<<",\"object_removed\":"<<lot.object_removed
+                <<",\"object_pick_buffer_bytes\":"<<lot.object_pick_ids.size()*sizeof(std::uint16_t)
                 <<",\"other_avatars_rendered\":false,\"objects_rendered\":true,\"original_visual_equivalence\":false}";
         }else std::cout<<"null";
         std::cout<<'}';

@@ -23,7 +23,8 @@ janela ou controles.
 O modo `--render-window` apresenta samples sucessivos do mesmo Playback/VM em
 uma janela X11 opcional. `P` pausa, as setas giram a câmera, `+`/`-` ajustam
 zoom e Escape fecha. A taxa de 25 Hz serve apenas para apresentação e não está
-calibrada ao tempo original; clique não aciona jogo. Este host não tem servidor
+calibrada ao tempo original; no caminho com lote o clique seleciona um objeto,
+mas ainda não executa interação. Este host não tem servidor
 X acessível: a tentativa terminou com `X11: cannot open DISPLAY`. Portanto o
 caminho compila, mas a janela ainda precisa de validação visual em uma sessão
 X11 ativa. A compilação sem X11 também foi verificada e a opção retorna
@@ -209,6 +210,42 @@ nível herdado do contêiner, alpha diante e atrás da parede, remoção/reuso d
 ID e recusa de cutaway incompleto. Build focal de `odh-person` e do teste de
 lote e cinco CTests (`saved_lot_renderer`, `saved_object_renderer`,
 `saved_wall_renderer`, `person_animation_cli`, `person_cli`) passaram.
+
+### Seleção de objetos no preview Main
+
+Com `--saved-world-main --render-floors ... --render-window`, Button1 seleciona
+o objeto sob o pixel do último frame apresentado. O título mostra ID/GUID ou
+`no object selected`. O backend retém o último clique drenado em cada `poll`,
+incluindo coordenadas fora do drawable; Space/Enter não inventam uma posição.
+O clique é resolvido antes de aplicar rotação/zoom que vieram no mesmo poll.
+
+`composite_sprites` pode registrar opcionalmente `owner_ids` uint16 no próprio
+passe que compara depth e escreve cor. Alpha zero não grava ID, fragmentos
+ocultos por avatar/piso/parede não selecionam, e empates retêm o primeiro
+fragmento, como a imagem. Um fragmento parcialmente transparente aceito é
+selecionável. O renderer de objetos fornece seu ID por camada; o lote ativa o
+buffer somente quando solicitado pelo host. O teto é um uint16 por pixel de
+viewport (1 Mi de pixels, 2 MiB; 153.600 bytes em 320x240). O headless padrão
+não aloca esse buffer. A ordem intraobjetos conserva o perfil imediato atual.
+
+`SavedLotRenderer::pick` rejeita buffer malformado e retorna vazio para cenário,
+coordenadas externas, entidade removida/oculta, geração ou GUID desatualizados.
+Não altera World, filas, VM ou RNG. O JSON `render.object_selection` registra
+cliques e a identidade escolhida no tick informado, com
+`interaction_requested:false`; `render.lot.object_pick_buffer_bytes` informa
+o custo da captura. Ainda não há TTAB, menu, cancelamento ou ação de gameplay.
+
+Build focal sem warnings e cinco CTests executados passaram:
+`sprite_composition`, `saved_object_renderer`, `saved_lot_renderer`,
+`person_animation_cli` e `person_cli`. Fixtures verificam tokens de alpha zero,
+sobreposição/profundidade/empates, ID do renderer, parede na frente, limites de
+coordenadas, Hidden, GUID e geração. `linux_window_backend` contém eventos
+Button1 sintéticos dirigidos à própria janela para coordenadas e último clique,
+mas foi pulado sem DISPLAY. Assim a seleção CPU é testada; a integração de
+mouse/título em X11 ainda precisa de execução em sessão gráfica real.
+O build completo recompilou todos os consumidores de `CompositeFrame` e passou;
+CTest completo: 127 configurados, zero falhas, somente `linux_window_backend`
+pulado por falta de DISPLAY. Isso não substitui o gate de entrada em janela.
 
 ### Probe com recursos de House07
 

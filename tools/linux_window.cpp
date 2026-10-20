@@ -191,7 +191,10 @@ WindowInput LinuxWindow::poll() {
         if (event.type == ClientMessage && event.xclient.message_type == p.protocols &&
             event.xclient.format == 32 &&
             static_cast<Atom>(event.xclient.data.l[0]) == p.delete_message) p.quit = true;
-        if (event.type == ButtonPress && event.xbutton.button == Button1) result.action = true;
+        if (event.type == ButtonPress && event.xbutton.button == Button1) {
+            result.action = true;
+            result.primary_click=std::array<std::int32_t,2>{event.xbutton.x,event.xbutton.y};
+        }
         if (event.type == ConfigureNotify) result.redraw = true;
         if (event.type == Expose && p.alive && event.xexpose.count == 0) {
             result.redraw = true;

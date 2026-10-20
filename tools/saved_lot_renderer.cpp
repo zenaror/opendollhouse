@@ -108,7 +108,7 @@ odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
 }
 
 SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
-                                      const odh::RasterFrame& avatar_frame) {
+                                      const odh::RasterFrame& avatar_frame,bool record_picks) {
     auto image=odh::rasterize(camera.width,camera.height,{},{});
     SavedLotFrame result;
     if(view_.terrain_theme){
@@ -168,11 +168,37 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     }
     // Walls have binary alpha and establish the opaque base before objects;
     // reversing these passes loses the wall color behind translucent objects.
-    auto objects=objects_.render(visuals,camera,image);
+    auto objects=objects_.render(visuals,camera,image,record_picks);
+    if(record_picks){result.pick_width=camera.width;result.pick_height=camera.height;}
+    result.object_pick_ids=std::move(objects.composite.owner_ids);
     result.objects=objects.records.size();result.object_layers=objects.layers;
     result.object_cached_frame_bytes=objects.cached_frame_bytes;
     result.object_tested_samples=objects.composite.tested_samples;
     result.object_shaded_samples=objects.composite.shaded_samples;
     image=std::move(objects.composite.image);
     result.image=std::move(image);return result;
+}
+
+std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& frame,
+                                                         std::int32_t x,std::int32_t y) const {
+    const auto count=std::uint64_t{frame.pick_width}*frame.pick_height;
+    if(!frame.pick_width||!frame.pick_height||frame.pick_width>2048||frame.pick_height>2048||
+       count>1048576||count!=frame.object_pick_ids.size())
+        throw odh::FormatError("live saved object pick buffer invalid");
+    if(x<0||y<0||static_cast<std::uint32_t>(x)>=frame.pick_width||static_cast<std::uint32_t>(y)>=frame.pick_height)
+        return {};
+    const auto token=frame.object_pick_ids[std::size_t(y)*frame.pick_width+static_cast<std::uint32_t>(x)];
+    if(!token||token>32767)return {};
+    const auto id=static_cast<std::int16_t>(token);
+    const auto identity=object_generations_.find(id);
+    const auto* entity=saved_.world->find(id);
+    if(identity==object_generations_.end()||!entity||entity->generation!=identity->second||
+       entity->kind!=odh::EntityKind::object||!entity->definition)return {};
+    const auto record=std::find_if(saved_.records.begin(),saved_.records.end(),
+        [&](const auto& raw){return raw.saved.object_id==token;});
+    if(record==saved_.records.end()||record->saved.guid!=entity->definition->guid||!entity->position)return {};
+    const odh::VmFrame context{odh::routine_key(4096),0,{id,id,id,0},{},{}};
+    const auto hidden=saved_.world->read(context,3,34);
+    if(!hidden||*hidden)return {};
+    return SavedObjectSelection{id,entity->definition->guid,entity->generation};
 }

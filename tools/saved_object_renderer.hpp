@@ -34,6 +34,8 @@ struct SavedObjectRenderResult {
 // draw extents <=4Mi pixels, compositor samples <=16Mi, viewport <=1Mi pixels.
 // Empty decoded frames are retained in cache and counted without placement.
 // Whole render failures leave inputs unchanged, but may populate bounded cache.
+// Optional record_picks returns per-pixel object IDs in composite.owner_ids;
+// the same alpha/depth pass decides ownership. Disabled leaves that array empty.
 class SavedObjectRenderer {
 public:
     explicit SavedObjectRenderer(const odh::DefinitionIndex&);
@@ -41,7 +43,8 @@ public:
     SavedObjectRenderer(SavedObjectRenderer&&) noexcept;
     SavedObjectRenderer& operator=(SavedObjectRenderer&&) noexcept;
     SavedObjectRenderResult render(const std::vector<SavedObjectVisual>&,
-                                  const odh::WorldProjection&, const odh::RasterFrame&);
+                                  const odh::WorldProjection&, const odh::RasterFrame&,
+                                  bool record_picks=false);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

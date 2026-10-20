@@ -30,8 +30,19 @@ testadas e 27.588 sombreadas. Recibo/PPM ignorados:
 O frame CPU foi inspecionado; isso não valida gameplay ou aparência equivalente
 ao original.
 
-Continuam pendentes: outros avatares visíveis, controle do jogador,
-seleção/interação, stacks salvas, áudio audível, serviços Main e validação em
+O incremento posterior a `e325706` adiciona seleção de objetos por Button1 no
+preview Main com lote. O último clique drenado preserva coordenadas do drawable;
+o buffer opt-in de IDs usa o mesmo passe alpha/depth dos sprites, com no máximo
+um uint16 por pixel (2 MiB no teto; 153.600 bytes em 320x240). Zero denota cenário.
+O clique usa o último frame apresentado, antes de aplicar rotação/zoom agregados,
+e revalida geração, GUID e Hidden vivos. O título mostra ID/GUID ou seleção vazia;
+o JSON inclui `render.object_selection`. Não descobre TTAB nem enfileira ação.
+Build focal/completo sem warnings e o CTest completo passaram (127 configurados,
+zero falhas); o gate X11 foi pulado sem DISPLAY. Logo, picking CPU é verificado
+por fixtures; entrada/título reais na janela ainda não foram exercitados.
+
+Continuam pendentes: outros avatares visíveis, ações TTAB/controle de gameplay,
+stacks salvas, áudio audível, serviços Main e validação em
 janela X11. Portanto, ainda não é um build jogável. Detalhes e hashes em
 [validação do Main restaurado](person-main-render-validation.md).
 

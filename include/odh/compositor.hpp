@@ -10,6 +10,7 @@ struct SpriteLayer {
     std::int32_t x, y; // Top-left screen placement; decoded frame offsets are caller-owned.
     float back_depth, front_depth_delta;
     bool flip = false;
+    std::uint16_t owner_id = 0; // Optional picking token; zero denotes no object.
 };
 
 struct CompositorLimits {
@@ -22,6 +23,9 @@ struct CompositeFrame {
     // Sprite-only counters; image retains the base raster's counters.
     std::uint64_t tested_samples = 0, shaded_samples = 0,
                   transparent_samples = 0, occluded_samples = 0;
+    // Opt-in, one token per base pixel. Transparent/occluded samples preserve
+    // the prior token; accepted samples write the layer token with depth.
+    std::vector<std::uint16_t> owner_ids = {};
 };
 
 // Merge opaque raster frames in the same screen/depth coordinate space. Smaller
@@ -53,8 +57,10 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
 // copying/rendering; invalid
 // inputs or exceeded budgets throw FormatError, without mutating inputs or
 // returning a partial result.
+// record_owners adds a zero-initialized uint16 token for each base pixel (at most
+// 2*limits.pixels bytes), updated in this same fragment pass; disabled is empty.
 CompositeFrame composite_sprites(const RasterFrame& base,
                                 const std::vector<SpriteLayer>& layers,
-                                CompositorLimits = {});
+                                CompositorLimits = {}, bool record_owners = false);
 
 } // namespace odh

@@ -77,7 +77,7 @@ CompositeFrame composite_wall_sprites(const RasterFrame& base,
             throw FormatError("wall sprite depth range invalid");
         charge(bounds(l,base).samples,candidates,limits.samples);
     }
-    CompositeFrame result{base,candidates,0,0,0};
+    CompositeFrame result{base,candidates,0,0,0,{}};
     for(const auto& l : layers) {
         const auto& p = *l.pattern;
         const auto& m = l.mask ? *l.mask : p;

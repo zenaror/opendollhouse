@@ -76,14 +76,21 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  SavedLotRenderer renderer(std::move(a),saved,definitions,floors.string(),walls.string());
  const auto empty=odh::rasterize(camera.width,camera.height,{},{});const odh::VmFrame f{odh::routine_key(4096),0,{2,2,2,0},{},{}};
  check(world.write(f,3,34,1));const auto wall=renderer.render(camera,empty);check(wall.objects==0&&wall.object_hidden==1);
- check(world.write(f,3,34,0));const auto near=renderer.render(camera,empty);
+ check(world.write(f,3,34,0));const auto near=renderer.render(camera,empty,true);
  check(near.objects==1&&near.object_layers==1&&near.object_shaded_samples==1&&near.object_cached_frame_bytes==6);
  check(near.image.depth[wall_pixel]<wall.image.depth[wall_pixel]);
+ check(near.object_pick_ids.size()==empty.pixels.size()&&near.object_pick_ids[wall_pixel]==2);
+ const auto picked=renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width));
+ check(picked&&picked->id==2&&picked->guid==123&&picked->generation==world.find(2)->generation);
+ saved.records[0].saved.guid=124;check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));saved.records[0].saved.guid=123;
+ check(world.write(f,3,34,1));check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));check(world.write(f,3,34,0));
+ check(!renderer.pick(near,-1,0)&&!renderer.pick(near,0,-1)&&!renderer.pick(near,static_cast<std::int32_t>(camera.width),0)&&!renderer.pick(near,0,static_cast<std::int32_t>(camera.height)));
+ auto invalid_pick=near;invalid_pick.object_pick_ids.pop_back();rejects([&]{renderer.pick(invalid_pick,0,0);});
  constexpr unsigned alpha=16*255/31;const std::array<std::uint8_t,4> color{210,10,20,255};
  for(unsigned c=0;c<3;++c)check(near.image.pixels[wall_pixel][c]==(color[c]*alpha+wall.image.pixels[wall_pixel][c]*(255-alpha)+127)/255);
  // A nearer translucent object must blend over the wall, not over the floor.
  // Changing Graphic live selects the far DGRP at the same pixel and is hidden.
- check(world.write(f,3,0,1));const auto far=renderer.render(camera,empty);check(far.objects==1&&far.object_shaded_samples==0&&far.image.pixels==wall.image.pixels);
+ check(world.write(f,3,0,1));const auto far=renderer.render(camera,empty,true);check(far.objects==1&&far.object_shaded_samples==0&&far.image.pixels==wall.image.pixels);check(far.object_pick_ids[wall_pixel]==0);
  check(world.write(f,3,0,0));check(world.set_position(2,{24,24,2,0}));check(renderer.render(camera,empty).object_above_level==1);
  check(world.set_position(2,{32,24,1,0}));check(renderer.render(camera,empty).image.pixels!=near.image.pixels);
  check(world.create_saved_entity(3,odh::EntityKind::object,123,{},{},{},words,{},1));check(world.set_position(3,{24,24,1,0}));
@@ -93,9 +100,9 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  check(world.set_position(2,{24,24,1,0}));check(world.write(f,3,8,1024));SavedLotView down;down.walls_down=true;
  auto cut=architecture();cut.architecture.levels[0].walls[5]={1,0,1,0,1,0,0,0};SavedLotRenderer cutaway(std::move(cut),saved,definitions,floors.string(),walls.string(),down);
  rejects([&]{cutaway.render(camera,empty);});check(world.write(f,3,8,0));
- check(world.remove(2));check(renderer.render(camera,empty).object_removed==1);
+ check(world.remove(2));check(renderer.render(camera,empty).object_removed==1);check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));
  rejects([&]{saved_wall_appearance(saved,definitions,architecture().architecture);});
- check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));check(world.set_position(2,{24,24,1,0}));rejects([&]{renderer.render(camera,empty);});
+ check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));check(world.set_position(2,{24,24,1,0}));rejects([&]{renderer.render(camera,empty);});check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));
 }
 odh::DefinitionCandidate candidate(const std::filesystem::path& path,std::uint32_t guid){return {path.string(),"",1,{138,guid,4,0,0,false,32,10}};}
 void contained_checks(const Temp& temp,const std::filesystem::path& floors){

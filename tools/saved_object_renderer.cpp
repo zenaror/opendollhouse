@@ -126,7 +126,7 @@ SavedObjectRenderer::SavedObjectRenderer(SavedObjectRenderer&&) noexcept=default
 SavedObjectRenderer& SavedObjectRenderer::operator=(SavedObjectRenderer&&) noexcept=default;
 
 SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjectVisual>& objects,
-    const odh::WorldProjection& projection,const odh::RasterFrame& base) {
+    const odh::WorldProjection& projection,const odh::RasterFrame& base,bool record_picks) {
     if(!impl_)throw odh::FormatError("moved saved object renderer");
     if(objects.size()>4096)throw odh::FormatError("saved object visual count exceeds budget");
     if(base.width!=projection.width||base.height!=projection.height)
@@ -183,7 +183,7 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
             // ObjectComponent maps only cardinals to radians; diagonal default is zero.
             constexpr std::array<float,8> radians{0,0,1.5707963267948966F,0,3.1415926535897932F,0,4.71238898038469F,0};
             const auto placement=odh::place_sprite(projection,sprite,frame,object.tile_position,radians[object.direction]);
-            layers.push_back({&frame,placement.x,placement.y,placement.back_depth,placement.front_depth_delta,placement.flip});
+            layers.push_back({&frame,placement.x,placement.y,placement.back_depth,placement.front_depth_delta,placement.flip,static_cast<std::uint16_t>(object.id)});
             ++record.layers;
         }
         result.records.push_back(std::move(record));
@@ -191,7 +191,7 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
     std::uint64_t layer_pixels=0;for(const auto& layer:layers)layer_pixels+=layer.frame->pixels.size();
     if(layer_pixels>4*1048576)throw odh::FormatError("saved object repeated layer extent exceeds compositor profile: "+std::to_string(layer_pixels)+" pixels");
     odh::CompositorLimits compositor_limits;compositor_limits.pixels=4*1048576;
-    result.composite=odh::composite_sprites(base,layers,compositor_limits);
+    result.composite=odh::composite_sprites(base,layers,compositor_limits,record_picks);
     result.layers=layers.size();result.cached_assets=impl_->assets.size();result.cached_groups=impl_->groups.size();
     result.cached_frames=impl_->frames.size();result.cached_pixels=impl_->pixels;result.cached_frame_bytes=impl_->frame_bytes;
     return result;
