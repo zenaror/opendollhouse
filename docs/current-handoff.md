@@ -1,34 +1,26 @@
 # Continuidade atual
 
-## Continuação do Main no World salvo (2026-10-20)
+## Main em lote restaurado (2026-10-20)
 
-O protótipo local agora usa `--saved-world-main` para restaurar House07 com
-`make_saved_world`, selecionar o avatar 105 pela identidade GUID com
-`User00000.iff` e iniciar um Main novo no mesmo World da VM/Playback. O estado
-das threads e filas salvas continua dormente; não é retomar a execução salva.
-O perfil do personagem vem de um descriptor puro que não altera PersonData/
-motives salvos nem avança RNG.
+`odh-person --saved-world-main` restaura House07 com `make_saved_world`,
+seleciona o avatar 105 por GUID/User00000.iff e inicia um Main novo no mesmo
+World da VM/Playback. Threads e filas salvas continuam dormentes; não é uma
+retomada da simulação salva. `SavedLotRenderer` agora desenha terreno, pisos,
+avatar Main e paredes/junções nessa captura, sem construir outro World. A
+câmera acompanha a posição gráfica viva. Outras instâncias e objetos continuam
+no World, mas ainda não são desenhados.
 
-Com os dados originais externos e LotZoning carregado, o Main permaneceu em
-`waiting` por 4.096 ticks, 4.358 instruções e cinco frames de stack ativos. O
-avatar continuou produzindo amostras de animação e alterou seu estado runtime.
-Opcode 23 agora resolve FWAVs em fontes explícitas, mas não há sink de áudio;
-quatro pedidos `hungry_sated_vox` foram registrados como silenciosos. Opcode 22
-mode 0 grava o estado head-seek do Sim conforme o caminho TS1 da referência
-FreeSO fixa. Outros modos que exigem rotação/roteamento corporal continuam
-desativados. A animação carry é resolvida e retida, mas não é composta no frame.
+Com House07, Neighborhood e recursos locais externos, aos 214 ticks o VM está
+`waiting`, com 308 instruções e cinco frames ativos. A cena 320x240 usou 6.323
+triângulos de terreno, 1.365 de piso, 69 camadas de parede e 49 junções; o
+avatar usou 684 vértices/840 triângulos. Recibo e PPM locais ignorados:
+`reports/odh-person-main-lot-house07-tick214.json/.ppm`; CTest completo: 127/127
+passou e o backend X11 foi pulado sem DISPLAY. O PPM é uma renderização CPU com
+dados do jogo, não validação de aparência equivalente ao original.
 
-O frame tick214 foi renderizado na posição do World salvo
-`[24.5,27.5,0]`, direção3, com 684 vértices, 840 triângulos e 7.368 shaded
-samples. O quadro contém apenas o Sim em fundo plano. Recibos locais ignorados:
-`reports/odh-person-restored-main-tick214.json/.ppm` e
-`reports/odh-person-restored-main-tick4096-looktowards.json`. Build focal e
-9 CTests (Playback, LookTowards, som e CLI person) passaram; `git diff --check`
-passou.
-
-Próximos limites: threads salvas, áudio real, arquitetura/lote desenhado,
-roteamento para LookTowards corporal, interação via input/seleção e validação
-visual de X11. Este não é ainda um build jogável. Referência detalhada:
+Continuam pendentes: objetos/outros avatares visíveis, controle do jogador,
+seleção/interação, stacks salvas, áudio audível, serviços Main e validação em
+janela X11. Portanto, ainda não é um build jogável. Detalhes e hashes em
 [validação do Main restaurado](person-main-render-validation.md).
 
 ## Checkpoint anterior — Main construído e posição projetada (2026-10-20)

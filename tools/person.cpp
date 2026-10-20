@@ -27,6 +27,7 @@
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
 #include "saved_resources.hpp"
+#include "saved_lot_renderer.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
 #endif
@@ -132,6 +133,9 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> render_saved_id;
     bool render_window=false,saved_world_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
+    std::optional<std::string> render_floors,render_walls;
+    SavedLotView render_lot_view;
+    bool render_level_set=false,render_wall_mode_set=false;
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
         if(option=="--avatar"&&!avatar&&n+3<argc){avatar=Resource{argv[n+1],argv[n+2]};avatar_def=selector(argv[n+3]);n+=3;}
@@ -161,6 +165,20 @@ int main(int argc,char** argv) {
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
         else if(option=="--render-window"&&!render_window){render_window=true;}
+        else if(option=="--render-floors"&&!render_floors&&n+1<argc){render_floors=argv[++n];}
+        else if(option=="--render-walls"&&!render_walls&&n+1<argc){render_walls=argv[++n];}
+        else if(option=="--render-level"&&!render_level_set&&n+1<argc){
+            const auto level=selector(argv[++n]);if(level<1||level>2)throw odh::FormatError("render level outside profile");
+            render_lot_view.level=static_cast<std::uint8_t>(level);render_level_set=true;
+        }
+        else if(option=="--render-wall-mode"&&!render_wall_mode_set&&n+1<argc){
+            const std::string mode=argv[++n];if(mode!="up"&&mode!="down")throw odh::FormatError("render wall mode must be up or down");
+            render_lot_view.walls_down=mode=="down";render_wall_mode_set=true;
+        }
+        else if(option=="--render-terrain-theme"&&!render_lot_view.terrain_theme&&n+1<argc){
+            const auto theme=selector(argv[++n]);if(theme>=8)throw odh::FormatError("render terrain theme outside profile");
+            render_lot_view.terrain_theme=static_cast<odh::TerrainTheme>(theme);
+        }
         else if(option=="--saved-world-main"&&!saved_world_main){saved_world_main=true;}
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
@@ -170,13 +188,18 @@ int main(int argc,char** argv) {
         else throw odh::FormatError("invalid or repeated person host option");
     }
     if(render_window&&!ticks_set)ticks_limit=4096;
+    if((render_floors&&(!saved_world_main||render_floors->empty()||render_floors->size()>4096))||
+       (render_walls&&(!render_floors||render_walls->empty()||render_walls->size()>4096))||
+       (render_level_set&&!render_floors)||(render_wall_mode_set&&!render_walls)||
+       (render_lot_view.terrain_theme&&!render_floors))
+        throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id||render_window;
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -354,12 +377,11 @@ int main(int argc,char** argv) {
             throw odh::FormatError("selected saved World entity is not the matching person resource");
         restored_world=odh::make_saved_world(records,*definition_index,neighbors?&*neighbors:nullptr);
         runtime_avatar_id=static_cast<std::int16_t>(*render_saved_id);
-        world_owner=std::move(restored_world->world);
-        const auto* restored_avatar=world_owner->find(runtime_avatar_id);
+        const auto* restored_avatar=restored_world->world->find(runtime_avatar_id);
         if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
             throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
-    odh::World& world=*world_owner;
+    odh::World& world=saved_world_main?*restored_world->world:*world_owner;
     if(!saved_world_main){
         if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(runtime_avatar_id,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
         // Explicit reference constructor subset, not completed native Init.
@@ -573,6 +595,9 @@ int main(int argc,char** argv) {
     std::optional<RenderEvidence> render_evidence;
     std::unique_ptr<SavedAppearanceResources> render_appearances;
     std::unique_ptr<SceneRenderer> render_renderer;
+    std::unique_ptr<SavedLotRenderer> render_lot;
+    std::unique_ptr<SavedGraphicsResources> render_graphics;
+    std::optional<SavedLotFrame> render_lot_evidence;
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
 #endif
@@ -589,8 +614,6 @@ int main(int argc,char** argv) {
         if(saved_world_main){
             const auto* entity=world.find(runtime_avatar_id);
             if(!entity||!entity->position)throw odh::FormatError("render saved avatar has no live restored World position");
-            render_position={static_cast<float>(entity->position->x)/16.0f,static_cast<float>(entity->position->y)/16.0f,static_cast<float>(entity->position->level-1)*2.95f};
-            render_direction=entity->position->direction;
         }else{
             if((p.x==-16&&p.y==-16)||p.x<0||p.y<0||p.x>32767||p.y>32767||(p.level!=1&&p.level!=2)||p.object_data[1]<0||p.object_data[1]>7)
                 throw odh::FormatError("render saved avatar has no supported lot position");
@@ -619,6 +642,15 @@ int main(int argc,char** argv) {
             return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
         };
         render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+        if(render_floors){
+            render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
+                *restored_world,*definition_index,*render_floors,render_walls,render_lot_view);
+        }else if(saved_world_main)render_graphics=std::make_unique<SavedGraphicsResources>(*definition_index);
+        if(saved_world_main){
+            const auto graphics=render_lot?render_lot->avatar(runtime_avatar_id):render_graphics->entity(world,runtime_avatar_id);
+            render_position=graphics.tile_position;render_direction=graphics.direction;
+            render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
+        }
 #ifdef ODH_HAVE_X11
         if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
             "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
@@ -632,9 +664,18 @@ int main(int argc,char** argv) {
         const auto* sample_actor=world.find(sample->actor);
         if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=runtime_avatar_id)
             throw odh::FormatError("person frame sample actor identity is stale or outside this host");
+        if(saved_world_main){
+            const auto graphics=render_lot?render_lot->avatar(sample->actor):render_graphics->entity(world,sample->actor);
+            render_position=graphics.tile_position;render_direction=graphics.direction;
+            render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
+        }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
-        const auto frame=render_renderer->render(scene_state,render_camera);
+        auto frame=render_renderer->render(scene_state,render_camera);
+        if(render_lot){
+            auto lot=render_lot->render(render_camera,frame.image);
+            frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
+        }
 #ifdef ODH_HAVE_X11
         if(render_window_host)render_window_host->present(frame.image);
 #endif
@@ -1009,7 +1050,20 @@ int main(int argc,char** argv) {
             <<",\"vm_generation\":"<<v.vm_generation<<",\"clip\":"<<json_bytes(v.clip)<<",\"frame\":"<<v.frame
             <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
             <<",\"texture_bytes\":"<<v.texture_bytes<<",\"catalog_cfp_samples\":"<<v.cfp_samples
-            <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples<<'}';
+            <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples
+            <<",\"lot\":";
+        if(render_lot_evidence){const auto& lot=*render_lot_evidence;
+            std::cout<<"{\"same_runtime_World\":true,\"selected_level\":"<<unsigned(render_lot_view.level)
+                <<",\"wall_mode\":"<<json_bytes(render_lot_view.walls_down?"down":"up")
+                <<",\"terrain_theme\":"<<(render_lot_view.terrain_theme?std::to_string(unsigned(*render_lot_view.terrain_theme)):"null")
+                <<",\"floor_draws\":"<<lot.floor_draws<<",\"floor_triangles\":"<<lot.floor_triangles
+                <<",\"floor_texture_bytes\":"<<lot.floor_texture_bytes<<",\"terrain_triangles\":"<<lot.terrain_triangles
+                <<",\"terrain_reserved_bytes\":"<<lot.terrain_reserved_bytes<<",\"wall_layers\":"<<lot.wall_layers
+                <<",\"wall_junctions\":"<<lot.wall_junctions<<",\"wall_cached_frame_bytes\":"<<lot.wall_cached_frame_bytes
+                <<",\"wall_tested_samples\":"<<lot.wall_tested_samples<<",\"wall_shaded_samples\":"<<lot.wall_shaded_samples
+                <<",\"other_avatars_rendered\":false,\"objects_rendered\":false,\"original_visual_equivalence\":false}";
+        }else std::cout<<"null";
+        std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<"}\n";
     return host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;

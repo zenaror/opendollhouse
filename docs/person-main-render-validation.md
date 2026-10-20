@@ -126,3 +126,111 @@ dormant, sounds have no sink, the X11 preview has not been visually validated
 in this environment, and there is no player input or object selection. The
 4,096-tick run is stronger evidence of a live Main/VM path, not a playable build
 or a claim of simulation fidelity.
+
+## Composição do lote no mesmo World (2026-10-20)
+
+O caminho `--saved-world-main` pode receber `--render-floors FLOORS_IFF` e,
+opcionalmente, `--render-walls WALLS_IFF`, `--render-level 1|2`,
+`--render-wall-mode up|down` e `--render-terrain-theme 0..7`. O nível padrão é
+1 e as paredes começam em modo `up`; tema de terreno é explícito. Essas opções
+também valem para a janela Main. Requerem as fontes explícitas e mantêm as
+recusas existentes de padrões customizados sem resolvedor, pools/água e
+recursos fora dos perfis dos renderizadores.
+
+`SavedLotRenderer` empresta o `SavedWorld` restaurado que já fornece a memória
+da VM; nenhuma outra instância de World é construída para desenhar. O host
+preserva a propriedade desse World em `SavedWorld`, em vez de retirar seu
+ponteiro. Cada captura consulta novamente posição/direção e geração do ator;
+o sample de Playback deve corresponder à identidade ainda viva. O terreno usa
+a altitude interpolada na posição livre do avatar ou do seu contêiner efetivo.
+As entidades fora da tela permanecem no World.
+
+Avatares anexados usam o resolvedor explícito OBJD→SLOT do contêiner, também
+no preview sem lote. O cache valida GUID/OBJD, SLOT único e os limites de 16
+tabelas e 4.096 registros no total. A posição gráfica vem do SLOT; nível e
+altitude usam o contêiner efetivo, sem somar a posição lógica copiada do avatar.
+Quando o contêiner é membro de um grupo multitile salvo, a altitude usa a média
+inteira X/Y dos membros serializados, como em `saved_scene`; os limites são
+4.096 registros/membros e soma intermediária sem overflow de short. O centro é
+do snapshot salvo, inclui membros fora do mundo e não implementa movimento de
+grupo runtime. A fixture de declive distingue a média das altitudes individuais
+e verifica truncamento inteiro, membros inválidos/duplicados e orçamento.
+A câmera acompanha a posição gráfica a cada captura com o deslocamento de
+enquadramento `Z + 0.75`. Fixtures cobrem avatar salvo anexado sem flag runtime
+`positioned`, movimento do contêiner, nível/terreno herdados, recursos SLOT
+inválidos e limites por cache/acumulados. Contêineres aninhados continuam fora
+do perfil de `graphics_entity`.
+
+A ordem de composição é terreno/floors, raster do avatar vivo e sprites de
+paredes/junções. Todos usam câmera/profundidade compartilhadas; a comparação
+de profundidade mantém a superfície mais próxima. Submeter paredes depois do
+avatar permite que alpha de paredes mais próximas use a cor do avatar como
+fundo. A composição mantém os perfis CPU já documentados em
+`saved-floor-validation.md`, `saved-wall-validation.md` e
+`terrain-surface-validation.md`; não estabelece equivalência GPU/original.
+
+O JSON `render.lot` informa nível, tema, contagens de geometria/floors/paredes,
+bytes de recursos e amostras dos sprites de paredes. `render.shaded_samples`
+agora inclui os rasters de terreno, pisos e avatar; amostras de parede ficam
+nos campos próprios, seguindo o contrato do compositor. Outros avatares e
+objetos ainda não são submetidos nesse caminho e aparecem explicitamente
+como `false`, mesmo que continuem preservados na simulação restaurada.
+
+O CTest `saved_lot_renderer` usa IFFs sintéticos: valida consulta de posição e
+direção após movimento no mesmo World, nível/altitude, recusa de ator/viewport
+inválidos e oclusão de pixels à frente/atrás dos pisos e paredes. Os testes
+CLI rejeitam combinações incompletas e valores de view fora do perfil. Isso
+verifica a integração CPU e os limites declarados, sem provar gameplay,
+seleção, continuidade das filas salvas, áudio ou aparência do jogo original.
+
+### Probe com recursos de House07
+
+O probe final usou a instalação local com House07, LotZoning, Neighborhood,
+`floors.iff`, `walls.iff`, Animation.far e ExpansionShared.far. Aos 214 ticks,
+o Main ficou `waiting` sem falha de host: 308 instruções, cinco frames ativos e
+sample do avatar 105/GUID 850010198. A posição de captura foi
+`[24.5,27.5,3.75]`, direção 3; o Z inclui terreno, e a câmera ficou em
+`[24.5,27.5,4.5]`. O frame mediu 320x240, com 684 vértices, 840 triângulos do
+avatar, 425.984 bytes de textura e 84.168 shaded samples agregados.
+
+O receipt `reports/odh-person-main-lot-house07-tick214.json` registra
+6.323 triângulos/1.107.072 bytes reservados de terreno, 683 desenhos/1.365
+triângulos de piso, e 69 camadas/49 junções de parede. O PPM final foi
+inspecionado; SHA256:
+`6003498c6479da998666153da13c85da3575f9e11901be08760499b669691288`.
+PNG de consulta visual local:
+`reports/odh-person-main-lot-house07-tick214.png` (derivado do PPM, também
+ignorado pelo Git). O probe terminou com código 3 porque o limite explícito de
+214 ticks foi alcançado; o receipt identifica status VM `waiting`, sem falha
+do host.
+
+A reprodução precisa incluir o contexto de bairro. Sem `--neighborhood`, o
+Main falhou no primitive 31 de BHAV 8211 antes do sample; com Neighborhood e os
+recursos acima, o caminho foi reproduzido. Os dois arquivos `User00000.iff` e
+`User00001.iff` também entram como fontes de definição:
+
+```sh
+./odh-person --avatar-file '../referencias/The Sims/UserData/Characters/User00000.iff' 128 \
+  --semiglobal '../referencias/The Sims/GameData/Global/Global.far' PersonGlobals.iff \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff \
+  --lot '../referencias/The Sims/UserData/Houses/House07.iff' 7 \
+  --zoning '../referencias/The Sims/UserData/LotZoning.iff' \
+  --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
+  --animation-source '../referencias/The Sims/GameData/Animation/Animation.far' \
+  --animation-source '../referencias/The Sims/ExpansionShared/ExpansionShared.far' \
+  --render-animation-far '../referencias/The Sims/GameData/Animation/Animation.far' \
+  --render-textures '../referencias/The Sims/GameData/Textures/Textures.far' \
+  --render-skeleton adult-skeleton.cmx.bcf adult --render-saved-avatar 105 \
+  --saved-world-main --render-tick 214 --ticks 214 \
+  --render-frame /tmp/house07-main-lot-tick214.ppm \
+  --render-floors '../referencias/The Sims/GameData/floors.iff' \
+  --render-walls '../referencias/The Sims/GameData/walls.iff' \
+  --render-level 1 --render-wall-mode up --render-terrain-theme 0
+```
+
+Esta evidência comprova captura CPU do Main sobre camadas do lote usando o
+mesmo World restaurado. Não mostra objetos nem o segundo avatar; não valida
+X11, input físico, interações, recursos remapeados ou aparência original.

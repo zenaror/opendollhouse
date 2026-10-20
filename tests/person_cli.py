@@ -32,6 +32,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
  setup();r=run(['--initialize','--saved-world-main'])
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
+ for options in [['--render-floors','floors.iff'],['--render-walls','walls.iff'],['--render-level','1'],
+                 ['--render-wall-mode','down'],['--render-terrain-theme','0']]:
+  setup();r=run(options)
+  assert r.returncode==2 and not r.stdout and 'render lot options require' in r.stderr
+ for options in [['--render-level','0'],['--render-level','3'],['--render-wall-mode','cut'],['--render-terrain-theme','8']]:
+  setup();r=run(options)
+  assert r.returncode==2 and not r.stdout and 'render ' in r.stderr
  def next_random(seed,maximum):
   if maximum==0:return seed,0
   mask=(1<<64)-1;seed^=seed>>12;seed^=(seed<<25)&mask;seed^=seed>>27
