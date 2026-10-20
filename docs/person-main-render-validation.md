@@ -143,6 +143,14 @@ verificado contra todos esses inputs por caminho canônico/equivalência,
 incluindo symlinks/hardlinks. Sem essa opção, o caminho global é preservado.
 Contrato de mapas, preparação e recursos por zoom está na
 [validação de materiais externos](external-architecture-renderer-validation.md).
+
+Para definições OBJD em FARs mistos, `--object-definition-entry FAR ENTRY`
+seleciona explicitamente uma única entrada IFF por nome; entradas não IFF do
+mesmo FAR não são abertas como IFF. A opção é repetível e compartilha um limite
+de 256 fontes com `--object-definitions FAR` e `--object-definition-file IFF`;
+caminhos e nome da entrada têm limite de 4096 bytes. Nome de entrada ausente
+ou ambíguo falha. O caminho FAR continua protegido contra alias do frame de
+saída. Isso permite selecionar definições sem extrair a entrada para disco.
 Essas opções
 também valem para a janela Main. Requerem as fontes explícitas e mantêm as
 recusas existentes de padrões customizados sem resolvedor, pools/água e

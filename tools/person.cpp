@@ -46,6 +46,8 @@
 
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;};
+struct PersonDefinitionSource {std::string path,entry;bool standalone=false;};
+constexpr std::size_t person_definition_source_limit=256;
 template<class F>void with_resource(const Resource& resource,F read){
     if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
 }
@@ -132,7 +134,7 @@ std::uint64_t seed_selector(const std::string& text){
 int main(int argc,char** argv) {
  try {
     std::optional<Resource> avatar,semi,globals,action;
-    std::vector<std::pair<std::string,bool>> definition_sources;
+    std::vector<PersonDefinitionSource> definition_sources;
     std::vector<std::string> animation_sources;
     std::vector<odh::ArchitectureResourceSource> architecture_sources;
     std::optional<std::string> lot_path,zoning_path,neighborhood_path;
@@ -202,10 +204,18 @@ int main(int argc,char** argv) {
             render_lot_view.terrain_theme=static_cast<odh::TerrainTheme>(theme);
         }
         else if(option=="--saved-world-main"&&!saved_world_main){saved_world_main=true;}
+        else if(option=="--object-definition-entry"&&n+2<argc){
+            if(definition_sources.size()>=person_definition_source_limit)throw odh::FormatError("definition source count exceeds bounded host profile");
+            PersonDefinitionSource source;source.path=argv[++n];source.entry=argv[++n];
+            if(source.path.empty()||source.path.size()>4096||source.entry.empty()||source.entry.size()>4096)
+                throw odh::FormatError("object definition archive/entry path outside bounded host profile");
+            definition_sources.push_back(std::move(source));
+        }
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
-            if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
-            definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
-            if(definition_sources.back().first.size()>4096)throw odh::FormatError("definition source path exceeds bounded host profile");
+            if(definition_sources.size()>=person_definition_source_limit)throw odh::FormatError("definition source count exceeds bounded host profile");
+            PersonDefinitionSource source;source.path=argv[++n];source.standalone=option=="--object-definition-file";
+            if(source.path.empty()||source.path.size()>4096)throw odh::FormatError("definition source path outside bounded host profile");
+            definition_sources.push_back(std::move(source));
         }
         else throw odh::FormatError("invalid or repeated person host option");
     }
@@ -223,7 +233,7 @@ int main(int argc,char** argv) {
        (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -233,7 +243,7 @@ int main(int argc,char** argv) {
         std::vector<std::string> inputs;
         for(const auto* resource:{&avatar,&semi,&globals,&action})
             if(*resource)inputs.push_back((*resource)->archive);
-        for(const auto& source:definition_sources)inputs.push_back(source.first);
+        for(const auto& source:definition_sources)inputs.push_back(source.path);
         inputs.insert(inputs.end(),animation_sources.begin(),animation_sources.end());
         for(const auto& source:architecture_sources)inputs.push_back(source.path);
         for(const auto* path:{&lot_path,&zoning_path,&neighborhood_path,&render_animation_far,
@@ -268,13 +278,17 @@ int main(int argc,char** argv) {
             },limits);
         };
         for(const auto& source:definition_sources){
-            if(source.second){with_iff_file(source.first,[&](const auto& view){add_iff(view,source.first,"");});continue;}
-            std::ifstream stream(source.first,std::ios::binary);
+            if(source.standalone){with_iff_file(source.path,[&](const auto& view){add_iff(view,source.path,"");});continue;}
+            if(!source.entry.empty()){
+                with_far_entry(source.path,source.entry,[&](const auto& view){add_iff(view,source.path,source.entry);});
+                continue;
+            }
+            std::ifstream stream(source.path,std::ios::binary);
             if(!stream)throw odh::FormatError("cannot open explicit definition archive");
-            const odh::View archive(stream,std::filesystem::file_size(source.first));
+            const odh::View archive(stream,std::filesystem::file_size(source.path));
             odh::Limits limits;limits.far_entries=8192;limits.far_name_length=4096;limits.far_name_bytes=256*1024;
             for(const auto& entry:odh::far1_index(archive,limits))
-                add_iff(archive.subview(entry.offset,entry.length),source.first,entry.name);
+                    add_iff(archive.subview(entry.offset,entry.length),source.path,entry.name);
         }
         definition_index.emplace(candidates);
     }
