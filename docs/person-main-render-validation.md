@@ -10,10 +10,15 @@ nome. A aparência é construída diretamente do `AvatarBodyStrings` efetivament
 aplicado; não há estado de save fabricado. A resolução mantém os limites de
 ambiguidade, recursos e 16 partes.
 
-O render usa âncora de apresentação `(0,0,0)` e informa explicitamente
-`runtime_position_present:false`. Não altera posição no `World`. A saída só é
-criada quando ainda não existe. Esse caminho é diagnóstico/headless, sem janela
-ou controles.
+Sem `--render-saved-avatar`, o render usa âncora diagnóstica `(0,0,0)`. Com
+`--render-saved-avatar OBJECT_ID`, usa posição/direção já decodificadas dos
+prefixos ObjM do lote selecionado. A opção só aceita um ID cujo GUID coincide
+com o recurso de pessoa carregado e cujo tipo ObjT é avatar; rejeita posição
+ausente e coordenadas, nível ou direção fora do perfil. O JSON mantém
+`runtime_position_present:false`: o sample é posicionado apenas para
+apresentação e a entidade salva não é restaurada no World vivo da VM. A saída
+só é criada quando ainda não existe; continua sendo um caminho headless, sem
+janela ou controles.
 
 ## Execução com dados originais
 
@@ -33,6 +38,14 @@ jogo:
 | --- | ---: | --- | ---: | ---: | ---: |
 | primeiro sample | 2 | `a2o-idle-neutral-trans-stand-lstand` | 0.0 | 5490 | 6860 |
 | posterior | 214 | `a2o-idle-neutral-trans-lstand-lhips` | 1.2 | 2928 | 6924 |
+
+Uma terceira execução selecionou o Sim salvo ObjectID 105 (GUID `850010198`),
+cuja identidade confere com `User00000.iff`; seu ObjM fornece `(392,440)`, nível
+1 e direção 3. O perfil gráfico projeta isso para `[24.5,27.5,0]` e centraliza a
+câmera em `[24.5,27.5,0.75]`. O frame registra 7119 pixels sombreados. O JSON
+é `reports/odh-person-main-savedpos-verified-20261020.json` e a imagem é
+`reports/odh-person-main-savedpos-verified-20261020.ppm` (SHA256
+`4ee6fb0d7c829c9e95a36e5c9529b01308c301ae6a73923cb9dd59eafa2ebe49`).
 
 Ambos produziram 320×240, 684 vértices, 840 triângulos e 425.984 bytes de
 textura. A execução de 214 ticks terminou com status VM `waiting` e código 3

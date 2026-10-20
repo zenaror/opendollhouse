@@ -111,6 +111,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint64_t> seed;
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::optional<std::uint16_t> render_tick;
+    std::optional<std::uint16_t> render_saved_id;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::uint16_t ticks_limit=256;bool ticks_set=false,initialize=false,activate_family=false;
     for(int n=1;n<argc;++n){const std::string option=argv[n];
@@ -139,6 +140,7 @@ int main(int argc,char** argv) {
         else if(option=="--render-textures"&&!render_textures_far&&n+1<argc){render_textures_far=argv[++n];}
         else if(option=="--render-skeleton"&&!render_skeleton_entry&&n+2<argc){render_skeleton_entry=argv[n+1];render_skeleton_name=argv[n+2];n+=2;}
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
+        else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
         else if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(definition_sources.size()>=16)throw odh::FormatError("definition source count exceeds bounded host profile");
             definition_sources.emplace_back(argv[++n],option=="--object-definition-file");
@@ -146,11 +148,12 @@ int main(int argc,char** argv) {
         }
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick;
+    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id;
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&(!render_output||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||!initialize||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)))||
+       (render_saved_id&&(!render_output||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR] [--object-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID]]");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -224,6 +227,8 @@ int main(int argc,char** argv) {
             saved_tails=std::move(tails);
         }
     }
+    if(render_saved_id&&(!saved_prefixes||!objt))
+        throw odh::FormatError("render saved avatar requires ObjM1 and objt0 in selected house");
     if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||chunk.id!=1)return;
         if(zoning)throw odh::FormatError("ambiguous zoning STR#1");zoning=odh::read_lot_zoning(odh::read_strings(chunk.payload));
@@ -500,6 +505,22 @@ int main(int argc,char** argv) {
     std::unique_ptr<SavedAppearanceResources> render_appearances;
     std::unique_ptr<SceneRenderer> render_renderer;
     odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
+    std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
+    std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
+    if(render_saved_id){
+        const auto found=std::find_if(saved_prefixes->begin(),saved_prefixes->end(),[&](const auto& saved){return saved.object_id==*render_saved_id;});
+        if(found==saved_prefixes->end())throw odh::FormatError("render saved avatar ID absent from selected house");
+        const auto* type=objt->entry_for_type(found->type_id);
+        if(found->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
+            throw odh::FormatError("render saved avatar identity does not match the selected person resource");
+        const auto& p=found->prefix;
+        if((p.x==-16&&p.y==-16)||p.x<0||p.y<0||p.x>32767||p.y>32767||(p.level!=1&&p.level!=2)||p.object_data[1]<0||p.object_data[1]>7)
+            throw odh::FormatError("render saved avatar has no supported lot position");
+        render_position={static_cast<float>(p.x)/16.0f,static_cast<float>(p.y)/16.0f,static_cast<float>(p.level-1)*2.95f};
+        render_direction=static_cast<std::uint8_t>(p.object_data[1]);
+        render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
+        presented_saved_id=*render_saved_id;presented_saved_guid=found->guid;
+    }
     if(render_output){
         if(!body_state||!body_state->body||!playback||!animation_catalog)
             throw odh::FormatError("person frame export requires initialized BodySTR and explicit AnimationCatalog");
@@ -527,7 +548,7 @@ int main(int argc,char** argv) {
         if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=1)
             throw odh::FormatError("person frame sample actor identity is stale or outside this host");
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
-        scene_state.hands=sample->hands;scene_state.avatar_direction=0;scene_state.avatar_tile={0,0,0};
+        scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         const auto frame=render_renderer->render(scene_state,render_camera);
         std::ofstream ppm(*render_output,std::ios::binary|std::ios::out);
         if(!ppm)throw odh::FormatError("person frame output cannot be created");
@@ -841,8 +862,11 @@ int main(int argc,char** argv) {
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":\"headless_Main_Playback_sample\",\"output\":"<<json_bytes(*render_output)
-            <<",\"runtime_position_present\":false,\"presentation_anchor\":[0,0,0],\"presentation_direction\":0"
-            <<",\"camera_center_tile\":[0,0,0.75],\"tick\":"<<v.tick<<",\"actor\":"<<v.actor<<",\"actor_generation\":"<<v.actor_generation
+            <<",\"runtime_position_present\":false,\"presentation_position_source\":"<<json_bytes(presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
+            <<",\"presentation_saved_object_id\":"<<(presented_saved_id?std::to_string(*presented_saved_id):"null")
+            <<",\"presentation_saved_guid\":"<<(presented_saved_guid?std::to_string(*presented_saved_guid):"null")
+            <<",\"presentation_position\":["<<render_position[0]<<','<<render_position[1]<<','<<render_position[2]<<"],\"presentation_direction\":"<<unsigned(render_direction)
+            <<",\"camera_center_tile\":["<<render_camera.center_tile[0]<<','<<render_camera.center_tile[1]<<','<<render_camera.center_tile[2]<<"],\"tick\":"<<v.tick<<",\"actor\":"<<v.actor<<",\"actor_generation\":"<<v.actor_generation
             <<",\"vm_generation\":"<<v.vm_generation<<",\"clip\":"<<json_bytes(v.clip)<<",\"frame\":"<<v.frame
             <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
             <<",\"texture_bytes\":"<<v.texture_bytes<<",\"catalog_cfp_samples\":"<<v.cfp_samples

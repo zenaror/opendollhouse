@@ -6,26 +6,31 @@
 vivo do Main. O caminho usa `AvatarBodyStrings` diretamente para resolver corpo,
 cabeça e seis variantes de mão, decodifica CFP pelo `AnimationHeader` exato
 selecionado no catálogo multi-FAR e passa clip, frame e gestos ao renderer.
-Não cria `ObjmPersonState`, não injeta posição no World e não escolhe animação
-por nome. A âncora `(0,0,0)` existe apenas para apresentação do frame.
+Não cria `ObjmPersonState` nem escolhe animação por nome. A opção
+`--render-saved-avatar OBJECT_ID` valida GUID e tipo contra o recurso de pessoa
+carregado e projeta a posição/direção de ObjM salvo; esse dado não é inserido no
+World do VM.
 
 Validação com os arquivos externos da instalação original: os relatórios
-`reports/odh-person-main-first-sample-20261020.json` e
-`reports/odh-person-main-tick214-20261020.json` registram frames diferentes do
-Main (ticks 2 e 214). No tick 214 o clip foi
+`reports/odh-person-main-first-sample-20261020.json`,
+`reports/odh-person-main-tick214-20261020.json` e
+`reports/odh-person-main-savedpos-verified-20261020.json` registram frames do
+Main em ticks 2 e 214. No tick 214 o clip foi
 `a2o-idle-neutral-trans-lstand-lhips`, frame 1.2; o frame usou 684 vértices,
 840 triângulos e 425.984 bytes de textura. Os PPMs são preservados em
-`reports/odh-person-main-*.ppm`. Sete CTests focais passam e
+`reports/odh-person-main-*.ppm`. No frame posicionado, ObjectID 105/GUID
+850010198 projeta para `[24.5,27.5,0]`, direção 3, com a câmera centrada nessa
+posição. Sete CTests focais passam e
 `git diff --check` passa. A execução encerra em `waiting` ao esgotar o limite de
 214 ticks (código 3 esperado pelo host); não é falha de renderização nem prova
 de que Main concluiu.
 
-Limites atuais: ainda não há posição viva/restaurada no lote, janela ou entrada
-de usuário; a cena não é jogável e o Main ainda pode parar em opcode/comportamento
-não implementado. Próximo passo de maior valor: usar a infraestrutura de lote
-salvo existente para exibir o Sim na posição real com câmera e janela Linux,
-preservando o mesmo Playback/VM e adicionando entrada mínima. Só depois avançar
-para ações contínuas, tempo/necessidades e persistência ODH. Detalhes em
+Limites atuais: a posição ainda é projeção de apresentação, não posição viva no
+World; lote/arquitetura não são desenhados, não há janela ou entrada de usuário,
+a cena não é jogável e o Main ainda pode parar em opcode/comportamento não
+implementado. Próximo passo de maior valor: unir essa posição com o desenho do
+lote salvo e janela Linux, preservando o mesmo Playback/VM e sem clonar o World.
+Só depois avançar para ações contínuas, tempo/necessidades e persistência ODH. Detalhes em
 [validação do frame do Main](person-main-render-validation.md).
 
 Meta integral: primeira versão funcional e verificável no Linux; New 3DS, Vita

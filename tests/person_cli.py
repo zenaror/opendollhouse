@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
  def run(extra=()):return subprocess.run(args+list(extra),capture_output=True,text=True)
+ setup();r=run(['--render-saved-avatar','105'])
+ assert r.returncode==2 and not r.stdout and 'render-frame' in r.stderr
  def next_random(seed,maximum):
   if maximum==0:return seed,0
   mask=(1<<64)-1;seed^=seed>>12;seed^=(seed<<25)&mask;seed^=seed>>27
