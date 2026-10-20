@@ -42,7 +42,7 @@ fixtures; a janela real ainda não foi exercitada.
 
 No HEAD local `edd21fa`, `Vm::install_owner` permite anexar um banco
 private/semiglobal em safe point, sem reiniciar Main nem alterar estado
-suspenso. A integração local não commitada liga Space/Return à primeira linha
+suspenso. O commit `b888f63` liga Space/Return à primeira linha
 comum elegível da TTAB: recalcula TestFunction contra o World atual, carrega a
 closure privada da ActionFunction do `source`/`asset` exato, instala um
 CodeOwner separado por recurso e ação e enfileira pela `InteractionQueue`.
