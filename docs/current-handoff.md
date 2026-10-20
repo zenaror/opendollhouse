@@ -16,6 +16,15 @@ contidos, box candidato do avatar ±3 e interseção estrita. `odh-collision-tes
 tem 16 checks de fórmula, não de colisão no lote. Build completa e CTest
 129/129 passaram; a janela segue pulada sem DISPLAY. Ainda faltam validar floors,
 doors, rooms, objetos dinâmicos e política do avatar; não conectar Routing45.
+O avanço local atual adiciona `odh_route_geometry`: piso preciso por posição
+1/16 tile e Bresenham TL/TR com solidez externa explícita. O novo CTest cobre
+coordenadas fora de faixa, diagonais de piso, oito octantes, reversão e portas/
+paredes sólidas, não sólidas ou sem resolução. A geometria continua sem vínculo
+com o Main e não basta para aceitar destino: `FloorChangeValid`, rooms,
+inclinações, obstáculos dinâmicos e construção autoritativa do estado de portas
+seguem pendentes. Build limpa out-of-tree concluiu; CTest passou 130/130, sem
+falhas, com `linux_window_backend` pulado por falta de DISPLAY. `git diff --check`
+passou. Ver [geometria de rota](route-geometry-validation.md).
 
 ## Main em lote restaurado (2026-10-20)
 
