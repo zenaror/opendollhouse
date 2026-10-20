@@ -36,6 +36,9 @@
 #include <memory>
 #include <charconv>
 #include <algorithm>
+#include <limits>
+#include <map>
+#include <tuple>
 #include <filesystem>
 #include <fstream>
 #include <chrono>
@@ -603,6 +606,89 @@ int main(int argc,char** argv) {
     std::optional<SavedObjectInteractions> render_interactions;
     std::vector<SavedTestFunctionResult> render_test_results;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
+    bool render_interaction_requested=false,render_interaction_enqueued=false,saved_owner_ids_exhausted=false;
+    std::string render_interaction_status="not_requested",render_interaction_diagnostic;
+    std::optional<std::uint16_t> render_interaction_action;
+    std::optional<odh::CodeOwner> render_interaction_owner;
+    std::optional<SavedObjectSelection> render_interaction_target;
+    std::optional<bool> render_interaction_result;
+    std::optional<std::uint64_t> previous_completion_uid;
+    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
+    odh::CodeOwner next_saved_code_owner=0x80000000U;
+    const auto request_selected_interaction=[&] {
+        if(render_interaction_enqueued)return;
+        if(!saved_world_main||!render_selection||!render_interactions){
+            render_interaction_status="unsupported";render_interaction_diagnostic="select a saved-lot object with a decoded TTAB first";return;
+        }
+        if(queue.size()!=0){
+            render_interaction_status="rejected";render_interaction_diagnostic="manual preview action requires an empty interaction queue";return;
+        }
+        const auto& selected=*render_selection;
+        const auto* actor=world.find(runtime_avatar_id);
+        const auto* target=world.find(selected.id);
+        if(!actor||actor->kind!=odh::EntityKind::avatar||!target||target->kind!=odh::EntityKind::object||
+           target->generation!=selected.generation||!target->definition||target->definition->guid!=selected.guid){
+            render_interaction_status="unsupported";render_interaction_diagnostic="selected actor/target identity is stale";return;
+        }
+        const auto* candidate=definition_index?definition_index->unique(selected.guid):nullptr;
+        if(!candidate||candidate->source!=render_interactions->source||candidate->asset!=render_interactions->asset||
+           candidate->definition.tree_table_id!=selected.tree_table_id){
+            render_interaction_status="unsupported";render_interaction_diagnostic="selected definition provenance is ambiguous or changed";return;
+        }
+        if(!render_interactions->table||render_interactions->table->status!=odh::TtabStatus::decoded){
+            render_interaction_status="unsupported";render_interaction_diagnostic="selected object has no decoded TTAB";return;
+        }
+        // Re-evaluate against the current World at the input boundary; an
+        // earlier click-time TestFunction result can become stale as Main ticks.
+        std::vector<std::uint16_t> current_tests;
+        current_tests.reserve(std::min<std::size_t>(render_interactions->table->interactions.size(),32));
+        for(std::size_t n=0;n<std::min<std::size_t>(render_interactions->table->interactions.size(),32);++n)
+            current_tests.push_back(render_interactions->table->interactions[n].test);
+        render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,selected.id,
+            current_tests,4096,128);
+        const auto selected_row=first_eligible_saved_interaction(*render_interactions,render_test_results);
+        if(!selected_row){
+            render_interaction_status="unsupported";render_interaction_diagnostic="no ordinary private TTAB row has a matching eligible ODH TestFunction";return;
+        }
+        const auto& row=render_interactions->table->interactions[*selected_row];
+        const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action);
+        auto owner=saved_code_owners.find(owner_key);
+        if(owner==saved_code_owners.end()){
+            if(saved_owner_ids_exhausted){
+                render_interaction_status="unsupported";render_interaction_diagnostic="saved object code-owner identity space exhausted";return;
+            }
+            odh::RoutineSet routines;
+            try{routines=load_saved_action_routines(*candidate,row.action);}
+            catch(const std::exception& error){
+                render_interaction_status="unsupported";render_interaction_diagnostic=error.what();return;
+            }
+            const auto key=odh::routine_key(row.action);
+            if(key.scope!=odh::RoutineScope::private_object||!routines.count(key)){
+                render_interaction_status="unsupported";render_interaction_diagnostic="selected ActionFunction is absent from its exact private owner";return;
+            }
+            const auto code_owner=next_saved_code_owner;
+            if(!vm.install_owner(code_owner,std::move(routines))){
+                render_interaction_status="unsupported";render_interaction_diagnostic="Main VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
+            }
+            if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+            else ++next_saved_code_owner;
+            owner=saved_code_owners.emplace(owner_key,code_owner).first;
+        }
+        actor=world.find(runtime_avatar_id);target=world.find(selected.id);
+        if(!actor||actor->kind!=odh::EntityKind::avatar||!target||target->generation!=selected.generation||
+           !target->definition||target->definition->guid!=selected.guid){
+            render_interaction_status="unsupported";render_interaction_diagnostic="live actor/target identity changed while loading action owner";return;
+        }
+        const odh::VmContext context{runtime_avatar_id,selected.id,selected.id,owner->second};
+        if(!queue.enqueue(odh::routine_key(row.action),context)){
+            render_interaction_status="rejected";render_interaction_diagnostic=queue.diagnostic();return;
+        }
+        render_interaction_enqueued=true;render_interaction_status="queued";render_interaction_action=row.action;
+        render_interaction_owner=owner->second;
+        render_interaction_target=selected;
+        previous_completion_uid=queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::optional<std::uint64_t>{};
+        render_interaction_diagnostic.clear();
+    };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
 #endif
@@ -658,7 +744,7 @@ int main(int argc,char** argv) {
         }
 #ifdef ODH_HAVE_X11
         if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
-            render_lot?"OpenDollhouse Main preview: click selects object, P pause, arrows rotate, +/- zoom, Escape close":
+            render_lot?"OpenDollhouse Main preview: click selects object, Space/Return requests first eligible interaction, P pause, arrows rotate, +/- zoom, Escape close":
                        "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
@@ -718,6 +804,11 @@ int main(int argc,char** argv) {
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
                 render_interactions.reset();render_test_results.clear();
+                if(!render_interaction_enqueued||queue.size()==0){
+                    render_interaction_requested=false;render_interaction_enqueued=false;
+                    render_interaction_status="not_requested";render_interaction_diagnostic.clear();
+                    render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                }
                 if(render_selection&&definition_index){
                     const auto* candidate=definition_index->unique(render_selection->guid);
                     if(candidate){
@@ -739,6 +830,23 @@ int main(int argc,char** argv) {
                 if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid)+
                     " TTAB "+std::to_string(render_selection->tree_table_id);
                 else title+="no object selected";
+                if(render_selection){
+                    const auto row=render_interactions?first_eligible_saved_interaction(*render_interactions,render_test_results):std::nullopt;
+                    if(row){
+                        title+=" | Space/Return: ";
+                        if(*row<render_interactions->row_labels.size()&&render_interactions->row_labels[*row])
+                            title+=*render_interactions->row_labels[*row];
+                        else title+="eligible interaction";
+                    }
+                }
+                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+            }
+            if(input.action&&!input.primary_click){
+                render_interaction_requested=true;
+                request_selected_interaction();
+                std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
+                if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
+                if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
             }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
@@ -769,6 +877,23 @@ int main(int argc,char** argv) {
             animation_events.push_back(event);animation_event_bytes+=bytes;
         });
         execute();
+        if(render_interaction_requested){
+            const auto status_before=render_interaction_status;
+            if(host_failed){
+                render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;
+            }else if(vm.status()==odh::VmStatus::fault){
+                render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
+            }else if(queue.completion()&&(!previous_completion_uid||queue.completion()->uid!=*previous_completion_uid)){
+                render_interaction_result=queue.completion()->result;
+                render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
+            }
+            if(render_window_host&&render_interaction_status!=status_before){
+                std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
+                if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
+                if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
+                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+            }
+        }
         capture_frame();
     }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
@@ -1088,7 +1213,16 @@ int main(int argc,char** argv) {
             <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
             <<",\"generation\":"<<(render_selection?std::to_string(render_selection->generation):"null")
             <<",\"tree_table_id\":"<<(render_selection?std::to_string(render_selection->tree_table_id):"null")
-            <<",\"interaction_requested\":false,\"interaction_discovery\":";
+            <<",\"interaction_requested\":"<<(render_interaction_requested?"true":"false")
+            <<",\"interaction_status\":"<<json_bytes(render_interaction_status)
+            <<",\"interaction_diagnostic\":"<<json_bytes(render_interaction_diagnostic)
+            <<",\"interaction_action\":"<<(render_interaction_action?std::to_string(*render_interaction_action):"null")
+            <<",\"interaction_code_owner\":"<<(render_interaction_owner?std::to_string(*render_interaction_owner):"null")
+            <<",\"interaction_target\":"<<(render_interaction_target?std::to_string(render_interaction_target->id):"null")
+            <<",\"interaction_target_generation\":"<<(render_interaction_target?std::to_string(render_interaction_target->generation):"null")
+            <<",\"interaction_target_guid\":"<<(render_interaction_target?std::to_string(render_interaction_target->guid):"null")
+            <<",\"interaction_result\":"<<(render_interaction_result?(*render_interaction_result?"true":"false"):"null")
+            <<",\"interaction_discovery\":";
         if(!render_interactions)std::cout<<"null";
         else {
             const auto& discovery=*render_interactions;

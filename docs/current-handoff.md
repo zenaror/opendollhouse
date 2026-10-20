@@ -34,20 +34,39 @@ Os incrementos `bb2db4e` e `281a972`, posteriores a `e325706`, adicionam seleç�
 de objetos por Button1 no preview Main com lote e preservam `TreeTableID` do
 OBJD136/138 no pick e JSON. House07 original confirma cadeira128/GUID
 `0x26BFBB29`/TreeTableID128; sua TTAB128 em `DiningChairs.iff` decodifica uma
-linha Action4097/Test4098. Isso ainda não calcula elegibilidade nem executa ação.
-O último clique drenado preserva coordenadas do drawable;
-o buffer opt-in de IDs usa o mesmo passe alpha/depth dos sprites, com no máximo
-um uint16 por pixel (2 MiB no teto; 153.600 bytes em 320x240). Zero denota cenário.
-O clique usa o último frame apresentado, antes de aplicar rotação/zoom agregados,
-e revalida geração, GUID e Hidden vivos. O título mostra ID/GUID/TreeTableID ou seleção vazia;
-o JSON inclui `render.object_selection`. Não descobre TTAB nem enfileira ação.
-Build focal/completo sem warnings e o CTest completo passaram (127 configurados,
-zero falhas); o gate X11 foi pulado sem DISPLAY. Logo, picking CPU é verificado
-por fixtures; entrada/título reais na janela ainda não foram exercitados.
+linha Action4097/Test4098. O clique usa o último frame apresentado, antes de
+aplicar rotação/zoom agregados, e revalida geração, GUID e Hidden vivos. O
+buffer opt-in usa o mesmo passe alpha/depth dos sprites e no máximo um uint16
+por pixel (2 MiB no teto; 153.600 bytes em 320x240). Picking é coberto por
+fixtures; a janela real ainda não foi exercitada.
 
-Continuam pendentes: outros avatares visíveis, ações TTAB/controle de gameplay,
-stacks salvas, áudio audível, serviços Main e validação em
-janela X11. Portanto, ainda não é um build jogável. Detalhes e hashes em
+No HEAD local `edd21fa`, `Vm::install_owner` permite anexar um banco
+private/semiglobal em safe point, sem reiniciar Main nem alterar estado
+suspenso. A integração local não commitada liga Space/Return à primeira linha
+comum elegível da TTAB: recalcula TestFunction contra o World atual, carrega a
+closure privada da ActionFunction do `source`/`asset` exato, instala um
+CodeOwner separado por recurso e ação e enfileira pela `InteractionQueue`.
+JSON diferencia pedido, fila, rejeição, fault e retorno do BHAV. O limite padrão
+da VM é 64 owners incluindo owner zero (até 63 anexados). Isso ainda não
+apresenta o pie menu completo nem comprova sentar.
+
+A ação House07 4097→4100→4099 alcança Routing45; o Main host ainda não liga esse
+serviço nesse caminho. O controller roteia com Global.iff SLOT100/tipo3/data1,
+mas não existe conversor de arquivos de arquitetura/objetos do lote para a
+malha de clearance. House07 tem 64x64 tiles; a resolução de 1/16 tile do World
+resultaria em 1024x1024 células para o lote todo, acima do limite padrão e com
+custo relevante de memória. Uma malha vazia não é fallback correto. O opcode15
+é registrado como VMBreakPoint no Simitone/FreeSO fixado, cuja condição está
+TODO e o handler retorna GOTO_TRUE; isso é evidência dessa referência, não do
+executável original. O opcode49 é NotifyOutOfIdle.
+
+Build completa sem warnings e CTest atual: 128/128 aprovados, sem falhas; o
+gate `linux_window_backend` foi pulado pois `DISPLAY=:0` não tem servidor X
+acessível. O teste sintético de descoberta agora tem 26 checks e o conjunto
+focal 4/4 passa. A tentativa de ação real pela janela e a conversão de rota do
+lote continuam pendentes. Outros avatares visíveis, stacks salvas, áudio audível,
+serviços Main, save/restore ODH e validação X11 também estão pendentes; logo
+ainda não é um build jogável. Detalhes e hashes em
 [validação do Main restaurado](person-main-render-validation.md).
 
 ## Checkpoint anterior — Main construído e posição projetada (2026-10-20)

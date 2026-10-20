@@ -166,6 +166,24 @@ prova de comportamento do executável original.
 
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
-Isso ainda não exibe um menu nem enfileira a ação. O próximo passo é selecionar
-apenas linhas `eligible`, carregar os owners exatos da ação e enfileirar na Main
-permanente, preservando a identidade/generation do avatar e objeto.
+No preview de lote salvo, Space/Return agora solicita a primeira linha com teste
+`eligible`, flags TTAB zero e ActionFunction privado. O recurso exato
+`source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner
+de alta faixa, instalado na VM Main já viva. A fila valida novamente actor,
+target e geração antes de aceitar caller/target/StackObject. Não reinicia Main.
+O preview não apresenta pie menu ainda; só a primeira opção elegível do perfil
+manual. O JSON diferencia `not_requested`, `queued`, rejeição, falha da VM e
+retorno true/false. Um retorno BHAV apenas informa o resultado do filho; não
+prova que o avatar sentou nem que o objeto atualizou os slots corretamente.
+Os owners da VM são append-only e o limite padrão é 64 incluindo o owner zero;
+uma sessão pode anexar no máximo 63 owners antes de novas ações serem recusadas
+por capacidade. O preview instala um owner por recurso/ação, não por clique.
+
+O recurso da ação ainda não ganha handlers implícitos. A cadeia observada
+4097→4100→4099 entra em Routing opcode45; o Main host atual ainda não integra
+esse controller nesse caminho, então uma tentativa pode parar como `vm_fault`.
+O Simitone/FreeSO fixado registra opcode15 como `VMBreakPoint`; o código deixa
+“todo: check condition” e retorna GOTO_TRUE. Isso é comportamento daquela
+referência, não confirmação contra o executável ou os recursos do jogo original.
+Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
+levantar continuam em aberto.

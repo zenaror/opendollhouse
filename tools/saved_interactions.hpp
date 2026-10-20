@@ -49,6 +49,65 @@ inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCa
     return result;
 }
 
+// Load executable code only from the exact resource that supplied the selected
+// definition. Archive precedence and global/semiglobal fallback are forbidden.
+inline odh::RoutineSet load_saved_private_routines(const odh::DefinitionCandidate& definition,
+                                                    std::size_t routine_limit=4096) {
+    odh::RoutineSet routines;
+    const auto scan=[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="BHAV")return;
+            const auto key=odh::routine_key(chunk.id);
+            if(key.scope!=odh::RoutineScope::private_object)return;
+            if(routines.size()>=routine_limit||!routines.emplace(key,odh::read_bhav(chunk.payload)).second)
+                throw odh::FormatError("private BHAV owner is ambiguous or exceeds resource budget");
+        },limits);};
+    if(definition.asset.empty())with_iff_file(definition.source,scan);
+    else with_far_entry(definition.source,definition.asset,scan);
+    return routines;
+}
+
+// Load the statically reachable private-call closure for one selected action.
+// Global/semiglobal calls are left to explicit shared owners; no file search
+// order or implicit fallback is introduced. The limits bound retained code.
+inline odh::RoutineSet load_saved_action_routines(const odh::DefinitionCandidate& definition,
+                                                  std::uint16_t action,
+                                                  std::size_t routine_limit=256,
+                                                  std::size_t instruction_limit=16384) {
+    odh::RoutineSet routines;std::size_t instruction_count=0;
+    const auto scan=[&](const odh::View& view){
+        odh::Limits limits;limits.iff_chunks=4096;
+        std::map<std::uint16_t,odh::View> private_payloads;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="BHAV"||odh::routine_key(chunk.id).scope!=odh::RoutineScope::private_object)return;
+            if(!private_payloads.emplace(chunk.id,chunk.payload).second)
+                throw odh::FormatError("duplicate private BHAV in exact action owner");
+        },limits);
+        std::vector<std::uint16_t> pending{action};
+        for(std::size_t cursor=0;cursor<pending.size();++cursor){
+            const auto id=pending[cursor];const auto key=odh::routine_key(id);
+            if(key.scope!=odh::RoutineScope::private_object)continue;
+            if(routines.count(key))continue;
+            const auto found=private_payloads.find(id);
+            if(found==private_payloads.end())throw odh::FormatError("private action dependency absent from exact owner");
+            if(routines.size()>=routine_limit)throw odh::FormatError("private action closure exceeds routine budget");
+            auto routine=odh::read_bhav(found->second);
+            if(routine.version!=0x8002||!routine.metadata)
+                throw odh::FormatError("private action closure requires BHAV 8002 metadata");
+            if(routine.instructions.size()>instruction_limit-instruction_count)
+                throw odh::FormatError("private action closure exceeds instruction budget");
+            instruction_count+=routine.instructions.size();
+            for(const auto& instruction:routine.instructions)
+                if(instruction.opcode>=4096&&instruction.opcode<8192)
+                    pending.push_back(instruction.opcode);
+            routines.emplace(key,std::move(routine));
+        }
+    };
+    if(definition.asset.empty())with_iff_file(definition.source,scan);
+    else with_far_entry(definition.source,definition.asset,scan);
+    return routines;
+}
+
 struct SavedTestFunctionResult {
     enum class State { eligible, ineligible, unsupported };
     State state=State::unsupported;
@@ -56,6 +115,21 @@ struct SavedTestFunctionResult {
     std::uint64_t steps=0;
     std::string diagnostic;
 };
+
+// Current manual host action profile supports only ordinary private actions
+// with zero TTAB flags and a matching successful ODH TestFunction.
+inline std::optional<std::size_t> first_eligible_saved_interaction(
+    const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests) {
+    if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return {};
+    const auto count=std::min<std::size_t>({interactions.table->interactions.size(),tests.size(),32});
+    for(std::size_t n=0;n<count;++n){
+        const auto& row=interactions.table->interactions[n];
+        if(row.flags!=0||tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
+           odh::routine_key(row.action).scope!=odh::RoutineScope::private_object)continue;
+        return n;
+    }
+    return {};
+}
 
 // Run TestFunction in an isolated VM, against live entities and a read-only
 // World memory view. Only private routines from the exact object resource are
@@ -76,18 +150,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         return result;
     }
     odh::RoutineSet routines;bool invalid=false;std::string load_error;
-    try {
-        const auto scan=[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
-            odh::iff_chunks(view,[&](const odh::Chunk& chunk){
-                if(chunk.type!="BHAV")return;
-                const auto key=odh::routine_key(chunk.id);
-                if(key.scope!=odh::RoutineScope::private_object)return;
-                if(routines.size()>=4096||!routines.emplace(key,odh::read_bhav(chunk.payload)).second)
-                    throw odh::FormatError("private BHAV owner is ambiguous or exceeds probe budget");
-            },limits);};
-        if(definition.asset.empty())with_iff_file(definition.source,scan);
-        else with_far_entry(definition.source,definition.asset,scan);
-    }catch(const odh::FormatError& error){invalid=true;load_error=error.what();}
+    try {routines=load_saved_private_routines(definition);}
+    catch(const odh::FormatError& error){invalid=true;load_error=error.what();}
     if(invalid){for(const auto test:tests)result.push_back({SavedTestFunctionResult::State::unsupported,test,0,load_error});return result;}
 
     odh::VmLimits limits;limits.stack_depth=16;limits.frame_variables=256;limits.code_owners=2;

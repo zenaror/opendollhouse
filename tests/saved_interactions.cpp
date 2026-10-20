@@ -12,12 +12,14 @@ std::string chunk(const std::string& type,unsigned id,const std::string& payload
     b[8]=static_cast<char>(id>>8);b[9]=static_cast<char>(id);return b+payload;
 }
 std::string iff(const std::string& payload){std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');return b+payload;}
-std::string ttab(){std::string b;put(b,1,2);put(b,8,2);put(b,0x1001,2);put(b,0x1002,2);put(b,0,4);put(b,1,4);put(b,0,4);put(b,4,4);put(b,0x3f800000,4);put(b,50,4);put(b,0xffffffff,4);return b;}
+std::string ttab(){std::string b;put(b,1,2);put(b,8,2);put(b,0x1001,2);put(b,0x1002,2);put(b,0,4);put(b,0,4);put(b,0,4);put(b,4,4);put(b,0x3f800000,4);put(b,50,4);put(b,0xffffffff,4);return b;}
 std::string labels(){std::string b;put(b,0,2);put(b,1,2);b+=char(3);b+="Sit";return b;}
 std::string test_bhav(unsigned opcode=2){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,opcode,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     if(opcode==2){b.push_back(0);b.push_back(0);b.push_back(11);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(16);b.push_back(3);}
     else b.append(8,'\0');return b;}
+std::string call_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
+    put(b,callee,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));b.append(8,'\0');return b;}
 std::string write_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(0);b.push_back(0);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(5);b.push_back(3);b.push_back(7);return b;}
@@ -35,12 +37,43 @@ int main(){try{
     data=iff(chunk("TTAB",128,ttab()));write(path,data);
     const auto no_labels=saved_object_interactions({path.string(),"",7,object});
     check(no_labels.state==SavedObjectInteractions::State::found&&!no_labels.row_labels[0],"missing TTAs leaves decoded interaction unlabeled");
+    const std::vector<SavedTestFunctionResult> eligible_row{{SavedTestFunctionResult::State::eligible,0x1002,3,{}}};
+    check(first_eligible_saved_interaction(no_labels,eligible_row)==0,"manual action selector chooses a matching eligible private row");
+    auto flagged=no_labels;flagged.table->interactions[0].flags=1;
+    check(!first_eligible_saved_interaction(flagged,eligible_row),"manual action selector leaves flagged TTAB rows unsupported");
+    auto mismatched=eligible_row;mismatched[0].routine=0x1003;
+    check(!first_eligible_saved_interaction(no_labels,mismatched),"manual action selector requires TestFunction identity match");
     data=iff(chunk("TTAB",128,ttab())+chunk("TTAB",128,ttab()));write(path,data);
     bool duplicate=false;try{(void)saved_object_interactions({path.string(),"",7,object});}catch(const odh::FormatError&){duplicate=true;}
     check(duplicate,"duplicate owner TTAB is rejected");
     object.tree_table_id=0;check(saved_object_interactions({path.string(),"",7,object}).state==SavedObjectInteractions::State::no_tree_table_id,"zero table id distinguished");
     object.tree_table_id=128;write(path,iff(""));check(saved_object_interactions({path.string(),"",7,object}).state==SavedObjectInteractions::State::missing_ttab,"absent TTAB distinguished");
-    data=iff(chunk("BHAV",4098,test_bhav()));write(path,data);object.guid=123;
+    data=iff(chunk("BHAV",4098,test_bhav())+chunk("BHAV",4097,test_bhav())+chunk("BHAV",256,test_bhav()));write(path,data);object.guid=123;
+    const auto private_code=load_saved_private_routines({path.string(),"",7,object});
+    check(private_code.size()==2&&private_code.count(odh::routine_key(4097))&&private_code.count(odh::routine_key(4098)),
+        "action owner loads exact private BHAVs and excludes shared global code");
+    bool owner_budget=false;try{(void)load_saved_private_routines({path.string(),"",7,object},1);}
+    catch(const odh::FormatError&){owner_budget=true;}
+    check(owner_budget,"private owner resource budget rejects overflow");
+    data=iff(chunk("BHAV",4098,test_bhav())+chunk("BHAV",4098,test_bhav()));write(path,data);
+    bool duplicate_private=false;try{(void)load_saved_private_routines({path.string(),"",7,object});}
+    catch(const odh::FormatError&){duplicate_private=true;}
+    check(duplicate_private,"ambiguous private action owner rejected");
+    data=iff(chunk("BHAV",4098,call_bhav(4097))+chunk("BHAV",4097,call_bhav(4099))+
+             chunk("BHAV",4099,test_bhav())+chunk("BHAV",4100,test_bhav()));write(path,data);
+    const auto closure=load_saved_action_routines({path.string(),"",7,object},4098);
+    check(closure.size()==3&&closure.count(odh::routine_key(4098))&&closure.count(odh::routine_key(4097))&&
+          closure.count(odh::routine_key(4099))&&!closure.count(odh::routine_key(4100)),
+          "action owner loads only reachable private call closure");
+    bool missing_dependency=false;data=iff(chunk("BHAV",4098,call_bhav(4097)));write(path,data);
+    try{(void)load_saved_action_routines({path.string(),"",7,object},4098);}
+    catch(const odh::FormatError&){missing_dependency=true;}
+    check(missing_dependency,"missing private action dependency is rejected without fallback");
+    bool closure_limit=false;data=iff(chunk("BHAV",4098,call_bhav(4097))+chunk("BHAV",4097,test_bhav()));write(path,data);
+    try{(void)load_saved_action_routines({path.string(),"",7,object},4098,1);}
+    catch(const odh::FormatError&){closure_limit=true;}
+    check(closure_limit,"private action closure routine budget is enforced");
+    data=iff(chunk("BHAV",4098,test_bhav()));write(path,data);
     odh::World world;check(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object,{0,0,1}),"probe world entities created");
     check(world.define_type(2,123),"target identity bound");
     auto blocked=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
@@ -48,6 +81,10 @@ int main(){try{
     check(world.attach(2,0,1),"occupant inserted into object slot");
     auto eligible=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(eligible[0].state==SavedTestFunctionResult::State::eligible,"read-only probe sees live slot occupant");
+    check(world.detach(2,0),"live occupant removed before action-boundary eligibility recheck");
+    auto stale_eligibility=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
+    check(stale_eligibility[0].state==SavedTestFunctionResult::State::ineligible,
+        "fresh TestFunction result supersedes an earlier eligible click-time result");
     data=iff(chunk("BHAV",4098,test_bhav(49)));write(path,data);
     auto unsupported=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(unsupported[0].state==SavedTestFunctionResult::State::unsupported&&!unsupported[0].diagnostic.empty(),"unsupported primitive never becomes eligible");
