@@ -8,11 +8,16 @@ executável original.
 
 O registro SLOT8 de House07 tem proximidade raw `16/64/16` e resolução `8`.
 Na referência, os campos são lidos na ordem min/max/optimal; max zero usa min
-como fallback. Como min e max diferem aqui, a enumeração percorre `x` externo e `y`
-interno, ambos de `-64` a `64`, em passos de `8`: 17×17 = 289 offsets. A
+como fallback. Como min e max diferem aqui, a enumeração percorre `x` externo e
+`y` interno, ambos de `-64` a `64`, em passos de `8`: 17×17 = 289 offsets. A
 função aplica um teto de alocação configurável (4096 por padrão) antes de
 reservar o vetor. A unidade retornada é o offset raw do SLOT; a conversão para
 posição do lote é responsabilidade de outra etapa.
+
+Releitura do recurso externo, sem copiar conteúdo comercial para o repositório:
+`odh-slot '../referencias/The Sims/GameData/Global/Global.far' Global.iff 100 3 8`
+retornou `decoded_fields_only`, SLOT v10, record index8, flags `0xa0ff`, raw
+proximity `[16,64,16]`, facing `-3` e resolução `8`.
 
 Os offsets ainda incluem pontos que serão rejeitados depois. Distância mínima e
 máxima, direção, sala, piso, paredes/portas, ocupação, score/RNG, facing e
