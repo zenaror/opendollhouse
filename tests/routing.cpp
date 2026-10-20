@@ -1,10 +1,42 @@
 #include "odh/routing.hpp"
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
 namespace {
 int checks=0;
 void require(bool v,const char* message) {++checks;if(!v)throw std::runtime_error(message);}
+void reference_slot_lattice_tests() {
+    odh::SlotRecord ranged{};ranged.type=3;ranged.flags=0xA0FF;
+    ranged.proximity=std::array<std::int32_t,3>{16,64,16};ranged.resolution=8;
+    std::vector<odh::SlotRecord> records(10);
+    records[0].type=0;
+    for(std::size_t i=1;i<9;++i) records[i].type=3;
+    records[9]=ranged;
+    const odh::SlotTable table{0,10,records,0};
+    const auto offsets=odh::enumerate_reference_slot_range_lattice(table,8);
+    require(offsets.size()==289,"House07 SLOT8 reference lattice has 17x17 points");
+    require(offsets.front()==odh::RoutePoint{-64,-64} && offsets[16]==odh::RoutePoint{-64,64} &&
+            offsets[17]==odh::RoutePoint{-56,-64} && offsets.back()==odh::RoutePoint{64,64},
+            "reference lattice preserves x-outer/y-inner inclusive order");
+    bool limited=false;
+    try { (void)odh::enumerate_reference_slot_range_lattice(table,8,288); }
+    catch(const std::length_error&) { limited=true; }
+    require(limited,"reference lattice enforces candidate allocation budget");
+    bool invalid=false;
+    auto malformed=table;malformed.records[9].resolution=0;
+    try { (void)odh::enumerate_reference_slot_range_lattice(malformed,8); }
+    catch(const std::invalid_argument&) { invalid=true; }
+    require(invalid,"reference lattice rejects zero resolution");
+    invalid=false;malformed=table;malformed.records[9].proximity=std::array<std::int32_t,3>{64,16,16};
+    try { (void)odh::enumerate_reference_slot_range_lattice(malformed,8); }
+    catch(const std::invalid_argument&) { invalid=true; }
+    require(invalid,"reference lattice rejects reversed proximity range");
+    invalid=false;malformed=table;malformed.version=9;
+    try { (void)odh::enumerate_reference_slot_range_lattice(malformed,8); }
+    catch(const std::invalid_argument&) { invalid=true; }
+    require(invalid,"reference lattice rejects incomplete version profile");
+}
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;
     r.proximity=std::array<std::int32_t,3>{4,4,4};r.max_size=0;r.unknown_i10=0;
@@ -27,6 +59,7 @@ struct Fixture {
 }
 int main() {
     try {
+        reference_slot_lattice_tests();
         {Fixture f;f.start();require(f.vm.status()==odh::VmStatus::waiting,"route dispatch waits");
          require(f.world.find(1)->position->x==4,"planning does not teleport actor");
          require(f.routing.tick(1) && f.world.find(1)->position->x==5,"first tick advances one unit");
@@ -64,6 +97,12 @@ int main() {
          require(f.routing.tick(1) && f.vm.status()==odh::VmStatus::returned_false,"target removal cancels");}
         {Fixture f;f.slots.records[0].flags=0xFF;f.start();
          require(f.vm.status()==odh::VmStatus::fault && !f.routing.active(),"unsupported SLOT profile never becomes success");}
+        {Fixture f;auto& slot=f.slots.records[0];slot.flags=0xA0FF;
+         slot.proximity=std::array<std::int32_t,3>{16,64,16};slot.gradient_bits=0;
+         slot.facing=-3;slot.resolution=8;f.start();
+         require(f.vm.status()==odh::VmStatus::fault && !f.routing.active() &&
+                 f.world.find(1)->position->x==4 && f.world.find(1)->position->y==12,
+                 "real House07 SLOT8 profile remains fail-closed until goal/clearance rules exist");}
         {Fixture f;f.world.attach(2,0,1);f.start();
          require(f.vm.status()==odh::VmStatus::fault,"attached avatar cannot walk as a free actor");}
         {Fixture f;f.world.set_position(1,{4,12,2,0});f.start();

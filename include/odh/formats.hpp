@@ -159,7 +159,7 @@ struct SlotRecord {
     std::int32_t standing, sitting, ground;
     std::uint32_t flags;
     std::int32_t snap_target_slot;
-    std::optional<std::array<std::int32_t, 3>> proximity;
+    std::optional<std::array<std::int32_t, 3>> proximity; // Raw min/max/optimal fields.
     std::optional<std::int32_t> max_size, unknown_i10;
     std::optional<std::uint32_t> gradient_bits;
     std::optional<std::int32_t> height, facing, resolution;

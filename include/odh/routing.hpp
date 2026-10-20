@@ -1,9 +1,17 @@
 #pragma once
 #include "odh/world.hpp"
 #include "odh/route.hpp"
+#include <cstddef>
+#include <vector>
 
 namespace odh {
 struct RouteMovement {std::uint64_t tick;std::int16_t entity;EntityPosition position;};
+// Enumerates the bounded offset lattice used by the pinned FreeSO
+// VMSlotParser for ranged type-3 SLOTs. This is only candidate generation:
+// it does not filter by distance, room, direction, floor, walls, occupancy,
+// scoring, or establish original The Sims 1 semantics.
+std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
+    const SlotTable&,std::size_t type3_index,std::size_t candidate_limit=4096);
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {

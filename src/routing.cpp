@@ -1,6 +1,7 @@
 #include "odh/routing.hpp"
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <stdexcept>
 
 namespace odh {
@@ -12,6 +13,43 @@ std::uint8_t heading(RoutePoint from,RoutePoint to) {
     return 0;
 }
 PrimitiveOutcome unsupported(const std::string& why) {return {PrimitiveDisposition::unsupported,why};}
+}
+std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
+    const SlotTable& table,std::size_t type3_index,std::size_t candidate_limit) {
+    const auto* slot=slot_of_type(table,3,type3_index);
+    if(table.version!=10 || !slot || !slot->proximity || !slot->resolution)
+        throw std::invalid_argument("reference SLOT lattice requires a version-10 type-3 slot with range fields");
+    const auto min_proximity=(*slot->proximity)[0];
+    const auto raw_max_proximity=(*slot->proximity)[1];
+    const auto max_proximity=raw_max_proximity==0?min_proximity:raw_max_proximity;
+    const auto resolution=*slot->resolution;
+    if(min_proximity<0 || max_proximity<0 || max_proximity<min_proximity || resolution<=0 ||
+       raw_max_proximity==min_proximity)
+        throw std::invalid_argument("reference SLOT lattice requires a valid ranged proximity profile");
+    if(candidate_limit==0) throw std::invalid_argument("reference SLOT lattice candidate budget is zero");
+
+    // VMSlotParser computes the last lattice coordinate by truncating the
+    // maximum proximity to a whole resolution step, then visits x outer/y
+    // inner, both inclusive. Distance, room and SLOT flags are applied later.
+    const auto bound=(static_cast<std::int64_t>(max_proximity)/resolution)*resolution;
+    const auto steps=static_cast<std::uint64_t>(bound/resolution);
+    const auto axis=steps*2U+1U;
+    if(axis>candidate_limit || axis>candidate_limit/axis)
+        throw std::length_error("reference SLOT lattice exceeds candidate budget");
+    const auto count=static_cast<std::size_t>(axis*axis);
+    std::vector<RoutePoint> offsets;
+    offsets.reserve(count);
+    for(std::uint64_t x_index=0;x_index<axis;++x_index) {
+        const auto x=-bound+static_cast<std::int64_t>(x_index)*resolution;
+        for(std::uint64_t y_index=0;y_index<axis;++y_index) {
+            const auto y=-bound+static_cast<std::int64_t>(y_index)*resolution;
+            if(x<std::numeric_limits<std::int32_t>::min() || x>std::numeric_limits<std::int32_t>::max() ||
+               y<std::numeric_limits<std::int32_t>::min() || y>std::numeric_limits<std::int32_t>::max())
+                throw std::length_error("reference SLOT lattice coordinate exceeds int32");
+            offsets.push_back({static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)});
+        }
+    }
+    return offsets;
 }
 bool Routing::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
