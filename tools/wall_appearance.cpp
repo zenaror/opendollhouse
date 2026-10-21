@@ -5,6 +5,7 @@
 #include "odh/room_map.hpp"
 #include "odh/room_obstacles.hpp"
 #include "odh/saved_collision_candidates.hpp"
+#include "odh/saved_avatar_place_discovery.hpp"
 #include "odh/saved_room_route_grid.hpp"
 #include "odh/saved_slot_goal_selection.hpp"
 #include "odh/saved_room_boundary_audit.hpp"
@@ -160,6 +161,9 @@ void emit_route_grid_diagnostic(
        floor.state==odh::SavedFloorPlacementState::allowed&&wall.state==odh::WallRaycastState::clear;
   const auto selection=odh::assess_saved_slot_goal_selection(slots,slot_type3_index,rooms,actor_id,
       {candidate.position.x,candidate.position.y,actor->position->level,0},entities,groups,true);
+  const auto avatar_place=odh::discover_saved_avatar_place_blockers(
+      {candidate.position.x,candidate.position.y,actor->position->level,actor->position->direction},
+      actor_id,entities,groups,true,true);
   switch(selection.state){
    case odh::SavedSlotGoalSelectionState::snapshot_clear:++selection_clear;break;
    case odh::SavedSlotGoalSelectionState::object_overlap_rejected:++selection_object_overlap;break;
@@ -187,7 +191,25 @@ void emit_route_grid_diagnostic(
   out<<",\"object_overlaps\":"<<selection.object_overlaps<<",\"avatar_overlaps\":"<<selection.avatar_overlaps
    <<",\"related_entity_id\":";
   if(selection.blocker)out<<*selection.blocker;else out<<"null";
-  out<<"},\"route_search_goal\":"<<(route_search_goal?"true":"false")<<'}';
+  out<<"},\"saved_entity_overlap_audit\":{\"evidence\":\"saved_entity_footprint_snapshot_only\",\"status\":"
+   <<json_bytes(odh::saved_avatar_place_discovery_status_name(avatar_place.status))
+   <<",\"reason\":"<<json_bytes(odh::saved_avatar_place_discovery_reason_name(avatar_place.reason))
+   <<",\"runtime_obstacle_inventory_complete\":false,\"candidate_count\":"<<avatar_place.entities_examined
+   <<",\"possible_entity_overlaps\":[";
+  for(std::size_t blocker_index=0;blocker_index<avatar_place.entity_snapshot_blockers.size();++blocker_index){
+   if(blocker_index)out<<',';
+   const auto& blocker=avatar_place.entity_snapshot_blockers[blocker_index];
+   out<<"{\"id\":"<<blocker.blocker_id<<",\"kind\":"
+    <<json_bytes(blocker.overlap.blocker_kind==odh::AvatarPlaceBlockerKind::avatar?"avatar":"object")
+    <<",\"same_multitile_group\":"<<(blocker.overlap.same_multitile_group?"true":"false")<<'}';
+  }
+  const auto audit_status=avatar_place.entity_snapshot_rule_audit.status;
+  const char* audit_name=audit_status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":
+   audit_status==odh::SavedAvatarPlaceAuditStatus::blocked?"blocked":"unsupported";
+  out<<"],\"rule_audit_status\":"<<json_bytes(audit_name)
+   <<",\"rule_audit_pairs\":"<<avatar_place.entity_snapshot_rule_audit.pair_classifications
+   <<",\"rule_audit_final_blocker\":"<<avatar_place.entity_snapshot_rule_audit.final_blocker_id
+   <<",\"runtime_clearance\":false},\"route_search_goal\":"<<(route_search_goal?"true":"false")<<'}';
   if(route_search_goal)goals.push_back(candidate.position);
  }
  out<<"],\"goal_selection_counts\":{\"snapshot_clear\":"<<selection_clear

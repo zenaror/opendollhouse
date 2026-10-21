@@ -51,6 +51,11 @@ Uma [grade candidata de rota por sala](saved-room-route-grid-validation.md)
 combina pertencimento geométrico e obstáculos fornecidos em um orçamento
 limitado; RoomObs/WallObs têm geradores separados e runtime/portas ainda
 impedem usar a grade como clearance.
+O diagnóstico House07 agora também liga cada ponto SLOT à descoberta ordenada
+de overlaps de footprints de entidades e ao classificador de GetAvatarPlace
+([evidência e limites](saved-avatar-place-discovery-validation.md)); BHAVs,
+obstáculos estáticos/dinâmicos registrados e clearance runtime continuam
+pendentes.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
