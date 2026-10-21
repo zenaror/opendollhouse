@@ -115,7 +115,7 @@ para as salas 1–5; com inventário completo, todos têm
 `routing_clearance` segue false. Isso valida leitura e junção estática da
 instalação/save, não abertura runtime, colisões completas ou movimento de Sims.
 
-### Árvore BHAV do Portal15 (2026-10-21)
+### Árvore BHAV do Portal15 e binding semiglobal (2026-10-21)
 
 `odh-bhav Objects.far Doors.iff 4105` decodifica estaticamente a ação Portal15
 presente nos membros. A rotina chama os BHAVs privados 4112, 4113, 8197, 4162,
@@ -125,14 +125,33 @@ BHAVs privados diretamente referenciados (4112, 4113, 4162, 4106 e 4107)
 existem no asset `Doors.iff`; a inspeção de 4113 confirma o código dos dois
 Route45.
 
-O ID 8197 pertence ao escopo semiglobal pelo particionamento atual de IDs,
-mas o GLOB128 de `Doors.iff` ainda não foi ligado a uma entrada semiglobal
-explícita. Tentar `Global.far/Global.iff` não correspondeu ao nome declarado
-pelo recurso proprietário, então essa chamada permanece sem resolução. Os
-operandos dos Route45 e os efeitos das outras chamadas não foram interpretados
-nem executados. Assim, isto mostra uma ligação estrutural entre Portal15 e
-rotinas de rota, mas não valida o ciclo de travessia, estados de porta, mutação
-de sala ou equivalência com o jogo.
+O `GLOB128` Pascal de `Doors.iff` declara `DoorGlobals`; a entrada correspondente
+é `DoorGlobals.iff` em `Global.far`. O vínculo pode ser conferido sem executar
+o código:
+
+```sh
+./odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' \
+  Doors.iff 4105 --semiglobal \
+  '../referencias/The Sims/GameData/Global/Global.far' DoorGlobals.iff
+./odh-bhav '../referencias/The Sims/GameData/Global/Global.far' \
+  DoorGlobals.iff 8197
+```
+
+No asset ligado, 8197 tem versão `0x8001`, sem metadata, e uma expressão
+(`opcode=2`, `op=5`) com escopo 7/literal 0 como origem e escopo 9/argumento 0
+como destino; no mapeamento atual de `Vm::expression`, op 5 atribui o literal
+zero ao argumento 0 e retorna true. A versão `0x8001` sem metadata não é
+executável pelo perfil bounded atual, que exige BHAV `0x8002`; essa leitura
+descreve a estrutura e o mapeamento ODH, não prova o efeito observável no jogo.
+
+O FreeSO pinado em `f86bbd34b2112296ed786741f640a0535886d180`, arquivo
+`VMRoutingFrame.cs`, documenta a sequência de sala: calcular a cadeia de
+portais, chamar EP15 do próximo portal e aguardar seu retorno; retorno falso
+descarta aquele portal e recalcula a rota. A rotina `Doors.iff:4113` conter dois
+Route45 é compatível com essa função de portal. Não conhecemos ainda o
+significado dos operandos de Route45 em 4113, nem os efeitos dos demais BHAVs
+4105; nenhum deles foi executado aqui. Isso não valida travessia, estado de
+porta, mutação de sala ou equivalência com o jogo.
 
 Na amostra 2026-10-20, `--route-grid-diagnostic 105 128` colocou Bob (105) e o
 alvo salvo 128 na sala geométrica 3. A grade candidata ficou `ready` com

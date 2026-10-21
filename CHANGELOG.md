@@ -32,8 +32,11 @@ validação indicados por versão.
 
 - A inspeção estática da ação Portal15 `Doors.iff:4105` encontrou chamada à
   rotina privada 4113, que contém dois opcodes Route45. A árvore também chama
-  outros BHAVs privados; a dependência semiglobal 8197 permanece sem binding
-  GLOB128 resolvido. Não foram inferidos operandos nem efeitos runtime.
+  outros BHAVs privados. O `GLOB128=DoorGlobals` resolve 8197 em
+  `Global.far/DoorGlobals.iff`; a rotina antiga atribui literal zero ao
+  argumento 0 no mapeamento atual do decoder, mas não tem metadata 0x8002 e não
+  foi executada. A documentação também relaciona esse fluxo ao contrato
+  Portal15/child-route do FreeSO pinado, sem afirmar equivalência runtime.
 
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
