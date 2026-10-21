@@ -23,9 +23,10 @@ Na chegada aplica facing/person data37 e conclui o ticket uma vez.
 Cada entidade mantém `static_footprint` como estado runtime separado da posição
 salva. No perfil Simitone fixado, a caminhada torna o footprint do avatar
 dinâmico antes do primeiro passo; saída ou cancelamento do job o torna estático
-novamente. Rotas turn-only não iniciam caminhada. Isso prepara o dado necessário
-para reconciliar `RoomInfo`, mas o índice de obstáculos ainda não é atualizado
-por `World` e o caminho Main ainda não fornece uma clearance runtime. A mesma
+novamente. Rotas turn-only não iniciam caminhada. `World` não retém um índice
+RoomInfo; `query_world_room_info` reconstrói os obstáculos do estado vivo a cada
+consulta e falha fechada se os dados relevantes mudarem durante os resolvers.
+O caminho Main ainda não alimenta essa consulta na clearance da rota. A mesma
 transição ainda precisa de confirmação contra o executável original.
 Proveniência: Simitone fixado, submódulo FreeSO
 `f86bbd34b2112296ed786741f640a0535886d180`,

@@ -77,6 +77,55 @@ int main() {
                     query.intersections[1].owner_id == 3,
                 "query returns live obstacles in the requested room sorted by owner ID");
 
+        // Exercise a sequence of live mutations between independent queries.
+        // RoomInfo is rebuilt on demand, so every next snapshot must reflect
+        // the current World and must not retain an old membership or footprint.
+        const auto live_timeout = [&](std::int16_t id, std::uint64_t generation)
+            -> std::optional<std::int32_t> {
+            const auto* entity = world.find(id);
+            return entity && entity->generation == generation ? entity->kill_timeout : std::nullopt;
+        };
+        require(world.declare_object_word(2, 8, 1U << 2), "live HasZeroExtent toggle");
+        query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
+                                          2, {33, 9, 47, 23}, 1);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.size() == 1 && query.intersections[0].owner_id == 3,
+                "next query observes a live HasZeroExtent change");
+        require(world.declare_object_word(2, 8, 0), "restore live collision flags");
+        require(world.attach(3, 0, 2), "move live obstacle into a container");
+        query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
+                                          2, {33, 9, 47, 23}, 1);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.size() == 1 && query.intersections[0].owner_id == 3,
+                "next query omits an attached obstacle");
+        require(world.detach(3, 0), "release live obstacle from its container");
+        query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
+                                          2, {33, 9, 47, 23}, 1);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.size() == 2 && query.intersections[0].owner_id == 2,
+                "next query restores a detached obstacle");
+        require(world.remove(2) && world.create(2, odh::EntityKind::object, {0, 0, 1}) &&
+                    world.define_type(2, 100) && world.declare_object_word(2, 8, 0) &&
+                    world.set_position(2, {40, 16, 1, 0}),
+                "replace live obstacle using a new World generation");
+        query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
+                                          2, {33, 9, 47, 23}, 1);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.size() == 2 && query.intersections[0].owner_id == 2,
+                "next query indexes a recreated entity with the reused ID");
+        require(world.set_avatar_kill_timeout(1, 0), "mark live avatar as dying");
+        query = odh::query_world_room_info(world, defs, room_for, live_timeout,
+                                          1, {13, 13, 19, 19}, 99);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.empty(),
+                "next query removes a dying avatar obstacle");
+        require(world.set_avatar_kill_timeout(1, -1), "revive live avatar obstacle");
+        query = odh::query_world_room_info(world, defs, room_for, live_timeout,
+                                          1, {13, 13, 19, 19}, 99);
+        require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    query.intersections.size() == 1 && query.intersections[0].owner_id == 1,
+                "next query restores an alive avatar obstacle");
+
         const auto unknown_avatar = [](std::int16_t, std::uint64_t) -> std::optional<std::int32_t> { return {}; };
         query = odh::query_world_room_info(world, defs, room_for, unknown_avatar,
                                           1, {13, 13, 19, 19}, 1);

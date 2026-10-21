@@ -98,3 +98,10 @@ same live flags/LevelOffset; it returned no RoomInfo intersections. The empty
 list describes only this avatar box against the current World snapshot. It does
 not account for removing the avatar's old static footprint, architecture
 obstacles, portals or movement between candidate and commit.
+
+The synthetic World test now also runs repeated queries through live flag toggles,
+container attach/detach, ID removal/reuse with a new generation, and avatar
+kill-timeout death/revival. It checks that each next query rebuild reflects the
+mutation; it does not add a persistent obstacle cache. `world_room_info` reports
+38 checks. This validates the query adapter's snapshot contract only, not VM
+placement decisions or live movement on the original engine.

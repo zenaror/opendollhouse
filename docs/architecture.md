@@ -62,7 +62,9 @@ movimento e reclassificação owner-keyed dos footprints estáticos/dinâmicos;
 continua sem política completa de clearance.
 `World::Entity::static_footprint` representa a classe runtime da entidade e
 `Routing` troca o ator para dinâmico no primeiro passo, restaurando-o ao sair
-da rota conforme o perfil Simitone fixado. Isso ainda não atualiza o índice.
+da rota conforme o perfil Simitone fixado. O índice RoomInfo não é persistido:
+cada consulta o reconstrói a partir do World vivo, mas o caminho de clearance
+da rota ainda não chama essa consulta.
 [`query_world_room_info`](world-room-info-validation.md) reconstrói o índice
 diretamente do World antes de cada consulta, usando resolvers explícitos para
 salas e KillTimeout de avatares. O saved-world preview pode consultar o avatar
