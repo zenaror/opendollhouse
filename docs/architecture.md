@@ -67,10 +67,11 @@ cada consulta o reconstrói a partir do World vivo, mas o caminho de clearance
 da rota ainda não chama essa consulta.
 [`query_world_room_info`](world-room-info-validation.md) reconstrói o índice
 diretamente do World antes de cada consulta, usando resolvers explícitos para
-salas e KillTimeout de avatares. O saved-world preview pode consultar o avatar
-selecionado usando mapa de sala congelado derivado da arquitetura preparada e
-estado live do World; o resultado é diagnóstico de footprints apenas. A API
-ainda não alimenta GetAvatarPlace, Route45 ou Snap46.
+salas e KillTimeout de avatares. O saved-world preview consulta candidatos
+usando mapa de sala congelado e estado live do World; o auditor classifica
+somente overlap entre entidades usando flags e IDs de EntryPoint. Não executa
+EntryPoint 5 BHAV, não avalia arquitetura/portais nem decide a posição final.
+A API ainda não alimenta Route45 ou Snap46.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta

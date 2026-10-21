@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Adaptador de auditoria para política de sobreposição entre entidades de um
+  `World` restaurado: resolve flags e EntryPoints vinculados, preserva
+  inventário incompleto como unsupported e respeita a parada sequencial por
+  EP26 sem consultar bloqueadores posteriores. O teste sintético cobre também
+  esse curto-circuito. O CLI informa apenas uma auditoria de sobreposição de
+  entidades, não uma decisão final de colocação; BHAVs EP5 e obstáculos de
+  arquitetura/portais continuam fora do escopo. Consulte
+  `docs/world-avatar-place-audit-validation.md`.
 - Módulo puro `odh_saved_avatar_place_overlap` modela uma regra limitada de
   sobreposição de `GetAvatarPlace`: grupo multitile, exceção/tri-state de
   EntryPoint 5, flags de interseção e preferência de parada de EntryPoint 26.

@@ -22,6 +22,7 @@
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
 #include "odh/world_room_info.hpp"
+#include "odh/world_avatar_place_audit.hpp"
 #include "odh/floor_placement.hpp"
 #include "odh/route_geometry.hpp"
 #include "animation_catalog.hpp"
@@ -31,6 +32,7 @@
 #include "saved_appearance.hpp"
 #include "saved_resources.hpp"
 #include "saved_interactions.hpp"
+#include "saved_wall_appearance.hpp"
 #include "saved_lot_renderer.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
@@ -467,6 +469,28 @@ int main(int argc,char** argv) {
         if(saved==records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
             throw odh::FormatError("selected saved World entity is not the matching person resource");
         restored_world=odh::make_saved_world(records,*definition_index,neighbors?&*neighbors:nullptr);
+        // Bind the exact immutable OBJD/OBJf tables to every restored entity.
+        // This is static metadata only; action function IDs are not BHAV results.
+        std::map<std::uint32_t,std::vector<odh::EntryPoint>> entry_point_cache;
+        for(const auto& record:records){
+            const auto id=static_cast<std::int16_t>(record.saved.object_id);
+            const auto* entity=restored_world->world->find(id);
+            if(!entity||!entity->definition||entity->definition->guid!=record.saved.guid)
+                throw odh::FormatError("saved World EntryPoint entity identity unavailable");
+            auto cached=entry_point_cache.find(entity->definition->guid);
+            if(cached==entry_point_cache.end()){
+                if(entry_point_cache.size()>=256)
+                    throw odh::FormatError("saved World EntryPoint definition cache budget exceeded");
+                const auto* candidate=definition_index->unique(entity->definition->guid);
+                if(!candidate)throw odh::FormatError("saved World EntryPoint definition unavailable or ambiguous");
+                auto resource=saved_entry_point_resource(*candidate);
+                if(resource.chunk_id!=candidate->chunk_id||resource.table.entries.size()>256)
+                    throw odh::FormatError("saved World EntryPoint resource identity or size invalid");
+                cached=entry_point_cache.emplace(entity->definition->guid,std::move(resource.table.entries)).first;
+            }
+            if(!restored_world->world->define_entry_points(id,cached->second))
+                throw odh::FormatError("saved World EntryPoint binding exceeds World limits");
+        }
         runtime_avatar_id=static_cast<std::int16_t>(*render_saved_id);
         const auto* restored_avatar=restored_world->world->find(runtime_avatar_id);
         if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
@@ -696,6 +720,7 @@ struct PlacementCandidateProbe {
     std::optional<odh::FloorPlacementResult> floor_result;
     std::string floor_reason;
     std::optional<odh::RoomInfoObstacleQuery> query;
+    std::optional<odh::WorldAvatarPlaceAuditResult> overlap_audit;
     std::string room_info_reason;
 };
     std::optional<RenderEvidence> render_evidence;
@@ -1086,6 +1111,24 @@ struct PlacementCandidateProbe {
                         };
                         probe.query=odh::query_world_room_info(world,*definition_index,room_for,kill_timeout_for,
                             *probe.room, *probe.box,runtime_avatar_id);
+                        const auto same_saved_group=[&](std::int16_t actor_id,std::int16_t blocker_id)
+                            ->std::optional<bool>{
+                            if(!restored_world)return std::nullopt;
+                            for(const auto& group:restored_world->multitile_groups){
+                                bool actor_member=false,blocker_member=false;
+                                for(const auto member:group.members){
+                                    actor_member=actor_member||member==actor_id;
+                                    blocker_member=blocker_member||member==blocker_id;
+                                }
+                                if(actor_member&&blocker_member)return true;
+                                if(actor_member||blocker_member)return false;
+                            }
+                            return false;
+                        };
+                        // A preview has no explicit place-request flags. The reference default
+                        // is zero, so AllAvatarsSolid=false; this remains overlap-only.
+                        probe.overlap_audit=odh::audit_world_avatar_place_overlaps(
+                            world,runtime_avatar_id,*probe.query,false,same_saved_group);
                     }
                 }
                 placement_candidate_probe=std::move(probe);
@@ -1139,7 +1182,7 @@ struct PlacementCandidateProbe {
         std::cout<<"{\"source\":"<<json_bytes(table.source==odh::EntryPointSource::objd_legacy?"OBJD138 generated33":"OBJf matching OBJD chunk ID")
             <<",\"version\":"<<table.version<<",\"remaining_bytes\":"<<table.remaining_bytes<<",\"entries\":[";
         for(std::size_t n=0;n<table.entries.size();++n){if(n)std::cout<<',';std::cout<<"{\"condition\":"<<table.entries[n].condition<<",\"action\":"<<table.entries[n].action<<'}';}
-        std::cout<<"]}";
+        std::cout<<']'<<'}';
     }else std::cout<<"null";
     std::cout<<",\"family_activation\":";
     if(active_family){const auto& v=*active_family;
@@ -1410,7 +1453,7 @@ struct PlacementCandidateProbe {
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
     if(placement_candidate_probe){
         const auto& probe=*placement_candidate_probe;
-        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_candidate_floor_and_RoomInfo_only\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":false,\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
+        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_candidate_floor_RoomInfo_and_entity_overlap_policy_only\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":false,\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
             <<",\"position\":["<<probe.position.x<<','<<probe.position.y<<','<<probe.position.level<<','<<unsigned(probe.position.direction)<<']'
             <<",\"inside_lot\":"<<(probe.inside_lot?"true":"false")<<",\"room\":";
         if(probe.room)std::cout<<*probe.room;else std::cout<<"null";
@@ -1440,7 +1483,21 @@ struct PlacementCandidateProbe {
                 <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
                 <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
         }
-        std::cout<<"]}";
+        std::cout<<']';
+        if(probe.overlap_audit){
+            const auto& audit=*probe.overlap_audit;
+            const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":
+                audit.rules.status==odh::SavedAvatarPlaceAuditStatus::blocked?"blocked":"unsupported";
+            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bound_EntryPoint_ids\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":false,\"status\":"<<json_bytes(status)
+                <<",\"reason\":"<<json_bytes(odh::world_avatar_place_audit_reason_name(audit.reason))
+                <<",\"pair_classifications\":"<<audit.rules.pair_classifications
+                <<",\"final_blocker_id\":"<<audit.rules.final_blocker_id
+                <<",\"early_stop_known\":";
+            if(audit.rules.early_stop_known)std::cout<<(*audit.rules.early_stop_known?"true":"false");
+            else std::cout<<"null";
+            std::cout<<'}';
+        }
+        std::cout<<'}';
     }else if(placement_candidate)std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"unavailable\",\"reason\":"
         <<json_bytes(placement_candidate_probe_unavailable)<<'}';
     std::cout<<",\"render\":";

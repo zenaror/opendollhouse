@@ -79,10 +79,12 @@ executado com acesso autorizado ao display.
 candidate position against the prepared lot and the post-tick live World. It
 reports the candidate room and radius-3 avatar box, `FloorChangeValid` inputs
 from the unique avatar definition and live `ObjectData[8]`, plus the current
-RoomInfo intersections. It does not move the avatar, execute a BHAV, remove the
-avatar from its current static footprint, evaluate final placement policy, or
-claim route clearance. An unavailable floor, room, definition, or live flags
-remains unknown/unsupported rather than being inferred from the save snapshot.
+RoomInfo intersections. A later `entity_overlap_policy_audit` field composes
+that list with the live World flags and restored EntryPoint IDs. The probe does
+not move the avatar, execute a BHAV, remove the avatar from its current static
+footprint, evaluate final placement policy, or claim route clearance. An
+unavailable floor, room, definition, or live flags remains unknown/unsupported
+rather than being inferred from the save snapshot.
 
 House07 was queried at tick 214 for candidate `(392,440,1,3)`. It resolved room
 3, precise floor 6, live placement flags 8 and avatar `LevelOffset` 0;
@@ -98,6 +100,17 @@ same live flags/LevelOffset; it returned no RoomInfo intersections. The empty
 list describes only this avatar box against the current World snapshot. It does
 not account for removing the avatar's old static footprint, architecture
 obstacles, portals or movement between candidate and commit.
+
+After binding EntryPoint tables to the restored entities, both candidate probes
+also report `entity_overlap_policy_audit`. For `(392,440,1,3)`, RoomInfo returned
+only avatar 105's static footprint; the audit skipped the actor's own ID and
+classified zero blocker pairs. For `(400,440,1,3)`, the intersection list was
+empty and the audit also classified zero pairs. Both report `allowed` only for
+the entity-overlap subset with Default `AllAvatarsSolid=false`; top-level
+`placement_decision` remains `not_evaluated`. The group relation comes from the
+restored save snapshot; the World does not yet model runtime group mutation.
+The complete contract and synthetic coverage are in
+[`world-avatar-place-audit-validation.md`](world-avatar-place-audit-validation.md).
 
 The synthetic World test now also runs repeated queries through live flag toggles,
 container attach/detach, ID removal/reuse with a new generation, and avatar

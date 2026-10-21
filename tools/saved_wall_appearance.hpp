@@ -56,7 +56,11 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
         }
     };
     if(candidate.asset.empty()) with_iff_file(candidate.source,load);
-    else with_far_entry(candidate.source,candidate.asset,load);
+    else {
+        // Match the bounded FAR inventory used while building DefinitionIndex.
+        odh::Limits far_limits;far_limits.far_entries=8192;far_limits.far_name_bytes=256*1024;
+        with_far_entry(candidate.source,candidate.asset,load,far_limits);
+    }
     if(!functions||!table) throw odh::FormatError("entry-point probe function table unavailable");
     return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,std::move(bhavs)};
 }
