@@ -117,6 +117,23 @@ e `main_movement_integrated` permanecem false. Com RoughBalanced habilitado,
 esta reexecução somou 4.402 unidades de trabalho. A ordem de entidades continua
 sendo a sequência owner-ID do snapshot ODH.
 
+### Ordem de `RoomInfo.Entities`
+
+No Simitone fixado, `VMContext.RegeneratePortalInfo` percorre `VM.Entities` e
+usa `VM.AddToObjList` para inserir cada entidade no room. `AddToObjList`
+mantém a lista em ordem crescente de `ObjectID` (`VM.cs:488-504`), e
+`VMRoutingFrame.AttemptWalk` percorre essa lista diretamente (`VMRoutingFrame.cs:361-379`).
+O `World` ODH também itera por ID crescente (`World::next_entity`, baseado no
+`std::map`); `world_attempt_walk` testa que a ordem independe da ordem de
+criação. O diagnóstico informa essa equivalência do algoritmo em
+`entity_iteration_order_matches_reference=true`.
+
+Isso prova somente a regra de ordenação. A equivalência do conjunto de entidades
+por room permanece `entity_order_matches_reference=false`, pois a composição
+runtime, os avatares considerados e o estado dinâmico das portas ainda não foram
+reconstruídos. `entity_obstacle_order_matches_reference` continua sendo uma
+checagem separada da ordem dos IDs que efetivamente viraram obstáculos.
+
 ## Validação
 
 O teste focal `rect_router` cobre corredor simples, passagem por aresta,

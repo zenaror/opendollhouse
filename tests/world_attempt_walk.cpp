@@ -88,6 +88,21 @@ bool set_attribute16(odh::World& world, std::int16_t actor_id,
 
 int main() {
     using namespace odh;
+    {
+        World ordered;
+        require(ordered.create(9, EntityKind::object) &&
+                ordered.create(2, EntityKind::avatar) &&
+                ordered.create(7, EntityKind::object),
+                "ordered World fixture accepts entities created out of ObjectID order");
+        std::vector<std::int16_t> ids;
+        auto cursor = std::int16_t{0};
+        while (const auto next = ordered.next_entity(cursor)) {
+            cursor = *next;
+            ids.push_back(cursor);
+        }
+        require(ids == std::vector<std::int16_t>{2, 7, 9},
+                "World entity iteration is ascending ObjectID independent of creation order");
+    }
     const auto defs = definitions();
     const auto rooms = room_map();
     const RoomObstacleCandidateSet room_obstacles{1, 0, true, {{70, 70, 75, 75}}};

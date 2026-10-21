@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O diagnóstico AttemptWalk separa a equivalência do algoritmo de ordenação
+  de `RoomInfo.Entities` da equivalência do conjunto runtime de entidades.
+  Simitone e `World` percorrem IDs em ordem crescente; um teste cobre criação
+  fora de ordem. A composição por sala, avatares considerados e estado dinâmico
+  de portas seguem sem validação.
+
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
   limite da sala e preservando o motivo de snapshots incompletos. Há uma

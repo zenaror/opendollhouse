@@ -2151,6 +2151,7 @@ struct PlacementCandidateProbe {
                 <<",\"room_obstacle_rectangles\":"<<attempt.room_obstacle_rectangles
                 <<",\"wall_obstacle_rectangles\":"<<attempt.wall_obstacle_rectangles
                 <<",\"roughbalanced_architecture_rectangles\":"<<attempt.roughbalanced_architecture_rectangles
+                <<",\"entity_iteration_order_matches_reference\":true"
                 <<",\"entity_order_matches_reference\":false"
                 <<",\"entity_obstacle_order_matches_reference\":"<<(attempt.entity_obstacle_order_matches_reference?"true":"false")
                 <<",\"obstacle_rectangles\":"<<snapshot.obstacles.size()
@@ -2169,7 +2170,7 @@ struct PlacementCandidateProbe {
                 probe.attempt_walk_lines->status==odh::RectRouteStatus::found;
             std::cout<<",\"attempt_walk_route_diagnostic\":{\"evidence\":\"live_World_AttemptWalk_snapshot_and_pinned_corridor_model\",\"goal_selection_validated\":false,\"optimize_lines_applied\":"<<(optimize_lines_applied?"true":"false")
                 <<",\"optimize_lines_evidence\":\"bounded_pinned_Simitone_geometry_only\",\"incoming_direction_supplied\":false,\"incoming_direction_context\":\"not_reconstructed\",\"incoming_direction_applied\":"<<(probe.attempt_walk_lines&&probe.attempt_walk_lines->incoming_direction_applied?"true":"false")
-                <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false,\"entity_order_matches_reference\":false,\"entity_obstacle_order_matches_reference\":"<<(probe.attempt_walk&&probe.attempt_walk->entity_obstacle_order_matches_reference?"true":"false")<<",\"status\":"
+                <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false,\"entity_iteration_order_matches_reference\":true,\"entity_order_matches_reference\":false,\"entity_obstacle_order_matches_reference\":"<<(probe.attempt_walk&&probe.attempt_walk->entity_obstacle_order_matches_reference?"true":"false")<<",\"status\":"
                 <<json_bytes(probe.attempt_walk_route_state)<<",\"destination\":["
                 <<probe.attempt_walk_destination->x<<','<<probe.attempt_walk_destination->y<<']';
             if(probe.attempt_walk_room_route){
