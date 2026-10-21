@@ -10,6 +10,10 @@
   New 3DS/Vita/Android (decisão humana de 2026-10-13). Seguir autonomamente em
   milestones, com testes e checkpoints. New 3DS segue orientando restrições
   arquiteturais; resultados Linux não validam consoles.
+- Nintendo Switch também é um possível alvo futuro de build, depois do Linux e
+  dos ports prioritários; toolchain, requisitos de distribuição e validação em
+  hardware ainda não foram confirmados. Windows e macOS (Apple Silicon e Intel)
+  também permanecem alvos futuros de build.
 - Consultar OMM no escopo `OpenDollhouse` nas retomadas. Ler o handoff antes de
   atualizar; usar o SHA atual em `expected_sha256`. Registrar revisão, checks,
   pendências e referências. Notas históricas de planejamento não revogam a
@@ -50,5 +54,5 @@
   alterar projetos e configurações do Open-GBP.
 - Rodar os checks adequados ao código alterado e atualizar a documentação de
   cobertura. Não instalar dependências sem necessidade técnica demonstrada.
-- Nesta etapa não há testes de 3DS, Vita ou Android. Não declarar esses ports
-  funcionais a partir do build Linux.
+- Nesta etapa não há testes de 3DS, Vita, Android ou Switch. Não declarar esses
+  ports funcionais a partir do build Linux.
