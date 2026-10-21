@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--avatar-id", type=int, default=105)
     parser.add_argument("--avatar-file", default="UserData/Characters/User00000.iff")
     parser.add_argument("--stack-object-id", type=int, default=18)
+    parser.add_argument("--mutation-entity-id", type=int, default=106)
     parser.add_argument("--ticks", type=int, default=214)
     return parser.parse_args()
 
@@ -98,11 +99,15 @@ def main():
     for path in architecture:
         command += ["--architecture-resource", str(path)]
 
-    def run(avatar_path, stack_object_id=None):
+    def run(avatar_path, stack_object_id=None, scheduled_move=None):
         invocation = command.copy()
         invocation[invocation.index("--avatar-file") + 1] = str(avatar_path)
         if stack_object_id is not None:
             invocation += ["--headless-stack-object", str(stack_object_id)]
+        if scheduled_move is not None:
+            entity_id, position, tick = scheduled_move
+            invocation += ["--headless-move-entity", str(entity_id),
+                           *(str(value) for value in position), str(tick)]
         result = subprocess.run(invocation, check=False, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if not result.stdout.strip():
@@ -115,9 +120,15 @@ def main():
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
         patch_root_with_route45(original_avatar, probe_avatar, root_id)
         exit_code, report = run(probe_avatar, args.stack_object_id)
+        movement_positions = report["route_runtime"]["movement_positions"]
+        if len(movement_positions) < 2:
+            raise SystemExit("successful House07 route produced fewer than two movement samples")
+        scheduled_move = (args.mutation_entity_id, movement_positions[1], 2)
+        blocked_code, blocked_report = run(probe_avatar, args.stack_object_id, scheduled_move)
 
     route = report["route_runtime"]
     start, end = route["start_position"], route["end_position"]
+    blocked_route = blocked_report["route_runtime"]
     evidence = {
         "main_routine": root_id,
         "baseline_exit": baseline_code,
@@ -125,6 +136,9 @@ def main():
         "vm_status": report["status"],
         "ticks": report["ticks"],
         "route_runtime": route,
+        "obstacle_mutation_exit": blocked_code,
+        "obstacle_mutation_vm_status": blocked_report["status"],
+        "obstacle_mutation": blocked_route,
     }
     print(json.dumps(evidence, indent=2))
     if (exit_code != 0 or report["status"] != "returned_true" or
@@ -134,6 +148,14 @@ def main():
             route["snapshot_refresh_policy"] != "on_world_spatial_revision_change" or
             not route["dynamic_obstacle_refresh"] or route["active"] or start == end):
         raise SystemExit("House07 Route45 integration probe failed its movement/ticket checks")
+    if (blocked_code != 0 or blocked_report["status"] != "returned_false" or
+            blocked_route["movement_callbacks"] != 1 or
+            blocked_route["snapshot_refreshes"] < 2 or
+            not blocked_route["scheduled_world_mutation_applied"] or
+            blocked_route["active"] or
+            blocked_route["end_position"] != blocked_route["movement_positions"][0] or
+            blocked_route["diagnostic"] != "next segment blocked during route"):
+        raise SystemExit("House07 moving-obstacle probe failed to refresh and cancel the blocked route")
 
 
 if __name__ == "__main__":

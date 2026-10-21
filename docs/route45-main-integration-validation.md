@@ -17,10 +17,12 @@ python3 tests/house07_route45_integration.py \
 
 The default saved avatar is object 105, and the default StackObject is object
 18. Both can be changed with `--avatar-id` and `--stack-object-id` when the
-local House07 save uses different IDs. Success requires a returned-true VM,
-at least one Route45 movement callback, a completed route ticket, and changed
-avatar coordinates. The JSON output reports the exact route host state and the
-number of live obstacle snapshots refreshed before movement ticks.
+local House07 save uses different IDs. The probe first requires Route45 to
+return true after moving the avatar. It then repeats the run with a scheduled
+move of another avatar into the next route cell. That run must refresh the
+obstacle grid, stop before entering the occupied cell, and return false. The
+JSON output reports both runs, movement positions, ticket result, and refresh
+counts.
 
 This is a synthetic BHAV integration test using real external lot, architecture,
 global SLOT100, and object-definition resources. It verifies that the Main VM
@@ -28,5 +30,7 @@ dispatches Route45 through the host scheduler and that movement updates the
 restored World. The runtime tracks a World spatial revision and rebuilds the
 bounded same-room obstacle grid when relevant entity state changes; unchanged
 route steps reuse the current grid. The probe reports refresh count and policy
-alongside movement. It does not establish natural interaction behavior, portal
-traversal, or full-gameplay compatibility.
+alongside movement. The scheduled obstacle movement uses the explicit
+headless-only `--headless-move-entity ID X Y LEVEL DIRECTION TICK` test hook; it
+does not write any saved game data. These checks do not establish natural
+interaction behavior, portal traversal, or full-gameplay compatibility.

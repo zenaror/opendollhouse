@@ -191,6 +191,9 @@ int main(int argc,char** argv) {
     std::optional<odh::EntityPosition> placement_candidate;
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
     std::optional<std::int16_t> headless_stack_object;
+    struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
+    std::optional<HeadlessEntityMove> headless_entity_move;
+    bool headless_entity_move_applied=false;
     bool render_window=false,saved_world_main=false,headless_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
@@ -267,6 +270,15 @@ int main(int argc,char** argv) {
             if(value==0||value>32767)throw odh::FormatError("headless StackObject ID is outside the supported World range");
             headless_stack_object=static_cast<std::int16_t>(value);
         }
+        else if(option=="--headless-move-entity"&&!headless_entity_move&&n+6<argc){
+            const auto id=selector(argv[++n]);
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),direction=selector(argv[++n]),tick=selector(argv[++n]);
+            if(id==0||id>32767||x<0||x>32767||y<0||y>32767||level<1||level>2||direction>7||tick==0)
+                throw odh::FormatError("headless entity move is outside the supported World profile");
+            headless_entity_move=HeadlessEntityMove{static_cast<std::int16_t>(id),
+                {x,y,static_cast<std::uint8_t>(level),static_cast<std::uint8_t>(direction)},tick};
+        }
         else if(option=="--object-definition-entry"&&n+2<argc){
             if(definition_sources.size()>=person_definition_source_limit)throw odh::FormatError("definition source count exceeds bounded host profile");
             PersonDefinitionSource source;source.path=argv[++n];source.entry=argv[++n];
@@ -297,9 +309,10 @@ int main(int argc,char** argv) {
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||render_requested))||
        (headless_stack_object&&!headless_main)||
+       (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -682,6 +695,7 @@ int main(int argc,char** argv) {
     std::string route_runtime_state=saved_world_main?"unavailable":"not_applicable";
     std::string route_runtime_reason=saved_world_main?"runtime_route_context_not_prepared":"requires_saved_world_main";
     std::size_t route_runtime_movement_callbacks=0;
+    std::vector<odh::EntityPosition> route_runtime_movement_positions;
     std::size_t route_runtime_snapshot_refreshes=0;
     std::optional<std::uint64_t> route_runtime_spatial_revision;
     std::optional<odh::EntityPosition> route_runtime_start_position;
@@ -1197,14 +1211,26 @@ struct PlacementCandidateProbe {
         if(ticks>=ticks_limit||total_steps()>=10000||
            (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded))break;
         ++ticks;
+        if(headless_entity_move&&!headless_entity_move_applied&&ticks==headless_entity_move->tick){
+            const auto* moving_entity=world.find(headless_entity_move->id);
+            if(!moving_entity||!moving_entity->position||
+               !world.set_position(headless_entity_move->id,headless_entity_move->position)){
+                host_failed=true;
+                host_diagnostic="headless scheduled entity move rejected";
+                break;
+            }
+            headless_entity_move_applied=true;
+        }
         if(runtime_routing&&runtime_routing->active()){
             if(!refresh_route_obstacles()){
                 host_failed=true;
                 host_diagnostic=route_runtime_reason;
                 break;
             }
-            const bool route_ok=runtime_routing->tick(ticks,[&](const odh::RouteMovement&){
+            const bool route_ok=runtime_routing->tick(ticks,[&](const odh::RouteMovement& movement){
                 ++route_runtime_movement_callbacks;
+                if(route_runtime_movement_positions.size()<128)
+                    route_runtime_movement_positions.push_back(movement.position);
             });
             route_runtime_spatial_revision=world.spatial_revision();
             if(!route_ok&&runtime_routing->active()){
@@ -1733,6 +1759,23 @@ struct PlacementCandidateProbe {
     if(route_runtime_actor&&route_runtime_actor->position)std::cout<<'['<<route_runtime_actor->position->x<<','
         <<route_runtime_actor->position->y<<','<<route_runtime_actor->position->level<<','
         <<static_cast<unsigned>(route_runtime_actor->position->direction)<<']';
+    else std::cout<<"null";
+    std::cout<<",\"movement_positions\":[";
+    for(std::size_t i=0;i<route_runtime_movement_positions.size();++i){
+        if(i)std::cout<<',';
+        const auto& position=route_runtime_movement_positions[i];
+        std::cout<<'['<<position.x<<','<<position.y<<','<<position.level<<','
+            <<static_cast<unsigned>(position.direction)<<']';
+    }
+    std::cout<<"],\"movement_positions_truncated\":"
+        <<(route_runtime_movement_callbacks>route_runtime_movement_positions.size()?"true":"false")
+        <<",\"scheduled_world_mutation_applied\":"
+        <<(headless_entity_move_applied?"true":"false")
+        <<",\"scheduled_world_mutation\":";
+    if(headless_entity_move)std::cout<<"{\"entity\":"<<headless_entity_move->id<<",\"tick\":"
+        <<headless_entity_move->tick<<",\"position\":["<<headless_entity_move->position.x<<','
+        <<headless_entity_move->position.y<<','<<static_cast<unsigned>(headless_entity_move->position.level)<<','
+        <<static_cast<unsigned>(headless_entity_move->position.direction)<<"]}";
     else std::cout<<"null";
     std::cout<<",\"diagnostic\":";
     if(runtime_routing&&!runtime_routing->diagnostic().empty())std::cout<<json_bytes(runtime_routing->diagnostic());
