@@ -203,6 +203,7 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     result.object_tested_samples=objects.composite.tested_samples;
     result.object_shaded_samples=objects.composite.shaded_samples;
     image=std::move(objects.composite.image);
+    result.ground_pick_ids=std::move(image.owner_ids);
     result.image=std::move(image);return result;
 }
 
@@ -238,11 +239,11 @@ std::optional<SavedGroundSelection> SavedLotRenderer::pick_ground(
     const auto count=std::uint64_t{frame.pick_width}*frame.pick_height;
     if(!frame.pick_width||!frame.pick_height||frame.pick_width>2048||frame.pick_height>2048||
        count>1048576||frame.image.width!=frame.pick_width||frame.image.height!=frame.pick_height||
-       count!=frame.image.owner_ids.size())
+       count!=frame.ground_pick_ids.size())
         throw odh::FormatError("live saved ground pick buffer invalid");
     if(x<0||y<0||static_cast<std::uint32_t>(x)>=frame.pick_width||
        static_cast<std::uint32_t>(y)>=frame.pick_height)return {};
-    const auto token=frame.image.owner_ids[std::size_t(y)*frame.pick_width+static_cast<std::uint32_t>(x)];
+    const auto token=frame.ground_pick_ids[std::size_t(y)*frame.pick_width+static_cast<std::uint32_t>(x)];
     const auto cell=odh::decode_ground_owner(token);
     if(!cell||cell->x+1>=render_architecture().width||
        cell->y+1>=render_architecture().height||cell->level>view_.level||!runtime_rooms_)return {};

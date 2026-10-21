@@ -44,6 +44,7 @@ struct SavedLotFrame {
     odh::RasterFrame image;
     std::uint32_t pick_width=0,pick_height=0;
     std::vector<std::uint16_t> object_pick_ids; // <=1Mi pixels, zero is scenery.
+    std::vector<std::uint16_t> ground_pick_ids; // Separate so the display image can be moved.
     std::uint64_t floor_draws=0,floor_triangles=0,floor_texture_bytes=0;
     std::uint64_t terrain_triangles=0,terrain_reserved_bytes=0;
     std::uint64_t wall_layers=0,wall_junctions=0,wall_cached_frame_bytes=0;

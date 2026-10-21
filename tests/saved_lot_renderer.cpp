@@ -181,26 +181,26 @@ int main(){try{
  SavedLotMaterialOptions material_options;
  SavedLotRenderer pick_renderer(pick_architecture(),saved,definitions,path.string(),{},view,material_options);
  const auto pick_frame=pick_renderer.render(camera,empty,true);
- check(pick_frame.image.owner_ids.size()==empty.pixels.size());
- check(pick_frame.image.owner_ids[painted]==odh::ground_owner_id(1,1,1));
+ check(pick_frame.image.owner_ids.empty()&&pick_frame.ground_pick_ids.size()==empty.pixels.size());
+ check(pick_frame.ground_pick_ids[painted]==odh::ground_owner_id(1,1,1));
  const auto floor_pick=pick_renderer.pick_ground(pick_frame,static_cast<std::int32_t>(painted%camera.width),
                                                 static_cast<std::int32_t>(painted/camera.width));
  check(floor_pick&&floor_pick->x==1&&floor_pick->y==1&&floor_pick->level==1);
  check(floor_pick->room==*pick_renderer.runtime_room_at({24,24,1,0}));
- std::size_t terrain_pixel=pick_frame.image.owner_ids.size();
- for(std::size_t i=0;i<pick_frame.image.owner_ids.size();++i)
-  if(pick_frame.image.owner_ids[i]==odh::ground_owner_id(2,1,1)){terrain_pixel=i;break;}
- check(terrain_pixel<pick_frame.image.owner_ids.size());
+ std::size_t terrain_pixel=pick_frame.ground_pick_ids.size();
+ for(std::size_t i=0;i<pick_frame.ground_pick_ids.size();++i)
+  if(pick_frame.ground_pick_ids[i]==odh::ground_owner_id(2,1,1)){terrain_pixel=i;break;}
+ check(terrain_pixel<pick_frame.ground_pick_ids.size());
  const auto terrain_pick=pick_renderer.pick_ground(pick_frame,static_cast<std::int32_t>(terrain_pixel%camera.width),
                                                    static_cast<std::int32_t>(terrain_pixel/camera.width));
  check(terrain_pick&&terrain_pick->x==2&&terrain_pick->y==1&&terrain_pick->level==1);
  check(!pick_renderer.pick_ground(pick_frame,-1,0));
- auto malformed_ground_pick=pick_frame;malformed_ground_pick.image.owner_ids.pop_back();
+ auto malformed_ground_pick=pick_frame;malformed_ground_pick.ground_pick_ids.pop_back();
  rejects([&]{pick_renderer.pick_ground(malformed_ground_pick,0,0);});
  auto foreground=empty;foreground.depth[painted]=ground.image.depth[painted]-1;foreground.pixels[painted]={255,0,0,255};foreground.tested_samples=foreground.shaded_samples=1;
  auto composed=renderer.render(camera,foreground);check(composed.image.pixels[painted]==foreground.pixels[painted]);
  auto pick_foreground=foreground;const auto occluded=pick_renderer.render(camera,pick_foreground,true);
- check(occluded.image.owner_ids[painted]==0&&!pick_renderer.pick_ground(occluded,
+ check(occluded.ground_pick_ids[painted]==0&&!pick_renderer.pick_ground(occluded,
        static_cast<std::int32_t>(painted%camera.width),static_cast<std::int32_t>(painted/camera.width)));
  auto behind=foreground;behind.depth[painted]=ground.image.depth[painted]+1;
  check(renderer.render(camera,behind).image.pixels[painted]==ground.image.pixels[painted]);

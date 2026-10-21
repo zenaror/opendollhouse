@@ -49,12 +49,12 @@ janela ou controles.
 O modo `--render-window` apresenta samples sucessivos do mesmo Playback/VM em
 uma janela X11 opcional. `P` pausa, as setas giram a câmera, `+`/`-` ajustam
 zoom e Escape fecha. A taxa de 25 Hz serve apenas para apresentação e não está
-calibrada ao tempo original; no caminho com lote o clique seleciona um objeto,
-mas ainda não executa interação. Este host não tem servidor
-X acessível: a tentativa terminou com `X11: cannot open DISPLAY`. Portanto o
-caminho compila, mas a janela ainda precisa de validação visual em uma sessão
-X11 ativa. A compilação sem X11 também foi verificada e a opção retorna
-diagnóstico claro de backend ausente.
+calibrada ao tempo original. No preview House07, um clique selecionou a célula
+do chão; Space iniciou Go Here e, após cerca de um minuto, o avatar andou até o
+ponto escolhido. Consulte [interaction-validation.md](interaction-validation.md)
+para os detalhes e limites do teste. Os eventos foram enviados diretamente à
+janela; não houve movimento do cursor físico. A compilação sem X11 também foi
+verificada e a opção retorna diagnóstico claro de backend ausente.
 
 ## Execução com dados originais
 
@@ -277,6 +277,12 @@ Isso valida clique, apresentação da opção, ciclo unitário e enfileiramento
 pela janela. Não valida a escolha entre várias ações elegíveis nem a conclusão
 da ação; a enumeração de várias linhas e o mapeamento Tab/Shift+Tab também têm
 testes automatizados separados.
+
+Em outra sessão X11, clicar em um pixel de piso selecionou `(23,26)`, level 1,
+room 3; Space colocou Go Here na fila. Após manter a janela aberta por cerca de
+um minuto, a ação terminou e o avatar chegou ao tile escolhido. A entrega do
+clique e tecla foi sintética e direcionada à janela, percorrendo o código de
+seleção e a fila do app.
 
 `composite_sprites` pode registrar opcionalmente `owner_ids` uint16 no próprio
 passe que compara depth e escreve cor. Alpha zero não grava ID, fragmentos

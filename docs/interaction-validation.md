@@ -231,9 +231,10 @@ adapter aceita agora esse formato exato de operandos, além do perfil anterior;
 As duas instalações têm a mesma tabela/rotina Go Here nessa leitura estrutural.
 
 O caminho de execução agora cria um destino temporário 0x7C4 com os bancos
-iniciais que a rotina precisa, enfileira a BHAV4096 real e remove o destino só
-quando a ação termina. No jogo, clicar no chão escolhe o ponto e Space/Enter
-solicita a caminhada; clicar em um objeto mantém a interação normal.
+iniciais que a rotina precisa, enfileira a BHAV4096 real e remove o destino ao
+terminar ou quando o host interrompe a sessão. No jogo, clicar no chão escolhe
+o ponto e Space/Enter solicita a caminhada; clicar em um objeto mantém a
+interação normal.
 
 Validação reproduzível com os arquivos locais do jogo:
 
@@ -244,12 +245,21 @@ python3 tests/house07_route45_integration.py \
   --go-here 27 26 1 --ticks 214
 ```
 
-O resultado observado foi BHAV4096 retornando `true`; o avatar saiu de
+No modo sem janela, BHAV4096 retornou `true`; o avatar saiu de
 `[392,440]` e chegou ao centro do tile escolhido `[440,424]` após 48 passos.
-O destino temporário foi removido ao final. Essa prova usa os recursos
-comerciais locais somente para leitura, mas o pedido é agendado pelo modo de
-diagnóstico sem janela: ainda não é uma captura visual do clique natural. O
-perfil coberto é uma caminhada no mesmo cômodo e andar; destinos bloqueados,
+O destino temporário foi removido ao final. Em uma janela X11 do próprio
+OpenDollhouse, um clique sintético enviado diretamente ao app em (190,125)
+selecionou o chão `(23,26)`, cômodo 3. Space enfileirou o pedido. A janela
+precisou ficar aberta por cerca de um minuto para o Main concluir a ação: o
+avatar saiu de `[392,440,1,3]`, andou 16 passos até `[376,424,1,7]`, BHAV4096
+retornou `true`, a fila ficou vazia e o destino temporário foi removido. Duas
+tentativas anteriores foram encerradas após cerca de nove segundos, cedo demais
+para esse teste lento. Os eventos foram enviados diretamente à janela, sem
+mover o cursor físico.
+
+Esse teste da janela revelou que o mapa de seleção do chão era perdido quando
+a imagem era transferida para a tela. O mapa agora fica guardado à parte e os
+testes de seleção confirmam que sobrevive à transferência. Destinos bloqueados,
 cancelamento e escadas continuam pendentes.
 
 ## Integração Sit/Stand em House07
