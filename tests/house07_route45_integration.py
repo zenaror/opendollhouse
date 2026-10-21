@@ -25,6 +25,12 @@ def parse_args():
                         help="diagnose opcode27 against the restored StackObject and live route grid")
     parser.add_argument("--portal-id", type=int,
                         help="schedule saved Portal15 on a restored House07 portal, using the original Main")
+    parser.add_argument("--go-here", nargs=3, type=int, metavar=("TILE_X", "TILE_Y", "LEVEL"),
+                        help="schedule saved Destination GUID 0x7C4 BHAV4096 at a ground tile, using the original Main")
+    parser.add_argument("--go-here-expect-status",
+                        choices=("returned_true", "returned_false", "tick_limit", "host_failed", "vm_fault"),
+                        default="returned_true",
+                        help="expected terminal state for --go-here diagnostics")
     parser.add_argument("--second-route-room-refresh", action="store_true",
                         help="run synthetic Main: reach StackObject26, then validate two Route45 SLOT orders on room 1's refreshed grid")
     parser.add_argument("--cross-room-entrypoint", action="store_true",
@@ -113,12 +119,15 @@ def main():
     if not 1 <= args.ticks <= 4096:
         raise SystemExit("ticks must be in 1..4096")
     if sum((args.literal_slot, args.goto_relative, args.portal_id is not None,
-            args.second_route_room_refresh, args.cross_room_entrypoint)) > 1:
+            args.second_route_room_refresh, args.cross_room_entrypoint,
+            args.go_here is not None)) > 1:
         raise SystemExit("route diagnostic modes are mutually exclusive")
     if (args.second_route_room_refresh or args.cross_room_entrypoint) and args.stack_object_id != 26:
         raise SystemExit("the House07 portal route modes require --stack-object-id 26")
     if args.expect_route_goal is not None and args.portal_id is None:
         raise SystemExit("--expect-route-goal requires --portal-id")
+    if args.expect_route_goal is not None and args.go_here is not None:
+        raise SystemExit("--expect-route-goal cannot be combined with --go-here")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -174,6 +183,8 @@ def main():
                            *(str(value) for value in position), str(tick)]
         if args.portal_id is not None:
             invocation += ["--headless-portal", str(args.portal_id), "1"]
+        if args.go_here is not None:
+            invocation += ["--headless-go-here", *(str(value) for value in args.go_here), "1"]
         profile = os.environ.get("ODH_PROFILE_STARTUP")
         if profile:
             print(f"[house07-probe] starting odh-person with ODH_PROFILE_STARTUP={profile}",
@@ -188,6 +199,39 @@ def main():
 
     baseline_code, baseline = run(original_avatar)
     root_id = baseline["avatar"]["main"]
+    if args.go_here is not None:
+        go_here = baseline.get("go_here_runtime") or {}
+        route = baseline.get("route_runtime") or {}
+        destination = [args.go_here[0] * 16 + 8, args.go_here[1] * 16 + 8,
+                       args.go_here[2]]
+        end = route.get("end_position") or []
+        print(json.dumps({
+            "probe_exit": baseline_code,
+            "vm_status": baseline.get("status"),
+            "host_failed": baseline.get("host_failed"),
+            "go_here": go_here,
+            "route_runtime": {key: route.get(key) for key in (
+                "state", "start_position", "end_position", "active",
+                "movement_callbacks", "diagnostic")},
+            "evidence": "House07 restored World and original Main; saved Destination BHAV4096; temporary UI-only marker",
+        }, indent=2))
+        expected_status = args.go_here_expect_status
+        successful = expected_status == "returned_true"
+        if (go_here.get("status") != expected_status or
+                go_here.get("marker_alive") is not False or
+                go_here.get("action") != 4096 or
+                (successful and (baseline_code != 0 or baseline.get("host_failed") or
+                                 go_here.get("result") is not True or
+                                 go_here.get("end_position", [])[:3] != destination or
+                                 route.get("active") or route.get("movement_callbacks", 0) <= 0 or
+                                 len(end) < 3 or end[:3] != destination or
+                                 route.get("diagnostic") is not None)) or
+                (expected_status == "returned_false" and go_here.get("result") is not False) or
+                (expected_status == "tick_limit" and
+                 (baseline_code == 0 or go_here.get("end_position") != go_here.get("start_position") or
+                  route.get("movement_callbacks", 0) != 0))):
+            raise SystemExit(f"House07 Go Here did not reach expected state {expected_status}")
+        return
     if args.portal_id is not None:
         portal_definition = next((record for record in baseline.get("saved_definition_records", [])
                                   if record.get("object_id") == args.portal_id), None)

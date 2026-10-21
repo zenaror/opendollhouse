@@ -30,6 +30,30 @@ int main() {
         require(spatial.set_static_footprint(1,false) && spatial.spatial_revision()>spatial_revision,
                 "changing an entity footprint advances spatial revision");
 
+        odh::World ui_ghosts;
+        require(ui_ghosts.create(1,odh::EntityKind::avatar) &&
+                    ui_ghosts.create(2,odh::EntityKind::object) &&
+                    ui_ghosts.create(3,odh::EntityKind::object) &&
+                    ui_ghosts.define_type(2,0x7c4) && ui_ghosts.define_type(3,0x7c4) &&
+                    ui_ghosts.set_position(1,{24,24,1,0}) &&
+                    ui_ghosts.set_position(2,{24,24,1,0}) &&
+                    ui_ghosts.set_position(3,{24,24,1,0}) &&
+                    ui_ghosts.set_ui_ghost(2,true),
+                "temporary UI destination fixture setup");
+        auto ghost_revision=ui_ghosts.spatial_revision();
+        require(ui_ghosts.find(2)->ui_ghost && ui_ghosts.set_ui_ghost(2,true) &&
+                    ui_ghosts.spatial_revision()==ghost_revision &&
+                    ui_ghosts.next_entity(1)==std::optional<std::int16_t>{3} &&
+                    ui_ghosts.next_entity(1,odh::EntityKind::object)==std::optional<std::int16_t>{3} &&
+                    ui_ghosts.next_entity_of_guid(1,0x7c4)==std::optional<std::int16_t>{3} &&
+                    ui_ghosts.next_entity_on_same_tile(1)==std::optional<std::int16_t>{3},
+                "UI-only ghost remains directly addressable but stays out of object searches");
+        require(ui_ghosts.set_ui_ghost(2,false) &&
+                    ui_ghosts.next_entity(1)==std::optional<std::int16_t>{2} &&
+                    ui_ghosts.next_entity_of_guid(1,0x7c4)==std::optional<std::int16_t>{2} &&
+                    ui_ghosts.next_entity_on_same_tile(1)==std::optional<std::int16_t>{2},
+                "restoring a normal entity makes it visible to object searches");
+
         odh::World w;
         require(w.create(1,odh::EntityKind::avatar,{2,88,1}),"create avatar");
         require(w.find(1)->kill_timeout==std::optional<std::int32_t>{-1} &&

@@ -230,14 +230,27 @@ adapter aceita agora esse formato exato de operandos, além do perfil anterior;
 `distance_to` testa que o resultado compara posições distintas corretamente.
 As duas instalações têm a mesma tabela/rotina Go Here nessa leitura estrutural.
 
-Isto ainda não liga o clique no chão à ação. Uma sonda de BHAV4096 com World
-sintético passou por opcode11 após receber Flags8=256, mas depois encontrou
-ObjectData17 do caller ausente. Portanto, criar um World object vazio não é
-suficiente; o próximo passo precisa construir o marcador com os bancos iniciais
-que Simitone prepara e mantê-lo vivo até o retorno da fila. A prova de opcode27
-em House07 é separada: `tests/house07_route45_integration.py --goto-relative`
-moveu o avatar em 48 passos até o alvo com o grid dinâmico da casa, mas usou
-Main sintético e um alvo já salvo; não comprova ainda o caminho natural Go Here.
+O caminho de execução agora cria um destino temporário 0x7C4 com os bancos
+iniciais que a rotina precisa, enfileira a BHAV4096 real e remove o destino só
+quando a ação termina. No jogo, clicar no chão escolhe o ponto e Space/Enter
+solicita a caminhada; clicar em um objeto mantém a interação normal.
+
+Validação reproduzível com os arquivos locais do jogo:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-build-go-here/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --go-here 27 26 1 --ticks 214
+```
+
+O resultado observado foi BHAV4096 retornando `true`; o avatar saiu de
+`[392,440]` e chegou ao centro do tile escolhido `[440,424]` após 48 passos.
+O destino temporário foi removido ao final. Essa prova usa os recursos
+comerciais locais somente para leitura, mas o pedido é agendado pelo modo de
+diagnóstico sem janela: ainda não é uma captura visual do clique natural. O
+perfil coberto é uma caminhada no mesmo cômodo e andar; destinos bloqueados,
+cancelamento e escadas continuam pendentes.
 
 ## Integração Sit/Stand em House07
 

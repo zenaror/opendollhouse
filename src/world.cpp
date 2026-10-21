@@ -59,7 +59,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
         std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),
-        {},{},{},std::int16_t{-1},true,std::nullopt});
+        {},{},{},std::int16_t{-1},true,false,std::nullopt});
     if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     words_ += count;
     mark_spatial_change();
@@ -93,7 +93,7 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     Entity candidate{id,kind,attributes,person_data,std::vector<std::int16_t>(slots),{},
         {},{},generation,EntityType{guid,master_guid},motives,{},{},
         SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1},
-        true,std::nullopt};
+        true,false,std::nullopt};
     for (std::int16_t index=0;index<68;++index)
         if (!derived(index)) candidate.object_words.emplace(index,object_data[static_cast<std::size_t>(index)]);
     entities_.emplace(id,std::move(candidate));
@@ -109,17 +109,17 @@ const Entity* World::find(std::int16_t id) const {
 }
 std::optional<std::int16_t> World::next_entity_of_guid(std::int16_t current,std::uint32_t guid) const {
     for(auto it=entities_.upper_bound(current);it!=entities_.end();++it)
-        if(it->second.definition && it->second.definition->guid==guid)return it->first;
+        if(!it->second.ui_ghost&&it->second.definition&&it->second.definition->guid==guid)return it->first;
     return {};
 }
 std::optional<std::int16_t> World::next_entity(std::int16_t current,std::optional<EntityKind> kind) const {
     for(auto it=entities_.upper_bound(current);it!=entities_.end();++it)
-        if(!kind || it->second.kind==*kind)return it->first;
+        if(!it->second.ui_ghost&&(!kind || it->second.kind==*kind))return it->first;
     return {};
 }
 std::optional<std::int16_t> World::next_entity_on_same_tile(std::int16_t current) const {
     const auto* anchor=find(current);
-    if(!anchor||!anchor->position||anchor->position->x<0||anchor->position->y<0||
+    if(!anchor||anchor->ui_ghost||!anchor->position||anchor->position->x<0||anchor->position->y<0||
        anchor->position->level<1||anchor->position->level>2)return {};
     const auto tile=[](std::int32_t coordinate){
         return coordinate>=0?coordinate/16:-static_cast<std::int32_t>((-static_cast<std::int64_t>(coordinate)+15)/16);
@@ -132,6 +132,7 @@ std::optional<std::int16_t> World::next_entity_on_same_tile(std::int16_t current
     std::optional<std::int16_t> first,after;
     bool anchor_present=false;
     for(const auto& [id,entity]:entities_){
+        if(entity.ui_ghost)continue;
         if(!same_tile(entity))continue;
         if(!first)first=id;
         if(id==current)anchor_present=true;
@@ -217,6 +218,12 @@ bool World::set_static_footprint(std::int16_t id, bool is_static) {
     const auto found=entities_.find(id);
     if(found==entities_.end()) return false;
     if(found->second.static_footprint!=is_static){found->second.static_footprint=is_static;mark_spatial_change();}
+    return true;
+}
+bool World::set_ui_ghost(std::int16_t id,bool is_ghost) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end())return false;
+    if(found->second.ui_ghost!=is_ghost){found->second.ui_ghost=is_ghost;mark_spatial_change();}
     return true;
 }
 bool World::set_avatar_kill_timeout(std::int16_t id, std::int32_t value) {

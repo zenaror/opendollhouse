@@ -46,6 +46,9 @@ struct Entity {
     // Runtime RoomInfo collection state. Simitone starts entities static and
     // changes routed avatars dynamically while walking; this is not save data.
     bool static_footprint=true;
+    // UI-only ghost objects can be addressed directly (for example as a
+    // temporary Go Here target) but must not appear in VM object enumeration.
+    bool ui_ghost=false;
     // New VM avatars start alive. Death/leave controllers may update this;
     // absent state remains possible for imported profiles that cannot prove it.
     std::optional<std::int32_t> kill_timeout;
@@ -110,6 +113,7 @@ public:
     bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_static_footprint(std::int16_t id, bool is_static);
+    bool set_ui_ghost(std::int16_t id, bool is_ghost);
     bool set_avatar_kill_timeout(std::int16_t id, std::int32_t value);
     bool set_radian_direction(std::int16_t id, float radians);
     bool set_position(std::int16_t id, EntityPosition);
