@@ -1,4 +1,5 @@
 #include "odh/world_attempt_walk.hpp"
+#include "odh/entry_point5_readonly.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -28,13 +29,59 @@ bool setup(odh::World& world, std::uint16_t action = 0) {
     const std::vector<odh::EntryPoint> entries(6, {0, 0});
     auto actor_entries = entries; actor_entries[5].action = action;
     auto object_entries = entries; object_entries[5].action = action;
-    return world.create(1, odh::EntityKind::avatar, {0, 88, 1}) &&
+    return world.create(1, odh::EntityKind::avatar, {17, 88, 1}) &&
         world.define_type(1, 100) && world.declare_object_word(1, 8, 0) &&
         world.set_position(1, {32, 32, 1, 0}) &&
         world.define_entry_points(1, actor_entries) &&
-        world.create(2, odh::EntityKind::object, {0, 0, 1}) && world.define_type(2, 100) &&
+        world.create(2, odh::EntityKind::object, {17, 0, 1}) && world.define_type(2, 100) &&
         world.declare_object_word(2, 8, 0) && world.set_position(2, {50, 50, 1, 0}) &&
         world.define_entry_points(2, object_entries);
+}
+
+odh::Bhav allowlisted_ep5() {
+    odh::Instruction type_test{};
+    type_test.opcode = 32;
+    type_test.on_true = 1;
+    type_test.on_false = 0xff;
+    type_test.operands = {100, 0, 0, 0, 0, 0, 10, 0};
+
+    odh::Instruction attribute_test{};
+    attribute_test.opcode = 2;
+    attribute_test.on_true = 0xfe;
+    attribute_test.on_false = 0xff;
+    attribute_test.operands = {16, 0, 1, 0, 0, 2, 1, 7};
+
+    odh::Bhav bhav;
+    bhav.version = 0x8002;
+    bhav.metadata = odh::Bhav::Metadata{0, 0, 0, 2};
+    bhav.instructions = {type_test, attribute_test};
+    return bhav;
+}
+
+std::optional<bool> resolve_ep5(odh::World& world, const odh::Bhav& bhav,
+                                std::int16_t caller_id, std::int16_t stack_object_id) {
+    const auto* caller = world.find(caller_id);
+    const auto* stack_object = world.find(stack_object_id);
+    if (!caller || !caller->entry_points || caller->entry_points->size() <= 5 ||
+        !stack_object || !stack_object->definition)
+        return std::nullopt;
+    const auto action = (*caller->entry_points)[5].action;
+    const odh::VmFrame frame{odh::routine_key(4096), 0,
+        {caller_id, caller_id, stack_object_id, 0}, {}, {}};
+    const auto attribute16 = world.read(frame, 1, 16);
+    const auto evaluated = odh::evaluate_read_only_entry_point5(
+        action, bhav, stack_object->definition->guid,
+        stack_object->definition->master_guid, attribute16);
+    if (evaluated.state == odh::ReadOnlyEntryPoint5State::evaluated_true) return true;
+    if (evaluated.state == odh::ReadOnlyEntryPoint5State::evaluated_false) return false;
+    return std::nullopt;
+}
+
+bool set_attribute16(odh::World& world, std::int16_t actor_id,
+                     std::int16_t stack_object_id, std::int16_t value) {
+    const odh::VmFrame frame{odh::routine_key(4096), 0,
+        {actor_id, actor_id, stack_object_id, 0}, {}, {}};
+    return world.write(frame, 1, 16, value);
 }
 }
 
@@ -47,11 +94,16 @@ int main() {
     const RuntimeRoomResolver room_for = [](const EntityPosition&) -> std::optional<std::uint16_t> { return 1; };
     const AvatarKillTimeoutResolver timeout = [](std::int16_t, std::uint64_t) -> std::optional<std::int32_t> { return -1; };
 
+    const auto ep5 = allowlisted_ep5();
     World world;
-    require(setup(world, 300), "live World fixture includes actor and obstacle EntryPoint 5 tables");
+    require(setup(world, 4108), "live World fixture includes actor and obstacle EntryPoint 5 tables");
+    require(set_attribute16(world, 1, 1, 0) && set_attribute16(world, 1, 2, 0),
+        "synthetic EP5 fixture initializes both stack-object attribute values");
     auto result = build_world_attempt_walk_obstacles(world, defs, room_for, timeout,
         rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
-        [](std::int16_t, std::int16_t) -> std::optional<bool> { return false; });
+        [&](std::int16_t caller, std::int16_t stack_object) {
+            return resolve_ep5(world, ep5, caller, stack_object);
+        });
     require(result.state == AttemptWalkObstacleState::ready &&
         result.entity_obstacle_ids == std::vector<std::int16_t>{2} &&
         result.entry_point5_calls == 2,
@@ -60,16 +112,34 @@ int main() {
         "live AttemptWalk output combines wall, room, bands and expanded entity footprints");
 
     World exempt_world;
-    require(setup(exempt_world, 300), "EP5 callback fixture uses private actions");
+    require(setup(exempt_world, 4108), "EP5 integration fixture uses private actions");
+    require(set_attribute16(exempt_world, 1, 1, 1) &&
+            set_attribute16(exempt_world, 1, 2, 0),
+        "second pair's blocker EP5 sees attribute 16 on the avatar stack object");
     result = build_world_attempt_walk_obstacles(exempt_world, defs, room_for, timeout,
         rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
-        [](std::int16_t, std::int16_t) -> std::optional<bool> { return true; });
+        [&](std::int16_t caller, std::int16_t stack_object) {
+            return resolve_ep5(exempt_world, ep5, caller, stack_object);
+        });
     require(result.state == AttemptWalkObstacleState::ready &&
-        result.entity_obstacle_ids.empty() && result.exempted_by_entry_point5 == 1,
-        "live AttemptWalk retains bilateral EntryPoint 5 exemption semantics");
+        result.entity_obstacle_ids.empty() && result.exempted_by_entry_point5 == 1 &&
+        result.entry_point5_calls == 2,
+        "read-only BHAV result from the blocker is applied to the live RoomInfo footprint");
+
+    auto unsupported_ep5 = ep5;
+    unsupported_ep5.instructions[1].operands[5] = 5;
+    World unsupported_world;
+    require(setup(unsupported_world, 4108), "unsupported EP5 fixture has a live RoomInfo blocker");
+    result = build_world_attempt_walk_obstacles(unsupported_world, defs, room_for, timeout,
+        rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
+        [&](std::int16_t caller, std::int16_t stack_object) {
+            return resolve_ep5(unsupported_world, unsupported_ep5, caller, stack_object);
+        });
+    require(result.state == AttemptWalkObstacleState::unsupported && result.obstacles.empty(),
+        "unsupported EntryPoint BHAV fails closed without publishing partial obstacle state");
 
     World mutating_world;
-    require(setup(mutating_world, 300), "mutation fixture has private EntryPoint 5 actions");
+    require(setup(mutating_world, 4108), "mutation fixture has private EntryPoint 5 actions");
     result = build_world_attempt_walk_obstacles(mutating_world, defs, room_for, timeout,
         rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
         [&](std::int16_t, std::int16_t) -> std::optional<bool> {

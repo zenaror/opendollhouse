@@ -79,11 +79,21 @@ comparar os corredores bruto e otimizado.
 
 `world_attempt_walk` usa um World sintético para confirmar caixas live,
 aplicação da política/EP5 bilateral e invalidação quando uma callback muda o
-World durante a montagem. Os testes `odh-world-tests` e
+World durante a montagem. Além dos retornos simulados, o caso de integração
+constrói uma BHAV sintética no formato read-only permitido e a executa pelo
+avaliador real: o EP5 do ator retorna false para o objeto, o EP5 do bloqueador
+retorna true para o avatar e a pegada RoomInfo deixa de ser obstáculo. Outro
+caso altera a forma da BHAV e confirma `unsupported` sem publicar obstáculos
+parciais. Isto verifica o encadeamento adapter/política
+evaluator→callback→RoomInfo→AttemptWalk para essa forma sintética. Não exercita
+a recuperação/cache de BHAV comercial do callback de `odh-person`, não amplia o
+conjunto de BHAVs aceitas e não substitui a consulta House07 com o asset original.
+Os testes `odh-world-tests` e
 `odh-world-saved-bank-tests` também cobrem persistência do ângulo contínuo,
 derivação do notch e preservação dos bancos salvos. O teste focal passou. A
 build Debug completa em `/tmp/odh-attemptwalk-build` e o CTest passaram com
-158/158; `linux_window_backend` foi pulado por falta de X11 acessível.
+158/158 após adicionar esses casos; `linux_window_backend` foi pulado por falta
+de X11 acessível.
 
 ## Proveniência
 
@@ -92,3 +102,4 @@ O contrato base é descrito em
 e usa a referência Simitone fixada registrada ali. Esta integração adiciona
 dados observados do World ODH; não afirma comportamento runtime do executável
 original.
+caso de integração de adapter/política
