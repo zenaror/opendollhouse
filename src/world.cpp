@@ -422,9 +422,13 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
     return false;
 }
 VmMemory World::vm_memory() {
-    return {[this](const VmFrame& frame,std::uint8_t scope,std::int16_t index) { return read(frame,scope,index); },
-            [this](const VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value) {
-                return write(frame,scope,index,value);
-            }};
+    VmMemory memory;
+    memory.read=[this](const VmFrame& frame,std::uint8_t scope,std::int16_t index) {
+        return read(frame,scope,index);
+    };
+    memory.write=[this](const VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value) {
+        return write(frame,scope,index,value);
+    };
+    return memory;
 }
 } // namespace odh

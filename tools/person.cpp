@@ -618,6 +618,7 @@ int main(int argc,char** argv) {
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
+    const odh::GeometricRoomMap* vm_room_map=nullptr;
     const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
         std::map<std::uint16_t,odh::StringTable>{};
     profile_mark("tree-by-name-strings");
@@ -655,6 +656,9 @@ int main(int argc,char** argv) {
         if(!value)return {};
         if(tuning_reads.size()>=20000)throw odh::FormatError("tuning read log exceeds bounded host profile");
         tuning_reads.push_back(*value);return value->value;
+    };
+    memory.room_by_temp0=[&](const odh::VmFrame&,std::int16_t temp0,std::int16_t index)->std::optional<std::int16_t> {
+        return vm_room_map?odh::room_by_temp0_data(*vm_room_map,temp0,index):std::nullopt;
     };
     memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value){
         if(scope==6){
@@ -1351,6 +1355,7 @@ struct PlacementCandidateProbe {
         render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
             *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
     }
+    if(render_lot&&render_lot->runtime_room_map())vm_room_map=&*render_lot->runtime_room_map();
     if(saved_world_main){
         const auto* actor=world.find(runtime_avatar_id);
         if(!render_lot)route_runtime_reason="prepared_lot_renderer_required";
@@ -1376,11 +1381,11 @@ struct PlacementCandidateProbe {
                         runtime_route_grid.emplace(std::move(grid));
                         odh::PreRankedSlotGoalProvider range_slot_goals=[&](const auto& table,std::size_t index,
                             const auto& caller,const auto& target) {
-                            return odh::rank_reference_door_range_slot(table,index,caller,target,random);
+                            return odh::rank_reference_range_slot(table,index,caller,target,random);
                         };
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                             *shared.routing_slots);
-                        runtime_routing->set_door_range_goal_provider(std::move(range_slot_goals));
+                        runtime_routing->set_ranged_slot_goal_provider(std::move(range_slot_goals));
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
                             const auto* route_actor=world.find(frame.context.caller);
@@ -1397,12 +1402,8 @@ struct PlacementCandidateProbe {
                                 return false;
                             }
                             auto goal=*route_actor->position;goal.x=point.x;goal.y=point.y;
-                            const auto goal_room=render_lot->runtime_room_at(goal);
-                            if(!goal_room||*goal_room!=runtime_route_grid->room_id) {
-                                route_goal_validation_diagnostic="candidate room "+
-                                    (goal_room?std::to_string(*goal_room):std::string("unresolved"))+
-                                    " differs from prepared route room "+
-                                    std::to_string(runtime_route_grid->room_id);
+                            if(!runtime_route_grid->grid->walkable(point)) {
+                                route_goal_validation_diagnostic="candidate lies outside the prepared room grid or inside an obstacle";
                                 return false;
                             }
                             route_goal_validation_diagnostic.clear();
@@ -1420,9 +1421,8 @@ struct PlacementCandidateProbe {
             }
         }
     }
-    const auto refresh_route_obstacles=[&]() -> bool {
+    const auto refresh_route_obstacles=[&](bool preserve_local_room=false) -> bool {
         const auto revision=world.spatial_revision();
-        if(route_runtime_spatial_revision&&*route_runtime_spatial_revision==revision)return true;
         if(!runtime_route_grid||!runtime_route_grid->grid||!render_lot||!restored_world||!definition_index){
             route_runtime_reason="runtime_route_refresh_context_unavailable";
             return false;
@@ -1432,65 +1432,45 @@ struct PlacementCandidateProbe {
             route_runtime_reason="runtime_route_refresh_avatar_position_unavailable";
             return false;
         }
-        const auto room=render_lot->runtime_room_at(*actor->position);
-        if(!room||*room!=runtime_route_grid->room_id||
-           static_cast<std::uint8_t>(actor->position->level-1)!=runtime_route_grid->level){
-            route_runtime_reason="runtime_route_refresh_room_or_floor_changed";
+        // A local path was checked against this snapshot's complete obstacle
+        // domain. Geometric room labels can change inside its padded bounds;
+        // retain that domain until arrival, while still refreshing mutations.
+        const auto room=preserve_local_room
+            ? std::optional<std::uint16_t>{runtime_route_grid->room_id}
+            : render_lot->runtime_room_at(*actor->position);
+        if(!room){
+            route_runtime_reason="runtime_route_refresh_room_unresolved";
             return false;
         }
+        const auto level=static_cast<std::uint8_t>(actor->position->level-1);
+        if(*room==runtime_route_grid->room_id&&level==runtime_route_grid->level&&
+           route_runtime_spatial_revision&&*route_runtime_spatial_revision==revision)return true;
         const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
             render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
-            runtime_route_grid->level,runtime_avatar_id,true,{},resolve_read_only_ep5);
+            level,runtime_avatar_id,true,{},resolve_read_only_ep5);
         if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
             route_runtime_reason=std::string("runtime_route_refresh_snapshot_")+
                 odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
             return false;
         }
         auto updated=odh::build_world_room_route_grid(probe.snapshot);
+        if(updated.reason==odh::WorldRoomRouteGridReason::route_grid_over_budget){
+            // Large outdoor rooms need only a bounded local search domain.
+            // Preserve the complete room obstacle inventory and all budgets;
+            // candidate goals beyond this 16-tile window remain unavailable.
+            constexpr std::int32_t radius=128;
+            const auto x=actor->position->x,y=actor->position->y;
+            updated=odh::build_world_room_route_grid(probe.snapshot,{},
+                odh::WorldRoomRouteGridWindow{{x-radius,y-radius},{x+radius,y+radius}});
+        }
         if(updated.state!=odh::WorldRoomRouteGridState::ready||!updated.grid||
-           updated.room_id!=runtime_route_grid->room_id||updated.level!=runtime_route_grid->level){
+           updated.room_id!=*room||updated.level!=level){
             route_runtime_reason=std::string("runtime_route_refresh_grid_")+
                 odh::world_room_route_grid_reason_name(updated.reason);
             return false;
         }
         *runtime_route_grid->grid=std::move(*updated.grid);
-        runtime_route_grid->obstacle_rectangles=updated.obstacle_rectangles;
-        runtime_route_grid->rasterized_cells=updated.rasterized_cells;
-        runtime_route_grid->newly_blocked_cells=updated.newly_blocked_cells;
-        ++route_runtime_snapshot_refreshes;
-        route_runtime_spatial_revision=world.spatial_revision();
-        return true;
-    };
-    if(runtime_routing)runtime_routing->set_route_grid_refresh([&](const odh::EntityPosition& position) {
-        if(!runtime_route_grid||!runtime_route_grid->grid||!render_lot||!restored_world||!definition_index||
-           position.level<1||position.level>2||position.direction>7) {
-            route_runtime_reason="portal route-grid refresh context unavailable";
-            return false;
-        }
-        const auto room=render_lot->runtime_room_at(position);
-        if(!room) {
-            route_runtime_reason="portal route-grid refresh room unresolved";
-            return false;
-        }
-        const auto level=static_cast<std::uint8_t>(position.level-1);
-        if(*room==runtime_route_grid->room_id&&level==runtime_route_grid->level)
-            return refresh_route_obstacles();
-        const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
-            render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,level,
-            runtime_avatar_id,true,{},resolve_read_only_ep5);
-        if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready) {
-            route_runtime_reason=std::string("portal route-grid refresh snapshot_")+
-                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
-            return false;
-        }
-        auto updated=odh::build_world_room_route_grid(probe.snapshot);
-        if(updated.state!=odh::WorldRoomRouteGridState::ready||!updated.grid||
-           updated.room_id!=*room||updated.level!=level) {
-            route_runtime_reason=std::string("portal route-grid refresh grid_")+
-                odh::world_room_route_grid_reason_name(updated.reason);
-            return false;
-        }
-        *runtime_route_grid->grid=std::move(*updated.grid);
+        runtime_route_grid->windowed=updated.windowed;
         runtime_route_grid->room_id=updated.room_id;
         runtime_route_grid->level=updated.level;
         runtime_route_grid->obstacle_rectangles=updated.obstacle_rectangles;
@@ -1500,7 +1480,157 @@ struct PlacementCandidateProbe {
         route_runtime_spatial_revision=world.spatial_revision();
         route_runtime_reason.clear();
         return true;
+    };
+    if(runtime_routing)runtime_routing->set_route_grid_refresh([&](const odh::EntityPosition&) {
+        return refresh_route_obstacles();
     });
+    struct RuntimeRoomPortalContext {
+        std::vector<odh::IgnoredRoomPortal> ignored;
+        std::optional<odh::RoomPortalEdge> pending_edge;
+        std::optional<odh::VmCall> pending_call;
+        std::uint64_t portal_generation=0;
+    };
+    std::map<std::uint64_t,RuntimeRoomPortalContext> route_room_portal_contexts;
+    std::size_t route_room_portal_planned_calls=0,route_room_portal_returns=0;
+    std::size_t route_room_portal_transitions=0;
+    std::string route_room_portal_diagnostic;
+    if(runtime_routing){
+        runtime_routing->set_room_pair_provider([&](const odh::EntityPosition& actor,
+            const odh::EntityPosition& target)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
+            if(!render_lot)return std::nullopt;
+            const auto source=render_lot->runtime_room_at(actor);
+            const auto destination=render_lot->runtime_room_at(target);
+            if(!source||!destination)return std::nullopt;
+            return std::make_pair(*source,*destination);
+        });
+        runtime_routing->set_room_portal_context_end_provider([&](std::uint64_t ticket){
+            route_room_portal_contexts.erase(ticket);
+        });
+        runtime_routing->set_room_portal_step_provider([&](std::uint64_t ticket,
+            const odh::EntityPosition& actor,const odh::EntityPosition& target,
+            const std::optional<odh::VmCall>& previous_call,
+            const std::optional<bool>& previous_result,std::size_t portal_step)
+            ->odh::RoutePortalStepPlan {
+            const auto fail=[&](const std::string& reason){
+                route_room_portal_contexts.erase(ticket);
+                route_room_portal_diagnostic=reason;
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::unavailable,{},reason};
+            };
+            // Suspended parent services are represented by external VM frames;
+            // prune canceled contexts without dropping a nested Route45 parent.
+            for(auto entry=route_room_portal_contexts.begin();entry!=route_room_portal_contexts.end();){
+                const auto live=(vm.pending()&&vm.pending()->ticket==entry->first)||
+                    std::any_of(vm.stack().begin(),vm.stack().end(),[&](const auto& frame){
+                        return frame.return_mode==odh::VmCallReturnMode::external_frame_next_tick&&
+                            frame.invocation_ticket==entry->first;
+                    });
+                if(!live)entry=route_room_portal_contexts.erase(entry);else ++entry;
+            }
+            if(!ticket||portal_step>32||previous_call.has_value()!=previous_result.has_value())
+                return fail("room portal planner received invalid ticket, result, or step budget");
+            if(!render_lot||!render_lot->prepared_architecture()||!restored_world||!definition_index||
+               actor.level<1||actor.level>2||target.level<1||target.level>2)
+                return fail("room portal planner has no prepared live lot context");
+            const auto source_room=render_lot->runtime_room_at(actor);
+            const auto destination_room=render_lot->runtime_room_at(target);
+            if(!source_room||!destination_room)
+                return fail("room portal planner could not resolve actor or destination room");
+            auto context=route_room_portal_contexts.find(ticket);
+            if(!previous_call){
+                if(context!=route_room_portal_contexts.end()||portal_step!=0)
+                    return fail("room portal planner initial context was reused");
+                if(route_room_portal_contexts.size()>=16)
+                    return fail("room portal planner context budget exhausted");
+                context=route_room_portal_contexts.emplace(ticket,RuntimeRoomPortalContext{}).first;
+            }else{
+                if(context==route_room_portal_contexts.end()||!context->second.pending_edge||
+                   !context->second.pending_call)
+                    return fail("room portal planner has no matching pending edge");
+                const auto& edge=*context->second.pending_edge;
+                const auto& expected=*context->second.pending_call;
+                const auto* portal=world.find(edge.portal_id);
+                if(previous_call->key.scope!=expected.key.scope||previous_call->key.id!=expected.key.id||
+                   previous_call->context.caller!=expected.context.caller||
+                   previous_call->context.callee!=expected.context.callee||
+                   previous_call->context.stack_object!=expected.context.stack_object||
+                   previous_call->context.code_owner!=expected.context.code_owner||
+                   previous_call->arguments!=expected.arguments||
+                   previous_call->return_mode!=odh::VmCallReturnMode::ordinary||!portal||
+                   portal->generation!=context->second.portal_generation||!portal->position||
+                   !(*portal->position==edge.position))
+                    return fail("returned room portal changed its call or live edge identity");
+                ++route_room_portal_returns;
+                if(*previous_result){
+                    if(*source_room!=edge.target_room)
+                        return fail("Portal15 returned true without reaching its planned destination room");
+                    ++route_room_portal_transitions;
+                }else{
+                    if(context->second.ignored.size()>=32)
+                        return fail("room portal ignored-edge budget exhausted");
+                    const odh::IgnoredRoomPortal ignored{edge.portal_id,edge.target_room};
+                    if(std::none_of(context->second.ignored.begin(),context->second.ignored.end(),[&](const auto& item){
+                        return item.portal_id==ignored.portal_id&&item.target_room==ignored.target_room;
+                    }))context->second.ignored.push_back(ignored);
+                }
+                context->second.pending_edge.reset();context->second.pending_call.reset();
+            }
+            if(*source_room==*destination_room){
+                route_room_portal_contexts.erase(ticket);route_room_portal_diagnostic.clear();
+                return {odh::RoutePortalStepStatus::destination_reached,{},{}};
+            }
+            try {
+                const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+                    render_lot->architecture_resource(),*render_lot->prepared_architecture(),*source_room,
+                    static_cast<std::uint8_t>(actor.level-1),runtime_avatar_id,true,{},resolve_read_only_ep5);
+                if(!probe.portal_inventory_complete||probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
+                    return fail("room portal planner requires a complete live portal/obstacle inventory");
+                odh::RoomPortalInventory inventory;inventory.complete=probe.portal_inventory_complete;
+                inventory.edges=probe.portal_edges;
+                const auto route=odh::find_room_portal_route(inventory,*source_room,*destination_room,
+                    actor,target,context->second.ignored);
+                if(route.status!=odh::RoomPortalRouteStatus::found||route.portals.empty())
+                    return fail(std::string("room portal graph route ")+room_portal_route_status_name(route.status));
+                const auto edge=route.portals.front();
+                const auto* portal=world.find(edge.portal_id);
+                const auto record=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& item){
+                    return item.saved.object_id==static_cast<std::uint16_t>(edge.portal_id);
+                });
+                const auto* candidate=portal&&portal->definition?
+                    definition_index->unique(portal->definition->guid):nullptr;
+                if(!portal||!candidate||record==restored_records.end()||!portal->position||
+                   !(*portal->position==edge.position)||edge.source_room!=*source_room)
+                    return fail("planned room portal has no matching live saved resource identity");
+                if(!globals||globals->standalone)
+                    return fail("room portal requires an explicit Global.iff FAR resource");
+                const auto function=saved_portal_function(*candidate);
+                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,function.action);
+                auto owner=saved_portal_code_owners.find(owner_key);
+                if(owner==saved_portal_code_owners.end()&&saved_owner_ids_exhausted)
+                    return fail("room portal code-owner identity space exhausted");
+                const auto code_owner=owner==saved_portal_code_owners.end()?next_saved_code_owner:owner->second;
+                std::optional<SavedSemiglobalCodeBank> semiglobal_bank;
+                if(function.semiglobal_name)
+                    semiglobal_bank=load_saved_semiglobal_code_bank(globals->archive,*function.semiglobal_name+".iff");
+                // Main's default bank was loaded from this same exact resource.
+                // The plan verifies the transitive global/semiglobal dependencies.
+                const auto global_bank=load_saved_global_code_bank(globals->archive,globals->entry);
+                const auto plan=saved_portal_vm_call_plan(*record,world,*definition_index,runtime_avatar_id,
+                    edge.portal_id,code_owner,semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank);
+                if(owner==saved_portal_code_owners.end()){
+                    if(!install_saved_portal_vm_call_plan(vm,plan))
+                        return fail("Main VM rejected the planned Portal15 code owner at its safe point");
+                    if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                    else ++next_saved_code_owner;
+                    saved_portal_code_owners.emplace(owner_key,code_owner);
+                }
+                context->second.pending_edge=edge;context->second.pending_call=plan.call;
+                context->second.portal_generation=portal->generation;
+                ++route_room_portal_planned_calls;route_room_portal_diagnostic.clear();
+                return {odh::RoutePortalStepStatus::call_ready,plan.call,{}};
+            }catch(const std::exception& error){return fail(error.what());}
+        });
+    }
     snap_placement_validator=[&](std::int16_t actor_id,const odh::EntityPosition& destination){
         const auto* actor=world.find(actor_id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||destination.level<1||destination.level>2||
@@ -1756,7 +1886,7 @@ struct PlacementCandidateProbe {
             headless_entity_move_applied=true;
         }
         if(runtime_routing&&runtime_routing->active()){
-            if(!runtime_routing->external_frame_active()&&!refresh_route_obstacles()){
+            if(!runtime_routing->external_frame_active()&&!refresh_route_obstacles(true)){
                 host_failed=true;
                 host_diagnostic=route_runtime_reason;
                 break;
@@ -1766,7 +1896,13 @@ struct PlacementCandidateProbe {
                 if(route_runtime_movement_positions.size()<128)
                     route_runtime_movement_positions.push_back(movement.position);
             });
-            route_runtime_spatial_revision=world.spatial_revision();
+            // A local SLOT may cross the geometric room boundary. Rebuild the
+            // arrival-room grid before Main can select its next route.
+            if(!runtime_routing->active()){
+                if(!refresh_route_obstacles()){
+                    host_failed=true;host_diagnostic=route_runtime_reason;break;
+                }
+            }else route_runtime_spatial_revision=world.spatial_revision();
             if(!route_ok&&runtime_routing->active()){
                 host_failed=true;
                 host_diagnostic=runtime_routing->diagnostic().empty()?
@@ -1793,6 +1929,10 @@ struct PlacementCandidateProbe {
         }else if(headless_portal_applied&&headless_portal_status=="queued"&&host_failed){
             headless_portal_status="host_failed";headless_portal_diagnostic=host_diagnostic;
         }
+        // This mode diagnoses one scheduled Portal15 request. Stop at its
+        // terminal result so later Main instructions cannot overwrite the
+        // route diagnostic or append unrelated movement to the probe.
+        if(headless_portal_applied&&headless_portal_status!="queued")break;
         if(headless_stand_applied&&headless_stand_status=="queued"&&queue.completion()&&
            (!headless_stand_previous_completion||queue.completion()->uid!=*headless_stand_previous_completion)){
             headless_stand_result=queue.completion()->result;
@@ -2391,8 +2531,14 @@ struct PlacementCandidateProbe {
         <<",\"movement_callbacks\":"<<route_runtime_movement_callbacks
         <<",\"snapshot_refreshes\":"<<route_runtime_snapshot_refreshes
         <<",\"snapshot_refresh_policy\":\"on_world_spatial_revision_change\""
+        <<",\"grid_windowed\":"<<(runtime_route_grid&&runtime_route_grid->windowed?"true":"false")
         <<",\"active\":"<<(runtime_routing&&runtime_routing->active()?"true":"false")
-        <<",\"dynamic_obstacle_refresh\":true,\"cross_room_portal_execution\":false"
+        <<",\"dynamic_obstacle_refresh\":true,\"cross_room_portal_scheduler\":"<<(runtime_routing?"true":"false")
+        <<",\"cross_room_portal_execution\":"<<(route_room_portal_returns?"true":"false")
+        <<",\"portal_planned_calls\":"<<route_room_portal_planned_calls
+        <<",\"portal_returns\":"<<route_room_portal_returns
+        <<",\"portal_room_transitions\":"<<route_room_portal_transitions
+        <<",\"portal_planner_diagnostic\":"<<json_bytes(route_room_portal_diagnostic)
         <<",\"room_id\":";
     if(runtime_route_grid)std::cout<<runtime_route_grid->room_id;else std::cout<<"null";
     std::cout<<",\"floor\":";

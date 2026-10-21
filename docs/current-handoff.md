@@ -974,3 +974,98 @@ validador de sala/clearance; os testes unitários cobrem ambos. Build de
 `odh-person`/`odh-routing-tests`, CTest focal `routing` e `person_cli` passaram;
 o probe House07 com opcode27 agora termina sem falha de VM e reporta o mismatch
 de salas. Nenhuma travessia de portal foi executada.
+
+
+## Diagnóstico completo do retorno Portal26 (2026-10-21)
+
+O probe `tests/house07_route45_integration.py --portal-id 26 --ticks 214` agora
+para no resultado terminal da ação e mantém trace separado pelo CodeOwner do
+Portal15. Foram 49 instruções para `Doors.iff:4105`. A cadeia chega a
+`4105 pc2 → 4113 pc1 opcode45`; o Route45 retorna falso porque o validador
+recebe candidatos da sala1 enquanto a grade ativa é da sala3
+(`candidate room 1 differs from prepared route room 3`). `4105` retorna falso
+sem fault; ator termina em `[408,424,1,0]`, sem travessia. Portal25, a outra
+peça do par, falha antes de mover (`routing start or pre-ranked goal input
+invalid`) e deixa o ator em `[392,440,1,3]`. O código de processo 0 no teste da
+peça26 significa probe completado, não sucesso da ação. Esta prova é do ODH com
+House07 restaurado e ação host-scheduled, não interação natural nem resultado
+do executável original. Próxima dependência: integrar a cadeia de salas ao
+Route45/Portal15 e reconstruir a grade após a transição.
+
+## Route45 com planejamento diferido entre salas (2026-10-21)
+
+O Route45 agora tem uma fase suspensa por ticket raiz que consulta o inventário
+live de portais, resolve a rota no grafo, valida e agenda EntryPoint15, confirma
+a sala observada após o retorno e exige refresh da grade antes de continuar.
+Retornos falsos excluem a aresta direcionada `(portal, sala destino)` e
+recalculam a alternativa. Os contextos são limitados e preservam chamadas
+Route45 aninhadas. `IgnoreRooms` evita a fase de portais e continua pelo
+validador local da grade ativa, conforme o perfil Simitone examinado.
+
+Build Debug limpa em `/tmp/odh-route-integrated`: compilação completa, CTest
+160/160 (159 executados; `linux_window_backend` pulado sem DISPLAY), 308
+checks em `odh-routing-tests` e `git diff --check` passaram. Isso cobre host e
+fixtures sintéticas, não o executável original.
+
+O probe real `tests/house07_route45_integration.py --portal-id 26 --ticks 214`
+agora observa o Route45 chegar ao SLOT `[408,408,1,0]` em 32 movimentos,
+partindo de `[392,440,1,3]`. O destino continua classificado como sala 1, mas
+está dentro da grade de obstáculos preparada para a sala 3. O host agora usa
+essa grade e sua máscara de walkability como gate geométrico, coerente com o
+`AttemptWalk()` do Simitone, que reúne obstáculos da sala atual. O percurso não
+agenda Portal15 (`portal_planned_calls=0`), portanto isso não demonstra
+travessia entre salas.
+
+Depois da chegada, o BHAV comercial continua; o leitor `RoomByTemp0` agora
+consulta o cômodo principal calculado a partir das ligações entre cômodos no
+mapa preparado. Para os índices 0 a 4, reproduz os campos usados pelo
+Simitone; usa `clamp(Temp0 + 1)` e recusa mapas preparados sem identidade de
+piso resolvida. O índice 1 consulta o estado externo do cômodo principal, não
+o estado geométrico do cômodo selecionado.
+
+O probe `--portal-id 26 --ticks 214 --expect-route-goal 408 408` termina a
+chamada Portal26 com `returned_true`, sem erro, e mantém o avatar em
+`[408,408,1,0]`. O host não agendou outra chamada Portal15 e registrou zero
+mudanças de cômodo. Assim, validamos o caminho até a porta e o retorno positivo
+da ação diagnóstica; ainda não validamos o Sim atravessando a porta para outro
+cômodo nem uma interação natural pela janela do jogo. `--expect-route-goal`
+continua afirmando a chegada separadamente do resultado posterior da ação.
+
+Na revisão seguinte, a grade da chegada passou a usar uma janela de 256×256
+unidades quando a sala inteira excede o limite de memória. A nova grade é
+montada com os obstáculos do retrato completo da sala e recusa destinos fora
+da janela. O probe House07 continuou chegando a `[408,408,1,0]` em 32
+movimentos; a grade final corresponde à sala 1 e está marcada como reduzida.
+Portal26 retornou true, mas o avatar continuou no mesmo ponto e não houve
+mudança de cômodo.
+
+### Retry limitado de EntryPoint externo (2026-10-21)
+
+`Routing` agora oferece `RoutePortalRetryProvider`: após retorno false de uma
+BHAV externa, o host pode recalcular uma alternativa com base na chamada e nas
+posições atuais. Até 32 novas chamadas podem ser agendadas sob o ticket Route45
+original; cada retorno continua validando geração da VM, ticket e CodeOwner.
+Sem provider/alternativa, ou após o limite, o job completa false. Se a chamada
+falha depois de mover o avatar, o host precisa confirmar refresh da grade antes
+de planejar outra tentativa; sem refresh válido, o provider nem é consultado.
+Depois desse refresh, o Route45 pai marca o trecho local como obsoleto e o
+replaneja após o primeiro retorno bem-sucedido, mesmo se a tentativa alternativa
+não mover o avatar. A fixture cobre o movimento x=4→8, retorno false, refresh,
+alternativa estacionária true, retomada em x=9 e chegada ao goal original x=20.
+Os testes sintéticos cobrem retorno false → alternativa com outro CodeOwner →
+retorno true → rota local concluída, ausência de provider, limite de 32
+alternativas, movimento sem refresh e invalidação do ator dentro do callback de
+refresh; o controller revalida a identidade e geração após o callback.
+`odh-routing-tests` passa 280 checks.
+Isso implementa a fronteira de retry
+descrita pelo Simitone, não o planejador de salas: o host ainda precisa excluir
+a ligação falha, escolher o portal alternativo, resolver EntryPoint15 e fornecer
+a chamada. A travessia
+natural em House07 permanece pendente.
+
+Validação histórica do checkpoint abaixo, anterior ao refresh de sala e à
+janela local: build Debug completo e CTest 160/160 sem falhas;
+159 executaram e `linux_window_backend` foi ignorado porque não há DISPLAY X11
+acessível. `person_cli.py` passou. Reexecuções dos probes House07 mantêm o
+resultado: Portal25 falha antes de mover com entrada de rota inválida, enquanto
+Portal26 retorna false após 16 movimentos locais; nenhum dos dois cruza salas.

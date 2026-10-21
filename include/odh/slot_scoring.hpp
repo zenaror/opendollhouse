@@ -27,8 +27,9 @@ struct ReferenceSlotScores {
     std::uint64_t seed_before, seed_after;
     std::size_t random_calls;
 };
-// Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle and
-// Door 16-to-32 ranged profiles, optionally with RandomScoring /
+// Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle,
+// Door 16-to-32 ranged profiles and Global 16-to-64 randomized profile, with
+// optional RandomScoring /
 // FSOEqualProximityScore. Inputs must already have passed proximity, room and
 // direction gates, in reference enumeration order.
 // Does not enumerate, resolve facing, verify eligibility or establish TS1
@@ -39,9 +40,9 @@ ReferenceSlotScores score_reference_slot_candidates(
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>&,
     RandomState&);
 // Generates, filters by ranged proximity/direction, scores and stably ranks the
-// pinned Simitone Door 16-to-32 profile. Room and clearance eligibility remain
+// verified ranged SLOT profiles. Room and clearance eligibility remain
 // the Routing host's responsibility; the supplied RNG is explicit and mutable.
-std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
+std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable&,std::size_t type3_index,const EntityPosition& caller,
     const EntityPosition& target,RandomState&);
 } // namespace odh

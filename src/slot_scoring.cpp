@@ -31,21 +31,28 @@ ReferenceSlotScores score_reference_slot_candidates(
         slot->offset_bits == std::array<std::uint32_t,3>{0,0,0} && slot->standing == 1 &&
         slot->sitting == 0 && slot->ground == 0 && slot->snap_target_slot == -1 &&
         slot->max_size == 0 && slot->unknown_i10 == 0 && slot->gradient_bits == 0x3E400000 &&
-        slot->height == 0 && slot->facing == -2 && slot->resolution == 16 && slot->proximity &&
+        slot->height == 0 && slot->proximity &&
         (*slot->proximity)[0] > 0 && (*slot->proximity)[1] >= (*slot->proximity)[0] &&
         (*slot->proximity)[2] >= (*slot->proximity)[0] && (*slot->proximity)[0] <= 4096 &&
         (*slot->proximity)[1] <= 4096;
     const bool circle=common &&
+        slot->facing == -2 && slot->resolution == 16 &&
         (slot->flags & ~(random_scoring | equal_proximity)) == 0x55 &&
         (*slot->proximity)[0] == (*slot->proximity)[1] &&
         (*slot->proximity)[0] == (*slot->proximity)[2];
     const auto door_flags=slot?(slot->flags & ~(random_scoring | equal_proximity)):0U;
-    const bool door_range=common &&
+    const bool door_range=common && slot->facing == -2 && slot->resolution == 16 &&
         ((slot->flags & 0xFFU) == 0x54U || (slot->flags & 0xFFU) == 0x45U) &&
         (door_flags == 0x54U || door_flags == 0x45U) &&
         *slot->proximity == std::array<std::int32_t,3>{16,32,16};
-    if (!circle && !door_range)
-        throw std::invalid_argument("reference SLOT scoring requires the House07 circle or verified Door 16-to-32 directional profile");
+    const bool house07_global_range=table.version==10 && slot && slot->flags==0xA0FF &&
+        slot->offset_bits==std::array<std::uint32_t,3>{0,0,0} && slot->standing==1 &&
+        slot->sitting==0 && slot->ground==0 && slot->snap_target_slot==-1 &&
+        slot->max_size==0 && slot->unknown_i10==0 && slot->gradient_bits==0 &&
+        slot->height==0 && slot->facing==-3 && slot->resolution==8 &&
+        slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,64,16}};
+    if (!circle && !door_range && !house07_global_range)
+        throw std::invalid_argument("reference SLOT scoring requires a verified House07 circle or ranged profile");
     if (inputs.size() > 4096) throw std::length_error("reference SLOT scoring exceeds 4096 candidates");
     validate_position(object_position);
     validate_position(caller_position);
@@ -61,7 +68,7 @@ ReferenceSlotScores score_reference_slot_candidates(
     caller_distances.reserve(inputs.size());
     for (const auto& input : inputs) {
         validate_position(input.goal.position);
-        const bool in_range=std::isfinite(input.slot_distance) && (circle
+    const bool in_range=std::isfinite(input.slot_distance) && (circle
             ? input.slot_distance == min_proximity
             : input.slot_distance >= min_proximity-0.5 && input.slot_distance <= max_proximity+0.5);
         if (!in_range || input.goal.entry_flags == 0 ||
@@ -105,17 +112,25 @@ ReferenceSlotScores score_reference_slot_candidates(
     random = next_random;
     return result;
 }
-std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
+std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
     const EntityPosition& target,RandomState& random) {
     const auto* slot=slot_of_type(table,3,type3_index);
-    if(table.version!=10||!slot||(slot->flags!=0x54&&slot->flags!=0x45)||slot->facing!=-2||
-       slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0}||
-       slot->proximity!=std::optional<std::array<std::int32_t,3>>{{16,32,16}}||
-       slot->resolution!=16||slot->standing!=1||slot->sitting!=0||slot->ground!=0||
-       slot->snap_target_slot!=-1||slot->max_size!=0||slot->unknown_i10!=0||
-       slot->gradient_bits!=0x3E400000||slot->height!=0)
-        throw std::invalid_argument("Door range generation requires the exact SLOT128 16-to-32 profile");
+    const bool door_range=table.version==10&&slot&&
+       (slot->flags==0x54||slot->flags==0x45)&&slot->facing==-2&&
+       slot->offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
+       slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,32,16}}&&
+       slot->resolution==16&&slot->standing==1&&slot->sitting==0&&slot->ground==0&&
+       slot->snap_target_slot==-1&&slot->max_size==0&&slot->unknown_i10==0&&
+       slot->gradient_bits==0x3E400000&&slot->height==0;
+    const bool house07_global_range=table.version==10&&slot&&slot->flags==0xA0FF&&
+       slot->facing==-3&&slot->offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
+       slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,64,16}}&&
+       slot->resolution==8&&slot->standing==1&&slot->sitting==0&&slot->ground==0&&
+       slot->snap_target_slot==-1&&slot->max_size==0&&slot->unknown_i10==0&&
+       slot->gradient_bits==0&&slot->height==0;
+    if(!door_range&&!house07_global_range)
+        throw std::invalid_argument("ranged SLOT generation requires a source-verified profile");
     const RoutePoint center{target.x,target.y};
     const auto offsets=enumerate_reference_slot_range_lattice(table,type3_index,4096);
     const auto ranged=filter_reference_slot_range_proximity(table,type3_index,offsets);
@@ -134,8 +149,10 @@ std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
         const auto dx=(target.x>position.x)-(target.x<position.x);
         const auto dy=(target.y>position.y)-(target.y<position.y);
         std::uint8_t facing=0;
-        for(std::uint8_t n=0;n<headings.size();++n)
-            if(headings[n]==RoutePoint{dx,dy}){facing=n;break;}
+        if(slot->facing!=-3) {
+            for(std::uint8_t n=0;n<headings.size();++n)
+                if(headings[n]==RoutePoint{dx,dy}){facing=n;break;}
+        }
         const auto ox=static_cast<double>(offset.x),oy=static_cast<double>(offset.y);
         const auto proximity=std::sqrt(ox*ox+oy*oy);
         inputs.push_back({{position,entry_flags,facing},proximity,ReferenceSlotVerification::eligible});

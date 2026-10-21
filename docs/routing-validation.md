@@ -81,11 +81,29 @@ precisa ser zero e as rotinas semiglobais/globais permanecem fora do perfil.
 O host ainda aloca `CodeOwner`, instala a closure e agenda a chamada; não há
 descoberta automática do portal pelo controller. Esperas da BHAV externa
 pausam o movimento. Cada retorno valida ticket, geração e CodeOwner; mudança de
-posição força novo planejamento até o destino pai na mesma malha. Falha de
-BHAV propaga false para o frame Route45 correspondente. O teste sintético cobre
-Route45 pai → BHAV externa → Route45 filho → retorno e replanejamento do pai,
-além do consumo de `PortalTurns` no contexto pai. Isso não integra a resolução
+posição força novo planejamento até o destino pai na mesma malha.
+
+Quando uma BHAV retorna false, um `RoutePortalRetryProvider` opcional recebe a
+chamada que falhou, posições atuais e índice de tentativa para o host recalcular
+uma alternativa. A chamada seguinte continua sob o ticket pai e passa pelas
+mesmas validações de VM e `CodeOwner`; o controller limita a 32 retries. Sem
+provider, sem alternativa ou ao atingir o limite, Route45 termina false. O
+provider deve excluir a ligação que falhou e consultar o grafo de salas; esta
+API não faz isso automaticamente. Se o BHAV que falhou moveu o avatar, o host
+precisa atualizar a grade com sucesso antes de o provider ser chamado; sem
+`RouteGridRefresh` válido o job falha fechado. Testes sintéticos cobrem retorno
+false seguido de chamada com outro `CodeOwner`, sucesso e continuação até o
+destino; ausência de provider; limite de retries; e movimento do avatar sem
+refresh, que não chama o provider. Outra fixture move o avatar durante uma
+tentativa falsa, confirma o refresh, retorna sucesso sem novo movimento e
+verifica que o caminho pai é replanejado até seu goal original. Outra fixture
+remove o ator dentro do callback de refresh e confirma que sua identidade é
+revalidada antes da consulta ao provider. As fixtures não integram a resolução
 de salas, RoomInfo/EP5 vivo, seleção de portal ou o host persistente Main.
+
+O teste sintético também cobre Route45 pai → BHAV externa → Route45 filho →
+retorno e replanejamento do pai, além do consumo de `PortalTurns` no contexto
+pai. Isso não prova a execução natural de Portal15 nem travessia entre salas.
 
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,

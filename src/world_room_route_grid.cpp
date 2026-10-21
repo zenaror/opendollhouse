@@ -15,7 +15,8 @@ WorldRoomRouteGrid unsupported(WorldRoomRouteGridReason reason,
 }
 
 WorldRoomRouteGrid build_world_room_route_grid(
-    const AttemptWalkObstacleSnapshot& snapshot,const WorldRoomRouteGridLimits& limits) {
+    const AttemptWalkObstacleSnapshot& snapshot,const WorldRoomRouteGridLimits& limits,
+    std::optional<WorldRoomRouteGridWindow> window) {
     if(snapshot.state!=AttemptWalkObstacleState::ready)
         return unsupported(WorldRoomRouteGridReason::obstacle_snapshot_incomplete,snapshot.reason);
     if(!snapshot.room_id || snapshot.level>1)
@@ -31,8 +32,16 @@ WorldRoomRouteGrid build_world_room_route_grid(
 
     // AttemptWalk's snapshot bounds include the room's one-tile padded bounds;
     // its four outer fence bands extend one more tile on every side.
-    const auto origin_x=min_x-16,origin_y=min_y-16;
-    const auto end_x=max_x+16,end_y=max_y+16;
+    auto origin_x=min_x-16,origin_y=min_y-16;
+    auto end_x=max_x+16,end_y=max_y+16;
+    if(window) {
+        if(window->min.x>=window->max.x||window->min.y>=window->max.y)
+            return unsupported(WorldRoomRouteGridReason::room_bounds_invalid);
+        origin_x=std::max(origin_x,static_cast<std::int64_t>(window->min.x));
+        origin_y=std::max(origin_y,static_cast<std::int64_t>(window->min.y));
+        end_x=std::min(end_x,static_cast<std::int64_t>(window->max.x));
+        end_y=std::min(end_y,static_cast<std::int64_t>(window->max.y));
+    }
     const auto width=end_x-origin_x,height=end_y-origin_y;
     constexpr std::int64_t route_dimension_limit=32767;
     if(origin_x<std::numeric_limits<std::int32_t>::min()||
@@ -46,6 +55,7 @@ WorldRoomRouteGrid build_world_room_route_grid(
         return unsupported(WorldRoomRouteGridReason::route_grid_over_budget);
 
     WorldRoomRouteGrid result;
+    result.windowed=window.has_value();
     result.room_id=snapshot.room_id;
     result.level=snapshot.level;
     result.obstacle_rectangles=snapshot.obstacles.size();

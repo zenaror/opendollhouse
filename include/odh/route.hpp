@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include <cstddef>
+#include <optional>
 
 namespace odh {
 struct RoutePoint {
@@ -37,7 +38,15 @@ struct RoutePath {
     std::uint32_t cost=0; // Grid metric: cardinal10, diagonal14; not duration.
     std::size_t expanded=0;
 };
+struct RankedRoutePath {
+    RoutePath path;
+    std::optional<std::size_t> selected;
+};
 // Multi-goal Dijkstra; deterministic tie order. No room/portal/animation policy.
 RoutePath find_route(const RouteGrid&,RoutePoint start,const std::vector<RoutePoint>& goals,
                      RouteLimits limits={});
+// One Dijkstra traversal; among reachable goals, prefer the earliest input.
+// If a higher-ranked goal is disconnected, search the reachable component once.
+RankedRoutePath find_ranked_route(const RouteGrid&,RoutePoint start,
+                                 const std::vector<RoutePoint>& goals,RouteLimits limits={});
 } // namespace odh

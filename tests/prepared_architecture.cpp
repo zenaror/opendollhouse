@@ -68,7 +68,8 @@ int main() { try {
     require(prepared.diagnostics.floor_lookups == 3 && prepared.diagnostics.floor_alias_misses == 3 &&
             prepared.diagnostics.missing_floor_aliases[31] && !prepared.floor_aliases_resolved() &&
             prepared.floor_identity_unambiguous() &&
-            odh::generate_prepared_room_map(prepared).floor_resources_resolved,
+            odh::generate_prepared_room_map(prepared).floor_resources_resolved &&
+            odh::generate_prepared_room_map(prepared).light_base_rooms_resolved,
             "diagnostics count full-source lookup misses without inventing names");
     aliases = {};
     aliases.declared_unresolved_floors[31] = true;
@@ -76,7 +77,8 @@ int main() { try {
     require(prepared.diagnostics.floor_alias_misses == 3 &&
             prepared.diagnostics.unresolved_floor_alias_references == 3 &&
             !prepared.floor_identity_unambiguous() &&
-            !odh::generate_prepared_room_map(prepared).floor_resources_resolved,
+            !odh::generate_prepared_room_map(prepared).floor_resources_resolved &&
+            !odh::generate_prepared_room_map(prepared).light_base_rooms_resolved,
             "used declared-unresolved alias keeps prepared room identity incomplete");
     saved = source();
     prepared = odh::prepare_saved_architecture(saved, aliases);

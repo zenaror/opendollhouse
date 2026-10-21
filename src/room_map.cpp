@@ -210,6 +210,31 @@ void generate_level(const Level& level, std::uint8_t level_index,
         outside = false;
     }
 }
+
+void resolve_light_base_rooms(GeometricRoomMap& map) {
+    std::vector<bool> visited(map.rooms.size(), false);
+    for (std::size_t seed = 1; seed < map.rooms.size(); ++seed) {
+        if (visited[seed]) continue;
+        std::vector<std::uint16_t> component{static_cast<std::uint16_t>(seed)};
+        visited[seed] = true;
+        auto base = static_cast<std::uint16_t>(seed);
+        for (std::size_t next = 0; next < component.size(); ++next) {
+            const auto room_id = component[next];
+            const auto& room = map.rooms[room_id];
+            if (room.id != room_id) throw std::runtime_error("room map identity invalid while resolving light base");
+            for (const auto adjacent : room.adjacent) {
+                if (adjacent == 0 || adjacent >= map.rooms.size() ||
+                    map.rooms[adjacent].id != adjacent || map.rooms[adjacent].level != room.level)
+                    throw std::runtime_error("room map adjacency invalid while resolving light base");
+                if (visited[adjacent]) continue;
+                visited[adjacent] = true;
+                base = std::min(base, adjacent);
+                component.push_back(adjacent);
+            }
+        }
+        for (const auto room_id : component) map.rooms[room_id].light_base_room = base;
+    }
+}
 } // namespace
 
 GeometricRoomMap generate_saved_room_map(const SavedArchitecture& architecture,
@@ -235,6 +260,7 @@ GeometricRoomMap generate_saved_room_map(const SavedArchitecture& architecture,
     result.rooms.emplace_back(); // VMArchitecture.RegenRoomMap dummy.
     for (std::uint8_t level = 0; level < result.levels.size(); ++level)
         generate_level(candidate_level(architecture, level), level, result, limits);
+    resolve_light_base_rooms(result);
     return result;
 }
 
@@ -258,9 +284,11 @@ GeometricRoomMap generate_prepared_room_map(const PreparedArchitecture& architec
     result.width = architecture.width;
     result.height = architecture.height;
     result.floor_resources_resolved = architecture.floor_identity_unambiguous();
+    result.light_base_rooms_resolved = result.floor_resources_resolved;
     result.rooms.emplace_back();
     for (std::uint8_t level = 0; level < result.levels.size(); ++level)
         generate_level(architecture.levels[level], level, result, limits);
+    resolve_light_base_rooms(result);
     return result;
 }
 
@@ -317,5 +345,27 @@ std::optional<std::uint16_t> geometric_room_at_runtime(
         static_cast<std::uint32_t>(y) / 16U >= map.height)
         return std::uint16_t{0};
     return geometric_room_at(map, x, y, level);
+}
+
+std::optional<std::int16_t> room_by_temp0_data(
+    const GeometricRoomMap& map, std::int16_t temp0, std::int16_t data_index) {
+    if (!map.light_base_rooms_resolved || map.rooms.empty() || map.rooms.size() > 32768)
+        return std::nullopt;
+    const auto last = static_cast<std::int32_t>(map.rooms.size() - 1);
+    const auto selected_id = static_cast<std::uint16_t>(std::clamp<std::int32_t>(
+        static_cast<std::int32_t>(temp0) + 1, 0, last));
+    const auto& selected = map.rooms[selected_id];
+    if (selected.id != selected_id || selected.light_base_room >= map.rooms.size())
+        return std::nullopt;
+    const auto& base = map.rooms[selected.light_base_room];
+    if (base.id != selected.light_base_room) return std::nullopt;
+    switch (data_index) {
+    case 0: return 100; // Simitone's current ambient-light profile.
+    case 1: return static_cast<std::int16_t>(base.outside ? 1 : 0);
+    case 2: return static_cast<std::int16_t>(base.level);
+    case 3: return static_cast<std::int16_t>(base.area);
+    case 4: return static_cast<std::int16_t>(selected.pool ? 1 : 0);
+    default: return std::nullopt;
+    }
 }
 } // namespace odh

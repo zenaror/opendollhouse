@@ -26,6 +26,12 @@ struct WorldRoomRouteGridLimits {
     std::size_t rasterized_cells = 262144;
 };
 
+// Optional allocation window in absolute route units, with an exclusive maximum.
+// Obstacles still come from the complete snapshot; cells outside are unavailable.
+struct WorldRoomRouteGridWindow {
+    RoutePoint min, max;
+};
+
 struct WorldRoomRouteGrid {
     WorldRoomRouteGridState state = WorldRoomRouteGridState::unsupported;
     WorldRoomRouteGridReason reason = WorldRoomRouteGridReason::obstacle_snapshot_incomplete;
@@ -33,6 +39,7 @@ struct WorldRoomRouteGrid {
     std::optional<RouteGrid> grid;
     std::uint16_t room_id = 0;
     std::uint8_t level = 0;
+    bool windowed = false;
     std::size_t obstacle_rectangles = 0;
     std::size_t rasterized_cells = 0;
     std::size_t newly_blocked_cells = 0;
@@ -43,7 +50,8 @@ struct WorldRoomRouteGrid {
 // rectangle interior convention. This does not prove VMRectRouter equivalence.
 WorldRoomRouteGrid build_world_room_route_grid(
     const AttemptWalkObstacleSnapshot&,
-    const WorldRoomRouteGridLimits& = {});
+    const WorldRoomRouteGridLimits& = {},
+    std::optional<WorldRoomRouteGridWindow> window = {});
 
 const char* world_room_route_grid_reason_name(WorldRoomRouteGridReason) noexcept;
 

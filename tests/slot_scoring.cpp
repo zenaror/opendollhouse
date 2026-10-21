@@ -26,6 +26,13 @@ odh::SlotTable door_range_table() {
     result.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
     return result;
 }
+odh::SlotTable house07_global_range_table() {
+    auto result=table(0xA0FF);
+    auto& slot=result.records[0];
+    slot.proximity=std::array<std::int32_t,3>{16,64,16};
+    slot.gradient_bits=0;slot.facing=-3;slot.resolution=8;
+    return result;
+}
 template<class F> void invalid_unchanged(odh::RandomState& random, F operation) {
     const auto before=random.seed();
     bool rejected=false;
@@ -122,7 +129,7 @@ void door_range() {
 void door_range_generation() {
     odh::RandomState random(0);
     const odh::EntityPosition caller{0,0,1,0},target{0,0,1,0};
-    const auto goals=odh::rank_reference_door_range_slot(door_range_table(),0,caller,target,random);
+    const auto goals=odh::rank_reference_range_slot(door_range_table(),0,caller,target,random);
     require(!goals.empty()&&goals.size()<=25,"Door range provider bounds candidates to its 5x5 Simitone lattice");
     require(goals.size()>=3&&goals[0].position==odh::RoutePoint{-16,0}&&
             goals[1].position==odh::RoutePoint{0,16}&&goals[2].position==odh::RoutePoint{16,0},
@@ -137,7 +144,7 @@ void door_range_generation() {
     require(random.seed()==0,"explicit zero seed remains an absorbing RNG state during range generation");
     auto alternate_mask=door_range_table();alternate_mask.records[0].flags=0x45;
     odh::RandomState alternate_random(0);
-    const auto alternate_goals=odh::rank_reference_door_range_slot(
+    const auto alternate_goals=odh::rank_reference_range_slot(
         alternate_mask,0,caller,target,alternate_random);
     require(!alternate_goals.empty(),"mirrored Door SLOT128 directional mask keeps its verified range profile");
     for(const auto& goal:alternate_goals)
@@ -145,9 +152,44 @@ void door_range_generation() {
             "mirrored Door range goals respect the authored directional mask");
     auto malformed=door_range_table();malformed.records[0].facing=-3;
     const auto before=random.seed();bool rejected=false;
-    try{(void)odh::rank_reference_door_range_slot(malformed,0,caller,target,random);}
+    try{(void)odh::rank_reference_range_slot(malformed,0,caller,target,random);}
     catch(const std::invalid_argument&){rejected=true;}
     require(rejected&&random.seed()==before,"unsupported facing profile is rejected without consuming route RNG");
+}
+void house07_global_range() {
+    const auto table=house07_global_range_table();
+    odh::RandomState random(7),expected(7);
+    const auto draw0=static_cast<float>(expected.next(1024))/1024.0f;
+    expected.next(1024); // rejected after candidate scoring still consumes its draw
+    const auto draw2=static_cast<float>(expected.next(1024))/1024.0f;
+    const std::vector<odh::ReferenceSlotScoreInput> inputs{
+        {{{116,100},4,0},16,Verification::eligible},
+        {{{100,116},16,0},64,Verification::rejected_after_score},
+        {{{124,100},4,0},24,Verification::eligible_with_penalty}
+    };
+    const auto scores=odh::score_reference_slot_candidates(table,0,{100,100},{0,100},inputs,random);
+    require(scores.random_calls==3&&random.seed()==expected.seed(),
+        "House07 Global SLOT8 randomized scoring consumes one draw per matching direction candidate");
+    require(scores.records[0].base_score==draw0&&*scores.records[0].final_score==draw0&&
+            !scores.records[1].final_score&&
+            *scores.records[2].final_score==static_cast<double>(draw2)/100000,
+        "RandomScoring omits proximity and caller-distance terms while retaining occupancy penalty");
+
+    odh::RandomState route_random(0);
+    const odh::EntityPosition caller{16,80,1,3},target{80,80,1,0};
+    const auto goals=odh::rank_reference_range_slot(table,0,caller,target,route_random);
+    require(goals.size()==204&&route_random.seed()==0,
+        "House07 Global SLOT8 ranks all 204 source-enumerated candidates under explicit RNG");
+    for(const auto& goal:goals)
+        require(goal.entry_flags!=0&&(goal.entry_flags&0xFFU)==goal.entry_flags&&goal.facing==0,
+            "FaceAnywhere ranged goals retain their direction mask and neutral facing value");
+
+    auto unsupported=table;unsupported.records[0].flags|=1U<<30;
+    const auto seed_before=route_random.seed();bool rejected=false;
+    try{(void)odh::rank_reference_range_slot(unsupported,0,caller,target,route_random);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected&&route_random.seed()==seed_before,
+        "unverified square-distance variant remains rejected without consuming RNG");
 }
 void invalid_inputs() {
     odh::RandomState random(42);
@@ -183,6 +225,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); door_range_generation(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); door_range_generation(); house07_global_range(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

@@ -141,9 +141,12 @@ original ainda não foi estabelecida.
 
 O leitor SLOT consulta `TSOClient/tso.files/Formats/IFF/Chunks/SLOT.cs` na
 revisão FreeSO acima. Preserva floats como bits e extensões ausentes como opcionais,
-sem aplicar defaults ou escalas do runtime. `Engine/VMSlotParser.cs` foi consultado
-para identificar a próxima etapa de geração/validação de destinos; sua política
-de colisões, scoring e rotação ainda não está implementada no ODH.
+sem aplicar defaults ou escalas do runtime. `Engine/VMSlotParser.cs` do
+submódulo FreeSO fixado do Simitone foi consultado para enumeração, scoring,
+direção e `FaceAnywhere`. O ODH implementa um perfil de faixa delimitado para
+House07 Global SLOT100 tipo 3 índice 8; o host fornece a validação do destino e
+outros perfis continuam fora do escopo. Evidência e limites em
+[route-slot-range-lattice-validation.md](route-slot-range-lattice-validation.md).
 
 Para a ligação inicial de roteamento foram também consultados `VMRoutingFrame.cs`
 (`Engine/`) e `VMSnap.cs` (`Primitives/`) no mesmo FreeSO fixo. A referência

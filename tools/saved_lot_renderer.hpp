@@ -82,6 +82,7 @@ public:
     // lot; it resolves room membership, not portal clearance.
     std::optional<std::uint16_t> runtime_room_at(const odh::EntityPosition&) const;
     bool runtime_room_map_available() const noexcept { return runtime_rooms_.has_value(); }
+    const std::optional<odh::GeometricRoomMap>& runtime_room_map() const noexcept { return runtime_rooms_; }
     SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,bool record_picks=false);
     // Last presented pixel ownership, revalidated against live generation,
     // definition GUID and visibility; out-of-bounds/scenery/stale IDs select none.

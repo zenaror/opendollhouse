@@ -25,6 +25,8 @@ def parse_args():
                         help="diagnose opcode27 against the restored StackObject and live route grid")
     parser.add_argument("--portal-id", type=int,
                         help="schedule saved Portal15 on a restored House07 portal, using the original Main")
+    parser.add_argument("--expect-route-goal", nargs=2, type=int, metavar=("X", "Y"),
+                        help="assert that Route45 reached this XY before the scheduled portal BHAV continues")
     parser.add_argument("--architecture-resource", action="append", type=pathlib.Path, default=[],
                         help="additional loose .flr/.wll resource; may be repeated")
     return parser.parse_args()
@@ -90,6 +92,8 @@ def main():
         raise SystemExit("ticks must be in 1..4096")
     if sum((args.literal_slot, args.goto_relative, args.portal_id is not None)) > 1:
         raise SystemExit("--literal-slot, --goto-relative, and --portal-id are mutually exclusive")
+    if args.expect_route_goal is not None and args.portal_id is None:
+        raise SystemExit("--expect-route-goal requires --portal-id")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -159,20 +163,35 @@ def main():
     if args.portal_id is not None:
         portal_definition = next((record for record in baseline.get("saved_definition_records", [])
                                   if record.get("object_id") == args.portal_id), None)
+        portal_runtime = baseline.get("portal_runtime") or {}
+        portal_owner = portal_runtime.get("code_owner")
+        portal_trace = [record for record in baseline["trace"]
+                        if record["owner"] == portal_owner]
         print(json.dumps({
             "probe_exit": baseline_code,
             "vm_status": baseline["status"],
             "vm_diagnostic": baseline["diagnostic"],
             "ticks": baseline["ticks"],
             "trace_tail": baseline["trace"][-12:],
-            "portal_trace_tail": [record for record in baseline["trace"]
-                                  if record["owner"] == (baseline.get("portal_runtime") or {}).get("code_owner")][-24:],
+            "portal_trace_count": len(portal_trace),
+            "portal_trace": portal_trace[-256:],
+            "portal_trace_truncated": len(portal_trace) > 256,
+            "portal_trace_tail": portal_trace[-24:],
             "entity_next": baseline.get("entity_next"),
             "route_runtime": baseline.get("route_runtime"),
             "portal_runtime": baseline.get("portal_runtime"),
             "portal_definition": portal_definition,
             "evidence": "House07 restored World, live saved door, original avatar Main, and host-scheduled diagnostic Portal15",
         }, indent=2))
+        if args.expect_route_goal is not None:
+            route = baseline.get("route_runtime") or {}
+            expected = args.expect_route_goal
+            end = route.get("end_position") or []
+            if (route.get("state") != "ready_dynamic_single_room_grid" or
+                    route.get("active") or route.get("movement_callbacks", 0) <= 0 or
+                    len(end) < 2 or end[:2] != expected or
+                    route.get("diagnostic") is not None):
+                raise SystemExit("House07 portal diagnostic did not reach the expected Route45 destination")
         return
     with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"

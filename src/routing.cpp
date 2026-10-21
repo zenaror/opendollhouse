@@ -27,13 +27,20 @@ bool supported_circle_slot_profile(const SlotRecord& slot) {
         (*slot.proximity)[0]==(*slot.proximity)[1] &&
         (*slot.proximity)[0]==(*slot.proximity)[2] && (*slot.proximity)[0]<=4096;
 }
-bool supported_door_range_slot_profile(const SlotRecord& slot) {
-    return (slot.flags==0x54||slot.flags==0x45)&&slot.facing==-2&&
+bool supported_ranged_slot_profile(const SlotRecord& slot) {
+    const bool door_range=(slot.flags==0x54||slot.flags==0x45)&&slot.facing==-2&&
         slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&slot.proximity&&
         *slot.proximity==std::array<std::int32_t,3>{16,32,16}&&
         slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
         slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0x3E400000&&
         slot.height==0&&slot.resolution==16;
+    const bool house07_global_range=slot.flags==0xA0FF&&slot.facing==-3&&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&slot.proximity&&
+        *slot.proximity==std::array<std::int32_t,3>{16,64,16}&&
+        slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0&&
+        slot.height==0&&slot.resolution==8;
+    return door_range||house07_global_range;
 }
 std::int32_t floor_tile(std::int32_t coordinate) {
     auto quotient=coordinate/16;
@@ -170,23 +177,18 @@ PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid& grid,RoutePoint s
     if(goals.size()>limits.candidates) {
         result.path.status=RouteStatus::budget_exhausted;return result;
     }
-    std::size_t expanded=0;
+    std::vector<RoutePoint> positions;
+    positions.reserve(goals.size());
     for(std::size_t n=0;n<goals.size();++n) {
         const auto& goal=goals[n];
         if(!grid.contains(goal.position) || goal.entry_flags==0 || goal.facing>=8) {
-            result.path={RouteStatus::invalid_input,{},0,expanded};return result;
+            result.path={RouteStatus::invalid_input,{},0,0};return result;
         }
-        // Exhaustion cannot be interpreted as proof that this goal failed.
-        if(expanded>=limits.expanded) {
-            result.path={RouteStatus::budget_exhausted,{},0,expanded};return result;
-        }
-        auto path=find_route(grid,start,{goal.position},{limits.expanded-expanded,limits.frontier});
-        expanded+=path.expanded;
-        path.expanded=expanded;
-        result.path=std::move(path);
-        if(result.path.status==RouteStatus::found) {result.selected=n;return result;}
-        if(result.path.status!=RouteStatus::no_path) return result;
+        positions.push_back(goal.position);
     }
+    auto ranked=find_ranked_route(grid,start,positions,limits);
+    result.path=std::move(ranked.path);
+    result.selected=ranked.selected;
     return result;
 }
 bool Routing::bind(Vm& vm) {
@@ -220,6 +222,7 @@ bool Routing::call_external_frame(const VmCall& call) {
     if(!vm_->call_pending(job_->ticket,call)) return false;
     job_->external_frame_active=true;
     job_->external_frame_owner=call.context.code_owner;
+    job_->external_frame_call=call;
     job_->frame.state=RouteFrameState::room_portal;
     return true;
 }
@@ -231,11 +234,14 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     bool nested_request=false;
     if(job_) {
         if(job_->run_generation!=vm_->run_generation()) {
+            end_room_context(*job_);
             if(const auto* actor=world_.find(job_->actor);actor&&actor->generation==job_->actor_generation)
                 world_.set_static_footprint(job_->actor,true);
-            for(const auto& parent:suspended_jobs_)
+            for(auto& parent:suspended_jobs_){
+                end_room_context(parent);
                 if(const auto* actor=world_.find(parent.actor);actor&&actor->generation==parent.actor_generation)
                     world_.set_static_footprint(parent.actor,true);
+            }
             job_.reset();suspended_jobs_.clear();
         } else {
             const auto& stack=vm_->stack();
@@ -282,17 +288,17 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     }
     const auto* slot=goto_relative?nullptr:slot_of_type(*selected_slots,3,slot_index);
     const bool ranged_slot=!goto_relative&&slot&&selected_slots->version==10&&
-        supported_door_range_slot_profile(*slot);
+        supported_ranged_slot_profile(*slot);
     if(!goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
         if(selected_slots->version!=10 ||
            (!supported_circle_slot_profile(*slot)&&!ranged_slot))
             return unsupported("SLOT runtime profile not implemented");
-        if(ranged_slot&&!door_range_goals_)
-            return unsupported("Door range SLOT requires an explicit scoring provider");
+        if(ranged_slot&&!ranged_slot_goals_)
+            return unsupported("ranged SLOT requires an explicit scoring provider");
         if(ranged_slot&&!goal_validator_)
-            return unsupported("Door range SLOT requires a host room/clearance validator");
+            return unsupported("ranged SLOT requires a host room/clearance validator");
         if((slot->flags&0x0800U)!=0&&!goal_validator_)
             return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
     }
@@ -303,6 +309,38 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return unsupported("routing requires positioned free avatar and target on one level");
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
+    if(!goto_relative&&room_pair_) {
+        const auto actor_id=actor->id,target_id=target->id;
+        const auto actor_generation=actor->generation,target_generation=target->generation;
+        const auto actor_position=*actor->position,target_position=*target->position;
+        const auto actor_direction=actor->radian_direction;
+        const auto rooms=[&] {
+            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            return room_pair_(actor_position,target_position);
+        }();
+        actor=world_.find(actor_id);target=world_.find(target_id);
+        if(!actor||!target||actor->generation!=actor_generation||target->generation!=target_generation||
+           !actor->position||!target->position||!(*actor->position==actor_position)||
+           !(*target->position==target_position)||actor->radian_direction!=actor_direction||actor->attachment)
+            return unsupported("entity changed during Route45 room resolver");
+        if(!rooms)return unsupported("Route45 room resolver could not classify actor and target");
+        const bool ignore_rooms=(slot->flags&0x0800U)!=0;
+        if(rooms->first!=rooms->second&&!ignore_rooms) {
+            if(!room_portal_step_)
+                return unsupported("cross-room Route45 requires a bounded Portal15 step provider");
+            RouteFrameContext frame_context;frame_context.state=RouteFrameState::room_portal;
+            if(nested_request)suspended_jobs_.push_back(std::move(*job_));
+            job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
+                     *actor->position,*target->position,actor->radian_direction,frame_context,
+                     {},1,0,0,false,false,0,false,0,{},0,false,true,frame,i,0,true};
+            job_->run_generation=vm_->run_generation();
+            job_->deferred_room_route=true;
+            job_->room_context_open=true;
+            job_->replay_frame=frame;
+            job_->replay_instruction=i;
+            return {PrimitiveDisposition::wait,{}};
+        }
+    }
     const RoutePoint start{actor->position->x,actor->position->y};
     const auto allow_goal=[&](RoutePoint point) {
         if(!goal_validator_)return true;
@@ -327,14 +365,14 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
         } else path=find_route(grid_,start,{goal},limits_);
-    } else if((ranged_slot&&door_range_goals_)||(!ranged_slot&&ranked_goals_)) {
+    } else if((ranged_slot&&ranged_slot_goals_)||(!ranged_slot&&ranked_goals_)) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
         const auto actor_radian_direction=actor->radian_direction;
         const auto candidates=[&] {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
-            const auto& provider=ranged_slot?door_range_goals_:ranked_goals_;
+            const auto& provider=ranged_slot?ranged_slot_goals_:ranked_goals_;
             return provider(*selected_slots,slot_index,actor_position,target_position);
         }();
         actor=world_.find(actor_id);target=world_.find(target_id);
@@ -407,17 +445,99 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
-             arrival_facing,!goto_relative&&slot->facing==-3};
+             arrival_facing,!goto_relative&&slot->facing==-3,false,0,false,0,{},0,false,false,{}, {},0,false};
     job_->run_generation=vm_->run_generation();
     return {PrimitiveDisposition::wait,{}};
 }
+void Routing::end_room_context(Job& job) {
+    if(!job.room_context_open)return;
+    job.room_context_open=false;
+    if(room_portal_context_end_)room_portal_context_end_(job.ticket);
+}
+bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
+                                 const std::optional<bool>& previous_result) {
+    if(!job_||!job_->deferred_room_route||!room_portal_step_||!vm_||
+       vm_->run_generation()!=job_->run_generation||vm_->status()!=VmStatus::waiting||
+       !vm_->pending()||vm_->pending()->ticket!=job_->ticket)
+        return job_?finish(false,"deferred room route lost its root VM ticket"):false;
+    const auto* actor=world_.find(job_->actor);const auto* target=world_.find(job_->target);
+    if(!actor||!target||actor->generation!=job_->actor_generation||
+       target->generation!=job_->target_generation||!actor->position||!target->position||
+       !(*target->position==job_->target_position)||actor->attachment)
+        return finish(false,"deferred room route participants changed");
+    const auto actor_position=*actor->position,target_position=*target->position;
+    const auto actor_direction=actor->radian_direction;
+    const auto step_index=job_->portal_steps;
+    const auto plan=[&] {
+        struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+        return room_portal_step_(job_->ticket,actor_position,target_position,previous_call,previous_result,step_index);
+    }();
+    actor=world_.find(job_->actor);target=world_.find(job_->target);
+    if(!actor||!target||actor->generation!=job_->actor_generation||
+       target->generation!=job_->target_generation||!actor->position||!target->position||
+       !(*actor->position==actor_position)||!(*target->position==target_position)||
+       actor->radian_direction!=actor_direction||actor->attachment)
+        return finish(false,"Route45 portal planner changed route participants");
+    if(plan.status==RoutePortalStepStatus::unavailable)
+        return finish(false,plan.diagnostic.empty()?"no bounded room portal step is available":plan.diagnostic);
+    if(plan.status==RoutePortalStepStatus::call_ready) {
+        if(!plan.call||plan.call->return_mode!=VmCallReturnMode::ordinary||
+           job_->portal_steps>=max_portal_retries_||!vm_->call_pending(job_->ticket,*plan.call))
+            return finish(false,"room portal planner returned an invalid, over-budget, or unschedulable call");
+        ++job_->portal_steps;
+        job_->external_frame_active=true;
+        job_->external_frame_owner=plan.call->context.code_owner;
+        job_->external_frame_call=*plan.call;
+        job_->expected=*actor->position;
+        job_->expected_radian_direction=actor->radian_direction;
+        job_->frame.state=RouteFrameState::room_portal;
+        return true;
+    }
+    if(plan.call||!room_pair_||!job_->replay_frame||!job_->replay_instruction)
+        return finish(false,"room portal planner reported arrival without a valid local Route45 request");
+    const auto rooms=[&] {
+        struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+        return room_pair_(actor_position,target_position);
+    }();
+    actor=world_.find(job_->actor);target=world_.find(job_->target);
+    if(!rooms||rooms->first!=rooms->second||!actor||!target||
+       actor->generation!=job_->actor_generation||target->generation!=job_->target_generation||
+       !actor->position||!target->position||!(*actor->position==actor_position)||
+       !(*target->position==target_position)||actor->radian_direction!=actor_direction||actor->attachment)
+        return finish(false,"portal planner claimed destination before the actor reached the target room");
+
+    auto deferred=std::move(*job_);
+    job_.reset();
+    end_room_context(deferred);
+    const auto was_executing=executing_;
+    executing_=false;
+    PrimitiveOutcome outcome;
+    try {
+        outcome=request(*deferred.replay_frame,*deferred.replay_instruction,
+                        VmDispatch{vm_,deferred.ticket});
+    } catch(...) {
+        executing_=was_executing;
+        job_=deferred;
+        return finish(false,"local Route45 SLOT planning raised an exception after room transition");
+    }
+    executing_=was_executing;
+    if(outcome.disposition==PrimitiveDisposition::wait&&job_&&job_->ticket==deferred.ticket&&
+       !job_->deferred_room_route)
+        return true;
+    const auto reason=diagnostic_.empty()?"local Route45 SLOT planning failed after room transition":diagnostic_;
+    if(job_)job_.reset();
+    job_=deferred;
+    return finish(false,reason);
+}
 bool Routing::finish(bool result,const std::string& reason) {
+    end_room_context(*job_);
     const auto ticket=job_->ticket;
     if(suspended_jobs_.empty()) {
         const auto* actor=world_.find(job_->actor);
         if(actor && actor->generation==job_->actor_generation)
             world_.set_static_footprint(job_->actor,true);
         job_.reset();
+        last_tick_.reset();
     } else {
         job_.reset();
         job_=std::move(suspended_jobs_.back());
@@ -431,16 +551,18 @@ bool Routing::finish(bool result,const std::string& reason) {
 }
 void Routing::cancel_chain(const std::string& reason) {
     if(job_) {
+        end_room_context(*job_);
         const auto* actor=world_.find(job_->actor);
         if(actor&&actor->generation==job_->actor_generation)
             world_.set_static_footprint(job_->actor,true);
     }
-    for(const auto& parent:suspended_jobs_) {
+    for(auto& parent:suspended_jobs_) {
+        end_room_context(parent);
         const auto* actor=world_.find(parent.actor);
         if(actor&&actor->generation==parent.actor_generation)
             world_.set_static_footprint(parent.actor,true);
     }
-    job_.reset();suspended_jobs_.clear();diagnostic_=reason;
+    job_.reset();suspended_jobs_.clear();diagnostic_=reason;last_tick_.reset();
 }
 bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovement&)>& moved) {
     if(executing_) throw std::logic_error("routing ticks must not reenter");
@@ -461,15 +583,73 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
             }
             job_->external_frame_active=false;
             job_->frame.state=RouteFrameState::room_portal;
-            if(!result.result) return finish(false,"external route frame returned false; portal replanning unavailable");
             const auto* actor=world_.find(job_->actor);
             const auto* target=world_.find(job_->target);
             if(!actor||!target||actor->generation!=job_->actor_generation||
                target->generation!=job_->target_generation||!actor->position||!target->position||
-               !(*target->position==job_->target_position)||actor->attachment)
+               (job_->target!=job_->actor&&!(*target->position==job_->target_position))||
+               actor->attachment)
                 return finish(false,"portal frame changed or invalidated route participants");
-            if(!(*actor->position==job_->expected)) {
-                if(route_grid_refresh_&&!route_grid_refresh_(*actor->position))
+            const auto refresh_after_external_move=[&](bool required)->bool {
+                const auto actor_position=*actor->position;
+                const auto target_position=*target->position;
+                const auto actor_direction=actor->radian_direction;
+                if(!route_grid_refresh_)return !required;
+                if(!route_grid_refresh_(actor_position))return false;
+                actor=world_.find(job_->actor);
+                target=world_.find(job_->target);
+                return actor&&target&&actor->generation==job_->actor_generation&&
+                    target->generation==job_->target_generation&&actor->position&&target->position&&
+                    *actor->position==actor_position&&*target->position==target_position&&
+                    actor->radian_direction==actor_direction&&!actor->attachment;
+            };
+            if(job_->deferred_room_route) {
+                const auto previous_call=job_->external_frame_call;
+                if(!refresh_after_external_move(true))
+                    return finish(false,"Portal15 returned but the active room grid could not be refreshed");
+                job_->expected=*actor->position;
+                job_->expected_radian_direction=actor->radian_direction;
+                return advance_room_route(previous_call,result.result);
+            }
+            if(!result.result) {
+                if(!portal_retry_||!job_->external_frame_call||
+                   job_->portal_retries>=max_portal_retries_)
+                    return finish(false,"external route frame returned false; no bounded portal retry is available");
+                if(!(*actor->position==job_->expected)) {
+                    if(!refresh_after_external_move(true))
+                        return finish(false,"failed portal frame moved avatar but host route-grid refresh is unavailable or failed");
+                    job_->expected=*actor->position;
+                    job_->expected_radian_direction=actor->radian_direction;
+                    job_->portal_replan_required=true;
+                }
+                const auto failed_call=*job_->external_frame_call;
+                const auto retry_index=job_->portal_retries+1;
+                const auto actor_position=*actor->position;
+                const auto target_position=*target->position;
+                const auto next=[&] {
+                    struct CallbackGuard {bool& flag;explicit CallbackGuard(bool& value):flag(value){flag=true;}~CallbackGuard(){flag=false;}} callback_guard(executing_);
+                    return portal_retry_(failed_call,actor_position,target_position,retry_index);
+                }();
+                const auto* current_actor=world_.find(job_->actor);
+                const auto* current_target=world_.find(job_->target);
+                if(!current_actor||!current_target||current_actor->generation!=job_->actor_generation||
+                   current_target->generation!=job_->target_generation||!current_actor->position||!current_target->position||
+                   !(*current_actor->position==job_->expected)||
+                   (job_->target!=job_->actor&&!(*current_target->position==job_->target_position))||
+                   current_actor->attachment)
+                    return finish(false,"portal retry provider changed or invalidated route participants");
+                if(!next) return finish(false,"external route frame returned false; no alternate room route remains");
+                if(next->return_mode!=VmCallReturnMode::ordinary||!vm_->call_pending(job_->ticket,*next))
+                    return finish(false,"portal retry provider returned an invalid or unschedulable VM call");
+                job_->portal_retries=retry_index;
+                job_->external_frame_owner=next->context.code_owner;
+                job_->external_frame_call=*next;
+                job_->external_frame_active=true;
+                job_->frame.state=RouteFrameState::room_portal;
+                return true;
+            }
+            if(!(*actor->position==job_->expected)||job_->portal_replan_required) {
+                if(!(*actor->position==job_->expected)&&!refresh_after_external_move(false))
                     return finish(false,"portal frame moved avatar but host route-grid refresh failed");
                 const auto goal=job_->path.back();
                 const auto replanned=find_route(grid_,{actor->position->x,actor->position->y},{goal},limits_);
@@ -477,6 +657,7 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                     return finish(false,"portal frame moved avatar but parent route could not be replanned");
                 job_->path=replanned.points;job_->next=1;job_->expected=*actor->position;
                 job_->expected_radian_direction=actor->radian_direction;
+                job_->portal_replan_required=false;
             }
             // A portal BHAV resumes the suspended Route45 service only at this
             // scheduler boundary. Movement begins on a later tick.
@@ -492,11 +673,20 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         cancel_chain("route canceled by VM restart or ticket mismatch");return false;
     }
     const auto* actor=world_.find(job_->actor);const auto* target=world_.find(job_->target);
-    if(!actor || !target || actor->generation!=job_->actor_generation || target->generation!=job_->target_generation ||
-       !actor->position || !target->position || !(*actor->position==job_->expected) ||
-       !(*target->position==job_->target_position) ||
-       actor->radian_direction!=job_->expected_radian_direction || actor->attachment)
-        return finish(false,"route canceled by entity change");
+    if(!actor || !target) return finish(false,"route canceled by missing participant");
+    if(actor->generation!=job_->actor_generation) return finish(false,"route canceled by actor generation change");
+    if(target->generation!=job_->target_generation) return finish(false,"route canceled by target generation change");
+    if(!actor->position || !target->position) return finish(false,"route canceled by missing participant position");
+    if(!(*actor->position==job_->expected))
+        return finish(false,"route canceled by actor position change: actor="+std::to_string(job_->actor));
+    if(target->id!=actor->id && !(*target->position==job_->target_position))
+        return finish(false,"route canceled by target position change: target="+std::to_string(job_->target)+
+            " expected="+std::to_string(job_->target_position.x)+","+std::to_string(job_->target_position.y)+
+            " actual="+std::to_string(target->position->x)+","+std::to_string(target->position->y));
+    if(actor->radian_direction!=job_->expected_radian_direction)
+        return finish(false,"route canceled by continuous actor direction change");
+    if(actor->attachment) return finish(false,"route canceled because actor became attached");
+    if(job_->deferred_room_route)return advance_room_route({},{});
     std::optional<RouteMovement> event;
     if(job_->next<job_->path.size()) {
         const auto point=job_->path[job_->next];const RoutePoint from{actor->position->x,actor->position->y};

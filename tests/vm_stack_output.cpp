@@ -43,6 +43,25 @@ void rejects(odh::PrimitiveOutcome outcome) {
 }
 int main() {
     try {
+        {
+            auto room_routines = odh::RoutineSet{{key(), {0x8002, {{2, 254, 255, {1,0,1,0,0,5,8,23}}}, {},
+                odh::Bhav::Metadata{0, 4, 1, 0}}}};
+            odh::VmMemory memory;
+            memory.room_by_temp0 = [&](const auto& frame, std::int16_t room_selector,
+                                       std::int16_t data_index) -> std::optional<std::int16_t> {
+                require(frame.context.caller==11&&frame.context.callee==22&&
+                        frame.context.stack_object==33&&frame.context.code_owner==0&&
+                        room_selector == 7 && data_index == 1,
+                        "RoomByTemp0 callback receives Temp0 and its data index");
+                return 42;
+            };
+            odh::Vm vm(std::move(room_routines), memory);
+            require(vm.start(key(), {11,22,33,0}) == odh::VmStatus::running,
+                    "RoomByTemp0 scope fixture starts");
+            vm.temps()[0] = 7;
+            require(vm.run(1) == odh::VmStatus::returned_true,
+                    "RoomByTemp0 backend value is read by an expression");
+        }
         for (const auto disposition : {odh::PrimitiveDisposition::goto_true,
                                        odh::PrimitiveDisposition::goto_false}) {
             for (const std::int16_t value : {std::int16_t{0}, std::int16_t{-7},

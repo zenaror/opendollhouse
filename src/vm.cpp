@@ -155,6 +155,9 @@ std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
     case 10: return frame.context.stack_object;
     case 25: return indexed(frame.locals, data);
     default:
+        if (scope == 23 && memory_.room_by_temp0) {
+            if (const auto value = memory_.room_by_temp0(frame, temps_[0], data)) return *value;
+        }
         if (const auto address=resolve_person_data_address(scope,data,temps_);address&&memory_.read) {
             const auto value = memory_.read(frame, address->scope, address->index);
             if (value) return *value;

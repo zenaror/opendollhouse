@@ -61,6 +61,28 @@ using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&
 using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
 // Rebuilds the active room grid after an external portal frame moved the avatar.
 using RouteGridRefresh=std::function<bool(const EntityPosition&)>;
+// Recomputes the next Portal15 call after an external portal frame returns
+// false. The provider owns room-graph policy and must exclude the failed edge;
+// Routing bounds retries and still validates every VM ticket and CodeOwner.
+using RoutePortalRetryProvider=std::function<std::optional<VmCall>(
+    const VmCall& failed_call,const EntityPosition& actor,const EntityPosition& target,
+    std::size_t retry_index)>;
+enum class RoutePortalStepStatus : std::uint8_t { call_ready,destination_reached,unavailable };
+struct RoutePortalStepPlan {
+    RoutePortalStepStatus status=RoutePortalStepStatus::unavailable;
+    std::optional<VmCall> call;
+    std::string diagnostic;
+};
+using RouteRoomPairProvider=std::function<std::optional<std::pair<std::uint16_t,std::uint16_t>>(
+    const EntityPosition& actor,const EntityPosition& target)>;
+// Called at a Route45 scheduler safe point. `previous_call` and
+// `previous_result` describe the last completed Portal15 frame; both are empty
+// for the initial step. The provider owns graph/ignored-edge policy.
+using RoutePortalStepProvider=std::function<RoutePortalStepPlan(
+    std::uint64_t root_ticket,const EntityPosition& actor,const EntityPosition& target,
+    const std::optional<VmCall>& previous_call,const std::optional<bool>& previous_result,
+    std::size_t step_index)>;
+using RoutePortalContextEndProvider=std::function<void(std::uint64_t root_ticket)>;
 // Controlled async route adapter: Route45's profiled SLOTs plus opcode27's
 // exact-point OnTopOf/SameDirection-or-Opposing/NoFailureTrees profile.
 // Opcode27 requires a host goal validator; this is not the complete TS1 routing policy.
@@ -85,10 +107,26 @@ public:
         if(executing_||job_)throw std::logic_error("cannot replace Route45 grid refresher while active");
         route_grid_refresh_=std::move(refresh);
     }
-    // Profile-specific provider used only by the bounded Door range SLOT.
-    void set_door_range_goal_provider(PreRankedSlotGoalProvider provider) {
-        if(executing_||job_)throw std::logic_error("cannot replace Door range provider while active");
-        door_range_goals_=std::move(provider);
+    void set_portal_retry_provider(RoutePortalRetryProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 portal retry provider while active");
+        portal_retry_=std::move(provider);
+    }
+    void set_room_pair_provider(RouteRoomPairProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 room resolver while active");
+        room_pair_=std::move(provider);
+    }
+    void set_room_portal_step_provider(RoutePortalStepProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 room portal planner while active");
+        room_portal_step_=std::move(provider);
+    }
+    void set_room_portal_context_end_provider(RoutePortalContextEndProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 room context cleanup while active");
+        room_portal_context_end_=std::move(provider);
+    }
+    // Provider for bounded, source-verified ranged SLOT profiles.
+    void set_ranged_slot_goal_provider(PreRankedSlotGoalProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace ranged SLOT provider while active");
+        ranged_slot_goals_=std::move(provider);
     }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
@@ -104,6 +142,7 @@ public:
     const std::string& diagnostic() const {return diagnostic_;}
 private:
     static constexpr std::size_t max_nested_jobs_=16;
+    static constexpr std::size_t max_portal_retries_=32;
     struct Job {
         std::uint64_t ticket,actor_generation,target_generation;
         std::int16_t actor,target;
@@ -119,18 +158,32 @@ private:
         std::uint64_t run_generation=0;
         bool external_frame_active=false;
         CodeOwner external_frame_owner=0;
+        std::optional<VmCall> external_frame_call{};
+        std::size_t portal_retries=0;
+        bool portal_replan_required=false;
+        bool deferred_room_route=false;
+        std::optional<VmFrame> replay_frame;
+        std::optional<Instruction> replay_instruction;
+        std::size_t portal_steps=0;
+        bool room_context_open=false;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
+    bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);
+    void end_room_context(Job&);
     bool finish(bool result,const std::string& reason);
     void cancel_chain(const std::string& reason);
     World& world_;
     RouteGrid& grid_;
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
-    PreRankedSlotGoalProvider door_range_goals_;
+    PreRankedSlotGoalProvider ranged_slot_goals_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
     RouteGridRefresh route_grid_refresh_;
+    RoutePortalRetryProvider portal_retry_;
+    RouteRoomPairProvider room_pair_;
+    RoutePortalStepProvider room_portal_step_;
+    RoutePortalContextEndProvider room_portal_context_end_;
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;

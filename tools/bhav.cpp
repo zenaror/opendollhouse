@@ -491,10 +491,10 @@ int main(int argc, char** argv) {
         const auto route_slot_random_handler=odh::random_primitive(route_slot_random);
         odh::PreRankedSlotGoalProvider route_slot_goals=[&](const auto& table,std::size_t index,
             const auto& actor,const auto& target) {
-            return odh::rank_reference_door_range_slot(table,index,actor,target,route_slot_random);
+            return odh::rank_reference_range_slot(table,index,actor,target,route_slot_random);
         };
         odh::Routing routing(world,grid,routing_slots?*routing_slots:empty_slots);
-        if(route_slot_probe)routing.set_door_range_goal_provider(route_slot_goals);
+        if(route_slot_probe)routing.set_ranged_slot_goal_provider(route_slot_goals);
         std::size_t stackobject_slot_resolutions=0;
         if(route_slot_probe) {
             routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame)->const odh::SlotTable* {

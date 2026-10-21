@@ -218,9 +218,48 @@ queues that BHAV through the existing Main/interaction host. The JSON
 `portal_runtime` result is labeled diagnostic: the host schedules the action
 directly; this is not the natural portal scheduler or cross-room routing.
 
-`tests/house07_route45_integration.py --portal-id 25 --ticks 2` exercises this
-path with the saved House07 and original avatar Main. In the current
-environment it exceeded a 90-second timeout; the same House07 baseline without
-the scheduled portal also exceeded 90 seconds. Therefore no commercial Portal15
-result is claimed. The standard CTest suite passes 160/160; the window-backend
-test is skipped when no display is available.
+A primeira execução de `tests/house07_route45_integration.py --portal-id 25
+--ticks 2`, antes do limite de parada após a ação, excedeu 90 segundos; a Main
+sem portal também excedeu esse limite. O probe foi depois alterado para parar
+no resultado da ação, permitindo os traces House07 descritos abaixo. Isso não
+converte a chamada host-scheduled em navegação natural.
+
+
+### Trace Portal26 até a recusa de Route45 (2026-10-21)
+
+O probe headless foi ajustado para encerrar assim que Portal15 termina e para
+expor as instruções do CodeOwner da ação, mantendo também a cauda de 24 itens
+compatível com o relatório anterior. Com a instalação externa House07 e
+`--portal-id 26 --ticks 214`, EntryPoint15 resolveu `Doors.iff:4105` no owner
+`2147483648`; o trace filtrado contém 49 instruções e termina em `4105 pc7`,
+opcode2, destinos `on_true=0xff` e `on_false=0xfd`. Antes disso, `4105 pc2`
+chama `4113`; `4113 pc1` despacha Route45 literal com operandos
+`[0,0,1,0,1,0,0,0]` e retorna pelo ramo falso a `4105 pc3`. O runtime registra
+`candidate room 1 differs from prepared route room 3` e
+`host goal validator rejected every direction-compatible SLOT candidate`.
+Assim, a recusa observada vem do Route45 interno tentando validar um destino da
+sala1 contra a malha ativa da sala3. A ação termina `returned_false`, sem fault;
+o ator fica em `[408,424,1,0]`, e nenhuma travessia é executada. O processo
+encerra com código 0 após a ação completar; a Main permanece `yielded` no tick
+119 porque o probe para antes de continuar seu relógio.
+
+O script `tests/house07_route45_integration.py --portal-id 26 --ticks 214`
+produz o trace até 256 itens por owner (49 neste caso), informa contagem e
+truncamento, e mantém `portal_trace_tail`. Isso identifica o limite do host para
+este trace; não estabelece que o executável original falharia. A próxima etapa
+é ligar o planner entre salas ao lifecycle do Route45 e do portal, preservando
+a EntryPoint15, o owner e a reconstrução da malha ao mudar de sala.
+
+
+### Portal25 e Portal26 no mesmo lote
+
+Com o mesmo host e `--ticks 214`, a peça25 da Door (posição salva
+`[408,408,1,0]`) falha antes de mover: GotoRelativePosition não encontra uma
+entrada compatível com a grade ativa, o VM termina `fault` com
+`routing start or pre-ranked goal input invalid`, e o ator permanece em
+`[392,440,1,3]`. A peça26 executa GotoRelativePosition até `[408,424,1,0]`, mas
+seu Route45 interno é rejeitado por pedir destinos da sala1 contra a grade da
+sala3, conforme o trace anterior. São limites observados do adaptador ODH com
+ação agendada. Não representam faults atribuídos ao jogo original. A aresta do
+planner estático Room3→Room1 segue identificada via Portal26; a ligação desse
+planner ao Route45/EntryPoint15 continua pendente.

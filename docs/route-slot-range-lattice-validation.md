@@ -28,25 +28,53 @@ proximidade `[16,16,16]` e resolução `16`, um perfil de raio exato aceito pelo
 protótipo `Routing` quando o chamador fornece uma `RouteGrid`. O Main host ainda
 não conecta esse serviço, e a grade de teste não valida clearance do lote.
 
-O perfil de faixa do índice 8 não é aceito pelo controller. Mesmo após o filtro
-de proximidade, direção, sala, piso, bounds, rotação, paredes/portas, ocupação,
-score/RNG, facing e política de failure trees ainda ficam por validar.
-Portanto, os 289 offsets e os 204 candidatos não autorizam movimento nem
-estabelecem semântica do executável original.
+## Perfil Global de House07 no Route45 (2026-10-21)
 
-Proveniência: FreeSO submódulo em `f86bbd34b2112296ed786741f640a0535886d180`,
-`TSOClient/tso.simantics/Engine/VMSlotParser.cs`, filtro de distância na linha
-147 e `SLOTEnumerationFunction` nas linhas 177–203. `FSOSquare` está definido
-em `TSOClient/tso.files/Formats/IFF/Chunks/SLOT.cs`. Essa referência não prova
+A consulta ao frontend Simitone e ao submódulo FreeSO fixado confirmou as regras
+de referência usadas para este registro: enumeração em faixa, máscara
+direcional, scoring com RNG e a política `FaceAnywhere`. Com `RandomScoring`,
+o score não soma proximidade desejada nem distância do chamador. `FaceAnywhere`
+não força a direção final do avatar. Isso descreve o código Simitone/FreeSO,
+não o executável original.
+
+O ODH admite agora somente o perfil exato de House07 Global SLOT100 tipo 3
+índice 8 (versão 10, flags `0xa0ff`, proximidade `[16,64,16]`, resolução 8,
+facing -3 e demais campos verificados acima). O provider gera e ordena os 204
+candidatos filtrados com RNG explícito; o controlador revalida a máscara
+direcional e exige validador de destino fornecido pelo host. Outros perfis de
+faixa continuam rejeitados. A política completa do original não está
+estabelecida.
+
+Cobertura: `tests/slot_scoring.cpp` verifica scoring aleatório e candidatos;
+`tests/routing.cpp` testa a admissão desse perfil, validador e orientação de
+chegada. Os CTests `slot_scoring` e `routing` passaram no build limpo
+`build/linux-checkpoint`. A integração
+`tests/house07_route45_integration.py` executou a Main sintética na instalação
+externa de base: Route45 retornou `true` após 32 movimentos. Com mutação de
+obstáculo, retornou `false` antes de entrar na célula ocupada, após atualizar o
+snapshot. Isso valida o caminho delimitado no ODH, não gameplay natural nem
+equivalência ao executável original.
+
+O probe Portal26 permanece separado da integração sintética. O Route45 chega
+até `[408,408,1,0]` em 32 movimentos e `Doors.iff:4105` termina
+`returned_true`, sem fault. O probe encerra nesse resultado antes de a Main
+despachar outra rota. Isso é uma ação diagnóstica host-scheduled, não interação
+natural nem prova de compatibilidade com o executável original.
+
+Proveniência: Simitone em `4906db3156616bfaffc10ce0963cf08062975fef` e seu
+submódulo FreeSO em `f86bbd34b2112296ed786741f640a0535886d180`;
+`TSOClient/tso.simantics/Engine/VMSlotParser.cs` (filtro de distância,
+`SLOTEnumerationFunction`, scoring e `FaceAnywhere`),
+`Engine/VMRoutingFrame.cs` (orientação ao chegar) e
+`tso.files/Formats/IFF/Chunks/SLOT.cs` (flags). Essa referência não prova
 comportamento do executável original.
 
-`tests/routing.cpp` valida a grade de 289 offsets do índice 8, os 204 candidatos
-Euclidianos, o modo quadrado, ordem, teto de alocação e entradas inválidas. A
-fixture de Route45 usa `data=1`, os campos lidos do índice 1 e as coordenadas
-salvas de Bob105/cadeira128, sobre uma grade construída. São fixtures
-sintéticas, não execução do jogo nem clearance do lote.
+`tests/routing.cpp` também conserva as fixtures de raio exato do índice 1 e
+verifica a faixa Global acima em World/grade sintéticos. O fixture de frame de
+portal usa um avatar como Caller e Target, move-o entre salas, atualiza a grade
+e retoma a rota suspensa; é um teste do scheduler, não um portal descoberto nos
+dados do jogo. A integração Main descrita acima usa os dados externos do lote,
+com BHAV sintético.
 
-Build focal `odh-routing-tests`, build completo e os 138 testes CTest passaram
-(137 executados com sucesso; `linux_window_backend` foi pulado por ausência de
-display). Nenhuma validação de Main, movimento real, janela Linux ou jogo
-original foi executada nesta etapa.
+O resultado anterior de 138 testes CTest e as fixtures históricas permanecem
+como checkpoint anterior; a verificação deste perfil está registrada acima.

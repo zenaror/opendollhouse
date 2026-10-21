@@ -105,10 +105,10 @@ void pre_ranked_goal_tests() {
     const auto failed=odh::find_route(grid,{0,1},{{8,1}});
     result=odh::find_pre_ranked_slot_route(grid,{0,1},goals);
     require(failed.status==odh::RouteStatus::no_path&&result.selected==1&&
-            result.path.expanded>failed.expanded,"unreachable first goal retries and accumulates expanded work");
+            result.path.expanded==failed.expanded,"one ranked search falls through an unreachable first goal");
     result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{failed.expanded,100});
-    require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected&&
-            result.path.expanded==failed.expanded,"next attempt cannot reset cumulative expansion budget");
+    require(result.path.status==odh::RouteStatus::found&&result.selected==1&&
+            result.path.expanded==failed.expanded,"single traversal fits the full reachable component in budget");
     result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{1,100});
     require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected,
             "unfinished first search never falls through to a reachable second goal");
@@ -118,6 +118,23 @@ void pre_ranked_goal_tests() {
     result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{100,100,1});
     require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected,
             "candidate count is bounded before ordered searches");
+    std::vector<odh::RoutePoint> rank_overflow(std::size_t(std::numeric_limits<std::uint16_t>::max())+1,{1,1});
+    odh::RouteLimits rank_limits;rank_limits.candidates=rank_overflow.size();
+    const auto rank_limited=odh::find_ranked_route(grid,{0,1},rank_overflow,rank_limits);
+    require(rank_limited.path.status==odh::RouteStatus::budget_exhausted&&!rank_limited.selected,
+            "rank storage bound rejects candidate lists that exceed uint16 indices");
+    odh::RouteGrid many{128,64};
+    for(std::int32_t y=0;y<64;++y)many.wall({63,y},{64,y});
+    std::vector<odh::PreRankedSlotGoal> many_goals;
+    many_goals.reserve(204);
+    for(std::int32_t x=64;x<128&&many_goals.size()<203;++x)
+        for(std::int32_t y=0;y<64&&many_goals.size()<203;++y)
+            many_goals.push_back({{x,y},1,0});
+    many_goals.push_back({{2,32},1,0});
+    result=odh::find_pre_ranked_slot_route(many,{1,32},many_goals,{5000,8192,204});
+    require(result.path.status==odh::RouteStatus::found&&result.selected==203&&
+            result.path.points.back()==odh::RoutePoint{2,32}&&result.path.expanded==4096,
+            "204 ranked goals search a disconnected preferred region only once before selecting a reachable goal");
     result=odh::find_pre_ranked_slot_route(grid,{0,1},{{{9,1},1,0},goals[1]});
     require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
             "out of grid preferred candidate stops rather than masquerading as no path");
@@ -137,10 +154,10 @@ void door_range_route_tests() {
     odh::PreRankedSlotGoalProvider provider=[&](const auto& table,std::size_t index,
         const auto& actor,const auto& target) {
         if(index!=0)return std::vector<odh::PreRankedSlotGoal>{};
-        return odh::rank_reference_door_range_slot(table,index,actor,target,random);
+        return odh::rank_reference_range_slot(table,index,actor,target,random);
     };
     odh::Routing routing{world,grid,globals};
-    routing.set_door_range_goal_provider(provider);
+    routing.set_ranged_slot_goal_provider(provider);
     routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame)->const odh::SlotTable* {
         return frame.context.stack_object==2?&doors:nullptr;
     });
@@ -162,6 +179,55 @@ void door_range_route_tests() {
         world.find(1)->position->x==12&&world.find(1)->position->y==20&&
         world.find(1)->person_data[37]==0x40,
         "Door range Route45 reaches the ranked west approach while preserving entry flags");
+
+    std::vector<odh::SlotRecord> records(9);
+    for(auto& record:records)record.type=3;
+    auto& house07_slot=records[8];house07_slot.flags=0xA0FF;
+    house07_slot.proximity=std::array<std::int32_t,3>{16,64,16};
+    house07_slot.offset_bits={0,0,0};house07_slot.standing=1;house07_slot.sitting=0;
+    house07_slot.ground=0;house07_slot.snap_target_slot=-1;house07_slot.max_size=0;
+    house07_slot.unknown_i10=0;house07_slot.gradient_bits=0;house07_slot.height=0;
+    house07_slot.facing=-3;house07_slot.resolution=8;
+    odh::SlotTable house07_globals{0,10,records,0};odh::World main_world;odh::RouteGrid main_grid{160,160};
+    odh::RandomState main_random{0};
+    odh::PreRankedSlotGoalProvider main_provider=[&](const auto& table,std::size_t index,
+        const auto& actor,const auto& target) {
+        return odh::rank_reference_range_slot(table,index,actor,target,main_random);
+    };
+    odh::Routing main_routing{main_world,main_grid,house07_globals};
+    main_routing.set_ranged_slot_goal_provider(main_provider);
+    main_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
+        const auto* actor=main_world.find(frame.context.caller);
+        const auto* target=main_world.find(frame.context.stack_object);
+        return actor&&target&&actor->position&&target->position&&
+            actor->position->level==target->position->level&&main_grid.contains(point)&&
+            main_grid.walkable(point)&&point==odh::RoutePoint{96,80};
+    });
+    odh::RoutineSet global_route{{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{45,254,255,{8,0,2,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+    odh::Vm main_vm{std::move(global_route),main_world.vm_memory(),{},main_routing.primitive()};
+    main_world.create(1,odh::EntityKind::avatar,{0,88,0});
+    main_world.create(2,odh::EntityKind::object,{0,0,1});
+    main_world.set_position(1,{96,64,1,3});main_world.set_position(2,{80,80,1,0});
+    main_grid.block({80,80});main_routing.bind(main_vm);
+    main_vm.start(odh::routine_key(4096),{1,2,2});
+    const auto main_route_status=main_vm.run(10);
+    require(main_route_status==odh::VmStatus::waiting&&main_routing.active()&&main_random.seed()==0,
+        ("Global SLOT100 type-3 index8 Route45 accepts the exact randomized range profile: status="+
+         std::to_string(static_cast<int>(main_vm.status()))+", active="+
+         std::to_string(main_routing.active())+", rng="+std::to_string(main_random.seed())+
+         ", vm="+main_vm.diagnostic()+", route="+main_routing.diagnostic()).c_str());
+    for(std::uint64_t tick=1;tick<=64&&main_routing.active();++tick)main_routing.tick(tick);
+    require(main_vm.status()==odh::VmStatus::returned_true&&!main_routing.active()&&
+            main_world.find(1)->position->direction==4&&main_world.find(1)->person_data[37]==0x04,
+        ("FaceAnywhere Global route does not force the candidate's neutral facing: status="+
+         std::to_string(static_cast<int>(main_vm.status()))+", active="+
+         std::to_string(main_routing.active())+", pos="+
+         std::to_string(main_world.find(1)->position->x)+","+
+         std::to_string(main_world.find(1)->position->y)+", direction="+
+         std::to_string(main_world.find(1)->position->direction)+", entry="+
+         std::to_string(main_world.find(1)->person_data[37])+", route="+
+         main_routing.diagnostic()).c_str());
 }
 void route_frame_context_tests() {
     odh::RouteFrameContext root;
@@ -221,6 +287,213 @@ struct Fixture {
     }
     void start() {vm.start(odh::routine_key(4096),{1,2,2});vm.run(10);}
 };
+void deferred_room_route_tests() {
+    {
+        odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
+        std::size_t local_goal_calls=0,step_calls=0,refreshes=0,context_ends=0;
+        std::uint8_t local_goal_flags=0;
+        odh::PreRankedSlotGoalProvider goals=[&](const auto&,std::size_t,const auto& actor,const auto& target) {
+            ++local_goal_calls;
+            require(actor.x==24&&target.x==28,"local SLOT planning starts only after the actor reaches the destination room");
+            const odh::RoutePoint point{20,12};
+            local_goal_flags=odh::reference_slot_entry_flags({target.x,target.y},target.direction,point,0x55);
+            return std::vector<odh::PreRankedSlotGoal>{{point,local_goal_flags,6}};
+        };
+        odh::Routing routing{world,grid,slots,goals};
+        routing.set_room_pair_provider([](const auto& actor,const auto& target)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
+            const auto room=static_cast<std::uint16_t>(actor.x<16?3:actor.x<24?2:1);
+            return std::pair{room,std::uint16_t{1}};
+        });
+        routing.set_route_grid_refresh([&](const auto& actor) {++refreshes;return actor.x==4||actor.x==16||actor.x==24;});
+        routing.set_room_portal_context_end_provider([&](auto){++context_ends;});
+        routing.set_room_portal_step_provider([&](auto ticket,const auto&,const auto&,
+            const std::optional<odh::VmCall>& previous,const std::optional<bool>& result,auto step) {
+            ++step_calls;
+            require(ticket!=0,"deferred planner receives the root VM ticket");
+            if(!previous&&!result&&step==0)
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                    odh::VmCall{odh::routine_key(4097),{1,2,2,9},{}},{}};
+            require(previous.has_value()&&result.has_value(),"planner receives each completed Portal15 result");
+            if(step==1&&!(*result))
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                    odh::VmCall{odh::routine_key(4098),{1,2,2,10},{}},{}};
+            require(*result,("a failed portal result is visible before the planner selects an alternate (step="+
+                std::to_string(step)+", result="+(result?std::to_string(*result):"none")+")").c_str());
+            if(step==2)
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                    odh::VmCall{odh::routine_key(4098),{1,2,2,10},{}},{}};
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::destination_reached,{}, {}};
+        });
+        auto code=routines();
+        odh::RoutineSet false_portal{{odh::routine_key(4097),odh::Bhav{0x8002,
+            {{2,254,255,{1,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+        odh::RoutineSet true_portal{{odh::routine_key(4098),odh::Bhav{0x8002,
+            {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+        odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive(),
+            {{9,std::move(false_portal)},{10,std::move(true_portal)}}};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(2)==odh::VmStatus::waiting&&routing.active()&&local_goal_calls==0,
+                "cross-room Route45 waits on the root ticket before local SLOT selection");
+        const auto root_ticket=vm.pending()->ticket;
+        require(routing.tick(1)&&routing.external_frame_active()&&step_calls==1&&
+                vm.pending()->ticket==root_ticket,"first Portal15 is scheduled at the original ticket safe point");
+        require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(2)&&routing.external_frame_active()&&
+                step_calls==2&&refreshes==1&&vm.pending()->ticket==root_ticket,
+                "false Portal15 refreshes the grid and schedules an alternate edge under the same ticket");
+        world.set_position(1,{16,12,1,0});
+        require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(3)&&routing.external_frame_active()&&
+                step_calls==3&&refreshes==2&&vm.pending()->ticket==root_ticket,
+                "successful alternate opens the next room transition without replacing the root ticket");
+        world.set_position(1,{24,12,1,0});
+        require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(4)&&!routing.external_frame_active()&&
+                local_goal_calls==1&&context_ends==1&&vm.status()==odh::VmStatus::waiting,
+                "verified destination room closes planner state and resumes local SLOT planning");
+        for(std::uint64_t tick=5;tick<16&&routing.active();++tick)routing.tick(tick);
+        const auto* arrived=world.find(1);
+        require(!routing.active()&&vm.status()==odh::VmStatus::returned_true&&
+                arrived->position->x==20&&arrived->person_data[37]==local_goal_flags&&vm.pending()==std::nullopt,
+                ("local Route45 reaches its destination and completes the original ticket true (status="+
+                 std::to_string(static_cast<int>(vm.status()))+", x="+std::to_string(arrived->position->x)+
+                 ", flags="+std::to_string(arrived->person_data[37])+", active="+
+                 std::to_string(routing.active())+", diagnostic="+routing.diagnostic()+")").c_str());
+        require(refreshes==3&&step_calls==4&&context_ends==1,
+                "failed edge plus two successful portal transitions refresh and clean ticket state exactly once");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+        std::size_t ended=0;
+        routing.set_room_pair_provider([](const auto&,const auto&)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{3,1};});
+        routing.set_route_grid_refresh([](const auto&){return true;});
+        routing.set_room_portal_context_end_provider([&](auto){++ended;});
+        routing.set_room_portal_step_provider([](auto,const auto&,const auto&,const auto&,const auto&,auto) {
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::destination_reached,{}, {}};
+        });
+        odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(2)==odh::VmStatus::waiting&&routing.tick(1)&&!routing.active()&&
+                vm.status()==odh::VmStatus::returned_false&&ended==1,
+                "planner cannot claim destination while the live room resolver still disagrees");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+        std::size_t ended=0;
+        routing.set_room_pair_provider([](const auto&,const auto&)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{3,1};});
+        routing.set_room_portal_context_end_provider([&](auto){++ended;});
+        routing.set_room_portal_step_provider([](auto,const auto&,const auto&,const auto&,const auto&,auto) {
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::unavailable,{},"no alternate portal edge"};
+        });
+        odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(2)==odh::VmStatus::waiting&&routing.tick(1)&&!routing.active()&&
+                vm.status()==odh::VmStatus::returned_false&&ended==1&&
+                routing.diagnostic()=="no alternate portal edge",
+                "missing alternate room route fails the original ticket and releases its planner state");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+        std::vector<std::uint64_t> planned_tickets,ended_tickets;
+        std::uint64_t root_ticket=0;
+        routing.set_room_pair_provider([](const auto&,const auto&)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{3,1};});
+        routing.set_route_grid_refresh([](const auto&){return true;});
+        routing.set_room_portal_context_end_provider([&](auto ticket){ended_tickets.push_back(ticket);});
+        routing.set_room_portal_step_provider([&](auto ticket,const auto&,const auto&,
+            const std::optional<odh::VmCall>& previous,const std::optional<bool>&,auto) {
+            planned_tickets.push_back(ticket);
+            if(ticket==root_ticket&&!previous)
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                    odh::VmCall{odh::routine_key(4097),{1,2,2,9},{}},{}};
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::unavailable,{},"nested route has no portal"};
+        });
+        odh::RoutineSet portal{{odh::routine_key(4097),odh::Bhav{0x8002,
+            {{45,254,255,{1,0,2,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+        odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(portal)}}};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(2)==odh::VmStatus::waiting&&routing.active(),
+                "nested deferred-route cleanup test establishes a parent room job");
+        root_ticket=vm.pending()->ticket;
+        require(routing.tick(1)&&routing.external_frame_active()&&vm.run(1)==odh::VmStatus::waiting&&
+                vm.pending()->ticket!=root_ticket,
+                "parent Portal15 can start an independent nested deferred Route45 ticket");
+        const auto child_ticket=vm.pending()->ticket;
+        require(routing.tick(2)&&vm.status()==odh::VmStatus::yielded&&vm.pending()->ticket==root_ticket&&
+                ended_tickets==std::vector<std::uint64_t>{child_ticket},
+                "failed nested room route cleans only its own root-ticket planner state");
+        require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                vm.external_frame_return()->ticket==root_ticket&&routing.tick(3)&&!routing.active()&&
+                vm.status()==odh::VmStatus::returned_false&&
+                ended_tickets==std::vector<std::uint64_t>{child_ticket,root_ticket},
+                "parent route later cleans its distinct planner state after nested failure");
+        require(planned_tickets.size()==3&&planned_tickets[0]==root_ticket&&
+                planned_tickets[1]==child_ticket&&planned_tickets[2]==root_ticket,
+                "nested and parent portal planners receive their own stable root-ticket identities");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+        std::size_t ended=0;
+        routing.set_room_pair_provider([](const auto&,const auto&)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{3,1};});
+        routing.set_room_portal_context_end_provider([&](auto){++ended;});
+        routing.set_room_portal_step_provider([](auto,const auto&,const auto&,const auto&,const auto&,auto) {
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                odh::VmCall{odh::routine_key(4097),{1,2,2,9},{}},{}};
+        });
+        odh::RoutineSet portal{{odh::routine_key(4097),odh::Bhav{0x8002,
+            {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+        odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(portal)}}};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(2)==odh::VmStatus::waiting&&routing.tick(1)&&routing.external_frame_active(),
+                "restart cleanup test schedules a deferred Portal15 child");
+        vm.start(odh::routine_key(4096),{1,2,2});
+        require(!routing.tick(2)&&!routing.active()&&ended==1,
+                "VM restart cancels deferred routing and releases per-ticket host state exactly once");
+    }
+}
+void ignore_rooms_cross_room_test() {
+    odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
+    slots.records[1].flags=0x0801;
+    slots.records[1].facing=-3;
+    std::size_t portal_plans=0,local_goal_plans=0,goal_checks=0;
+    odh::PreRankedSlotGoalProvider goals=[&](const auto&,std::size_t,const auto&,const auto&) {
+        ++local_goal_plans;
+        return std::vector<odh::PreRankedSlotGoal>{{{20,12},0x01,2}};
+    };
+    odh::Routing routing{world,grid,slots,goals};
+    routing.set_room_pair_provider([](const auto&,const auto&)
+        ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{3,1};});
+    routing.set_route_goal_validator([&](const auto&,odh::RoutePoint point) {
+        ++goal_checks;return point==odh::RoutePoint{20,12};
+    });
+    routing.set_room_portal_step_provider([&](auto,const auto&,const auto&,const auto&,const auto&,auto) {
+        ++portal_plans;
+        return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+            odh::VmCall{odh::routine_key(4097),{1,2,2,9},{}},{}};
+    });
+    odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
+    world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+    world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+    vm.start(odh::routine_key(4096),{1,2,2});
+    require(vm.run(2)==odh::VmStatus::waiting&&routing.active()&&local_goal_plans==1&&
+            goal_checks==1&&portal_plans==0,
+            "cross-room IgnoreRooms SLOT uses local goal validation without scheduling portals");
+    for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
+    require(!routing.active()&&vm.status()==odh::VmStatus::returned_true&&
+            world.find(1)->position->x==20&&portal_plans==0,
+            "IgnoreRooms completes through the local active-grid route while portal planning stays unused");
+}
 }
 int main() {
     try {
@@ -230,6 +503,8 @@ int main() {
         pre_ranked_goal_tests();
         door_range_route_tests();
         route_frame_context_tests();
+        deferred_room_route_tests();
+        ignore_rooms_cross_room_test();
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();odh::Routing routing{world,grid,globals};
          routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {
@@ -412,9 +687,9 @@ int main() {
              return position==odh::EntityPosition{70,12,1,0};
          });
          routing.bind(vm);
-         vm.start(odh::routine_key(4096),{1,2,2});
+         vm.start(odh::routine_key(4096),{1,1,1});
          require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
-                 "Route45 service waits before scheduling its host-resolved portal BHAV");
+                 "self-target Route45 service waits before scheduling its host-resolved portal BHAV");
          const auto route_ticket=vm.pending()->ticket;
          const bool portal_scheduled=routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}});
          require(portal_scheduled&&vm.status()==odh::VmStatus::running&&
@@ -437,6 +712,171 @@ int main() {
          require(routing.tick(3)&&world.find(1)->position->x==69&&
                  routing.active_frame_context()->state==odh::RouteFrameState::walking,
                  "Route45 movement resumes on the rebuilt grid after the portal continuation boundary");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
+         odh::Routing routing{world,grid,slots};
+         const auto return_bhav=[](bool result) {
+             const auto lhs=static_cast<std::uint8_t>(result?0:1);
+             const auto rhs=static_cast<std::uint8_t>(0);
+             return odh::Bhav{0x8002,{{2,254,255,{lhs,0,rhs,0,0,2,7,7}}},
+                 {},odh::Bhav::Metadata{0,4,0,0}};
+         };
+         odh::RoutineSet owner_failed{{odh::routine_key(4097),return_bhav(false)}};
+         odh::RoutineSet owner_alternate{{odh::routine_key(4097),return_bhav(true)}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),
+             {{9,std::move(owner_failed)},{10,std::move(owner_alternate)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         std::size_t retry_calls=0;
+         routing.set_portal_retry_provider([&](const odh::VmCall& failed,const odh::EntityPosition& actor,
+             const odh::EntityPosition& target,std::size_t retry_index)->std::optional<odh::VmCall> {
+             ++retry_calls;
+             require(failed.context.code_owner==9&&failed.context.callee==2&&retry_index==1,
+                     "portal retry receives the exact failed edge identity and bounded attempt number");
+             require(actor==odh::EntityPosition{4,12,1,0}&&target==odh::EntityPosition{28,12,1,0},
+                     "portal retry receives current participant positions for route replanning");
+             return odh::VmCall{odh::routine_key(4097),{1,2,2,10},{}};
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
+                 "Route45 parent waits before its first Portal15 attempt");
+         const auto route_ticket=vm.pending()->ticket;
+         require(routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}})&&
+                 vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 !vm.external_frame_return()->result,
+                 "first Portal15 attempt returns false to the suspended route");
+         require(routing.tick(1)&&retry_calls==1&&routing.external_frame_active()&&
+                 vm.status()==odh::VmStatus::running,
+                 "false portal return replans and schedules one alternate EntryPoint frame");
+         require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 vm.external_frame_return()->ticket==route_ticket&&vm.external_frame_return()->code_owner==10&&
+                 vm.external_frame_return()->result,
+                 "alternate Portal15 frame returns under its independently checked code owner");
+         require(routing.tick(2)&&vm.status()==odh::VmStatus::waiting&&vm.pending()->ticket==route_ticket&&
+                 routing.active()&&!routing.external_frame_active(),
+                 "successful alternate portal resumes the original Route45 wait");
+         for(std::uint64_t tick=3;tick<=40&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active(),
+                 "Route45 continues to its local destination after alternate portal success");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
+         odh::PreRankedSlotGoalProvider goals=[](const auto&,std::size_t,const auto&,const auto& target) {
+             const odh::RoutePoint point{20,12};
+             return std::vector<odh::PreRankedSlotGoal>{{point,
+                 odh::reference_slot_entry_flags({target.x,target.y},target.direction,point,0x55),2}};
+         };
+         odh::Routing routing{world,grid,slots,goals};std::size_t refreshes=0;
+         routing.set_route_grid_refresh([&](const odh::EntityPosition& position) {
+             ++refreshes;return position==odh::EntityPosition{8,12,1,0};
+         });
+         const auto return_bhav=[](bool result) {
+             const auto lhs=static_cast<std::uint8_t>(result?0:1);
+             return odh::Bhav{0x8002,{{2,254,255,{lhs,0,0,0,0,2,7,7}}},
+                 {},odh::Bhav::Metadata{0,4,0,0}};
+         };
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),
+             {{9,{{odh::routine_key(4097),return_bhav(false)}}},
+              {10,{{odh::routine_key(4097),return_bhav(true)}}}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         routing.set_portal_retry_provider([](const odh::VmCall&,const auto&,const auto&,std::size_t)
+             ->std::optional<odh::VmCall> {return odh::VmCall{odh::routine_key(4097),{1,2,2,10},{}};});
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
+                 "moved failed portal test establishes a pending parent route");
+         require(routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}}),
+                 "moved failed portal test schedules its first external frame");
+         world.set_position(1,{8,12,1,0});
+         require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 !vm.external_frame_return()->result&&routing.tick(1)&&refreshes==1,
+                 "failed portal movement refreshes the active room grid before retry");
+         require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 vm.external_frame_return()->result&&routing.tick(2)&&routing.active(),
+                 "stationary successful alternative returns to the original parent route");
+         require(routing.tick(3)&&world.find(1)->position->x==9&&refreshes==1,
+                 "parent replans from refreshed post-failure position instead of using its stale path");
+         for(std::uint64_t tick=4;tick<=32&&routing.active();++tick)routing.tick(tick);
+         require(!routing.active()&&vm.status()==odh::VmStatus::returned_true&&
+                 world.find(1)->position->x==20,
+                 "replanned parent reaches its original ranked SLOT goal and completes true");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+         auto owner=odh::RoutineSet{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{2,254,255,{1,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(owner)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&
+                 routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}})&&
+                 vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 !vm.external_frame_return()->result,
+                 "unavailable alternate-path case begins with a clean false portal return");
+         require(routing.tick(1)&&!routing.active()&&vm.run(1)==odh::VmStatus::returned_false,
+                 "false Portal15 with no retry provider fails the waiting Route45 cleanly");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+         auto owner=odh::RoutineSet{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{2,254,255,{1,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(owner)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         std::size_t retry_calls=0;
+         routing.set_portal_retry_provider([&](const odh::VmCall&,const odh::EntityPosition&,
+             const odh::EntityPosition&,std::size_t)->std::optional<odh::VmCall> {
+             ++retry_calls;return std::nullopt;
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&
+                 routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}}),
+                 "moved-avatar retry test starts with a suspended Route45 parent");
+         world.set_position(1,{5,12,1,0});
+         require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 !vm.external_frame_return()->result,
+                 "failed Portal15 returns false after an external avatar move");
+         require(routing.tick(1)&&!routing.active()&&retry_calls==0&&
+                 vm.run(1)==odh::VmStatus::returned_false,
+                 "moved avatar requires a successful route-grid refresh before retry planning");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+         auto owner=odh::RoutineSet{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{2,254,255,{1,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(owner)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});
+         std::size_t retry_calls=0;
+         routing.set_route_grid_refresh([&](const odh::EntityPosition&) {return world.remove(1);});
+         routing.set_portal_retry_provider([&](const auto&,const auto&,const auto&,auto)
+             ->std::optional<odh::VmCall> {++retry_calls;return std::nullopt;});
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&
+                 routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}}),
+                 "refresh invalidation test starts with an active external portal");
+         world.set_position(1,{5,12,1,0});
+         require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(1)&&!routing.active()&&
+                 !world.find(1)&&retry_calls==0&&vm.run(1)==odh::VmStatus::returned_false,
+                 "route-grid refresh that removes its actor is revalidated before retry planning");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+         auto owner=odh::RoutineSet{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{2,254,255,{1,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,std::move(owner)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         std::size_t retry_calls=0;
+         routing.set_portal_retry_provider([&](const odh::VmCall& failed,const odh::EntityPosition&,
+             const odh::EntityPosition&,std::size_t retry_index)->std::optional<odh::VmCall> {
+             ++retry_calls;
+             require(retry_index==retry_calls&&failed.context.code_owner==9,
+                     "portal retries advance monotonically and preserve failed CodeOwner context");
+             return failed;
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&
+                 routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}}),
+                 "bounded retry test starts with a suspended Route45 parent");
+         for(std::uint64_t tick=1;tick<=33;++tick) {
+             require(vm.run(1)==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                     !vm.external_frame_return()->result,
+                     "each bounded portal attempt returns false under the same parent ticket");
+             require(routing.tick(tick),"portal retry scheduler accepts the next consecutive tick");
+         }
+         require(retry_calls==32&&!routing.active()&&vm.run(1)==odh::VmStatus::returned_false,
+                 "portal retry limit schedules at most 32 alternatives and then fails closed");}
         {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
          std::size_t provider_calls=0;
          odh::PreRankedSlotGoalProvider provider=[&](const auto&,std::size_t,const auto&,const auto& target) {
@@ -562,6 +1002,25 @@ int main() {
                  "arrival updates route flags, restores a static footprint and completes exact wait");
          require(std::abs(f.world.find(1)->radian_direction-2.0f*0.7853981633974483f)<0.00001f,
                  "Route45 arrival keeps continuous and eight-notch facing state synchronized");}
+        {Fixture f;f.start();
+         for(std::uint64_t tick=1;tick<=16&&f.routing.active();++tick)f.routing.tick(tick);
+         require(f.vm.status()==odh::VmStatus::returned_true&&!f.routing.active(),
+                 "first independent Route45 job completes");
+         require(f.world.set_position(2,{36,12,1,0}),"second Route45 destination can move after idle period");
+         f.vm.start(odh::routine_key(4096),{1,2,2});
+         require(f.vm.run(10)==odh::VmStatus::waiting&&f.routing.active(),
+                 "a second independent Route45 job can start after the first completes");
+         require(f.routing.tick(100)&&f.routing.active()&&f.world.find(1)->position->x==13,
+                 "new root route accepts a later host tick after an idle gap");
+         require(f.routing.tick(101)&&f.routing.active(),
+                 "consecutive host ticks remain required while the new route is active");}
+        {Fixture f;f.vm.start(odh::routine_key(4096),{1,1,1});
+         require(f.vm.run(10)==odh::VmStatus::waiting&&f.routing.active(),
+                 "Route45 supports a caller routing relative to its own SLOT");
+         for(std::uint64_t tick=1;tick<=64&&f.routing.active();++tick)f.routing.tick(tick);
+         require(f.vm.status()==odh::VmStatus::returned_true&&!f.routing.active()&&
+                 f.world.find(1)->position->x!=4&&f.world.find(1)->position->y!=12,
+                 "self-target route keeps its initial SLOT center while the avatar moves");}
         {Fixture* fixture=nullptr;
          Fixture f([&](const auto&,auto,const auto&,const auto&) {
              fixture->world.remove(2);

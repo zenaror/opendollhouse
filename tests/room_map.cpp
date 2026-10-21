@@ -49,6 +49,31 @@ int main() { try {
     require(result.rooms.size() == 3 && result.rooms[0].id == 0, "dummy + two global rooms");
     require(result.rooms[1].area == 6 && result.rooms[2].area == 6, "connected normal tile area");
     require(result.rooms[1].outside && result.rooms[2].outside, "first room of each level is outside");
+    require(result.rooms[1].light_base_room==1&&result.rooms[2].light_base_room==2,
+            "disconnected floors keep separate lighting base rooms");
+    require(!result.light_base_rooms_resolved,
+            "raw saved maps do not claim resolved lighting-base data");
+    auto room_data=result;
+    room_data.light_base_rooms_resolved=true;
+    room_data.rooms[1].outside=false;
+    room_data.rooms[2].outside=true;
+    room_data.rooms[2].light_base_room=1;
+    room_data.rooms[2].pool=true;
+    require(odh::room_by_temp0_data(room_data,0,1)==0 &&
+            odh::room_by_temp0_data(room_data,1,1)==0 &&
+            odh::room_by_temp0_data(room_data,1,4)==1 &&
+            odh::room_by_temp0_data(room_data,1,0)==100,
+            "RoomByTemp0 selects with Temp0 but reads outside from the shared base room");
+    require(odh::room_by_temp0_data(room_data,-32768,4)==0 &&
+            odh::room_by_temp0_data(room_data,32767,4)==1,
+            "RoomByTemp0 clamps low and high selectors to the available rooms");
+    require(!odh::room_by_temp0_data(result,0,1) &&
+            !odh::room_by_temp0_data(room_data,0,5),
+            "RoomByTemp0 fails closed for unresolved maps and unknown data indexes");
+    require(result.rooms[1].light_base_room==1&&result.rooms[2].light_base_room==2,
+            "disconnected floors keep separate lighting base rooms");
+    require(!result.light_base_rooms_resolved,
+            "raw saved maps do not claim resolved lighting-base data");
     require(result.rooms[1].bounds.x == 0 && result.rooms[1].bounds.y == 0 &&
         result.rooms[1].bounds.width == 3 && result.rooms[1].bounds.height == 2, "normal room bounds");
     require(result.levels[0] == std::vector<std::uint32_t>(6, 0x00010001U) &&
@@ -132,10 +157,18 @@ int main() { try {
         }
         result = odh::generate_saved_room_map(architecture);
         require(result.rooms.size() == 6, "non-wall segments separate four rooms + upper room");
+        require(!result.light_base_rooms_resolved,
+                "saved maps leave authoritative lighting-base reads disabled");
         require(result.rooms[2].adjacent == std::vector<std::uint16_t>({1, 3}), "ordered reciprocal adjacency");
         require(adjacent(result, 1, 4) && adjacent(result, 3, 4), "wrapped fence adjacency");
         for (unsigned id = 1; id <= 4; ++id)
             require(result.rooms[id].area == 1 && result.rooms[id].outside, "outside propagates across non-wall adjacency");
+        for (unsigned id = 1; id <= 4; ++id)
+            require(result.rooms[id].light_base_room==1,
+                    "rooms connected for lighting share the earliest room as their base");
+        for (unsigned id = 1; id <= 4; ++id)
+            require(result.rooms[id].light_base_room==1,
+                    "rooms connected for lighting share the earliest room as their base");
         complete(result);
     }
 

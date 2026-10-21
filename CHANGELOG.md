@@ -7,6 +7,32 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Route45 agora pode suspender o ticket raiz para planejar salas em uma grade
+  completa de portais, executar EntryPoint15 validado, confirmar a sala real
+  após o retorno, atualizar a grade e retomar a rota local. O provider mantém
+  estado por ticket, exclui arestas que retornaram falso e respeita
+  `IgnoreRooms`. No House07 real, o Route45 do Portal26 agora alcança o SLOT
+  `[408,408]` em 32 movimentos pela grade de obstáculos da sala atual, sem
+  agendar Portal15. O leitor de `RoomByTemp0` agora usa o cômodo principal
+  derivado das ligações do mapa preparado, e o Portal26 do House07 retorna
+  `true`. O Sim continua no mesmo cômodo: isso não prova travessia pela porta
+  nem uma sessão de jogo completa.
+
+- `RoomByTemp0` lê o valor usado pelo Simitone para os índices 0 a 4 em mapas
+  preparados com nomes de piso resolvidos. O índice `Temp0 + 1` é limitado ao
+  mapa disponível; o valor externo vem do cômodo principal compartilhado pelos
+  cômodos conectados. Mapas incompletos e índices desconhecidos continuam sem
+  resposta. Testes cobrem limites, mapa incompleto e diferença entre o cômodo
+  selecionado e seu cômodo principal.
+
+- O retorno falso de uma BHAV externa de portal pode consultar um provider do
+  host para tentar outra chamada EntryPoint, com limite de 32 tentativas e
+  validação do ticket/CodeOwner em cada retorno. Se a tentativa falha após
+  mover o avatar, exige refresh válido da grade antes do retry e replana o
+  trecho original depois do sucesso. Sem provider ou alternativa, Route45
+  falha de forma explícita. A ODH ainda não calcula automaticamente o caminho
+  entre salas nem descobre/agenda Portal15 no Main.
+
 - O diagnóstico AttemptWalk separa a equivalência do algoritmo de ordenação
   de `RoomInfo.Entities` da equivalência do conjunto runtime de entidades.
   Simitone e `World` percorrem IDs em ordem crescente; um teste cobre criação

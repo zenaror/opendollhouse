@@ -53,6 +53,8 @@ struct VmTrace {
 struct VmMemory {
     std::function<std::optional<std::int16_t>(const VmFrame&, std::uint8_t, std::int16_t)> read;
     std::function<bool(const VmFrame&, std::uint8_t, std::int16_t, std::int16_t)> write;
+    // Simantics scope 23 needs Temp0 as a room selector alongside its data index.
+    std::function<std::optional<std::int16_t>(const VmFrame&, std::int16_t, std::int16_t)> room_by_temp0;
 };
 struct VmMemoryAddress {std::uint8_t scope;std::int16_t index;};
 // Scopes30/31 select My/StackObject PersonData using temps[index]. The temp
