@@ -123,13 +123,17 @@ public:
     // World must outlive bound VMs. Its address is stable (copy/move disabled).
     VmMemory vm_memory();
     std::size_t word_count() const { return words_; }
+    // Changes whenever entity state relevant to live room/route obstacles changes.
+    std::uint64_t spatial_revision() const noexcept { return spatial_revision_; }
 private:
     std::vector<std::int16_t> position_tree(std::int16_t) const;
     void apply_position(const std::vector<std::int16_t>&,EntityPosition);
+    void mark_spatial_change() noexcept;
     std::map<std::int16_t, Entity> entities_;
     WorldLimits limits_;
     AttributePolicy attribute_policy_;
     std::size_t words_ = 0;
     std::uint64_t generation_sequence_ = 0;
+    std::uint64_t spatial_revision_ = 0;
 };
 } // namespace odh

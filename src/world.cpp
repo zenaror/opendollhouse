@@ -37,6 +37,9 @@ std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
         ? frame.context.caller : frame.context.stack_object;
 }
 }
+void World::mark_spatial_change() noexcept {
+    if(spatial_revision_!=std::numeric_limits<std::uint64_t>::max())++spatial_revision_;
+}
 bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     if (id <= 0 || generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
         (kind != EntityKind::object && kind != EntityKind::avatar) ||
@@ -59,6 +62,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
         {},{},{},std::int16_t{-1},true,std::nullopt});
     if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     words_ += count;
+    mark_spatial_change();
     return true;
 }
 bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t guid,
@@ -96,6 +100,7 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     generation_sequence_=generation;
     words_+=count;
+    mark_spatial_change();
     return true;
 }
 const Entity* World::find(std::int16_t id) const {
@@ -116,7 +121,7 @@ bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::ui
     const auto found=entities_.find(id);if(found==entities_.end())return false;
     auto& type=found->second.definition;
     if(type)return type->guid==guid&&type->master_guid==master_guid;
-    type=EntityType{guid,master_guid};return true;
+    type=EntityType{guid,master_guid};mark_spatial_change();return true;
 }
 bool World::define_entry_points(std::int16_t id,const std::vector<EntryPoint>& values) {
     const auto found=entities_.find(id);
@@ -131,6 +136,7 @@ bool World::define_entry_points(std::int16_t id,const std::vector<EntryPoint>& v
     auto owned=values;
     table.emplace(std::move(owned));
     words_+=2*values.size();
+    mark_spatial_change();
     return true;
 }
 bool World::declare_object_word(std::int16_t id, std::int16_t index, std::int16_t value) {
@@ -139,15 +145,16 @@ bool World::declare_object_word(std::int16_t id, std::int16_t index, std::int16_
     if (found == entities_.end() || index < 0 || index >= 79 || derived(index)) return false;
     auto& bank = found->second.object_words;
     const auto field = bank.find(index);
-    if (field != bank.end()) { field->second = value; return true; }
+    if (field != bank.end()) { if(field->second!=value){field->second = value;mark_spatial_change();} return true; }
     if (words_ >= limits_.words) return false;
-    bank.emplace(index,value); ++words_; return true;
+    bank.emplace(index,value); ++words_;mark_spatial_change();return true;
 }
 bool World::set_person_data(std::int16_t id, std::int16_t index, std::int16_t value) {
     const auto found = entities_.find(id);
     if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
         !valid_index(index,found->second.person_data.size())) return false;
-    found->second.person_data[static_cast<std::size_t>(index)] = value; return true;
+    auto& old=found->second.person_data[static_cast<std::size_t>(index)];
+    if(old!=value){old=value;mark_spatial_change();}return true;
 }
 bool World::replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values) {
     const auto found = entities_.find(id);
@@ -160,6 +167,7 @@ bool World::replace_person_data(std::int16_t id, const std::vector<std::int16_t>
     auto replacement = values; // Copy before publication, including self-aliasing input.
     bank.swap(replacement);
     words_ = retained_words + replacement_size;
+    mark_spatial_change();
     return true;
 }
 bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) {
@@ -168,8 +176,9 @@ bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) 
         !valid_index(index,found->second.motives.size())) return false;
     auto& old = found->second.motives[static_cast<std::size_t>(index)];
     // Fixed reference default: no tuning override or motive decay in this world.
-    old = std::clamp(value,static_cast<std::int16_t>(-100),
+    const auto updated=std::clamp(value,static_cast<std::int16_t>(-100),
                      std::max(old,static_cast<std::int16_t>(100)));
+    if(old!=updated){old=updated;mark_spatial_change();}
     return true;
 }
 bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value) {
@@ -177,14 +186,14 @@ bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::in
     if (found == entities_.end() || index < 0 || index > 255) return false;
     auto& bank = found->second.definition_words;
     const auto field = bank.find(index);
-    if (field != bank.end()) return field->second == value;
+    if (field != bank.end()) { if(field->second!=value)return false; return true; }
     if (bank.size() >= limits_.bank_words || words_ >= limits_.words) return false;
-    bank.emplace(index,value); ++words_; return true;
+    bank.emplace(index,value); ++words_;mark_spatial_change();return true;
 }
 bool World::set_static_footprint(std::int16_t id, bool is_static) {
     const auto found=entities_.find(id);
     if(found==entities_.end()) return false;
-    found->second.static_footprint=is_static;
+    if(found->second.static_footprint!=is_static){found->second.static_footprint=is_static;mark_spatial_change();}
     return true;
 }
 bool World::set_avatar_kill_timeout(std::int16_t id, std::int32_t value) {
@@ -215,6 +224,7 @@ void World::apply_position(const std::vector<std::int16_t>& descendants,EntityPo
         if (auto direction=child.object_words.find(1); direction!=child.object_words.end())
             direction->second=p.direction;
     }
+    mark_spatial_change();
 }
 bool World::set_position(std::int16_t id,EntityPosition position) {
     const auto found=entities_.find(id);
@@ -232,6 +242,7 @@ bool World::set_radian_direction(std::int16_t id,float radians) {
     if(avatar.position) avatar.position->direction=notch;
     if(auto direction=avatar.object_words.find(1);direction!=avatar.object_words.end())
         direction->second=notch;
+    mark_spatial_change();
     return true;
 }
 bool World::place_on_floor(std::int16_t id,EntityPosition position) {
@@ -277,6 +288,7 @@ bool World::attach(std::int16_t container, std::size_t slot, std::int16_t occupa
     }
     c->second.slots[slot] = occupant;
     o->second.attachment = Attachment{container,slot};
+    mark_spatial_change();
     return true;
 }
 bool World::detach(std::int16_t container, std::size_t slot) {
@@ -288,7 +300,9 @@ bool World::detach(std::int16_t container, std::size_t slot) {
         entity.attachment.reset();
         if (entity.saved_object_banks) entity.unattached_slot=-1;
     }
-    c->second.slots[slot] = 0; return true;
+    c->second.slots[slot] = 0;
+    if(occupant)mark_spatial_change();
+    return true;
 }
 bool World::remove(std::int16_t id) {
     const auto found = entities_.find(id);
@@ -300,7 +314,7 @@ bool World::remove(std::int16_t id) {
               entity.object_words.size() + entity.motives.size() + entity.definition_words.size() +
               (entity.entry_points ? 2*entity.entry_points->size() : 0) +
               (entity.saved_object_banks ? 73 : 0);
-    entities_.erase(found); return true;
+    entities_.erase(found);mark_spatial_change();return true;
 }
 std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope, std::int16_t index) const {
     if (scope != 0 && scope != 1 && scope != 3 && scope != 4 && scope != 14 && scope != 15 &&
@@ -361,9 +375,12 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
             replacement[static_cast<std::size_t>(index)] = value;
             entity.attributes.swap(replacement);
             words_ = retained_words + replacement_size;
+            mark_spatial_change();
             return true;
         }
-        entity.attributes[static_cast<std::size_t>(index)] = value; return true;
+        auto& old=entity.attributes[static_cast<std::size_t>(index)];
+        if(old!=value){old=value;mark_spatial_change();}
+        return true;
     }
     if (scope == 18 || scope == 19) return set_person_data(entity.id,index,value);
     if (scope == 14 || scope == 15) return set_motive(entity.id,index,value);
@@ -376,7 +393,8 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
             if (entity.kind==EntityKind::avatar)
                 entity.radian_direction=radians_for_notch(static_cast<std::uint8_t>(value));
         }
-        field->second = value; return true;
+        if(field->second!=value){field->second = value;mark_spatial_change();}
+        return true;
     }
     return false;
 }

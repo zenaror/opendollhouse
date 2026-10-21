@@ -128,8 +128,11 @@ def main():
     }
     print(json.dumps(evidence, indent=2))
     if (exit_code != 0 or report["status"] != "returned_true" or
-            route["state"] != "ready_static_single_room_grid" or
-            route["movement_callbacks"] <= 0 or route["active"] or start == end):
+            route["state"] != "ready_dynamic_single_room_grid" or
+            route["movement_callbacks"] <= 0 or
+            route["snapshot_refreshes"] <= 0 or
+            route["snapshot_refresh_policy"] != "on_world_spatial_revision_change" or
+            not route["dynamic_obstacle_refresh"] or route["active"] or start == end):
         raise SystemExit("House07 Route45 integration probe failed its movement/ticket checks")
 
 

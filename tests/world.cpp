@@ -15,6 +15,21 @@ odh::VmFrame frame(std::int16_t caller=1,std::int16_t object=2) {
 }
 int main() {
     try {
+        odh::World spatial;
+        require(spatial.create(1,odh::EntityKind::object,{0,0,1}) &&
+                    spatial.create(2,odh::EntityKind::avatar,{0,88,0}) &&
+                    spatial.set_position(1,{16,16,1,0}) && spatial.set_position(2,{32,16,1,0}),
+                "spatial revision fixture setup");
+        auto spatial_revision=spatial.spatial_revision();
+        require(spatial.set_position(2,{48,16,1,0}) && spatial.spatial_revision()>spatial_revision,
+                "moving an entity advances spatial revision");
+        spatial_revision=spatial.spatial_revision();
+        require(spatial.attach(1,0,2) && spatial.spatial_revision()>spatial_revision,
+                "changing containment advances spatial revision");
+        spatial_revision=spatial.spatial_revision();
+        require(spatial.set_static_footprint(1,false) && spatial.spatial_revision()>spatial_revision,
+                "changing an entity footprint advances spatial revision");
+
         odh::World w;
         require(w.create(1,odh::EntityKind::avatar,{2,88,1}),"create avatar");
         require(w.find(1)->kill_timeout==std::optional<std::int32_t>{-1} &&
@@ -32,9 +47,11 @@ int main() {
         require(!w.read(f,3,0) && !w.write(f,3,0,9),"undeclared object word is unsupported");
         require(w.declare_object_word(1,0,7) && w.read(f,3,0)==7,"explicit word declaration");
         require(w.write(f,3,0,9) && w.read(f,3,0)==9,"raw stored word write");
+        const auto revision_before_position=w.spatial_revision();
         require(w.declare_object_word(1,1,0) && w.set_position(1,{16,16,1,0}) &&
+                    w.spatial_revision()>revision_before_position &&
                     w.write(f,3,1,2) && w.find(1)->position->direction==2 && w.read(f,3,1)==2,
-                "ObjectData direction writes update live collision orientation");
+                "position and ObjectData direction writes advance live spatial revision");
         require(!w.write(f,3,1,8) && w.find(1)->position->direction==2,
                 "invalid ObjectData direction leaves live orientation unchanged");
         require(w.set_position(1,{16,16,1,4}) && w.read(f,3,1)==4,
