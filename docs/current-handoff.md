@@ -1,5 +1,24 @@
 # Continuidade atual
 
+## Estado runtime do footprint durante Route45 (2026-10-21)
+
+`World::Entity` agora carrega `static_footprint` como estado runtime, separado
+do estado salvo. `Routing` mantém o ator estático enquanto planeja, torna-o
+dinâmico no primeiro passo real e o restaura ao concluir, falhar ou cancelar
+por restart do VM. A transição segue o perfil do Simitone fixado
+(`VMRoutingFrame::StartWalkAnimation`/`PreExit`); ainda não foi confirmada no
+executável original. O setter protege contra entidade removida ou geração
+reutilizada.
+
+Os testes `world` e `routing` passaram; rebuild completo e CTest passaram com
+150/150 testes sem falhas, sendo `linux_window_backend` pulado por display
+indisponível. `git diff --check` passou. Sem validação visual. Isso ainda não
+atualiza o `RoomInfoObstacleIndex`: `World` não publica eventos de movimento,
+reclassificação ou remoção para o índice, e Main não tem clearance runtime.
+Próximo passo: construir adaptador owner-keyed entre eventos/lifecycle de
+`World`, geometria de `ObjectDefinition` e o índice; invalidar consultas caso
+algum evento ou footprint esteja incompleto.
+
 ## Seleção de destino SLOT sobre footprints salvos
 
 `assess_saved_slot_goal_selection` separa seleção de destino da caminhabilidade

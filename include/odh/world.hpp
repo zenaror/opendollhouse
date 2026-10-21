@@ -43,6 +43,9 @@ struct Entity {
     std::optional<SavedObjectBanks> saved_object_banks;
     // Save baseline while uncontained; ordinary entities keep the existing -1.
     std::int16_t unattached_slot=-1;
+    // Runtime RoomInfo collection state. Simitone starts entities static and
+    // changes routed avatars dynamically while walking; this is not save data.
+    bool static_footprint=true;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -96,6 +99,7 @@ public:
     bool replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values);
     bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
+    bool set_static_footprint(std::int16_t id, bool is_static);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,

@@ -60,6 +60,9 @@ pendentes.
 O [índice RoomInfo](room-info-obstacle-index-validation.md) define registro,
 movimento e reclassificação owner-keyed dos footprints estáticos/dinâmicos;
 ainda aguarda eventos reais do World e não é usado como clearance.
+`World::Entity::static_footprint` representa a classe runtime da entidade e
+`Routing` troca o ator para dinâmico no primeiro passo, restaurando-o ao sair
+da rota conforme o perfil Simitone fixado. Isso ainda não atualiza o índice.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta

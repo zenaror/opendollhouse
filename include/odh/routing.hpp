@@ -75,6 +75,7 @@ private:
         std::size_t next=1;
         std::int16_t entry_flags;
         std::uint8_t facing;
+        bool walking_started=false;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool finish(bool result,const std::string& reason);

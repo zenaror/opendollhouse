@@ -158,6 +158,12 @@ bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::in
     if (bank.size() >= limits_.bank_words || words_ >= limits_.words) return false;
     bank.emplace(index,value); ++words_; return true;
 }
+bool World::set_static_footprint(std::int16_t id, bool is_static) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end()) return false;
+    found->second.static_footprint=is_static;
+    return true;
+}
 std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
     std::vector<std::int16_t> descendants{id};
     for(std::size_t n=0;n<descendants.size();++n)

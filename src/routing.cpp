@@ -189,6 +189,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!vm_ || dispatch.origin!=vm_) return unsupported("routing controller bound to another VM");
     if(job_) {
         if(vm_->pending() && vm_->pending()->ticket==job_->ticket) return unsupported("routing request already active");
+        const auto* actor=world_.find(job_->actor);
+        if(actor && actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,true);
         job_.reset(); // A restarted VM invalidated the previous ticket.
     }
     diagnostic_.clear();
@@ -266,7 +269,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     return {PrimitiveDisposition::wait,{}};
 }
 bool Routing::finish(bool result,const std::string& reason) {
-    const auto ticket=job_->ticket;job_.reset();diagnostic_=reason;
+    const auto ticket=job_->ticket;
+    const auto* actor=world_.find(job_->actor);
+    if(actor && actor->generation==job_->actor_generation)
+        world_.set_static_footprint(job_->actor,true);
+    job_.reset();diagnostic_=reason;
     return vm_->complete(ticket,result);
 }
 bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovement&)>& moved) {
@@ -276,6 +283,9 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     last_tick_=now;
     if(!vm_ || !job_) return false;
     if(!vm_->pending() || vm_->status()!=VmStatus::waiting || vm_->pending()->ticket!=job_->ticket) {
+        const auto* actor=world_.find(job_->actor);
+        if(actor && actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,true);
         job_.reset();diagnostic_="route canceled by VM restart";return false;
     }
     const auto* actor=world_.find(job_->actor);const auto* target=world_.find(job_->target);
@@ -287,6 +297,11 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     if(job_->next<job_->path.size()) {
         const auto point=job_->path[job_->next];const RoutePoint from{actor->position->x,actor->position->y};
         if(!grid_.can_step(from,point)) return finish(false,"next segment blocked during route");
+        if(!job_->walking_started) {
+            if(!world_.set_static_footprint(actor->id,false))
+                return finish(false,"dynamic route footprint update rejected");
+            job_->walking_started=true;
+        }
         auto position=*actor->position;position.x=point.x;position.y=point.y;position.direction=heading(from,point);
         if(!world_.set_position(actor->id,position)) return finish(false,"position update rejected");
         job_->expected=position;++job_->next;

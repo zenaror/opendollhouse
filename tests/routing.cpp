@@ -193,8 +193,9 @@ int main() {
                  world.find(105)->position->x==392&&world.find(105)->position->y==440,
                  "constructed clear grid exercises the already-at-goal Route45 path without movement");}
         {Fixture f;f.start();require(f.vm.status()==odh::VmStatus::waiting,"route dispatch waits");
-         require(f.world.find(1)->position->x==4,"planning does not teleport actor");
-         require(f.routing.tick(1) && f.world.find(1)->position->x==5,"first tick advances one unit");
+         require(f.world.find(1)->position->x==4&&f.world.find(1)->static_footprint,"planning does not move actor or change RoomInfo class");
+         require(f.routing.tick(1) && f.world.find(1)->position->x==5&&!f.world.find(1)->static_footprint,
+                 "first walking step moves one unit and registers a dynamic footprint");
          require(!f.routing.tick(1) && !f.routing.tick(0) && !f.routing.tick(3) &&
                  f.world.find(1)->position->x==5,"duplicates/backwards/gaps do not consume movement");
          std::size_t movements=1;
@@ -202,7 +203,8 @@ int main() {
          const auto& p=*f.world.find(1)->position;
          require(p.x==12 && p.y==12 && p.direction==2 && movements==8,"arrives and faces object");
          require(f.world.find(1)->person_data[37]==64 && f.vm.status()==odh::VmStatus::returned_true &&
-                 !f.routing.active(),"arrival updates route flags and completes exact wait");}
+                 !f.routing.active()&&f.world.find(1)->static_footprint,
+                 "arrival updates route flags, restores a static footprint and completes exact wait");}
         {Fixture* fixture=nullptr;
          Fixture f([&](const auto&,auto,const auto&,const auto&) {
              fixture->world.remove(2);
@@ -263,8 +265,10 @@ int main() {
         {Fixture f;f.start();bool guarded=false;
          f.routing.tick(1,[&](const auto&){try{f.routing.tick(2);}catch(const std::logic_error&){guarded=true;}});
          require(guarded && f.world.find(1)->position->x==5 && f.routing.tick(2),"movement notification cannot reenter tick");}
-        {Fixture f;f.start();f.routing.tick(1,[&](const auto&){f.vm.start(odh::routine_key(4096),{1,2,2});});
-         require(!f.routing.tick(2) && f.world.find(1)->position->x==5,"observer cancellation stops subsequent movement");}
+        {Fixture f;f.start();bool was_dynamic=false;
+         f.routing.tick(1,[&](const auto&){was_dynamic=!f.world.find(1)->static_footprint;f.vm.start(odh::routine_key(4096),{1,2,2});});
+         require(was_dynamic&&!f.routing.tick(2) && f.world.find(1)->position->x==5&&
+                 f.world.find(1)->static_footprint,"restart cancellation stops movement and restores static membership");}
         {Fixture f;require(!f.world.set_position(1,{-1,0,1,0}) && !f.world.set_position(1,{0,0,0,0}) &&
                             !f.world.set_position(1,{0,0,1,8}),"position profile bounds");}
         std::cout<<checks<<" routing checks passed (constructed world only)\n";return 0;

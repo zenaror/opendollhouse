@@ -20,6 +20,18 @@ o avatar. Um tick consecutivo aplica um segmento válido; duplicatas, passado
 e lacunas de ticks são recusados. O chamador deve processar ticks em ordem.
 Na chegada aplica facing/person data37 e conclui o ticket uma vez.
 
+Cada entidade mantém `static_footprint` como estado runtime separado da posição
+salva. No perfil Simitone fixado, a caminhada torna o footprint do avatar
+dinâmico antes do primeiro passo; saída ou cancelamento do job o torna estático
+novamente. Rotas turn-only não iniciam caminhada. Isso prepara o dado necessário
+para reconciliar `RoomInfo`, mas o índice de obstáculos ainda não é atualizado
+por `World` e o caminho Main ainda não fornece uma clearance runtime. A mesma
+transição ainda precisa de confirmação contra o executável original.
+Proveniência: Simitone fixado, submódulo FreeSO
+`f86bbd34b2112296ed786741f640a0535886d180`,
+`TSOClient/tso.simantics/Engine/VMRoutingFrame.cs` (`StartWalkAnimation`,
+`PreExit`) e `Entities/VMEntity.cs` (`StaticFootprint`, `SetObstacleStatic`).
+
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,
 movimento externo ou novo obstáculo cancelam o percurso. Falhas de percurso
