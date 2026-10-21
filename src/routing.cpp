@@ -187,6 +187,17 @@ std::optional<RouteFrameContext> Routing::active_frame_context() const {
     if(!job_) return {};
     return job_->frame;
 }
+bool Routing::call_external_frame(const VmCall& call) {
+    if(executing_ || !vm_ || !job_ || job_->external_frame_active ||
+       vm_->run_generation()!=job_->run_generation || vm_->status()!=VmStatus::waiting ||
+       !vm_->pending() || vm_->pending()->ticket!=job_->ticket ||
+       call.return_mode!=VmCallReturnMode::ordinary) return false;
+    if(!vm_->call_pending(job_->ticket,call)) return false;
+    job_->external_frame_active=true;
+    job_->external_frame_owner=call.context.code_owner;
+    job_->frame.state=RouteFrameState::room_portal;
+    return true;
+}
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch) {
     if(i.opcode!=45) return {};
     if(executing_) return unsupported("routing callback cannot reenter controller");
@@ -275,6 +286,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
              selected?selected->facing:heading(goal,{target->position->x,target->position->y})};
+    job_->run_generation=vm_->run_generation();
     return {PrimitiveDisposition::wait,{}};
 }
 bool Routing::finish(bool result,const std::string& reason) {
@@ -291,6 +303,39 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     if(last_tick_ && (now<=*last_tick_ || now-*last_tick_!=1)) return false;
     last_tick_=now;
     if(!vm_ || !job_) return false;
+    if(job_->external_frame_active) {
+        if(vm_->run_generation()!=job_->run_generation) {
+            const auto* actor=world_.find(job_->actor);
+            if(actor && actor->generation==job_->actor_generation)
+                world_.set_static_footprint(job_->actor,true);
+            job_.reset();diagnostic_="route canceled by VM restart during external frame";return false;
+        }
+        if(const auto returned=vm_->external_frame_return()) {
+            const auto result=*returned;
+            if(result.ticket!=job_->ticket || result.run_generation!=job_->run_generation ||
+               result.code_owner!=job_->external_frame_owner ||
+               !vm_->resume_external_frame(job_->ticket)) {
+                const auto* actor=world_.find(job_->actor);
+                if(actor && actor->generation==job_->actor_generation)
+                    world_.set_static_footprint(job_->actor,true);
+                job_.reset();diagnostic_="external route frame returned with mismatched ownership";return false;
+            }
+            job_->external_frame_active=false;
+            job_->frame.state=RouteFrameState::room_portal;
+            if(!result.result) return finish(false,"external route frame returned false; portal replanning unavailable");
+            // A portal BHAV resumes the suspended Route45 service only at this
+            // scheduler boundary. Movement begins on a later tick.
+            return true;
+        }
+        const auto& pending=vm_->pending();
+        if((vm_->status()==VmStatus::waiting && pending && pending->ticket!=job_->ticket) ||
+           vm_->status()==VmStatus::running || vm_->status()==VmStatus::budget_exhausted)
+            return true; // Child BHAV is still executing or waiting on its own service.
+        const auto* actor=world_.find(job_->actor);
+        if(actor && actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,true);
+        job_.reset();diagnostic_="external route frame ended without a matching return";return false;
+    }
     if(!vm_->pending() || vm_->status()!=VmStatus::waiting || vm_->pending()->ticket!=job_->ticket) {
         const auto* actor=world_.find(job_->actor);
         if(actor && actor->generation==job_->actor_generation)

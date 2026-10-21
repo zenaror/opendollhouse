@@ -64,6 +64,10 @@ public:
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
     VmPrimitive primitive();
+    // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
+    // The host must supply the correct routine, code owner and VM context;
+    // this controller does not discover portals or resolve EntryPoint tables.
+    bool call_external_frame(const VmCall&);
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
     std::optional<RouteFrameContext> active_frame_context() const;
@@ -80,6 +84,9 @@ private:
         std::int16_t entry_flags;
         std::uint8_t facing;
         bool walking_started=false;
+        std::uint64_t run_generation=0;
+        bool external_frame_active=false;
+        CodeOwner external_frame_owner=0;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool finish(bool result,const std::string& reason);

@@ -27,7 +27,9 @@ validação indicados por versão.
 - A VM pode empilhar uma BHAV filha a partir de um serviço em espera, manter os
   tickets aninhados de forma LIFO e retornar ao serviço sem reexecutar a
   instrução pai. `odh-vm-tests` cobre esperas e retornos aninhados; o
-  `Routing` ainda não usa esse mecanismo para chamar BHAVs de portal. Consulte
+  `Routing::call_external_frame` usa o mecanismo para uma BHAV de portal
+  resolvida explicitamente pelo host; descoberta de portal/EntryPoint 15 e
+  replanejamento ainda faltam. Consulte
   `docs/vm-validation.md`.
 
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do

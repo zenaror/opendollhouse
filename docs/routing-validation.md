@@ -54,6 +54,19 @@ Referência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`,
 `FreeSO/TSOClient/tso.simantics/Engine/VMRoutingFrame.cs` (`GetParentFrame`,
 `CanPortalTurn`, `AttemptWalk`).
 
+Desde 2026-10-21, `Routing::call_external_frame` liga uma chamada de BHAV
+resolvida pelo host ao ticket pendente do Route45. O estado ROOM_PORTAL é
+mantido enquanto a BHAV filha executa; waits próprios da filha pausam o
+movimento. O retorno valida ticket, geração e CodeOwner, retoma o wait-pai no
+tick seguinte e só permite movimento em um tick posterior. Retorno false falha
+fechado porque a descoberta/remoção de portais e o replanejamento por salas
+ainda não existem. Esta API não descobre entidades-portais nem resolve
+EntryPoint 15: o chamador deve fornecer rotina, owner e contexto explícitos.
+`odh-routing-tests` (98 checks) exercita uma BHAV filha com CodeOwner explícito
+que aguarda um serviço próprio e depois retorna antes da retomada da rota.
+Ainda não há pilha de RouteFrame filha nem uma chamada Route45 aninhada dentro
+da BHAV do portal.
+
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,
 movimento externo ou novo obstáculo cancelam o percurso. Falhas de percurso
