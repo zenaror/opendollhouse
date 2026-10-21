@@ -51,6 +51,12 @@ int main() { try {
     require(opaque.image.pixels[0] == red && opaque.image.depth[0] == 0 &&
             opaque.tested_samples == 1 && opaque.shaded_samples == 1,
             "opaque sprite writes color and depth");
+    auto ground_backdrop=base(1,1,blue);ground_backdrop.owner_ids={77};
+    auto ground_sprite=sprite(1,1,red);
+    const auto ground_occlusion=odh::composite_sprites(ground_backdrop,{layer(ground_sprite)}, {}, true);
+    require(ground_occlusion.image.owner_ids==std::vector<std::uint16_t>{0} &&
+            ground_occlusion.owner_ids==std::vector<std::uint16_t>{0},
+            "visible sprite invalidates ground identity while preserving independent object-pick output");
     auto colored_base = base(1,1,{17,123,244,255});
     auto alpha_sprite = sprite(1,1,{240,80,1,255});
     alpha_sprite.flags = 7;
@@ -233,6 +239,17 @@ int main() { try {
     require(merged.pixels == std::vector<Pixel>{red,blue,blue,red,blue} &&
             merged.depth == std::vector<float>{1,2,2,4,infinity},
             "raster merge resolves front, back, ties, finite background and infinite background");
+    raster_base.owner_ids={11,12,13,14,15};
+    auto visible_owner_layer=raster_layer;visible_owner_layer.owner_ids={21,22,23,24,25};
+    const auto owned_merge=odh::merge_raster(raster_base,visible_owner_layer);
+    require(owned_merge.owner_ids==std::vector<std::uint16_t>{21,12,13,24,15},
+            "raster merge replaces owners only where the layer wins depth");
+    const auto unowned_occluder=odh::merge_raster(raster_base,raster_layer);
+    require(unowned_occluder.owner_ids==std::vector<std::uint16_t>{0,12,13,0,15},
+            "unowned opaque raster layer clears hidden surface owners");
+    auto malformed_owners=raster_base;malformed_owners.owner_ids.pop_back();
+    rejects([&]{odh::merge_raster(malformed_owners,raster_layer);});
+    raster_base.owner_ids.clear();raster_layer.owner_ids.clear();
     require(merged.tested_samples == 38 && merged.shaded_samples == 14,
             "raster merge preserves cumulative work counters rather than visible pixel counts");
     require(merged.width == 5 && merged.height == 1 &&

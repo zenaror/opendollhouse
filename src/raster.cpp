@@ -100,6 +100,8 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
     if(pixels>limits.pixels || pixels>std::vector<Pixel>().max_size() ||
        pixels>std::vector<float>().max_size())
         throw FormatError("raster pixel budget exceeded");
+    if(options.record_owner_ids&&pixels>std::vector<std::uint16_t>().max_size())
+        throw FormatError("raster owner token budget exceeded");
     if(triangles.size()>limits.triangles || textures.size()>limits.textures)
         throw FormatError("raster triangle or texture budget exceeded");
     if(options.clear[3]!=255 || (options.filter!=TextureFilter::nearest &&
@@ -136,7 +138,8 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
     }
     RasterFrame frame{width,height,std::vector<Pixel>(static_cast<std::size_t>(pixels),options.clear),
                       std::vector<float>(static_cast<std::size_t>(pixels),
-                                         std::numeric_limits<float>::infinity()),tested_samples,0};
+                                         std::numeric_limits<float>::infinity()),tested_samples,0,{}};
+    if(options.record_owner_ids)frame.owner_ids.assign(static_cast<std::size_t>(pixels),0);
     for(const auto& triangle:triangles) {
         const auto box=bounds(triangle,width,height);
         if(box.samples==0)continue;
@@ -185,7 +188,9 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 for(unsigned channel=0;channel<3;++channel)
                     frame.pixels[index][channel]=static_cast<std::uint8_t>(
                         std::round(std::clamp(color[channel]*shade,0.0,255.0)));
-                frame.pixels[index][3]=255;frame.depth[index]=depth;++frame.shaded_samples;
+                frame.pixels[index][3]=255;frame.depth[index]=depth;
+                if(options.record_owner_ids)frame.owner_ids[index]=triangle.owner_id;
+                ++frame.shaded_samples;
             }
     }
     return frame;

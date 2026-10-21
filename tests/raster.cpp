@@ -91,8 +91,22 @@ int main() {try {
     require(visible.pixels==std::vector<Pixel>(4,green) && visible.pixels==permuted.pixels &&
             visible.depth==permuted.depth,"smaller depth wins independently of submission order");
     require(visible.shaded_samples==8 && permuted.shaded_samples==4,"shaded counter measures depth-passing writes");
+    auto tagged_far=square(0,2),tagged_near=square(1,1);
+    for(auto& tri:tagged_far)tri.owner_id=17;
+    for(auto& tri:tagged_near)tri.owner_id=29;
+    auto tagged_triangles=tagged_far;
+    tagged_triangles.insert(tagged_triangles.end(),tagged_near.begin(),tagged_near.end());
+    odh::RasterOptions record_owners;record_owners.record_owner_ids=true;
+    const auto tagged=odh::rasterize(2,2,tagged_triangles,solids,record_owners);
+    require(tagged.owner_ids==std::vector<std::uint16_t>(4,29),
+            "optional pixel owner follows the same nearer depth winner as color");
+    require(visible.owner_ids.empty(),"owner storage remains absent when the caller does not request it");
     auto equal=square(1,2);auto ties=far;ties.insert(ties.end(),equal.begin(),equal.end());
     require(odh::rasterize(2,2,ties,solids).pixels==std::vector<Pixel>(4,red),"depth ties retain first color");
+    auto equal_tag=equal;for(auto& tri:tagged_far)tri.owner_id=17;for(auto& tri:equal_tag)tri.owner_id=29;
+    auto tie_tags=tagged_far;tie_tags.insert(tie_tags.end(),equal_tag.begin(),equal_tag.end());
+    require(odh::rasterize(2,2,tie_tags,solids,record_owners).owner_ids==
+            std::vector<std::uint16_t>(4,17),"equal-depth ownership retains the first surface");
     auto slope=square();for(auto& tri:slope)for(auto& v:tri.vertices)v.position[2]=v.position[0];
     require(odh::rasterize(2,2,slope,solids).depth==std::vector<float>{.5F,1.5F,.5F,1.5F},
             "depth interpolates affinely at pixel centers");

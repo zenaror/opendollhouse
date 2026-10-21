@@ -15,6 +15,7 @@ struct RasterVertex {
 struct RasterTriangle {
     std::array<RasterVertex,3> vertices;
     std::size_t texture;
+    std::uint16_t owner_id = 0; // Optional caller-defined picking token; zero is unowned.
 };
 struct RasterOptions {
     std::array<std::uint8_t,4> clear{245,245,242,255};
@@ -22,6 +23,7 @@ struct RasterOptions {
     TextureFilter filter = TextureFilter::bilinear;
     bool vertex_colors = false;
     bool directional_up_light = false; // With lighting: (dot(normal,up)+1)/2.
+    bool record_owner_ids = false; // Allocate/write one token per pixel only when requested.
 };
 struct RasterLimits {
     std::uint32_t width = 2048, height = 2048, pixels = 1048576;
@@ -33,6 +35,8 @@ struct RasterFrame {
     std::vector<std::array<std::uint8_t,4>> pixels;
     std::vector<float> depth;
     std::uint64_t tested_samples = 0, shaded_samples = 0;
+    // Empty unless a raster pass requested owner recording.
+    std::vector<std::uint16_t> owner_ids;
 };
 
 // Pure orthographic CPU rasterizer. Both windings use pixel centers and the

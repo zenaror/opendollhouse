@@ -45,7 +45,8 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
            frame->height > limits.height)
             throw FormatError("raster merge dimensions exceed limits or are zero");
         const auto count = std::uint64_t{frame->width}*frame->height;
-        if(count > limits.pixels || count != frame->pixels.size() || count != frame->depth.size())
+        if(count > limits.pixels || count != frame->pixels.size() || count != frame->depth.size() ||
+           (!frame->owner_ids.empty()&&count!=frame->owner_ids.size()))
             throw FormatError("raster merge pixel budget or arrays invalid");
         if(frame->shaded_samples > frame->tested_samples ||
            frame->tested_samples > limits.samples-tested)
@@ -60,12 +61,16 @@ RasterFrame merge_raster(const RasterFrame& base, const RasterFrame& layer,
                 throw FormatError("raster merge depth must be finite or positive infinity");
     }
     RasterFrame result = base;
+    if(result.owner_ids.empty()&&!layer.owner_ids.empty())
+        result.owner_ids.assign(result.pixels.size(),0);
     result.tested_samples = tested;
     result.shaded_samples = shaded;
     for(std::size_t i = 0; i < result.pixels.size(); ++i) {
         if(layer.depth[i] < result.depth[i]) {
             result.pixels[i] = layer.pixels[i];
             result.depth[i] = layer.depth[i];
+            if(!result.owner_ids.empty())
+                result.owner_ids[i]=layer.owner_ids.empty()?0:layer.owner_ids[i];
         }
     }
     return result;
@@ -78,7 +83,8 @@ CompositeFrame composite_sprites(const RasterFrame& base,
        base.height > limits.height)
         throw FormatError("compositor base dimensions exceed limits or are zero");
     const auto count = std::uint64_t{base.width}*base.height;
-    if(count > limits.pixels || count != base.pixels.size() || count != base.depth.size())
+    if(count > limits.pixels || count != base.pixels.size() || count != base.depth.size() ||
+       (!base.owner_ids.empty()&&count!=base.owner_ids.size()))
         throw FormatError("compositor base pixel budget or arrays invalid");
     for(const auto& pixel : base.pixels) if(pixel[3] != 255)
         throw FormatError("compositor base must be opaque");
@@ -137,6 +143,7 @@ CompositeFrame composite_sprites(const RasterFrame& base,
                          std::uint32_t{output[channel]}*(255-alpha) + 127)/255);
                 output[3] = 255;
                 result.image.depth[destination] = z;
+                if(!result.image.owner_ids.empty())result.image.owner_ids[destination]=0;
                 if(record_owners)result.owner_ids[destination]=layer.owner_id;
                 ++result.shaded_samples;
             }
