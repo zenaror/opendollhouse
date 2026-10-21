@@ -14,7 +14,9 @@ validação indicados por versão.
   antiga; identidade duplicada, remoção desconhecida e excesso do limite não
   alteram a geração. Ainda exige notificações do host e não está ligado aos
   callbacks de `World` nem ao replanejamento. No perfil Simitone observado,
-  `Portal15` é estrutural; o inventário não modela animação de porta.
+  `Portal15` é estrutural; o inventário não modela animação de porta. O probe
+  AttemptWalk já consome o snapshot via substituição em lote, ainda sem refresh
+  persistente entre ticks.
   Consulte `docs/room-obstacles-validation.md`.
 
 - O host agora pode preparar uma chamada VM para `Portal15`: valida o registro

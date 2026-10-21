@@ -52,6 +52,11 @@ posição e vínculos do grupo, sem alegar uma máquina de estado de portas. Os
 testes exercitam registro em lote/individual, movimento entre salas, posição
 desconhecida, remoção e limite com mapas sintéticos.
 
+`tools/runtime_attempt_walk_probe.cpp` alimenta o índice em lote com as
+posições atuais do `World` e a classificação de portas/grupos extraída do save.
+Esse probe ainda é uma reconstrução pontual: não mantém o índice entre ticks
+nem captura alterações posteriores.
+
 Quando recebe o mapa cru de `generate_saved_room_map`, o resultado também herda
 a ausência do remapeamento de pisos/flags. O caminho de
 [arquitetura preparada](prepared-architecture-validation.md) trata essa etapa

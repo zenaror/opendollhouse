@@ -92,7 +92,9 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
                     portal.action != 0, input->second->contained, entity->position});
             }
         }
-        const auto portal_inventory = odh::build_room_portal_inventory(rooms, portal_members);
+        odh::DynamicRoomPortalInventory portal_index(rooms);
+        if (!portal_index.replace_members(portal_members)) return result;
+        const auto& portal_inventory = portal_index.current();
         result.portal_inventory_complete = portal_inventory.complete;
         result.portal_openings = portal_inventory.openings.size();
 
