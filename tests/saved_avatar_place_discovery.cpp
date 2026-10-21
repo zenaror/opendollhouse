@@ -19,12 +19,26 @@ odh::SavedCollisionCandidate entity(std::int16_t id, bool avatar,
             odh::SavedCollisionCandidateReason::none, box, position};
 }
 
+odh::GeometricRoomMap room_map() {
+    odh::GeometricRoomMap result;
+    result.floor_resources_resolved = true;
+    result.width = 2;
+    result.height = 2;
+    result.rooms.resize(5);
+    result.rooms[0].id = 0;
+    for (std::uint16_t id = 1; id <= 4; ++id)
+        result.rooms[id] = {id, 0, 1, {}, false, false, {}};
+    result.levels[0] = {0x00010001U, 0x00020002U, 0x00030003U, 0x00040004U};
+    result.levels[1] = {0x00000000U, 0x00000000U, 0x00000000U, 0x00000000U};
+    return result;
+}
+
 odh::SavedAvatarPlaceDiscovery discover(
     const std::vector<odh::SavedCollisionCandidate>& entities,
     const std::vector<odh::SavedMultitileGroup>& groups = {},
     bool complete = true, bool groups_complete = true, std::size_t limit = 4096) {
     return odh::discover_saved_avatar_place_blockers(
-        {16, 16, 1, 0}, 5, entities, groups, complete, groups_complete, limit);
+        room_map(), {16, 16, 1, 0}, 5, entities, groups, complete, groups_complete, limit);
 }
 } // namespace
 
@@ -41,9 +55,41 @@ int main() {
         require(!clear.runtime_obstacle_inventory_complete,
                 "entity snapshot does not claim runtime obstacle completeness");
 
+        const auto room_filtered = odh::discover_saved_avatar_place_blockers(
+            room_map(), {24, 24, 1, 0}, 5,
+            {entity(5, true, {21, 21, 27, 27}, {24, 24, 1, 0}),
+             entity(8, false, {23, 23, 28, 28}, {25, 24, 1, 0}),
+             entity(9, false, {23, 23, 28, 28}, {8, 24, 1, 0})}, {}, true, true);
+        require(room_filtered.status == odh::SavedAvatarPlaceDiscoveryStatus::ready &&
+                    room_filtered.entity_snapshot_blockers.size() == 1 &&
+                    room_filtered.entity_snapshot_blockers[0].blocker_id == 8,
+                "overlaps are limited to the room selected by the saved room map");
+
+        auto diagonal_rooms = room_map();
+        diagonal_rooms.levels[0][3] = 0x80000000U | 0x00020001U;
+        const auto diagonal_filtered = odh::discover_saved_avatar_place_blockers(
+            diagonal_rooms, {24, 24, 1, 0}, 5,
+            {entity(5, true, {21, 21, 27, 27}, {24, 24, 1, 0}),
+             entity(8, false, {23, 23, 28, 28}, {25, 24, 1, 0}),
+             entity(9, false, {23, 23, 28, 28}, {24, 22, 1, 0})}, {}, true, true);
+        require(diagonal_filtered.entity_snapshot_blockers.size() == 1 &&
+                    diagonal_filtered.entity_snapshot_blockers[0].blocker_id == 8,
+                "horizontal diagonal room assignment follows the position within the tile");
+
+        require(odh::discover_saved_avatar_place_blockers(
+                    {}, {16, 16, 1, 0}, 5, {actor}, {}, true, true).reason ==
+                    odh::SavedAvatarPlaceDiscoveryReason::candidate_room_unknown,
+                "malformed room maps fail closed");
+        auto unresolved_room_map = room_map();
+        unresolved_room_map.floor_resources_resolved = false;
+        require(odh::discover_saved_avatar_place_blockers(
+                    unresolved_room_map, {16, 16, 1, 0}, 5, {actor}, {}, true, true).reason ==
+                    odh::SavedAvatarPlaceDiscoveryReason::candidate_room_unknown,
+                "raw room maps without prepared floor aliases fail closed");
+
         const auto ordered = discover({actor,
             entity(9, false, {17, 14, 20, 18}, {18, 16, 1, 0}),
-            entity(2, true, {12, 12, 14, 14}, {13, 13, 1, 0})});
+            entity(2, true, {12, 12, 14, 14}, {16, 16, 1, 0})});
         require(ordered.status == odh::SavedAvatarPlaceDiscoveryStatus::ready &&
                     ordered.entity_snapshot_blockers.size() == 2,
                 "both intersecting saved entity footprints are discovered");
@@ -112,10 +158,10 @@ int main() {
                          {{5, std::nullopt, {5, 7}}, {7, std::nullopt, {7}}}).reason ==
                     odh::SavedAvatarPlaceDiscoveryReason::multitile_inventory_invalid,
                 "duplicate multitile membership fails closed");
-        require(odh::discover_saved_avatar_place_blockers({16,16,1,0}, 0, {actor}, {}, true, true).reason ==
+        require(odh::discover_saved_avatar_place_blockers(room_map(), {16,16,1,0}, 0, {actor}, {}, true, true).reason ==
                     odh::SavedAvatarPlaceDiscoveryReason::actor_identity_invalid,
                 "invalid actor identity fails closed");
-        require(checks == 19, "all discovery assertions were counted");
+        require(checks == 23, "all discovery assertions were counted");
         std::cout << "saved avatar place discovery: " << checks << " checks passed (entity snapshot only)\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

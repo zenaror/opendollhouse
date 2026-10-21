@@ -2,6 +2,7 @@
 
 #include "odh/saved_avatar_place_audit.hpp"
 #include "odh/saved_collision_candidates.hpp"
+#include "odh/room_map.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,8 @@ enum class SavedAvatarPlaceDiscoveryReason : std::uint8_t {
     entity_identity_invalid,
     multitile_inventory_invalid,
     entity_position_unknown,
+    candidate_room_unknown,
+    entity_room_unknown,
     entity_geometry_unknown,
 };
 
@@ -33,10 +36,12 @@ struct SavedAvatarPlaceDiscovery {
     bool runtime_obstacle_inventory_complete = false;
 };
 
-// Finds saved entity footprints intersecting a proposed avatar footprint.
+// Finds saved entity footprints intersecting a proposed avatar footprint in
+// the candidate's geometric room. Prepared floor aliases are required.
 // Unknown BHAV, flags, and EP26 values stay unknown in each overlap input;
 // runtime_obstacle_inventory_complete is always false.
 SavedAvatarPlaceDiscovery discover_saved_avatar_place_blockers(
+    const GeometricRoomMap& rooms,
     const EntityPosition& candidate_position, std::int16_t actor_id,
     const std::vector<SavedCollisionCandidate>& entities,
     const std::vector<SavedMultitileGroup>& groups,

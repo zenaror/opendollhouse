@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bitset>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace odh {
@@ -26,7 +27,8 @@ bool valid_box(const CollisionBox& box) noexcept {
 } // namespace
 
 SavedAvatarPlaceDiscovery discover_saved_avatar_place_blockers(
-    const EntityPosition& candidate_position, std::int16_t actor_id,
+    const GeometricRoomMap& rooms, const EntityPosition& candidate_position,
+    std::int16_t actor_id,
     const std::vector<SavedCollisionCandidate>& entities,
     const std::vector<SavedMultitileGroup>& groups,
     bool entity_inventory_complete, bool multitile_inventory_complete,
@@ -42,6 +44,24 @@ SavedAvatarPlaceDiscovery discover_saved_avatar_place_blockers(
     const auto footprint = avatar_candidate_collision_shape(candidate_position);
     if (footprint.state != CollisionShapeState::present)
         return unsupported(SavedAvatarPlaceDiscoveryReason::candidate_shape_invalid);
+    if (!rooms.floor_resources_resolved || !rooms.width || !rooms.height ||
+        rooms.width > 64 || rooms.height > 64 ||
+        rooms.rooms.empty() || rooms.rooms.size() > 32768 ||
+        rooms.levels[0].size() != std::size_t(rooms.width) * rooms.height ||
+        rooms.levels[1].size() != std::size_t(rooms.width) * rooms.height)
+        return unsupported(SavedAvatarPlaceDiscoveryReason::candidate_room_unknown);
+
+    const auto room_at = [&](const EntityPosition& position) -> std::optional<std::uint16_t> {
+        if (position.level < 1 || position.level > 2) return std::uint16_t{0};
+        if (position.x < 0 || position.y < 0 ||
+            static_cast<std::uint32_t>(position.x / 16) >= rooms.width ||
+            static_cast<std::uint32_t>(position.y / 16) >= rooms.height)
+            return std::uint16_t{0};
+        return geometric_room_at(rooms, position.x, position.y, position.level);
+    };
+    const auto candidate_room = room_at(candidate_position);
+    if (!candidate_room)
+        return unsupported(SavedAvatarPlaceDiscoveryReason::candidate_room_unknown);
 
     std::bitset<id_count> seen;
     const SavedCollisionCandidate* actor = nullptr;
@@ -100,6 +120,11 @@ SavedAvatarPlaceDiscovery discover_saved_avatar_place_blockers(
                                entities.size());
         }
         if (entity.position->level != candidate_position.level) continue;
+        const auto entity_room = room_at(*entity.position);
+        if (!entity_room)
+            return unsupported(SavedAvatarPlaceDiscoveryReason::entity_room_unknown,
+                               entities.size());
+        if (*entity_room != *candidate_room) continue;
         if (!entity.box || !valid_box(*entity.box))
             return unsupported(SavedAvatarPlaceDiscoveryReason::entity_geometry_unknown,
                                entities.size());
@@ -149,6 +174,8 @@ const char* saved_avatar_place_discovery_reason_name(
     case SavedAvatarPlaceDiscoveryReason::entity_identity_invalid: return "entity_identity_invalid";
     case SavedAvatarPlaceDiscoveryReason::multitile_inventory_invalid: return "multitile_inventory_invalid";
     case SavedAvatarPlaceDiscoveryReason::entity_position_unknown: return "entity_position_unknown";
+    case SavedAvatarPlaceDiscoveryReason::candidate_room_unknown: return "candidate_room_unknown";
+    case SavedAvatarPlaceDiscoveryReason::entity_room_unknown: return "entity_room_unknown";
     case SavedAvatarPlaceDiscoveryReason::entity_geometry_unknown: return "entity_geometry_unknown";
     }
     return "invalid_reason";

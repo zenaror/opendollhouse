@@ -162,6 +162,7 @@ void emit_route_grid_diagnostic(
   const auto selection=odh::assess_saved_slot_goal_selection(slots,slot_type3_index,rooms,actor_id,
       {candidate.position.x,candidate.position.y,actor->position->level,0},entities,groups,true);
   const auto avatar_place=odh::discover_saved_avatar_place_blockers(
+      rooms,
       {candidate.position.x,candidate.position.y,actor->position->level,actor->position->direction},
       actor_id,entities,groups,true,true);
   switch(selection.state){

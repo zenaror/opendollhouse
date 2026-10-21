@@ -362,7 +362,7 @@ add_library(odh_saved_collision_candidates src/saved_collision_candidates.cpp)
 target_link_libraries(odh_saved_collision_candidates PUBLIC odh_saved_world odh_collision)
 add_library(odh_saved_avatar_place_discovery src/saved_avatar_place_discovery.cpp)
 target_link_libraries(odh_saved_avatar_place_discovery PUBLIC
-  odh_saved_collision_candidates odh_saved_avatar_place_overlap)
+  odh_saved_collision_candidates odh_saved_avatar_place_overlap odh_room_map)
 target_include_directories(odh_saved_avatar_place_discovery PUBLIC include)
 target_compile_features(odh_saved_avatar_place_discovery PUBLIC cxx_std_17)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
