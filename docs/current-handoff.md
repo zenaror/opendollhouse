@@ -1,5 +1,25 @@
 # Continuidade atual
 
+## Door BHAV: GetDistanceTo e Route45 StackVariable (2026-10-21)
+
+Após o checkpoint 98ecb50, opcode11 GetDistanceTo foi implementado no perfil
+same-level observado em `Doors.iff:4114` (Temp0, Caller default, distância
+euclidiana truncada em tiles). Route45 scope0 agora resolve o índice SLOT pelo
+argumento BHAV e usa a tabela vinculada ao StackObject. Testes focais: 140
+checks de routing e 4 de distância. CTest completo: 160/160 passou; X11 foi
+pulando por indisponibilidade do display.
+
+O probe real com `Objects.far`, `Global.far`, `Doors.iff:4105`, OBJD15089 e
+SLOT128 agora atravessa o opcode11, as chamadas 4115 e chega a `Doors.iff:4114`
+pc4 Route45 (Data0, scope StackVariable). A expressão anterior define Args[0]
+como 3, selecionando SLOT128 type3 índice3. O registro usa `flags=0x54`, facing
+-2 e proximidade variável 16–32, fora do perfil de círculo já implementado; o
+probe para com `SLOT runtime profile not implemented`. Não foi escolhida nem
+forçada uma posição destino. Próximo: estudar enumeração, elegibilidade e
+pontuação da faixa contra fontes FreeSO/Simitone e a instância House07 antes de
+abrir esse perfil. Não declarar rota de porta, interação natural ou travessia
+de portal.
+
 ## Inventário RoomInfo completo do World vivo (2026-10-21)
 
 `snapshot_world_room_info` reconstrói e valida o inventário completo de

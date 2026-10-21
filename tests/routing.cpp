@@ -244,6 +244,30 @@ int main() {
          for(std::uint64_t tick=1;tick<=64&&routing.active();++tick) routing.tick(tick);
          require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->x==44,
                  "StackObject Literal Route45 completes using its selected local SLOT");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
+         auto object_slots=slot();bool provider_seen=false;
+         odh::PreRankedSlotGoalProvider goals=[&](const auto& table,std::size_t index,const auto&,const auto& target) {
+             provider_seen=&table==&object_slots&&index==1;
+             const odh::RoutePoint point{44,12};
+             return std::vector<odh::PreRankedSlotGoal>{{point,
+                 odh::reference_slot_entry_flags({target.x,target.y},target.direction,point,0x55),2}};
+         };
+         odh::Routing routing{world,grid,globals,goals};
+         routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame) -> const odh::SlotTable* {
+             return frame.context.stack_object==2?&object_slots:nullptr;
+         });
+         odh::Vm vm{routines(0,1,0),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2},{1,0,0,0});
+         const auto status=vm.run(10);
+         if(status!=odh::VmStatus::waiting||!provider_seen||!routing.active())
+             throw std::runtime_error("StackVariable dispatch status="+std::to_string(static_cast<int>(status))+ ", provider="+
+                 std::to_string(provider_seen)+", diagnostic="+vm.diagnostic());
+         require(true,"Route45 StackVariable scope resolves the StackObject SLOT index through BHAV argument 0");
+         for(std::uint64_t tick=1;tick<=64&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->x==44,
+                 "StackVariable Route45 follows the exact ranked goal from its argument-selected SLOT");}
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{routines(1,1),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});

@@ -24,6 +24,7 @@
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
+#include "odh/distance_to.hpp"
 #include "odh/world_room_info.hpp"
 #include "odh/saved_attempt_walk_obstacles.hpp"
 #include "runtime_attempt_walk_probe.hpp"
@@ -794,6 +795,7 @@ int main(int argc,char** argv) {
         if(sound_records.size()<4096)sound_records.push_back({request,status});
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
+    const auto distance_to_handler=odh::get_distance_to_primitive(world);
     const auto object_type_handler=odh::object_type_primitive(world);
     const auto notify_handler=odh::notify_idle_primitive(world);
     struct SnapRuntime {
@@ -945,6 +947,7 @@ int main(int argc,char** argv) {
         if(i.opcode==44&&animation_handler)return animation_handler(f,i,t,d);
         if(i.opcode==23)return sound_handler(f,i,t,d);
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
+        if(i.opcode==11)return distance_to_handler(f,i,t,d);
         if(i.opcode==45)return routing_handler(f,i,t,d);
         if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};

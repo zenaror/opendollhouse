@@ -1,4 +1,5 @@
 #include "odh/routing.hpp"
+#include "odh/distance_to.hpp"
 #include "odh/snap.hpp"
 #include "odh/notify.hpp"
 #include "odh/playback.hpp"
@@ -551,6 +552,7 @@ int main(int argc, char** argv) {
         const auto notify_handler=snap_probe?odh::notify_idle_primitive(world,main_probe?odh::IdleNotifySink{[&](auto id){return id==2 && main_sleep.interrupt();}}:odh::IdleNotifySink{},[&](auto id,const auto& status){notifications.emplace_back(id,status);}):odh::VmPrimitive{};
         const auto animation_handler=animation?playback->primitive():odh::VmPrimitive{};
         const auto route_handler=routing.primitive();
+        const auto distance_to_handler=odh::get_distance_to_primitive(world);
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
         odh::VmPrimitive handler;
         if(route_probe) handler=[&](const auto& f,const auto& i,const auto& t,const auto& d) {
@@ -558,6 +560,7 @@ int main(int argc, char** argv) {
             if(i.opcode==32 && type_handler)return type_handler(f,i,t,d);
             if(i.opcode==23 && sound_handler)return sound_handler(f,i,t,d);
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
+            if(i.opcode==11)return distance_to_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
         const auto world_memory=world.vm_memory();

@@ -346,3 +346,28 @@ natural do jogador nem executa a BHAV 4113 em House07. O probe anterior executa
 4113/4115 reais, mas constrói a entidade e a grade. Juntos eles não demonstram
 travessia de Portal15, simulação completa de portas/clearance ou equivalência
 ao executável original.
+
+### GetDistanceTo e Route45 StackVariable da porta — 2026-10-21
+
+O opcode11 agora implementa o perfil observado em `Doors.iff:4114`: saída
+Temp0, destino Caller default, Caller e StackObject posicionados no mesmo nível
+e operandos restantes zerados. A distância é `floor(sqrt(dx²+dy²)/16)` sobre
+coordenadas em 1/16 de tile. Outros operandos, posições ausentes e níveis
+diferentes falham fechados. O serviço está ligado ao probe BHAV e ao runtime
+`odh-person`; quatro testes cobrem distância, truncamento, nível e formato.
+
+Route45 agora reconhece scope 0 StackVariable: lê o índice de SLOT a partir do
+argumento BHAV selecionado pelo campo Data e obtém a tabela pelo StackObject,
+com teste dedicado de resolução e conclusão assíncrona. Em `Doors.iff:4114`, o
+trace real percorre GetDistanceTo e chamadas 4115, então chega ao Route45 de
+pc4 com Data0/scope0. A expressão anterior grava 3 em Args[0], logo o alvo é
+SLOT128 type3 índice3. Esse registro real possui `flags=0x54`, facing -2 e
+faixa de proximidade 16–32; o motor retorna `unsupported` porque ainda não
+implementa seleção/pontuação de SLOT de faixa. Isso é um novo ponto de parada,
+não uma rota ou interação concluída.
+
+Verificação: 140 checks de `odh-routing-tests`, 4 checks de
+`odh-distance-to-tests` e 160/160 CTests passaram. `linux_window_backend` foi
+pulado sem display X11. Nenhum dado comercial foi alterado. A referência de
+primitiva é FreeSO `VMGotoRoutingSlot.cs` no snapshot usado pelo checkpoint
+98ecb50; compatibilidade com o executável original não é inferida desses testes.
