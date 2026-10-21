@@ -378,13 +378,21 @@ int main() {
                  return route_primitive(frame,instruction,temps,dispatch);
              },{{9,std::move(portal_code)}}};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
-         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});routing.bind(vm);
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         std::size_t grid_refreshes=0;
+         routing.set_route_grid_refresh([&](const odh::EntityPosition& position) {
+             ++grid_refreshes;
+             grid=odh::RouteGrid{128,32};grid.block({28,12});
+             return position==odh::EntityPosition{70,12,1,0};
+         });
+         routing.bind(vm);
          vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
                  "Route45 service waits before scheduling its host-resolved portal BHAV");
          const auto route_ticket=vm.pending()->ticket;
          const bool portal_scheduled=routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}});
          require(portal_scheduled&&vm.status()==odh::VmStatus::running&&
+                 routing.external_frame_active()&&
                  routing.active_frame_context()->state==odh::RouteFrameState::room_portal,
                  "Routing suspends Route45 and marks the active frame as room portal");
          require(vm.run(1)==odh::VmStatus::waiting&&vm.pending()->ticket!=route_ticket,
@@ -392,15 +400,17 @@ int main() {
          const auto portal_ticket=vm.pending()->ticket;
          require(routing.tick(1)&&world.find(1)->position->x==4&&routing.active(),
                  "route movement stays paused while portal BHAV waits");
+         require(world.set_position(1,{70,12,1,0}),
+                 "portal BHAV may update the avatar position before returning");
          require(vm.complete(portal_ticket,true)&&vm.run(1)==odh::VmStatus::yielded&&
                  vm.external_frame_return()&&vm.external_frame_return()->ticket==route_ticket,
                  "portal BHAV return publishes the suspended Route45 continuation");
          require(routing.tick(2)&&vm.status()==odh::VmStatus::waiting&&vm.pending()->ticket==route_ticket&&
-                 world.find(1)->position->x==4&&routing.active(),
-                 "Routing resumes the original wait at the next tick without same-tick movement");
-         require(routing.tick(3)&&world.find(1)->position->x==5&&
+                 world.find(1)->position->x==70&&grid_refreshes==1&&routing.active(),
+                 "Routing rebuilds its room grid and resumes the original wait without same-tick movement");
+         require(routing.tick(3)&&world.find(1)->position->x==69&&
                  routing.active_frame_context()->state==odh::RouteFrameState::walking,
-                 "Route45 movement resumes only after the portal continuation boundary");}
+                 "Route45 movement resumes on the rebuilt grid after the portal continuation boundary");}
         {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
          std::size_t provider_calls=0;
          odh::PreRankedSlotGoalProvider provider=[&](const auto&,std::size_t,const auto&,const auto& target) {

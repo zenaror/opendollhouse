@@ -33,6 +33,17 @@ foi validada. A próxima etapa é ligar essa cadeia ao scheduler Route45, execut
 a ação Portal15 com owner/EntryPoint corretos e reconstruir a malha da sala após
 o retorno antes de continuar até o SLOT.
 
+## Refresh da malha após uma frame externa de rota (2026-10-21)
+
+`Routing` agora aceita um callback do host que reconstrói a grade quando uma
+frame externa move o avatar, e replana o trecho restante na nova grade. Em
+`odh-person`, o callback resolve sala/andar pela arquitetura preparada, recompõe
+o snapshot AttemptWalk vivo e atualiza os dados de clearance antes da retomada.
+O teste do scheduler move um ator de x=4 para x=70, troca a grade de 64×32 para
+128×32 e valida que o movimento retoma na malha nova. Essa fixture é sintética:
+nenhuma EntryPoint15 comercial foi chamada e o host ainda não agenda a cadeia
+portal Room3→Room1.
+
 ## Diagnóstico de destinos Route45 (2026-10-21)
 
 `Routing` diferencia ausência de candidato compatível com a máscara direcional

@@ -47,6 +47,12 @@ validação indicados por versão.
   fixture de geometrias e um teste integrado ao snapshot vivo. A grade ainda
   não alimenta o `Routing` nem substitui o VMRectRouter do Simitone.
 
+- Após uma frame externa de rota mover o avatar, `Routing` permite ao host
+  reconstruir a grade da sala/andar atual antes de continuar o caminho. `odh-person`
+  recompõe o snapshot AttemptWalk e o scheduler replana na grade substituída;
+  uma fixture sintética cobre a mudança de posição e de grade. A execução real
+  de Portal15 e a navegação entre salas continuam pendentes.
+
 - `Routing` agora preserva até 16 jobs Route45 aninhados quando uma BHAV
   externa em execução dispara outro Route45. O controller valida o vínculo
   entre frame VM, ticket e identidade do avatar, mantém o job pai suspenso,

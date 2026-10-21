@@ -461,6 +461,8 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                !(*target->position==job_->target_position)||actor->attachment)
                 return finish(false,"portal frame changed or invalidated route participants");
             if(!(*actor->position==job_->expected)) {
+                if(route_grid_refresh_&&!route_grid_refresh_(*actor->position))
+                    return finish(false,"portal frame moved avatar but host route-grid refresh failed");
                 const auto goal=job_->path.back();
                 const auto replanned=find_route(grid_,{actor->position->x,actor->position->y},{goal},limits_);
                 if(replanned.status!=RouteStatus::found)

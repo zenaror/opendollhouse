@@ -59,6 +59,8 @@ using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
 using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&)>;
 // Read-only host filter for candidates constrained to the active route room.
 using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
+// Rebuilds the active room grid after an external portal frame moved the avatar.
+using RouteGridRefresh=std::function<bool(const EntityPosition&)>;
 // Controlled async route adapter: Route45's profiled SLOTs plus opcode27's
 // exact-point OnTopOf/SameDirection/NoFailureTrees profile. Opcode27 requires
 // a host goal validator; this is not the complete TS1 routing policy.
@@ -79,6 +81,10 @@ public:
         if(executing_||job_)throw std::logic_error("cannot replace Route45 goal validator while active");
         goal_validator_=std::move(validator);
     }
+    void set_route_grid_refresh(RouteGridRefresh refresh) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 grid refresher while active");
+        route_grid_refresh_=std::move(refresh);
+    }
     // Profile-specific provider used only by the bounded Door range SLOT.
     void set_door_range_goal_provider(PreRankedSlotGoalProvider provider) {
         if(executing_||job_)throw std::logic_error("cannot replace Door range provider while active");
@@ -91,6 +97,7 @@ public:
     bool call_external_frame(const VmCall&);
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
+    bool external_frame_active() const {return job_&&job_->external_frame_active;}
     std::optional<RouteFrameContext> active_frame_context() const;
     std::optional<float> incoming_direction(float caller_radian_direction) const noexcept;
     bool consume_portal_turn() noexcept;
@@ -123,6 +130,7 @@ private:
     PreRankedSlotGoalProvider door_range_goals_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
+    RouteGridRefresh route_grid_refresh_;
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;

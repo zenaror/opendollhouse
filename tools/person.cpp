@@ -1407,6 +1407,46 @@ struct PlacementCandidateProbe {
         route_runtime_spatial_revision=world.spatial_revision();
         return true;
     };
+    if(runtime_routing)runtime_routing->set_route_grid_refresh([&](const odh::EntityPosition& position) {
+        if(!runtime_route_grid||!runtime_route_grid->grid||!render_lot||!restored_world||!definition_index||
+           position.level<1||position.level>2||position.direction>7) {
+            route_runtime_reason="portal route-grid refresh context unavailable";
+            return false;
+        }
+        const auto room=render_lot->runtime_room_at(position);
+        if(!room) {
+            route_runtime_reason="portal route-grid refresh room unresolved";
+            return false;
+        }
+        const auto level=static_cast<std::uint8_t>(position.level-1);
+        if(*room==runtime_route_grid->room_id&&level==runtime_route_grid->level)
+            return refresh_route_obstacles();
+        const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+            render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,level,
+            runtime_avatar_id,true,{},resolve_read_only_ep5);
+        if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready) {
+            route_runtime_reason=std::string("portal route-grid refresh snapshot_")+
+                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
+            return false;
+        }
+        auto updated=odh::build_world_room_route_grid(probe.snapshot);
+        if(updated.state!=odh::WorldRoomRouteGridState::ready||!updated.grid||
+           updated.room_id!=*room||updated.level!=level) {
+            route_runtime_reason=std::string("portal route-grid refresh grid_")+
+                odh::world_room_route_grid_reason_name(updated.reason);
+            return false;
+        }
+        *runtime_route_grid->grid=std::move(*updated.grid);
+        runtime_route_grid->room_id=updated.room_id;
+        runtime_route_grid->level=updated.level;
+        runtime_route_grid->obstacle_rectangles=updated.obstacle_rectangles;
+        runtime_route_grid->rasterized_cells=updated.rasterized_cells;
+        runtime_route_grid->newly_blocked_cells=updated.newly_blocked_cells;
+        ++route_runtime_snapshot_refreshes;
+        route_runtime_spatial_revision=world.spatial_revision();
+        route_runtime_reason.clear();
+        return true;
+    });
     snap_placement_validator=[&](std::int16_t actor_id,const odh::EntityPosition& destination){
         const auto* actor=world.find(actor_id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||destination.level<1||destination.level>2||
@@ -1612,7 +1652,7 @@ struct PlacementCandidateProbe {
             headless_entity_move_applied=true;
         }
         if(runtime_routing&&runtime_routing->active()){
-            if(!refresh_route_obstacles()){
+            if(!runtime_routing->external_frame_active()&&!refresh_route_obstacles()){
                 host_failed=true;
                 host_diagnostic=route_runtime_reason;
                 break;
