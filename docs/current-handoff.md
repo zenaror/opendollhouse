@@ -1,5 +1,28 @@
 # Continuidade atual
 
+## Estado verificado da interação e auditoria de limites (2026-10-20)
+
+A nota abaixo sobre a fila parada foi superada: no teste posterior registrado em
+`docs/interaction-validation.md`, a fila privada foi consumida e a VM chegou à
+cadeia `4097→4100→4099` no opcode 45 aos 103 ticks. O resultado foi
+`unsupported primitive 45`; isso confirma a execução BHAV até o serviço, não
+movimento nem conclusão de gameplay. O Main segue sem integrar o controller
+Routing ou fornecer uma malha de clearance.
+
+A auditoria estática por entidade agora também compara a shape expandida com as
+quatro faixas externas de um tile que `VMRoutingFrame.AttemptWalk` constrói ao
+redor de `VMRoom.Bounds`, além de RoomObs. No House07: 50 não cruzam RoomObs,
+41 cruzam RoomObs, zero cruzam as faixas externas, 22 permanecem unsupported e
+69 not_applicable. São resultados de sobreposição estática por entidade;
+`routing_clearance` continua false. A auditoria tem 25 checks focais; o build
+completo e 143 CTests passaram. O gate X11 também passou em execução separada
+com acesso ao display `:0`.
+
+Próximo incremento: criar um adaptador de clearance local ao lote, com orçamento
+explícito e estados fail-closed para chão, RoomObs, faixas externas, paredes e
+entidades; antes de habilitar Routing ainda será necessário resolver elegibilidade
+runtime, EntryPoint 5 bilateral, RouteEntryFlags/slot e caminho VMRectRouter.
+
 ## Ordem de restauração de portas nas paredes (2026-10-20)
 
 O adapter `odh-wall-appearance` agora ordena uma cópia das entidades por

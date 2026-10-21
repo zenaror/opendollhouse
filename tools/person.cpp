@@ -702,9 +702,9 @@ int main(int argc,char** argv) {
             current_tests.push_back(render_interactions->table->interactions[n].test);
         render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,selected.id,
             current_tests,4096,128);
-        const auto selected_row=first_eligible_saved_interaction(*render_interactions,render_test_results);
+        const auto selected_row=first_eligible_saved_interaction(*render_interactions,render_test_results,actor);
         if(!selected_row){
-            render_interaction_status="unsupported";render_interaction_diagnostic="no ordinary private TTAB row has a matching eligible ODH TestFunction";return;
+            render_interaction_status="unsupported";render_interaction_diagnostic="no supported private TTAB row has a matching eligible ODH TestFunction";return;
         }
         const auto& row=render_interactions->table->interactions[*selected_row];
         const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action);
@@ -887,7 +887,8 @@ int main(int argc,char** argv) {
                     " TTAB "+std::to_string(render_selection->tree_table_id);
                 else title+="no object selected";
                 if(render_selection){
-                    const auto row=render_interactions?first_eligible_saved_interaction(*render_interactions,render_test_results):std::nullopt;
+                    const auto row=render_interactions?first_eligible_saved_interaction(
+                        *render_interactions,render_test_results,world.find(runtime_avatar_id)):std::nullopt;
                     if(row){
                         title+=" | Space/Return: ";
                         if(*row<render_interactions->row_labels.size()&&render_interactions->row_labels[*row])

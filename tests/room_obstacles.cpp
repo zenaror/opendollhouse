@@ -76,6 +76,52 @@ int main() {
         require(!odh::generate_room_obstacle_candidates(rooms, 1, 0, door_opening, true).complete,
                 "unprepared floor resources keep room-obstacle generation incomplete");
 
+        auto portal_rooms = map(4, 3);
+        add_room(portal_rooms, 1, 0, {0, 0, 4, 3});
+        add_room(portal_rooms, 2, 0, {0, 0, 4, 3});
+        std::fill(portal_rooms.levels[0].begin(), portal_rooms.levels[0].end(), 0x00010001U);
+        portal_rooms.levels[0][1 * 4 + 2] = 0x00020002U;
+        const std::vector<odh::RoomPortalMemberSnapshot> portal_group{
+            {10, 10, true, false, false, odh::EntityPosition{16, 16, 1, 0}},
+            {11, 10, false, true, false, odh::EntityPosition{32, 16, 1, 0}}};
+        auto inventory = odh::build_room_portal_inventory(portal_rooms, portal_group);
+        require(inventory.complete && inventory.overlapping_door_tiles == 0 &&
+                inventory.openings.size() == 1 && inventory.openings[0].target_room == 2 &&
+                inventory.openings[0].tile_x == 1 && inventory.openings[0].tile_y == 1,
+                "portal group opens its positioned door tile toward the member's geometric room");
+
+        auto missing_door = portal_group;
+        missing_door[0].position.reset();
+        inventory = odh::build_room_portal_inventory(portal_rooms, missing_door);
+        require(!inventory.complete && inventory.openings.empty(),
+                "architectural door without position makes the inventory incomplete");
+        auto outside_door = portal_group;
+        outside_door[0].position->x = 64;
+        inventory = odh::build_room_portal_inventory(portal_rooms, outside_door);
+        require(!inventory.complete && inventory.openings.empty(),
+                "architectural door outside the room map makes the inventory incomplete");
+        auto missing_portal = portal_group;
+        missing_portal[1].position.reset();
+        inventory = odh::build_room_portal_inventory(portal_rooms, missing_portal);
+        require(!inventory.complete && inventory.openings.empty(),
+                "Portal15 member without a geometric room makes the inventory incomplete");
+
+        auto overlapping = portal_group;
+        overlapping.push_back({20, 20, true, true, false, odh::EntityPosition{16, 16, 1, 0}});
+        inventory = odh::build_room_portal_inventory(portal_rooms, overlapping);
+        require(!inventory.complete && inventory.overlapping_door_tiles == 1,
+                "different door groups overlapping a tile invalidate completeness");
+        auto same_group_overlap = portal_group;
+        same_group_overlap.push_back({12, 10, true, false, false, odh::EntityPosition{16, 16, 1, 0}});
+        inventory = odh::build_room_portal_inventory(portal_rooms, same_group_overlap);
+        require(inventory.complete && inventory.overlapping_door_tiles == 0,
+                "members of one door group sharing a tile are not an ordering ambiguity");
+        auto duplicate_member = portal_group;
+        duplicate_member.push_back(portal_group.front());
+        inventory = odh::build_room_portal_inventory(portal_rooms, duplicate_member);
+        require(!inventory.complete,
+                "duplicate saved entity identity invalidates portal inventory");
+
         // Room zero uses the expanded interior, which covers every tile. A
         // contiguous outside map collapses to a single border candidate.
         rooms = map(3, 2);

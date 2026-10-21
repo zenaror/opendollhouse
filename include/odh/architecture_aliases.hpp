@@ -42,6 +42,11 @@ struct ArchitectureAliasResolutionDiagnostics {
     std::size_t unsupported_wall_map_names = 0;
     std::array<bool, 256> unresolved_floor_aliases{};
     std::array<bool, 256> unresolved_wall_aliases{};
+    // Final declared IDs with no successful dictionary value. Unlike the
+    // historical arrays above, a failed duplicate does not taint an ID when
+    // any duplicate successfully resolved, matching BuildFloorDict.
+    std::array<bool, 256> declared_unresolved_floor_aliases{};
+    std::array<bool, 256> declared_unresolved_wall_aliases{};
 };
 
 struct ResolvedArchitectureAliases {

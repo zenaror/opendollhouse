@@ -20,8 +20,9 @@ espacial do lote:
 - `prepared_precise_floor` aplica a mesma seleção espacial de piso aos grids
   preparados por `prepare_saved_architecture`, sem convertê-los de volta ao
   snapshot cru. Um alias não resolvido continua sendo consultável como valor
-  retido; `floor_aliases_resolved()` deve ser avaliado separadamente e nenhum
-  resultado equivale a `FloorChangeValid`.
+  retido; `floor_aliases_resolved()` mantém o diagnóstico estrito de misses,
+  enquanto `floor_identity_unambiguous()` indica se há referência usada a alias
+  FLRm declarado-sem-resolução. Nenhum resultado equivale a `FloorChangeValid`.
 
 Proveniência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
 submódulo `f86bbd34b2112296ed786741f640a0535886d180`;
@@ -35,9 +36,14 @@ Bresenham em oito octantes, travessia reversa, aresta sólida, não sólida e
 desconhecida, diagonais não consultadas pelo RaycastWall da referência e
 extensões inconsistentes.
 
-Este é apenas um incremento verificável do adapter. Não valida `FloorChangeValid`
-com flags de placement, terreno/piscina/água, inclinações, rooms, colisões
-dinâmicas, overrides de interseção, multitile ou portas em estado vivo. O
-resultado não deve ser usado para aceitar um destino nem ligado ao Routing45;
-faltam também a montagem autoritativa da solidez por portas e o mapa de
-obstáculos de `GetAvatarPlace`.
+O módulo `odh_route_geometry` não valida sozinho `FloorChangeValid` com flags de
+placement, terreno/piscina/água, inclinações, rooms, colisões dinâmicas,
+overrides de interseção, multitile ou portas em estado vivo. O adapter separado
+`odh-saved-floor-placement` cobre somente a regra de piso a partir dos dados
+salvos e da arquitetura preparada; ele não está ligado ao runtime. Nenhum desses
+resultados aceita um destino ou habilita Routing45. Ainda faltam montagem
+autoritativa da solidez por portas e mapa de obstáculos de `GetAvatarPlace`.
+
+A regra isolada `FloorChangeValid` está traduzida e testada. O adapter usa
+`ObjectData[42]` e `LevelOffset` do OBJD, com o piso preciso da arquitetura
+preparada, conforme [`floor-placement-validation.md`](floor-placement-validation.md).

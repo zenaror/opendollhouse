@@ -27,9 +27,10 @@ struct GeometricRoom {
 };
 struct GeometricRoomMap {
     std::uint32_t width = 0, height = 0;
-    // False for the raw saved API. The prepared API sets this only when every
-    // attempted floor-alias lookup was found; it does not prove catalog/name
-    // fidelity or a complete runtime room map. See preparation diagnostics.
+    // False for the raw saved API. The prepared API sets this when each used
+    // FLRm-declared alias has an unambiguous final value; undeclared IDs keep
+    // their source byte under Simitone's failed-TryGetValue fallback. This
+    // does not prove catalog/name fidelity or a complete runtime room map.
     bool floor_resources_resolved = false;
     // Row major. Bits 0..15: first room, 16..30: second room; bit 31 marks
     // horizontal diagonals. Normal tiles repeat the same ID in both halves.

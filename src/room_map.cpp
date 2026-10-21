@@ -257,7 +257,7 @@ GeometricRoomMap generate_prepared_room_map(const PreparedArchitecture& architec
     GeometricRoomMap result;
     result.width = architecture.width;
     result.height = architecture.height;
-    result.floor_resources_resolved = architecture.floor_aliases_resolved();
+    result.floor_resources_resolved = architecture.floor_identity_unambiguous();
     result.rooms.emplace_back();
     for (std::uint8_t level = 0; level < result.levels.size(); ++level)
         generate_level(architecture.levels[level], level, result, limits);

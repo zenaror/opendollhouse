@@ -44,12 +44,25 @@ O perfil implementa:
 Cada lookup de padrão avançado usa somente seu byte baixo, inclusive 65534 e
 65535 antes das sobreposições. Um alias ausente retém o valor corrente do
 preparo, incluindo uma troca 10/11 já aplicada pelo road flip, como a fonte.
-Os diagnósticos contam tentativas e misses por família e marcam os
-aliases ausentes; contam o source completo de 64x64, inclusive a região que o
-crop descarta. `floor_aliases_resolved()` e `wall_aliases_resolved()` significam
-somente que todas as tentativas da respectiva família encontraram um valor.
-Sem nomes/declarações de FLRm/WALm, um miss não identifica por si só um arquivo
-faltante nem distingue um padrão interno de um nome externo não resolvido.
+Os diagnósticos contam tentativas e misses por família no source completo
+64x64, inclusive a região que o crop descarta. `floor_aliases_resolved()` e
+`wall_aliases_resolved()` preservam a leitura estrita: retornam true somente se
+todas as tentativas encontraram um valor. Isso inclui tentativas de IDs globais
+ou de IDs sem declaração, cujo fallback mantém o byte original pela regra
+`TryGetValue` de `VMTS1Activator.RemapFloors` (`:397-418`).
+
+Para o room map preparado, `floor_identity_unambiguous()` é a medida distinta:
+o preparo conta referências que usam um ID declarado em FLRm sem resolução
+final. IDs nunca declarados mantêm identidade pelo fallback e não tornam o mapa
+ambíguo; IDs declarados e nunca resolvidos continuam bloqueando completude
+quando usados. Uma consulta à grade-base não conta como identidade usada se
+uma diagonal tem campos explícitos `TopLeftPattern`/`TopLeftStyle` ou se pool/
+water substitui o piso térreo antes do room fill. Os campos diagonais explícitos
+continuam contando separadamente. Duplicatas seguem `BuildFloorDict` (`:482-497`): uma resolução
+bem-sucedida sobrevive a outras duplicatas sem match, e um ID só fica
+declarado-não-resolvido quando nenhuma entrada sua resolveu. Nenhum desses
+predicados prova fidelidade dos nomes, completude do runtime ou clearance de
+rota.
 
 ## Entrada, IDs e limites
 
@@ -89,9 +102,12 @@ Isso importa quando um fallback diagonal ficou zero antes de uma piscina
 substituir o piso do tile. A API crua `generate_saved_room_map` conserva seu
 comportamento e continua com `floor_resources_resolved=false`.
 
-No mapa preparado, esse campo copia `floor_aliases_resolved()`; é cobertura
-dos lookups de piso, sem atestar nomes, conteúdo do catálogo, recursos de
-parede, iluminação ou equivalência runtime. A segmentação e os
+No mapa preparado, esse campo copia `floor_identity_unambiguous()`: fallback de
+IDs sem declaração é identidade preservada, enquanto alias FLRm declarado e
+sem resolução final só bloqueia quando é referenciado. O contador estrito
+`floor_alias_misses` continua disponível para auditoria. Isso não atesta nomes,
+conteúdo do catálogo, recursos de parede, iluminação ou equivalência runtime.
+A segmentação e os
 [obstáculos candidatos](room-obstacles-validation.md) continuam sem estado vivo
 de entidades, portas, grupos multitile e portais. Nenhuma das APIs aceita um
 destino ou dirige Routing45.

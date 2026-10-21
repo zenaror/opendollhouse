@@ -65,7 +65,13 @@ int main() {
         require(!resolved.aliases.floors[6] && !resolved.aliases.floors[7] &&
                 resolved.diagnostics.floor_map_misses == 2 &&
                 resolved.diagnostics.unresolved_floor_aliases[6] &&
-                resolved.diagnostics.unresolved_floor_aliases[7],
+                resolved.diagnostics.unresolved_floor_aliases[7] &&
+                resolved.diagnostics.declared_unresolved_floor_aliases[6] &&
+                resolved.diagnostics.declared_unresolved_floor_aliases[7] &&
+                !resolved.diagnostics.declared_unresolved_floor_aliases[3] &&
+                resolved.aliases.declared_unresolved_floors[6] &&
+                resolved.aliases.declared_unresolved_floors[7] &&
+                !resolved.aliases.declared_unresolved_floors[3],
                 "missing names are reported without manufacturing aliases");
         require(resolved.aliases.walls[3] == 300 && resolved.aliases.walls[9] == 301 &&
                 resolved.wall_map_complete() && !resolved.floor_map_complete(),
@@ -92,8 +98,17 @@ int main() {
         const auto miss_after_match = odh::resolve_architecture_aliases(
             duplicate_aliases, {}, floor_catalog, {});
         require(miss_after_match.aliases.floors[3] == 260 &&
-                miss_after_match.diagnostics.unresolved_floor_aliases[3],
-                "later missing duplicate does not erase earlier successful alias");
+                miss_after_match.diagnostics.unresolved_floor_aliases[3] &&
+                !miss_after_match.diagnostics.declared_unresolved_floor_aliases[3] &&
+                !miss_after_match.aliases.declared_unresolved_floors[3],
+                "later missing duplicate preserves successful alias and final identity");
+        duplicate_aliases.entries = {entry("not-in-catalog.flr", 9), entry("still-missing.flr", 9)};
+        const auto all_missing_duplicate = odh::resolve_architecture_aliases(
+            duplicate_aliases, {}, floor_catalog, {});
+        require(all_missing_duplicate.diagnostics.unresolved_floor_aliases[9] &&
+                all_missing_duplicate.diagnostics.declared_unresolved_floor_aliases[9] &&
+                all_missing_duplicate.aliases.declared_unresolved_floors[9],
+                "duplicate ID remains declared-unresolved when no declaration succeeds");
 
         auto non_ascii = floors;
         non_ascii.entries = {entry(std::string("\xc0") + ".flr", 12)};

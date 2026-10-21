@@ -29,7 +29,9 @@ std::uint16_t remap(std::uint16_t value,
 
 std::uint16_t remap_floor(std::uint16_t original, std::uint8_t flags, bool flip,
                           const ArchitectureResourceAliases& aliases,
-                          ArchitecturePreparationDiagnostics& diagnostics) {
+                          ArchitecturePreparationDiagnostics& diagnostics,
+                          bool& declared_unresolved_miss) {
+    declared_unresolved_miss = false;
     auto result = original;
     if (flip) {
         if (original == 10) result = 11;
@@ -43,6 +45,7 @@ std::uint16_t remap_floor(std::uint16_t original, std::uint8_t flags, bool flip,
         else {
             ++diagnostics.floor_alias_misses;
             diagnostics.missing_floor_aliases[key] = true;
+            declared_unresolved_miss = aliases.declared_unresolved_floors[key];
         }
     }
     return result;
@@ -52,8 +55,12 @@ SavedWallTile remap_wall(SavedWallTile wall, std::uint16_t remapped_floor,
                          const ArchitectureResourceAliases& aliases,
                          ArchitecturePreparationDiagnostics& diagnostics) {
     const auto floor = [&](std::uint16_t value) {
-        return remap(value, aliases.floors, diagnostics.floor_lookups,
+        const auto mapped = remap(value, aliases.floors, diagnostics.floor_lookups,
                      diagnostics.floor_alias_misses, diagnostics.missing_floor_aliases);
+        const auto key = static_cast<std::uint8_t>(value);
+        if (!aliases.floors[key] && aliases.declared_unresolved_floors[key])
+            ++diagnostics.unresolved_floor_alias_references;
+        return mapped;
     };
     const auto pattern = [&](std::uint16_t value) {
         return remap(value, aliases.walls, diagnostics.wall_lookups,
@@ -122,17 +129,29 @@ PreparedArchitecture prepare_saved_architecture(
             for (std::uint32_t x = 0; x < source_size; ++x) {
                 const auto index = std::size_t(y) * source_size + x;
                 const auto flags = (*saved.levels[0].flags)[index];
+                bool floor_declared_unresolved = false;
                 auto floor = remap_floor(saved.levels[level].floors[index], flags,
-                                         options.flip_road, aliases, result.diagnostics);
+                                         options.flip_road, aliases, result.diagnostics,
+                                         floor_declared_unresolved);
+                const auto& saved_wall = saved.levels[level].walls[index];
+                const bool diagonal = (saved_wall.segments & any_diagonal) != 0;
+                const bool shared_diagonal_floor = diagonal &&
+                    !saved_wall.top_left_pattern && !saved_wall.top_left_style;
                 // Per-cell evaluation preserves the dependencies of the source
                 // passes: walls see remapped floors before overlays or crop.
                 const auto wall = remap_wall(saved.levels[level].walls[index], floor,
                                              aliases, result.diagnostics);
+                bool floor_identity_used = !diagonal || shared_diagonal_floor;
                 if (level == 0) {
                     const auto pool = (*saved.pools)[index], water = (*saved.water)[index];
+                    const bool overlay = (pool != 0 && pool != 255) ||
+                                         (water != 0 && water != 255);
                     if (pool != 0 && pool != 255) floor = 65535;
                     if (water != 0 && water != 255) floor = 65534;
+                    if (!diagonal && overlay) floor_identity_used = false;
                 }
+                if (floor_declared_unresolved && floor_identity_used)
+                    ++result.diagnostics.unresolved_floor_alias_references;
                 if (x < options.target_size && y < options.target_size) {
                     const auto destination = std::size_t(y) * options.target_size + x;
                     result.levels[level].floors[destination] = floor;

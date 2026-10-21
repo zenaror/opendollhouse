@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace odh {
 namespace {
@@ -47,6 +50,105 @@ void optimize(std::vector<RoomObstacleRect>& rectangles) {
     rectangles = std::move(merged);
 }
 } // namespace
+
+RoomPortalInventory build_room_portal_inventory(
+    const GeometricRoomMap& map,
+    const std::vector<RoomPortalMemberSnapshot>& members) {
+    RoomPortalInventory result;
+    if (!map.width || !map.height || map.width > maximum_dimension ||
+        map.height > maximum_dimension || map.rooms.empty()) {
+        result.complete = false;
+        return result;
+    }
+    const auto cells = std::size_t(map.width) * map.height;
+    for (const auto& grid : map.levels) {
+        if (grid.size() != cells) {
+            result.complete = false;
+            return result;
+        }
+    }
+
+    using GroupId = std::int16_t;
+    using TileKey = std::tuple<std::uint8_t, std::uint32_t, std::uint32_t>;
+    using OpeningKey = std::tuple<std::uint16_t, std::uint32_t, std::uint32_t, std::uint8_t>;
+    std::map<GroupId, std::vector<const RoomPortalMemberSnapshot*>> groups;
+    std::set<std::int16_t> seen_ids;
+    for (const auto& member : members) {
+        if (member.id <= 0 || !seen_ids.insert(member.id).second) {
+            result.complete = false;
+            continue;
+        }
+        const auto group = member.group_leader > 0 ? member.group_leader : member.id;
+        groups[group].push_back(&member);
+    }
+
+    const auto locate = [&map](const std::optional<EntityPosition>& position,
+                               std::uint32_t& tile_x, std::uint32_t& tile_y,
+                               std::uint8_t& tile_level,
+                               std::optional<std::uint16_t>& room) {
+        if (!position || position->x < 0 || position->y < 0 ||
+            position->level < 1 || position->level > 2)
+            return false;
+        tile_x = static_cast<std::uint32_t>(position->x / 16);
+        tile_y = static_cast<std::uint32_t>(position->y / 16);
+        tile_level = static_cast<std::uint8_t>(position->level - 1);
+        if (tile_x >= map.width || tile_y >= map.height) return false;
+        room = geometric_room_at(map, position->x, position->y, position->level);
+        return room.has_value();
+    };
+
+    std::map<TileKey, std::set<GroupId>> door_groups_by_tile;
+    std::set<OpeningKey> openings;
+    for (const auto& [group_id, group_members] : groups) {
+        const bool has_door = std::any_of(group_members.begin(), group_members.end(),
+            [](const auto* member) { return member->architectural_door && !member->contained; });
+        if (!has_door) continue;
+
+        std::set<std::uint16_t> target_rooms;
+        for (const auto* member : group_members) {
+            if (!member->portal) continue;
+            std::uint32_t tile_x = 0, tile_y = 0;
+            std::uint8_t tile_level = 0;
+            std::optional<std::uint16_t> room;
+            if (!locate(member->position, tile_x, tile_y, tile_level, room)) {
+                result.complete = false;
+                continue;
+            }
+            target_rooms.insert(*room);
+        }
+
+        std::set<TileKey> door_tiles;
+        for (const auto* member : group_members) {
+            if (!member->architectural_door || member->contained) continue;
+            std::uint32_t tile_x = 0, tile_y = 0;
+            std::uint8_t tile_level = 0;
+            std::optional<std::uint16_t> room;
+            if (!locate(member->position, tile_x, tile_y, tile_level, room)) {
+                result.complete = false;
+                continue;
+            }
+            const TileKey tile{tile_level, tile_x, tile_y};
+            door_tiles.insert(tile);
+            door_groups_by_tile[tile].insert(group_id);
+        }
+
+        for (const auto& [tile_level, tile_x, tile_y] : door_tiles)
+            for (const auto target_room : target_rooms)
+                openings.emplace(target_room, tile_x, tile_y, tile_level);
+    }
+
+    for (const auto& [tile, groups_at_tile] : door_groups_by_tile) {
+        (void)tile;
+        if (groups_at_tile.size() > 1) {
+            ++result.overlapping_door_tiles;
+            result.complete = false;
+        }
+    }
+    result.openings.reserve(openings.size());
+    for (const auto& [room, tile_x, tile_y, tile_level] : openings)
+        result.openings.push_back({room, tile_x, tile_y, tile_level});
+    return result;
+}
 
 RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level) {

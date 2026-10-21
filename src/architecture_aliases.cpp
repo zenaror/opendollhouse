@@ -77,10 +77,12 @@ void resolve_map(const ArchitectureMap& map, const Catalog& catalog,
                  std::array<std::optional<std::uint16_t>, 256>& aliases,
                  std::size_t& resolved, std::size_t& misses,
                  std::size_t& overwrites, std::array<bool, 256>& missing,
+                 std::array<bool, 256>& declared,
                  std::size_t& unsupported) {
     if (map.entries.size() > entry_limit)
         throw std::runtime_error("architecture alias resolver map entry limit exceeded");
     for (const auto& entry : map.entries) {
+        declared[entry.id] = true;
         auto name = normalize_name(entry.name, true, budget, unsupported);
         if (!name) {
             ++misses;
@@ -112,16 +114,27 @@ ResolvedArchitectureAliases resolve_architecture_aliases(
         diagnostics.floor_catalog_duplicates, diagnostics.unsupported_floor_catalog_names);
     const auto walls = make_catalog(wall_catalog, limits, budget,
         diagnostics.wall_catalog_duplicates, diagnostics.unsupported_wall_catalog_names);
+    std::array<bool, 256> declared_floor_ids{}, declared_wall_ids{};
     diagnostics.floor_map_entries = floor_map.entries.size();
     diagnostics.wall_map_entries = wall_map.entries.size();
     resolve_map(floor_map, floors, budget, limits.map_entries, result.aliases.floors,
         diagnostics.floor_map_resolved, diagnostics.floor_map_misses,
         diagnostics.floor_map_overwrites, diagnostics.unresolved_floor_aliases,
+        declared_floor_ids,
         diagnostics.unsupported_floor_map_names);
     resolve_map(wall_map, walls, budget, limits.map_entries, result.aliases.walls,
         diagnostics.wall_map_resolved, diagnostics.wall_map_misses,
         diagnostics.wall_map_overwrites, diagnostics.unresolved_wall_aliases,
+        declared_wall_ids,
         diagnostics.unsupported_wall_map_names);
+    for (std::size_t id = 0; id < 256; ++id) {
+        diagnostics.declared_unresolved_floor_aliases[id] =
+            declared_floor_ids[id] && !result.aliases.floors[id];
+        diagnostics.declared_unresolved_wall_aliases[id] =
+            declared_wall_ids[id] && !result.aliases.walls[id];
+        result.aliases.declared_unresolved_floors[id] =
+            diagnostics.declared_unresolved_floor_aliases[id];
+    }
     return result;
 }
 } // namespace odh

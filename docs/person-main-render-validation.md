@@ -252,12 +252,12 @@ não aloca esse buffer. A ordem intraobjetos conserva o perfil imediato atual.
 
 `SavedLotRenderer::pick` rejeita buffer malformado e retorna vazio para cenário,
 coordenadas externas, entidade removida/oculta, geração ou GUID desatualizados.
-Não altera World, filas, VM ou RNG. O JSON `render.object_selection` registra
-cliques e a identidade escolhida no tick informado, com
-`interaction_requested:false`; `render.lot.object_pick_buffer_bytes` informa
-o custo da captura. Ainda não há TTAB, menu, cancelamento ou ação de gameplay.
-O `TreeTableID` exibido vem apenas do prefixo OBJD136/138 e não confirma que a
-TTAB exista no owner nem que sua ação passe em elegibilidade.
+O JSON `render.object_selection` registra cliques e a identidade escolhida no
+tick informado; `render.lot.object_pick_buffer_bytes` informa o custo da
+captura. A seleção não altera World, VM ou RNG. A descoberta de TTAB e o
+enfileiramento manual são descritos em
+[interaction-validation.md](interaction-validation.md); ainda não há pie menu,
+nem isso confirma a execução ou o efeito de gameplay.
 
 Build focal sem warnings e cinco CTests executados passaram:
 `sprite_composition`, `saved_object_renderer`, `saved_lot_renderer`,
@@ -265,11 +265,38 @@ Build focal sem warnings e cinco CTests executados passaram:
 sobreposição/profundidade/empates, ID do renderer, parede na frente, limites de
 coordenadas, Hidden, GUID e geração. `linux_window_backend` contém eventos
 Button1 sintéticos dirigidos à própria janela para coordenadas e último clique,
-mas foi pulado sem DISPLAY. Assim a seleção CPU é testada; a integração de
-mouse/título em X11 ainda precisa de execução em sessão gráfica real.
-O build completo recompilou todos os consumidores de `CompositeFrame` e passou;
-CTest completo: 127 configurados, zero falhas, somente `linux_window_backend`
-pulado por falta de DISPLAY. Isso não substitui o gate de entrada em janela.
+mas foi pulado sem DISPLAY naquela rodada headless. O build completo recompilou
+todos os consumidores de `CompositeFrame` e passou; CTest completo: 127
+configurados, zero falhas, somente `linux_window_backend` pulado por falta de
+DISPLAY. O teste manual posterior em X11 está registrado abaixo.
+
+Em 2026-10-20, a prévia foi aberta na sessão X11 do desktop com House07 e os
+dados externos locais. A captura 320x240 mostrou terreno, pisos, paredes,
+objetos e o avatar 105. Um clique real selecionou a cadeira salva 128
+(GUID 650099497, TTAB 128); o título mostrou a opção `Sit`. Com foco explícito,
+Space mudou o título para `interaction queued BHAV4097`. O receipt registrou
+`interaction_requested:true`, ação 4097, owner privado 2147483648, alvo 128,
+geração 55 e estado `queued`; após fechar a janela, `queue_size` era 1,
+`queue_active:false` e não havia resultado/completion. A imagem continuou
+mostrando o avatar em pé. Portanto X11, apresentação, seleção e entrada de
+tecla foram validados nesta sessão; a fila ainda não prova que a VM iniciou a
+ação, que routing completou ou que o avatar sentou. Capturas brutas ficaram em
+`/tmp` e não foram adicionadas ao Git.
+
+O primeiro envio de Space sem ativar a janela não solicitou a ação. A repetição
+com `windowactivate --sync` e tecla após o clique funcionou, o que confirma que
+o caminho de entrada depende do foco da janela.
+
+Em uma segunda sessão, mantive a janela aberta depois de solicitar `Sit` até a
+VM avançar pelo idle/animação atual. Aos 103 ticks, o receipt terminou com
+`status=fault`, `diagnostic="unsupported primitive 45"`, e a pilha mostrou
+owner privado `0x80000000`, rotinas `4097 → 4100 → 4099`, caller 105, callee e
+StackObject 128. Isso prova que a ação enfileirada chegou à execução BHAV e
+atingiu Routing; não prova movimento nem chegada ao SLOT. `queue_size=1` e
+`queue_active=true` refletem que a ação permanece ativa quando o VM faulta.
+O próximo bloqueio concreto é conectar um Routing45 alimentado por clearance
+construído e validado; não se deve fornecer a malha sintética de teste ou
+tratar candidatos geométricos incompletos como destinos seguros.
 
 ### Probe com recursos de House07
 

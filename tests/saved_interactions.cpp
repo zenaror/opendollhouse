@@ -38,11 +38,35 @@ int main(){try{
     const auto no_labels=saved_object_interactions({path.string(),"",7,object});
     check(no_labels.state==SavedObjectInteractions::State::found&&!no_labels.row_labels[0],"missing TTAs leaves decoded interaction unlabeled");
     const std::vector<SavedTestFunctionResult> eligible_row{{SavedTestFunctionResult::State::eligible,0x1002,3,{}}};
-    check(first_eligible_saved_interaction(no_labels,eligible_row)==0,"manual action selector chooses a matching eligible private row");
-    auto flagged=no_labels;flagged.table->interactions[0].flags=1;
-    check(!first_eligible_saved_interaction(flagged,eligible_row),"manual action selector leaves flagged TTAB rows unsupported");
+    odh::World actor_world;check(actor_world.create(1,odh::EntityKind::avatar,{0,66,0,0}),"actor permission profile created");
+    check(actor_world.set_person_data(1,32,0)&&actor_world.set_person_data(1,34,0)&&
+          actor_world.set_person_data(1,58,27)&&actor_world.set_person_data(1,65,0),"resident adult permission profile initialized");
+    const auto* actor=actor_world.find(1);
+    check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
+        "zero-flag private action accepts resident with matching eligible TestFunction");
+    auto visitor_allowed=no_labels;visitor_allowed.table->interactions[0].flags=1;
+    check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
+        "AllowVisitors flag accepts resident adult");
+    check(actor_world.set_person_data(1,32,1)&&actor_world.set_person_data(1,34,1),"active visitor profile initialized");
+    check(!first_eligible_saved_interaction(no_labels,eligible_row,actor),
+        "visitor with greet status below two is rejected when AllowVisitors is clear");
+    check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
+        "visitor with greet status below two is accepted when AllowVisitors is set");
+    check(actor_world.set_person_data(1,34,2),"greet threshold profile initialized");
+    check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
+        "PersonType one with greet status two or greater is not treated as visitor");
+    auto unknown_flags=no_labels;unknown_flags.table->interactions[0].flags=2;
+    check(!first_eligible_saved_interaction(unknown_flags,eligible_row,actor),
+        "unknown TTAB permission bit remains unsupported");
+    unknown_flags.table->interactions[0].flags=3;
+    check(!first_eligible_saved_interaction(unknown_flags,eligible_row,actor),
+        "known AllowVisitors plus unknown TTAB bit remains unsupported");
+    check(actor_world.set_person_data(1,34,0)&&actor_world.set_person_data(1,65,8),"pet profile initialized");
+    check(!first_eligible_saved_interaction(visitor_allowed,eligible_row,actor),
+        "pet interaction permissions remain outside the supported profile");
     auto mismatched=eligible_row;mismatched[0].routine=0x1003;
-    check(!first_eligible_saved_interaction(no_labels,mismatched),"manual action selector requires TestFunction identity match");
+    check(actor_world.set_person_data(1,65,0),"resident gender profile restored");
+    check(!first_eligible_saved_interaction(no_labels,mismatched,actor),"manual action selector requires TestFunction identity match");
     data=iff(chunk("TTAB",128,ttab())+chunk("TTAB",128,ttab()));write(path,data);
     bool duplicate=false;try{(void)saved_object_interactions({path.string(),"",7,object});}catch(const odh::FormatError&){duplicate=true;}
     check(duplicate,"duplicate owner TTAB is rejected");

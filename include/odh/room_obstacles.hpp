@@ -1,7 +1,10 @@
 #pragma once
 
 #include "odh/room_map.hpp"
+#include "odh/world.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace odh {
@@ -26,6 +29,31 @@ struct RoomPortalOpening {
     std::uint8_t tile_level = 0;
 };
 
+// Minimal saved-World evidence used to conservatively enumerate Portal15
+// openings. group_leader <= 0 denotes a singleton whose own id is its group.
+struct RoomPortalMemberSnapshot {
+    std::int16_t id = 0;
+    std::int16_t group_leader = 0;
+    bool architectural_door = false;
+    bool portal = false;
+    bool contained = false;
+    std::optional<EntityPosition> position;
+};
+
+struct RoomPortalInventory {
+    bool complete = true;
+    std::size_t overlapping_door_tiles = 0;
+    std::vector<RoomPortalOpening> openings;
+};
+
+// Builds room/tile openings from architectural-door groups. A missing or
+// out-of-lot door/portal position, unknown room, duplicate ID, or tile claimed
+// by different door groups makes the inventory incomplete. Overlapping doors
+// still produce diagnostic openings, but callers must keep room obstacles
+// incomplete because Simitone selects the first architectural door at a tile.
+RoomPortalInventory build_room_portal_inventory(
+    const GeometricRoomMap&, const std::vector<RoomPortalMemberSnapshot>&);
+
 // Geometric port of VMRoomMap.GenerateRoomObs's room-membership raster and
 // rectangle optimization. Every tile outside `room` is conservatively kept
 // blocked. Missing object/portal evidence is never interpreted as an opening.
@@ -38,8 +66,9 @@ RoomObstacleCandidateSet generate_room_obstacle_candidates(
 // door tile/group member that is a Portal into `target_room`; each such tile is
 // omitted from that room's boundary obstacles, matching GenerateRoomObs. The
 // caller asserts inventory completeness explicitly. Result.complete is true
-// only for a prepared room map with resolved floor lookups and a complete
-// portal inventory; it still says nothing about entity collisions or routing.
+// only for a prepared room map with unambiguous used floor identities and a
+// complete portal inventory; undeclared IDs use the source-byte fallback. It
+// still says nothing about entity collisions or route clearance.
 RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap&, std::uint16_t room, std::uint8_t level,
     const std::vector<RoomPortalOpening>& portal_openings,

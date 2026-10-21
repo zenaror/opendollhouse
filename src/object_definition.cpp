@@ -16,7 +16,16 @@ ObjectDefinition read_object_definition(const View& payload) {
                     : static_cast<std::int32_t>(sub) - 65536);
     const auto master = prefix.le16(20);
     ObjectDefinition result{version, prefix.le32(28), prefix.le16(18), master, signed_sub,
-            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}};
+            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}, {}};
+    // Simitone's v136/v138 profiles share the first 80 OBJD fields. The
+    // VMOBJDVariable index includes the two 16-bit version words; LevelOffset
+    // is index 56, at byte offset 112 from the payload start.
+    constexpr std::uint64_t level_offset_end = 114;
+    if (payload.size() >= level_offset_end) {
+        result.level_offset = payload.le16(112);
+        result.header_extent = level_offset_end;
+        result.remaining_bytes = payload.size() - level_offset_end;
+    }
     // Simitone's pinned OBJD field order places TileWidth at field 65 and
     // FootprintMask at field 75 (byte offsets 134/154 after the version word).
     // Only expose the pair when both are present; shorter metadata views remain

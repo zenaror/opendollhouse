@@ -1,7 +1,8 @@
 # Campos e shape de colisão OBJD
 
-O leitor de metadados OBJD136/138 agora expõe `TileWidth` e `FootprintMask`
-quando o payload contém ambos os campos. Ele continua aceitando views curtas
+O leitor de metadados OBJD136/138 agora expõe `LevelOffset` quando o payload
+alcança o campo (índice `VMOBJDVariable` 56, byte offset 112), além de
+`TileWidth` e `FootprintMask` quando o payload contém ambos. Ele continua aceitando views curtas
 para os callers que só precisam do prefixo estável até TreeTableID; campos
 ausentes ficam `nullopt`. O `header_extent` indica o maior prefixo realmente
 inspecionado, não validação integral do OBJD.
@@ -29,6 +30,48 @@ Isso ainda não reproduz regra integral de placement: flags de avatar/ghost,
 rooms, portas, floors, objetos ignorados, multitile e políticas de ocupação
 precisam ser aplicados pelo chamador. Não conectar ao roteamento antes dessas
 verificações.
+
+`odh-wall-appearance --portal-probe` também emite `collision_candidates` por
+entidade, juntando o prefixo OBJM salvo com a entidade restaurada no World. A
+caixa é classificada como candidata geométrica, ausência ou unsupported; o
+campo `route_clearance` permanece false. Uma auditoria separada localiza a sala
+geométrica do centro e compara a caixa expandida em 3 unidades com os
+retângulos RoomObs completos daquela sala. Objetos contidos e objetos comuns com `HasZeroExtent` não geram
+obstáculo persistente. Avatares sem `HasZeroExtent` ficam unsupported porque o
+estado transient `KillTimeout` não está no save. Portas arquitetônicas ficam
+unsupported mesmo quando a flag `HasZeroExtent` sugere ausência de obstáculo:
+o probe não conhece a solidez runtime da porta. Em alguns desses casos, `box`
+pode estar presente como geometria possível, sem afirmar que ela esteja
+registrada como obstáculo.
+
+O adapter exige identidade e posição iguais entre OBJM e World; posição
+divergente, posição sentinela e OBJD sem `TileWidth`/`FootprintMask` não viram
+espaço livre. O footprint bruto de OBJM não é usado como fallback. Esse
+inventário ainda não modela janelas, paredes, múltiplas peças, obstáculos
+dinâmicos ou a ordem de seleção de portas do runtime.
+
+A posição validada fica vinculada ao próprio candidato, impedindo que uma
+auditoria combine a caixa de uma entidade com a posição de outra. Para avatares,
+a shape centro±3 é expandida pelo roteador em mais ±3, chegando a raio total 6;
+objetos usam a mesma expansão de roteamento sobre sua caixa OBJD.
+
+No House07 local, o probe classificou os 182 registros: 91 candidatos
+geométricos, 69 ausentes e 22 `unsupported`. Destes, oito não têm posição
+utilizável, dois avatares não permitem resolver `KillTimeout` e 12 portas
+dependem de estado runtime. Entre candidatos com estado e sala conhecidos,
+50 caixas não intersectam RoomObs e 41 intersectam; as 22 entidades
+`unsupported` continuam assim e 69 são `not_applicable`. Isso só avalia
+interseções com limites da sala, não `wallObs`, elegibilidade dinâmica,
+EntryPoint 5, caminho ou clearance. `routing_clearance` permanece false. O
+JSON de trabalho está em `/tmp/odh-house07-room-boundary-audit.json`, fora do
+repositório e sem assets incorporados.
+
+A revisão seguinte da auditoria verifica adicionalmente as quatro faixas
+externas de um tile criadas em `VMRoutingFrame.AttemptWalk`, mantendo as
+contagens de interseção com RoomObs e com esses limites separadas no JSON.
+No probe House07, zero candidatos cruzaram as faixas externas. Ambos os testes
+continuam sendo sobreposições por entidade: não verificam o segmento entre
+posições nem as regras runtime.
 
 Testes sintéticos confirmam offsets, payload com campos presentes, view curta,
 truncamento, todas as oito direções, fallback zero-width, flags sem obstáculo,

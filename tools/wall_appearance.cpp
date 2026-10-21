@@ -4,6 +4,8 @@
 #include "odh/wall_route_state.hpp"
 #include "odh/room_map.hpp"
 #include "odh/room_obstacles.hpp"
+#include "odh/saved_collision_candidates.hpp"
+#include "odh/saved_room_boundary_audit.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include <iostream>
 #include <set>
@@ -61,7 +63,9 @@ int main(int argc,char** argv){try{
    const auto* floor_map=selected_architecture_map(architecture,"FLRm");
    const auto* wall_map=selected_architecture_map(architecture,"WALm");
    aliases=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,wall_map?*wall_map:empty,catalog.floors(),catalog.walls());
-   if(!aliases->floor_map_complete()||!aliases->wall_map_complete())throw odh::FormatError("portal probe architecture aliases unresolved");
+   // Preserve unresolved declarations in the prepared result. The room map
+   // determines whether a missing FLRm value actually affects used identity;
+   // raw lookup and map-entry misses remain visible in its diagnostics.
    prepared=odh::prepare_saved_architecture(architecture.architecture,aliases->aliases);
    rooms=odh::generate_prepared_room_map(*prepared);
   }else rooms=odh::generate_saved_room_map(architecture.architecture);
@@ -78,47 +82,33 @@ int main(int argc,char** argv){try{
    const auto function=saved_portal_function(*candidate);
    portal_cache.emplace(record.definition.guid,function);return function;
   };
-  std::vector<odh::RoomPortalOpening> portal_openings;
-  std::set<std::tuple<std::uint16_t,std::uint32_t,std::uint32_t,std::uint8_t>> unique_openings;
-  std::set<std::int16_t> processed_door_groups;
-  bool portal_inventory_complete=true;
+  std::map<std::int16_t,const odh::WallAppearanceInput*> inputs_by_id;
+  std::set<std::int16_t> door_group_leaders;
   for(const auto& input:result.inputs){
-   if(input.kind!=odh::EntityKind::object||input.contained||!input.position||!(input.flags2&0x8000U))continue;
+   inputs_by_id.emplace(input.id,&input);
+   if(input.kind!=odh::EntityKind::object||input.contained||!(input.flags2&0x8000U))continue;
    const auto group_it=groups_by_member.find(input.id);
+   door_group_leaders.insert(group_it==groups_by_member.end()?input.id:group_it->second->leader);
+  }
+  std::vector<odh::RoomPortalMemberSnapshot> portal_members;
+  for(const auto leader:door_group_leaders){
+   const auto group_it=groups_by_member.find(leader);
    const auto group=group_it==groups_by_member.end()?nullptr:group_it->second;
-   const auto leader=group?group->leader:input.id;
-   if(!processed_door_groups.insert(leader).second)continue;
-   const std::vector<std::int16_t> members=group?group->members:std::vector<std::int16_t>{input.id};
-   std::set<std::uint16_t> target_rooms;
+   const std::vector<std::int16_t> members=group?group->members:std::vector<std::int16_t>{leader};
    for(const auto member:members){
     const auto member_record=records_by_id.find(member);
-    if(member_record==records_by_id.end())throw odh::FormatError("portal probe multitile member missing from saved World");
+    const auto input=inputs_by_id.find(member);
+    const auto* entity=world->world->find(member);
+    if(member_record==records_by_id.end()||input==inputs_by_id.end()||!entity)
+     throw odh::FormatError("portal probe group member missing from saved World snapshot");
     const auto function=portal_for(*member_record->second);
-    if(!function.action)continue;
-    const auto* entity=world->world->find(member);
-    if(!entity||!entity->position){portal_inventory_complete=false;continue;}
-    const auto room=odh::geometric_room_at(rooms,entity->position->x,entity->position->y,entity->position->level);
-    if(!room){portal_inventory_complete=false;continue;}
-    target_rooms.insert(*room);
-   }
-   for(const auto member:members){
-    const auto member_record=records_by_id.find(member);
-    if(member_record==records_by_id.end())throw odh::FormatError("portal probe door member missing from saved World");
-    const auto* entity=world->world->find(member);
-    const auto frame=odh::VmFrame{odh::routine_key(4096),0,{member,member,member,0},{},{}};
-    const auto flags=world->world->read(frame,3,40);
-    if(!flags||!entity){portal_inventory_complete=false;continue;}
-    if((static_cast<std::uint16_t>(*flags)&0x8000U)==0||!entity->position)continue;
-    const auto& p=*entity->position;
-    if(p.level<1||p.level>2){portal_inventory_complete=false;continue;}
-    const auto tile_x=static_cast<std::uint32_t>(p.x/16),tile_y=static_cast<std::uint32_t>(p.y/16);
-    if(tile_x>=rooms.width||tile_y>=rooms.height)continue;
-    for(const auto target_room:target_rooms){
-     const auto key=std::make_tuple(target_room,tile_x,tile_y,static_cast<std::uint8_t>(p.level-1));
-     if(unique_openings.insert(key).second)portal_openings.push_back({target_room,tile_x,tile_y,static_cast<std::uint8_t>(p.level-1)});
-    }
+    portal_members.push_back({member,leader,(input->second->flags2&0x8000U)!=0,
+      function.action!=0,input->second->contained,entity->position});
    }
   }
+  const auto portal_inventory=odh::build_room_portal_inventory(rooms,portal_members);
+  const auto& portal_openings=portal_inventory.openings;
+  const bool portal_inventory_complete=portal_inventory.complete;
   std::vector<odh::RoomObstacleCandidateSet> room_obstacles;
   for(std::size_t room=1;room<rooms.rooms.size();++room){
    const auto level=rooms.rooms[room].level;
@@ -126,15 +116,58 @@ int main(int argc,char** argv){try{
   }
   std::map<std::int16_t,std::vector<const odh::WallAppearanceFace*>> door_faces;
   for(const auto& face:result.appearance.faces)if(face.door)door_faces[face.door_owner].push_back(&face);
-  std::cout<<",\"portal_probe\":{\"evidence\":\"authored_entry_point15_inventory_only\",\"room_map_profile\":"<<json_bytes(prepared?"prepared_alias_resolved":"saved_raw_no_floor_alias_remap")
+  const char* room_map_profile=prepared?(prepared->floor_identity_unambiguous()?"prepared_floor_identity_unambiguous":"prepared_floor_identity_ambiguous"):"saved_raw_no_floor_alias_remap";
+  std::cout<<",\"portal_probe\":{\"evidence\":\"authored_entry_point15_inventory_only\",\"room_map_profile\":"<<json_bytes(room_map_profile)
    <<",\"architecture_prepared\":"<<(prepared?"true":"false")<<",\"floor_alias_misses\":"<<(prepared?prepared->diagnostics.floor_alias_misses:0)
+   <<",\"floor_map_entries\":"<<(aliases?aliases->diagnostics.floor_map_entries:0)
+   <<",\"floor_map_misses\":"<<(aliases?aliases->diagnostics.floor_map_misses:0)
+   <<",\"unresolved_floor_alias_references\":"<<(prepared?prepared->diagnostics.unresolved_floor_alias_references:0)
+   <<",\"floor_identity_unambiguous\":"<<(prepared?(prepared->floor_identity_unambiguous()?"true":"false"):"false")
    <<",\"wall_alias_misses\":"<<(prepared?prepared->diagnostics.wall_alias_misses:0)<<",\"room_count\":"<<rooms.rooms.size()
    <<",\"room_floor_lookups_complete\":"<<(rooms.floor_resources_resolved?"true":"false")
    <<",\"portal_opening_tile_room_pairs\":"<<portal_openings.size()<<",\"portal_inventory_complete\":"<<(portal_inventory_complete?"true":"false")
+   <<",\"overlapping_portal_door_tiles\":"<<portal_inventory.overlapping_door_tiles
    <<",\"room_obstacle_candidates\":[";
   for(std::size_t i=0;i<room_obstacles.size();++i){if(i)std::cout<<',';const auto& candidate=room_obstacles[i];
    std::cout<<"{\"room\":"<<candidate.room<<",\"level\":"<<unsigned(candidate.level)<<",\"generation_complete\":"<<(candidate.complete?"true":"false")<<",\"rectangles\":"<<candidate.rectangles.size()<<'}';}
-  std::cout<<"],\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
+  std::size_t collision_candidate_count=0,collision_absent_count=0,collision_unsupported_count=0;
+  std::size_t boundary_no_intersection=0,boundary_intersections=0,outer_bounds_intersections=0,boundary_unsupported=0,boundary_not_applicable=0;
+  std::cout<<"],\"collision_candidates\":{\"evidence\":\"saved_snapshot_geometry_only\",\"route_clearance\":false,\"entities\":[";
+  bool first_collision=true;
+  for(const auto& record:world->records){
+   const auto id=static_cast<std::int16_t>(record.saved.object_id);
+   const auto* entity=world->world->find(id);
+   const auto candidate=odh::saved_collision_candidate(record,entity);
+   const auto boundary=odh::audit_saved_room_boundary(candidate,rooms,room_obstacles);
+   if(boundary.intersecting_outer_bounds>0)++outer_bounds_intersections;
+   if(candidate.state==odh::SavedCollisionCandidateState::candidate)++collision_candidate_count;
+   else if(candidate.state==odh::SavedCollisionCandidateState::absent)++collision_absent_count;
+   else ++collision_unsupported_count;
+   switch(boundary.state){
+   case odh::SavedRoomBoundaryAuditState::no_intersection:++boundary_no_intersection;break;
+   case odh::SavedRoomBoundaryAuditState::intersects_boundary:++boundary_intersections;break;
+   case odh::SavedRoomBoundaryAuditState::intersects_outer_room_bounds:break;
+   case odh::SavedRoomBoundaryAuditState::unsupported:++boundary_unsupported;break;
+   case odh::SavedRoomBoundaryAuditState::not_applicable:++boundary_not_applicable;break;
+   }
+   if(!first_collision)std::cout<<',';
+   first_collision=false;
+   std::cout<<"{\"id\":"<<candidate.object_id<<",\"kind\":"<<json_bytes(candidate.avatar?"avatar":"object")
+    <<",\"state\":"<<json_bytes(odh::saved_collision_candidate_state_name(candidate.state))
+    <<",\"reason\":"<<json_bytes(odh::saved_collision_candidate_reason_name(candidate.reason))<<",\"box\":";
+   if(candidate.box)std::cout<<'['<<candidate.box->x1<<','<<candidate.box->y1<<','<<candidate.box->x2<<','<<candidate.box->y2<<']';
+   else std::cout<<"null";
+   std::cout<<",\"room_boundary_audit\":{\"state\":"<<json_bytes(odh::saved_room_boundary_audit_state_name(boundary.state))
+    <<",\"reason\":"<<json_bytes(odh::saved_room_boundary_audit_reason_name(boundary.reason))<<",\"room\":";
+   if(boundary.room)std::cout<<*boundary.room;else std::cout<<"null";
+   std::cout<<",\"intersecting_rectangles\":"<<boundary.intersecting_rectangles
+    <<",\"intersecting_outer_bounds\":"<<boundary.intersecting_outer_bounds<<"}}";
+  }
+  std::cout<<"],\"counts\":{\"candidate\":"<<collision_candidate_count<<",\"absent\":"<<collision_absent_count
+   <<",\"unsupported\":"<<collision_unsupported_count<<"},\"room_boundary_audit\":{\"evidence\":\"room_obstacles_and_outer_bounds_only\",\"route_clearance\":false,\"counts\":{\"no_intersection\":"
+   <<boundary_no_intersection<<",\"intersects_boundary\":"<<boundary_intersections
+   <<",\"intersects_outer_room_bounds_entities\":"<<outer_bounds_intersections<<",\"unsupported\":"<<boundary_unsupported
+   <<",\"not_applicable\":"<<boundary_not_applicable<<"}}},\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
   bool first_door=true;
   for(const auto& [door_id,faces]:door_faces){
    const auto found=records_by_id.find(door_id);

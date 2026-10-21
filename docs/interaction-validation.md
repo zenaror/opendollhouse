@@ -166,8 +166,12 @@ prova de comportamento do executável original.
 
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
-No preview de lote salvo, Space/Return agora solicita a primeira linha com teste
-`eligible`, flags TTAB zero e ActionFunction privado. O recurso exato
+No preview de lote salvo, Space/Return solicita a primeira linha com teste
+`eligible`, perfil de flags suportado e ActionFunction privado. Flags zero são
+aceitas; `AllowVisitors` (bit `0x1`) é aceito depois de conferir o perfil do
+ator. Um visitor actor (`PersonType==1 && GreetStatus<2`) requer esse bit.
+Pets, perfil de ator ausente e bits desconhecidos continuam fora do perfil.
+O recurso exato
 `source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner
 de alta faixa, instalado na VM Main já viva. A fila valida novamente actor,
 target e geração antes de aceitar caller/target/StackObject. Não reinicia Main.
@@ -182,6 +186,12 @@ por capacidade. O preview instala um owner por recurso/ação, não por clique.
 O recurso da ação ainda não ganha handlers implícitos. A cadeia observada
 4097→4100→4099 entra em Routing opcode45; o Main host atual ainda não integra
 esse controller nesse caminho, então uma tentativa pode parar como `vm_fault`.
+
+No teste posterior de X11 com House07, a fila foi consumida e a VM alcançou
+essa cadeia aos 103 ticks. O receipt terminou em `unsupported primitive 45`,
+com owner privado `0x80000000`, caller 105, callee/StackObject 128 e fila
+ativa. Isso confirma execução BHAV até Routing no perfil ODH; não confirma
+movimento, chegada ao SLOT ou comportamento do executável original.
 Leitura somente estrutural de BHAV4099 em `Objects.far` nas instalações The Sims
 e Legacy Collection dá instruções idênticas; o payload SHA256 é
 `c6ab9b5eed558746c2997bd0f29d741ba9907e38062bbcfdb1cd2da86ea815f6`. Em PC2–5

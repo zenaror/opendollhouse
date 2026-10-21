@@ -6,9 +6,11 @@ saves comerciais. A biblioteca permanece independente de aceitação de alvos,
 roteamento e estado de entidades.
 
 O resultado é um **candidato geométrico sobre IDs de piso retidos**, não o mapa
-restaurado do runtime TS1. A resolução de nomes FLRm e o remapeamento de IDs
-de piso condicionado por flags em `RemapFloors` não são implementados; `floor_resources_resolved` é
-sempre falso. A segmentação pode mudar quando esse preparo for resolvido.
+restaurado do runtime TS1. A API crua não remapeia nomes FLRm, então
+`floor_resources_resolved` é sempre falso. A variante preparada usa
+`floor_identity_unambiguous()`: o fallback de `TryGetValue` mantém o byte quando
+FLRm não declara o ID; uma declaração sem valor resolvido bloqueia completude
+se for usada. A segmentação ainda depende do preparo e não equivale ao runtime.
 O caminho separado `generate_prepared_room_map` consome grids já preparados;
 seu contrato está em [prepared-architecture-validation.md](prepared-architecture-validation.md).
 
@@ -89,8 +91,10 @@ Essas comparações seguem `GetRoomAt` em Simitone
 `4906db3156616bfaffc10ce0963cf08062975fef`,
 `FreeSO/TSOClient/tso.simantics/VMContext.cs:1314-1343`. A API consulta o mapa
 geométrico de ODH; não cria salas do runtime, não resolve portais e não autoriza
-transições entre salas. `floor_resources_resolved` continua sendo apenas uma
-medida de cobertura dos aliases, não validade de piso.
+transições entre salas. `floor_resources_resolved` no mapa preparado informa
+apenas que as identidades usadas não dependem de alias FLRm declarado sem
+resolução. O mapa cru conserva esse campo falso. Nenhum valor declara validade
+de piso ou completude do runtime.
 
 ## Limites explícitos
 

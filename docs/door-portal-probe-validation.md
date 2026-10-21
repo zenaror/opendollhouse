@@ -17,11 +17,22 @@ permite conferir os candidatos a ligação de sala que
 `VMRoomMap.GenerateRoomObs` usa ao procurar uma entidade Portal no grupo da
 porta. O probe também produz os candidatos geométricos de obstáculo por sala,
 usando pares explícitos tile/room derivados dos membros posicionados com
-Portal15 não zero. O mapa ainda não habilita completude: House07 tem 115 misses
-de lookup de piso no preparo, e `generation_complete` permanece false em todas
-as salas. Esses misses podem incluir padrões globais sem alias declarado; o
-probe não os reinterpreta como espaço livre. Também não acrescenta colisões de
-objetos ou calcula clearance/caminho. `portal_bhav_executed`,
+Portal15 não zero. O contador estrito de preparo mantém os misses de
+`TryGetValue`, inclusive quando o ID não está declarado em FLRm e o fallback
+preserva o byte. O room map preparado só fica incompleto quando uma referência
+usa um ID FLRm declarado sem resolução final; o probe publica
+`floor_map_entries` e `unresolved_floor_alias_references` para rastrear essa
+distinção. Um fallback sem alias não é reinterpretado como espaço livre. O
+probe também emite `collision_candidates`, juntando geometrias salvas no OBJM a
+posições iguais no World restaurado, e `room_boundary_audit` compara cada caixa
+expandida com RoomObs e os limites externos de `AttemptWalk`. É só uma auditoria
+de interseção estática por entidade, não pathfinding ou clearance; estados
+incompletos de avatar e porta permanecem `unsupported`. O inventário do portal fica incompleto se uma
+porta ou membro Portal15 não tiver posição/sala resolvida, sair do lote ou se
+grupos distintos de portas disputarem o mesmo tile; o campo
+`overlapping_portal_door_tiles` expõe essa última ambiguidade. O probe não
+calcula clearance/pathfinding completo.
+`portal_bhav_executed`,
 `runtime_portal_state` (runtime não simulado) e `routing_clearance` continuam
 false.
 
@@ -56,14 +67,19 @@ build/odh-wall-appearance '../referencias/The Sims/UserData/Houses/House07.iff' 
 ```
 
 Com as 23 fontes loose `.flr`/`.wll` presentes nesta instalação, o probe
-preparou a arquitetura e gerou seis salas. Foram localizadas seis faces de
+preparou a arquitetura e gerou seis salas. House07 reporta 115 misses estritos,
+zero entradas FLRm e zero referências a alias declarado-sem-resolução; portanto
+as seis salas têm `generation_complete=true` quando o inventário de portais
+está completo. Isso só completa os candidatos geométricos de obstáculo dentro
+do perfil atual; `routing_clearance` permanece false. Foram localizadas seis faces de
 porta. Cada grupo de duas entidades aponta para `OBJf` action `4105`, e esse
 ID existe como BHAV no respectivo asset `Doors.iff`. Os pares de IDs de sala
 consultados para os seis grupos foram `(2,3)`, `(3,4)`, `(4,2)`, `(1,3)`,
 `(1,2)` e `(3,1)`. A expansão por peças de porta produziu 24 pares
 tile/room-alvo. Os candidatos de obstáculo emitiram 8, 7, 8, 6 e 0 retângulos
-para as salas 1–5; todos permanecem `generation_complete=false` por causa dos
-floor lookups e nenhum vira caminho. Isso valida leitura e junção estática da
+para as salas 1–5; com inventário completo, todos têm
+`generation_complete=true`, mas nenhum vira caminho e `routing_clearance` segue
+false. Isso valida leitura e junção estática da
 instalação/save, não abertura runtime, colisões completas ou movimento de Sims.
 
 `tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima

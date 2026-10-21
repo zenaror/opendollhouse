@@ -44,7 +44,7 @@ int main() {
         check(metadata.tree_table_id == 128);
         check(metadata.sub_index == -1 && metadata.is_multitile);
         check(metadata.header_extent == 32 && metadata.remaining_bytes == 0);
-        check(!metadata.tile_width&&!metadata.footprint_mask);
+        check(!metadata.level_offset&&!metadata.tile_width&&!metadata.footprint_mask);
         // read() destroys its stream: metadata remains independently owned.
         check(metadata.guid == 0xfedcba98);
 
@@ -60,14 +60,23 @@ int main() {
                 check(rejects([&] { read(profile.substr(0, size)); }));
         }
         {
+            auto placement = std::string(116, '\0');put32(placement,0,138);
+            put16(placement,112,0x8001);
+            const auto parsed=read(placement);
+            check(parsed.level_offset==0x8001&&parsed.header_extent==114&&parsed.remaining_bytes==2);
+            placement.resize(113);
+            const auto partial=read(placement);
+            check(!partial.level_offset&&partial.header_extent==32);
+        }
+        {
             auto collision=std::string(160,'\0');put32(collision,0,138);
-            put16(collision,14,128);put16(collision,134,0x2345);put16(collision,154,0xA19C);
+            put16(collision,14,128);put16(collision,112,0x1234);put16(collision,134,0x2345);put16(collision,154,0xA19C);
             const auto parsed=read(collision);
             check(parsed.tile_width==0x2345&&parsed.footprint_mask==0xA19C&&
-                  parsed.header_extent==156&&parsed.remaining_bytes==4);
+                  parsed.level_offset==0x1234&&parsed.header_extent==156&&parsed.remaining_bytes==4);
             collision.resize(155);
             const auto partial=read(collision);
-            check(!partial.tile_width&&!partial.footprint_mask&&partial.header_extent==32);
+            check(partial.level_offset==0x1234&&!partial.tile_width&&!partial.footprint_mask&&partial.header_extent==114);
         }
         for (std::uint32_t version : {0u, 137u, 139u, 140u, 141u, 142u, 0xffffffffu}) {
             auto unsupported = bytes;

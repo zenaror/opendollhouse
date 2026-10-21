@@ -13,6 +13,9 @@ namespace odh {
 // bounded ODH profile; 65534/65535 remain water/pool sentinels.
 struct ArchitectureResourceAliases {
     std::array<std::optional<std::uint16_t>, 256> floors{}, walls{};
+    // IDs explicitly declared by FLRm for which no entry survived the
+    // reference's successful-lookup-only dictionary construction.
+    std::array<bool, 256> declared_unresolved_floors{};
 };
 struct ArchitecturePreparationOptions {
     bool flip_road = false;
@@ -24,10 +27,13 @@ struct ArchitecturePreparationLimits {
 struct ArchitecturePreparationDiagnostics {
     // Counts cover the complete 64x64 source, including cells cropped away.
     // A lookup miss retains the current value (including any road swap),
-    // matching RemapFloors/RemapWalls.
-    // It does not by itself prove that a named asset is missing: the input
-    // dictionaries contain no names or declarations for unsuccessful aliases.
+    // matching Simitone RemapFloors/RemapWalls. Strict misses include
+    // undeclared/global fallback IDs; unresolved references count only used
+    // identities declared in FLRm with no final successful value. A base-floor
+    // lookup is unused on a diagonal with explicit floor fields and beneath a
+    // ground pool/water overlay.
     std::size_t floor_lookups = 0, floor_alias_misses = 0;
+    std::size_t unresolved_floor_alias_references = 0;
     std::size_t wall_lookups = 0, wall_alias_misses = 0;
     std::array<bool, 256> missing_floor_aliases{}, missing_wall_aliases{};
 };
@@ -43,6 +49,11 @@ struct PreparedArchitecture {
     ArchitecturePreparationDiagnostics diagnostics;
     bool floor_aliases_resolved() const noexcept {
         return diagnostics.floor_alias_misses == 0;
+    }
+    // Undeclared aliases retain their source byte under RemapFloors. Only a
+    // used FLRm declaration with no resolved value makes identity ambiguous.
+    bool floor_identity_unambiguous() const noexcept {
+        return diagnostics.unresolved_floor_alias_references == 0;
     }
     bool wall_aliases_resolved() const noexcept {
         return diagnostics.wall_alias_misses == 0;

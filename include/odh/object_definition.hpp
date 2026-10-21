@@ -11,6 +11,9 @@ struct ObjectDefinition {
     bool is_multitile;
     std::uint64_t header_extent, remaining_bytes;
     std::uint16_t tree_table_id = 0;
+    // VMOBJDVariable index 56, used by VMEntity.FloorChangeValid. Present when the
+    // complete supported-profile word is in the payload.
+    std::optional<std::uint16_t> level_offset;
     // Present only when the payload reaches the complete stable fields in the
     // supported 136/138 layouts. Values are raw OBJD collision parameters.
     std::optional<std::uint16_t> tile_width;

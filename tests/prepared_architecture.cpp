@@ -66,14 +66,57 @@ int main() { try {
     require(prepared.levels[0].floors[0] == 31 && prepared.levels[1].floors[0] == 31,
             "missing alias preserves source pattern");
     require(prepared.diagnostics.floor_lookups == 3 && prepared.diagnostics.floor_alias_misses == 3 &&
-            prepared.diagnostics.missing_floor_aliases[31] && !prepared.floor_aliases_resolved(),
+            prepared.diagnostics.missing_floor_aliases[31] && !prepared.floor_aliases_resolved() &&
+            prepared.floor_identity_unambiguous() &&
+            odh::generate_prepared_room_map(prepared).floor_resources_resolved,
             "diagnostics count full-source lookup misses without inventing names");
+    aliases = {};
+    aliases.declared_unresolved_floors[31] = true;
+    prepared = odh::prepare_saved_architecture(saved, aliases, {false, 1});
+    require(prepared.diagnostics.floor_alias_misses == 3 &&
+            prepared.diagnostics.unresolved_floor_alias_references == 3 &&
+            !prepared.floor_identity_unambiguous() &&
+            !odh::generate_prepared_room_map(prepared).floor_resources_resolved,
+            "used declared-unresolved alias keeps prepared room identity incomplete");
+    saved = source();
+    prepared = odh::prepare_saved_architecture(saved, aliases);
+    require(prepared.diagnostics.unresolved_floor_alias_references == 0 &&
+            prepared.floor_identity_unambiguous() &&
+            odh::generate_prepared_room_map(prepared).floor_resources_resolved,
+            "unused declared-unresolved alias does not block room identity");
+    saved = source();
+    saved.levels[0].walls[0].segments = odh::wall_horizontal_diagonal;
+    saved.levels[0].walls[0].top_left_style = 31;
+    prepared = odh::prepare_saved_architecture(saved, aliases);
+    require(prepared.diagnostics.floor_alias_misses == 1 &&
+            prepared.diagnostics.unresolved_floor_alias_references == 1 &&
+            !prepared.floor_identity_unambiguous(),
+            "declared-unresolved diagonal floor field contributes an ambiguity reference");
+    saved = source();
+    saved.levels[0].floors[0] = 255;
+    saved.levels[0].walls[0].segments = odh::wall_horizontal_diagonal;
+    saved.levels[0].walls[0].top_left_style = 8;
+    aliases.declared_unresolved_floors[255] = true;
+    prepared = odh::prepare_saved_architecture(saved, aliases);
+    require(prepared.diagnostics.floor_alias_misses == 2 &&
+            prepared.diagnostics.unresolved_floor_alias_references == 0 &&
+            prepared.floor_identity_unambiguous() &&
+            odh::generate_prepared_room_map(prepared).floor_resources_resolved,
+            "unresolved base floor 255 is unused when diagonal fields are explicit");
+    saved = source(); saved.levels[0].floors[0] = 31; (*saved.pools)[0] = 1;
+    aliases.declared_unresolved_floors[31] = true;
+    prepared = odh::prepare_saved_architecture(saved, aliases);
+    require(prepared.diagnostics.floor_alias_misses == 1 &&
+            prepared.diagnostics.unresolved_floor_alias_references == 0 &&
+            prepared.floor_identity_unambiguous(),
+            "pool overlay supersedes an unresolved non-diagonal ground material identity");
     saved = source(); saved.levels[0].walls[0].bottom_left_pattern = 0x0103;
     prepared = odh::prepare_saved_architecture(saved, {});
     require(prepared.levels[0].walls[0].bottom_left_pattern == 0x0103 &&
             prepared.diagnostics.wall_lookups == 1 && prepared.diagnostics.wall_alias_misses == 1 &&
             prepared.diagnostics.missing_wall_aliases[3] && !prepared.wall_aliases_resolved() &&
-            prepared.floor_aliases_resolved(), "wall misses retain full word and track low-byte alias independently");
+            prepared.floor_aliases_resolved() && prepared.floor_identity_unambiguous(),
+            "wall misses retain full word and track low-byte alias independently");
 
     saved = source(); aliases = {};
     aliases.floors[10] = 500; aliases.floors[11] = 501;
