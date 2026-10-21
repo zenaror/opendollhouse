@@ -94,6 +94,9 @@ public:
     Routing(const Routing&)=delete;
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
+    // Stop an active, local Go Here walk through its saved failure tree.
+    // Only supported when the scheduler is between ticks and no route frame is suspended.
+    bool interrupt();
     // Install before VM execution. Missing/ambiguous tables remain unsupported.
     void set_stack_object_slot_table_provider(StackObjectSlotTableProvider provider) {
         if(executing_||job_)throw std::logic_error("cannot replace Route45 SLOT provider while active");

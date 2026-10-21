@@ -214,6 +214,8 @@ int main(int argc,char** argv) {
     bool headless_entity_move_applied=false;
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
+    std::optional<std::uint64_t> headless_go_here_interrupt_tick;
+    bool headless_go_here_interrupt_applied=false,headless_go_here_interrupt_accepted=false;
     std::optional<HeadlessInteraction> headless_interaction;
     bool headless_interaction_applied=false;
     std::optional<HeadlessGoHere> headless_go_here;
@@ -322,6 +324,11 @@ int main(int argc,char** argv) {
             headless_go_here=HeadlessGoHere{static_cast<std::uint32_t>(x),static_cast<std::uint32_t>(y),
                 static_cast<std::uint8_t>(level),tick};
         }
+        else if(option=="--headless-go-here-interrupt"&&!headless_go_here_interrupt_tick&&n+1<argc){
+            const auto tick=selector(argv[++n]);
+            if(tick==0)throw odh::FormatError("Go Here interrupt tick must be nonzero");
+            headless_go_here_interrupt_tick=tick;
+        }
         else if(option=="--headless-portal"&&!headless_portal&&n+2<argc){
             const auto id=selector(argv[++n]),tick=selector(argv[++n]);
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless Portal15 target/tick is outside the supported profile");
@@ -369,6 +376,9 @@ int main(int argc,char** argv) {
     if(headless_go_here&&(!headless_main||headless_go_here->tick>ticks_limit||headless_interaction||
        headless_portal||headless_stand))
         throw odh::FormatError("--headless-go-here requires --headless-main, an in-range tick, and an otherwise idle action probe");
+    if(headless_go_here_interrupt_tick&&(!headless_main||!headless_go_here||
+       *headless_go_here_interrupt_tick>ticks_limit||headless_entity_move))
+        throw odh::FormatError("--headless-go-here-interrupt requires Go Here and an in-range tick without a world mutation");
     if(headless_portal&&(!headless_main||headless_portal->tick>ticks_limit||headless_interaction||headless_stand||headless_go_here))
         throw odh::FormatError("--headless-portal requires --headless-main, an in-range tick, and an otherwise idle action probe");
     if(headless_stand&&(!headless_main||!headless_interaction||headless_stand->tick>ticks_limit||
@@ -384,7 +394,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -1316,7 +1326,7 @@ struct PlacementCandidateProbe {
             title+=" | ground ("+std::to_string(ground.x)+","+std::to_string(ground.y)+") level "+
                 std::to_string(ground.level)+" room "+std::to_string(ground.room)+"; Space/Enter to Go Here";
         }
-        return title+" | P pause, arrows rotate, +/- zoom, Escape close";
+        return title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
@@ -1373,8 +1383,8 @@ struct PlacementCandidateProbe {
         }
 #ifdef ODH_HAVE_X11
         if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
-            render_lot?"OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, P pause, arrows rotate, +/- zoom, Escape close":
-                       "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
+            render_lot?"OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
+                       "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
     if(headless_main){
@@ -1800,6 +1810,10 @@ struct PlacementCandidateProbe {
             const auto input=render_window_host->poll();
             if(input.quit){window_closed=true;break;}
             if(input.pause)window_paused=!window_paused;
+            if(input.interrupt&&go_here_status=="queued"&&runtime_routing&&runtime_routing->interrupt()){
+                go_here_route_status="cancelling";
+                render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
+            }
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
                 auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
@@ -1850,7 +1864,7 @@ struct PlacementCandidateProbe {
                     if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                     if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 }
-                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
@@ -2011,6 +2025,12 @@ struct PlacementCandidateProbe {
             }
             headless_entity_move_applied=true;
         }
+        if(headless_go_here_interrupt_tick&&!headless_go_here_interrupt_applied&&
+           ticks>=*headless_go_here_interrupt_tick&&runtime_routing&&
+           runtime_routing->active()&&route_runtime_movement_callbacks>0){
+            headless_go_here_interrupt_applied=true;
+            headless_go_here_interrupt_accepted=runtime_routing->interrupt();
+        }
         if(runtime_routing&&runtime_routing->active()){
             if(!runtime_routing->external_frame_active()&&
                !refresh_route_obstacles(!runtime_routing->waiting_for_room_portal_step())){
@@ -2051,7 +2071,9 @@ struct PlacementCandidateProbe {
                queue.completion()->uid!=*go_here_previous_completion_uid)){
                 go_here_result=queue.completion()->result;
                 go_here_status=*go_here_result?"returned_true":"returned_false";
-                go_here_route_status=runtime_routing&&runtime_routing->diagnostic().empty()?"arrived":"failed";
+                const auto route_diagnostic=runtime_routing?runtime_routing->diagnostic():std::string{};
+                go_here_route_status=route_diagnostic.empty()?"arrived":
+                    route_diagnostic=="route interrupted by player"?"cancelled":"failed";
                 go_here_diagnostic.clear();
             }else if(vm.status()==odh::VmStatus::fault){
                 go_here_status="vm_fault";go_here_diagnostic=vm.diagnostic();
@@ -2061,10 +2083,11 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_X11
             if(render_window_host&&go_here_status!="queued"){
                 std::string title="OpenDollhouse Main preview: Go Here ";
-                title+=go_here_route_status=="arrived"?"arrived":"could not reach the selected ground";
+                title+=go_here_route_status=="arrived"?"arrived":
+                    go_here_route_status=="cancelled"?"cancelled by player":"could not reach the selected ground";
                 if(go_here_route_status=="failed"&&runtime_routing&&!runtime_routing->diagnostic().empty())
                     title+=" | "+runtime_routing->diagnostic();
-                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
             if(go_here_status!="queued")remove_go_here_marker();
@@ -2112,7 +2135,7 @@ struct PlacementCandidateProbe {
                 std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
                 if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                 if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
-                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
         }
@@ -2771,7 +2794,12 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"movement_positions_truncated\":"
         <<(route_runtime_movement_callbacks>route_runtime_movement_positions.size()?"true":"false")
-        <<",\"scheduled_world_mutation_applied\":"
+        <<",\"headless_go_here_interrupt\":";
+    if(headless_go_here_interrupt_tick)std::cout<<"{\"tick\":"<<*headless_go_here_interrupt_tick
+        <<",\"applied\":"<<(headless_go_here_interrupt_applied?"true":"false")
+        <<",\"accepted\":"<<(headless_go_here_interrupt_accepted?"true":"false")<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"scheduled_world_mutation_applied\":"
         <<(headless_entity_move_applied?"true":"false")
         <<",\"scheduled_world_mutation\":";
     if(headless_entity_move)std::cout<<"{\"entity\":"<<headless_entity_move->id<<",\"tick\":"

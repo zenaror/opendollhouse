@@ -39,6 +39,10 @@ def parse_args():
                         help="require the saved blocker to resolve to this OBJD asset, for example DiningTables.iff")
     parser.add_argument("--go-here-expect-interruption", action="store_true",
                         help="assert that a live world change stops saved Go Here during movement")
+    parser.add_argument("--go-here-expect-cancelled", action="store_true",
+                        help="assert that a scheduled player cancel stops saved Go Here through Global BHAV398")
+    parser.add_argument("--go-here-interrupt-at-tick", type=int,
+                        help="send a player-cancel request at this headless simulation tick")
     parser.add_argument("--go-here-mutation", nargs=6, type=int,
                         metavar=("ENTITY_ID", "X", "Y", "LEVEL", "DIRECTION", "TICK"),
                         help="move a saved World entity while Go Here is walking; X/Y are world coordinates")
@@ -148,8 +152,14 @@ def main():
         raise SystemExit("saved blocker identity checks require --go-here and --go-here-expect-route-failure")
     if args.go_here_expect_interruption and args.go_here_mutation is None:
         raise SystemExit("--go-here-expect-interruption requires --go-here-mutation")
-    if args.go_here_expect_interruption and args.go_here_expect_route_failure:
-        raise SystemExit("Go Here route failure and interruption expectations are mutually exclusive")
+    if args.go_here_expect_cancelled and args.go_here_interrupt_at_tick is None:
+        raise SystemExit("--go-here-expect-cancelled requires --go-here-interrupt-at-tick")
+    if args.go_here_interrupt_at_tick is not None and (args.go_here is None or
+            args.go_here_mutation is not None or args.go_here_interrupt_at_tick <= 1):
+        raise SystemExit("Go Here player cancel needs --go-here, a tick after request, and no world mutation")
+    if sum((args.go_here_expect_interruption, args.go_here_expect_route_failure,
+            args.go_here_expect_cancelled)) > 1:
+        raise SystemExit("Go Here failure, world-change, and player-cancel expectations are mutually exclusive")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -207,6 +217,8 @@ def main():
             invocation += ["--headless-portal", str(args.portal_id), "1"]
         if args.go_here is not None:
             invocation += ["--headless-go-here", *(str(value) for value in args.go_here), "1"]
+        if args.go_here_interrupt_at_tick is not None:
+            invocation += ["--headless-go-here-interrupt", str(args.go_here_interrupt_at_tick)]
         profile = os.environ.get("ODH_PROFILE_STARTUP")
         if profile:
             print(f"[house07-probe] starting odh-person with ODH_PROFILE_STARTUP={profile}",
@@ -263,8 +275,8 @@ def main():
             "go_here": go_here,
             "route_runtime": {key: route.get(key) for key in (
                 "state", "start_position", "end_position", "active",
-                "movement_callbacks", "movement_positions", "diagnostic", "scheduled_world_mutation_applied",
-            "scheduled_world_mutation")},
+                "movement_callbacks", "movement_positions", "diagnostic", "headless_go_here_interrupt",
+                "scheduled_world_mutation_applied", "scheduled_world_mutation")},
             "goal_validation_diagnostic": route.get("goal_validation_diagnostic"),
             "global_398_trace": failure_tree_trace,
             "blocker_validation": blocker_validation,
@@ -274,13 +286,14 @@ def main():
         successful = expected_status == "returned_true"
         route_failure = args.go_here_expect_route_failure
         route_interruption = args.go_here_expect_interruption
+        route_cancelled = args.go_here_expect_cancelled
         movement_positions = route.get("movement_positions") or []
         if (route_failure and expected_status != "returned_true"):
             raise SystemExit("--go-here-expect-route-failure requires action status returned_true")
         if (go_here.get("status") != expected_status or
                 go_here.get("marker_alive") is not False or
                 go_here.get("action") != 4096 or
-                (successful and not route_failure and not route_interruption and
+                (successful and not route_failure and not route_interruption and not route_cancelled and
                                  (baseline_code != 0 or baseline.get("host_failed") or
                                  go_here.get("result") is not True or
                                  go_here.get("route_status") != "arrived" or
@@ -302,6 +315,17 @@ def main():
                    (not blocker_validation["matches_requested_ground"] or
                     not blocker_validation["matches_expected_asset"] or
                     not blocker_validation["included_in_route_obstacles"])))) or
+                (route_cancelled and
+                 (baseline_code != 0 or baseline.get("host_failed") or
+                  go_here.get("route_status") != "cancelled" or
+                  not movement_positions or go_here.get("end_position") != movement_positions[-1] or
+                  go_here.get("end_position", [])[:3] == destination or
+                  go_here.get("queue_size") != 0 or go_here.get("queue_active") is not False or
+                  route.get("active") or route.get("movement_callbacks", 0) <= 0 or
+                  route.get("diagnostic") != "route interrupted by player" or
+                  route.get("headless_go_here_interrupt") != {
+                      "tick": args.go_here_interrupt_at_tick, "applied": True, "accepted": True} or
+                  not failure_tree_trace)) or
                 (route_interruption and
                  (baseline_code != 0 or baseline.get("host_failed") or
                   go_here.get("route_status") != "failed" or

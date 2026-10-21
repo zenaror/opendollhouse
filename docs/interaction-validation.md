@@ -234,7 +234,8 @@ O caminho de execução agora cria um destino temporário 0x7C4 com os bancos
 iniciais que a rotina precisa, enfileira a BHAV4096 real e remove o destino ao
 terminar ou quando o host interrompe a sessão. No jogo, clicar no chão escolhe
 o ponto e Space/Enter solicita a caminhada; clicar em um objeto mantém a
-interação normal.
+interação normal. Backspace pede para cancelar Go Here; a janela deixa a ação
+salva encerrar pelo seu caminho de falha antes de limpar a fila e o marcador.
 
 Validação reproduzível com os arquivos locais do jogo:
 
@@ -287,8 +288,7 @@ move uma entidade salva para perto do caminho no passo 40. O avatar já havia
 andado dois passos, para `[394,440,1,2]`; a rota parou ali, chamou Global
 BHAV398, esvaziou a fila e removeu o marcador. O retorno `true` de BHAV4096 não
 foi tratado como chegada. Isso valida a parada causada por uma mudança de
-obstáculo durante a caminhada; ainda não valida uma ordem do jogador para
-cancelar a ação. A reprodução é:
+obstáculo durante a caminhada. A reprodução é:
 
 ```sh
 python3 tests/house07_route45_integration.py \
@@ -299,11 +299,26 @@ python3 tests/house07_route45_integration.py \
   --go-here-expect-interruption
 ```
 
+Também foi testado o cancelamento do jogador. O teste pede a interrupção depois
+do primeiro passo: o avatar para em `[393,440,1,2]`, não teleporta até o alvo,
+entra em Global BHAV398, esvazia a fila e remove o marcador. A referência
+Simitone chama o código de falha `4` de `Interrupted`; ainda falta confirmar
+esse número diretamente no executável original. O teste prova o fluxo atual do
+host ODH com a BHAV398 salva, não a confirmação final da fidelidade do número.
+Reprodução:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-build-release/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --ticks 256 --go-here 27 26 1 \
+  --go-here-interrupt-at-tick 5 --go-here-expect-cancelled
+```
+
 O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
 (`Doors.iff`), e o personagem conseguiu chegar ali; ele não foi contado como
-prova de mobília bloqueando o destino. A parada após mudança no caminho não
-equivale a apertar um botão de cancelar. Cancelamento pelo jogador, escadas e
-passagem entre cômodos continuam pendentes.
+prova de mobília bloqueando o destino. Escadas e passagem entre cômodos
+continuam pendentes.
 
 ## Integração Sit/Stand em House07
 

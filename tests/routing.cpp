@@ -519,6 +519,27 @@ int main() {
                  routing.diagnostic().find("host goal validator rejected every direction-compatible SLOT candidate")==0,
                  "Route45 distinguishes host-rejected SLOT goals from direction-mask rejection");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+         auto code=goto_relative(go_here);
+         code.emplace(odh::routine_key(398),odh::Bhav{0x8002,
+             {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}});
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.tick(1)&&
+                 world.find(1)->position->x==5&&routing.interrupt()&&routing.active()&&
+                 routing.external_frame_active()&&vm.stack().back().key.id==398&&
+                 vm.stack().back().arguments==std::vector<std::int16_t>{4,0,0,0},
+                 "player interrupt stops an active Go Here after its last step and enters Global 398 as Interrupted");
+         require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(2)&&!routing.active()&&
+                 vm.status()==odh::VmStatus::returned_false&&world.find(1)->position->x==5&&
+                 routing.diagnostic()=="route interrupted by player"&&vm.run(1)==odh::VmStatus::returned_false,
+                 "interrupted Go Here completes false without teleporting after the game's failure tree");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
          world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,3});

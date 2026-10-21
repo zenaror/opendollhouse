@@ -585,6 +585,15 @@ bool Routing::finish(bool result,std::string reason) {
     diagnostic_=reason;
     return vm_->complete(ticket,result);
 }
+bool Routing::interrupt() {
+    if(executing_||!job_||!suspended_jobs_.empty()||!job_->call_failure_trees||
+       job_->external_frame_active||job_->failure_pending||job_->failure_tree_invoked)
+        return false;
+    // Simitone names fail code 4 Interrupted. Keep this isolated until the
+    // original PC executable's cancellation code is verified independently.
+    job_->failure_code=4;
+    return finish(false,"route interrupted by player");
+}
 void Routing::cancel_chain(const std::string& reason) {
     if(job_) {
         end_room_context(*job_);
