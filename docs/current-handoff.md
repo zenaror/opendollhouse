@@ -747,3 +747,23 @@ quadrados da referência transbordariam. Próxima unidade: investigar a ordem
 implementação de frame de rota ligada ao Route45 real, com estado-pai,
 `PortalTurns` e continuidade de execução. Não promover a saída geométrica a
 clearance, execução de waypoints ou movimento.
+
+## Probe resource-backed Door Route45 — 2026-10-21
+
+No commit-base `330a2e5`, `tools/bhav.cpp` ganhou `--route-slot-probe` para
+carregar o OBJD3114 (GUID985, MasterID1) e fornecer o SLOT128 real a Route45
+Literal sem instanciar serviços Snap nem alterar os dados do jogo. O probe
+executou `Doors.iff:4113` e `4115` no VM ODH, com atributo1 da StackObject
+controlado. Valor0 selecionou a chamada no pc2/SLOT type3 índice1; valor1
+selecionou pc1/índice0. Ambos resolveram o provider uma vez, moveram o avatar
+no grid construído e retornaram true (53 e 48 ticks). O teste manual
+`tests/door_route_probe.py --game-root '../referencias/The Sims'` valida as
+duas ramificações. Build `odh-bhav`, 134 checks de routing e CTest 159/159
+passaram; X11 foi pulado sem display.
+
+Escopo da prova: BHAV e SLOT comerciais executados/consumidos no ODH; StackObject,
+grade e clearance são construídos. Não valida o valor runtime do atributo da
+porta, hierarquia multitile, interação natural, clearance dinâmico, Portal15 ou
+equivalência ao executável original. Próximo: localizar e vincular uma instância
+Door real no mundo/salvamento suportado, preservando a resolução de code owner e
+MasterID, e testar a rota na sala ativa antes de integrar travessia de portais.

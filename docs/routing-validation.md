@@ -296,3 +296,27 @@ a resolução de SLOT Literal, ligar Portal15 e grids por sala, e conectar a
 Main natural por RunFunctionalTree. Snap46, animação44, sprites/paletas,
 composição/janela Linux e comparação contra o original ainda fazem parte do
 trabalho; os resultados construídos não provam fidelidade.
+
+### Probe dos BHAVs e SLOTs reais da porta — 2026-10-21
+
+`odh-bhav --route-slot-probe --object-def 3114` agora carrega o OBJD3114 e a
+tabela SLOT128 vinculada e fornece essa tabela ao Route45 Literal da VM. Esse
+modo não ativa Snap nem requer um OBJD monopeça: o recurso 3114 informa
+`MasterID=1`, mas o probe usa apenas sua tabela SLOT como StackObject do mundo
+construído. O atributo1 da StackObject pode ser configurado com
+`--route-attribute1 0|1`; o valor default continua explícito e sintético.
+
+`tests/door_route_probe.py --game-root '../referencias/The Sims'` executou a
+BHAV real `Doors.iff:4113`, que chama `4115`, e ambas as chamadas Route45 com
+`Objects.far` e `Global.far` originais. Atributo1=0 tomou o ramo pc2, resolveu
+SLOT128 type3 índice1 e terminou no ponto `[64,80,1,3]`, flags16, após53
+ticks. Atributo1=1 tomou pc1, resolveu type3 índice0 e terminou em
+`[64,48,1,1]`, flags1, após48 ticks. Cada ramo recebeu exatamente uma
+resolução do provider e retornou true. Os 134 checks de `odh-routing-tests` e
+159 CTests passaram; `linux_window_backend` foi pulado sem display.
+
+Isso prova execução ODH de BHAV real e consumo de SLOT comercial em um mundo e
+grade construídos, não interação normal, instância Door restaurada, hierarquia
+multitile, clearance dinâmico, portal/transição de sala ou equivalência ao
+executável original. O script é manual/opcional e recebe os arquivos externos;
+eles não são adicionados ao repositório.

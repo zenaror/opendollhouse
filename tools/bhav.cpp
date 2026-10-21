@@ -133,6 +133,7 @@ int main(int argc, char** argv) {
                      "  [--world-probe [--occupant 0|1|3] [--posture 0..32767] [--autonomous]]\n"
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
+                     "  [--route-slot-probe --object-def ID [--route-attribute1 0|1]] loads StackObject OBJD/SLOT.\n"
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
                      "  [--reset-probe ENTRY.bcf [--post-ticks 0..4096]] requires --animation-probe; explicit global posture loops.\n"
                      "  [--stand-after] requires reset, sound, animation and snap probes; legacy selected OBJD Stand.\n"
@@ -152,7 +153,7 @@ int main(int argc, char** argv) {
     try {
         bool run = false;
         bool world_probe = false, autonomous = false;
-        bool route_probe=false;
+        bool route_probe=false,route_slot_probe=false;
         bool snap_probe=false, sound_probe=false, stand_after=false, main_probe=false;
         bool audio_probe=false,audio_args=false,audio_jump=false,audio_gain=false,audio_pan=false;
         bool audio_choose_first=false,audio_option_seen=false,audio_rate=false,audio_native_controls=false;
@@ -164,7 +165,7 @@ int main(int argc, char** argv) {
         std::optional<std::uint16_t> view_stride;
         std::vector<ScenePart> view_parts;
         bool view_window=false,view_auto=false,view_readback=false;
-        std::optional<std::uint16_t> object_def;
+        std::optional<std::uint16_t> object_def,route_attribute1;
         std::optional<std::uint16_t> occupant, posture, age, post_ticks, hold_ticks;
         std::optional<std::string> reset_entry;
         std::optional<std::pair<std::string,std::string>> animation;
@@ -182,6 +183,8 @@ int main(int argc, char** argv) {
             else if (option == "--run" && !run) run = true;
             else if (option == "--world-probe" && !world_probe) world_probe = true;
             else if (option == "--route-probe" && !route_probe) route_probe=true;
+            else if (option == "--route-slot-probe" && !route_slot_probe) route_slot_probe=true;
+            else if (option == "--route-attribute1" && !route_attribute1 && n + 1 < argc) route_attribute1=identifier(argv[++n]);
             else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
             else if (option == "--audio-probe" && !audio_probe && n+3<argc) {
                 audio_probe=audio_option_seen=true;
@@ -251,7 +254,10 @@ int main(int argc, char** argv) {
         }
         if ((world_probe && !run) || (!world_probe && (occupant || posture || autonomous)) ||
             (route_probe && (!world_probe || !global || occupant.value_or(0)!=0)) ||
-            (snap_probe && (!route_probe || !object_def)) || (!snap_probe && object_def) ||
+            (snap_probe && (!route_probe || !object_def)) ||
+            (route_slot_probe && (!route_probe || !object_def || snap_probe)) ||
+            (object_def && !snap_probe && !route_slot_probe) ||
+            (route_attribute1 && (!route_slot_probe || *route_attribute1>1)) ||
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
             (posture && *posture > 32767) || (animation && !snap_probe) ||
             (age && (!animation || *age>32767)) || (sound_probe && !animation) || (reset_entry && !animation) ||
@@ -280,7 +286,7 @@ int main(int argc, char** argv) {
         std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
         std::map<std::uint16_t,odh::Bcon> private_tuning;
         std::optional<odh::Glob> semiglobal_binding;
-        load(argv[1], argv[2], routines, false,nullptr,snap_probe?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr,
+        load(argv[1], argv[2], routines, false,nullptr,(snap_probe||route_slot_probe)?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr,
              semiglobal?&semiglobal_binding:nullptr,semiglobal?std::optional<odh::RoutineScope>(odh::RoutineScope::private_object):std::nullopt);
         if(semiglobal) {
             if(!semiglobal_binding || semiglobal_binding->name.empty())
@@ -383,13 +389,18 @@ int main(int argc, char** argv) {
         if(snap_probe) {storage_slots=0;for(const auto& r:definition.slots->records) if(r.type==0) ++storage_slots;}
         if (world_probe) {
             if (!world.create(1,odh::EntityKind::avatar,{0,88,reset_entry?1u:0u,main_probe?16u:0u}) ||
-                !world.create(2,odh::EntityKind::object,{0,0,storage_slots}) ||
+                !world.create(2,odh::EntityKind::object,{route_slot_probe?2u:0u,0,storage_slots}) ||
                 !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
                 !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
                 (animation && (!world.set_person_data(1,58,static_cast<std::int16_t>(age.value_or(21))) ||
                                !world.declare_object_word(1,17,0))) ||
                 (occupant.value_or(0) && !world.attach(2,0,static_cast<std::int16_t>(*occupant))))
                 throw odh::FormatError("cannot construct probe world");
+            if(route_slot_probe) {
+                odh::VmFrame object_frame{key,0,{1,2,2},{},{},odh::VmCallReturnMode::ordinary,0};
+                if(!world.write(object_frame,1,1,static_cast<std::int16_t>(route_attribute1.value_or(0))))
+                    throw odh::FormatError("cannot initialize constructed StackObject attribute 1");
+            }
         }
         if(main_probe && (!world.declare_definition_word(1,9,2) || !world.set_motive(1,6,0)))
             throw odh::FormatError("cannot construct avatar motive and definition profile");
@@ -402,6 +413,20 @@ int main(int argc, char** argv) {
         }
         const odh::SlotTable empty_slots{0,10,{},0};
         odh::Routing routing(world,grid,routing_slots?*routing_slots:empty_slots);
+        std::size_t stackobject_slot_resolutions=0;
+        if(route_slot_probe) {
+            routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame)->const odh::SlotTable* {
+                if(frame.context.stack_object!=2 || !definition.slots)return nullptr;
+                ++stackobject_slot_resolutions;
+                return &*definition.slots;
+            });
+            routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
+                const auto* actor=world.find(frame.context.caller);
+                const auto* target=world.find(frame.context.stack_object);
+                return actor&&target&&actor->position&&target->position&&
+                    actor->position->level==target->position->level&&grid.contains(point)&&grid.walkable(point);
+            });
+        }
         std::optional<odh::Snap> snap;
         if(snap_probe) snap.emplace(world,2,*definition.binding,*definition.slots,definition.binding->slot_table,
             [&](std::int16_t,const odh::EntityPosition& position) {
@@ -547,6 +572,13 @@ int main(int argc, char** argv) {
         std::cout << "{\"evidence\":" << quote(audio_probe?"ODH_VM_diagnostic_explicit_XA_PCM_audio_world":sound_probe?"ODH_VM_constructed_route_snap_silent_animation_sound_requests_world":animation?"ODH_VM_constructed_route_snap_silent_animation_world":snap_probe?"ODH_VM_constructed_route_snap_world":
                                                        route_probe?"ODH_VM_constructed_route_world":
                                                        world_probe ? "ODH_VM_constructed_world" : "ODH_VM_probe_without_world");
+        if(route_slot_probe) {
+            std::cout<<",\"stackobject_slot_binding\":{\"objd_id\":"<<definition.id
+                <<",\"guid\":"<<definition.binding->guid<<",\"master_id\":"<<definition.binding->master_id
+                <<",\"sub_index\":"<<definition.binding->sub_index<<",\"slot_table\":"<<definition.binding->slot_table
+                <<",\"initial_attribute_1\":"<<route_attribute1.value_or(0)
+                <<",\"attribute_source\":\"constructed StackObject probe parameter\"}";
+        }
         if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
             << occupant.value_or(0) << ",\"posture\":" << posture.value_or(0)
             << ",\"age\":" << (animation?age.value_or(21):0)
@@ -686,6 +718,7 @@ int main(int argc, char** argv) {
         }
         if(route_probe) {
             std::cout<<",\"placement_validation\":\"constructed raw grid walkability and floor bounds; no dynamic avatar clearance\",\"route_ticks\":"<<ticks<<",\"route_diagnostic\":"<<quote(routing.diagnostic())
+                     <<",\"stackobject_slot_resolutions\":"<<stackobject_slot_resolutions
                      <<",\"movements\":[";
             for(std::size_t n=0;n<movements.size();++n) {
                 if(n) std::cout<<',';
