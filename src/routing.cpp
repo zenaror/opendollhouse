@@ -14,6 +14,19 @@ std::uint8_t heading(RoutePoint from,RoutePoint to) {
     return 0;
 }
 PrimitiveOutcome unsupported(const std::string& why) {return {PrimitiveDisposition::unsupported,why};}
+bool supported_circle_slot_profile(const SlotRecord& slot) {
+    const bool house07=slot.flags==0x55&&slot.facing==-2;
+    const bool door_north=slot.flags==0x0801&&slot.facing==-3;
+    const bool door_south=slot.flags==0x0810&&slot.facing==-3;
+    return (house07||door_north||door_south) &&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0} &&
+        slot.standing==1 && slot.sitting==0 && slot.ground==0 &&
+        slot.snap_target_slot==-1 && slot.max_size==0 && slot.unknown_i10==0 &&
+        slot.gradient_bits==0x3E400000 && slot.height==0 && slot.proximity &&
+        slot.resolution==16 && (*slot.proximity)[0]>0 &&
+        (*slot.proximity)[0]==(*slot.proximity)[1] &&
+        (*slot.proximity)[0]==(*slot.proximity)[2] && (*slot.proximity)[0]<=4096;
+}
 std::int32_t floor_tile(std::int32_t coordinate) {
     auto quotient=coordinate/16;
     if(coordinate<0 && coordinate%16) --quotient;
@@ -121,14 +134,8 @@ std::uint8_t reference_slot_entry_flags(
 std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
     const SlotTable& table,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction) {
     const auto* slot=slot_of_type(table,3,type3_index);
-    if(table.version!=10 || !slot || slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
-       slot->standing!=1 || slot->sitting!=0 || slot->ground!=0 || slot->flags!=0x55 ||
-       slot->snap_target_slot!=-1 || slot->max_size!=0 || slot->unknown_i10!=0 ||
-       slot->gradient_bits!=0x3E400000 || slot->height!=0 || slot->facing!=-2 ||
-       !slot->proximity || slot->resolution!=16 ||
-       (*slot->proximity)[0]<=0 || (*slot->proximity)[0]!=(*slot->proximity)[1] ||
-       (*slot->proximity)[0]!=(*slot->proximity)[2] || (*slot->proximity)[0]>4096)
-        throw std::invalid_argument("reference SLOT circle requires the verified House07 v10 type-3 profile");
+    if(table.version!=10 || !slot || !supported_circle_slot_profile(*slot))
+        throw std::invalid_argument("reference SLOT circle requires a verified House07 or Door v10 type-3 profile");
     const auto radius=(*slot->proximity)[0];
     // The diagonal rounding is an ODH candidate-generation rule, not a claim
     // about the original executable's tie-breaking or destination scoring.
@@ -257,13 +264,10 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!slot) return {PrimitiveDisposition::goto_false,{}};
     // Explicit first profile: circle in the same floor with zero offset. Other
     // SLOT rules must be implemented, not approximated as successful routing.
-    if(selected_slots->version!=10 || slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
-       slot->flags!=0x55 || slot->standing!=1 || slot->sitting!=0 || slot->ground!=0 ||
-       slot->snap_target_slot!=-1 || !slot->proximity || (*slot->proximity)[0]<=0 ||
-       (*slot->proximity)[0]>4096 || (*slot->proximity)[0]!=(*slot->proximity)[1] ||
-       (*slot->proximity)[0]!=(*slot->proximity)[2] || slot->height!=0 || slot->facing!=-2 ||
-       slot->resolution!=16 || slot->max_size!=0 || slot->unknown_i10!=0 || slot->gradient_bits!=0x3E400000)
+    if(selected_slots->version!=10 || !supported_circle_slot_profile(*slot))
         return unsupported("SLOT runtime profile not implemented");
+    if((slot->flags&0x0800U)!=0&&!goal_validator_)
+        return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
     const auto* actor=world_.find(frame.context.caller);
     const auto* target=world_.find(frame.context.stack_object);
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
@@ -272,6 +276,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
     const RoutePoint start{actor->position->x,actor->position->y};
+    const auto allow_goal=[&](RoutePoint point) {
+        if(!goal_validator_)return true;
+        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        return goal_validator_(frame,point);
+    };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
     if(ranked_goals_) {
@@ -297,14 +306,17 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                    {target_position.x,target_position.y},target_position.direction,
                    candidate.position,static_cast<std::uint8_t>(slot->flags)))
                 return unsupported("pre-ranked SLOT goal has unsupported entry flags");
-        auto result=find_pre_ranked_slot_route(grid_,start,candidates,limits_);
-        if(result.selected) selected=candidates[*result.selected];
+        std::vector<PreRankedSlotGoal> accepted;
+        accepted.reserve(candidates.size());
+        for(const auto& candidate:candidates)if(allow_goal(candidate.position))accepted.push_back(candidate);
+        auto result=find_pre_ranked_slot_route(grid_,start,accepted,limits_);
+        if(result.selected) selected=accepted[*result.selected];
         path=std::move(result.path);
     }else {
         std::vector<RoutePoint> goals;
         for(const auto& candidate:enumerate_reference_slot_circle_candidates(*selected_slots,data,
                 {target->position->x,target->position->y},target->position->direction))
-            if(candidate.entry_flags!=0) goals.push_back(candidate.position);
+            if(candidate.entry_flags!=0&&allow_goal(candidate.position)) goals.push_back(candidate.position);
         if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
         if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
             // Validate clearance even for the turn-only shortcut.
@@ -327,7 +339,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
-             selected?selected->facing:heading(goal,{target->position->x,target->position->y})};
+             selected?selected->facing:heading(goal,{target->position->x,target->position->y}),
+             slot->facing==-3};
     job_->run_generation=vm_->run_generation();
     return {PrimitiveDisposition::wait,{}};
 }
@@ -433,11 +446,12 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         event=RouteMovement{now,actor->id,position};
     }
     if(job_->next==job_->path.size()) {
-        auto position=job_->expected;position.direction=job_->facing;
+        auto position=job_->expected;
+        if(!job_->face_anywhere)position.direction=job_->facing;
         if(!world_.set_position(job_->actor,position) || !world_.set_person_data(job_->actor,37,job_->entry_flags))
             return finish(false,"route arrival fields rejected");
         constexpr float pi_over_four=0.78539816339744830962f;
-        if(!world_.set_radian_direction(job_->actor,static_cast<float>(job_->facing)*pi_over_four))
+        if(!job_->face_anywhere&&!world_.set_radian_direction(job_->actor,static_cast<float>(job_->facing)*pi_over_four))
             return finish(false,"route arrival facing rejected");
         if(event) event->position=position;
         const auto accepted=finish(true,{});

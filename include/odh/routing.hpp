@@ -29,7 +29,7 @@ std::uint8_t reference_slot_entry_flags(
     RoutePoint object_position,std::uint8_t object_direction,RoutePoint candidate_position,
     std::uint8_t slot_direction_flags);
 struct ReferenceSlotCircleCandidate { RoutePoint position; std::uint8_t entry_flags; };
-// ODH's bounded exact-radius circle profile for the observed House07 SLOT.
+// ODH's bounded exact-radius profiles for verified House07 and Door SLOTs.
 // Eight positions are returned, including those rejected by the SLOT mask.
 std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
     const SlotTable&,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction);
@@ -57,6 +57,8 @@ using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
 // Resolves a StackObject's authored SLOT table for Route45 Literal scope.
 // Returned tables must outlive the Routing controller and remain immutable.
 using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&)>;
+// Read-only host filter for candidates constrained to the active route room.
+using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {
@@ -71,6 +73,10 @@ public:
     void set_stack_object_slot_table_provider(StackObjectSlotTableProvider provider) {
         if(executing_||job_)throw std::logic_error("cannot replace Route45 SLOT provider while active");
         stack_object_slots_=std::move(provider);
+    }
+    void set_route_goal_validator(RouteGoalValidator validator) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 goal validator while active");
+        goal_validator_=std::move(validator);
     }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
@@ -95,6 +101,7 @@ private:
         std::size_t next=1;
         std::int16_t entry_flags;
         std::uint8_t facing;
+        bool face_anywhere=false;
         bool walking_started=false;
         std::uint64_t run_generation=0;
         bool external_frame_active=false;
@@ -108,6 +115,7 @@ private:
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
     StackObjectSlotTableProvider stack_object_slots_;
+    RouteGoalValidator goal_validator_;
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;

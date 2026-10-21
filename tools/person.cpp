@@ -1268,6 +1268,15 @@ struct PlacementCandidateProbe {
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                                                                        *shared.routing_slots);
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
+                        runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
+                            const auto* route_actor=world.find(frame.context.caller);
+                            if(!route_actor||!route_actor->position||!render_lot||!runtime_route_grid)return false;
+                            const auto actor_room=render_lot->runtime_room_at(*route_actor->position);
+                            if(!actor_room||*actor_room!=runtime_route_grid->room_id)return false;
+                            auto goal=*route_actor->position;goal.x=point.x;goal.y=point.y;
+                            const auto goal_room=render_lot->runtime_room_at(goal);
+                            return goal_room&&*goal_room==runtime_route_grid->room_id;
+                        });
                         if(!runtime_routing->bind(vm))route_runtime_reason="route_controller_vm_binding_failed";
                         else {
                             routing_handler=runtime_routing->primitive();

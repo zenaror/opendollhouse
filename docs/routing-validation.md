@@ -268,19 +268,31 @@ a semântica de falhas/árvores de falha do jogo.
 Leitura estática do recurso comercial externo `Objects.far` / `Doors.iff`:
 BHAV4113 compara a condição 4115 e escolhe Route45 Data 0 ou 1; ambos usam
 Scope Literal (1) e flag `NoFailureTrees` (1). O OBJD3114 (GUID985) vincula
-SLOT128; type-3 índices 0/1 têm flags 2049/2064 e facing -3, fora do perfil
-atual (flags 0x55, facing -2), então o pedido ainda falha fechado como
-unsupported após resolver a tabela correta. A integração House07 Sit/Stand
-executou com `stackobject_slot_resolutions=0`, portanto não exercitou esse
-caminho. Os 129 checks de `odh-routing-tests` incluem seleção do SLOT do
-StackObject com tabela global deliberadamente inválida, percurso em mundo
-construído e falha fechada sem provider. Build de
-`odh-person` e CTest 159/159 passaram; `linux_window_backend` foi pulado sem
-display. Ainda não foi demonstrado o carregamento de uma instância Door por
-esse caminho em uma sessão viva. Perfil estrito de SLOT, chamada Portal15,
-mudança de sala e semântica do executável original seguem pendentes.
+SLOT128; type-3 índices 0/1 têm flags `0x0801` (NORTH|IgnoreRooms) e `0x0810`
+(SOUTH|IgnoreRooms), facing -3 (FaceAnywhere), raio exato 16 e offset zero.
+A referência FreeSO fixada trata `IgnoreRooms` como bypass do teste de sala,
+e `FaceAnywhere` como ausência de uma rotação final forçada. O perfil ODH
+reconhece esses dois registros exatos além do House07, filtra cada candidato
+pela sala da grade ativa através de um `RouteGoalValidator` do host e preserva
+a orientação de chegada para FaceAnywhere. Sem o validador de sala, SLOT com
+IgnoreRooms falha fechado; candidatos em outras salas são removidos, não
+roteados pela grade atual. `NoFailureTrees` bit0 cria o frame de rota com
+failure trees desabilitadas na referência.
 
-Próximas etapas: decodificar/resolver SLOT privado da cadeira para snap46,
-ligar animação44, sprites/paletas e composição Linux. Ampliar e comparar a
-política de roteamento, clearance e tempo contra o original, sem promover
-este percurso construído a prova de fidelidade.
+`odh-routing-tests` agora tem 134 checks, incluindo os dois candidatos reais
+N/S sintetizados dos campos lidos em SLOT128, seleção pelo StackObject, filtro
+de sala requerido, rejeição sem filtro e orientação final FaceAnywhere. Build
+`odh-person` e CTest completo passaram (159/159; backend X11 pulado sem display).
+A integração House07 Sit/Stand também passou, mas continua sem chamar o provider
+(`stackobject_slot_resolutions=0`); ainda não há sessão viva que carregue uma
+instância Door por Route45. Portal15,
+transição multi-sala, ranking/ocupação completos e equivalência ao executável
+original permanecem pendentes. Referência: FreeSO fixado
+`f86bbd34b2112296ed786741f640a0535886d180`, `SLOT.cs`, `VMSlotParser.cs`,
+`VMGotoRoutingSlot.cs` e `VMRoutingFrame.cs`.
+
+Próximas etapas: criar uma integração que invoque a BHAV real de Door e prove
+a resolução de SLOT Literal, ligar Portal15 e grids por sala, e conectar a
+Main natural por RunFunctionalTree. Snap46, animação44, sprites/paletas,
+composição/janela Linux e comparação contra o original ainda fazem parte do
+trabalho; os resultados construídos não provam fidelidade.

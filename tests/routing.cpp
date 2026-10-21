@@ -167,8 +167,8 @@ odh::SlotTable slot() {
     auto other=r;other.flags=0x8055;other.proximity=std::array<std::int32_t,3>{16,48,16};
     return {0,10,{other,r},0};
 }
-odh::RoutineSet routines(std::uint8_t scope=2,std::uint8_t flags=0) {
-    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{1,0,scope,0,flags,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+odh::RoutineSet routines(std::uint8_t scope=2,std::uint8_t flags=0,std::uint8_t data=1) {
+    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{data,0,scope,0,flags,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
 }
 struct Fixture {
     odh::World world;odh::RouteGrid grid{64,32};odh::SlotTable slots=slot();
@@ -215,6 +215,47 @@ int main() {
          vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(10)==odh::VmStatus::fault&&!routing.active()&&world.find(1)->position->x==4,
                  "StackObject Literal Route45 fails closed without an exact SLOT provider");}
+        {auto doors=slot();
+         doors.records[0].flags=0x0801;doors.records[0].facing=-3;
+         doors.records[0].proximity=std::array<std::int32_t,3>{16,16,16};
+         doors.records[1].flags=0x0810;doors.records[1].facing=-3;
+         const auto north=odh::enumerate_reference_slot_circle_candidates(doors,0,{28,20},0);
+         const auto south=odh::enumerate_reference_slot_circle_candidates(doors,1,{28,20},0);
+         require(std::any_of(north.begin(),north.end(),[](const auto& c){return c.position==odh::RoutePoint{28,4}&&c.entry_flags==1;})&&
+                 std::any_of(south.begin(),south.end(),[](const auto& c){return c.position==odh::RoutePoint{28,36}&&c.entry_flags==16;}),
+                 "Door SLOT128 N/S profiles enumerate their exact directional candidates");
+         odh::World world;odh::RouteGrid grid{64,64};auto globals=slot();globals.version=9;
+         odh::Routing routing{world,grid,globals};
+         routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {return &doors;});
+         routing.set_route_goal_validator([](const odh::VmFrame&,odh::RoutePoint p){return p==odh::RoutePoint{28,4};});
+         odh::Vm vm{routines(1,1,0),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,20,1,3});world.set_position(2,{28,20,1,0});grid.block({28,20});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active(),
+                 "Door IgnoreRooms route requires and uses the active-room goal validator");
+         std::uint8_t last_walk_direction=255;
+         for(std::uint64_t tick=1;tick<=64&&routing.active();++tick)
+             routing.tick(tick,[&](const auto& movement){last_walk_direction=movement.position.direction;});
+         const auto* actor=world.find(1);
+         require(vm.status()==odh::VmStatus::returned_true&&actor->position->x==28&&actor->position->y==4&&
+                 actor->person_data[37]==1, ("Door SLOT128 Route45 reaches the validated north candidate: status="+
+                 std::to_string(static_cast<int>(vm.status()))+", position="+
+                 std::to_string(actor->position->x)+","+std::to_string(actor->position->y)+
+                 ", flags="+std::to_string(actor->person_data[37]) +", diagnostic="+routing.diagnostic()).c_str());
+         require(actor->position->direction==last_walk_direction&&actor->position->direction!=4&&
+                 std::abs(actor->radian_direction-3.14159265358979323846f)>0.01f,
+                 "FaceAnywhere preserves the walk arrival orientation instead of forcing toward the Door");}
+        {auto doors=slot();doors.records[0].flags=0x0801;doors.records[0].facing=-3;
+         doors.records[0].proximity=std::array<std::int32_t,3>{16,16,16};
+         odh::World world;odh::RouteGrid grid{64,64};auto globals=slot();odh::Routing routing{world,grid,globals};
+         routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {return &doors;});
+         odh::Vm vm{routines(1,1,0),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,20,1,0});world.set_position(2,{28,20,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::fault&&!routing.active()&&world.find(1)->position->x==4,
+                 "Door IgnoreRooms refuses a single-room route without a host goal validator");}
         {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
          odh::Routing routing{world,grid,slots};auto code=routines();
          odh::RoutineSet portal_code{{odh::routine_key(4097),odh::Bhav{0x8002,
