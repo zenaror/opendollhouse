@@ -603,6 +603,10 @@ int main() {
                   vm.diagnostic()+", route="+routing.diagnostic()+")").c_str());
          require(vm.run(1)==odh::VmStatus::returned_false,
                  "Go Here reports a failed walk whether its failure routine returns true or false");
+         require(routing.diagnostic()==(destination_walkable?
+                     "no path in supplied clearance grid":
+                     "GotoRelativePosition target rejected by host room/clearance validator"),
+                 "Go Here retains the route failure message after its callback frame is removed");
         }
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};

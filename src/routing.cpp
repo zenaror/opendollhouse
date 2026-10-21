@@ -546,7 +546,7 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
     job_=deferred;
     return finish(false,reason);
 }
-bool Routing::finish(bool result,const std::string& reason) {
+bool Routing::finish(bool result,std::string reason) {
     if(!result&&job_->call_failure_trees&&!job_->failure_tree_invoked) {
         const auto pending=vm_->pending();
         if(pending&&pending->ticket==job_->ticket) {

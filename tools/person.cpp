@@ -1180,7 +1180,7 @@ struct PlacementCandidateProbe {
     std::optional<SavedObjectSelection> render_interaction_target;
     std::optional<bool> render_interaction_result;
     std::optional<std::uint64_t> previous_completion_uid;
-    std::string go_here_status="not_requested",go_here_diagnostic;
+    std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     std::optional<std::uint16_t> go_here_action;
     std::optional<odh::CodeOwner> go_here_owner;
     std::optional<std::int16_t> go_here_marker_id;
@@ -1679,8 +1679,8 @@ struct PlacementCandidateProbe {
             reject("Go Here currently supports only the avatar's current room");return;
         }
         const odh::RoutePoint goal{destination.x,destination.y};
-        if(!runtime_route_grid->grid->walkable(goal)){
-            reject("the selected ground cell is outside the route grid or blocked");return;
+        if(!runtime_route_grid->grid->contains(goal)){
+            reject("the selected ground cell is outside the prepared route grid");return;
         }
         const auto* candidate=definition_index->unique(0x7c4);
         if(!candidate){reject("the unique saved Destination object definition 0x7C4 is unavailable");return;}
@@ -1728,7 +1728,7 @@ struct PlacementCandidateProbe {
         go_here_position=destination;go_here_start_position=actor->position;go_here_previous_completion_uid=
             queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::nullopt;
         go_here_action=4096;go_here_owner=owner->second;go_here_result.reset();
-        go_here_status="queued";go_here_diagnostic.clear();
+        go_here_status="queued";go_here_route_status="pending";go_here_diagnostic.clear();
     };
     const auto remove_go_here_marker=[&]{
         if(!go_here_marker_id||!go_here_marker_generation)return;
@@ -2051,12 +2051,22 @@ struct PlacementCandidateProbe {
                queue.completion()->uid!=*go_here_previous_completion_uid)){
                 go_here_result=queue.completion()->result;
                 go_here_status=*go_here_result?"returned_true":"returned_false";
+                go_here_route_status=runtime_routing&&runtime_routing->diagnostic().empty()?"arrived":"failed";
                 go_here_diagnostic.clear();
             }else if(vm.status()==odh::VmStatus::fault){
                 go_here_status="vm_fault";go_here_diagnostic=vm.diagnostic();
             }else if(host_failed){
                 go_here_status="host_failed";go_here_diagnostic=host_diagnostic;
             }
+#ifdef ODH_HAVE_X11
+            if(render_window_host&&go_here_status!="queued"){
+                std::string title="OpenDollhouse Main preview: Go Here ";
+                title+=go_here_route_status=="arrived"?"arrived":"could not reach the selected ground";
+                if(go_here_route_status=="failed"&&runtime_routing&&!runtime_routing->diagnostic().empty())
+                    title+=" | "+runtime_routing->diagnostic();
+                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+            }
+#endif
             if(go_here_status!="queued")remove_go_here_marker();
         }
         if(headless_go_here_applied&&go_here_status!="queued")break;
@@ -2111,18 +2121,23 @@ struct PlacementCandidateProbe {
     if(go_here_status=="queued"){
         if(host_failed){
             go_here_status="host_failed";
+            go_here_route_status="host_failed";
             go_here_diagnostic=host_diagnostic;
         }else if(window_closed){
             go_here_status="window_closed";
+            go_here_route_status="interrupted";
             go_here_diagnostic="window closed before Go Here completed";
         }else if(vm.status()==odh::VmStatus::fault){
             go_here_status="vm_fault";
+            go_here_route_status="host_failed";
             go_here_diagnostic=vm.diagnostic();
         }else if(ticks>=ticks_limit){
             go_here_status="tick_limit";
+            go_here_route_status="incomplete";
             go_here_diagnostic="Go Here remained queued when the tick budget ended";
         }else{
             go_here_status="interrupted";
+            go_here_route_status="incomplete";
             go_here_diagnostic="host loop stopped before Go Here completed";
         }
         remove_go_here_marker();
@@ -2456,7 +2471,9 @@ struct PlacementCandidateProbe {
         std::cout<<",\"marker_id\":"<<(go_here_marker_id?std::to_string(*go_here_marker_id):"null")
             <<",\"marker_generation\":"<<(go_here_marker_generation?std::to_string(*go_here_marker_generation):"null")
             <<",\"marker_alive\":"<<(marker_alive?"true":"false")
-            <<",\"status\":"<<json_bytes(go_here_status)<<",\"diagnostic\":"<<json_bytes(go_here_diagnostic)
+            <<",\"status\":"<<json_bytes(go_here_status)
+            <<",\"route_status\":"<<json_bytes(go_here_route_status)
+            <<",\"diagnostic\":"<<json_bytes(go_here_diagnostic)
             <<",\"action\":"<<(go_here_action?std::to_string(*go_here_action):"null")
             <<",\"code_owner\":"<<(go_here_owner?std::to_string(*go_here_owner):"null")
             <<",\"result\":"<<(go_here_result?(*go_here_result?"true":"false"):"null")

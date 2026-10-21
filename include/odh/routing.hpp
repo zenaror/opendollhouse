@@ -179,7 +179,7 @@ private:
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);
     void end_room_context(Job&);
-    bool finish(bool result,const std::string& reason);
+    bool finish(bool result,std::string reason);
     void cancel_chain(const std::string& reason);
     World& world_;
     RouteGrid& grid_;

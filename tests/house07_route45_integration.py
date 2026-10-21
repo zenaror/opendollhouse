@@ -31,6 +31,8 @@ def parse_args():
                         choices=("returned_true", "returned_false", "tick_limit", "host_failed", "vm_fault"),
                         default="returned_true",
                         help="expected terminal state for --go-here diagnostics")
+    parser.add_argument("--go-here-expect-route-failure", action="store_true",
+                        help="assert that saved Go Here runs its failure callback and leaves the avatar still")
     parser.add_argument("--second-route-room-refresh", action="store_true",
                         help="run synthetic Main: reach StackObject26, then validate two Route45 SLOT orders on room 1's refreshed grid")
     parser.add_argument("--cross-room-entrypoint", action="store_true",
@@ -205,6 +207,8 @@ def main():
         destination = [args.go_here[0] * 16 + 8, args.go_here[1] * 16 + 8,
                        args.go_here[2]]
         end = route.get("end_position") or []
+        failure_tree_trace = [record for record in baseline.get("trace", [])
+                              if record.get("routine") == 398]
         print(json.dumps({
             "probe_exit": baseline_code,
             "vm_status": baseline.get("status"),
@@ -213,20 +217,42 @@ def main():
             "route_runtime": {key: route.get(key) for key in (
                 "state", "start_position", "end_position", "active",
                 "movement_callbacks", "diagnostic")},
+            "goal_validation_diagnostic": route.get("goal_validation_diagnostic"),
+            "global_398_trace": failure_tree_trace,
             "evidence": "House07 restored World and original Main; saved Destination BHAV4096; temporary UI-only marker",
         }, indent=2))
         expected_status = args.go_here_expect_status
         successful = expected_status == "returned_true"
+        route_failure = args.go_here_expect_route_failure
+        if (route_failure and expected_status != "returned_true"):
+            raise SystemExit("--go-here-expect-route-failure requires action status returned_true")
         if (go_here.get("status") != expected_status or
                 go_here.get("marker_alive") is not False or
                 go_here.get("action") != 4096 or
-                (successful and (baseline_code != 0 or baseline.get("host_failed") or
+                (successful and not route_failure and
+                                 (baseline_code != 0 or baseline.get("host_failed") or
                                  go_here.get("result") is not True or
+                                 go_here.get("route_status") != "arrived" or
                                  go_here.get("end_position", [])[:3] != destination or
                                  route.get("active") or route.get("movement_callbacks", 0) <= 0 or
                                  len(end) < 3 or end[:3] != destination or
                                  route.get("diagnostic") is not None)) or
-                (expected_status == "returned_false" and go_here.get("result") is not False) or
+                (route_failure and
+                 (baseline.get("host_failed") or go_here.get("result") is not True or
+                  go_here.get("route_status") != "failed" or
+                  go_here.get("end_position") != go_here.get("start_position") or
+                  go_here.get("queue_size") != 0 or go_here.get("queue_active") is not False or
+                  route.get("active") or route.get("movement_callbacks", 0) != 0 or
+                  route.get("diagnostic") != "GotoRelativePosition target rejected by host room/clearance validator" or
+                  route.get("goal_validation_diagnostic") !=
+                    "candidate lies outside the prepared room grid or inside an obstacle" or
+                  not failure_tree_trace)) or
+                (expected_status == "returned_false" and
+                 (go_here.get("result") is not False or
+                  go_here.get("end_position") != go_here.get("start_position") or
+                  go_here.get("queue_size") != 0 or go_here.get("queue_active") is not False or
+                  route.get("active") or route.get("movement_callbacks", 0) != 0 or
+                  not failure_tree_trace)) or
                 (expected_status == "tick_limit" and
                  (baseline_code == 0 or go_here.get("end_position") != go_here.get("start_position") or
                   route.get("movement_callbacks", 0) != 0))):
