@@ -6,6 +6,7 @@
 namespace {
 int checks=0;
 void require(bool v,const char* message) {++checks;if(!v)throw std::runtime_error(message);}
+odh::SlotTable slot();
 void reference_slot_lattice_tests() {
     odh::SlotRecord ranged{};ranged.type=3;ranged.flags=0xA0FF;
     ranged.proximity=std::array<std::int32_t,3>{16,64,16};ranged.resolution=8;
@@ -63,6 +64,24 @@ void reference_slot_direction_tests() {
     require(odh::reference_slot_entry_flags({160,160},0,{176,160},0)==0,
             "candidate rejected when the SLOT direction mask allows no matched sector");
 }
+void reference_slot_circle_tests() {
+    const auto candidates=odh::enumerate_reference_slot_circle_candidates(slot(),1,{392,456},0);
+    require(candidates.size()==8,"exact-radius SLOT profile enumerates a bounded eight-position ring");
+    require(candidates.front().position==odh::RoutePoint{392,440}&&
+            candidates[2].position==odh::RoutePoint{408,456},
+            "circle candidates preserve N/NE/E ordering around target");
+    require(candidates[0].entry_flags==0x01&&candidates[2].entry_flags==0x04,
+            "circle candidates report reference mask bits for each position");
+    auto malformed=slot();malformed.records[1].proximity=std::array<std::int32_t,3>{16,16,32};
+    bool rejected=false;
+    try {(void)odh::enumerate_reference_slot_circle_candidates(malformed,1,{0,0},0);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected,"circle model fails closed for anisotropic proximity fields");
+    malformed=slot();malformed.records[1].offset_bits[0]=1;rejected=false;
+    try {(void)odh::enumerate_reference_slot_circle_candidates(malformed,1,{0,0},0);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected,"circle model fails closed for an unsupported SLOT offset");
+}
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;
     r.proximity=std::array<std::int32_t,3>{16,16,16};r.max_size=0;r.unknown_i10=0;
@@ -90,6 +109,7 @@ int main() {
     try {
         reference_slot_lattice_tests();
         reference_slot_direction_tests();
+        reference_slot_circle_tests();
         {odh::World world;odh::RouteGrid grid{32,33,262144,{376,424}};auto slots=slot();
          odh::Routing routing{world,grid,slots};odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
          world.create(105,odh::EntityKind::avatar,{0,88,0});world.create(128,odh::EntityKind::object,{0,0,1});

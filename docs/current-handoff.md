@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Diagnóstico de candidatos SLOT Route45 (2026-10-21)
+
+`odh-wall-appearance --route-grid-diagnostic` agora exige
+`--route-slot-resource ARCHIVE ENTRY CHUNK_ID TYPE INDEX` e lê o SLOT
+selecionado de forma exata e fail-closed. O perfil v10 type-3 isotrópico gera
+oito posições circulares; cada uma reporta `RouteEntryFlags`, aceitação da
+máscara, bounds, sala e caminhabilidade. Só candidatos aceitos, na sala e
+caminháveis entram no `find_route`. House07 `Global.far/Global.iff/SLOT100`,
+type 3 index 1 (offsets zero) produziu três candidatos aptos; um deles coincide
+com a posição salva do avatar, resultando em caminho de custo zero e um ponto. Isso continua
+sendo somente `candidate_grid_search_only`, com `route_clearance=false`; a
+regra de raio/diagonal é perfil ODH e não foi demonstrada no executável original.
+
+`odh-routing-tests` passou 56 checks. Build completa e 143 testes passaram;
+`linux_window_backend` foi pulado porque o X11 retornou `DISPLAY inaccessible`
+mesmo com `DISPLAY=:0` e socket X11 presente. Não houve validação visual neste
+checkpoint. `git diff --check` passou. Próxima etapa é investigar filtros
+PositionValid/GetAvatarPlace e WallRaycast antes de afirmar clearance ou ligar
+Route45 ao Main. O acesso DNS ao remoto falhou nesta sessão; publicação ainda
+precisa ser confirmada quando o host resolver.
+
 ## Máscara direcional do SLOT no Route45 (2026-10-20)
 
 O `Routing` filtra os oito candidatos do perfil de raio exato pela máscara

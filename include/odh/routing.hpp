@@ -23,6 +23,11 @@ std::vector<RoutePoint> filter_reference_slot_range_proximity(
 std::uint8_t reference_slot_entry_flags(
     RoutePoint object_position,std::uint8_t object_direction,RoutePoint candidate_position,
     std::uint8_t slot_direction_flags);
+struct ReferenceSlotCircleCandidate { RoutePoint position; std::uint8_t entry_flags; };
+// ODH's bounded exact-radius circle profile for the observed House07 SLOT.
+// Eight positions are returned, including those rejected by the SLOT mask.
+std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
+    const SlotTable&,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction);
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {

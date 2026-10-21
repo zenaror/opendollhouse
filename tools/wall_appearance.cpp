@@ -9,8 +9,12 @@
 #include "odh/saved_room_boundary_audit.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include "odh/route.hpp"
+#include "odh/routing.hpp"
+#include "odh/formats.hpp"
 #include <algorithm>
 #include <charconv>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -18,6 +22,34 @@
 #include <vector>
 
 namespace {
+struct SlotResource { std::string archive,entry; std::uint16_t chunk_id,type,index; };
+std::uint16_t parse_u16(const char* value,const char* label) {
+ int parsed=0;const auto* end=value+std::char_traits<char>::length(value);
+ const auto result=std::from_chars(value,end,parsed);
+ if(result.ec!=std::errc{}||result.ptr!=end||parsed<0||parsed>std::numeric_limits<std::uint16_t>::max())
+  throw odh::FormatError(std::string(label)+" must be an unsigned 16-bit integer");
+ return static_cast<std::uint16_t>(parsed);
+}
+odh::SlotTable read_slot_resource(const SlotResource& resource) {
+ std::ifstream stream(resource.archive,std::ios::binary);
+ if(!stream)throw odh::FormatError("cannot open SLOT archive");
+ const odh::View archive(stream,std::filesystem::file_size(resource.archive));
+ std::optional<odh::FarEntry> selected;
+ for(const auto& entry:odh::far1_index(archive))if(entry.name==resource.entry){
+  if(selected)throw odh::FormatError("ambiguous SLOT archive entry");
+  selected=entry;
+ }
+ if(!selected)throw odh::FormatError("exact SLOT archive entry not found");
+ std::optional<odh::SlotTable> table;
+ odh::iff_chunks(archive.subview(selected->offset,selected->length),[&](const odh::Chunk& chunk){
+  if(chunk.type!="SLOT"||chunk.id!=resource.chunk_id)return;
+  if(table)throw odh::FormatError("ambiguous SLOT chunk ID");
+  table=odh::read_slot(chunk.payload);
+ });
+ if(!table)throw odh::FormatError("SLOT chunk not found");
+ if(!odh::slot_of_type(*table,resource.type,resource.index))throw odh::FormatError("selected SLOT type/index not found");
+ return *table;
+}
 const char* route_status_name(odh::RouteStatus status) {
  switch(status){
  case odh::RouteStatus::found:return "found";
@@ -33,7 +65,8 @@ void emit_route_grid_diagnostic(
  const odh::SavedArchitecture& architecture, const odh::WallAppearance& appearance,
  const odh::GeometricRoomMap& rooms,
  const std::vector<odh::RoomObstacleCandidateSet>& room_obstacles,
- const std::vector<odh::SavedCollisionCandidate>& entities) {
+ const std::vector<odh::SavedCollisionCandidate>& entities,
+ const odh::SlotTable& slots,std::size_t slot_type3_index) {
  const auto find_entity=[&](std::int16_t id)->const odh::SavedCollisionCandidate*{
   for(const auto& entity:entities)if(entity.object_id==id)return &entity;
   return nullptr;
@@ -45,6 +78,12 @@ void emit_route_grid_diagnostic(
  if(!target||target->avatar||target->state!=odh::SavedCollisionCandidateState::candidate||!target->position||!target->box){
   out<<",\"status\":\"unsupported\",\"reason\":\"target_collision_candidate_unavailable\"}";return;
  }
+ std::vector<odh::ReferenceSlotCircleCandidate> slot_candidates;
+ try {slot_candidates=odh::enumerate_reference_slot_circle_candidates(slots,slot_type3_index,
+       {target->position->x,target->position->y},target->position->direction);}
+ catch(const std::exception&){out<<",\"status\":\"unsupported\",\"reason\":\"slot_circle_profile_unimplemented\"}";return;}
+ const auto* selected_slot=odh::slot_of_type(slots,3,slot_type3_index);
+ if(!selected_slot){out<<",\"status\":\"unsupported\",\"reason\":\"slot_selection_missing\"}";return;}
  const auto actor_room=odh::geometric_room_at(rooms,actor->position->x,actor->position->y,actor->position->level);
  const auto target_room=odh::geometric_room_at(rooms,target->position->x,target->position->y,target->position->level);
  if(!actor_room||!target_room){out<<",\"status\":\"unsupported\",\"reason\":\"room_lookup_unavailable\"}";return;}
@@ -75,23 +114,25 @@ void emit_route_grid_diagnostic(
    <<",\"start_walkable\":"<<(grid.grid->walkable({actor->position->x,actor->position->y})?"true":"false");
  }else{out<<",\"status\":\"unsupported\"}";return;}
  if(grid.state!=odh::SavedRoomRouteGridState::ready){out<<",\"status\":\"unsupported\"}";return;}
- const auto& box=*target->box;
- const std::int64_t x1=std::int64_t(box.x1)-3,y1=std::int64_t(box.y1)-3;
- const std::int64_t x2=std::int64_t(box.x2)+3,y2=std::int64_t(box.y2)+3;
- const auto perimeter=2*((x2-x1)+(y2-y1));
- if(perimeter<=0||perimeter>4096){out<<",\"status\":\"goal_budget_exhausted\"}";return;}
- std::vector<odh::RoutePoint> goals;goals.reserve(static_cast<std::size_t>(perimeter));
- const auto add_goal=[&](std::int64_t x,std::int64_t y){
-  if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max()||
-     y<std::numeric_limits<std::int32_t>::min()||y>std::numeric_limits<std::int32_t>::max())return;
-  const odh::RoutePoint point{static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)};
-  if(grid.grid->walkable(point))goals.push_back(point);
- };
- for(auto x=x1;x<x2;++x){add_goal(x,y1-1);add_goal(x,y2);}
- for(auto y=y1;y<y2;++y){add_goal(x1-1,y);add_goal(x2,y);}
- std::sort(goals.begin(),goals.end(),[](const auto& a,const auto& b){return a.y==b.y?a.x<b.x:a.y<b.y;});
- goals.erase(std::unique(goals.begin(),goals.end()),goals.end());
- out<<",\"approach_model\":\"walkable_grid_cells_outside_expanded_target_box\",\"approach_candidates\":"<<goals.size();
+ std::vector<odh::RoutePoint> goals;
+ out<<",\"approach_model\":\"global_slot_type3_candidate_circle\",\"slot_type3_index\":"<<slot_type3_index
+  <<",\"slot_offset_bits\":["<<selected_slot->offset_bits[0]<<','<<selected_slot->offset_bits[1]<<','
+  <<selected_slot->offset_bits[2]<<"],\"slot_candidates\":[";
+ for(std::size_t i=0;i<slot_candidates.size();++i){
+  if(i)out<<',';
+  const auto& candidate=slot_candidates[i];
+  const bool in_bounds=grid.grid->contains(candidate.position);
+  const auto candidate_room=odh::geometric_room_at(rooms,candidate.position.x,candidate.position.y,target->position->level);
+  const bool same_room=candidate_room&&*candidate_room==*actor_room;
+  const bool walkable=in_bounds&&grid.grid->walkable(candidate.position);
+  out<<"{\"x\":"<<candidate.position.x<<",\"y\":"<<candidate.position.y
+   <<",\"entry_flags\":"<<unsigned(candidate.entry_flags)<<",\"mask_accepted\":"<<(candidate.entry_flags?"true":"false")
+   <<",\"in_bounds\":"<<(in_bounds?"true":"false")<<",\"room\":";
+  if(candidate_room)out<<*candidate_room;else out<<"null";
+  out<<",\"same_room\":"<<(same_room?"true":"false")<<",\"grid_walkable\":"<<(walkable?"true":"false")<<'}';
+  if(candidate.entry_flags&&same_room&&walkable)goals.push_back(candidate.position);
+ }
+ out<<"],\"approach_candidates\":"<<goals.size();
  if(goals.empty()){out<<",\"status\":\"no_approach_cell\"}";return;}
  const auto path=odh::find_route(*grid.grid,{actor->position->x,actor->position->y},goals);
  out<<",\"status\":"<<json_bytes(route_status_name(path.status))<<",\"route_cost\":"<<path.cost
@@ -103,9 +144,10 @@ void emit_route_grid_diagnostic(
 }
 
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID]");
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
  const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false;
  std::optional<std::pair<std::int16_t,std::int16_t>> route_grid_diagnostic;
+ std::optional<SlotResource> slot_resource;
  const auto parse_id=[](const char* value){
   int parsed=0;const auto* end=value+std::char_traits<char>::length(value);
   const auto result=std::from_chars(value,end,parsed);
@@ -123,7 +165,17 @@ int main(int argc,char** argv){try{
    const auto actor_id=parse_id(argv[++n]);const auto target_id=parse_id(argv[++n]);
    route_grid_diagnostic=std::make_pair(actor_id,target_id);portal_probe=true;
   }
+  else if(option=="--route-slot-resource"&&!slot_resource&&n+5<argc){
+   SlotResource resource;resource.archive=argv[++n];resource.entry=argv[++n];
+   resource.chunk_id=parse_u16(argv[++n],"SLOT chunk ID");resource.type=parse_u16(argv[++n],"SLOT type");
+   resource.index=parse_u16(argv[++n],"SLOT type index");
+   if(resource.type!=3)throw odh::FormatError("route-grid diagnostic currently supports SLOT type 3 only");
+   slot_resource=std::move(resource);
+  }
   else throw odh::FormatError("invalid wall appearance option");}
+ if(route_grid_diagnostic&&!slot_resource)throw odh::FormatError("route-grid diagnostic requires explicit --route-slot-resource ARCHIVE ENTRY CHUNK_ID TYPE INDEX");
+ if(slot_resource&&!route_grid_diagnostic)throw odh::FormatError("--route-slot-resource requires --route-grid-diagnostic");
+ std::optional<odh::SlotTable> route_slots;if(slot_resource)route_slots=read_slot_resource(*slot_resource);
  if(sources.empty())throw odh::FormatError("wall appearance requires explicit definitions");
  auto index=saved_definition_index(sources);auto records=saved_world_records(house,*index);std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
  auto world=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);auto architecture=saved_architecture_resource(house);
@@ -280,7 +332,7 @@ int main(int argc,char** argv){try{
    <<",\"not_applicable\":"<<boundary_not_applicable<<"}}}";
   if(route_grid_diagnostic){std::cout<<",\"route_grid_diagnostic\":";
    emit_route_grid_diagnostic(std::cout,route_grid_diagnostic->first,route_grid_diagnostic->second,
-    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates);
+    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,*route_slots,slot_resource->index);
   }
   std::cout<<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
   bool first_door=true;

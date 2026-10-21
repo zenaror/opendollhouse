@@ -118,6 +118,36 @@ std::uint8_t reference_slot_entry_flags(
     if(degrees>=-90.0-angle_error&&degrees<=0.0+angle_error) directions|=1U<<7;
     return directions&slot_direction_flags;
 }
+std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
+    const SlotTable& table,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction) {
+    const auto* slot=slot_of_type(table,3,type3_index);
+    if(table.version!=10 || !slot || slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
+       slot->standing!=1 || slot->sitting!=0 || slot->ground!=0 || slot->flags!=0x55 ||
+       slot->snap_target_slot!=-1 || slot->max_size!=0 || slot->unknown_i10!=0 ||
+       slot->gradient_bits!=0x3E400000 || slot->height!=0 || slot->facing!=-2 ||
+       !slot->proximity || slot->resolution!=16 ||
+       (*slot->proximity)[0]<=0 || (*slot->proximity)[0]!=(*slot->proximity)[1] ||
+       (*slot->proximity)[0]!=(*slot->proximity)[2] || (*slot->proximity)[0]>4096)
+        throw std::invalid_argument("reference SLOT circle requires the verified House07 v10 type-3 profile");
+    const auto radius=(*slot->proximity)[0];
+    // The diagonal rounding is an ODH candidate-generation rule, not a claim
+    // about the original executable's tie-breaking or destination scoring.
+    const auto diagonal=static_cast<std::int32_t>((static_cast<std::int64_t>(radius)*46341+32768)/65536);
+    std::vector<ReferenceSlotCircleCandidate> candidates;
+    candidates.reserve(headings.size());
+    for(std::size_t n=0;n<headings.size();++n) {
+        const auto step=(n&1U)?diagonal:radius;
+        const auto x=static_cast<std::int64_t>(object_position.x)+headings[n].x*step;
+        const auto y=static_cast<std::int64_t>(object_position.y)+headings[n].y*step;
+        if(x<std::numeric_limits<std::int32_t>::min() || x>std::numeric_limits<std::int32_t>::max() ||
+           y<std::numeric_limits<std::int32_t>::min() || y>std::numeric_limits<std::int32_t>::max())
+            throw std::length_error("reference SLOT circle candidate exceeds int32");
+        const RoutePoint point{static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)};
+        candidates.push_back({point,reference_slot_entry_flags(object_position,object_direction,point,
+            static_cast<std::uint8_t>(slot->flags))});
+    }
+    return candidates;
+}
 bool Routing::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
     vm_=&vm;return true;
@@ -156,20 +186,10 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
        actor->person_data.size()<=37 || actor->attachment || actor->position->level!=target->position->level)
         return unsupported("routing requires positioned free avatar and target on one level");
-    const auto radius=(*slot->proximity)[0];
-    // Fixed integer approximation for circle diagonals. Ties and scoring here
-    // are ODH prototype rules; equivalence with original routing is unproven.
-    const auto diagonal=static_cast<std::int32_t>((static_cast<std::int64_t>(radius)*46341+32768)/65536);
     std::vector<RoutePoint> goals;
-    for(std::size_t n=0;n<8;++n) {
-        const auto step=(n&1)?diagonal:radius;
-        const RoutePoint candidate{target->position->x+headings[n].x*step,
-                                   target->position->y+headings[n].y*step};
-        if(reference_slot_entry_flags({target->position->x,target->position->y},
-                                      target->position->direction,candidate,
-                                      static_cast<std::uint8_t>(slot->flags))!=0)
-            goals.push_back(candidate);
-    }
+    for(const auto& candidate:enumerate_reference_slot_circle_candidates(globals_,data,
+            {target->position->x,target->position->y},target->position->direction))
+        if(candidate.entry_flags!=0)goals.push_back(candidate.position);
     if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
     const RoutePoint start{actor->position->x,actor->position->y};
     RoutePath path{RouteStatus::invalid_input,{},0,0};

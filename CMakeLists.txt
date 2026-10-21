@@ -324,7 +324,7 @@ target_link_libraries(odh_wall_appearance PUBLIC odh_world odh_saved_architectur
 add_library(odh_wall_route_state src/wall_route_state.cpp)
 target_link_libraries(odh_wall_route_state PUBLIC odh_route_geometry odh_wall_appearance)
 add_executable(odh-wall-appearance tools/wall_appearance.cpp)
-target_link_libraries(odh-wall-appearance PRIVATE odh_wall_appearance odh_saved_world odh_saved_collision_candidates odh_saved_room_boundary_audit odh_saved_room_route_grid odh_wall_route_state odh_room_map odh_room_obstacles odh_architecture_aliases)
+target_link_libraries(odh-wall-appearance PRIVATE odh_wall_appearance odh_saved_world odh_saved_collision_candidates odh_saved_room_boundary_audit odh_saved_room_route_grid odh_wall_route_state odh_room_map odh_room_obstacles odh_architecture_aliases odh_routing)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_wall_appearance PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
   target_compile_options(odh-wall-appearance PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
