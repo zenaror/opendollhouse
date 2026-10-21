@@ -72,6 +72,15 @@ int main(){try{
     try{(void)saved_portal_action(candidate);}catch(const odh::FormatError&){zero_portal=true;}
     check(zero_portal,"zero Portal action is rejected instead of creating a call");
 
+    write(path,iff(chunk("OBJD",7,objd(0))+chunk("GLOB",128,std::string(1,'\5'))));
+    const auto without_binding=saved_entry_point_resource(candidate,false);
+    check(!without_binding.semiglobal_binding,
+        "ordinary saved-world EntryPoint binding does not parse an unused GLOB128");
+    bool malformed_binding_rejected=false;
+    try{(void)saved_entry_point_resource(candidate);}
+    catch(const odh::FormatError&){malformed_binding_rejected=true;}
+    check(malformed_binding_rejected,"Portal-capable resource lookup still validates its requested GLOB128");
+
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
                     chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(2))));
     const auto tabled=saved_entry_point_resource(candidate);

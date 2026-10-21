@@ -42,7 +42,8 @@ struct SavedEntryPointResource {
 // Resolve the exact OBJD/OBJf function table and private BHAV inventory from
 // one saved entity's selected definition asset. This is static resource
 // inspection only; it never executes any entry-point routine.
-inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionCandidate& candidate) {
+inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionCandidate& candidate,
+                                                           bool read_semiglobal_binding=true) {
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::EntryPointTable> table;
     std::optional<odh::Glob> semiglobal_binding;
@@ -54,7 +55,7 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
         odh::iff_chunks(view,[&](const odh::Chunk& chunk) {
             if(chunk.type=="OBJD"&&chunk.id==candidate.chunk_id) { ++objd_count; objd=chunk.payload; }
             else if(chunk.type=="OBJf"&&chunk.id==candidate.chunk_id) { ++objf_count; objf=chunk.payload; }
-            else if(chunk.type=="GLOB"&&chunk.id==128) {
+            else if(read_semiglobal_binding&&chunk.type=="GLOB"&&chunk.id==128) {
                 if(semiglobal_binding)throw odh::FormatError("ambiguous GLOB128 in selected object resource");
                 semiglobal_binding=odh::read_glob(chunk.payload);
             }

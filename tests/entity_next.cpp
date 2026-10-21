@@ -80,6 +80,19 @@ void same_tile_query(){
     require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),
         "adjacent-tile mode remains unsupported");
 }
+void multitile_query(){
+    odh::World w;add(w,2);add(w,5);add(w,7);add(w,10);
+    const auto p=odh::entity_next_primitive(w,{}, {}, {{2,5,7}});
+    auto r=dispatch(p,frame(5),next(10,0,3,10));
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==7,"opcode31 multitile mode selects the next member in the saved group");
+    r=dispatch(p,frame(7),next(10,0,3,10));
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==2,"opcode31 multitile mode wraps to the group's lowest ID");
+    r=dispatch(p,frame(10),next(10,0,3,10));
+    require(r.disposition==odh::PrimitiveDisposition::goto_false&&no_output(r),
+        "opcode31 multitile mode returns false for an object outside saved groups");
+}
 void selectors(){
     odh::World w;add(w,11);add(w,15);add(w,19);
     const auto f=frame();std::array<std::int16_t,20> temps{};temps[1]=11;
@@ -108,7 +121,7 @@ void selectors(){
         require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),"unreadable selector rejects");
     }
     auto wrong=next();wrong.opcode=30;
-    for(const auto i:{wrong,next(10,0,133),next(10,0,131),next(10,0,255)}){
+    for(const auto i:{wrong,next(10,0,133),next(10,0,138),next(10,0,255)}){
         const auto r=dispatch(odh::entity_next_primitive(w),f,i);
         require(r.disposition==odh::PrimitiveDisposition::unsupported&&r.diagnostic.empty()&&no_output(r),"unhandled opcodes/modes leave dispatcher unsupported");
     }
@@ -244,5 +257,5 @@ void kinds(){
         "ID reused as untyped avatar immediately participates");
 }
 }
-int main(){try{live_query();same_tile_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+int main(){try{live_query();same_tile_query();multitile_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}

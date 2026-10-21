@@ -260,6 +260,21 @@ int main() {
                  world.find(1)->position->direction==3&&world.find(1)->person_data[37]==0,
                  "OnTopOf reaches the validated exact point with SameDirection and zero entry flags");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         auto operands=std::array<std::uint8_t,8>{0,0,254,4,0,0,2,0};
+         odh::Vm vm{goto_relative(operands),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,3});
+         routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p) {
+             const auto* actor=world.find(frame.context.caller);const auto* target=world.find(frame.context.stack_object);
+             return actor&&target&&actor->position&&target->position&&actor->position->level==target->position->level&&
+                 p==odh::RoutePoint{target->position->x,target->position->y}&&grid.contains(p)&&grid.walkable(p);
+         });routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::waiting&&routing.active(),
+                 "bounded GotoRelativePosition accepts the commercial OpposingDirection profile");
+         for(std::uint64_t tick=1;tick<=8&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->direction==7,
+                 "OpposingDirection turns the avatar four eighth-turns from the target facing");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
          world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});grid.block({12,12});

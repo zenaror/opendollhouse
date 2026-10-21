@@ -135,6 +135,14 @@ void door_range_generation() {
                 "Door provider emits only in-band, direction-masked and faced goals");
     }
     require(random.seed()==0,"explicit zero seed remains an absorbing RNG state during range generation");
+    auto alternate_mask=door_range_table();alternate_mask.records[0].flags=0x45;
+    odh::RandomState alternate_random(0);
+    const auto alternate_goals=odh::rank_reference_door_range_slot(
+        alternate_mask,0,caller,target,alternate_random);
+    require(!alternate_goals.empty(),"mirrored Door SLOT128 directional mask keeps its verified range profile");
+    for(const auto& goal:alternate_goals)
+        require(goal.entry_flags!=0&&(goal.entry_flags&static_cast<std::uint8_t>(~0x45U))==0,
+            "mirrored Door range goals respect the authored directional mask");
     auto malformed=door_range_table();malformed.records[0].facing=-3;
     const auto before=random.seed();bool rejected=false;
     try{(void)odh::rank_reference_door_range_slot(malformed,0,caller,target,random);}

@@ -39,12 +39,13 @@ ReferenceSlotScores score_reference_slot_candidates(
         (slot->flags & ~(random_scoring | equal_proximity)) == 0x55 &&
         (*slot->proximity)[0] == (*slot->proximity)[1] &&
         (*slot->proximity)[0] == (*slot->proximity)[2];
+    const auto door_flags=slot?(slot->flags & ~(random_scoring | equal_proximity)):0U;
     const bool door_range=common &&
-        (slot->flags & 0xFFU) == 0x54U &&
-        (slot->flags & ~(random_scoring | equal_proximity)) == 0x54U &&
+        ((slot->flags & 0xFFU) == 0x54U || (slot->flags & 0xFFU) == 0x45U) &&
+        (door_flags == 0x54U || door_flags == 0x45U) &&
         *slot->proximity == std::array<std::int32_t,3>{16,32,16};
     if (!circle && !door_range)
-        throw std::invalid_argument("reference SLOT scoring requires the House07 circle or Door 16-to-32 range profile");
+        throw std::invalid_argument("reference SLOT scoring requires the House07 circle or verified Door 16-to-32 directional profile");
     if (inputs.size() > 4096) throw std::length_error("reference SLOT scoring exceeds 4096 candidates");
     validate_position(object_position);
     validate_position(caller_position);
@@ -108,7 +109,7 @@ std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
     const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
     const EntityPosition& target,RandomState& random) {
     const auto* slot=slot_of_type(table,3,type3_index);
-    if(table.version!=10||!slot||slot->flags!=0x54||slot->facing!=-2||
+    if(table.version!=10||!slot||(slot->flags!=0x54&&slot->flags!=0x45)||slot->facing!=-2||
        slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0}||
        slot->proximity!=std::optional<std::array<std::int32_t,3>>{{16,32,16}}||
        slot->resolution!=16||slot->standing!=1||slot->sitting!=0||slot->ground!=0||

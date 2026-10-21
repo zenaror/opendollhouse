@@ -28,7 +28,7 @@ bool supported_circle_slot_profile(const SlotRecord& slot) {
         (*slot.proximity)[0]==(*slot.proximity)[2] && (*slot.proximity)[0]<=4096;
 }
 bool supported_door_range_slot_profile(const SlotRecord& slot) {
-    return slot.flags==0x54&&slot.facing==-2&&
+    return (slot.flags==0x54||slot.flags==0x45)&&slot.facing==-2&&
         slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&slot.proximity&&
         *slot.proximity==std::array<std::int32_t,3>{16,32,16}&&
         slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
@@ -255,9 +255,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     }
     diagnostic_.clear();
     if(goto_relative && (i.operands[0]!=0 || i.operands[1]!=0 || i.operands[2]!=254 ||
-        i.operands[3]!=0 || i.operands[4]!=0 || i.operands[5]!=0 ||
+        (i.operands[3]!=0&&i.operands[3]!=4) || i.operands[4]!=0 || i.operands[5]!=0 ||
         i.operands[6]!=2 || i.operands[7]!=0))
-        return unsupported("GotoRelativePosition outside the exact OnTopOf/SameDirection/NoFailureTrees profile");
+        return unsupported("GotoRelativePosition outside the bounded OnTopOf/SameDirection-or-Opposing/NoFailureTrees profile");
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
     if(!goto_relative && scope!=0&&scope!=1&&scope!=2)
@@ -395,7 +395,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         static_cast<std::uint8_t>(slot->flags)));
     if(!goto_relative && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
-    const auto arrival_facing=goto_relative?target->position->direction:
+    // The TS1 direction operand is a relative facing offset from the target:
+    // 0 keeps its direction and 4 faces the opposite way. Other values remain
+    // unsupported until their authored placement behavior is modeled.
+    const auto arrival_facing=goto_relative?
+        static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U):
         (selected?selected->facing:heading(goal,{target->position->x,target->position->y}));
     RouteFrameContext frame_context;
     if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;

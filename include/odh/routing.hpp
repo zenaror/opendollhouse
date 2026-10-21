@@ -62,8 +62,8 @@ using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
 // Rebuilds the active room grid after an external portal frame moved the avatar.
 using RouteGridRefresh=std::function<bool(const EntityPosition&)>;
 // Controlled async route adapter: Route45's profiled SLOTs plus opcode27's
-// exact-point OnTopOf/SameDirection/NoFailureTrees profile. Opcode27 requires
-// a host goal validator; this is not the complete TS1 routing policy.
+// exact-point OnTopOf/SameDirection-or-Opposing/NoFailureTrees profile.
+// Opcode27 requires a host goal validator; this is not the complete TS1 routing policy.
 class Routing {
 public:
     Routing(World& world,RouteGrid& grid,const SlotTable& globals,

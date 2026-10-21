@@ -59,6 +59,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -184,6 +185,17 @@ const char* floor_result_name(odh::FloorPlacementResult result){
 }
 int main(int argc,char** argv) {
  try {
+    const bool profile_startup=std::getenv("ODH_PROFILE_STARTUP")!=nullptr;
+    const auto profile_started=std::chrono::steady_clock::now();
+    auto profile_previous=profile_started;
+    const auto profile_mark=[&](const char* phase){
+        if(!profile_startup)return;
+        const auto now=std::chrono::steady_clock::now();
+        const auto phase_ms=std::chrono::duration_cast<std::chrono::milliseconds>(now-profile_previous).count();
+        const auto total_ms=std::chrono::duration_cast<std::chrono::milliseconds>(now-profile_started).count();
+        std::cerr<<"[odh-profile] phase="<<phase<<" elapsed_ms="<<phase_ms<<" total_ms="<<total_ms<<'\n';
+        profile_previous=now;
+    };
     std::optional<Resource> avatar,semi,globals,action;
     std::vector<PersonDefinitionSource> definition_sources;
     std::vector<std::string> animation_sources;
@@ -362,6 +374,7 @@ int main(int argc,char** argv) {
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
+    profile_mark("arguments-parsed");
     if(render_output){
         // Treat every supplied resource as input before catalog or payload reads.
         // Canonical paths and equivalent files cover lexical/symlink/hardlink aliases.
@@ -381,6 +394,7 @@ int main(int argc,char** argv) {
         render_materials.emplace();
         render_materials->catalog=odh::discover_architecture_resources(architecture_sources);
     }
+    profile_mark("architecture-catalog");
     std::optional<odh::Simi> simi;
     std::optional<odh::Objm> objm;std::optional<odh::LotZoning> zoning;
     std::optional<odh::Objt> objt;
@@ -463,6 +477,7 @@ int main(int argc,char** argv) {
     }
     if(render_saved_id&&(!saved_prefixes||!objt))
         throw odh::FormatError("render saved avatar requires ObjM1 and objt0 in selected house");
+    profile_mark("saved-object-index");
     if(zoning_path)with_iff_file(*zoning_path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type!="STR#"||chunk.id!=1)return;
         if(zoning)throw odh::FormatError("ambiguous zoning STR#1");zoning=odh::read_lot_zoning(odh::read_strings(chunk.payload));
@@ -496,6 +511,7 @@ int main(int argc,char** argv) {
     if(neighborhood_path&&!nbrs)throw odh::FormatError("NBRS1 absent");
     std::optional<odh::NeighborContext> neighbors;
     if(nbrs)neighbors.emplace(std::move(*nbrs));
+    profile_mark("neighborhood-context");
     std::optional<odh::FamilyContext> families;
     const odh::FamilyEntry* active_family=nullptr;
     std::optional<std::int16_t> family_global;
@@ -524,6 +540,7 @@ int main(int argc,char** argv) {
     const auto person_sounds=load_sounds(*avatar);
     const auto semiglobal_sounds=load_sounds(*semi);
     const auto global_sounds=load_sounds(*globals);
+    profile_mark("person-and-global-resources");
     std::optional<odh::AvatarBodyStrings> body;
     std::optional<odh::StringTable> body_walk,body_swim,private_walk;
     if(initialize||saved_world_main){
@@ -577,7 +594,9 @@ int main(int argc,char** argv) {
                     throw odh::FormatError("saved World EntryPoint definition cache budget exceeded");
                 const auto* candidate=definition_index->unique(entity->definition->guid);
                 if(!candidate)throw odh::FormatError("saved World EntryPoint definition unavailable or ambiguous");
-                auto resource=saved_entry_point_resource(*candidate);
+                // Every restored entity needs its exact EntryPoint table, but
+                // only a Portal15 plan needs to decode that asset's GLOB128.
+                auto resource=saved_entry_point_resource(*candidate,false);
                 if(resource.chunk_id!=candidate->chunk_id||resource.table.entries.size()>256)
                     throw odh::FormatError("saved World EntryPoint resource identity or size invalid");
                 cached=entry_point_cache.emplace(entity->definition->guid,std::move(resource.table.entries)).first;
@@ -597,9 +616,11 @@ int main(int argc,char** argv) {
         if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
             throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
+    profile_mark("saved-world-restore-and-bindings");
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
     const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
         std::map<std::uint16_t,odh::StringTable>{};
+    profile_mark("tree-by-name-strings");
     if(!saved_world_main){
         if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(runtime_avatar_id,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
         // Explicit reference constructor subset, not completed native Init.
@@ -660,10 +681,15 @@ int main(int argc,char** argv) {
         if(neighbor_next.size()>=10000)throw odh::FormatError("neighbor enumeration log exceeds bounded host profile");neighbor_next.push_back(value);
     }):odh::VmPrimitive{};
     std::vector<odh::EntityNext> entity_next;
+    std::vector<std::vector<std::int16_t>> multitile_groups;
+    if(restored_world){
+        multitile_groups.reserve(restored_world->multitile_groups.size());
+        for(const auto& group:restored_world->multitile_groups)multitile_groups.push_back(group.members);
+    }
     const auto entity_handler=odh::entity_next_primitive(world,memory,[&](const auto& value){
         if(entity_next.size()>=10000)throw odh::FormatError("entity enumeration log exceeds bounded host profile");
         entity_next.push_back(value);
-    });
+    },std::move(multitile_groups));
     const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
         const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
         if(instruction.opcode!=28)return {};
@@ -952,11 +978,22 @@ int main(int argc,char** argv) {
     };
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
+        if(i.opcode==7){
+            const auto refresh_type=static_cast<std::uint16_t>(i.operands[2])|
+                (static_cast<std::uint16_t>(i.operands[3])<<8);
+            if(refresh_type!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "Refresh supports only the graphic type in the current renderer profile"};
+            // SavedLotRenderer reads the live Graphic ObjectData word on each
+            // capture and resolves its DGRP then; it has no cached per-instance
+            // graphic binding to invalidate. FreeSO's Refresh primitive returns
+            // GOTO_TRUE even when the selected target is not a game object.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
-        if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4||(i.operands[4]&127)==8))return entity_handler(f,i,t,d);
+        if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if(i.opcode==32)return object_type_handler(f,i,t,d);
         if(i.opcode==49)return notify_handler(f,i,t,d);
@@ -1517,7 +1554,9 @@ struct PlacementCandidateProbe {
         vm.run(total_steps()<10000?10000-total_steps():0,trace_in(initialize?"main":"root_probe"));
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
     };
+    profile_mark("host-runtime-ready");
     execute();
+    profile_mark("first-main-execution");
     capture_frame();
     bool window_paused=false,window_closed=false;
     auto window_deadline=std::chrono::steady_clock::now();

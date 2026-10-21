@@ -2,7 +2,9 @@
 """Run a Route45 Main-host integration probe against an external TS1 install."""
 import argparse
 import json
+import os
 import pathlib
+import sys
 import struct
 import subprocess
 import tempfile
@@ -23,6 +25,8 @@ def parse_args():
                         help="diagnose opcode27 against the restored StackObject and live route grid")
     parser.add_argument("--portal-id", type=int,
                         help="schedule saved Portal15 on a restored House07 portal, using the original Main")
+    parser.add_argument("--architecture-resource", action="append", type=pathlib.Path, default=[],
+                        help="additional loose .flr/.wll resource; may be repeated")
     return parser.parse_args()
 
 
@@ -107,7 +111,23 @@ def main():
         command += ["--animation-source", str(path)]
     command += ["--headless-main", "--render-saved-avatar", str(args.avatar_id),
                 "--ticks", str(args.ticks), "--render-floors", str(floor_file)]
-    architecture = sorted(game.rglob("*.flr")) + sorted(game.rglob("*.wll"))
+    profile = os.environ.get("ODH_PROFILE_STARTUP")
+    architecture_dirs = [game / "GameData" / "Floors", game / "GameData" / "Walls"]
+    for root in [game / "Deluxe", game / "ExpansionShared", *game.glob("ExpansionPack*")]:
+        architecture_dirs.extend(root / relative for relative in (
+            pathlib.Path("Floors"), pathlib.Path("Walls"),
+            pathlib.Path("GameData/Floors"), pathlib.Path("GameData/Walls")))
+    if profile:
+        print("[house07-probe] scanning canonical architecture directories",
+              file=sys.stderr, flush=True)
+    architecture = {path for directory in architecture_dirs if directory.is_dir()
+                    for path in directory.glob("*")
+                    if path.is_file() and path.suffix.lower() in {".flr", ".wll"}}
+    architecture.update(args.architecture_resource)
+    architecture = sorted(architecture)
+    if profile:
+        print(f"[house07-probe] architecture catalog inputs: {len(architecture)} files",
+              file=sys.stderr, flush=True)
     for path in architecture:
         command += ["--architecture-resource", str(path)]
 
@@ -122,22 +142,35 @@ def main():
                            *(str(value) for value in position), str(tick)]
         if args.portal_id is not None:
             invocation += ["--headless-portal", str(args.portal_id), "1"]
+        profile = os.environ.get("ODH_PROFILE_STARTUP")
+        if profile:
+            print(f"[house07-probe] starting odh-person with ODH_PROFILE_STARTUP={profile}",
+                  file=sys.stderr, flush=True)
         result = subprocess.run(invocation, check=False, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE,
+                                stderr=None if profile else subprocess.PIPE)
         if not result.stdout.strip():
-            raise RuntimeError(f"odh-person exited {result.returncode}: {result.stderr.strip()}")
+            diagnostic = result.stderr.strip() if result.stderr else ""
+            raise RuntimeError(f"odh-person exited {result.returncode}: {diagnostic}")
         return result.returncode, json.loads(result.stdout)
 
     baseline_code, baseline = run(original_avatar)
     root_id = baseline["avatar"]["main"]
     if args.portal_id is not None:
+        portal_definition = next((record for record in baseline.get("saved_definition_records", [])
+                                  if record.get("object_id") == args.portal_id), None)
         print(json.dumps({
             "probe_exit": baseline_code,
             "vm_status": baseline["status"],
             "vm_diagnostic": baseline["diagnostic"],
             "ticks": baseline["ticks"],
             "trace_tail": baseline["trace"][-12:],
+            "portal_trace_tail": [record for record in baseline["trace"]
+                                  if record["owner"] == (baseline.get("portal_runtime") or {}).get("code_owner")][-24:],
+            "entity_next": baseline.get("entity_next"),
+            "route_runtime": baseline.get("route_runtime"),
             "portal_runtime": baseline.get("portal_runtime"),
+            "portal_definition": portal_definition,
             "evidence": "House07 restored World, live saved door, original avatar Main, and host-scheduled diagnostic Portal15",
         }, indent=2))
         return
