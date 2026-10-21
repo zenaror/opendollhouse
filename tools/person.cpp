@@ -22,6 +22,8 @@
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
 #include "odh/world_room_info.hpp"
+#include "odh/floor_placement.hpp"
+#include "odh/route_geometry.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "json.hpp"
@@ -131,6 +133,26 @@ std::uint64_t seed_selector(const std::string& text){
     if(result.ec!=std::errc{}||result.ptr!=text.data()+text.size())throw odh::FormatError("RNG seed outside uint64 profile");
     return value;
 }
+std::int32_t coordinate_selector(const char* text){
+    const std::string value=text;
+    if(value.empty())throw odh::FormatError("empty placement candidate coordinate");
+    std::int32_t parsed=0;const auto result=std::from_chars(value.data(),value.data()+value.size(),parsed);
+    if(result.ec!=std::errc{}||result.ptr!=value.data()+value.size()||parsed<-(1<<20)||parsed>(1<<20))
+        throw odh::FormatError("placement candidate coordinate outside signed bounded profile");
+    return parsed;
+}
+const char* floor_result_name(odh::FloorPlacementResult result){
+    switch(result){
+    case odh::FloorPlacementResult::allowed:return "allowed";
+    case odh::FloorPlacementResult::cant_place_on_water:return "cant_place_on_water";
+    case odh::FloorPlacementResult::must_place_on_pool:return "must_place_on_pool";
+    case odh::FloorPlacementResult::must_place_on_water:return "must_place_on_water";
+    case odh::FloorPlacementResult::not_allowed_on_terrain:return "not_allowed_on_terrain";
+    case odh::FloorPlacementResult::cant_place_in_air:return "cant_place_in_air";
+    case odh::FloorPlacementResult::not_allowed_on_floor:return "not_allowed_on_floor";
+    }
+    return "invalid_result";
+}
 }
 int main(int argc,char** argv) {
  try {
@@ -144,6 +166,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> avatar_def,action_def,action_routine,flags,age,routine;
     std::optional<std::uint16_t> render_tick;
     std::optional<std::uint16_t> render_saved_id;
+    std::optional<odh::EntityPosition> placement_candidate;
     bool render_window=false,saved_world_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
@@ -189,6 +212,12 @@ int main(int argc,char** argv) {
         else if(option=="--render-skeleton"&&!render_skeleton_entry&&n+2<argc){render_skeleton_entry=argv[n+1];render_skeleton_name=argv[n+2];n+=2;}
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
+        else if(option=="--placement-candidate"&&!placement_candidate&&n+4<argc){
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),direction=selector(argv[++n]);
+            if(level<1||level>2||direction>7)throw odh::FormatError("placement candidate level/direction outside profile");
+            placement_candidate=odh::EntityPosition{x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)};
+        }
         else if(option=="--render-window"&&!render_window){render_window=true;}
         else if(option=="--render-floors"&&!render_floors&&n+1<argc){render_floors=argv[++n];}
         else if(option=="--render-walls"&&!render_walls&&n+1<argc){render_walls=argv[++n];}
@@ -233,8 +262,9 @@ int main(int argc,char** argv) {
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
+       (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning ZONING_IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main [--render-floors IFF [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -658,9 +688,21 @@ int main(int argc,char** argv) {
         odh::CollisionBox candidate;
         odh::RoomInfoObstacleQuery query;
     };
+struct PlacementCandidateProbe {
+    odh::EntityPosition position;
+    bool inside_lot=false;
+    std::optional<std::uint16_t> room,floor,placement_flags,level_offset;
+    std::optional<odh::CollisionBox> box;
+    std::optional<odh::FloorPlacementResult> floor_result;
+    std::string floor_reason;
+    std::optional<odh::RoomInfoObstacleQuery> query;
+    std::string room_info_reason;
+};
     std::optional<RenderEvidence> render_evidence;
     std::optional<RoomInfoProbe> room_info_probe;
     std::string room_info_probe_unavailable;
+    std::optional<PlacementCandidateProbe> placement_candidate_probe;
+    std::string placement_candidate_probe_unavailable;
     std::unique_ptr<SavedAppearanceResources> render_appearances;
     std::unique_ptr<SceneRenderer> render_renderer;
     std::unique_ptr<SavedLotRenderer> render_lot;
@@ -990,6 +1032,66 @@ int main(int argc,char** argv) {
             }
         }
     }
+    if(placement_candidate){
+        if(!saved_world_main)placement_candidate_probe_unavailable="requires_saved_world_main";
+        else if(!render_lot||!render_lot->prepared_architecture())placement_candidate_probe_unavailable="requires_prepared_architecture";
+        else if(!render_lot->runtime_room_map_available())placement_candidate_probe_unavailable="prepared_runtime_room_map_unavailable";
+        else {
+            const auto* actor=world.find(runtime_avatar_id);
+            const auto* prepared=&*render_lot->prepared_architecture();
+            if(!actor||actor->kind!=odh::EntityKind::avatar||!actor->definition)
+                placement_candidate_probe_unavailable="selected_avatar_identity_unavailable";
+            else {
+                PlacementCandidateProbe probe;probe.position=*placement_candidate;
+                probe.inside_lot=probe.position.x>=0&&probe.position.y>=0&&
+                    static_cast<std::uint32_t>(probe.position.x/16)<prepared->width&&
+                    static_cast<std::uint32_t>(probe.position.y/16)<prepared->height;
+                if(!probe.inside_lot){
+                    probe.floor_reason="candidate_outside_lot_bounds";
+                    probe.room_info_reason="candidate_outside_lot_bounds";
+                }else{
+                    probe.room=render_lot->runtime_room_at(probe.position);
+                    const auto shape=odh::avatar_candidate_collision_shape(probe.position);
+                    if(shape.state==odh::CollisionShapeState::present)probe.box=shape.box;
+                    else probe.room_info_reason="candidate_avatar_geometry_unsupported";
+
+                    const auto floor=odh::prepared_precise_floor(*prepared,probe.position.x,probe.position.y,probe.position.level);
+                    if(!floor)probe.floor_reason="precise_floor_unavailable";
+                    else {
+                        probe.floor=*floor;
+                        if(!prepared->floor_identity_unambiguous())probe.floor_reason="floor_identity_ambiguous";
+                        else {
+                            const auto* definition=definition_index?definition_index->unique(actor->definition->guid):nullptr;
+                            const odh::VmFrame frame{odh::routine_key(4096),0,{runtime_avatar_id,runtime_avatar_id,runtime_avatar_id,0},{},{}};
+                            const auto live_flags=world.read(frame,3,8);
+                            if(!definition)probe.floor_reason="avatar_definition_missing_or_ambiguous";
+                            else if(!definition->definition.level_offset)probe.floor_reason="avatar_level_offset_unavailable";
+                            else if(!live_flags)probe.floor_reason="live_placement_flags_unavailable";
+                            else {
+                                probe.level_offset=*definition->definition.level_offset;
+                                probe.placement_flags=static_cast<std::uint16_t>(*live_flags);
+                                probe.floor_result=odh::floor_change_valid(*floor,static_cast<std::int8_t>(probe.position.level),
+                                    *probe.placement_flags,false,*probe.level_offset);
+                            }
+                        }
+                    }
+                    if(!probe.room)probe.room_info_reason="candidate_room_unresolved";
+                    else if(probe.box){
+                        const odh::RuntimeRoomResolver room_for=[&](odh::EntityPosition position){return render_lot->runtime_room_at(position);};
+                        const odh::AvatarKillTimeoutResolver kill_timeout_for=[&](std::int16_t id,std::uint64_t generation)
+                            ->std::optional<std::int32_t>{
+                            const auto* entity=world.find(id);
+                            if(!entity||entity->generation!=generation||entity->kind!=odh::EntityKind::avatar)return std::nullopt;
+                            return entity->kill_timeout;
+                        };
+                        probe.query=odh::query_world_room_info(world,*definition_index,room_for,kill_timeout_for,
+                            *probe.room, *probe.box,runtime_avatar_id);
+                    }
+                }
+                placement_candidate_probe=std::move(probe);
+            }
+        }
+    }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
@@ -1306,6 +1408,41 @@ int main(int argc,char** argv) {
         }
         std::cout<<"]}";
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
+    if(placement_candidate_probe){
+        const auto& probe=*placement_candidate_probe;
+        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_candidate_floor_and_RoomInfo_only\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":false,\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
+            <<",\"position\":["<<probe.position.x<<','<<probe.position.y<<','<<probe.position.level<<','<<unsigned(probe.position.direction)<<']'
+            <<",\"inside_lot\":"<<(probe.inside_lot?"true":"false")<<",\"room\":";
+        if(probe.room)std::cout<<*probe.room;else std::cout<<"null";
+        std::cout<<",\"candidate_box\":";
+        if(probe.box)std::cout<<'['<<probe.box->x1<<','<<probe.box->y1<<','<<probe.box->x2<<','<<probe.box->y2<<']';
+        else std::cout<<"null";
+        std::cout<<",\"floor\":";if(probe.floor)std::cout<<*probe.floor;else std::cout<<"null";
+        std::cout<<",\"placement_flags\":";if(probe.placement_flags)std::cout<<*probe.placement_flags;else std::cout<<"null";
+        std::cout<<",\"level_offset\":";if(probe.level_offset)std::cout<<*probe.level_offset;else std::cout<<"null";
+        std::cout<<",\"floor_change_valid\":";
+        if(probe.floor_result)std::cout<<json_bytes(floor_result_name(*probe.floor_result));else std::cout<<"null";
+        std::cout<<",\"floor_state\":";
+        if(!probe.floor_result)std::cout<<"\"unknown\"";
+        else std::cout<<json_bytes(*probe.floor_result==odh::FloorPlacementResult::allowed?"allowed":"rejected");
+        std::cout<<",\"floor_reason\":"<<json_bytes(probe.floor_reason)
+            <<",\"room_info_status\":";
+        if(probe.query)std::cout<<json_bytes(odh::room_info_obstacle_index_status_name(probe.query->status));
+        else std::cout<<"\"unavailable\"";
+        std::cout<<",\"room_info_reason\":";
+        if(probe.query)std::cout<<json_bytes(odh::room_info_obstacle_index_reason_name(probe.query->reason));
+        else std::cout<<json_bytes(probe.room_info_reason.empty()?placement_candidate_probe_unavailable:probe.room_info_reason);
+        std::cout<<",\"intersections\":[";
+        if(probe.query)for(std::size_t n=0;n<probe.query->intersections.size();++n){
+            if(n)std::cout<<',';
+            const auto& obstacle=probe.query->intersections[n];
+            std::cout<<"{\"owner_id\":"<<obstacle.owner_id<<",\"collection\":"
+                <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
+                <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
+        }
+        std::cout<<"]}";
+    }else if(placement_candidate)std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"unavailable\",\"reason\":"
+        <<json_bytes(placement_candidate_probe_unavailable)<<'}';
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")

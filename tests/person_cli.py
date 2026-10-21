@@ -32,6 +32,12 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
  setup();r=run(['--initialize','--saved-world-main'])
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
+ setup();r=run(['--placement-candidate','10','20','1','0'])
+ assert r.returncode==2 and not r.stdout and 'placement-candidate' in r.stderr
+ for candidate in [['--placement-candidate','bad','20','1','0'],
+                   ['--placement-candidate','10','20','0','0'],
+                   ['--placement-candidate','10','20','1','8']]:
+  setup();r=run(candidate);assert r.returncode==2 and not r.stdout
  for options in [['--render-floors','floors.iff'],['--render-walls','walls.iff'],['--render-level','1'],
                  ['--render-wall-mode','down'],['--render-terrain-theme','0']]:
   setup();r=run(options)

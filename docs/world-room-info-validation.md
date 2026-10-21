@@ -72,3 +72,29 @@ resultado não classifica EntryPoint 5/26 nem afirma que a posição passou por
 `GetAvatarPlace`. O frame CPU produzido na mesma execução mostra Bob e o lote
 compostos. Os 152 CTests passaram, incluindo `linux_window_backend` quando
 executado com acesso autorizado ao display.
+
+## Candidate placement diagnostic
+
+`--placement-candidate X Y LEVEL DIRECTION` adds an independent query for a
+candidate position against the prepared lot and the post-tick live World. It
+reports the candidate room and radius-3 avatar box, `FloorChangeValid` inputs
+from the unique avatar definition and live `ObjectData[8]`, plus the current
+RoomInfo intersections. It does not move the avatar, execute a BHAV, remove the
+avatar from its current static footprint, evaluate final placement policy, or
+claim route clearance. An unavailable floor, room, definition, or live flags
+remains unknown/unsupported rather than being inferred from the save snapshot.
+
+House07 was queried at tick 214 for candidate `(392,440,1,3)`. It resolved room
+3, precise floor 6, live placement flags 8 and avatar `LevelOffset` 0;
+`FloorChangeValid` returned `allowed`. RoomInfo reported the current static
+footprint of avatar 105 at `[389,437,395,443]`. This confirms the candidate
+query plumbing on House07; because the probe deliberately keeps the avatar in
+that static collection and does not evaluate EntryPoint 5/26, overlap policy,
+ghost/allow flags, architecture obstacles, portals or route clearance, it is
+not a placement approval.
+
+Candidate `(400,440,1,3)` on the same run resolved room 3 and floor 6 with the
+same live flags/LevelOffset; it returned no RoomInfo intersections. The empty
+list describes only this avatar box against the current World snapshot. It does
+not account for removing the avatar's old static footprint, architecture
+obstacles, portals or movement between candidate and commit.
