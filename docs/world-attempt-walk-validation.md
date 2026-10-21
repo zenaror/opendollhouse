@@ -39,6 +39,14 @@ snapshot após movimento contém sua caixa atualizada. Isso valida o adaptador
 sintético e o mecanismo de revisão espacial; não demonstra porta comercial
 abrindo/fechando, refresh de `RoomObs` por `RegenRoomObs` nem clearance runtime.
 
+No host `odh-person`, `refresh_route_obstacles()` compara a revisão espacial e,
+antes de cada tick de uma rota ativa, recompõe AttemptWalk, inventário Portal15,
+RoomObs e a grade da sala quando o `World` mudou. `Routing::tick` lê essa mesma
+grade mutável e confere o próximo passo antes de mover. Um teste novo bloqueia
+o próximo ponto depois do planejamento e verifica que a rota falha sem mover o
+avatar. Isto verifica o contrato de atualização da grade e parada fail-closed;
+não é simulação de BHAV de porta nem prova de clearance completo do jogo.
+
 ## House07 no Main
 
 Em 2026-10-21, `odh-person` foi compilado em Debug e executado com dados

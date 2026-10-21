@@ -319,6 +319,15 @@ int main() {
          require(routing.tick(1)&&vm.status()==odh::VmStatus::returned_true&&
                  world.find(105)->position->x==392&&world.find(105)->position->y==440,
                  "constructed clear grid exercises the already-at-goal Route45 path without movement");}
+        {Fixture f;f.start();
+         require(f.vm.status()==odh::VmStatus::waiting&&f.routing.active(),
+                 "mutable-grid fixture plans a live Route45 path");
+         require(f.grid.block({5,12}),"host can publish a newly blocked next step into the live grid");
+         require(f.routing.tick(1),"host obstacle refresh is accepted by the route scheduler");
+         require(!f.routing.active()&&f.vm.status()==odh::VmStatus::returned_false,
+                 "blocked live route returns false and clears its active job");
+         require(f.world.find(1)->position->x==4&&f.world.find(1)->static_footprint,
+                 "Route45 revalidates the next step after a host obstacle refresh and stops before collision");}
         {Fixture f;f.start();require(f.vm.status()==odh::VmStatus::waiting,"route dispatch waits");
          require(f.routing.active_frame_context()&&
                  f.routing.active_frame_context()->state==odh::RouteFrameState::initial,

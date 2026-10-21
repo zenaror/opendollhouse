@@ -18,6 +18,11 @@ validação indicados por versão.
   bloqueador e atualiza sua caixa; isso não valida a transição de estado de
   portas comerciais nem clearance runtime.
 
+- `Routing::tick` é testado contra uma grade que o host atualiza após planejar:
+  se o próximo passo ficou bloqueado, Route45 encerra sem mover o avatar. O
+  `odh-person` já recompõe o snapshot e atualiza a grade antes de cada tick
+  ativo quando muda a revisão espacial; isso não valida clearance completo.
+
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
   limite da sala e preservando o motivo de snapshots incompletos. Há uma
