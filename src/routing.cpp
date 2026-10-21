@@ -1,6 +1,7 @@
 #include "odh/routing.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -13,6 +14,11 @@ std::uint8_t heading(RoutePoint from,RoutePoint to) {
     return 0;
 }
 PrimitiveOutcome unsupported(const std::string& why) {return {PrimitiveDisposition::unsupported,why};}
+std::int32_t floor_tile(std::int32_t coordinate) {
+    auto quotient=coordinate/16;
+    if(coordinate<0 && coordinate%16) --quotient;
+    return quotient;
+}
 }
 std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
     const SlotTable& table,std::size_t type3_index,std::size_t candidate_limit) {
@@ -90,6 +96,28 @@ std::vector<RoutePoint> filter_reference_slot_range_proximity(
     }
     return candidates;
 }
+std::uint8_t reference_slot_entry_flags(
+    RoutePoint object_position,std::uint8_t object_direction,RoutePoint candidate_position,
+    std::uint8_t slot_direction_flags) {
+    constexpr double pi=3.141592653589793238462643383279502884;
+    constexpr double angle_error=-0.1;
+    const auto dx=floor_tile(candidate_position.x)-floor_tile(object_position.x);
+    const auto neg_dy=floor_tile(object_position.y)-floor_tile(candidate_position.y);
+    auto degrees=std::atan2(static_cast<double>(dx),static_cast<double>(neg_dy))*(180.0/pi)-
+                 static_cast<double>(object_direction%8)*45.0;
+    degrees=std::fmod(std::fmod(degrees,360.0)+360.0,360.0);
+    if(degrees>180.0) degrees-=360.0;
+    std::uint8_t directions=0;
+    if(degrees>=-45.0-angle_error && degrees<=45.0+angle_error) directions|=1U<<0;
+    if(degrees>=0.0-angle_error && degrees<=90.0+angle_error) directions|=1U<<1;
+    if(degrees>=45.0-angle_error && degrees<=135.0+angle_error) directions|=1U<<2;
+    if((degrees>=90.0-angle_error && degrees<=180.0+angle_error)||degrees<=-180.0+angle_error) directions|=1U<<3;
+    if(degrees>=135.0-angle_error||degrees<=-135.0+angle_error) directions|=1U<<4;
+    if((degrees>=-180.0-angle_error&&degrees<=-90.0+angle_error)||degrees>=180.0+angle_error) directions|=1U<<5;
+    if(degrees>=-135.0-angle_error&&degrees<=-45.0+angle_error) directions|=1U<<6;
+    if(degrees>=-90.0-angle_error&&degrees<=0.0+angle_error) directions|=1U<<7;
+    return directions&slot_direction_flags;
+}
 bool Routing::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
     vm_=&vm;return true;
@@ -135,8 +163,14 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     std::vector<RoutePoint> goals;
     for(std::size_t n=0;n<8;++n) {
         const auto step=(n&1)?diagonal:radius;
-        goals.push_back({target->position->x+headings[n].x*step,target->position->y+headings[n].y*step});
+        const RoutePoint candidate{target->position->x+headings[n].x*step,
+                                   target->position->y+headings[n].y*step};
+        if(reference_slot_entry_flags({target->position->x,target->position->y},
+                                      target->position->direction,candidate,
+                                      static_cast<std::uint8_t>(slot->flags))!=0)
+            goals.push_back(candidate);
     }
+    if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
     const RoutePoint start{actor->position->x,actor->position->y};
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
@@ -152,12 +186,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(path.status==RouteStatus::invalid_input) return unsupported("routing start outside walkable grid");
     if(path.status==RouteStatus::no_path) {diagnostic_="no path in supplied clearance grid";return {PrimitiveDisposition::goto_false,{}};}
     const auto goal=path.points.back();
-    const auto absolute=heading({target->position->x,target->position->y},goal);
-    const auto relative=(absolute+8-target->position->direction)%8;
-    const auto mask=static_cast<std::int16_t>(((1U<<relative)|(1U<<((relative+7)%8))|
-                                             (1U<<((relative+1)%8)))&slot->flags);
+    const auto entry_flags=reference_slot_entry_flags({target->position->x,target->position->y},
+        target->position->direction,goal,static_cast<std::uint8_t>(slot->flags));
+    if(entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
+        return {PrimitiveDisposition::goto_false,{}};}
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
-             *actor->position,*target->position,std::move(path.points),1,mask,
+             *actor->position,*target->position,std::move(path.points),1,entry_flags,
              heading(goal,{target->position->x,target->position->y})};
     return {PrimitiveDisposition::wait,{}};
 }

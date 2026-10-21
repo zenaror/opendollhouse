@@ -1,5 +1,24 @@
 # Continuidade atual
 
+## Máscara direcional do SLOT no Route45 (2026-10-20)
+
+O `Routing` filtra os oito candidatos do perfil de raio exato pela máscara
+direcional e grava no `RouteEntryFlags` o resultado de
+`VMSlotParser.GetSearchDirection` do Simitone fixado. A regra usa floor de
+coordenadas em 1/16 tile, rotação do objeto, setores angulares e interseção com
+os bits baixos do SLOT. O dado comercial House07 confirma que Route45 usa
+Global SLOT100, type3/data1, flags `0x55`, raio `16`, standing=1 e facing=-2;
+isso foi lido, sem alterar ou copiar recursos comerciais.
+
+`odh-routing-tests` passa 51 checks, inclusive uma célula walkable em um setor
+que a máscara `0x55` rejeita. Build completa e CTest 144/144 passaram com o
+teste `linux_window_backend` usando o display `:0`. Esse marco verifica apenas
+o controller em mundos construídos e a semântica da referência Simitone; não
+liga Routing45 ao Main e não prova movimento no lote. Próximo: substituir o
+diagnóstico genérico ao redor da caixa do alvo por candidatos explícitos do
+SLOT verificado, depois modelar validação de parede/ocupação/portal e integrar
+somente quando a geometria do lote puder ser comprovada.
+
 ## Grade candidata por sala (2026-10-20)
 
 Commits `28403d3` e `8bdb5d4` estão publicados em `origin/main`. O adapter

@@ -17,6 +17,12 @@ std::vector<RoutePoint> enumerate_reference_slot_range_lattice(
 // geometry, occupancy, score/RNG and original-game semantics remain unknown.
 std::vector<RoutePoint> filter_reference_slot_range_proximity(
     const SlotTable&,std::size_t type3_index,const std::vector<RoutePoint>& offsets);
+// Reproduces the pinned VMSlotParser.GetSearchDirection floor-tile angle
+// sectors, then returns the SLOT direction bits accepted for this candidate.
+// Positions use the ODH 1/16-tile lattice; object_direction is 0..7.
+std::uint8_t reference_slot_entry_flags(
+    RoutePoint object_position,std::uint8_t object_direction,RoutePoint candidate_position,
+    std::uint8_t slot_direction_flags);
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {

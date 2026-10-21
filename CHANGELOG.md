@@ -37,6 +37,10 @@ validação indicados por versão.
 - Probe opcional executa `find_route` em uma grade candidata de sala salva até
   pontos geométricos ao redor de uma entidade alvo. Resultado `found` não
   valida SLOT, movimento do jogo, `VMRectRouter` nem clearance runtime.
+- Controller Route45 do ODH agora filtra destinos do perfil exact-radius pela
+  máscara direcional usando os setores angulares, coordenadas floor em tiles
+  e rotação do alvo de `VMSlotParser.GetSearchDirection` do Simitone fixado.
+  Ainda não é a validação completa de destino, nem está ligado ao Main.
 - O room map preparado distingue misses estritos de `TryGetValue` dos aliases
   FLRm declarados-sem-resolução efetivamente usados. Mantém o contador legado de
   misses, considera os bytes retidos por fallback como identidade e continua
@@ -140,3 +144,7 @@ validação indicados por versão.
   Cinco CTests companheiros por configuração foram reutilizados, sem rerun.
 - Fixtures sintéticas não comprovam integração World, áudio físico, fidelidade
   completa ou uma build Linux jogável.
+- Route45: `odh-routing-tests` passa 51 checks, incluindo a recusa de um
+  destino caminável que não corresponde à máscara direcional do SLOT. Validação
+  em mundo construído e na revisão Simitone fixada; sem movimento real,
+  integração ao Main ou prova de compatibilidade com o jogo original.

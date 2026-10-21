@@ -36,12 +36,22 @@ flags0x55, standing1/sitting0/ground0, snap-1, height0, facing-2, resolution16,
 maxsize/i10 zero e gradientbits0x3e400000. Outros layouts ou regras falham
 explicitamente como unsupported.
 
-Gera oito destinos com diagonal inteira baseada em 46341/65536; usa menor
-custo de malha, com tie determinístico. Direção/entry flags derivam dos
-octantes. Essa aproximação não replica completamente floor/rotação, scores,
-aleatoriedade e regras de rooms do FreeSO/original. Não alegar equivalência.
-Uma unidade de movimento por tick, inclusive diagonal, é velocidade ODH
-provisória; não é tempo/velocidade de caminhada TS1 comprovados.
+Gera oito destinos do círculo exact-radius do perfil e usa menor custo de
+malha, com tie determinístico. Antes da busca, cada destino passa pela máscara
+direcional do SLOT; os `RouteEntryFlags` de chegada reproduzem
+`VMSlotParser.GetSearchDirection` da revisão Simitone fixada: convertem posição
+1/16 tile em tiles por floor, subtraem a rotação discreta do objeto, aplicam os
+setores angulares do código-fonte e intersectam com os bits direcionais do
+SLOT. Testes cobrem rotação, limites de tile fracionários, coordenadas
+negativas, máscara vazia e setores diagonais. Isso elimina a estimativa anterior
+por octantes, mas ainda não replica seleção por score/RNG, elegibilidade de
+sala, raycast, ocupação, facing completo ou regras do jogo original. Não alegar
+equivalência. Uma unidade de movimento por tick, inclusive diagonal, é
+velocidade ODH provisória; não é tempo/velocidade de caminhada TS1 comprovados.
+Proveniência do filtro direcional: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`,
+FreeSO submódulo `f86bbd34b2112296ed786741f640a0535886d180`,
+`TSOClient/tso.simantics/Engine/VMSlotParser.cs:GetSearchDirection` e
+`tso.common/Utils/DirectionUtils.cs:NormalizeDegrees`.
 
 A máscara da malha é fornecida explicitamente e deve considerar clearance.
 O atalho sem movimento (`start == goal`) só é aceito quando a célula também
@@ -58,7 +68,7 @@ reservas de destino ainda precisam ser implementados.
 ## Evidência
 
 CTest12/12 passou em Debug e ASan/UBSan no checkpoint anterior. No checkout
-atual, `odh-routing-tests` passa 43 checks e `odh-route-tests` 71 checks; são
+atual, `odh-routing-tests` passa 51 checks e `odh-route-tests` 71 checks; são
 malhas/mundos construídos, não validação do lote nativo. Cobrem espera/avanço,
 relógio, chegada, restart, obstáculo novo,
 entidade movida/removida/recriada, profiles unsupported, nível, outro VM e

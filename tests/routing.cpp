@@ -48,6 +48,21 @@ void reference_slot_lattice_tests() {
     catch(const std::invalid_argument&) { invalid=true; }
     require(invalid,"max-zero fallback to min rejects a non-ranged profile");
 }
+void reference_slot_direction_tests() {
+    constexpr std::uint8_t all=0xFF;
+    require(odh::reference_slot_entry_flags({160,160},0,{176,160},all)==0x04,
+            "east goal maps to the reference EAST direction bit");
+    require(odh::reference_slot_entry_flags({160,160},0,{176,144},all)==0x02,
+            "diagonal goal uses the reference angular sectors");
+    require(odh::reference_slot_entry_flags({160,160},1,{176,144},all)==0x01,
+            "candidate sectors rotate relative to the target orientation");
+    require(odh::reference_slot_entry_flags({392,456},0,{403,445},all)==0x02,
+            "candidate classification uses floored tile coordinates from 1/16 positions");
+    require(odh::reference_slot_entry_flags({-1,-1},0,{0,-1},all)==0x04,
+            "negative lattice coordinates use mathematical floor rather than truncation");
+    require(odh::reference_slot_entry_flags({160,160},0,{176,160},0)==0,
+            "candidate rejected when the SLOT direction mask allows no matched sector");
+}
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;
     r.proximity=std::array<std::int32_t,3>{16,16,16};r.max_size=0;r.unknown_i10=0;
@@ -74,6 +89,7 @@ struct Fixture {
 int main() {
     try {
         reference_slot_lattice_tests();
+        reference_slot_direction_tests();
         {odh::World world;odh::RouteGrid grid{32,33,262144,{376,424}};auto slots=slot();
          odh::Routing routing{world,grid,slots};odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
          world.create(105,odh::EntityKind::avatar,{0,88,0});world.create(128,odh::EntityKind::object,{0,0,1});
@@ -137,6 +153,16 @@ int main() {
          require(f.vm.status()==odh::VmStatus::returned_false && !f.routing.active(),"no path is false without movement");}
         {Fixture f;odh::Vm other(routines(),f.world.vm_memory(),{},f.routing.primitive());other.start(odh::routine_key(4096),{1,2,2});
          require(other.run(1)==odh::VmStatus::fault && !f.routing.active(),"controller refuses foreign VM identity");}
+        {odh::World world;odh::RouteGrid grid{32,32,1024,{380,440}};auto slots=slot();
+         const odh::RoutePoint start{403,445};
+         for(std::size_t n=0;n<grid.cells();++n)grid.block(grid.point(n));
+         grid.block(start,false);
+         odh::Routing routing{world,grid,slots};odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{start.x,start.y,1,0});world.set_position(2,{392,456,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::returned_false&&!routing.active(),
+                 "a walkable exact-radius goal outside the SLOT direction mask is not accepted");}
         {Fixture f;f.start();bool guarded=false;
          f.routing.tick(1,[&](const auto&){try{f.routing.tick(2);}catch(const std::logic_error&){guarded=true;}});
          require(guarded && f.world.find(1)->position->x==5 && f.routing.tick(2),"movement notification cannot reenter tick");}
