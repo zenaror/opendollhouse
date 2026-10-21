@@ -99,14 +99,14 @@ reservas de destino ainda precisam ser implementados.
 ## Evidência
 
 CTest12/12 passou em Debug e ASan/UBSan no checkpoint anterior. No checkout
-atual, `odh-routing-tests` passa 72 checks e `odh-route-tests` 71 checks; são
+atual, `odh-routing-tests` passa 74 checks e `odh-route-tests` 71 checks; são
 malhas/mundos construídos, não validação do lote nativo. Cobrem espera/avanço,
 relógio, chegada, restart, obstáculo novo,
 entidade movida/removida/recriada, profiles unsupported, nível, outro VM e
 reentrada. O incremento de destinos ordenados passou os dois testes CTest
 `route|routing` em builds separados Debug (`/tmp/odh-ordered-goals-debug`) e
 ASan/UBSan (`/tmp/odh-ordered-goals-sanitize`, `ASAN_OPTIONS=detect_leaks=0`),
-com 71 checks de route e 72 de routing em cada build. Inclui preferência
+com 71 checks de route e 74 de routing em cada build. Inclui preferência
 distante, desempate estável, fallback após destino bloqueado/inalcançável,
 limites cumulativos e de frontier, entrada inválida e chegada com flags/facing
 do provider. A CLI usa
