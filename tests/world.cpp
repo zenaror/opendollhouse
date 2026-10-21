@@ -26,6 +26,13 @@ int main() {
         require(!w.read(f,3,0) && !w.write(f,3,0,9),"undeclared object word is unsupported");
         require(w.declare_object_word(1,0,7) && w.read(f,3,0)==7,"explicit word declaration");
         require(w.write(f,3,0,9) && w.read(f,3,0)==9,"raw stored word write");
+        require(w.declare_object_word(1,1,0) && w.set_position(1,{16,16,1,0}) &&
+                    w.write(f,3,1,2) && w.find(1)->position->direction==2 && w.read(f,3,1)==2,
+                "ObjectData direction writes update live collision orientation");
+        require(!w.write(f,3,1,8) && w.find(1)->position->direction==2,
+                "invalid ObjectData direction leaves live orientation unchanged");
+        require(w.set_position(1,{16,16,1,4}) && w.read(f,3,1)==4,
+                "live position updates the ObjectData direction");
         for (const auto index : {2,3,11,67}) {
             require(!w.declare_object_word(1,static_cast<std::int16_t>(index),9),"derived words cannot be replaced");
             require(!w.write(f,3,static_cast<std::int16_t>(index),9),"derived identity/relation cannot be written");
@@ -51,7 +58,7 @@ int main() {
         require(w.detach(2,0) && !w.detach(2,2),"idempotent empty detach and bounds");
         require(w.attach(2,1,3) && w.remove(3) && w.read(f,16,1)==0,"remove occupant detaches");
         require(w.attach(2,0,1) && w.remove(2) && !w.find(1)->attachment,"remove container releases occupant");
-        require(w.word_count()==92,"word accounting after removals");
+        require(w.word_count()==93,"word accounting after removals");
         require(w.remove(1) && w.word_count()==0 && !w.remove(1),"remove accounting and missing ID");
         require(!w.create(0,odh::EntityKind::object) && !w.create(-1,odh::EntityKind::object),"null/negative ID rejected");
         require(!w.create(1,odh::EntityKind::object,{0,1,0}),"person bank requires avatar");

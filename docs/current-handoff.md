@@ -1,5 +1,28 @@
 # Continuidade atual
 
+## Consulta RoomInfo a partir do World vivo (2026-10-21)
+
+`query_world_room_info` enumera o World atual, deriva OBJD boxes, salas e
+coleções static/dynamic e reconstrói o índice RoomInfo antes de cada query.
+Isso mantém consultas frescas sem observers para toda mutação. O limite é 4096
+entidades por consulta. O caller precisa fornecer a sala runtime e o
+`KillTimeout` atual do avatar; dados desconhecidos, flags ausentes, definição
+ambígua e geometria/sala sem suporte falham fechados. A API preserva a regra de
+RoomInfo de incluir o alvo na coleção estática e excluir da dinâmica.
+
+`odh-world-room-info-tests` passou com fixtures sintéticas para movimento entre
+salas, contenção, zero extent, classificação, ordem, entradas desconhecidas e
+orçamento, incluindo mutação disparada por callback. Callbacks recebem cópias e
+a API verifica a projeção do World antes de aceitar o índice. `World` sincroniza
+ObjectData[1] com a direção espacial em escritas VM e mudanças de posição. O
+build completo e CTest passaram com 151/151 testes sem falhas; `git diff --check`
+passou. Esse contrato ainda não é consumido
+por Main e não valida clearances, EntryPoint5/26, portas/portais, movimento ou
+Sit/Stand no lote. Próximo: fornecer um resolver de sala runtime derivado do
+lote Main sem promover o mapa geométrico salvo a estado de porta/portal; depois
+compor as regras restantes de GetAvatarPlace e conectar clearance a Route45 e
+Snap46 no mesmo World da UI.
+
 ## Estado runtime do footprint durante Route45 (2026-10-21)
 
 `World::Entity` agora carrega `static_footprint` como estado runtime, separado

@@ -173,9 +173,14 @@ std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
 }
 void World::apply_position(const std::vector<std::int16_t>& descendants,EntityPosition position) {
     entities_.at(descendants[0]).position=position;
+    if (auto direction=entities_.at(descendants[0]).object_words.find(1);
+        direction!=entities_.at(descendants[0]).object_words.end())
+        direction->second=position.direction;
     for(std::size_t n=1;n<descendants.size();++n) {
         auto& child=entities_.at(descendants[n]);
         auto p=position;p.direction=child.position->direction;child.position=p;
+        if (auto direction=child.object_words.find(1); direction!=child.object_words.end())
+            direction->second=p.direction;
     }
 }
 bool World::set_position(std::int16_t id,EntityPosition position) {
@@ -320,6 +325,10 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
     if ((scope == 3 || scope == 4) && !derived(index)) {
         const auto field = entity.object_words.find(index);
         if (field == entity.object_words.end()) return false;
+        if (index == 1) {
+            if (value < 0 || value > 7) return false;
+            if (entity.position) entity.position->direction = static_cast<std::uint8_t>(value);
+        }
         field->second = value; return true;
     }
     return false;

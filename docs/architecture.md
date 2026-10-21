@@ -59,10 +59,14 @@ obstáculos estáticos/dinâmicos registrados e clearance runtime continuam
 pendentes.
 O [índice RoomInfo](room-info-obstacle-index-validation.md) define registro,
 movimento e reclassificação owner-keyed dos footprints estáticos/dinâmicos;
-ainda aguarda eventos reais do World e não é usado como clearance.
+continua sem política completa de clearance.
 `World::Entity::static_footprint` representa a classe runtime da entidade e
 `Routing` troca o ator para dinâmico no primeiro passo, restaurando-o ao sair
 da rota conforme o perfil Simitone fixado. Isso ainda não atualiza o índice.
+[`query_world_room_info`](world-room-info-validation.md) reconstrói o índice
+diretamente do World antes de cada consulta, usando resolvers runtime explícitos
+para salas e KillTimeout de avatares. Main ainda não chama essa API; mapas
+geométricos salvos não são automaticamente considerados salas runtime.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,
 com fila limitada e SDL2 carregado em runtime. Validação dummy e entrega curta
