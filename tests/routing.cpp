@@ -224,6 +224,61 @@ int main() {
          require(routing.tick(3)&&world.find(1)->position->x==5&&
                  routing.active_frame_context()->state==odh::RouteFrameState::walking,
                  "Route45 movement resumes only after the portal continuation boundary");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
+         std::size_t provider_calls=0;
+         odh::PreRankedSlotGoalProvider provider=[&](const auto&,std::size_t,const auto&,const auto& target) {
+             const auto position=provider_calls++==0?odh::RoutePoint{12,12}:odh::RoutePoint{20,12};
+             return std::vector<odh::PreRankedSlotGoal>{{position,
+                 odh::reference_slot_entry_flags({target.x,target.y},target.direction,position,0x55),2}};
+         };
+         odh::Routing routing{world,grid,slots,provider};auto code=routines();
+         odh::RoutineSet portal_code{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{45,254,255,{1,0,2,0,0,0,0,0}},
+              {2,254,255,{0,0,2,7,7,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive(),{{9,std::move(portal_code)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),"parent Route45 waits before nested portal routing");
+         const auto parent_ticket=vm.pending()->ticket;
+         require(routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}})&&vm.run(1)==odh::VmStatus::waiting&&
+                 vm.pending()->ticket!=parent_ticket&&provider_calls==2,
+                 "portal BHAV can issue a nested Route45 with its own wait ticket");
+         require(routing.active_frame_context()->state==odh::RouteFrameState::initial&&
+                 routing.incoming_direction(0.25f)==0.25f&&routing.consume_portal_turn()&&
+                 !routing.consume_portal_turn(),
+                 "nested route reads and consumes PortalTurns on its suspended parent frame");
+         for(std::uint64_t tick=1;tick<=16&&world.find(1)->position->x<20;++tick) routing.tick(tick);
+         require(world.find(1)->position->x==20&&world.find(1)->static_footprint&&routing.active()&&
+                 vm.status()==odh::VmStatus::yielded&&vm.external_frame_return()&&
+                 vm.external_frame_return()->ticket==parent_ticket,
+                 "nested Route45 returns control to the portal BHAV without dropping its parent job");
+         require(routing.tick(17)&&vm.status()==odh::VmStatus::waiting&&vm.pending()->ticket==parent_ticket&&
+                 world.find(1)->position->x==20,
+                 "parent Route45 revalidates and replans from the nested route destination");
+         require(routing.tick(18)&&world.find(1)->position->x==19&&
+                 !world.find(1)->static_footprint&&routing.active(),
+                 "parent route movement resumes on a later tick with its dynamic footprint restored");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();std::size_t provider_calls=0;
+         odh::PreRankedSlotGoalProvider provider=[&](const auto&,std::size_t,const auto& actor,const auto& target) {
+             ++provider_calls;const odh::RoutePoint point{actor.x,actor.y};
+             return std::vector<odh::PreRankedSlotGoal>{{point,
+                 odh::reference_slot_entry_flags({target.x,target.y},target.direction,point,0x55),2}};
+         };
+         odh::Routing routing{world,grid,slots,provider};auto code=routines();
+         odh::RoutineSet portal_code{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{45,254,255,{1,0,2,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive(),{{9,std::move(portal_code)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});require(vm.run(1)==odh::VmStatus::waiting,"root route waits before depth test");
+         for(std::size_t depth=1;depth<16;++depth)
+             require(routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}})&&
+                     vm.run(1)==odh::VmStatus::waiting,
+                     "bounded nested frame accepts a ticket-linked portal Route45");
+         require(provider_calls==16&&routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}})&&
+                 vm.run(1)==odh::VmStatus::fault&&provider_calls==16,
+                 "nested route depth limit fails closed before planning an over-budget child");}
         {bool invoked=false;
          Fixture f([&](const auto& table,std::size_t index,const auto& actor,const auto& target) {
              invoked=table.version==10&&index==1&&actor.x==4&&target.x==28;

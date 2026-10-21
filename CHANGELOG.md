@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `Routing` agora preserva até 16 jobs Route45 aninhados quando uma BHAV
+  externa em execução dispara outro Route45. O controller valida o vínculo
+  entre frame VM, ticket e identidade do avatar, mantém o job pai suspenso,
+  propaga `PortalTurns` pelo contexto parent-or-self e recalcula o trecho pai
+  após o filho mover o avatar. Fixture sintética cobre a sequência e o retorno
+  ordenado. A malha segue única e fornecida pelo host; não é ainda roteamento
+  runtime entre salas nem integração de gameplay.
+
 - O inventário de portal agora preserva arestas dirigidas por ID de objeto e
   sala destino, escolhendo a primeira outra parte Portal na ordem do grupo como
   faz `AddRoomPortal` no Simitone. `find_room_portal_route` busca uma sequência

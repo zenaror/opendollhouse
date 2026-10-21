@@ -42,30 +42,35 @@ entrada obsoleta, mas ainda não implementa `VMRoutingFrame`, `PortalTurns`,
 curva de virada nem animação de caminhada. Teste fixture cobre a mudança
 fracionária no mesmo notch e cancelamento sem deslocamento adicional.
 
-`RouteFrameContext` agora dá forma ao contexto de um frame raiz ativo em ODH,
-com estados enumerados INITIAL/BEGIN_TURN/WALKING/TURN_ONLY/END_TURN/SHOOED/
-ROOM_PORTAL/STAND_FUNC/FAILED. O controller expõe o estado ativo e transita de
-INITIAL para WALKING no primeiro passo, ou usa TURN_ONLY quando já está no
-destino. Helpers puros reproduzem a seleção parent-or-self para `dirIn` e o
-orçamento de `CanPortalTurn`, inclusive incrementando `PortalTurns` em chamadas
-repetidas. Testes com contextos sintéticos cobrem raízes e filhos; ODH ainda
-não mantém a pilha de parent frames nem chama esses helpers durante uma rota.
+`RouteFrameContext` representa cada frame ativo em ODH, com estados enumerados
+INITIAL/BEGIN_TURN/WALKING/TURN_ONLY/END_TURN/SHOOED/ROOM_PORTAL/STAND_FUNC/
+FAILED. O controller mantém jobs pai suspensos em uma pilha limitada a 16;
+aceita Route45 aninhado somente quando o topo da VM prova que a chamada veio
+da BHAV externa ligada ao ticket pai e conserva a mesma identidade do avatar.
+O estado pai fica ROOM_PORTAL enquanto o filho executa. `incoming_direction` e
+`consume_portal_turn` consultam o contexto pai efetivo e atualizam seu contador
+`PortalTurns`, seguindo a seleção parent-or-self observada na referência.
+Quando um filho termina, o controller restaura o job e o estado de footprint do
+pai. Se a BHAV externa mudou a posição do avatar, o pai tenta recalcular seu
+trecho até o mesmo destino na malha fornecida; falha fechada se não houver
+caminho. Essa malha continua única e não representa clearance por sala nem
+prova a semântica de mudança de sala do jogo.
 Referência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`,
 `FreeSO/TSOClient/tso.simantics/Engine/VMRoutingFrame.cs` (`GetParentFrame`,
 `CanPortalTurn`, `AttemptWalk`).
 
-Desde 2026-10-21, `Routing::call_external_frame` liga uma chamada de BHAV
-resolvida pelo host ao ticket pendente do Route45. O estado ROOM_PORTAL é
-mantido enquanto a BHAV filha executa; waits próprios da filha pausam o
-movimento. O retorno valida ticket, geração e CodeOwner, retoma o wait-pai no
-tick seguinte e só permite movimento em um tick posterior. Retorno false falha
-fechado porque a descoberta/remoção de portais e o replanejamento por salas
-ainda não existem. Esta API não descobre entidades-portais nem resolve
-EntryPoint 15: o chamador deve fornecer rotina, owner e contexto explícitos.
-`odh-routing-tests` (98 checks) exercita uma BHAV filha com CodeOwner explícito
-que aguarda um serviço próprio e depois retorna antes da retomada da rota.
-Ainda não há pilha de RouteFrame filha nem uma chamada Route45 aninhada dentro
-da BHAV do portal.
+`Routing::call_external_frame` liga uma chamada de BHAV resolvida pelo host ao
+ticket pendente do Route45. O host pode preparar Portal15 privado a partir do
+registro salvo, da entidade viva e do recurso de definição exato; a condição
+precisa ser zero e as rotinas semiglobais/globais permanecem fora do perfil.
+O host ainda aloca `CodeOwner`, instala a closure e agenda a chamada; não há
+descoberta automática do portal pelo controller. Esperas da BHAV externa
+pausam o movimento. Cada retorno valida ticket, geração e CodeOwner; mudança de
+posição força novo planejamento até o destino pai na mesma malha. Falha de
+BHAV propaga false para o frame Route45 correspondente. O teste sintético cobre
+Route45 pai → BHAV externa → Route45 filho → retorno e replanejamento do pai,
+além do consumo de `PortalTurns` no contexto pai. Isso não integra a resolução
+de salas, RoomInfo/EP5 vivo, seleção de portal ou o host persistente Main.
 
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,

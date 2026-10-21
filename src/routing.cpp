@@ -187,6 +187,16 @@ std::optional<RouteFrameContext> Routing::active_frame_context() const {
     if(!job_) return {};
     return job_->frame;
 }
+std::optional<float> Routing::incoming_direction(float caller_radian_direction) const noexcept {
+    if(!job_) return {};
+    const auto* parent=suspended_jobs_.empty()?nullptr:&suspended_jobs_.back().frame;
+    return route_incoming_direction(job_->frame,parent,caller_radian_direction);
+}
+bool Routing::consume_portal_turn() noexcept {
+    if(!job_) return false;
+    auto* parent=suspended_jobs_.empty()?nullptr:&suspended_jobs_.back().frame;
+    return consume_route_portal_turn(job_->frame,parent);
+}
 bool Routing::call_external_frame(const VmCall& call) {
     if(executing_ || !vm_ || !job_ || job_->external_frame_active ||
        vm_->run_generation()!=job_->run_generation || vm_->status()!=VmStatus::waiting ||
@@ -202,12 +212,30 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(i.opcode!=45) return {};
     if(executing_) return unsupported("routing callback cannot reenter controller");
     if(!vm_ || dispatch.origin!=vm_) return unsupported("routing controller bound to another VM");
+    bool nested_request=false;
     if(job_) {
-        if(vm_->pending() && vm_->pending()->ticket==job_->ticket) return unsupported("routing request already active");
-        const auto* actor=world_.find(job_->actor);
-        if(actor && actor->generation==job_->actor_generation)
-            world_.set_static_footprint(job_->actor,true);
-        job_.reset(); // A restarted VM invalidated the previous ticket.
+        if(job_->run_generation!=vm_->run_generation()) {
+            if(const auto* actor=world_.find(job_->actor);actor&&actor->generation==job_->actor_generation)
+                world_.set_static_footprint(job_->actor,true);
+            for(const auto& parent:suspended_jobs_)
+                if(const auto* actor=world_.find(parent.actor);actor&&actor->generation==parent.actor_generation)
+                    world_.set_static_footprint(parent.actor,true);
+            job_.reset();suspended_jobs_.clear();
+        } else {
+            const auto& stack=vm_->stack();
+            const bool in_external_parent=job_->external_frame_active&&!stack.empty()&&
+                stack.back().return_mode==VmCallReturnMode::external_frame_next_tick&&
+                stack.back().invocation_ticket==job_->ticket&&
+                stack.back().context.caller==frame.context.caller&&
+                stack.back().context.callee==frame.context.callee&&
+                stack.back().context.stack_object==frame.context.stack_object&&
+                stack.back().context.code_owner==frame.context.code_owner;
+            if(!in_external_parent)
+                return unsupported("routing request already active outside a portal BHAV child frame");
+            if(suspended_jobs_.size()+1>=max_nested_jobs_)
+                return unsupported("nested routing frame budget exhausted");
+            nested_request=true;
+        }
     }
     diagnostic_.clear();
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
@@ -230,6 +258,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
        actor->person_data.size()<=37 || actor->attachment || actor->position->level!=target->position->level)
         return unsupported("routing requires positioned free avatar and target on one level");
+    if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
+        return unsupported("nested Route45 changed the active avatar identity");
     const RoutePoint start{actor->position->x,actor->position->y};
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
@@ -282,6 +312,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return {PrimitiveDisposition::goto_false,{}};}
     RouteFrameContext frame_context;
     if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
+    if(nested_request) suspended_jobs_.push_back(std::move(*job_));
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
@@ -291,11 +322,34 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
 }
 bool Routing::finish(bool result,const std::string& reason) {
     const auto ticket=job_->ticket;
-    const auto* actor=world_.find(job_->actor);
-    if(actor && actor->generation==job_->actor_generation)
-        world_.set_static_footprint(job_->actor,true);
-    job_.reset();diagnostic_=reason;
+    if(suspended_jobs_.empty()) {
+        const auto* actor=world_.find(job_->actor);
+        if(actor && actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,true);
+        job_.reset();
+    } else {
+        job_.reset();
+        job_=std::move(suspended_jobs_.back());
+        suspended_jobs_.pop_back();
+        const auto* actor=world_.find(job_->actor);
+        if(actor && actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,!job_->walking_started);
+    }
+    diagnostic_=reason;
     return vm_->complete(ticket,result);
+}
+void Routing::cancel_chain(const std::string& reason) {
+    if(job_) {
+        const auto* actor=world_.find(job_->actor);
+        if(actor&&actor->generation==job_->actor_generation)
+            world_.set_static_footprint(job_->actor,true);
+    }
+    for(const auto& parent:suspended_jobs_) {
+        const auto* actor=world_.find(parent.actor);
+        if(actor&&actor->generation==parent.actor_generation)
+            world_.set_static_footprint(parent.actor,true);
+    }
+    job_.reset();suspended_jobs_.clear();diagnostic_=reason;
 }
 bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovement&)>& moved) {
     if(executing_) throw std::logic_error("routing ticks must not reenter");
@@ -305,24 +359,32 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     if(!vm_ || !job_) return false;
     if(job_->external_frame_active) {
         if(vm_->run_generation()!=job_->run_generation) {
-            const auto* actor=world_.find(job_->actor);
-            if(actor && actor->generation==job_->actor_generation)
-                world_.set_static_footprint(job_->actor,true);
-            job_.reset();diagnostic_="route canceled by VM restart during external frame";return false;
+            cancel_chain("route canceled by VM restart during external frame");return false;
         }
         if(const auto returned=vm_->external_frame_return()) {
             const auto result=*returned;
             if(result.ticket!=job_->ticket || result.run_generation!=job_->run_generation ||
                result.code_owner!=job_->external_frame_owner ||
                !vm_->resume_external_frame(job_->ticket)) {
-                const auto* actor=world_.find(job_->actor);
-                if(actor && actor->generation==job_->actor_generation)
-                    world_.set_static_footprint(job_->actor,true);
-                job_.reset();diagnostic_="external route frame returned with mismatched ownership";return false;
+                cancel_chain("external route frame returned with mismatched ownership");return false;
             }
             job_->external_frame_active=false;
             job_->frame.state=RouteFrameState::room_portal;
             if(!result.result) return finish(false,"external route frame returned false; portal replanning unavailable");
+            const auto* actor=world_.find(job_->actor);
+            const auto* target=world_.find(job_->target);
+            if(!actor||!target||actor->generation!=job_->actor_generation||
+               target->generation!=job_->target_generation||!actor->position||!target->position||
+               !(*target->position==job_->target_position)||actor->attachment)
+                return finish(false,"portal frame changed or invalidated route participants");
+            if(!(*actor->position==job_->expected)) {
+                const auto goal=job_->path.back();
+                const auto replanned=find_route(grid_,{actor->position->x,actor->position->y},{goal},limits_);
+                if(replanned.status!=RouteStatus::found)
+                    return finish(false,"portal frame moved avatar but parent route could not be replanned");
+                job_->path=replanned.points;job_->next=1;job_->expected=*actor->position;
+                job_->expected_radian_direction=actor->radian_direction;
+            }
             // A portal BHAV resumes the suspended Route45 service only at this
             // scheduler boundary. Movement begins on a later tick.
             return true;
@@ -331,16 +393,10 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         if((vm_->status()==VmStatus::waiting && pending && pending->ticket!=job_->ticket) ||
            vm_->status()==VmStatus::running || vm_->status()==VmStatus::budget_exhausted)
             return true; // Child BHAV is still executing or waiting on its own service.
-        const auto* actor=world_.find(job_->actor);
-        if(actor && actor->generation==job_->actor_generation)
-            world_.set_static_footprint(job_->actor,true);
-        job_.reset();diagnostic_="external route frame ended without a matching return";return false;
+        cancel_chain("external route frame ended without a matching return");return false;
     }
     if(!vm_->pending() || vm_->status()!=VmStatus::waiting || vm_->pending()->ticket!=job_->ticket) {
-        const auto* actor=world_.find(job_->actor);
-        if(actor && actor->generation==job_->actor_generation)
-            world_.set_static_footprint(job_->actor,true);
-        job_.reset();diagnostic_="route canceled by VM restart";return false;
+        cancel_chain("route canceled by VM restart or ticket mismatch");return false;
     }
     const auto* actor=world_.find(job_->actor);const auto* target=world_.find(job_->target);
     if(!actor || !target || actor->generation!=job_->actor_generation || target->generation!=job_->target_generation ||

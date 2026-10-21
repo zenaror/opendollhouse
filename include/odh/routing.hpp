@@ -71,8 +71,11 @@ public:
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
     std::optional<RouteFrameContext> active_frame_context() const;
+    std::optional<float> incoming_direction(float caller_radian_direction) const noexcept;
+    bool consume_portal_turn() noexcept;
     const std::string& diagnostic() const {return diagnostic_;}
 private:
+    static constexpr std::size_t max_nested_jobs_=16;
     struct Job {
         std::uint64_t ticket,actor_generation,target_generation;
         std::int16_t actor,target;
@@ -90,6 +93,7 @@ private:
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool finish(bool result,const std::string& reason);
+    void cancel_chain(const std::string& reason);
     World& world_;
     RouteGrid& grid_;
     const SlotTable& globals_;
@@ -97,6 +101,9 @@ private:
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;
+    // Parent Route45 jobs remain suspended while a portal BHAV executes and
+    // may itself issue Route45. The stack is bounded by max_nested_jobs_ below.
+    std::vector<Job> suspended_jobs_;
     std::optional<std::uint64_t> last_tick_;
     std::string diagnostic_;
     bool executing_=false;
