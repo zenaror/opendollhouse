@@ -1,5 +1,17 @@
 # Continuidade atual
 
+## Score SLOT de alcance Door (2026-10-21)
+
+O adaptador puro `score_reference_slot_candidates` também cobre o perfil
+SLOT128 type3 índice3 de `Doors.iff`: v10, flags `0x54`, min/max/optimal
+`16/32/16`, facing -2, resolução16. O scorer implementa o termo de score
+`max(abs(optimal-min),abs(max-optimal))`, preserva o draw por candidato antes
+da rejeição pós-score e ordena estavelmente. O perfil de círculo mantém os
+resultados anteriores. `odh-slot-scoring-tests` passou com 66 checks. Ainda
+opera sobre candidatos e elegibilidade fornecidos pelo chamador; enumeração,
+colisões e RNG não estão ligados ao runtime Route45. Próxima etapa: integrar a
+malha de offsets Simitone e os gates de room/clearance no provider runtime.
+
 ## Door BHAV: GetDistanceTo e Route45 StackVariable (2026-10-21)
 
 Após o checkpoint 98ecb50, opcode11 GetDistanceTo foi implementado no perfil

@@ -154,11 +154,12 @@ O cancelamento durante movimento ainda conclui false, sem tentar outro destino.
 ### Score de referência com seed explícito — 2026-10-20
 
 `odh_slot_scoring` / `score_reference_slot_candidates` é um adaptador puro
-separado do controller. Aceita o perfil House07 v10 type-3 já descrito,
-standing=1/sitting=0/ground=0, sem snap, proximidade min=max=optimal positiva
-até 4.096. Também reconhece os bits RandomScoring (8192) e
+separado do controller. Aceita o perfil House07 v10 type-3 já descrito e o
+perfil Door 16–32 (`flags=0x54`, facing -2), ambos standing=1/sitting=0/ground=0,
+sem snap e com resolução16. O perfil de faixa exige proximidade exatamente
+min=16/max=32/optimal=16. Também reconhece os bits RandomScoring (8192) e
 FSOEqualProximityScore (1<<29), cobertos por fixtures sintéticas. Não modela
-perfis sitting/ground, ranges, offsets, on-point ou SnapToDirection.
+perfis sitting/ground, offsets, on-point ou SnapToDirection.
 
 O chamador entrega em ordem explícita somente registros que já passaram pelos
 gates de proximidade, sala e direção. Cada registro tem posição 1/16 tile,
@@ -172,8 +173,10 @@ Não converte automaticamente snapshots incertos em elegibilidade runtime.
 
 Cada registro normal consome `RandomState::next(1024)` antes da verificação,
 inclusive rejeitados. A fração é calculada como float32 e promovida a double.
-`maxScore = (floor(distance(objeto,ator)) + raio)/3 + 2`, com divisão inteira;
-normalmente soma esse valor à fração e subtrai
+Para o círculo, `maxScore = (floor(distance(objeto,ator)) + raio)/3 + 2`; para
+a faixa, soma-se primeiro `max(abs(optimal-min), abs(max-optimal))` a esse valor,
+conforme `VMSlotParser`. As divisões são inteiras. Normalmente soma esse valor
+à fração e subtrai
 `floor(distance(candidato,ator))/3.0`. As distâncias são euclidianas nas unidades
 1/16, sem divisão por 16 antes do cálculo. RandomScoring omite ambas as
 correções. FSOEqualProximityScore usa maxScore sem RNG e não soma o ajuste de
@@ -207,6 +210,15 @@ CTest `slot_scoring|random_state|routing`, 3/3 em cada build, com
 divisão inteira de maxScore, truncamento euclidiano 1/16, consumo em rejeições,
 empates, penalidade, seed zero explícito e entradas inválidas/over-budget sem
 alteração do seed. Não é validação de seleção em lote real ou hardware.
+
+Em 2026-10-21 o scorer passou a aceitar o SLOT128 type3 índice3 real de
+`Doors.iff`, cuja faixa raw é `[16,32,16]`. Testes extras cobrem maxScore da
+faixa, pontuações nos limites mínimo e máximo, penalidade, consumo de RNG em
+rejeição, ordenação e recusa de candidatos fora da faixa ou máscara. O teste
+focal agora registra 66 checks. Isso valida aritmética sobre entradas já
+filtradas; não integra enumeração, sala, colisão/ocupação ou seleção ao
+controller Route45. O runtime continua falhando fechado nesse SLOT até que
+esses gates sejam implementados.
 
 A máscara da malha é fornecida explicitamente e deve considerar clearance.
 O atalho sem movimento (`start == goal`) só é aceito quando a célula também

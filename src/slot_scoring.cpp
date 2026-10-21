@@ -27,28 +27,44 @@ ReferenceSlotScores score_reference_slot_candidates(
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>& inputs,
     RandomState& random) {
     const auto* slot = slot_of_type(table, 3, type3_index);
-    if (table.version != 10 || !slot || slot->offset_bits != std::array<std::uint32_t,3>{0,0,0} ||
-        slot->standing != 1 || slot->sitting != 0 || slot->ground != 0 ||
-        (slot->flags & ~(random_scoring | equal_proximity)) != 0x55 ||
-        slot->snap_target_slot != -1 || slot->max_size != 0 || slot->unknown_i10 != 0 ||
-        slot->gradient_bits != 0x3E400000 || slot->height != 0 || slot->facing != -2 ||
-        slot->resolution != 16 || !slot->proximity || (*slot->proximity)[0] <= 0 ||
-        (*slot->proximity)[0] > 4096 || (*slot->proximity)[0] != (*slot->proximity)[1] ||
-        (*slot->proximity)[0] != (*slot->proximity)[2])
-        throw std::invalid_argument("reference SLOT scoring requires the House07 standing circle profile");
+    const bool common=table.version == 10 && slot &&
+        slot->offset_bits == std::array<std::uint32_t,3>{0,0,0} && slot->standing == 1 &&
+        slot->sitting == 0 && slot->ground == 0 && slot->snap_target_slot == -1 &&
+        slot->max_size == 0 && slot->unknown_i10 == 0 && slot->gradient_bits == 0x3E400000 &&
+        slot->height == 0 && slot->facing == -2 && slot->resolution == 16 && slot->proximity &&
+        (*slot->proximity)[0] > 0 && (*slot->proximity)[1] >= (*slot->proximity)[0] &&
+        (*slot->proximity)[2] >= (*slot->proximity)[0] && (*slot->proximity)[0] <= 4096 &&
+        (*slot->proximity)[1] <= 4096;
+    const bool circle=common &&
+        (slot->flags & ~(random_scoring | equal_proximity)) == 0x55 &&
+        (*slot->proximity)[0] == (*slot->proximity)[1] &&
+        (*slot->proximity)[0] == (*slot->proximity)[2];
+    const bool door_range=common &&
+        (slot->flags & 0xFFU) == 0x54U &&
+        (slot->flags & ~(random_scoring | equal_proximity)) == 0x54U &&
+        *slot->proximity == std::array<std::int32_t,3>{16,32,16};
+    if (!circle && !door_range)
+        throw std::invalid_argument("reference SLOT scoring requires the House07 circle or Door 16-to-32 range profile");
     if (inputs.size() > 4096) throw std::length_error("reference SLOT scoring exceeds 4096 candidates");
     validate_position(object_position);
     validate_position(caller_position);
-    const auto proximity = (*slot->proximity)[0];
+    const auto min_proximity = (*slot->proximity)[0];
+    const auto max_proximity = (*slot->proximity)[1] == 0 ? min_proximity : (*slot->proximity)[1];
+    const auto desired_proximity = (*slot->proximity)[2] == 0 ? min_proximity : (*slot->proximity)[2];
     // Both divisions are intentionally different: maxScore uses integer /3,
     // while VerifyAndAddLocation subtracts integer distance divided by 3.0.
-    const double max_score = (distance(object_position, caller_position) + proximity) / 3 + 2;
+    const double max_score = std::max(std::abs(desired_proximity-min_proximity),
+        std::abs(max_proximity-desired_proximity)) +
+        (distance(object_position, caller_position) + max_proximity) / 3 + 2;
     std::vector<std::int32_t> caller_distances;
     caller_distances.reserve(inputs.size());
     for (const auto& input : inputs) {
         validate_position(input.goal.position);
-        if (!std::isfinite(input.slot_distance) || input.slot_distance != proximity ||
-            input.goal.entry_flags == 0 || (input.goal.entry_flags & ~0x55) != 0 ||
+        const bool in_range=std::isfinite(input.slot_distance) && (circle
+            ? input.slot_distance == min_proximity
+            : input.slot_distance >= min_proximity-0.5 && input.slot_distance <= max_proximity+0.5);
+        if (!in_range || input.goal.entry_flags == 0 ||
+            (input.goal.entry_flags & ~static_cast<std::uint8_t>(slot->flags)) != 0 ||
             input.goal.facing > 7 ||
             (input.verification != ReferenceSlotVerification::eligible &&
              input.verification != ReferenceSlotVerification::eligible_with_penalty &&
@@ -69,7 +85,7 @@ ReferenceSlotScores score_reference_slot_candidates(
             base = static_cast<float>(next_random.next(1024)) / 1024.0f;
             ++result.random_calls;
             if ((slot->flags & random_scoring) == 0)
-                base += max_score - std::abs(proximity - input.slot_distance);
+                base += max_score - std::abs(desired_proximity - input.slot_distance);
         }
         std::optional<double> score;
         if (input.verification != ReferenceSlotVerification::rejected_after_score) {

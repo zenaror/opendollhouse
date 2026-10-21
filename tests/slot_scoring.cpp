@@ -20,6 +20,11 @@ odh::SlotTable table(std::uint32_t flags = 0x55) {
 odh::ReferenceSlotScoreInput input(odh::RoutePoint p, Verification v = Verification::eligible) {
     return {{p,4,2},16,v};
 }
+odh::SlotTable door_range_table() {
+    auto result=table(0x54);
+    result.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
+    return result;
+}
 template<class F> void invalid_unchanged(odh::RandomState& random, F operation) {
     const auto before=random.seed();
     bool rejected=false;
@@ -82,6 +87,37 @@ void branches() {
     result=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},{},random);
     require(result.records.empty() && result.ranked_goals.empty() && result.random_calls==0,"empty prefiltered list valid without draw");
 }
+void door_range() {
+    odh::RandomState random(1), expected(1);
+    const auto draw0=static_cast<float>(expected.next(1024))/1024.0f;
+    expected.next(1024); // rejected after scoring still consumes the draw
+    const auto draw2=static_cast<float>(expected.next(1024))/1024.0f;
+    const std::vector<odh::ReferenceSlotScoreInput> inputs{
+        {{{116,100},4,2},16,Verification::eligible},
+        {{{100,116},16,2},16,Verification::rejected_after_score},
+        {{{132,100},4,2},32,Verification::eligible_with_penalty}
+    };
+    const auto result=odh::score_reference_slot_candidates(door_range_table(),0,
+        {100,100},{0,100},inputs,random);
+    // maxScore = max(16-16,32-16) + (100+32)/3 + 2 = 62.
+    require(result.random_calls==3 && random.seed()==expected.seed(),
+        "Door ranged SLOT preserves Simitone enumeration RNG consumption");
+    require(result.records[0].base_score==draw0+62 &&
+        *result.records[0].final_score==draw0+62-116/3.0,
+        "Door range score rewards the optimal 16-unit proximity and subtracts caller distance");
+    require(!result.records[1].final_score && result.records[1].seed_after!=result.records[1].seed_before,
+        "Door range rejection after scoring retains consumed RNG but not a goal");
+    require(*result.records[2].final_score==(draw2+62-16-132/3.0)/100000,
+        "Door range maximum proximity and known occupancy penalty match the reference formula");
+    require(result.ranked_input_indices==std::vector<std::size_t>{0,2},
+        "Door range returns accepted candidates in descending score order");
+    auto bad=inputs;bad[0].slot_distance=33;
+    invalid_unchanged(random,[&]{(void)odh::score_reference_slot_candidates(door_range_table(),0,
+        {100,100},{0,100},bad,random);});
+    bad=inputs;bad[0].goal.entry_flags=0x02;
+    invalid_unchanged(random,[&]{(void)odh::score_reference_slot_candidates(door_range_table(),0,
+        {100,100},{0,100},bad,random);});
+}
 void invalid_inputs() {
     odh::RandomState random(42);
     auto invoke=[&](const odh::SlotTable& slots,const std::vector<odh::ReferenceSlotScoreInput>& inputs,
@@ -116,6 +152,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

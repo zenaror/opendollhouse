@@ -27,9 +27,10 @@ struct ReferenceSlotScores {
     std::uint64_t seed_before, seed_after;
     std::size_t random_calls;
 };
-// Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle
-// profile, optionally with RandomScoring / FSOEqualProximityScore. Inputs must
-// already have passed proximity, room and direction gates, in reference order.
+// Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle and
+// Door 16-to-32 ranged profiles, optionally with RandomScoring /
+// FSOEqualProximityScore. Inputs must already have passed proximity, room and
+// direction gates, in reference enumeration order.
 // Does not enumerate, resolve facing, verify eligibility or establish TS1
 // executable equivalence. Rejects still consume RNG; malformed input leaves
 // the explicit RNG unchanged. No runtime/default seed or Main wiring implied.
