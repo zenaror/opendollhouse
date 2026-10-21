@@ -220,6 +220,25 @@ sentar/levantar continuam em aberto.
 Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
 levantar continuam em aberto.
 
+## Ação Go Here e destino temporário
+
+`Destination.iff` das instalações The Sims e Legacy Collection declara o
+marcador GUID `0x7C4`; sua TTAB v9 inclui Go Here (ação BHAV4096, teste
+BHAV4109). O começo da ação chama a rotina global272 e usa GetDistanceTo
+(opcode11) com o destino no StackObject e o caller lido por MyObject[11]. O
+adapter aceita agora esse formato exato de operandos, além do perfil anterior;
+`distance_to` testa que o resultado compara posições distintas corretamente.
+As duas instalações têm a mesma tabela/rotina Go Here nessa leitura estrutural.
+
+Isto ainda não liga o clique no chão à ação. Uma sonda de BHAV4096 com World
+sintético passou por opcode11 após receber Flags8=256, mas depois encontrou
+ObjectData17 do caller ausente. Portanto, criar um World object vazio não é
+suficiente; o próximo passo precisa construir o marcador com os bancos iniciais
+que Simitone prepara e mantê-lo vivo até o retorno da fila. A prova de opcode27
+em House07 é separada: `tests/house07_route45_integration.py --goto-relative`
+moveu o avatar em 48 passos até o alvo com o grid dinâmico da casa, mas usou
+Main sintético e um alvo já salvo; não comprova ainda o caminho natural Go Here.
+
 ## Integração Sit/Stand em House07
 
 `odh-person --headless-main --headless-interaction ID TICK` agenda a seleção
