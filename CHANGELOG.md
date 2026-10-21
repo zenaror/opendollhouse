@@ -23,6 +23,13 @@ validação indicados por versão.
   `odh-person` já recompõe o snapshot e atualiza a grade antes de cada tick
   ativo quando muda a revisão espacial; isso não valida clearance completo.
 
+- A integração Route45/Main de House07 foi executada com o Main sintético em
+  arquivo temporário: avatar percorreu 32 passos; ao mover o objeto 106 para a
+  segunda célula da rota no tick 2, o host refez o snapshot e encerrou com
+  `returned_false` após apenas um passo, antes de entrar na célula ocupada.
+  Isso valida o refresh/fail-closed no host, não interação natural ou travessia
+  de portais.
+
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
   limite da sala e preservando o motivo de snapshots incompletos. Há uma
