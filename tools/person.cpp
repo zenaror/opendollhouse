@@ -932,7 +932,7 @@ int main(int argc,char** argv) {
     std::unique_ptr<odh::Routing> runtime_routing;
     odh::VmPrimitive routing_handler=[&](const auto&,const auto&,const auto&,const auto&){
         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-            "Route45 runtime unavailable: "+route_runtime_reason};
+            "routing runtime unavailable: "+route_runtime_reason};
     };
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
@@ -950,7 +950,7 @@ int main(int argc,char** argv) {
         if(i.opcode==23)return sound_handler(f,i,t,d);
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
         if(i.opcode==11)return distance_to_handler(f,i,t,d);
-        if(i.opcode==45)return routing_handler(f,i,t,d);
+        if(i.opcode==27||i.opcode==45)return routing_handler(f,i,t,d);
         if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
@@ -2248,7 +2248,8 @@ struct PlacementCandidateProbe {
     std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
         <<",\"reason\":"<<json_bytes(route_runtime_reason)
         <<",\"goal_validation_diagnostic\":"<<json_bytes(runtime_routing&&
-            runtime_routing->diagnostic().rfind("host goal validator rejected",0)==0?
+            (runtime_routing->diagnostic().rfind("host goal validator rejected",0)==0||
+             runtime_routing->diagnostic().rfind("GotoRelativePosition target rejected by host",0)==0)?
                 route_goal_validation_diagnostic:std::string{})
         <<",\"stackobject_slot_resolutions\":"<<route_stack_slot_resolutions
         <<",\"stackobject_slot_loads\":"<<route_stack_slot_loads

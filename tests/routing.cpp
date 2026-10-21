@@ -266,7 +266,18 @@ int main() {
          routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p){return grid.contains(p)&&grid.walkable(p);});
          routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(4)==odh::VmStatus::returned_false&&!routing.active()&&world.find(1)->position->x==4,
-                 "blocked exact StackObject point fails without starting or bypassing the route");}
+                 "blocked exact StackObject point fails without starting or bypassing the route");
+         require(routing.diagnostic()=="GotoRelativePosition target rejected by host room/clearance validator",
+                 "blocked GotoRelativePosition reports the host room/clearance rejection distinctly");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{40,12,1,0});
+         routing.set_route_goal_validator([](const odh::VmFrame&,odh::RoutePoint){return true;});
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::returned_false&&
+                 routing.diagnostic()=="GotoRelativePosition target lies outside the active route grid",
+                 "GotoRelativePosition reports a target outside the active route grid");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          auto operands=std::array<std::uint8_t,8>{0,0,254,0,0,0,0,0};
          odh::Vm vm{goto_relative(operands),world.vm_memory(),{},routing.primitive()};

@@ -315,8 +315,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(!goal_validator_)
             return unsupported("GotoRelativePosition exact-point goal requires a host bounds/room/clearance validator");
         const RoutePoint goal{target->position->x,target->position->y};
-        if(!grid_.contains(goal) || !allow_goal(goal)) {
-            diagnostic_="GotoRelativePosition exact StackObject point rejected by host validator";
+        if(!grid_.contains(goal)) {
+            diagnostic_="GotoRelativePosition target lies outside the active route grid";
+            return {PrimitiveDisposition::goto_false,{}};
+        }
+        if(!allow_goal(goal)) {
+            diagnostic_="GotoRelativePosition target rejected by host room/clearance validator";
             return {PrimitiveDisposition::goto_false,{}};
         }
         if(start==goal) {

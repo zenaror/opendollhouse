@@ -947,6 +947,30 @@ passou novamente com BHAV/SLOTs reais de `Doors.iff:4113`: atributo1=0
 seleciona o ramo pc2 e termina em `[64,80,1,3]` após 53 ticks; atributo1=1
 seleciona pc1 e termina em `[64,48,1,1]` após 48 ticks. Isso valida o roteamento
 isolado de 4113 no mundo construído, não conecta a frame Portal15 nem prova uma
-travessia entre salas. Próximo passo: substituir o ponto/clearance sintético do
-probe por uma Door restaurada e sua resolução EntryPoint5 antes de mudar a
-semântica de opcode27.
+travessia entre salas. A investigação posterior com Door25 restaurada está
+registrada na seção seguinte; não altere a semântica de opcode27 com base no
+bloqueio da grade sintética.
+
+## GotoRelativePosition sobre Door restaurada de House07 — 2026-10-21
+
+`odh-person` não encaminhava opcode27 ao `Routing`, embora o controlador já
+implementasse esse opcode; o Main de diagnóstico falhava como `unsupported
+primitive 27`. O host agora encaminha 27 e 45 ao mesmo controlador, com teste
+CLI sintético cobrindo a dispatch boundary. O script
+`tests/house07_route45_integration.py --binary ./odh-person --game-root
+'../referencias/The Sims' --stack-object-id 25 --goto-relative` injeta somente
+um Main de diagnóstico; o World, avatar e Door25 vêm do House07 restaurado.
+Depois da correção, o probe chega a `Routing` e retorna false sem movimento:
+`candidate room 1 differs from prepared route room 3`. Portanto o alvo real da
+Door25 está na sala1 enquanto a malha ativa do avatar está na sala3. Isso
+confirma o limite de roteamento local, não bloqueio de clearance/EntryPoint5.
+O caso mostra que mover a validação de sala ou aceitar a meta fora da malha não
+resolve a travessia; falta planejar o grafo de portais e executar EntryPoint15
+do próximo portal. A mesma ferramenta mantém `--literal-slot` e seu percurso
+Route45 anterior.
+
+`Routing` também separa diagnóstico de alvo fora da grade e rejeição pelo
+validador de sala/clearance; os testes unitários cobrem ambos. Build de
+`odh-person`/`odh-routing-tests`, CTest focal `routing` e `person_cli` passaram;
+o probe House07 com opcode27 agora termina sem falha de VM e reporta o mismatch
+de salas. Nenhuma travessia de portal foi executada.

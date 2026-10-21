@@ -19,10 +19,13 @@ def parse_args():
     parser.add_argument("--ticks", type=int, default=214)
     parser.add_argument("--literal-slot", action="store_true",
                         help="route through the selected live StackObject's OBJD SLOT")
+    parser.add_argument("--goto-relative", action="store_true",
+                        help="diagnose opcode27 against the restored StackObject and live route grid")
     return parser.parse_args()
 
 
-def patch_root_with_route45(source, destination, routine_id, literal_slot=False):
+def patch_root_with_route45(source, destination, routine_id, literal_slot=False,
+                            goto_relative=False):
     data = source.read_bytes()
     if len(data) < 64:
         raise ValueError("avatar IFF is shorter than its header")
@@ -39,11 +42,13 @@ def patch_root_with_route45(source, destination, routine_id, literal_slot=False)
 
     # One synthetic Main instruction calls Route45 for the selected live
     # StackObject. The original commercial IFF remains untouched.
-    bhav = struct.pack(
-        "<HH8sHBB8s", 0x8002, 1, bytes([0, 4, 0, 0, 0, 0, 0, 0]),
-        45, 254, 255, bytes([1, 0, 1, 0, 1, 0, 0, 0] if literal_slot else
-                            [1, 0, 2, 0, 0, 0, 0, 0]),
-    )
+    opcode = 27 if goto_relative else 45
+    operands = ([0, 0, 254, 0, 0, 0, 2, 0] if goto_relative else
+                [1, 0, 1, 0, 1, 0, 0, 0] if literal_slot else
+                [1, 0, 2, 0, 0, 0, 0, 0])
+    bhav = struct.pack("<HH8sHBB8s", 0x8002, 1,
+                       bytes([0, 4, 0, 0, 0, 0, 0, 0]),
+                       opcode, 254, 255, bytes(operands))
     replaced = 0
     output = bytearray(data[:64])
     for chunk in chunks:
@@ -77,6 +82,8 @@ def main():
         raise SystemExit("avatar and StackObject IDs must be in 1..32767")
     if not 1 <= args.ticks <= 4096:
         raise SystemExit("ticks must be in 1..4096")
+    if args.literal_slot and args.goto_relative:
+        raise SystemExit("--literal-slot and --goto-relative are mutually exclusive")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -121,8 +128,23 @@ def main():
     root_id = baseline["avatar"]["main"]
     with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
-        patch_root_with_route45(original_avatar, probe_avatar, root_id, args.literal_slot)
+        patch_root_with_route45(original_avatar, probe_avatar, root_id,
+                                args.literal_slot, args.goto_relative)
         exit_code, report = run(probe_avatar, args.stack_object_id)
+        if args.goto_relative:
+            route = report["route_runtime"]
+            print(json.dumps({
+                "main_routine": root_id,
+                "probe_exit": exit_code,
+                "vm_status": report["status"],
+                "vm_diagnostic": report["diagnostic"],
+                "ticks": report["ticks"],
+                "trace_tail": report["trace"][-12:],
+                "route_runtime": route,
+                "route_scope": "GotoRelativePosition OnTopOf/SameDirection/NoFailureTrees",
+                "evidence": "restored House07 World and live room grid; injected Main is synthetic",
+            }, indent=2))
+            return
         movement_positions = report["route_runtime"]["movement_positions"]
         if len(movement_positions) < 2:
             raise SystemExit("successful House07 route produced fewer than two movement samples")
