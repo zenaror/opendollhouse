@@ -58,6 +58,11 @@ struct SavedObjectSelection {
     std::uint64_t generation;
     std::uint16_t tree_table_id;
 };
+struct SavedGroundSelection {
+    std::uint32_t x,y;
+    std::uint8_t level;
+    std::uint16_t room;
+};
 // Borrow the live saved World and immutable definitions; both must outlive this
 // host renderer. Architecture owns its bounded decoded snapshot. Rendering does
 // not restore/clone a World, execute saved threads or change simulation state.
@@ -87,6 +92,10 @@ public:
     // Last presented pixel ownership, revalidated against live generation,
     // definition GUID and visibility; out-of-bounds/scenery/stale IDs select none.
     std::optional<SavedObjectSelection> pick(const SavedLotFrame&,std::int32_t x,std::int32_t y) const;
+    // Returns the visible ground cell only if its floor/terrain won this pixel
+    // and a prepared room map can resolve the cell center.
+    std::optional<SavedGroundSelection> pick_ground(const SavedLotFrame&,
+                                                     std::int32_t x,std::int32_t y) const;
     const SavedLotView& view() const{return view_;}
 private:
     SavedArchitectureResource architecture_;

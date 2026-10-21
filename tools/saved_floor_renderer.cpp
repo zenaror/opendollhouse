@@ -1,6 +1,7 @@
 #include "saved_floor_renderer.hpp"
 #include "architecture_material_resources.hpp"
 #include "odh/terrain.hpp"
+#include "odh/ground_owner.hpp"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -56,7 +57,7 @@ struct SavedFloorRenderer::Impl {
 SavedFloorRenderer::SavedFloorRenderer(const std::string& path,const odh::ArchitectureResourceCatalog& catalog)
     :impl_(std::make_unique<Impl>(path,catalog)){}
 SavedFloorRenderer::~SavedFloorRenderer()=default;
-SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,const odh::WorldProjection& camera,bool terrain,std::int32_t base_alt,std::uint8_t max_level){
+SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,const odh::WorldProjection& camera,bool terrain,std::int32_t base_alt,std::uint8_t max_level,bool record_owners){
     if(max_level<1||max_level>2)throw odh::FormatError("floor selected level outside profile");
     odh::project_tile(camera,camera.center_tile);
     if(a.width<2||a.height<2||a.width>64||a.height>64)throw odh::FormatError("floor architecture extent unsupported");
@@ -83,6 +84,11 @@ SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,cons
             throw odh::FormatError("floor geometry texture validation work exceeds budget");
         result.geometry_texture_pixel_visits+=textures[index].pixels.size();
         auto geometry=odh::floor_triangles(camera,static_cast<float>(x),static_cast<float>(y),level,textures[index],index,half,true,altitude);
+        if(record_owners){
+            const auto owner=odh::ground_owner_id(x,y,level);
+            if(!owner)throw odh::FormatError("floor owner tile outside supported lot");
+            for(auto& triangle:geometry)triangle.owner_id=owner;
+        }
         if(geometry.size()>odh::RasterLimits{}.triangles-triangles.size())throw odh::FormatError("floor triangle budget exceeded");
         triangles.insert(triangles.end(),geometry.begin(),geometry.end());result.draws.push_back({x,y,level,pattern,half,altitude});
     };
@@ -98,5 +104,6 @@ SavedFloorResult SavedFloorRenderer::render(const odh::SavedArchitecture& a,cons
         }else draw(x,y,static_cast<std::uint8_t>(l+1),pattern,odh::FloorHalf::whole);
     }
     result.triangles=triangles.size();for(const auto& texture:textures)result.texture_bytes+=texture.pixels.size()*4;
-    result.image=odh::rasterize(camera.width,camera.height,triangles,textures);return result;
+    odh::RasterOptions options;options.record_owner_ids=record_owners;
+    result.image=odh::rasterize(camera.width,camera.height,triangles,textures,options);return result;
 }

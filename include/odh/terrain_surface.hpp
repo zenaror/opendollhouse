@@ -15,5 +15,6 @@ struct TerrainSurface {
 // Theme is explicit; sand mixes light grass with dark sand as in the loader.
 // No blades/noise, room/day lighting, gamma, water/pools or original proof.
 TerrainSurface terrain_surface(const SavedArchitecture&,const WorldProjection&,
-                               TerrainTheme,std::int32_t base_alt=0);
+                               TerrainTheme,std::int32_t base_alt=0,
+                               bool record_owners=false);
 }

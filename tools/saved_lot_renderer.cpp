@@ -1,6 +1,7 @@
 #include "saved_lot_renderer.hpp"
 #include "saved_wall_appearance.hpp"
 #include "odh/compositor.hpp"
+#include "odh/ground_owner.hpp"
 #include <algorithm>
 
 namespace {
@@ -138,14 +139,14 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     auto image=odh::rasterize(camera.width,camera.height,{},{});
     SavedLotFrame result;
     if(view_.terrain_theme){
-        auto surface=odh::terrain_surface(render_architecture(),camera,*view_.terrain_theme);
+        auto surface=odh::terrain_surface(render_architecture(),camera,*view_.terrain_theme,0,record_picks);
         result.terrain_triangles=surface.triangles.size();
         result.terrain_reserved_bytes=surface.triangles.capacity()*sizeof(odh::RasterTriangle);
-        odh::RasterOptions options;options.lighting=true;options.directional_up_light=true;options.vertex_colors=true;
+        odh::RasterOptions options;options.lighting=true;options.directional_up_light=true;options.vertex_colors=true;options.record_owner_ids=record_picks;
         const odh::BitmapImage white{1,1,32,true,{{255,255,255,255}},0};
         image=odh::rasterize(camera.width,camera.height,surface.triangles,{white},options);
     }
-    auto floor=floors_.render(render_architecture(),camera,true,0,view_.level);
+    auto floor=floors_.render(render_architecture(),camera,true,0,view_.level,record_picks);
     result.floor_draws=floor.draws.size();result.floor_triangles=floor.triangles;
     result.floor_texture_bytes=floor.texture_bytes;
     image=odh::merge_raster(image,floor.image);
@@ -230,6 +231,26 @@ std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& 
     if(!hidden||*hidden)return {};
     return SavedObjectSelection{id,entity->definition->guid,entity->generation,
                                 definition->definition.tree_table_id};
+}
+
+std::optional<SavedGroundSelection> SavedLotRenderer::pick_ground(
+    const SavedLotFrame& frame,std::int32_t x,std::int32_t y) const {
+    const auto count=std::uint64_t{frame.pick_width}*frame.pick_height;
+    if(!frame.pick_width||!frame.pick_height||frame.pick_width>2048||frame.pick_height>2048||
+       count>1048576||frame.image.width!=frame.pick_width||frame.image.height!=frame.pick_height||
+       count!=frame.image.owner_ids.size())
+        throw odh::FormatError("live saved ground pick buffer invalid");
+    if(x<0||y<0||static_cast<std::uint32_t>(x)>=frame.pick_width||
+       static_cast<std::uint32_t>(y)>=frame.pick_height)return {};
+    const auto token=frame.image.owner_ids[std::size_t(y)*frame.pick_width+static_cast<std::uint32_t>(x)];
+    const auto cell=odh::decode_ground_owner(token);
+    if(!cell||cell->x+1>=render_architecture().width||
+       cell->y+1>=render_architecture().height||cell->level>view_.level||!runtime_rooms_)return {};
+    const odh::EntityPosition center{static_cast<std::int16_t>(cell->x*16+8),
+        static_cast<std::int16_t>(cell->y*16+8),cell->level,0};
+    const auto room=runtime_room_at(center);
+    if(!room)return {};
+    return SavedGroundSelection{cell->x,cell->y,cell->level,*room};
 }
 
 std::optional<std::uint16_t> SavedLotRenderer::runtime_room_at(

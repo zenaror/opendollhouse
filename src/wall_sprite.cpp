@@ -52,7 +52,8 @@ std::size_t sample(std::uint64_t x, std::uint64_t y, std::uint32_t w,
 CompositeFrame composite_wall_sprites(const RasterFrame& base,
     const std::vector<WallSpriteLayer>& layers, WallSpriteLimits limits) {
     const auto count = extent(base.width,base.height,limits);
-    if(count > limits.pixels || count != base.pixels.size() || count != base.depth.size())
+    if(count > limits.pixels || count != base.pixels.size() || count != base.depth.size() ||
+       (!base.owner_ids.empty()&&count!=base.owner_ids.size()))
         throw FormatError("wall sprite base arrays or budget invalid");
     for(const auto& p : base.pixels) if(p[3] != 255)
         throw FormatError("wall sprite base must be opaque");
@@ -96,6 +97,7 @@ CompositeFrame composite_wall_sprites(const RasterFrame& base,
             color[3] = 255;
             result.image.pixels[target] = color;
             result.image.depth[target] = z;
+            if(!result.image.owner_ids.empty())result.image.owner_ids[target]=0;
             ++result.shaded_samples;
         }
     }

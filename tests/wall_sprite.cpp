@@ -38,6 +38,11 @@ int main() { try {
     require(r.image.pixels[0]==red && r.image.depth[0]==0 && r.tested_samples==1 &&
             r.shaded_samples==1 && r.transparent_samples==0 && r.occluded_samples==0,
             "opaque wall and accounting");
+    auto ground=b;ground.owner_ids={77};
+    require(odh::composite_wall_sprites(ground,{l}).image.owner_ids==
+            std::vector<std::uint16_t>{0},"visible wall invalidates ground identity");
+    auto malformed_base=ground;malformed_base.owner_ids.clear();malformed_base.owner_ids={77,78};
+    rejects([&]{odh::composite_wall_sprites(malformed_base,{l});});
     require(r.image.tested_samples==19 && r.image.shaded_samples==7,"base counters retained");
     for(auto z : {0,51,102,153,204,255}) {
         d.pixels[0]=static_cast<std::uint8_t>(z); l.back_depth=2; l.front_depth_delta=4;

@@ -1,4 +1,5 @@
 #include "odh/terrain_surface.hpp"
+#include "odh/ground_owner.hpp"
 #include <cmath>
 namespace odh {
 namespace {
@@ -27,7 +28,7 @@ std::array<float,3> normal(const SavedArchitecture& a,std::uint32_t x,std::uint3
     return sum;
 }
 }
-TerrainSurface terrain_surface(const SavedArchitecture& a,const WorldProjection& camera,TerrainTheme theme,std::int32_t base_alt){
+TerrainSurface terrain_surface(const SavedArchitecture& a,const WorldProjection& camera,TerrainTheme theme,std::int32_t base_alt,bool record_owners){
     project_tile(camera,camera.center_tile);
     const unsigned type=static_cast<unsigned>(theme);
     if(type>=8||a.width<2||a.width>64||a.height!=a.width)throw FormatError("terrain surface theme/extent outside profile");
@@ -51,7 +52,9 @@ TerrainSurface terrain_surface(const SavedArchitecture& a,const WorldProjection&
         const std::array<std::array<std::uint32_t,2>,4> corners{{{x,y},{x+1,y},{x+1,y+1},{x,y+1}}};
         for(unsigned c=0;c<4;++c){const auto cx=corners[c][0],cy=corners[c][1];
             vertices[c]={project_tile(camera,{static_cast<float>(cx),static_cast<float>(cy),terrain_corner_altitude(a,cx,cy,base_alt)}),{0,0},normal(a,cx,cy),color(a,cx,cy,type)};}
-        auto tri=[&](unsigned i,unsigned j,unsigned k){out.triangles.push_back({{vertices[i],vertices[j],vertices[k]},0});};
+        const auto owner=record_owners?ground_owner_id(x,y,1):std::uint16_t{0};
+        if(record_owners&&!owner)throw FormatError("terrain owner tile outside supported lot");
+        auto tri=[&](unsigned i,unsigned j,unsigned k){out.triangles.push_back({{vertices[i],vertices[j],vertices[k]},0,owner});};
         if(!diag){tri(0,1,2);tri(2,3,0);++out.whole_tiles;}
         else if(diag==16){if(draw[0]){tri(1,2,3);++out.half_tiles;}if(draw[1]){tri(0,1,3);++out.half_tiles;}}
         else {if(draw[0]){tri(0,1,2);++out.half_tiles;}if(draw[1]){tri(2,3,0);++out.half_tiles;}}
