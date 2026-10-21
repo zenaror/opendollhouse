@@ -253,6 +253,33 @@ JSON Debug e ASan/UBSan idênticos, stderr vazio, saída3 esperada. Reports
 ignorados `reports/chair-route-probe.json` e `reports/chair-route-probe-sanitize.json`.
 Nenhuma execução do Sims.exe.bak, janela, animação ou teste de hardware.
 
+## Route45 com SLOT Literal do StackObject — 2026-10-21
+
+`Routing` agora aceita os escopos Global (2) e Literal do StackObject (1).
+Para escopo 1, exige um provider de host que devolva a tabela SLOT do objeto em
+`VmFrame::context.stack_object`; ausência, ambiguidade e falha de carregamento
+recusam o pedido, sem fallback para SLOT100. O host `odh-person` resolve o
+GUID pela definição única do objeto, valida OBJD/GUID/MasterID e lê somente o
+SLOT indicado pelo OBJD. O cache de tabelas carregadas é limitado a 256
+entradas. No Route45, flags de operandos aceitam somente `NoFailureTrees`
+(bit 0), com os bytes finais zerados. Essa aceitação ainda não demonstra toda
+a semântica de falhas/árvores de falha do jogo.
+
+Leitura estática do recurso comercial externo `Objects.far` / `Doors.iff`:
+BHAV4113 compara a condição 4115 e escolhe Route45 Data 0 ou 1; ambos usam
+Scope Literal (1) e flag `NoFailureTrees` (1). O OBJD3114 (GUID985) vincula
+SLOT128; type-3 índices 0/1 têm flags 2049/2064 e facing -3, fora do perfil
+atual (flags 0x55, facing -2), então o pedido ainda falha fechado como
+unsupported após resolver a tabela correta. A integração House07 Sit/Stand
+executou com `stackobject_slot_resolutions=0`, portanto não exercitou esse
+caminho. Os 129 checks de `odh-routing-tests` incluem seleção do SLOT do
+StackObject com tabela global deliberadamente inválida, percurso em mundo
+construído e falha fechada sem provider. Build de
+`odh-person` e CTest 159/159 passaram; `linux_window_backend` foi pulado sem
+display. Ainda não foi demonstrado o carregamento de uma instância Door por
+esse caminho em uma sessão viva. Perfil estrito de SLOT, chamada Portal15,
+mudança de sala e semântica do executável original seguem pendentes.
+
 Próximas etapas: decodificar/resolver SLOT privado da cadeira para snap46,
 ligar animação44, sprites/paletas e composição Linux. Ampliar e comparar a
 política de roteamento, clearance e tempo contra o original, sem promover

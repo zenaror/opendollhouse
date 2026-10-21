@@ -167,8 +167,8 @@ odh::SlotTable slot() {
     auto other=r;other.flags=0x8055;other.proximity=std::array<std::int32_t,3>{16,48,16};
     return {0,10,{other,r},0};
 }
-odh::RoutineSet routines() {
-    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{1,0,2,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+odh::RoutineSet routines(std::uint8_t scope=2,std::uint8_t flags=0) {
+    return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{1,0,scope,0,flags,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
 }
 struct Fixture {
     odh::World world;odh::RouteGrid grid{64,32};odh::SlotTable slots=slot();
@@ -189,6 +189,32 @@ int main() {
         reference_slot_circle_tests();
         pre_ranked_goal_tests();
         route_frame_context_tests();
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
+         auto object_slots=slot();bool provider_seen=false;
+         odh::PreRankedSlotGoalProvider goals=[&](const auto& table,std::size_t index,const auto&,const auto&) {
+             provider_seen=&table==&object_slots&&index==1;
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7}};
+         };
+         odh::Routing routing{world,grid,globals,goals};
+         routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame) -> const odh::SlotTable* {
+             return frame.context.stack_object==2?&object_slots:nullptr;
+         });
+         odh::Vm vm{routines(1,1),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&provider_seen&&routing.active(),
+                 "Route45 Literal scope resolves and ranks the StackObject's local SLOT despite invalid globals");
+         for(std::uint64_t tick=1;tick<=64&&routing.active();++tick) routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->x==44,
+                 "StackObject Literal Route45 completes using its selected local SLOT");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         odh::Vm vm{routines(1,1),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::fault&&!routing.active()&&world.find(1)->position->x==4,
+                 "StackObject Literal Route45 fails closed without an exact SLOT provider");}
         {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
          odh::Routing routing{world,grid,slots};auto code=routines();
          odh::RoutineSet portal_code{{odh::routine_key(4097),odh::Bhav{0x8002,

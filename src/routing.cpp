@@ -240,13 +240,24 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     diagnostic_.clear();
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
-    if(scope!=2 || i.operands[4]!=0 || i.operands[5] || i.operands[6] || i.operands[7])
-        return unsupported("routing operand profile requires global scope and zero flags/tail");
-    const auto* slot=slot_of_type(globals_,3,data);
+    if(scope!=1&&scope!=2)
+        return unsupported("routing operand scope requires StackObject Literal or Global");
+    if((i.operands[4]&0xFEU)!=0 || i.operands[5] || i.operands[6] || i.operands[7])
+        return unsupported("routing operand flags/tail outside NoFailureTrees profile");
+    const SlotTable* selected_slots=&globals_;
+    if(scope==1) {
+        if(!stack_object_slots_)
+            return unsupported("StackObject Literal SLOT table provider unavailable");
+        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        selected_slots=stack_object_slots_(frame);
+        if(!selected_slots)
+            return unsupported("StackObject Literal SLOT table missing or ambiguous");
+    }
+    const auto* slot=slot_of_type(*selected_slots,3,data);
     if(!slot) return {PrimitiveDisposition::goto_false,{}};
     // Explicit first profile: circle in the same floor with zero offset. Other
     // SLOT rules must be implemented, not approximated as successful routing.
-    if(globals_.version!=10 || slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
+    if(selected_slots->version!=10 || slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0} ||
        slot->flags!=0x55 || slot->standing!=1 || slot->sitting!=0 || slot->ground!=0 ||
        slot->snap_target_slot!=-1 || !slot->proximity || (*slot->proximity)[0]<=0 ||
        (*slot->proximity)[0]>4096 || (*slot->proximity)[0]!=(*slot->proximity)[1] ||
@@ -270,7 +281,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto actor_radian_direction=actor->radian_direction;
         const auto candidates=[&] {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
-            return ranked_goals_(globals_,data,actor_position,target_position);
+            return ranked_goals_(*selected_slots,data,actor_position,target_position);
         }();
         actor=world_.find(actor_id);target=world_.find(target_id);
         if(!actor || !target || actor->generation!=actor_generation || target->generation!=target_generation ||
@@ -291,7 +302,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         path=std::move(result.path);
     }else {
         std::vector<RoutePoint> goals;
-        for(const auto& candidate:enumerate_reference_slot_circle_candidates(globals_,data,
+        for(const auto& candidate:enumerate_reference_slot_circle_candidates(*selected_slots,data,
                 {target->position->x,target->position->y},target->position->direction))
             if(candidate.entry_flags!=0) goals.push_back(candidate.position);
         if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}

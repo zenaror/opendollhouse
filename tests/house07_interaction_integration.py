@@ -86,6 +86,7 @@ def main():
         "main_status": report["status"],
         "main_diagnostic": report["diagnostic"],
         "ticks": report["ticks"],
+        "route_runtime": report["route_runtime"],
         "interaction": interaction,
         "stand": stand,
         "completion": report["completion"],

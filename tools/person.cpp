@@ -861,6 +861,53 @@ int main(int argc,char** argv) {
     std::optional<std::uint64_t> route_runtime_spatial_revision;
     std::optional<odh::EntityPosition> route_runtime_start_position;
     std::optional<odh::WorldRoomRouteGrid> runtime_route_grid;
+    std::size_t route_stack_slot_resolutions=0,route_stack_slot_loads=0;
+    std::map<std::pair<std::uint32_t,std::uint16_t>,std::unique_ptr<odh::SlotTable>> route_stack_slot_cache;
+    const auto route_stack_slot_table=[&](const odh::VmFrame& frame)->const odh::SlotTable* {
+        ++route_stack_slot_resolutions;
+        const auto object_id=frame.context.stack_object;
+        if(object_id<=0||object_id>32767||!definition_index)return nullptr;
+        const auto* entity=world.find(static_cast<std::int16_t>(object_id));
+        if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition)return nullptr;
+        const auto guid=entity->definition->guid;
+        const auto* candidate=definition_index->unique(guid);
+        if(!candidate)return nullptr;
+        std::optional<odh::ObjdBinding> binding;
+        try {
+            const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+            odh::Limits limits;limits.iff_chunks=4096;
+            with_resource(resource,[&](const auto& view){
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id) {
+                        if(binding)throw odh::FormatError("ambiguous Route45 StackObject OBJD");
+                        binding=odh::read_objd_binding(chunk.payload);
+                    }
+                },limits);
+            });
+            if(!binding||binding->guid!=guid||binding->master_id!=0||binding->slot_table==0)return nullptr;
+            const auto key=std::make_pair(guid,binding->slot_table);
+            const auto cached=route_stack_slot_cache.find(key);
+            if(cached!=route_stack_slot_cache.end())return cached->second.get();
+            std::optional<odh::SlotTable> slots;
+            with_resource(resource,[&](const auto& view){
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="SLOT"&&chunk.id==binding->slot_table) {
+                        if(slots)throw odh::FormatError("ambiguous Route45 StackObject SLOT");
+                        slots=odh::read_slot(chunk.payload);
+                    }
+                },limits);
+            });
+            if(!slots||route_stack_slot_cache.size()>=256)return nullptr;
+            auto owned=std::make_unique<odh::SlotTable>(std::move(*slots));
+            const auto* result=owned.get();
+            route_stack_slot_cache.emplace(key,std::move(owned));
+            ++route_stack_slot_loads;
+            return result;
+        } catch(const std::exception&) {
+            route_runtime_reason="runtime_stackobject_SLOT_missing_ambiguous_or_invalid";
+            return nullptr;
+        }
+    };
     std::unique_ptr<odh::Routing> runtime_routing;
     odh::VmPrimitive routing_handler=[&](const auto&,const auto&,const auto&,const auto&){
         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
@@ -1220,6 +1267,7 @@ struct PlacementCandidateProbe {
                         runtime_route_grid.emplace(std::move(grid));
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                                                                        *shared.routing_slots);
+                        runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         if(!runtime_routing->bind(vm))route_runtime_reason="route_controller_vm_binding_failed";
                         else {
                             routing_handler=runtime_routing->primitive();
@@ -2068,6 +2116,8 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
         <<",\"reason\":"<<json_bytes(route_runtime_reason)
+        <<",\"stackobject_slot_resolutions\":"<<route_stack_slot_resolutions
+        <<",\"stackobject_slot_loads\":"<<route_stack_slot_loads
         <<",\"movement_callbacks\":"<<route_runtime_movement_callbacks
         <<",\"snapshot_refreshes\":"<<route_runtime_snapshot_refreshes
         <<",\"snapshot_refresh_policy\":\"on_world_spatial_revision_change\""

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,9 @@ PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid&,RoutePoint start,
 // Called synchronously; reentry or changes to actor/target are rejected.
 using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
     const SlotTable&,std::size_t,const EntityPosition&,const EntityPosition&)>;
+// Resolves a StackObject's authored SLOT table for Route45 Literal scope.
+// Returned tables must outlive the Routing controller and remain immutable.
+using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&)>;
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {
@@ -63,6 +67,11 @@ public:
     Routing(const Routing&)=delete;
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
+    // Install before VM execution. Missing/ambiguous tables remain unsupported.
+    void set_stack_object_slot_table_provider(StackObjectSlotTableProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 SLOT provider while active");
+        stack_object_slots_=std::move(provider);
+    }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
     // The host must supply the correct routine, code owner and VM context;
@@ -98,6 +107,7 @@ private:
     RouteGrid& grid_;
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
+    StackObjectSlotTableProvider stack_object_slots_;
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;
