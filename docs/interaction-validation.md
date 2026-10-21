@@ -259,8 +259,34 @@ mover o cursor físico.
 
 Esse teste da janela revelou que o mapa de seleção do chão era perdido quando
 a imagem era transferida para a tela. O mapa agora fica guardado à parte e os
-testes de seleção confirmam que sobrevive à transferência. Destinos bloqueados,
-cancelamento e escadas continuam pendentes.
+testes de seleção confirmam que sobrevive à transferência.
+
+Um chão bloqueado no mesmo cômodo, `(24,28)`, foi testado pela BHAV4096 salva.
+O avatar não se moveu, a fila terminou vazia e o marcador sumiu. O jogo chamou
+Global BHAV398, embora BHAV4096 tenha retornado `true`; por isso o host informa
+separadamente que a caminhada falhou.
+
+Também foi testada uma mudança no mundo enquanto Go Here caminhava. O teste
+move uma entidade salva para perto do caminho no passo 40. O avatar já havia
+andado dois passos, para `[394,440,1,2]`; a rota parou ali, chamou Global
+BHAV398, esvaziou a fila e removeu o marcador. O retorno `true` de BHAV4096 não
+foi tratado como chegada. Isso valida a parada causada por uma mudança de
+obstáculo durante a caminhada; ainda não valida uma ordem do jogador para
+cancelar a ação. A reprodução é:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-build-release/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --ticks 256 --go-here 27 26 1 \
+  --go-here-mutation 106 405 440 1 2 40 \
+  --go-here-expect-interruption
+```
+
+Um objeto salvo no centro de `(25,26)` não bloqueou essa caminhada. Esse ponto
+não serve como teste de destino ocupado; ainda falta identificar e validar um
+objeto que realmente impeça o personagem de ocupar o destino. Escadas,
+cancelamento pelo jogador e passagem entre cômodos continuam pendentes.
 
 ## Integração Sit/Stand em House07
 

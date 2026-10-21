@@ -33,6 +33,11 @@ def parse_args():
                         help="expected terminal state for --go-here diagnostics")
     parser.add_argument("--go-here-expect-route-failure", action="store_true",
                         help="assert that saved Go Here runs its failure callback and leaves the avatar still")
+    parser.add_argument("--go-here-expect-interruption", action="store_true",
+                        help="assert that a live world change stops saved Go Here during movement")
+    parser.add_argument("--go-here-mutation", nargs=6, type=int,
+                        metavar=("ENTITY_ID", "X", "Y", "LEVEL", "DIRECTION", "TICK"),
+                        help="move a saved World entity while Go Here is walking; X/Y are world coordinates")
     parser.add_argument("--second-route-room-refresh", action="store_true",
                         help="run synthetic Main: reach StackObject26, then validate two Route45 SLOT orders on room 1's refreshed grid")
     parser.add_argument("--cross-room-entrypoint", action="store_true",
@@ -130,6 +135,12 @@ def main():
         raise SystemExit("--expect-route-goal requires --portal-id")
     if args.expect_route_goal is not None and args.go_here is not None:
         raise SystemExit("--expect-route-goal cannot be combined with --go-here")
+    if args.go_here_mutation is not None and args.go_here is None:
+        raise SystemExit("--go-here-mutation requires --go-here")
+    if args.go_here_expect_interruption and args.go_here_mutation is None:
+        raise SystemExit("--go-here-expect-interruption requires --go-here-mutation")
+    if args.go_here_expect_interruption and args.go_here_expect_route_failure:
+        raise SystemExit("Go Here route failure and interruption expectations are mutually exclusive")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -199,7 +210,11 @@ def main():
             raise RuntimeError(f"odh-person exited {result.returncode}: {diagnostic}")
         return result.returncode, json.loads(result.stdout)
 
-    baseline_code, baseline = run(original_avatar)
+    go_here_mutation = None
+    if args.go_here_mutation is not None:
+        entity_id, x, y, level, direction, tick = args.go_here_mutation
+        go_here_mutation = (entity_id, [x, y, level, direction], tick)
+    baseline_code, baseline = run(original_avatar, scheduled_move=go_here_mutation)
     root_id = baseline["avatar"]["main"]
     if args.go_here is not None:
         go_here = baseline.get("go_here_runtime") or {}
@@ -216,7 +231,8 @@ def main():
             "go_here": go_here,
             "route_runtime": {key: route.get(key) for key in (
                 "state", "start_position", "end_position", "active",
-                "movement_callbacks", "diagnostic")},
+                "movement_callbacks", "movement_positions", "diagnostic", "scheduled_world_mutation_applied",
+            "scheduled_world_mutation")},
             "goal_validation_diagnostic": route.get("goal_validation_diagnostic"),
             "global_398_trace": failure_tree_trace,
             "evidence": "House07 restored World and original Main; saved Destination BHAV4096; temporary UI-only marker",
@@ -224,12 +240,14 @@ def main():
         expected_status = args.go_here_expect_status
         successful = expected_status == "returned_true"
         route_failure = args.go_here_expect_route_failure
+        route_interruption = args.go_here_expect_interruption
+        movement_positions = route.get("movement_positions") or []
         if (route_failure and expected_status != "returned_true"):
             raise SystemExit("--go-here-expect-route-failure requires action status returned_true")
         if (go_here.get("status") != expected_status or
                 go_here.get("marker_alive") is not False or
                 go_here.get("action") != 4096 or
-                (successful and not route_failure and
+                (successful and not route_failure and not route_interruption and
                                  (baseline_code != 0 or baseline.get("host_failed") or
                                  go_here.get("result") is not True or
                                  go_here.get("route_status") != "arrived" or
@@ -246,6 +264,21 @@ def main():
                   route.get("diagnostic") != "GotoRelativePosition target rejected by host room/clearance validator" or
                   route.get("goal_validation_diagnostic") !=
                     "candidate lies outside the prepared room grid or inside an obstacle" or
+                  not failure_tree_trace)) or
+                (route_interruption and
+                 (baseline_code != 0 or baseline.get("host_failed") or
+                  go_here.get("route_status") != "failed" or
+                  not movement_positions or
+                  go_here.get("end_position") != movement_positions[-1] or
+                  go_here.get("end_position") == [go_here_mutation[1][0], go_here_mutation[1][1],
+                                                   go_here_mutation[1][2], go_here_mutation[1][3]] or
+                  go_here.get("queue_size") != 0 or go_here.get("queue_active") is not False or
+                  route.get("active") or route.get("movement_callbacks", 0) <= 0 or
+                  route.get("diagnostic") != "next segment blocked during route" or
+                  route.get("scheduled_world_mutation_applied") is not True or
+                  route.get("scheduled_world_mutation") != {
+                      "entity": go_here_mutation[0], "tick": go_here_mutation[2],
+                      "position": go_here_mutation[1]} or
                   not failure_tree_trace)) or
                 (expected_status == "returned_false" and
                  (go_here.get("result") is not False or
