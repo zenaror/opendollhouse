@@ -23,6 +23,7 @@ struct SavedPortalFunction {
     // These are asset provenance values, never World entity IDs.
     std::string resource_source,resource_asset;
     std::uint16_t chunk_id;
+    std::optional<std::string> semiglobal_name;
 };
 struct SavedPortalAction {
     SavedPortalFunction function;
@@ -35,6 +36,7 @@ struct SavedEntryPointResource {
     odh::ObjdFunctions functions;
     odh::EntryPointTable table;
     std::set<std::uint16_t> bhavs;
+    std::optional<odh::Glob> semiglobal_binding;
 };
 
 // Resolve the exact OBJD/OBJf function table and private BHAV inventory from
@@ -43,6 +45,7 @@ struct SavedEntryPointResource {
 inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionCandidate& candidate) {
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::EntryPointTable> table;
+    std::optional<odh::Glob> semiglobal_binding;
     std::set<std::uint16_t> bhavs;
     auto load=[&](const auto& view) {
         std::optional<odh::View> objd,objf;
@@ -51,6 +54,10 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
         odh::iff_chunks(view,[&](const odh::Chunk& chunk) {
             if(chunk.type=="OBJD"&&chunk.id==candidate.chunk_id) { ++objd_count; objd=chunk.payload; }
             else if(chunk.type=="OBJf"&&chunk.id==candidate.chunk_id) { ++objf_count; objf=chunk.payload; }
+            else if(chunk.type=="GLOB"&&chunk.id==128) {
+                if(semiglobal_binding)throw odh::FormatError("ambiguous GLOB128 in selected object resource");
+                semiglobal_binding=odh::read_glob(chunk.payload);
+            }
             else if(chunk.type=="BHAV") bhavs.insert(chunk.id);
         },limits);
         if(objd_count!=1||!objd) throw odh::FormatError("entry-point probe OBJD identity absent or ambiguous");
@@ -70,7 +77,8 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
         with_far_entry(candidate.source,candidate.asset,load,far_limits);
     }
     if(!functions||!table) throw odh::FormatError("entry-point probe function table unavailable");
-    return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,std::move(bhavs)};
+    return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,
+            std::move(bhavs),std::move(semiglobal_binding)};
 }
 
 // Read one private BHAV only from the exact asset selected for the entity's
@@ -106,7 +114,9 @@ inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate&
     const auto action=resource.table.entries[15].action;
     const auto condition=resource.table.entries[15].condition;
     return {resource.table.source,condition,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end(),
-            resource.source,resource.asset,resource.chunk_id};
+            resource.source,resource.asset,resource.chunk_id,
+            resource.semiglobal_binding&&!resource.semiglobal_binding->name.empty()?
+                std::optional<std::string>{resource.semiglobal_binding->name}:std::nullopt};
 }
 
 // Resolve and parse the private Portal action BHAV from the same selected

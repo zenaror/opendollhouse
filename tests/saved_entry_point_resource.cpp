@@ -26,6 +26,12 @@ void write(const std::filesystem::path& path,const std::string& bytes){
     std::ofstream out(path,std::ios::binary);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));
     if(!out)throw std::runtime_error("fixture write failed");
 }
+void write_far(const std::filesystem::path& path,const std::string& name,const std::string& asset){
+    std::string bytes="FAR!byAZ";bytes.resize(16,'\0');put(bytes,8,1,4);put(bytes,12,16+asset.size(),4);
+    bytes+=asset;const auto index=bytes.size();bytes.resize(index+20,'\0');put(bytes,index,1,4);
+    put(bytes,index+4,asset.size(),4);put(bytes,index+8,asset.size(),4);put(bytes,index+12,16,4);
+    put(bytes,index+16,name.size(),4);bytes+=name;write(path,bytes);
+}
 std::string objd(std::uint16_t uses_table){
     std::string bytes(162,'\0');put(bytes,0,138,4);put(bytes,28,0x12345678,4);put(bytes,44,uses_table,2);
     put(bytes,10,4097,2); // generated EP1 / Main
@@ -76,7 +82,8 @@ int main(){try{
         tabled.bhavs.count(5005)&&tabled.bhavs.count(5015),"OBJf entries and matching asset BHAV reported");
     const auto portal=saved_portal_function(candidate);
     check(portal.action==5015&&portal.action_bhav_in_asset&&portal.source==odh::EntryPointSource::objf&&
-        portal.resource_source==candidate.source&&portal.resource_asset.empty()&&portal.chunk_id==candidate.chunk_id,
+        portal.resource_source==candidate.source&&portal.resource_asset.empty()&&portal.chunk_id==candidate.chunk_id&&
+        !portal.semiglobal_name,
         "Portal entry preserves exact definition resource provenance separately from runtime entity IDs");
     check(portal.condition==0,"Portal EntryPoint condition is retained explicitly");
     const auto portal_action=saved_portal_action(candidate);
@@ -135,12 +142,41 @@ int main(){try{
     try{(void)saved_portal_vm_call_plan(condition_record,condition_world,odh::DefinitionIndex({candidate}),12,37,0x80000038U);}
     catch(const odh::FormatError&){portal_condition_unsupported=true;}
     check(portal_condition_unsupported,"portal condition is not silently skipped without an evaluator");
-    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
-                    chunk("BHAV",5015,portal_bhav(8192))));
+    const std::string door_glob=std::string(1,static_cast<char>(11))+"DoorGlobals";
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("GLOB",128,door_glob)+
+                    chunk("BHAV",5005,std::string{})+chunk("BHAV",5015,portal_bhav(8192))));
+    const auto linked_resource=saved_entry_point_resource(candidate);
+    check(linked_resource.semiglobal_binding&&linked_resource.semiglobal_binding->name=="DoorGlobals",
+        "GLOB128 semiglobal identity is read from the exact portal definition resource");
+    const auto linked_function=saved_portal_function(candidate);
+    check(linked_function.semiglobal_name&&*linked_function.semiglobal_name=="DoorGlobals",
+        "Portal plan retains the linked semiglobal name");
     bool portal_semiglobal_unsupported=false;
     try{(void)saved_portal_vm_call_plan(portal_record,portal_world,portal_definitions,12,37,0x80000039U);}
     catch(const odh::FormatError&){portal_semiglobal_unsupported=true;}
     check(portal_semiglobal_unsupported,"semiglobal call dependency is rejected without its explicit bank");
-    std::error_code ignored;std::filesystem::remove(path,ignored);
+    const auto bank_path=path.parent_path()/(path.stem().string()+"-global.far");
+    const auto bank_asset=iff(chunk("BHAV",8192,portal_bhav(301)));
+    write_far(bank_path,"DoorGlobals.iff",bank_asset);
+    const auto bank=load_saved_semiglobal_code_bank(bank_path.string(),"DoorGlobals.iff");
+    odh::World linked_world;
+    check(linked_world.create(12,odh::EntityKind::avatar)&&linked_world.create(37,odh::EntityKind::object)&&
+        linked_world.define_type(37,candidate.definition.guid)&&
+        linked_world.define_entry_points(37,linked_resource.table.entries),
+        "explicit semiglobal portal World initialized");
+    const auto linked_plan=saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,
+        12,37,0x8000003aU,&bank);
+    check(linked_plan.owner_routines.count(odh::routine_key(5015))&&
+        linked_plan.owner_routines.count(odh::routine_key(8192))&&
+        linked_plan.global_dependencies==std::vector<std::uint16_t>{301}&&
+        linked_plan.semiglobal_name==std::optional<std::string>{"DoorGlobals"},
+        "portal private closure and explicitly linked semiglobal closure share the planned CodeOwner");
+    auto wrong_bank=bank;wrong_bank.entry="OtherGlobals.iff";wrong_bank.name="OtherGlobals";
+    bool mismatched_portal_bank=false;
+    try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_bank);}
+    catch(const odh::FormatError&){mismatched_portal_bank=true;}
+    check(mismatched_portal_bank,"portal semiglobal binding rejects a different explicit resource");
+    std::error_code ignored;std::filesystem::remove(bank_path,ignored);
+    std::filesystem::remove(path,ignored);
     std::cout<<"saved entry-point resource checks: "<<checks<<"\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
