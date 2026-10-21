@@ -171,6 +171,22 @@ int main(){try{
         linked_plan.global_dependencies==std::vector<std::uint16_t>{301}&&
         linked_plan.semiglobal_name==std::optional<std::string>{"DoorGlobals"},
         "portal private closure and explicitly linked semiglobal closure share the planned CodeOwner");
+    odh::VmLimits linked_limits;linked_limits.code_owners=2;
+    odh::Bhav global_dependency{0x8002,{{2,254,255,{0,0,0,0,0,0,0,0}}},{},
+        odh::Bhav::Metadata{0,0,0,3}};
+    odh::RoutineSet shared_globals{{odh::routine_key(301),global_dependency}};
+    odh::Vm linked_vm(std::move(shared_globals), {}, linked_limits);
+    check(install_saved_portal_vm_call_plan(linked_vm,linked_plan),
+        "portal private and semiglobal closure installs as one explicit VM owner");
+    std::vector<odh::RoutineKey> linked_trace;
+    check(linked_vm.start(linked_plan.call.key,linked_plan.call.context,linked_plan.call.arguments)==odh::VmStatus::running&&
+        linked_vm.run(2,[&](const odh::VmTrace& event){linked_trace.push_back(event.key);})==odh::VmStatus::budget_exhausted&&
+        linked_trace.size()==2&&linked_trace[0].id==5015&&linked_trace[1].id==8192&&
+        linked_vm.stack().size()==3&&
+        linked_vm.stack()[0].context.code_owner==0x8000003aU&&
+        linked_vm.stack()[1].context.code_owner==0x8000003aU&&
+        linked_vm.stack()[2].key.id==301,
+        "installed Portal15 plan resolves private then linked semiglobal call before shared-global dependency");
     auto wrong_bank=bank;wrong_bank.entry="OtherGlobals.iff";wrong_bank.name="OtherGlobals";
     bool mismatched_portal_bank=false;
     try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_bank);}

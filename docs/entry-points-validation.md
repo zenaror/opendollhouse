@@ -36,8 +36,11 @@ limitado; o plano confere seu nome contra o GLOB128 e incorpora ao mesmo
 CodeOwner apenas a closure semiglobal alcançável. ConditionFunction não zero,
 bank ausente/ambíguo e rotina dependente ausente continuam falhando fechados.
 
-O plano ainda não instala a closure no VM nem chama
-`Routing::call_external_frame`; não há descoberta automática de portais,
+`install_saved_portal_vm_call_plan` instala a closure no VM em um ponto seguro.
+O teste sintético inicia a ação privada e confirma que a chamada alcança o
+semiglobal e, em seguida, para na dependência global declarada. Essa dependência
+precisa estar no banco compartilhado antes da execução completa. Ainda não há
+chamada de `Routing::call_external_frame`, descoberta automática de portais,
 replanejamento entre salas ou navegação jogável. `odh-saved-entry-point-resource`
 valida o contrato com IFF/FAR sintéticos. O comando `odh-bhav` também confirmou
 `Objects.far:Doors.iff` → GLOB128 `DoorGlobals` → `Global.far:DoorGlobals.iff`;

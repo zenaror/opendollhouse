@@ -45,6 +45,15 @@ struct SavedPortalVmCallPlan {
     std::optional<std::string> semiglobal_name;
 };
 
+// Installs the exact private/semiglobal closure at a VM safe point. Shared
+// global dependencies remain in the VM's default bank and must be checked by
+// the caller before dispatching `call`.
+inline bool install_saved_portal_vm_call_plan(
+    odh::Vm& vm,const SavedPortalVmCallPlan& plan) {
+    if(plan.call.context.code_owner==0||plan.owner_routines.empty())return false;
+    return vm.install_owner(plan.call.context.code_owner,plan.owner_routines);
+}
+
 // Prepare the private-only portion of a saved portal call. The host allocates
 // `code_owner` from the exact resource identity and installs owner_routines at
 // a VM safe point before dispatching call through Routing::call_external_frame.
