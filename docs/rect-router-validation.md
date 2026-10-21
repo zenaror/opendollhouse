@@ -40,12 +40,15 @@ falham sem saída parcial. O chamador deve fornecer um corredor encontrado,
 com entradas nos respectivos retângulos e destino no último retângulo. Uma
 cadeia arbitrária com gap não é promovida a rota válida pelo otimizador.
 
-Os goldens sintéticos são derivados da fórmula inteira, sem comparação
-executada com o C# da referência nesta etapa. Para a linha `(1,1) -> (29,9)`,
-os crossings nas bordas x=10 e x=20 são `(327680,117024)` e
-`(655360,210648)` em HiP. Os testes cobrem no-op vazio/retângulo único,
-duplicata intermediária, frações, último corte aprovado antes de uma falha,
-gap, overflow e limites. O teste focal `rect_router` passou com compilação
+Os goldens sintéticos foram comparados com um harness temporário C#/.NET 10,
+transcrito das rotinas `OptimizeLines` (`VMRectRouter.cs:101-226`) e
+`RaycastLineHiP` (`VMObstacle.cs:186-234`) na revisão fixada. Para a linha
+`(1,1) -> (29,9)`, ambos produziram crossings em x=10 e x=20 de
+`(327680,117024)` e `(655360,210648)` HiP; também coincidiram nos casos de
+curva, gap e duplicata. O harness não invoca o Simitone compilado nem o jogo
+original. Os testes C++ cobrem no-op vazio/retângulo único, duplicata
+intermediária, frações, último corte aprovado antes de uma falha, gap, overflow
+e limites. O teste focal e a suíte CTest completa passaram com compilação
 warning-enabled.
 
 Esta API ainda não é chamada pelos probes. O ajuste de entrada vindo de portal

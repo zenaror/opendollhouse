@@ -10,8 +10,9 @@ validação indicados por versão.
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com
   crossings fixos HiP. O ajuste de entrada via `dirIn` e a integração aos
-  diagnósticos vivos permanecem pendentes; os goldens foram derivados e ainda
-  não comparados com o C# executado. Consulte
+  diagnósticos vivos permanecem pendentes; os casos sintéticos foram
+  comparados com uma transcrição C#/.NET 10 das rotinas, não com o Simitone
+  compilado. Consulte
   `docs/rect-router-validation.md`.
 
 - `snapshot_world_room_info` expõe o inventário bounded e completo de

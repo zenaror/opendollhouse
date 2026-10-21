@@ -723,7 +723,9 @@ provada igual a `roomInfo.Entities`, e clearance, estado dinâmico de portas e
 integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
 reproduz parcialmente o corner-cutting do `OptimizeLines` Simitone com
 `dirIn=null`, HiP preservado e limites fail-closed. Ainda não é chamado pelo
-probe: os goldens foram derivados, não comparados com um oracle C# executado.
-Próxima unidade: executar comparação C# em fixtures, implementar a correção de
-entrada de portal `dirIn`, alinhar a ordem das entidades e então aplicar a
-otimização ao diagnóstico House07 sem promover clearance ou movimento.
+probe. Uma transcrição temporária C#/.NET 10 das rotinas da referência confirmou
+os casos reto, curva, gap e duplicata; não invocou Simitone compilado nem o jogo
+original.
+Próxima unidade: implementar a correção de entrada de portal `dirIn`, alinhar a
+ordem das entidades e então aplicar a otimização ao diagnóstico House07 sem
+promover clearance ou movimento.
