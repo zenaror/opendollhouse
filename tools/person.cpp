@@ -44,6 +44,7 @@
 #include "saved_resources.hpp"
 #include "saved_interactions.hpp"
 #include "saved_wall_appearance.hpp"
+#include "saved_portal.hpp"
 #include "saved_lot_renderer.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
@@ -202,6 +203,13 @@ int main(int argc,char** argv) {
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     std::optional<HeadlessInteraction> headless_interaction;
     bool headless_interaction_applied=false;
+    std::optional<HeadlessInteraction> headless_portal;
+    bool headless_portal_applied=false;
+    std::string headless_portal_status="not_requested",headless_portal_diagnostic;
+    std::optional<std::uint16_t> headless_portal_action;
+    std::optional<odh::CodeOwner> headless_portal_owner;
+    std::optional<std::uint64_t> headless_portal_previous_completion;
+    std::optional<bool> headless_portal_result;
     std::optional<HeadlessInteraction> headless_stand;
     bool headless_stand_applied=false,headless_stand_precondition_met=false;
     std::string headless_stand_status="not_requested",headless_stand_diagnostic;
@@ -291,6 +299,11 @@ int main(int argc,char** argv) {
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless interaction target/tick is outside the supported profile");
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
+        else if(option=="--headless-portal"&&!headless_portal&&n+2<argc){
+            const auto id=selector(argv[++n]),tick=selector(argv[++n]);
+            if(id==0||id>32767||tick==0)throw odh::FormatError("headless Portal15 target/tick is outside the supported profile");
+            headless_portal=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
+        }
         else if(option=="--headless-stand"&&!headless_stand&&n+2<argc){
             const auto id=selector(argv[++n]),tick=selector(argv[++n]);
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless Stand target/tick is outside the supported profile");
@@ -330,6 +343,8 @@ int main(int argc,char** argv) {
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
     if(headless_interaction&&(!headless_main||headless_interaction->tick>ticks_limit))
         throw odh::FormatError("--headless-interaction requires --headless-main and a tick within --ticks");
+    if(headless_portal&&(!headless_main||headless_portal->tick>ticks_limit||headless_interaction||headless_stand))
+        throw odh::FormatError("--headless-portal requires --headless-main, an in-range tick, and an otherwise idle action probe");
     if(headless_stand&&(!headless_main||!headless_interaction||headless_stand->tick>ticks_limit||
        (headless_interaction&&headless_stand->tick<=headless_interaction->tick)))
         throw odh::FormatError("--headless-stand requires --headless-main, an in-range tick, and must follow the interaction request");
@@ -343,7 +358,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -538,19 +553,20 @@ int main(int argc,char** argv) {
     }
     std::unique_ptr<odh::SavedWorld> restored_world;
     std::unique_ptr<odh::World> world_owner;
+    std::vector<odh::SavedWorldEntity> restored_records;
     std::map<std::uint32_t,SavedTreeNameCatalog> saved_tree_names;
     std::int16_t runtime_avatar_id=1;
     if(saved_world_main){
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
-        auto records=saved_world_records(*lot_path,*definition_index);
-        const auto saved=std::find_if(records.begin(),records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
-        if(saved==records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
+        restored_records=saved_world_records(*lot_path,*definition_index);
+        const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
+        if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
             throw odh::FormatError("selected saved World entity is not the matching person resource");
-        restored_world=odh::make_saved_world(records,*definition_index,neighbors?&*neighbors:nullptr);
+        restored_world=odh::make_saved_world(restored_records,*definition_index,neighbors?&*neighbors:nullptr);
         // Bind the exact immutable OBJD/OBJf tables to every restored entity.
         // This is static metadata only; action function IDs are not BHAV results.
         std::map<std::uint32_t,std::vector<odh::EntryPoint>> entry_point_cache;
-        for(const auto& record:records){
+        for(const auto& record:restored_records){
             const auto id=static_cast<std::int16_t>(record.saved.object_id);
             const auto* entity=restored_world->world->find(id);
             if(!entity||!entity->definition||entity->definition->guid!=record.saved.guid)
@@ -1109,6 +1125,7 @@ struct PlacementCandidateProbe {
     std::optional<bool> render_interaction_result;
     std::optional<std::uint64_t> previous_completion_uid;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
+    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
@@ -1585,6 +1602,54 @@ struct PlacementCandidateProbe {
                 request_selected_interaction();
             }
         }
+        if(headless_portal&&!headless_portal_applied&&ticks==headless_portal->tick){
+            headless_portal_applied=true;
+            const auto fail_portal=[&](const std::string& reason){
+                headless_portal_status="unsupported";headless_portal_diagnostic=reason;
+            };
+            const auto* target=world.find(headless_portal->id);
+            const auto record=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& item){
+                return item.saved.object_id==static_cast<std::uint16_t>(headless_portal->id);
+            });
+            const auto* candidate=target&&target->definition&&definition_index?
+                definition_index->unique(target->definition->guid):nullptr;
+            if(!target||target->kind!=odh::EntityKind::object||!target->definition||!candidate||
+               record==restored_records.end())fail_portal("scheduled portal identity or saved resource is missing/ambiguous");
+            else if(queue.size()!=0)fail_portal("Portal15 probe requires an empty interaction queue");
+            else if(!globals||globals->standalone)fail_portal("explicit Global.iff FAR resource is unavailable");
+            else if(saved_owner_ids_exhausted)fail_portal("saved object code-owner identity space exhausted");
+            else try {
+                const auto function=saved_portal_function(*candidate);
+                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,function.action);
+                auto owner=saved_portal_code_owners.find(owner_key);
+                const auto code_owner=owner==saved_portal_code_owners.end()?next_saved_code_owner:owner->second;
+                std::optional<SavedSemiglobalCodeBank> semiglobal_bank;
+                if(function.semiglobal_name)
+                    semiglobal_bank=load_saved_semiglobal_code_bank(globals->archive,
+                        *function.semiglobal_name+".iff");
+                const auto global_bank=load_saved_global_code_bank(globals->archive,globals->entry);
+                const auto plan=saved_portal_vm_call_plan(*record,world,*definition_index,
+                    runtime_avatar_id,headless_portal->id,code_owner,
+                    semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank);
+                if(owner==saved_portal_code_owners.end()){
+                    if(!install_saved_portal_vm_call_plan(vm,plan))
+                        fail_portal("Main VM rejected Portal15 code owner (duplicate, capacity, or unsafe point)");
+                    else {
+                        if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                        else ++next_saved_code_owner;
+                        owner=saved_portal_code_owners.emplace(owner_key,code_owner).first;
+                    }
+                }
+                if(headless_portal_status!="unsupported"){
+                    headless_portal_action=plan.function.action;headless_portal_owner=owner->second;
+                    headless_portal_previous_completion=queue.completion()?
+                        std::optional<std::uint64_t>{queue.completion()->uid}:std::nullopt;
+                    if(!queue.enqueue(plan.call.key,plan.call.context,plan.call.arguments))
+                        fail_portal(queue.diagnostic());
+                    else {headless_portal_status="queued";headless_portal_diagnostic.clear();}
+                }
+            } catch(const std::exception& error){fail_portal(error.what());}
+        }
         if(headless_stand&&!headless_stand_applied&&ticks==headless_stand->tick){
             headless_stand_applied=true;
             const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
@@ -1679,6 +1744,16 @@ struct PlacementCandidateProbe {
             animation_events.push_back(event);animation_event_bytes+=bytes;
         });
         execute();
+        if(headless_portal_applied&&headless_portal_status=="queued"&&queue.completion()&&
+           (!headless_portal_previous_completion||queue.completion()->uid!=*headless_portal_previous_completion)){
+            headless_portal_result=queue.completion()->result;
+            headless_portal_status=*headless_portal_result?"returned_true":"returned_false";
+            headless_portal_diagnostic.clear();
+        }else if(headless_portal_applied&&headless_portal_status=="queued"&&vm.status()==odh::VmStatus::fault){
+            headless_portal_status="vm_fault";headless_portal_diagnostic=vm.diagnostic();
+        }else if(headless_portal_applied&&headless_portal_status=="queued"&&host_failed){
+            headless_portal_status="host_failed";headless_portal_diagnostic=host_diagnostic;
+        }
         if(headless_stand_applied&&headless_stand_status=="queued"&&queue.completion()&&
            (!headless_stand_previous_completion||queue.completion()->uid!=*headless_stand_previous_completion)){
             headless_stand_result=queue.completion()->result;
@@ -2024,6 +2099,27 @@ struct PlacementCandidateProbe {
             <<",\"loop\":"<<(animation->loop?"true":"false")<<'}';
         else std::cout<<"null";
         std::cout<<'}';
+    }
+    std::cout<<",\"portal_runtime\":";
+    if(!headless_portal)std::cout<<"null";
+    else {
+        const auto* actor=world.find(runtime_avatar_id);
+        const auto* target=world.find(headless_portal->id);
+        std::cout<<"{\"trigger\":\"diagnostic_headless_portal15\",\"scheduled_tick\":"<<headless_portal->tick
+            <<",\"portal_id\":"<<headless_portal->id<<",\"action\":"
+            <<(headless_portal_action?std::to_string(*headless_portal_action):"null")<<",\"code_owner\":"
+            <<(headless_portal_owner?std::to_string(*headless_portal_owner):"null")<<",\"status\":"
+            <<json_bytes(headless_portal_status)<<",\"diagnostic\":"<<json_bytes(headless_portal_diagnostic)
+            <<",\"result\":"<<(headless_portal_result?(*headless_portal_result?"true":"false"):"null")
+            <<",\"actor_position\":";
+        if(actor&&actor->position)std::cout<<'['<<actor->position->x<<','<<actor->position->y<<','
+            <<actor->position->level<<','<<unsigned(actor->position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<",\"portal_position\":";
+        if(target&&target->position)std::cout<<'['<<target->position->x<<','<<target->position->y<<','
+            <<target->position->level<<','<<unsigned(target->position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<"}";
     }
     std::cout<<",\"stand_runtime\":";
     if(!headless_stand)std::cout<<"null";

@@ -208,3 +208,19 @@ na simulação original.
 `tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima
 valida a junção com arquivos comerciais reais; nenhum asset ou relatório com
 conteúdo comercial é versionado.
+
+### Host-scheduled Portal15 diagnostic
+
+`odh-person --headless-portal ID TICK` resolves EntryPoint15 from the exact
+restored World record, loads the explicit GLOB128-linked semiglobal and
+`Global.iff`, validates their BHAV closures, installs a resource CodeOwner and
+queues that BHAV through the existing Main/interaction host. The JSON
+`portal_runtime` result is labeled diagnostic: the host schedules the action
+directly; this is not the natural portal scheduler or cross-room routing.
+
+`tests/house07_route45_integration.py --portal-id 25 --ticks 2` exercises this
+path with the saved House07 and original avatar Main. In the current
+environment it exceeded a 90-second timeout; the same House07 baseline without
+the scheduled portal also exceeded 90 seconds. Therefore no commercial Portal15
+result is claimed. The standard CTest suite passes 160/160; the window-backend
+test is skipped when no display is available.

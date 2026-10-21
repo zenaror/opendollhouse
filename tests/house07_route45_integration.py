@@ -21,6 +21,8 @@ def parse_args():
                         help="route through the selected live StackObject's OBJD SLOT")
     parser.add_argument("--goto-relative", action="store_true",
                         help="diagnose opcode27 against the restored StackObject and live route grid")
+    parser.add_argument("--portal-id", type=int,
+                        help="schedule saved Portal15 on a restored House07 portal, using the original Main")
     return parser.parse_args()
 
 
@@ -82,8 +84,8 @@ def main():
         raise SystemExit("avatar and StackObject IDs must be in 1..32767")
     if not 1 <= args.ticks <= 4096:
         raise SystemExit("ticks must be in 1..4096")
-    if args.literal_slot and args.goto_relative:
-        raise SystemExit("--literal-slot and --goto-relative are mutually exclusive")
+    if sum((args.literal_slot, args.goto_relative, args.portal_id is not None)) > 1:
+        raise SystemExit("--literal-slot, --goto-relative, and --portal-id are mutually exclusive")
 
     object_files = [game / "UserData/Characters/User00000.iff",
                     game / "UserData/Characters/User00001.iff"]
@@ -118,6 +120,8 @@ def main():
             entity_id, position, tick = scheduled_move
             invocation += ["--headless-move-entity", str(entity_id),
                            *(str(value) for value in position), str(tick)]
+        if args.portal_id is not None:
+            invocation += ["--headless-portal", str(args.portal_id), "1"]
         result = subprocess.run(invocation, check=False, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if not result.stdout.strip():
@@ -126,6 +130,17 @@ def main():
 
     baseline_code, baseline = run(original_avatar)
     root_id = baseline["avatar"]["main"]
+    if args.portal_id is not None:
+        print(json.dumps({
+            "probe_exit": baseline_code,
+            "vm_status": baseline["status"],
+            "vm_diagnostic": baseline["diagnostic"],
+            "ticks": baseline["ticks"],
+            "trace_tail": baseline["trace"][-12:],
+            "portal_runtime": baseline.get("portal_runtime"),
+            "evidence": "House07 restored World, live saved door, original avatar Main, and host-scheduled diagnostic Portal15",
+        }, indent=2))
+        return
     with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
         patch_root_with_route45(original_avatar, probe_avatar, root_id,
