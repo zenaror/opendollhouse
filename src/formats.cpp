@@ -141,8 +141,10 @@ std::string iff_chunks(const View& file, const std::function<void(const Chunk&)>
         const std::uint64_t length = file.be32(position + 4);
         if (length < 76) throw FormatError("IFF chunk length is smaller than header");
         const auto payload = file.subview(position + 76, length - 76);
+        const auto label_end=std::find(bytes.begin()+12,bytes.end(),'\0');
+        const std::string label(bytes.begin()+12,label_end);
         visit({std::string(bytes.data(), 4), file.be16(position + 8),
-               file.be16(position + 10), position, payload});
+               file.be16(position + 10), position, payload,label});
         position += length;
     }
     return version;

@@ -4,9 +4,9 @@ O [checkpoint seguinte de funções](entry-points-validation.md) fornece scope35
 e documenta o avanço dos gates abaixo até GotoRoutingSlot.
 
 SetToNext31 agora consulta entidades do World nos modos0 (todas),1 (avatares),
-2 (objetos comuns) e4 (GUID exato da definição). A enumeração de vizinhos5
-continua usando NBRS, como um provider separado. Outros modos não são
-substituídos por uma busca genérica.
+2 (objetos comuns),4 (GUID exato da definição) e8 (objetos na mesma célula).
+A enumeração de vizinhos5 continua usando NBRS, como um provider separado.
+Outros modos não são substituídos por uma busca genérica.
 
 ## Referência e seleção
 
@@ -35,6 +35,13 @@ World usa o mapa ordenado já existente: upper_bound(cursor) e varredura até
 a primeira correspondência. Não há cache/índice adicional nem alocação na
 consulta. O limite padrão4096 entidades continua; a cobertura do teste
 32767 é um limite sintético configurado, não medida de consumo do New3DS.
+
+Mode8 é diferente: `VMSetToNext` consulta `GetObjectsAt(Pointer.Position)`,
+exige que o cursor identifique uma entidade nessa célula e faz wrap para o
+primeiro ID da célula quando não há ID maior. O World ODH compara coordenadas
+em unidades 1/16 tile e nível, varrendo o mapa em ordem de ID. Só aceita
+posições não negativas nos níveis1–2; OUT_OF_WORLD e geometria multipart
+ficam fora deste perfil.
 
 ## Operandos e memória
 
@@ -101,7 +108,7 @@ Relatórios Debug/ASan completos coincidem byte a byte, arquivos ignorados
 - bob: `fe1e46afd1e21929958f3c871e15e744d1571cb095044fa072e5cc36d4b2ebb2`.
 - family3: `0b8ddbd8e1d3379b3f17d076f3704525b0b0f0a6f547146fce48d64a0eb4735f`.
 
-248 checks sintéticos do helper passaram, incluindo alvo byte255, GUID0 explícito,
+262 checks sintéticos do helper passaram, incluindo alvo byte255, GUID0 explícito,
 ordem/live remoção/reuso, definições ausentes, filtros, memória/PersonData indireto,
 callbacks próprios, rejeição sem mutação, contexto de code owner e VM real.
 Debug e ASan/UBSan:57 testes passaram e1 X11 foi pulado (58 configurados).

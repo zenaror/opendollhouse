@@ -117,6 +117,29 @@ std::optional<std::int16_t> World::next_entity(std::int16_t current,std::optiona
         if(!kind || it->second.kind==*kind)return it->first;
     return {};
 }
+std::optional<std::int16_t> World::next_entity_on_same_tile(std::int16_t current) const {
+    const auto* anchor=find(current);
+    if(!anchor||!anchor->position||anchor->position->x<0||anchor->position->y<0||
+       anchor->position->level<1||anchor->position->level>2)return {};
+    const auto tile=[](std::int32_t coordinate){
+        return coordinate>=0?coordinate/16:-static_cast<std::int32_t>((-static_cast<std::int64_t>(coordinate)+15)/16);
+    };
+    const auto same_tile=[&](const Entity& entity){
+        if(!entity.position||entity.position->level!=anchor->position->level)return false;
+        const auto& a=*anchor->position;const auto& b=*entity.position;
+        return tile(a.x)==tile(b.x)&&tile(a.y)==tile(b.y);
+    };
+    std::optional<std::int16_t> first,after;
+    bool anchor_present=false;
+    for(const auto& [id,entity]:entities_){
+        if(!same_tile(entity))continue;
+        if(!first)first=id;
+        if(id==current)anchor_present=true;
+        if(id>current&&!after)after=id;
+    }
+    if(after)return after;
+    return anchor_present?first:std::nullopt;
+}
 bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid) {
     const auto found=entities_.find(id);if(found==entities_.end())return false;
     auto& type=found->second.definition;

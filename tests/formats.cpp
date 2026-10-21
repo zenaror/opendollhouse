@@ -31,7 +31,7 @@ std::string bhav() {
     put(b, 28, 0xAB, 1);
     return b;
 }
-std::string iff(const std::string& payload) {
+std::string iff(const std::string& payload,const std::string& label={}) {
     std::string b(140, '\0');
     const std::string prefix = "IFF FILE 2.5:TYPE FOLLOWED BY SIZE";
     const std::string credit = " JAMIE DOORNBOS & MAXIS 1";
@@ -40,6 +40,7 @@ std::string iff(const std::string& payload) {
     b.replace(64, 4, "BHAV");
     put(b, 68, static_cast<std::uint32_t>(76 + payload.size()), 4, true);
     put(b, 72, 0x1234, 2, true); put(b, 74, 0xBEEF, 2, true);
+    b.replace(76,label.size(),label);
     return b + payload;
 }
 std::string far(const std::string& asset) {
@@ -120,12 +121,12 @@ int main() {
         bad = routine; put(bad, 0, 0x8003, 2);
         use(bad, [](const odh::View& v) { rejects([&] { odh::read_bhav(v); }, "unsupported BHAV"); });
 
-        auto container = iff(routine);
+        auto container = iff(routine,"sample tree");
         use(container, [](const odh::View& v) {
             int visited = 0;
             require(odh::iff_chunks(v, [&](const odh::Chunk& c) {
                 ++visited;
-                require(c.id == 0x1234 && c.flags == 0xBEEF, "IFF big endian fields");
+                require(c.id == 0x1234 && c.flags == 0xBEEF && c.label=="sample tree", "IFF big endian fields and bounded chunk label");
                 require(odh::read_bhav(c.payload).instructions.size() == 2, "nested BHAV");
             }) == "2.5" && visited == 1, "IFF enumeration");
         });

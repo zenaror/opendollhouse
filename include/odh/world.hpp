@@ -92,6 +92,10 @@ public:
     // Live exact definition GUID query, including avatars; no master alias or
     // wraparound. The signed cursor need not identify an existing entity.
     std::optional<std::int16_t> next_entity_of_guid(std::int16_t current,std::uint32_t guid) const;
+    // Live ObjectOnSameTile query in ascending ID order, wrapping to the first
+    // entity on the tile after the cursor reaches the end. Supports positive lot coordinates,
+    // levels 1-2; callers must reject outside-lot positions before dispatch.
+    std::optional<std::int16_t> next_entity_on_same_tile(std::int16_t current) const;
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     // Bind an immutable owned table to a typed entity; identical repeats succeed.
     // Each condition/action pair consumes two words. Empty tables are valid.

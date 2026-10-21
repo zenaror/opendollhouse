@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--avatar-id", type=int, default=105)
     parser.add_argument("--avatar-file", default="UserData/Characters/User00000.iff")
     parser.add_argument("--object-id", type=int, default=128)
-    parser.add_argument("--ticks", type=int, default=240)
+    parser.add_argument("--ticks", type=int, default=512)
     args = parser.parse_args()
 
     game = args.game_root.resolve()
@@ -64,6 +64,17 @@ def main():
     interaction = report["interaction_runtime"]
     trace = report["trace"]
     action_trace = [entry for entry in trace if entry["owner"] >= 0x80000000]
+    main_trace = [entry for entry in trace if entry["owner"] < 0x80000000]
+    main_trace_tail = main_trace[-12:]
+    main_run_tree_by_name = [entry for entry in main_trace if entry["opcode"] == 28]
+    run_tree_false_continued = any(
+        entry["false"] == following["pc"] and entry["routine"] == following["routine"]
+        and entry["owner"] == following["owner"]
+        for index, entry in enumerate(main_trace) if entry["opcode"] == 28
+        for following in main_trace[index + 1:index + 2]
+    )
+    main_entity_next = [entry for entry in report["entity_next"]
+                        if entry["owner"] < 0x80000000 and entry["mode"] == 8]
     action_routines = {entry["routine"] for entry in action_trace}
     action_opcodes = {entry["opcode"] for entry in action_trace}
     actor = interaction["actor"]
@@ -76,6 +87,10 @@ def main():
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
         "action_opcodes": sorted(action_opcodes),
+        "main_same_tile_queries": main_entity_next,
+        "main_run_tree_by_name": main_run_tree_by_name,
+        "run_tree_false_continued": run_tree_false_continued,
+        "main_trace_tail": main_trace_tail,
     }
     print(json.dumps(evidence, indent=2))
 
@@ -88,6 +103,10 @@ def main():
         actor["attachment"]["positioned"] and
         report["completion"] is not None and report["completion"]["result"] is True and
         {4097, 4100, 4099}.issubset(action_routines) and {44, 45, 46, 49}.issubset(action_opcodes) and
+        bool(main_entity_next) and report["ticks"] == args.ticks and
+        bool(main_run_tree_by_name) and run_tree_false_continued and
+        report["status"] in ("waiting", "yielded") and
+        (args.ticks < 512 or report["status"] == "waiting") and
         not report["host_failed"]
     )
     if not completed_sit:

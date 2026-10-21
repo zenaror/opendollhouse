@@ -520,6 +520,7 @@ int main(int argc,char** argv) {
     }
     std::unique_ptr<odh::SavedWorld> restored_world;
     std::unique_ptr<odh::World> world_owner;
+    std::map<std::uint32_t,SavedTreeNameCatalog> saved_tree_names;
     std::int16_t runtime_avatar_id=1;
     if(saved_world_main){
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
@@ -547,6 +548,13 @@ int main(int argc,char** argv) {
                     throw odh::FormatError("saved World EntryPoint resource identity or size invalid");
                 cached=entry_point_cache.emplace(entity->definition->guid,std::move(resource.table.entries)).first;
             }
+            if(entity->kind==odh::EntityKind::object&&!saved_tree_names.count(entity->definition->guid)){
+                if(saved_tree_names.size()>=256)
+                    throw odh::FormatError("saved World TreeByName definition cache budget exceeded");
+                const auto* candidate=definition_index->unique(entity->definition->guid);
+                if(!candidate)throw odh::FormatError("saved World TreeByName definition unavailable or ambiguous");
+                saved_tree_names.emplace(entity->definition->guid,load_saved_tree_name_catalog(*candidate));
+            }
             if(!restored_world->world->define_entry_points(id,cached->second))
                 throw odh::FormatError("saved World EntryPoint binding exceeds World limits");
         }
@@ -556,6 +564,8 @@ int main(int argc,char** argv) {
             throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
+    const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
+        std::map<std::uint16_t,odh::StringTable>{};
     if(!saved_world_main){
         if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(runtime_avatar_id,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
         // Explicit reference constructor subset, not completed native Init.
@@ -620,6 +630,35 @@ int main(int argc,char** argv) {
         if(entity_next.size()>=10000)throw odh::FormatError("entity enumeration log exceeds bounded host profile");
         entity_next.push_back(value);
     });
+    const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        if(instruction.opcode!=28)return {};
+        const auto table_id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
+        const auto string_scope=instruction.operands[2];
+        const auto string_id=instruction.operands[4];
+        const auto destination=instruction.operands[5];
+        if(!saved_world_main)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName requires a restored saved World catalog"};
+        if(string_scope!=1||destination>2)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName scope/destination is outside the saved-World profile"};
+        const auto strings=tree_by_name_global_strings.find(table_id);
+        if(strings==tree_by_name_global_strings.end()||string_id==0)
+            return {odh::PrimitiveDisposition::goto_false,{}};
+        const auto* name=odh::string_in_language(strings->second,1,static_cast<std::uint32_t>(string_id-1));
+        if(!name)return {odh::PrimitiveDisposition::goto_false,{}};
+        const auto* target=world.find(frame.context.stack_object);
+        if(!target)return {odh::PrimitiveDisposition::goto_false,{}};
+        if(!target->definition)return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target definition is unavailable"};
+        const auto catalog=saved_tree_names.find(target->definition->guid);
+        if(catalog==saved_tree_names.end())
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target catalog is unavailable"};
+        if(catalog->second.semiglobal_name)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target has an unresolved semiglobal tree catalog"};
+        if(std::find(catalog->second.private_bhav_labels.begin(),catalog->second.private_bhav_labels.end(),name->value)!=
+           catalog->second.private_bhav_labels.end())
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName found a private tree but runtime subroutine dispatch is not installed"};
+        return {odh::PrimitiveDisposition::goto_false,{}};
+    };
     std::optional<odh::RelationshipState> relationships;
     if(neighbors)relationships.emplace(*neighbors);
     std::vector<odh::RelationshipRecord> relationship_records;
@@ -810,9 +849,10 @@ int main(int argc,char** argv) {
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
+        if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
-        if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4))return entity_handler(f,i,t,d);
+        if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4||(i.operands[4]&127)==8))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if(i.opcode==32)return object_type_handler(f,i,t,d);
         if(i.opcode==49)return notify_handler(f,i,t,d);

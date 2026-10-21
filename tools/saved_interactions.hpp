@@ -67,6 +67,31 @@ inline odh::RoutineSet load_saved_private_routines(const odh::DefinitionCandidat
     return routines;
 }
 
+struct SavedTreeNameCatalog {
+    std::vector<std::string> private_bhav_labels;
+    std::optional<std::string> semiglobal_name;
+};
+
+// TreeByName in the reference is assembled from local BHAV chunk labels plus
+// the linked semiglobal's BHAV labels. Keep the link explicit so callers do not
+// treat a partial local scan as a complete negative lookup.
+inline SavedTreeNameCatalog load_saved_tree_name_catalog(const odh::DefinitionCandidate& definition) {
+    SavedTreeNameCatalog result;
+    const auto scan=[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type=="GLOB"&&!chunk.label.empty()){
+                if(result.semiglobal_name&&*result.semiglobal_name!=chunk.label)
+                    throw odh::FormatError("conflicting semiglobal links in exact object resource");
+                result.semiglobal_name=chunk.label;
+            }
+            if(chunk.type=="BHAV"&&odh::routine_key(chunk.id).scope==odh::RoutineScope::private_object)
+                result.private_bhav_labels.push_back(chunk.label);
+        },limits);};
+    if(definition.asset.empty())with_iff_file(definition.source,scan);
+    else with_far_entry(definition.source,definition.asset,scan);
+    return result;
+}
+
 // Load the statically reachable private-call closure for one selected action.
 // Global/semiglobal calls are left to explicit shared owners; no file search
 // order or implicit fallback is introduced. The limits bound retained code.

@@ -64,6 +64,7 @@ struct Chunk {
     std::uint16_t flags;
     std::uint64_t offset;
     View payload;
+    std::string label; // Bounded 64-byte IFF chunk label, without its NUL terminator.
 };
 
 // Return the IFF version; deliver only headers and bounded payload views.

@@ -223,9 +223,8 @@ elegibilidade e enfileiramento da janela X11. O teste de integração
 `tests/house07_interaction_integration.py` usa a instalação externa do jogo;
 nenhum recurso comercial é versionado. Com avatar105 e cadeira128 em House07,
 a ação4097 retornou true, drenou a fila e publicou conclusão true no tick240.
-O avatar ficou anexado ao container128/slot0, e o estado de animação foi
-`a2o-sit-loop`. O trace da ação alcançou routines4097/4100/4099 e opcodes
-44/45/46/49.
+O avatar ficou anexado ao container128/slot0. O trace da ação alcançou
+routines4097/4100/4099 e opcodes44/45/46/49.
 
 Reprodução após compilar `odh-person`:
 
@@ -234,9 +233,14 @@ python3 tests/house07_interaction_integration.py \
   --binary ./odh-person --game-root '../referencias/The Sims'
 ```
 
-O limite de240 ticks termina no ponto em que a ação já completou; por isso o
-processo retorna3 indicando orçamento de ticks esgotado, enquanto o JSON
-reporta `interaction_runtime.status=returned_true`, fila inativa e conclusão
-true. Isso prova uma interação Sit integrada ao host com recursos reais, não
-uma sessão completa jogável. O scheduler completo de Main e outras
-interações/estados continuam em aberto.
+O teste padrão avança até512 ticks. Após a conclusão do Sit, o Main executa
+SetToNext mode8 e RunTreeByName. Na rotina8229/PC87, a string global
+STR#303/33 resolve para `CT - Relax`; o objeto128 não tem BHAV local com esse
+rótulo nem link semiglobal, então o lookup retorna false e o trace segue para
+Animation44. O Main permanece em espera no tick512 e o avatar fica sentado,
+tocando `a2o-idle-sit-3`. O processo retorna3 para sinalizar o orçamento de
+ticks, enquanto o JSON separa o sucesso da interação do estado do Main.
+
+Isso prova Sit integrado e a continuação observada do Main por512 ticks, não
+uma sessão completa jogável. Dispatch de árvores nomeadas que existem,
+scheduler geral de objetos e outras interações/estados continuam em aberto.

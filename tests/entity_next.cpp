@@ -51,6 +51,35 @@ void live_query(){
         !full.next_entity_of_guid(32767,guid),"full world finds signed maximum without overflow/wrap");
     require(!full.create(0,odh::EntityKind::object)&&!full.create(-1,odh::EntityKind::object),"World object identities stay positive");
 }
+void same_tile_query(){
+    odh::World w;
+    for(const auto [id,kind]:{std::pair<std::int16_t,odh::EntityKind>{10,odh::EntityKind::object},
+        {15,odh::EntityKind::avatar},{20,odh::EntityKind::object},{30,odh::EntityKind::object},
+        {40,odh::EntityKind::object}})require(w.create(id,kind),"create same-tile entity");
+    require(w.create(25,odh::EntityKind::object),"create unpositioned entity");
+    require(w.set_position(10,{16,32,1,0})&&w.set_position(15,{31,47,1,0})&&
+        w.set_position(20,{17,33,1,0})&&w.set_position(30,{32,32,1,0})&&
+        w.set_position(40,{16,32,2,0}),"assign same-tile positions");
+    require(w.next_entity_on_same_tile(10)==15&&w.next_entity_on_same_tile(15)==20&&
+        w.next_entity_on_same_tile(20)==10,"same-tile query ascends IDs then wraps to first");
+    require(w.next_entity_on_same_tile(30)==30&&w.next_entity_on_same_tile(40)==40,
+        "same-tile query keeps tile and level identity");
+    require(!w.next_entity_on_same_tile(11),"same-tile cursor must identify a positioned entity");
+    const auto p=odh::entity_next_primitive(w);
+    auto r=dispatch(p,frame(10),next(10,0,136));
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==15,"opcode31 same-tile mode writes next StackObjectID");
+    r=dispatch(p,frame(20),next(10,0,136));
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==10,"opcode31 same-tile mode wraps to first matching entity");
+    r=dispatch(p,frame(25),next(10,0,136));
+    require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),
+        "opcode31 same-tile mode rejects an unpositioned cursor");
+    auto unsupported=next(10,0,137);
+    r=dispatch(p,frame(10),unsupported);
+    require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),
+        "adjacent-tile mode remains unsupported");
+}
 void selectors(){
     odh::World w;add(w,11);add(w,15);add(w,19);
     const auto f=frame();std::array<std::int16_t,20> temps{};temps[1]=11;
@@ -215,5 +244,5 @@ void kinds(){
         "ID reused as untyped avatar immediately participates");
 }
 }
-int main(){try{live_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+int main(){try{live_query();same_tile_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}
