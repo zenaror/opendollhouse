@@ -197,6 +197,9 @@ int main(int argc,char** argv) {
     struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
     std::optional<HeadlessEntityMove> headless_entity_move;
     bool headless_entity_move_applied=false;
+    struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
+    std::optional<HeadlessInteraction> headless_interaction;
+    bool headless_interaction_applied=false;
     bool render_window=false,saved_world_main=false,headless_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
@@ -273,6 +276,11 @@ int main(int argc,char** argv) {
             if(value==0||value>32767)throw odh::FormatError("headless StackObject ID is outside the supported World range");
             headless_stack_object=static_cast<std::int16_t>(value);
         }
+        else if(option=="--headless-interaction"&&!headless_interaction&&n+2<argc){
+            const auto id=selector(argv[++n]),tick=selector(argv[++n]);
+            if(id==0||id>32767||tick==0)throw odh::FormatError("headless interaction target/tick is outside the supported profile");
+            headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
+        }
         else if(option=="--headless-move-entity"&&!headless_entity_move&&n+6<argc){
             const auto id=selector(argv[++n]);
             const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
@@ -305,6 +313,8 @@ int main(int argc,char** argv) {
        (render_level_set&&!render_floors)||(render_wall_mode_set&&!render_walls)||
        (render_lot_view.terrain_theme&&!render_floors))
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
+    if(headless_interaction&&(!headless_main||headless_interaction->tick>ticks_limit))
+        throw odh::FormatError("--headless-interaction requires --headless-main and a tick within --ticks");
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_id&&!headless_main);
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
@@ -315,7 +325,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -970,6 +980,24 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> previous_completion_uid;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
+    const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
+        render_selection=std::move(selection);
+        render_interactions.reset();render_test_results.clear();
+        if(!render_selection||!definition_index)return;
+        const auto* candidate=definition_index->unique(render_selection->guid);
+        if(!candidate)return;
+        render_interactions=saved_object_interactions(*candidate);
+        if(!render_interactions->table||render_interactions->table->status!=odh::TtabStatus::decoded)return;
+        const auto& rows=render_interactions->table->interactions;
+        std::vector<std::uint16_t> tests;
+        tests.reserve(std::min<std::size_t>(rows.size(),32));
+        for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
+        render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
+            render_selection->id,tests,4096,128);
+        for(std::size_t n=render_test_results.size();n<rows.size();++n)
+            render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
+                "interaction row exceeds bounded selection-time probe profile"});
+    };
     const auto request_selected_interaction=[&] {
         if(render_interaction_enqueued)return;
         if(!saved_world_main||!render_selection||!render_interactions){
@@ -1239,28 +1267,12 @@ struct PlacementCandidateProbe {
             if(input.quit){window_closed=true;break;}
             if(input.pause)window_paused=!window_paused;
             if(input.primary_click&&render_lot&&render_lot_evidence){
-                render_selection=render_lot->pick(*render_lot_evidence,(*input.primary_click)[0],(*input.primary_click)[1]);
-                render_interactions.reset();render_test_results.clear();
+                prepare_selected_object(render_lot->pick(*render_lot_evidence,
+                    (*input.primary_click)[0],(*input.primary_click)[1]));
                 if(!render_interaction_enqueued||queue.size()==0){
                     render_interaction_requested=false;render_interaction_enqueued=false;
                     render_interaction_status="not_requested";render_interaction_diagnostic.clear();
                     render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
-                }
-                if(render_selection&&definition_index){
-                    const auto* candidate=definition_index->unique(render_selection->guid);
-                    if(candidate){
-                        render_interactions=saved_object_interactions(*candidate);
-                        if(render_interactions->table&&render_interactions->table->status==odh::TtabStatus::decoded){
-                            const auto& rows=render_interactions->table->interactions;
-                            std::vector<std::uint16_t> tests;tests.reserve(std::min<std::size_t>(rows.size(),32));
-                            for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
-                            render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
-                                render_selection->id,tests,4096,128);
-                            for(std::size_t n=render_test_results.size();n<rows.size();++n)
-                                render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
-                                    "interaction row exceeds bounded click-time probe profile"});
-                        }
-                    }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 std::string title="OpenDollhouse Main preview: ";
@@ -1306,6 +1318,24 @@ struct PlacementCandidateProbe {
         if(ticks>=ticks_limit||total_steps()>=10000||
            (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded))break;
         ++ticks;
+        if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
+            headless_interaction_applied=true;
+            render_interaction_requested=true;
+            const auto* target=world.find(headless_interaction->id);
+            const auto* candidate=target&&target->definition&&definition_index?
+                definition_index->unique(target->definition->guid):nullptr;
+            if(!target||target->kind!=odh::EntityKind::object||!target->definition){
+                render_interaction_status="unsupported";
+                render_interaction_diagnostic="scheduled target is not a defined live object";
+            }else if(!candidate){
+                render_interaction_status="unsupported";
+                render_interaction_diagnostic="scheduled target definition is missing or ambiguous";
+            }else{
+                prepare_selected_object(SavedObjectSelection{target->id,target->definition->guid,
+                    target->generation,candidate->definition.tree_table_id});
+                request_selected_interaction();
+            }
+        }
         if(headless_entity_move&&!headless_entity_move_applied&&ticks==headless_entity_move->tick){
             const auto* moving_entity=world.find(headless_entity_move->id);
             if(!moving_entity||!moving_entity->position||
@@ -1346,13 +1376,17 @@ struct PlacementCandidateProbe {
         execute();
         if(render_interaction_requested){
             const auto status_before=render_interaction_status;
-            if(host_failed){
+            if(render_interaction_result){
+                // Preserve the action's completion even if the parent Main
+                // faults on a later tick after the interaction was removed.
+            }else if(host_failed){
                 render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;
-            }else if(vm.status()==odh::VmStatus::fault){
-                render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
             }else if(queue.completion()&&(!previous_completion_uid||queue.completion()->uid!=*previous_completion_uid)){
                 render_interaction_result=queue.completion()->result;
                 render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
+                render_interaction_diagnostic.clear();
+            }else if(vm.status()==odh::VmStatus::fault){
+                render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
             }
             if(render_window_host&&render_interaction_status!=status_before){
                 std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
@@ -1534,6 +1568,19 @@ struct PlacementCandidateProbe {
             }
         }
     }
+    if(render_interaction_requested){
+        if(render_interaction_result){
+            // The interaction result is independent from a later parent-Main fault.
+        }else if(host_failed){render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;}
+        else if(queue.completion()&&(!previous_completion_uid||
+                                      queue.completion()->uid!=*previous_completion_uid)){
+            render_interaction_result=queue.completion()->result;
+            render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
+            render_interaction_diagnostic.clear();
+        }else if(vm.status()==odh::VmStatus::fault){
+            render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
+        }
+    }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
@@ -1630,6 +1677,40 @@ struct PlacementCandidateProbe {
     if(action)std::cout<<"{\"archive\":"<<json_bytes(action->archive)<<",\"entry\":"<<json_bytes(action->entry)<<",\"objd_id\":"<<*action_def<<",\"guid\":"<<action_data->binding->guid<<",\"owner\":2,\"routine\":"<<*action_routine<<'}';else std::cout<<"null";
     std::cout<<",\"completion\":";
     if(queue.completion()){const auto& c=*queue.completion();std::cout<<"{\"uid\":"<<c.uid<<",\"ticket\":"<<c.ticket<<",\"tick\":"<<c.tick<<",\"result\":"<<(c.result?"true":"false")<<'}';}else std::cout<<"null";
+    std::cout<<",\"interaction_runtime\":";
+    if(!render_interaction_requested)std::cout<<"null";
+    else {
+        const auto* actor=world.find(runtime_avatar_id);
+        const auto animation=playback?playback->progress():std::nullopt;
+        std::cout<<"{\"trigger\":"<<json_bytes(headless_interaction?"headless_schedule":"window_input")
+            <<",\"scheduled_tick\":"<<(headless_interaction?std::to_string(headless_interaction->tick):"null")
+            <<",\"scheduled_target\":"<<(headless_interaction?std::to_string(headless_interaction->id):"null")
+            <<",\"enqueued\":"<<(render_interaction_enqueued?"true":"false")
+            <<",\"status\":"<<json_bytes(render_interaction_status)
+            <<",\"diagnostic\":"<<json_bytes(render_interaction_diagnostic)
+            <<",\"main_vm_status\":"<<json_bytes(odh::vm_status_name(vm.status()))
+            <<",\"main_vm_diagnostic\":"<<json_bytes(vm.diagnostic())
+            <<",\"action\":"<<(render_interaction_action?std::to_string(*render_interaction_action):"null")
+            <<",\"code_owner\":"<<(render_interaction_owner?std::to_string(*render_interaction_owner):"null")
+            <<",\"result\":"<<(render_interaction_result?(*render_interaction_result?"true":"false"):"null")
+            <<",\"queue_size\":"<<queue.size()<<",\"queue_active\":"<<(queue.active()?"true":"false")
+            <<",\"actor\":{\"id\":"<<runtime_avatar_id<<",\"generation\":"<<(actor?actor->generation:0)
+            <<",\"position\":";
+        if(actor&&actor->position)std::cout<<'['<<actor->position->x<<','<<actor->position->y<<','
+            <<actor->position->level<<','<<unsigned(actor->position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<",\"attachment\":";
+        if(actor&&actor->attachment)std::cout<<"{\"container\":"<<actor->attachment->container
+            <<",\"slot\":"<<actor->attachment->slot<<",\"positioned\":"
+            <<(actor->attachment->positioned?"true":"false")<<'}';
+        else std::cout<<"null";
+        std::cout<<"},\"animation\":";
+        if(animation)std::cout<<"{\"name\":"<<json_bytes(animation->name)<<",\"frame\":"<<animation->frame
+            <<",\"frames\":"<<animation->frames<<",\"end\":"<<(animation->end?"true":"false")
+            <<",\"loop\":"<<(animation->loop?"true":"false")<<'}';
+        else std::cout<<"null";
+        std::cout<<'}';
+    }
     std::cout<<",\"tuning_profile\":\"explicit BCON only; no OTF or entity replacement backend; missing remains unsupported\",\"tuning_reads\":[";
     for(std::size_t n=0;n<tuning_reads.size();++n){if(n)std::cout<<',';const auto& v=tuning_reads[n];
         const auto scope=v.address.scope==odh::RoutineScope::global?"global":v.address.scope==odh::RoutineScope::semiglobal?"semiglobal":"private";

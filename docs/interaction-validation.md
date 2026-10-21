@@ -214,3 +214,29 @@ executar Animation44 e avaliar Snap46. Ações adicionais, serviços e retorno
 sentar/levantar continuam em aberto.
 Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
 levantar continuam em aberto.
+
+## Integração Sit em House07
+
+`odh-person --headless-main --headless-interaction ID TICK` agenda a seleção
+de um objeto salvo e passa pelo mesmo carregamento de TTAB, verificação de
+elegibilidade e enfileiramento da janela X11. O teste de integração
+`tests/house07_interaction_integration.py` usa a instalação externa do jogo;
+nenhum recurso comercial é versionado. Com avatar105 e cadeira128 em House07,
+a ação4097 retornou true, drenou a fila e publicou conclusão true no tick240.
+O avatar ficou anexado ao container128/slot0, e o estado de animação foi
+`a2o-sit-loop`. O trace da ação alcançou routines4097/4100/4099 e opcodes
+44/45/46/49.
+
+Reprodução após compilar `odh-person`:
+
+```sh
+python3 tests/house07_interaction_integration.py \
+  --binary ./odh-person --game-root '../referencias/The Sims'
+```
+
+O limite de240 ticks termina no ponto em que a ação já completou; por isso o
+processo retorna3 indicando orçamento de ticks esgotado, enquanto o JSON
+reporta `interaction_runtime.status=returned_true`, fila inativa e conclusão
+true. Isso prova uma interação Sit integrada ao host com recursos reais, não
+uma sessão completa jogável. O scheduler completo de Main e outras
+interações/estados continuam em aberto.
