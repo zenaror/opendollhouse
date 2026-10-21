@@ -230,6 +230,6 @@ std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& 
 
 std::optional<std::uint16_t> SavedLotRenderer::runtime_room_at(
     const odh::EntityPosition& position) const {
-    return runtime_rooms_ ? odh::geometric_room_at(*runtime_rooms_,position.x,position.y,position.level)
+    return runtime_rooms_ ? odh::geometric_room_at_runtime(*runtime_rooms_,position.x,position.y,position.level)
                           : std::nullopt;
 }

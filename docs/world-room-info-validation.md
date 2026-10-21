@@ -22,6 +22,14 @@ Uma mudança em pisos, segmentos, dimensões, aliases ou overlays requer prepara
 e gerar o mapa novamente; ODH Main ainda não oferece mutação arquitetônica.
 Isso não fornece `RoomObs`, `WallObs`, portais ou clearance de rota.
 
+`SavedLotRenderer::runtime_room_at` usa `geometric_room_at_runtime`, que reproduz
+o fallback de Simitone `VMContext.GetRoomAt`: coordenadas fora do lote e níveis
+fora da quantidade de andares configurada retornam a sala 0. Isso permite
+classificar entidades externas no mesmo bucket usado pela referência sem
+invalidar uma consulta de outro cômodo. Mapa malformado e célula interna sem ID
+válido continuam retornando ausência. A função geométrica estrita
+`geometric_room_at` mantém ausência para coordenadas e níveis fora do mapa.
+
 Definição ausente/ambígua, flag não inicializada,
 sala não resolvida, `KillTimeout` desconhecido, geometria inválida ou excesso
 de entidades torna a consulta `unsupported`, sem retornar interseções parciais.

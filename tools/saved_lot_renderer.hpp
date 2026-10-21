@@ -77,7 +77,8 @@ public:
     const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
     odh::GraphicsEntity avatar(std::int16_t id);
     // Available only when the immutable prepared architecture has unambiguous
-    // floor/wall identities. This resolves room membership, not portal clearance.
+    // floor/wall identities. Matches GetRoomAt room-zero fallback outside the
+    // lot; it resolves room membership, not portal clearance.
     std::optional<std::uint16_t> runtime_room_at(const odh::EntityPosition&) const;
     bool runtime_room_map_available() const noexcept { return runtime_rooms_.has_value(); }
     SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,bool record_picks=false);

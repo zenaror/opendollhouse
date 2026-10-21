@@ -78,8 +78,19 @@ int main() { try {
                 !odh::geometric_room_at(locations,0,0,0)&&
                 !odh::geometric_room_at(locations,0,0,3),
                 "out-of-bounds coordinates and levels are unsupported");
+        require(odh::geometric_room_at_runtime(locations,-1,0,1)==0&&
+                    odh::geometric_room_at_runtime(locations,32,0,1)==0&&
+                    odh::geometric_room_at_runtime(locations,0,-1,1)==0&&
+                    odh::geometric_room_at_runtime(locations,0,0,0)==0&&
+                    odh::geometric_room_at_runtime(locations,0,0,2,1)==0,
+                "runtime GetRoomAt fallback resolves outside coordinates and levels to room zero");
+        require(!odh::geometric_room_at_runtime(locations,0,0,1,0)&&
+                    !odh::geometric_room_at_runtime(locations,0,0,1,3),
+                "unsupported runtime story counts remain absent");
         auto malformed=locations;malformed.levels[1].pop_back();
         require(!odh::geometric_room_at(malformed,0,0,1),"malformed room-grid extent is unsupported");
+        require(!odh::geometric_room_at_runtime(malformed,32,0,1),
+                "malformed room-grid extent is not hidden by outside fallback");
         malformed=locations;malformed.levels[1][0]=packed(6,6);
         require(!odh::geometric_room_at(malformed,0,0,2),"unknown packed room identity is unsupported");
         malformed=locations;malformed.levels[1][0]=packed(1,1);

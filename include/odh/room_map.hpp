@@ -67,4 +67,12 @@ GeometricRoomMap generate_prepared_room_map(
 // absence; room ID 0 is a value when explicitly present in the packed map.
 std::optional<std::uint16_t> geometric_room_at(
     const GeometricRoomMap&, std::int32_t x, std::int32_t y, std::int16_t level);
+
+// Simitone VMContext.GetRoomAt fallback for a validated two-story room map:
+// out-of-lot coordinates and levels outside `stories` resolve to room 0.
+// Malformed map metadata and unresolved in-lot cells remain absent. `stories`
+// must be in [1, 2], matching this adapter's bounded architecture profile.
+std::optional<std::uint16_t> geometric_room_at_runtime(
+    const GeometricRoomMap&, std::int32_t x, std::int32_t y,
+    std::int16_t level, std::uint8_t stories = 2);
 } // namespace odh

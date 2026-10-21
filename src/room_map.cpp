@@ -297,4 +297,25 @@ std::optional<std::uint16_t> geometric_room_at(
     }
     return selected;
 }
+
+std::optional<std::uint16_t> geometric_room_at_runtime(
+    const GeometricRoomMap& map, std::int32_t x, std::int32_t y,
+    std::int16_t level, std::uint8_t stories) {
+    if (!map.width || !map.height || map.width > 64 || map.height > 64 ||
+        stories == 0 || stories > map.levels.size() || map.rooms.empty() ||
+        map.rooms.size() > 32768)
+        return std::nullopt;
+    const auto cells = std::size_t(map.width) * map.height;
+    for (const auto& room_level : map.levels)
+        if (room_level.size() != cells) return std::nullopt;
+
+    // GetRoomAt returns room zero before indexing Architecture.Rooms for
+    // coordinates or levels outside the lot. Keep malformed in-lot cells
+    // distinct from this valid reference fallback.
+    if (level < 1 || level > stories || x < 0 || y < 0 ||
+        static_cast<std::uint32_t>(x) / 16U >= map.width ||
+        static_cast<std::uint32_t>(y) / 16U >= map.height)
+        return std::uint16_t{0};
+    return geometric_room_at(map, x, y, level);
+}
 } // namespace odh
