@@ -13,8 +13,11 @@ campo durante a query.
 
 O chamador também fornece um resolver de sala para a posição viva. No host
 `saved-world-main` sem edição de arquitetura, `SavedLotRenderer` mantém um mapa
-congelado gerado de `PreparedArchitecture`, desde que aliases de piso e parede
-tenham identidades não ambíguas. Simitone `VMContext.GetRoomAt` lê diretamente
+congelado gerado de `PreparedArchitecture` desde que a identidade dos pisos
+esteja resolvida. A conectividade usa os segmentos/estilos geométricos das
+paredes; IDs de sprites de parede não alteram a conectividade das salas, e
+aliases artísticos ausentes continuam sinalizados separadamente. Simitone
+`VMContext.GetRoomAt` lê diretamente
 `Architecture.Rooms[level-1].Map`; portal e janela constroem listas de
 obstáculos/portais sem reescrever esse mapa. Portanto este resolver representa
 pertencimento geométrico para o perfil de arquitetura imutável de duas alturas.
@@ -56,5 +59,16 @@ Também cobre mutação de posição, remoção e lifecycle disparadas por callb
 `odh-person` inclui `room_info_probe` no JSON do saved-world preview quando há
 renderer com mapa preparado; consulta somente a caixa do avatar na posição
 atual e lista interseções owner-keyed. Status unsupported é preservado. A saída
-é diagnóstica e não bloqueia nem aprova interação. Nem os testes nem esse probe
-comprovam clearance, rota ou interação jogável no lote.
+é diagnóstica e não bloqueia nem aprova interação. Ela comprova a consulta
+espacial neste perfil, sem validar clearance, rota ou interação jogável no lote.
+
+## House07 com Main vivo
+
+Em 2026-10-21, um build Debug limpo executou House07 até o tick 214 com as 23
+fontes loose `.flr`/`.wll` da instalação. `room_info_probe` retornou
+`status=complete`, sala 3 e a interseção estática do próprio avatar 105 no box
+`[389,437,395,443]`. O avatar é mantido na coleção estática nesse perfil; o
+resultado não classifica EntryPoint 5/26 nem afirma que a posição passou por
+`GetAvatarPlace`. O frame CPU produzido na mesma execução mostra Bob e o lote
+compostos. Os 152 CTests passaram, incluindo `linux_window_backend` quando
+executado com acesso autorizado ao display.

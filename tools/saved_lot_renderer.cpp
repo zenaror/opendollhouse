@@ -102,7 +102,11 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
         // Remap misses without declarations can represent global road/base
         // patterns; they are preserved and exposed in preparation diagnostics.
         prepared_render_=prepared_render_architecture(architecture_.architecture,*prepared_);
-        if(prepared_->floor_identity_unambiguous() && prepared_->wall_aliases_resolved())
+        // Room membership uses floor identity and wall segments/styles, not
+        // wall sprite material IDs. Keep the room map available when a wall
+        // art alias is unresolved; the renderer still reports that material
+        // miss separately and does not treat it as resolved artwork.
+        if(prepared_->floor_identity_unambiguous())
             runtime_rooms_=odh::generate_prepared_room_map(*prepared_);
     }else if((floor_map&&!floor_map->entries.empty())||(walls&&wall_map&&!wall_map->entries.empty()))
         throw odh::FormatError("live saved lot custom materials require a resource resolver");
