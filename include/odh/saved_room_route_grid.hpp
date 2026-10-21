@@ -57,8 +57,7 @@ struct SavedRoomRouteGrid {
 SavedRoomRouteGrid build_saved_room_route_grid(
     const GeometricRoomMap&, std::uint16_t room, std::uint8_t level,
     const RoomObstacleCandidateSet&,
-    const std::vector<RoomObstacleRect>& wall_obstacles,
-    bool wall_obstacles_complete,
+    const WallObstacleCandidateSet& wall_obstacles,
     const std::vector<SavedCollisionCandidate>& entities,
     std::int16_t actor_id, bool entity_inventory_complete,
     const SavedRoomRouteGridLimits& limits = {});

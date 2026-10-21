@@ -41,6 +41,33 @@ não obstáculos runtime completos, colisão autoritativa, espaço de rota livre
 aceitação de destino. Esta API não está conectada a Routing45 nem a uma consulta
 de movimento.
 
+## Candidatos geométricos de WallObs
+
+`generate_wall_obstacle_candidates` emite candidatos geométricos de cada
+segmento de parede no andar selecionado, usando as mesmas fórmulas de
+`VMRoomMap.GenerateMap`. Inclui as quatro peças diagonais e as caixas dos
+segmentos TopLeft, TopRight, BottomLeft e BottomRight, preservando o wrap de
+vizinhos da fonte. Uma porta só remove a caixa correspondente quando
+`ResolvedWallEdges` traz evidência `non_solid` para a face do mesmo snapshot;
+aresta presente sem face resolvida fica sólida. O limite padrão é 65.536
+retângulos; erro ou estouro descarta a saída parcial e mantém `complete=false`.
+
+O resultado é um inventário global, não mesclado, por andar. Simitone coleta
+`wallObs` enquanto percorre cada região flood-filled e chama
+`OptimizeObstacles` separadamente por sala. Portanto, a ordem e a lista de
+retângulos não são byte a byte equivalentes às listas de cada sala. O candidato
+global é consumido apenas depois de recortar os retângulos aos limites da sala;
+isso ainda é geometria estática, não comportamento runtime.
+
+Proveniência: Simitone submódulo FreeSO na revisão acima,
+`VMRoomMap.cs:129-180`, comparado a `resolve_initial_wall_edges`. `non_solid`
+significa que o snapshot de aparência marcou a face como porta; não significa
+porta aberta nem passagem aceita em runtime. `tests/room_obstacles.cpp` cobre
+as duas fórmulas diagonais, retângulos cardinais, faces ausentes como parede
+sólida, portas reconhecidas, vizinhos normais e com wrap, bits inválidos,
+extent inválido e teto de saída. O `SavedRoomRouteGrid` consome esse conjunto,
+mas Main ainda não monta nem usa o resultado para Routing45.
+
 `tests/room_obstacles.cpp` cobre bounds expandidos, coordenadas/margens de
 tile, sala 0, ambos os IDs de tile diagonal (incluindo a máscara do bit de
 orientação), ordem/merge de retângulos, portal que interrompe um run como na

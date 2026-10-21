@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/room_map.hpp"
+#include "odh/route_geometry.hpp"
 #include "odh/world.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,14 @@ struct RoomObstacleCandidateSet {
     std::uint8_t level = 0;
     // Covers room-obstacle generation only. It does not include object/avatar
     // collision or mean that routing/placement clearance is complete.
+    bool complete = false;
+    std::vector<RoomObstacleRect> rectangles;
+};
+
+struct WallObstacleCandidateSet {
+    std::uint8_t level = 0;
+    // Geometric wallObs from saved architecture. A recognized door face omits
+    // that wall segment; runtime door state and traversal are not represented.
     bool complete = false;
     std::vector<RoomObstacleRect> rectangles;
 };
@@ -73,5 +82,13 @@ RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap&, std::uint16_t room, std::uint8_t level,
     const std::vector<RoomPortalOpening>& portal_openings,
     bool portal_inventory_complete);
+
+// Ports VMRoomMap's wallObs rectangles for one saved architecture level.
+// `resolved_edges` is row-major and must come from the same architecture
+// snapshot. Present edges without recognized door evidence remain solid.
+WallObstacleCandidateSet generate_wall_obstacle_candidates(
+    const SavedArchitecture&, std::uint8_t level,
+    const std::vector<ResolvedWallEdges>& resolved_edges,
+    std::size_t rectangle_limit = 65536);
 
 } // namespace odh

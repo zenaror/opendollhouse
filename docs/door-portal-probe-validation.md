@@ -36,6 +36,17 @@ calcula clearance/pathfinding completo.
 `runtime_portal_state` (runtime não simulado) e `routing_clearance` continuam
 false.
 
+Opcionalmente, `--route-grid-diagnostic ACTOR_ID TARGET_ID` acrescenta uma
+busca diagnóstica para duas entidades na mesma sala. Ela compõe o mapa
+preparado, RoomObs, candidatos WallObs do andar e caixas de colisão salvas na
+grade limitada, depois chama `find_route` até qualquer célula caminhável logo
+fora da caixa do alvo expandida em três unidades. `approach_model` identifica
+essa aproximação geométrica. Ela não resolve SLOT, direção, `WallRaycast`, flags
+de ocupação, portas runtime, EntryPoint 5, portais ou `VMRectRouter`; `found`
+significa apenas caminho na grade candidata ODH. Salas diferentes retornam
+`cross_room_unmodeled`; entradas incompletas falham fechadas.
+`route_clearance` e o `routing_clearance` geral continuam false.
+
 Referências locais pinadas: Simitone
 `4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
 `f86bbd34b2112296ed786741f640a0535886d180`, `VMEntity.cs` (propriedade
@@ -63,7 +74,7 @@ build/odh-wall-appearance '../referencias/The Sims/UserData/Houses/House07.iff' 
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
   --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
-  "${architecture_args[@]}" --route-edges --portal-probe
+  "${architecture_args[@]}" --route-edges --route-grid-diagnostic 105 128
 ```
 
 Com as 23 fontes loose `.flr`/`.wll` presentes nesta instalação, o probe
@@ -78,9 +89,17 @@ consultados para os seis grupos foram `(2,3)`, `(3,4)`, `(4,2)`, `(1,3)`,
 `(1,2)` e `(3,1)`. A expansão por peças de porta produziu 24 pares
 tile/room-alvo. Os candidatos de obstáculo emitiram 8, 7, 8, 6 e 0 retângulos
 para as salas 1–5; com inventário completo, todos têm
-`generation_complete=true`, mas nenhum vira caminho e `routing_clearance` segue
-false. Isso valida leitura e junção estática da
+`generation_complete=true`; o inventário por sala não executa movimento e
+`routing_clearance` segue false. Isso valida leitura e junção estática da
 instalação/save, não abertura runtime, colisões completas ou movimento de Sims.
+
+Na amostra 2026-10-20, `--route-grid-diagnostic 105 128` colocou Bob (105) e o
+alvo salvo 128 na sala geométrica 3. A grade candidata ficou `ready` com
+10.240 células, 4.529 caminháveis e start caminhável; a busca ODH encontrou um
+caminho de 9 pontos, custo 80, até `[392,448]`, entre 40 pontos geométricos
+candidatos ao redor da caixa expandida. É apenas um resultado de `find_route`
+8-vizinhos, não uma rota aprovada pelo jogo, seleção real de SLOT ou prova de
+que a interação Sit funcione.
 
 `tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima
 valida a junção com arquivos comerciais reais; nenhum asset ou relatório com

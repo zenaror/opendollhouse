@@ -3,7 +3,7 @@
 `odh_saved_room_route_grid` rasteriza uma sala geométrica em coordenadas de
 1/16 tile para alimentar o `RouteGrid` limitado. A área fica presa ao retângulo
 da sala; posições cujo mapa de salas não aponta para a sala solicitada são
-bloqueadas. RoomObs, WallObs fornecido pelo chamador e caixas de entidades
+bloqueadas. RoomObs, WallObs gerado da arquitetura salva e caixas de entidades
 conhecidas também bloqueiam centros de avatar. Footprints de entidades recebem
 a expansão de três unidades usada por `VMRoutingFrame.AttemptWalk`; entidades
 incertas com caixa conhecida são obstáculos conservadores.
@@ -19,9 +19,11 @@ Os limites padrão são 262.144 células, 4.096 entidades, 16.384 retângulos e
 4.194.304 células rasterizadas em soma. Assim, o trabalho do gerador tem teto
 determinístico além do teto de alocação do `RouteGrid`.
 
-`ready` significa somente que o candidato geométrico está formado. A unidade
-não gera WallObs: o chamador ainda precisa fornecer exatamente os obstáculos
-de parede da sala. Ela também não executa flags vivas, bilateral EntryPoint 5,
+`ready` significa somente que o candidato geométrico está formado. O gerador de
+WallObs emite os obstáculos da arquitetura e andar selecionados; o chamador
+fornece o conjunto derivado do mesmo snapshot de arquitetura e faces. Arestas
+sem face de porta reconhecida permanecem sólidas. A unidade não executa flags
+vivas, bilateral EntryPoint 5,
 estado runtime de portas, validação de slot/goal, transições de portal ou
 `VMRectRouter`. Não conectar esse resultado ao Routing45 nem rotulá-lo como
 `routing_clearance` até completar essas condições.

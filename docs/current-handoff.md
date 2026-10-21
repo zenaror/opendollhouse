@@ -2,18 +2,33 @@
 
 ## Grade candidata por sala (2026-10-20)
 
-Commit `28403d3` foi publicado em `origin/main` após CTest 143/143, teste X11
-isolado 1/1 e revisão do escopo do checkpoint anterior. Na árvore atual, um
-novo adapter `odh_saved_room_route_grid` transforma uma sala pronta em grade
-1/16 tile, bloqueando áreas fora da sala, RoomObs, WallObs fornecido e caixas
-de entidade com margem do AttemptWalk. O teste focal passou com 15 checks.
-Build completa passou; CTest 144/144, com `linux_window_backend` repetido em
-`:0` e aprovado 1/1.
+Commits `28403d3` e `8bdb5d4` estão publicados em `origin/main`. O adapter
+`odh_saved_room_route_grid` transforma uma sala pronta em grade 1/16 tile,
+bloqueando áreas fora da sala, RoomObs, WallObs e caixas de entidade com margem
+do AttemptWalk. O teste focal do adapter cobre 15 checks; build completa e
+CTest 144/144 concluíram sem falhas (143 executados, `linux_window_backend`
+pulou no sandbox); o gate X11 separado passou 1/1 em `:0`. A geração de
+candidatos WallObs usa as fórmulas de `VMRoomMap` na
+arquitetura salva; arestas sem face reconhecida são conservadas como sólidas.
+O inventário atual é global e não mesclado por andar, enquanto Simitone coleta
+e mescla `wallObs` por sala; ele não é byte a byte idêntico às listas runtime.
 Limites: 262.144 células, 4.096 entidades, 16.384 retângulos e 4.194.304
-células rasterizadas; o adapter falha fechado em entradas incompletas. Ele não
-gera WallObs nem executa política runtime, EntryPoint 5, estado de portas,
-validação de SLOT/goal, portal ou VMRectRouter. `ready` ainda não significa
-clearance, e Main continua sem usar o novo resultado.
+células rasterizadas; o adapter falha fechado em entradas incompletas. WallObs
+usa somente o snapshot inicial de faces e não modela estado runtime da porta.
+A unidade ainda não executa política runtime, EntryPoint 5, validação de
+SLOT/goal, portal ou VMRectRouter. `ready` ainda não significa clearance, e
+Main continua sem usar o novo resultado.
+
+O `odh-wall-appearance --route-grid-diagnostic 105 128` gera uma busca estática
+opcional para Bob e o alvo 128 na sala 3 de House07. Na cópia local, a grade
+ficou `ready` (10.240 células, 4.529 caminháveis), start caminhável e `find_route`
+retornou 9 pontos/custo 80 até `[392,448]`. O probe procura a vizinhança da
+caixa expandida do alvo, não lê SLOT, e não valida aceitação do jogo. Continua
+com `route_clearance=false`; o resultado não conecta Main/Routing45. Os testes
+de obstáculo agora cobrem as duas diagonais, wrap de portas vizinhas e flags
+malformadas. Próximo passo: identificar com precisão as entradas SLOT e os
+gates de AttemptWalk para a interação Sit, depois adaptar esse diagnóstico
+para testar posições válidas sem rotular `find_route` como VMRectRouter.
 
 ## Estado verificado da interação e auditoria de limites (2026-10-20)
 

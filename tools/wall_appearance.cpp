@@ -5,20 +5,124 @@
 #include "odh/room_map.hpp"
 #include "odh/room_obstacles.hpp"
 #include "odh/saved_collision_candidates.hpp"
+#include "odh/saved_room_route_grid.hpp"
 #include "odh/saved_room_boundary_audit.hpp"
 #include "odh/architecture_resource_catalog.hpp"
+#include "odh/route.hpp"
+#include <algorithm>
+#include <charconv>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <tuple>
+#include <vector>
+
+namespace {
+const char* route_status_name(odh::RouteStatus status) {
+ switch(status){
+ case odh::RouteStatus::found:return "found";
+ case odh::RouteStatus::no_path:return "no_path";
+ case odh::RouteStatus::invalid_input:return "invalid_input";
+ case odh::RouteStatus::budget_exhausted:return "budget_exhausted";
+ }
+ return "invalid_status";
+}
+
+void emit_route_grid_diagnostic(
+ std::ostream& out, std::int16_t actor_id, std::int16_t target_id,
+ const odh::SavedArchitecture& architecture, const odh::WallAppearance& appearance,
+ const odh::GeometricRoomMap& rooms,
+ const std::vector<odh::RoomObstacleCandidateSet>& room_obstacles,
+ const std::vector<odh::SavedCollisionCandidate>& entities) {
+ const auto find_entity=[&](std::int16_t id)->const odh::SavedCollisionCandidate*{
+  for(const auto& entity:entities)if(entity.object_id==id)return &entity;
+  return nullptr;
+ };
+ const auto* actor=find_entity(actor_id);const auto* target=find_entity(target_id);
+ out<<"{\"evidence\":\"candidate_grid_search_only\",\"route_clearance\":false"
+  <<",\"actor_id\":"<<actor_id<<",\"target_id\":"<<target_id;
+ if(!actor||!actor->avatar||!actor->position){out<<",\"status\":\"unsupported\",\"reason\":\"actor_position_unavailable\"}";return;}
+ if(!target||target->avatar||target->state!=odh::SavedCollisionCandidateState::candidate||!target->position||!target->box){
+  out<<",\"status\":\"unsupported\",\"reason\":\"target_collision_candidate_unavailable\"}";return;
+ }
+ const auto actor_room=odh::geometric_room_at(rooms,actor->position->x,actor->position->y,actor->position->level);
+ const auto target_room=odh::geometric_room_at(rooms,target->position->x,target->position->y,target->position->level);
+ if(!actor_room||!target_room){out<<",\"status\":\"unsupported\",\"reason\":\"room_lookup_unavailable\"}";return;}
+ out<<",\"actor_room\":"<<*actor_room<<",\"target_room\":"<<*target_room;
+ if(*actor_room!=*target_room){out<<",\"status\":\"cross_room_unmodeled\"}";return;}
+ if(*actor_room==0){out<<",\"status\":\"unsupported\",\"reason\":\"outside_room_unmodeled\"}";return;}
+ const auto level=static_cast<std::uint8_t>(actor->position->level-1);
+ const auto obstacle_it=std::find_if(room_obstacles.begin(),room_obstacles.end(),[&](const auto& candidate){
+  return candidate.room==*actor_room&&candidate.level==level;
+ });
+ if(obstacle_it==room_obstacles.end()){out<<",\"status\":\"unsupported\",\"reason\":\"room_obstacles_unavailable\"}";return;}
+ const auto edges=odh::resolve_initial_wall_edges(architecture,appearance,static_cast<std::int16_t>(level+1));
+ odh::WallObstacleCandidateSet wall_obstacles;wall_obstacles.level=level;
+ if(edges.status==odh::WallEdgeBuildStatus::ready)
+  wall_obstacles=odh::generate_wall_obstacle_candidates(architecture,level,edges.edges);
+ const auto grid=odh::build_saved_room_route_grid(rooms,*actor_room,level,*obstacle_it,wall_obstacles,
+  entities,actor_id,true);
+ out<<",\"grid_state\":"<<json_bytes(grid.state==odh::SavedRoomRouteGridState::ready?"ready":"unsupported")
+  <<",\"grid_reason\":"<<json_bytes(odh::saved_room_route_grid_reason_name(grid.reason));
+ if(grid.grid){
+  const auto& bounds=rooms.rooms[*actor_room].bounds;
+  out<<",\"grid_width\":"<<std::uint64_t(bounds.width)*16<<",\"grid_height\":"<<std::uint64_t(bounds.height)*16
+   <<",\"grid_cells\":"<<grid.grid->cells()
+   <<",\"walkable_cells\":"<<(grid.grid->cells()-grid.blocked_by_room-grid.blocked_by_room_obstacles-grid.blocked_by_wall_obstacles-grid.blocked_by_entities)
+   <<",\"blocked_by_room\":"<<grid.blocked_by_room<<",\"blocked_by_room_obstacles\":"<<grid.blocked_by_room_obstacles
+   <<",\"blocked_by_wall_obstacles\":"<<grid.blocked_by_wall_obstacles<<",\"blocked_by_entities\":"<<grid.blocked_by_entities
+   <<",\"rasterized_cells\":"<<grid.rasterized_cells
+   <<",\"start_walkable\":"<<(grid.grid->walkable({actor->position->x,actor->position->y})?"true":"false");
+ }else{out<<",\"status\":\"unsupported\"}";return;}
+ if(grid.state!=odh::SavedRoomRouteGridState::ready){out<<",\"status\":\"unsupported\"}";return;}
+ const auto& box=*target->box;
+ const std::int64_t x1=std::int64_t(box.x1)-3,y1=std::int64_t(box.y1)-3;
+ const std::int64_t x2=std::int64_t(box.x2)+3,y2=std::int64_t(box.y2)+3;
+ const auto perimeter=2*((x2-x1)+(y2-y1));
+ if(perimeter<=0||perimeter>4096){out<<",\"status\":\"goal_budget_exhausted\"}";return;}
+ std::vector<odh::RoutePoint> goals;goals.reserve(static_cast<std::size_t>(perimeter));
+ const auto add_goal=[&](std::int64_t x,std::int64_t y){
+  if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max()||
+     y<std::numeric_limits<std::int32_t>::min()||y>std::numeric_limits<std::int32_t>::max())return;
+  const odh::RoutePoint point{static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)};
+  if(grid.grid->walkable(point))goals.push_back(point);
+ };
+ for(auto x=x1;x<x2;++x){add_goal(x,y1-1);add_goal(x,y2);}
+ for(auto y=y1;y<y2;++y){add_goal(x1-1,y);add_goal(x2,y);}
+ std::sort(goals.begin(),goals.end(),[](const auto& a,const auto& b){return a.y==b.y?a.x<b.x:a.y<b.y;});
+ goals.erase(std::unique(goals.begin(),goals.end()),goals.end());
+ out<<",\"approach_model\":\"walkable_grid_cells_outside_expanded_target_box\",\"approach_candidates\":"<<goals.size();
+ if(goals.empty()){out<<",\"status\":\"no_approach_cell\"}";return;}
+ const auto path=odh::find_route(*grid.grid,{actor->position->x,actor->position->y},goals);
+ out<<",\"status\":"<<json_bytes(route_status_name(path.status))<<",\"route_cost\":"<<path.cost
+  <<",\"expanded_nodes\":"<<path.expanded<<",\"path_points\":"<<path.points.size();
+ if(!path.points.empty())out<<",\"route_start\":["<<path.points.front().x<<','<<path.points.front().y<<']'
+  <<",\"route_approach\":["<<path.points.back().x<<','<<path.points.back().y<<']';
+ out<<'}';
+}
+}
+
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe]");
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID]");
  const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false;
+ std::optional<std::pair<std::int16_t,std::int16_t>> route_grid_diagnostic;
+ const auto parse_id=[](const char* value){
+  int parsed=0;const auto* end=value+std::char_traits<char>::length(value);
+  const auto result=std::from_chars(value,end,parsed);
+  if(result.ec!=std::errc{}||result.ptr!=end||parsed<std::numeric_limits<std::int16_t>::min()||parsed>std::numeric_limits<std::int16_t>::max())
+   throw odh::FormatError("route-grid actor/target ID must be a signed 16-bit integer");
+  return static_cast<std::int16_t>(parsed);
+ };
  for(int n=2;n<argc;++n){const std::string option=argv[n];
   if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");sources.push_back({argv[++n],option=="--object-definition-file"});}
   else if(option=="--neighborhood"&&!neighborhood&&n+1<argc)neighborhood=argv[++n];
   else if(option=="--architecture-resource"&&n+1<argc){if(architecture_resources.size()>=256)throw odh::FormatError("architecture resource source count exceeds limit");architecture_resources.push_back(argv[++n]);}
   else if(option=="--route-edges"&&!route_edges)route_edges=true;
   else if(option=="--portal-probe"&&!portal_probe)portal_probe=true;
+  else if(option=="--route-grid-diagnostic"&&!route_grid_diagnostic&&n+2<argc){
+   const auto actor_id=parse_id(argv[++n]);const auto target_id=parse_id(argv[++n]);
+   route_grid_diagnostic=std::make_pair(actor_id,target_id);portal_probe=true;
+  }
   else throw odh::FormatError("invalid wall appearance option");}
  if(sources.empty())throw odh::FormatError("wall appearance requires explicit definitions");
  auto index=saved_definition_index(sources);auto records=saved_world_records(house,*index);std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
@@ -36,6 +140,8 @@ int main(int argc,char** argv){try{
   for(std::int16_t level=1;level<=2;++level){
    const auto edges=odh::resolve_initial_wall_edges(architecture.architecture,result.appearance,level);
    if(edges.status!=odh::WallEdgeBuildStatus::ready)throw odh::FormatError("initial wall edge resolution unsupported: "+edges.diagnostic);
+   const auto wall_obstacles=odh::generate_wall_obstacle_candidates(
+    architecture.architecture,static_cast<std::uint8_t>(level-1),edges.edges);
    std::uint64_t present=0,solid=0,non_solid=0,doors=0;
    const auto& walls=architecture.architecture.levels[level-1].walls;
    for(std::size_t i=0;i<walls.size();++i){
@@ -47,7 +153,9 @@ int main(int argc,char** argv){try{
    for(const auto& face:result.appearance.faces)if(face.level==level&&face.door)++doors;
    if(level>1)std::cout<<',';
    std::cout<<"{\"level\":"<<level<<",\"width\":"<<architecture.architecture.width<<",\"height\":"<<architecture.architecture.height
-    <<",\"present_wall_segments\":"<<present<<",\"solid_edges\":"<<solid<<",\"non_solid_edges\":"<<non_solid<<",\"door_faces\":"<<doors<<'}';
+    <<",\"present_wall_segments\":"<<present<<",\"solid_edges\":"<<solid<<",\"non_solid_edges\":"<<non_solid<<",\"door_faces\":"<<doors
+    <<",\"wall_obstacles_complete\":"<<(wall_obstacles.complete?"true":"false")
+    <<",\"wall_obstacle_rectangles\":"<<wall_obstacles.rectangles.size()<<'}';
   }
   std::cout<<"]}";
  }
@@ -132,12 +240,14 @@ int main(int argc,char** argv){try{
    std::cout<<"{\"room\":"<<candidate.room<<",\"level\":"<<unsigned(candidate.level)<<",\"generation_complete\":"<<(candidate.complete?"true":"false")<<",\"rectangles\":"<<candidate.rectangles.size()<<'}';}
   std::size_t collision_candidate_count=0,collision_absent_count=0,collision_unsupported_count=0;
   std::size_t boundary_no_intersection=0,boundary_intersections=0,outer_bounds_intersections=0,boundary_unsupported=0,boundary_not_applicable=0;
+  std::vector<odh::SavedCollisionCandidate> collision_candidates;collision_candidates.reserve(world->records.size());
   std::cout<<"],\"collision_candidates\":{\"evidence\":\"saved_snapshot_geometry_only\",\"route_clearance\":false,\"entities\":[";
   bool first_collision=true;
   for(const auto& record:world->records){
    const auto id=static_cast<std::int16_t>(record.saved.object_id);
    const auto* entity=world->world->find(id);
    const auto candidate=odh::saved_collision_candidate(record,entity);
+   collision_candidates.push_back(candidate);
    const auto boundary=odh::audit_saved_room_boundary(candidate,rooms,room_obstacles);
    if(boundary.intersecting_outer_bounds>0)++outer_bounds_intersections;
    if(candidate.state==odh::SavedCollisionCandidateState::candidate)++collision_candidate_count;
@@ -167,7 +277,12 @@ int main(int argc,char** argv){try{
    <<",\"unsupported\":"<<collision_unsupported_count<<"},\"room_boundary_audit\":{\"evidence\":\"room_obstacles_and_outer_bounds_only\",\"route_clearance\":false,\"counts\":{\"no_intersection\":"
    <<boundary_no_intersection<<",\"intersects_boundary\":"<<boundary_intersections
    <<",\"intersects_outer_room_bounds_entities\":"<<outer_bounds_intersections<<",\"unsupported\":"<<boundary_unsupported
-   <<",\"not_applicable\":"<<boundary_not_applicable<<"}}},\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
+   <<",\"not_applicable\":"<<boundary_not_applicable<<"}}}";
+  if(route_grid_diagnostic){std::cout<<",\"route_grid_diagnostic\":";
+   emit_route_grid_diagnostic(std::cout,route_grid_diagnostic->first,route_grid_diagnostic->second,
+    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates);
+  }
+  std::cout<<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
   bool first_door=true;
   for(const auto& [door_id,faces]:door_faces){
    const auto found=records_by_id.find(door_id);

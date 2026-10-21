@@ -26,10 +26,17 @@ validação indicados por versão.
   externas de um tile de `VMRoutingFrame.AttemptWalk`. Os grupos são contados
   separadamente; interseção ou ausência de interseção não vira caminho livre
   ou clearance.
-- Grade candidata por sala rasteriza pertencimento, RoomObs, WallObs fornecido
+- Grade candidata por sala rasteriza pertencimento, RoomObs, WallObs
   e footprints salvos em coordenadas 1/16 tile, com tetos para memória e trabalho.
-  Entradas incompletas falham fechadas. O adaptador não gera WallObs nem cobre
-  regras runtime; ainda não habilita Routing45.
+  Entradas incompletas falham fechadas. O adaptador ainda não cobre regras
+  runtime nem habilita Routing45.
+- Candidatos geométricos globais de WallObs usam as fórmulas de segmentos do
+  Simitone e tratam faces de porta ausentes como sólidas. O inventário não é
+  mesclado por sala como no runtime; consulte a cobertura e os limites em
+  `docs/room-obstacles-validation.md`.
+- Probe opcional executa `find_route` em uma grade candidata de sala salva até
+  pontos geométricos ao redor de uma entidade alvo. Resultado `found` não
+  valida SLOT, movimento do jogo, `VMRectRouter` nem clearance runtime.
 - O room map preparado distingue misses estritos de `TryGetValue` dos aliases
   FLRm declarados-sem-resolução efetivamente usados. Mantém o contador legado de
   misses, considera os bytes retidos por fallback como identidade e continua

@@ -32,8 +32,7 @@ bool expand_route_obstacle(const CollisionBox& box, CollisionBox& expanded) {
 SavedRoomRouteGrid build_saved_room_route_grid(
     const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level,
     const RoomObstacleCandidateSet& room_obstacles,
-    const std::vector<RoomObstacleRect>& wall_obstacles,
-    bool wall_obstacles_complete,
+    const WallObstacleCandidateSet& wall_obstacles,
     const std::vector<SavedCollisionCandidate>& entities,
     std::int16_t actor_id, bool entity_inventory_complete,
     const SavedRoomRouteGridLimits& limits) {
@@ -49,11 +48,13 @@ SavedRoomRouteGrid build_saved_room_route_grid(
         return unsupported(SavedRoomRouteGridReason::room_obstacles_mismatch);
     if (!room_obstacles.complete)
         return unsupported(SavedRoomRouteGridReason::room_obstacles_incomplete);
-    if (!wall_obstacles_complete)
+    if (wall_obstacles.level != level)
+        return unsupported(SavedRoomRouteGridReason::room_obstacles_mismatch);
+    if (!wall_obstacles.complete)
         return unsupported(SavedRoomRouteGridReason::wall_obstacles_incomplete);
     if (room_obstacles.rectangles.size() > limits.obstacle_rectangles ||
-        wall_obstacles.size() > limits.obstacle_rectangles - room_obstacles.rectangles.size() ||
-        entities.size() > limits.obstacle_rectangles - room_obstacles.rectangles.size() - wall_obstacles.size())
+        wall_obstacles.rectangles.size() > limits.obstacle_rectangles - room_obstacles.rectangles.size() ||
+        entities.size() > limits.obstacle_rectangles - room_obstacles.rectangles.size() - wall_obstacles.rectangles.size())
         return unsupported(SavedRoomRouteGridReason::obstacle_inventory_over_budget);
 
     const auto& bounds = map.rooms[room].bounds;
@@ -78,7 +79,7 @@ SavedRoomRouteGrid build_saved_room_route_grid(
     };
     for (const auto& rect : room_obstacles.rectangles)
         if (!valid_rect(rect)) return unsupported(SavedRoomRouteGridReason::room_obstacles_incomplete);
-    for (const auto& rect : wall_obstacles)
+    for (const auto& rect : wall_obstacles.rectangles)
         if (!valid_rect(rect)) return unsupported(SavedRoomRouteGridReason::wall_obstacles_incomplete);
 
     struct EntityObstacle { CollisionBox box; };
@@ -155,7 +156,7 @@ SavedRoomRouteGrid build_saved_room_route_grid(
     for (const auto& obstacle : room_obstacles.rectangles)
         if (!rasterize(obstacle, result.blocked_by_room_obstacles))
             return unsupported(SavedRoomRouteGridReason::raster_work_budget_exhausted);
-    for (const auto& obstacle : wall_obstacles)
+    for (const auto& obstacle : wall_obstacles.rectangles)
         if (!rasterize(obstacle, result.blocked_by_wall_obstacles))
             return unsupported(SavedRoomRouteGridReason::raster_work_budget_exhausted);
     for (const auto& obstacle : obstacles) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -228,6 +229,94 @@ RoomObstacleCandidateSet generate_room_obstacle_candidates(
         }
     }
     optimize(result.rectangles);
+    return result;
+}
+
+WallObstacleCandidateSet generate_wall_obstacle_candidates(
+    const SavedArchitecture& architecture, std::uint8_t level,
+    const std::vector<ResolvedWallEdges>& resolved_edges,
+    std::size_t rectangle_limit) {
+    WallObstacleCandidateSet result;
+    result.level = level;
+    if (!architecture.width || !architecture.height ||
+        architecture.width > maximum_dimension || architecture.height > maximum_dimension ||
+        level >= architecture.levels.size()) return result;
+    const auto cells = std::size_t(architecture.width) * architecture.height;
+    for (const auto& story : architecture.levels)
+        if (story.floors.size() != cells || story.walls.size() != cells) return result;
+    if (resolved_edges.size() != cells) return result;
+    const auto& walls = architecture.levels[level].walls;
+    const auto push = [&](std::int64_t x1, std::int64_t y1,
+                          std::int64_t x2, std::int64_t y2) {
+        if (result.rectangles.size() >= rectangle_limit || x1 < std::numeric_limits<std::int32_t>::min() ||
+            y1 < std::numeric_limits<std::int32_t>::min() || x2 > std::numeric_limits<std::int32_t>::max() ||
+            y2 > std::numeric_limits<std::int32_t>::max()) return false;
+        result.rectangles.push_back({static_cast<std::int32_t>(x1), static_cast<std::int32_t>(y1),
+                                     static_cast<std::int32_t>(x2), static_cast<std::int32_t>(y2)});
+        return true;
+    };
+    const auto door = [&](std::size_t index, bool top_left) {
+        const auto& tile = walls[index];
+        const auto segment = top_left ? std::uint8_t{1} : std::uint8_t{2};
+        if ((tile.segments & segment) == 0) return false;
+        const auto edge = top_left ? resolved_edges[index].top_left : resolved_edges[index].top_right;
+        // Only affirmative door-face evidence opens a gap. Missing/unresolved
+        // faces are conservative solid walls.
+        return edge == WallEdgeKnowledge::non_solid;
+    };
+    for (std::uint32_t y = 0; y < architecture.height; ++y) {
+        for (std::uint32_t x = 0; x < architecture.width; ++x) {
+            const auto index = std::size_t(y) * architecture.width + x;
+            const auto& tile = walls[index];
+            const auto bits = tile.segments;
+            if ((bits & 0xc0U) || (bits & 0x30U) == 0x30U) {
+                result.rectangles.clear(); return result;
+            }
+            const std::int64_t ox = std::int64_t(x) * 16;
+            const std::int64_t oy = std::int64_t(y) * 16;
+            if (bits & 0x10U) {
+                if (!push(ox + 11, oy - 1, ox + 17, oy + 5) ||
+                    !push(ox + 7, oy + 3, ox + 13, oy + 9) ||
+                    !push(ox + 3, oy + 7, ox + 9, oy + 13) ||
+                    !push(ox - 1, oy + 11, ox + 5, oy + 17)) {
+                    result.rectangles.clear(); return result;
+                }
+            }
+            if (bits & 0x20U) {
+                if (!push(ox - 1, oy - 1, ox + 5, oy + 5) ||
+                    !push(ox + 3, oy + 3, ox + 9, oy + 9) ||
+                    !push(ox + 7, oy + 7, ox + 13, oy + 13) ||
+                    !push(ox + 11, oy + 11, ox + 17, oy + 17)) {
+                    result.rectangles.clear(); return result;
+                }
+            }
+            if ((bits & 1U) && !door(index, true) &&
+                !push(ox - 3, oy - 3, ox + 6, oy + 19)) {
+                result.rectangles.clear(); return result;
+            }
+            if ((bits & 2U) && !door(index, false) &&
+                !push(ox - 3, oy - 3, ox + 19, oy + 6)) {
+                result.rectangles.clear(); return result;
+            }
+            const auto next_y = (y + 1U) % architecture.height;
+            const auto next_x = (x + 1U) % architecture.width;
+            const auto below = std::size_t(next_y) * architecture.width + x;
+            const auto right = std::size_t(y) * architecture.width + next_x;
+            const auto below_door =
+                resolved_edges[below].top_right == WallEdgeKnowledge::non_solid;
+            const auto right_door =
+                resolved_edges[right].top_left == WallEdgeKnowledge::non_solid;
+            if ((bits & 8U) && !below_door &&
+                !push(ox - 3, oy + 13, ox + 19, oy + 19)) {
+                result.rectangles.clear(); return result;
+            }
+            if ((bits & 4U) && !right_door &&
+                !push(ox + 13, oy - 3, ox + 19, oy + 19)) {
+                result.rectangles.clear(); return result;
+            }
+        }
+    }
+    result.complete = true;
     return result;
 }
 } // namespace odh
