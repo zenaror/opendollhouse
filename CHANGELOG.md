@@ -9,9 +9,10 @@ validação indicados por versão.
 
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com
-  crossings fixos HiP. O ajuste de entrada via `dirIn` e a integração aos
-  diagnósticos vivos permanecem pendentes; os casos sintéticos foram
-  comparados com uma transcrição C#/.NET 10 das rotinas, não com o Simitone
+  crossings fixos HiP. O ajuste opcional `dirIn` usa o orçamento inicial de
+  oito unidades e as conversões float32/Point da referência; a integração aos
+  diagnósticos vivos permanece pendente. Os casos sintéticos foram
+  comparados com uma transcrição C#/.NET 10 das rotinas e MonoGame 3.8.4, não com o Simitone
   compilado. Consulte
   `docs/rect-router-validation.md`.
 

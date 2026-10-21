@@ -20,16 +20,33 @@ entidades runtime ODH ainda não foi provada idêntica a
 `roomInfo.Entities`; por isso nenhum resultado afirma equivalência integral ou
 clearance do executável original.
 
-## Otimização de linhas com `dirIn=null`
+## Otimização de linhas e direção de entrada
 
 `optimize_rect_route_lines` é uma API separada para a geometria de
-`VMRectRouter.OptimizeLines` da revisão acima, com o ramo de direção de entrada
-omitido explicitamente (`incoming_direction_applied=false`). Ela remove nós
+`VMRectRouter.OptimizeLines` da revisão acima. Ela remove nós
 intermediários com entradas consecutivas iguais e tenta cortes progressivos,
 exigindo que cada saída de raio HiP pertença ao próximo retângulo livre na
 sequência. O primeiro corte que falha encerra a tentativa; o último aprovado
 recalcula os crossings intermediários e os `LineID`. O vetor de entrada não é
 alterado.
+
+O quarto argumento opcional é a direção de entrada `float` em radianos. Quando
+há pelo menos dois nós, o ramo de portal calcula a projeção inicial, limita o
+deslocamento inicial a oito unidades, desloca os crossings intermediários e
+os limita à aresta compartilhada na ordem direita/esquerda/topo/baixo. O último
+nó é preservado por esse ajuste; o corner-cutting começa no segundo nó e pode
+recalcular os crossings seguintes. `incoming_direction_applied` indica que o
+ramo foi executado, mesmo se a projeção inicial já consumiu as oito unidades.
+Sem direção, os resultados anteriores são preservados.
+
+O frontend Simitone fixado referencia MonoGame 3.8.4. Uma execução direta de
+`Vector2.ToPoint()` desse pacote confirmou truncamento para zero inclusive em
+valores negativos. O ajuste usa produtos/soma float32 separados, trigonometria
+double com cast para float e a conversão do offset antes da soma inteira do
+`Point`. A distância restante usa `Math.Sqrt` sobre a soma inteira dos
+quadrados do `Point`, com cast direto para float, sem truncamento intermediário
+para int. Se a aritmética int32 da referência transbordaria, ODH retorna
+`unsupported_coordinates` em vez de reproduzir wraparound/NaN.
 
 A saída preserva `entry_hip` em escala fixa 0x8000 e também a entrada inteira
 truncada para zero como na referência; descartar a fração alteraria os futuros
@@ -51,9 +68,17 @@ intermediária, frações, último corte aprovado antes de uma falha, gap, overf
 e limites. O teste focal e a suíte CTest completa passaram com compilação
 warning-enabled.
 
-Esta API ainda não é chamada pelos probes. O ajuste de entrada vindo de portal
-(`dirIn`), geração de waypoints, Bezier, clearance e movimento continuam
-pendentes; isto é uma implementação parcial de `OptimizeLines`, não uma
+O harness C#/.NET 10 com MonoGame 3.8.4 também coincidiu com a saída C++ nos
+casos de projeção inicial maior que oito, clamp com múltiplos crossings,
+offsets `+0.3f`/`-0.3f` e rota de dois nós. Nos offsets, a entrada ajustada foi
+respectivamente `(7,10)` e `(3,10)`, e o crossing seguinte foi
+`(185686,655360)` e `(141994,655360)` HiP. O teste de clamp produziu crossings
+`(327680,0)`, `(655360,65535)` e `(983040,131070)` HiP. São fixtures
+sintéticas; não houve execução do Simitone compilado nem do jogo original.
+
+Esta API ainda não é chamada pelos probes. Geração de waypoints, Bezier,
+clearance e movimento continuam pendentes; isto é uma implementação bounded
+de `OptimizeLines`, não uma
 alegação de equivalência completa ao Simitone ou ao executável original.
 
 ## House07

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace odh {
@@ -78,15 +79,17 @@ RectRouteResult route_rectangles(const std::vector<RectRouteObstacle>& insertion
                                  std::uint8_t initial_heading,
                                  const RectRouteLimits& limits = {});
 
-// Pinned-Simitone OptimizeLines geometry with dirIn=null only: deduplicate
+// Pinned-Simitone OptimizeLines geometry: deduplicate
 // intermediate entries, then greedily cut lines through the ordered free
 // rectangles using integer HiP ray exits. Input must be a found corridor;
-// empty input is a successful no-op. The portal incoming-direction adjustment,
-// waypoint generation, clearance validation and entity movement are excluded.
+// empty input is a successful no-op. Optional incoming direction is in radians
+// and applies the source's eight-unit portal-entry adjustment before line cuts.
+// Waypoint generation, clearance validation and entity movement are excluded.
 // Unsupported source arithmetic or a limit failure returns no partial output.
 RectRouteLineResult optimize_rect_route_lines(
     const std::vector<RectRouteCorridorEntry>& corridor, RectRoutePoint destination,
-    const RectRouteLineLimits& limits = {});
+    const RectRouteLineLimits& limits = {},
+    std::optional<float> incoming_direction = std::nullopt);
 
 const char* rect_route_status_name(RectRouteStatus) noexcept;
 

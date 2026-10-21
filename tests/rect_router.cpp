@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -205,5 +206,45 @@ int main() {
             "line source subtraction overflow must fail closed");
     require(optimize_rect_route_lines(one_line, {20, 20}).status == RectRouteStatus::invalid_input,
             "line destination must belong to the final corridor rectangle");
+    const std::vector<RectRouteCorridorEntry> projected = {
+        {{0,0,10,10},{1,5}}, {{10,0,20,10},{10,5}}, {{20,0,30,10},{20,5}}};
+    const auto projected_lines = optimize_rect_route_lines(projected, {29,5}, {}, 1.5707963267948966f);
+    require(projected_lines.status == RectRouteStatus::found && projected_lines.incoming_direction_applied &&
+            projected_lines.corridor[1].entry_hip.x == 327680 && projected_lines.corridor[1].entry_hip.y == 163840,
+            "projection already beyond eight units must retain the entry while applying portal mode");
+    const std::vector<RectRouteCorridorEntry> portal_clamp = {
+        {{0,0,10,10},{5,5}}, {{10,0,20,10},{10,5}},
+        {{20,0,30,10},{20,5}}, {{30,0,40,10},{30,5}}};
+    const auto portal_lines = optimize_rect_route_lines(portal_clamp, {35,5}, {}, 0.0f);
+    require(portal_lines.status == RectRouteStatus::found && portal_lines.incoming_direction_applied &&
+            portal_lines.corridor[1].entry_hip.x == 327680 && portal_lines.corridor[1].entry_hip.y == 0 &&
+            portal_lines.corridor[2].entry_hip.y == 65535 && portal_lines.corridor[2].line_id == 0 &&
+            portal_lines.corridor[3].entry_hip.y == 131070,
+            "portal edge clamp and following line cut must match MonoGame C# HiP crossings");
+    const std::vector<RectRouteCorridorEntry> portal_rows = {
+        {{0,0,10,10},{5,5}}, {{0,10,10,20},{5,10}}, {{0,20,10,30},{5,20}}};
+    const auto positive_direction = optimize_rect_route_lines(portal_rows, {5,25}, {}, 0.3f);
+    const auto negative_direction = optimize_rect_route_lines(portal_rows, {5,25}, {}, -0.3f);
+    require(positive_direction.status == RectRouteStatus::found && negative_direction.status == RectRouteStatus::found &&
+            positive_direction.corridor[1].entry.x == 7 && positive_direction.corridor[2].entry_hip.x == 185686 &&
+            negative_direction.corridor[1].entry.x == 3 && negative_direction.corridor[2].entry_hip.x == 141994,
+            "positive and negative float offsets must truncate toward zero before Point addition");
+    const std::vector<RectRouteCorridorEntry> portal_two = {
+        {{0,0,10,10},{5,5}}, {{10,0,20,10},{10,5}}};
+    const auto two_direction = optimize_rect_route_lines(portal_two, {19,5}, {}, 0.0f);
+    require(two_direction.status == RectRouteStatus::found && two_direction.incoming_direction_applied &&
+            two_direction.corridor[1].entry.x == 10 && two_direction.corridor[1].entry.y == 5 &&
+            two_direction.corridor[1].line_id == -1,
+            "two-node portal route must preserve its last crossing and skip first-node cutting");
+    require(optimize_rect_route_lines(portal_rows, {5,25}, {}, std::numeric_limits<float>::quiet_NaN()).status ==
+            RectRouteStatus::invalid_input, "nonfinite portal direction must fail closed");
+    line_limits = {}; line_limits.work_units = 4;
+    const auto limited_portal = optimize_rect_route_lines(portal_rows, {5,25}, line_limits, 0.3f);
+    require(limited_portal.status == RectRouteStatus::budget_exhausted && limited_portal.corridor.empty(),
+            "portal adjustment work exhaustion must return no partially adjusted entries");
+    const auto portal_overflow = optimize_rect_route_lines({{{-60000,-1,0,1},{-50000,0}},
+        {{0,-1,60000,1},{50000,0}}, {{60000,-1,60001,1},{60000,0}}}, {60000,0}, {}, 0.0f);
+    require(portal_overflow.status == RectRouteStatus::unsupported_coordinates && portal_overflow.corridor.empty(),
+            "portal Point square overflow must fail instead of propagating source wraparound");
     std::cout << "Rectangle corridor routing checks passed\n";
 }

@@ -721,11 +721,16 @@ dormentes, embora exista outro avatar na sala; isso não modela as threads de
 um runtime multissím completo. A ordem das entidades por ID ainda não foi
 provada igual a `roomInfo.Entities`, e clearance, estado dinâmico de portas e
 integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
-reproduz parcialmente o corner-cutting do `OptimizeLines` Simitone com
-`dirIn=null`, HiP preservado e limites fail-closed. Ainda não é chamado pelo
+reproduz o corner-cutting e o ajuste opcional de entrada `dirIn` do
+`OptimizeLines` Simitone, com HiP preservado e limites fail-closed. O ajuste
+usa float32 e offset `ToPoint` truncado antes da soma inteira; o sqrt da
+distância restante é convertido diretamente a float, sem truncamento para int.
+Ainda não é chamado pelo
 probe. Uma transcrição temporária C#/.NET 10 das rotinas da referência confirmou
 os casos reto, curva, gap e duplicata; não invocou Simitone compilado nem o jogo
-original.
-Próxima unidade: implementar a correção de entrada de portal `dirIn`, alinhar a
-ordem das entidades e então aplicar a otimização ao diagnóstico House07 sem
+original. Os casos de portal também coincidiram com harness C#/.NET 10 usando
+MonoGame 3.8.4: projeção >=8, clamp com vários crossings, offsets positivos e
+negativos e dois nós. ODH falha fechado no domínio em que as somas inteiras de
+quadrados da referência transbordariam.
+Próxima unidade: alinhar a ordem das entidades e então aplicar a otimização ao diagnóstico House07 sem
 promover clearance ou movimento.

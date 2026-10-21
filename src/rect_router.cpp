@@ -16,7 +16,7 @@
 // FreeSO/TSOClient/tso.simantics/Model/Routing/VMFreeList.cs:12-69;
 // FreeSO/TSOClient/tso.simantics/Model/Routing/VMObstacleSet.cs:119-270,352-360.
 // Input obstacle insertion order is explicit. The separate line optimizer
-// implements OptimizeLines with dirIn=null only. This is not TS1 equivalence.
+// implements OptimizeLines with optional portal entry direction. This is not TS1 equivalence.
 
 namespace odh {
 namespace {
@@ -405,6 +405,33 @@ bool contains_hip(const Rect& rectangle, Point point) {
            point.y >= low.y && point.y <= high.y;
 }
 
+// MonoGame Vector2 uses separate float32 products/sums. Volatile temporaries
+// retain those rounding points and prevent a C++ compiler from fusing a dot.
+float float_product(float a, float b) { volatile float value = a * b; return value; }
+float float_sum(float a, float b) { volatile float value = a + b; return value; }
+
+std::int32_t float_to_point(float value) {
+    if (!std::isfinite(value) || static_cast<double>(value) < std::numeric_limits<std::int32_t>::min() ||
+        static_cast<double>(value) > std::numeric_limits<std::int32_t>::max())
+        throw Stop{RectRouteStatus::unsupported_coordinates};
+    return static_cast<std::int32_t>(value); // Vector2.ToPoint truncates toward zero.
+}
+
+Point closest_on_shared_edge(const Rect& rectangle, const Rect& other, Point point) {
+    const auto clamp_shared = [](std::int32_t value, std::int32_t low, std::int32_t high) {
+        return std::min(high, std::max(low, value));
+    };
+    if (rectangle.x2 == other.x1)
+        return {rectangle.x2, clamp_shared(point.y, std::max(rectangle.y1, other.y1), std::min(rectangle.y2, other.y2))};
+    if (rectangle.x1 == other.x2)
+        return {rectangle.x1, clamp_shared(point.y, std::max(rectangle.y1, other.y1), std::min(rectangle.y2, other.y2))};
+    if (rectangle.y1 == other.y2)
+        return {clamp_shared(point.x, std::max(rectangle.x1, other.x1), std::min(rectangle.x2, other.x2)), rectangle.y1};
+    if (rectangle.y2 == other.y1)
+        return {clamp_shared(point.x, std::max(rectangle.x1, other.x1), std::min(rectangle.x2, other.x2)), rectangle.y2};
+    return point;
+}
+
 // Mirrors VMObstacle.RaycastLineHiP, including truncation toward zero and the
 // strict y-t tie test. Refuse every int32 overflow instead of emulating wrap.
 std::optional<Point> ray_exit_hip(const Rect& rectangle, Point from, Point to) {
@@ -440,8 +467,9 @@ std::optional<Point> ray_exit_hip(const Rect& rectangle, Point from, Point to) {
 class LineOptimizer {
 public:
     LineOptimizer(const std::vector<RectRouteCorridorEntry>& input,
-                  RectRoutePoint destination, const RectRouteLineLimits& limits)
-        : destination_(hip(destination)), limits_(limits) {
+                  RectRoutePoint destination, const RectRouteLineLimits& limits,
+                  std::optional<float> incoming_direction)
+        : destination_(hip(destination)), limits_(limits), incoming_direction_(incoming_direction) {
         entries_.reserve(input.size());
         for (const auto& step : input) {
             spend();
@@ -468,6 +496,11 @@ public:
             } else ++i;
         }
         std::size_t node = 0;
+        if (incoming_direction_ && entries_.size() > 1) {
+            adjust_incoming_direction(*incoming_direction_);
+            incoming_direction_applied_ = true;
+            node = 1; // The source skips the first rectangle after portal adjustment.
+        }
         std::int32_t line_id = 0;
         while (node + 1 < entries_.size()) {
             spend();
@@ -529,6 +562,7 @@ public:
         result.status = RectRouteStatus::found;
         result.corridor = std::move(entries_);
         result.work_units = work_;
+        result.incoming_direction_applied = incoming_direction_applied_;
         return result;
     }
 
@@ -536,7 +570,37 @@ private:
     std::vector<RectRouteLineEntry> entries_;
     Point destination_;
     const RectRouteLineLimits& limits_;
+    std::optional<float> incoming_direction_;
+    bool incoming_direction_applied_ = false;
     std::size_t work_ = 0;
+    void adjust_incoming_direction(float angle) {
+        const auto direction_x = static_cast<float>(std::sin(static_cast<double>(angle)));
+        const auto direction_y = -static_cast<float>(std::cos(static_cast<double>(angle)));
+        const auto dx = source_int(std::int64_t(entries_[1].entry.x) - entries_[0].entry.x);
+        const auto dy = source_int(std::int64_t(entries_[1].entry.y) - entries_[0].entry.y);
+        const auto dot = float_sum(float_product(static_cast<float>(dx), direction_x),
+                                   float_product(static_cast<float>(dy), direction_y));
+        float remaining = float_sum(8.0f, -std::max(0.0f, dot));
+        for (std::size_t next = 1; next + 1 < entries_.size() && remaining > 0.0f; ++next) {
+            spend();
+            const auto previous = entries_[next].entry;
+            const Point proposed{
+                source_int(std::int64_t(previous.x) + float_to_point(float_product(direction_x, remaining))),
+                source_int(std::int64_t(previous.y) + float_to_point(float_product(direction_y, remaining)))};
+            const auto adjusted = closest_on_shared_edge(entries_[next].rectangle, entries_[next - 1].rectangle, proposed);
+            if (!contains(entries_[next].rectangle, adjusted)) throw Stop{RectRouteStatus::invalid_input};
+            const auto shift_x = source_int(std::int64_t(adjusted.x) - previous.x);
+            const auto shift_y = source_int(std::int64_t(adjusted.y) - previous.y);
+            const auto square_x = std::int64_t(shift_x) * shift_x;
+            const auto square_y = std::int64_t(shift_y) * shift_y;
+            const auto maximum = std::numeric_limits<std::int32_t>::max();
+            if (square_x > maximum || square_y > maximum || square_x + square_y > maximum)
+                throw Stop{RectRouteStatus::unsupported_coordinates};
+            remaining = static_cast<float>(std::sqrt(static_cast<double>(square_x + square_y)));
+            entries_[next].entry = adjusted;
+            entries_[next].entry_hip = hip(adjusted);
+        }
+    }
     void spend() {
         if (work_ >= limits_.work_units) throw Stop{RectRouteStatus::budget_exhausted};
         ++work_;
@@ -590,16 +654,17 @@ private:
 
 RectRouteLineResult optimize_rect_route_lines(
     const std::vector<RectRouteCorridorEntry>& corridor, RectRoutePoint destination,
-    const RectRouteLineLimits& limits) {
+    const RectRouteLineLimits& limits, std::optional<float> incoming_direction) {
     RectRouteLineResult result;
     if (!limits.corridor_entries || limits.corridor_entries > 16384 ||
         !limits.work_units || limits.work_units > 16777216) return result;
+    if (incoming_direction && !std::isfinite(*incoming_direction)) return result;
     if (corridor.size() > limits.corridor_entries) {
         result.status = RectRouteStatus::budget_exhausted; return result;
     }
     if (corridor.empty()) { result.status = RectRouteStatus::found; return result; }
     try {
-        LineOptimizer optimizer(corridor, destination, limits);
+        LineOptimizer optimizer(corridor, destination, limits, incoming_direction);
         optimizer.optimize();
         return optimizer.finish();
     } catch (const Stop& stop) { result.status = stop.status; }
