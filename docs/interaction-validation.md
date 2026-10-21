@@ -215,16 +215,17 @@ sentar/levantar continuam em aberto.
 Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
 levantar continuam em aberto.
 
-## Integração Sit em House07
+## Integração Sit/Stand em House07
 
 `odh-person --headless-main --headless-interaction ID TICK` agenda a seleção
 de um objeto salvo e passa pelo mesmo carregamento de TTAB, verificação de
 elegibilidade e enfileiramento da janela X11. O teste de integração
 `tests/house07_interaction_integration.py` usa a instalação externa do jogo;
-nenhum recurso comercial é versionado. Com avatar105 e cadeira128 em House07,
-a ação4097 retornou true, drenou a fila e publicou conclusão true no tick240.
-O avatar ficou anexado ao container128/slot0. O trace da ação alcançou
-routines4097/4100/4099 e opcodes44/45/46/49.
+nenhum recurso comercial é versionado. A opção `--headless-stand ID TICK`
+agenda uma solicitação explícita de saída após Sit. Ela exige que a mesma
+ação tenha retornado true, que o avatar ainda esteja em Posture1 anexado ao
+objeto e que o alvo tenha a função privada carregada no entrypoint27. O host
+enfileira essa função na mesma InteractionQueue e VM Main, sem reiniciar a VM.
 
 Reprodução após compilar `odh-person`:
 
@@ -233,14 +234,27 @@ python3 tests/house07_interaction_integration.py \
   --binary ./odh-person --game-root '../referencias/The Sims'
 ```
 
-O teste padrão avança até512 ticks. Após a conclusão do Sit, o Main executa
-SetToNext mode8 e RunTreeByName. Na rotina8229/PC87, a string global
-STR#303/33 resolve para `CT - Relax`; o objeto128 não tem BHAV local com esse
-rótulo nem link semiglobal, então o lookup retorna false e o trace segue para
-Animation44. O Main permanece em espera no tick512 e o avatar fica sentado,
-tocando `a2o-idle-sit-3`. O processo retorna3 para sinalizar o orçamento de
-ticks, enquanto o JSON separa o sucesso da interação do estado do Main.
+O teste padrão avança até512 ticks. Para avatar105 e cadeira128, Sit4097
+retorna true no tick240 e anexa o avatar ao container128/slot0. No tick241,
+com a precondição sentada ainda confirmada, a solicitação consulta o
+entrypoint27 da cadeira, encontra Stand4102 e o enfileira no Main ativo. Stand
+retorna true no tick414; o Snap libera o avatar na posição [392,440,nível1,
+direção0], remove o attachment e grava Posture0. O validador de saída usa a
+grade de rota de sala preparada para o lote salvo, atualizada pela revisão
+espacial; destino sem grade/sala correspondente ou célula não caminhável é
+recusado. O Main continua em espera até tick512. O processo retorna3 para
+sinalizar o orçamento de ticks, enquanto o JSON distingue o resultado de cada
+interação, a postura e o attachment finais.
 
-Isso prova Sit integrado e a continuação observada do Main por512 ticks, não
-uma sessão completa jogável. Dispatch de árvores nomeadas que existem,
-scheduler geral de objetos e outras interações/estados continuam em aberto.
+No checkpoint Sit-only, sem agendar Stand, o Main também foi observado até512
+ticks e seguiu o ramo false de RunTreeByName na rotina8229/PC87 para
+Animation44. Essa consulta não é uma expectativa do cenário encadeado: ao
+enfileirar Stand no tick241, a sessão toma outro caminho antes desse ponto.
+
+Isso prova uma cadeia controlada Sit→Stand em uma única VM Main, com dados
+externos do jogo e callbacks ODH para a fila, animação, rota e Snap. A solicitação
+Stand é um evento explícito de teste que enfileira a função do entrypoint27; não
+prova que opcode20 ou o dispatcher completo do jogo original a disparariam.
+O grid de sala valida clearance no perfil suportado, não todos os footprints,
+raycasts ou regras do original. Dispatch de árvores nomeadas existentes,
+scheduler geral de objetos e uma sessão completa jogável continuam em aberto.

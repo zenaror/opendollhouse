@@ -40,6 +40,12 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'headless interaction target/tick' in r.stderr
  setup();r=run(['--headless-main','--headless-interaction','10','2','--ticks','1'])
  assert r.returncode==2 and not r.stdout and 'headless-interaction' in r.stderr
+ setup();r=run(['--headless-stand','10','1'])
+ assert r.returncode==2 and not r.stdout and 'headless-stand' in r.stderr
+ setup();r=run(['--headless-main','--headless-stand','10','2'])
+ assert r.returncode==2 and not r.stdout and 'headless-stand' in r.stderr
+ setup();r=run(['--headless-main','--headless-interaction','10','2','--headless-stand','10','1'])
+ assert r.returncode==2 and not r.stdout and 'headless-stand' in r.stderr
  setup();r=run(['--headless-move-entity','2','10','20','1','0','2'])
  assert r.returncode==2 and not r.stdout and 'headless-move-entity' in r.stderr
  setup();r=run(['--headless-move-entity','2','10','20','3','0','2'])

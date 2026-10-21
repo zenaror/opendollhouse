@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a resource-backed Sit interaction against an external TS1 install."""
+"""Run resource-backed Sit then Stand through one saved-world session."""
 import argparse
 import json
 import pathlib
@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--avatar-id", type=int, default=105)
     parser.add_argument("--avatar-file", default="UserData/Characters/User00000.iff")
     parser.add_argument("--object-id", type=int, default=128)
+    parser.add_argument("--stand-tick", type=int, default=241)
     parser.add_argument("--ticks", type=int, default=512)
     args = parser.parse_args()
 
@@ -50,6 +51,7 @@ def main():
         "--animation-source", str(expansion_shared),
         "--headless-main", "--render-saved-avatar", str(args.avatar_id),
         "--headless-interaction", str(args.object_id), "1",
+        "--headless-stand", str(args.object_id), str(args.stand_tick),
         "--ticks", str(args.ticks), "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
     ]
@@ -62,6 +64,7 @@ def main():
         raise RuntimeError(f"odh-person exited {result.returncode}: {result.stderr.strip()}")
     report = json.loads(result.stdout)
     interaction = report["interaction_runtime"]
+    stand = report["stand_runtime"]
     trace = report["trace"]
     action_trace = [entry for entry in trace if entry["owner"] >= 0x80000000]
     main_trace = [entry for entry in trace if entry["owner"] < 0x80000000]
@@ -84,6 +87,7 @@ def main():
         "main_diagnostic": report["diagnostic"],
         "ticks": report["ticks"],
         "interaction": interaction,
+        "stand": stand,
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
         "action_opcodes": sorted(action_opcodes),
@@ -95,22 +99,25 @@ def main():
     print(json.dumps(evidence, indent=2))
 
     completed_sit = (
-        interaction["trigger"] == "headless_schedule" and interaction["enqueued"] and
+        interaction["trigger"] in ("headless_schedule", "headless_sit_schedule") and interaction["enqueued"] and
         interaction["status"] == "returned_true" and interaction["result"] is True and
         interaction["queue_size"] == 0 and not interaction["queue_active"] and
         interaction["action"] == 4097 and interaction["scheduled_target"] == args.object_id and
-        actor["attachment"] is not None and actor["attachment"]["container"] == args.object_id and
-        actor["attachment"]["positioned"] and
+        stand["precondition_posture"] == 1 and
+        stand["precondition_attachment"] == args.object_id and
         report["completion"] is not None and report["completion"]["result"] is True and
         {4097, 4100, 4099}.issubset(action_routines) and {44, 45, 46, 49}.issubset(action_opcodes) and
         bool(main_entity_next) and report["ticks"] == args.ticks and
-        bool(main_run_tree_by_name) and run_tree_false_continued and
+        stand["precondition_met"] and stand["entry_point"] == 27 and
+        stand["action"] == 4102 and stand["status"] == "returned_true" and
+        stand["result"] is True and stand["actor_posture"] == 0 and
+        not stand["actor_attached"] and 4102 in action_routines and
         report["status"] in ("waiting", "yielded") and
         (args.ticks < 512 or report["status"] == "waiting") and
         not report["host_failed"]
     )
     if not completed_sit:
-        raise SystemExit("House07 Sit did not complete with the avatar attached to its target slot")
+        raise SystemExit("House07 Sit/Stand sequence did not complete with the avatar detached and standing")
 
 
 if __name__ == "__main__":
