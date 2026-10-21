@@ -719,7 +719,11 @@ corredor com 7 retângulos gerados, 3 expandidos, 2.258 unidades de trabalho e
 entradas `[392,440]`, `[399,449]`. O host declara raiz isolada e threads salvas
 dormentes, embora exista outro avatar na sala; isso não modela as threads de
 um runtime multissím completo. A ordem das entidades por ID ainda não foi
-provada igual a `roomInfo.Entities`, `OptimizeLines` não roda, e clearance,
-estado dinâmico de portas e integração de movimento permanecem falsos. Próxima
-unidade: alinhar a ordem das entidades com a referência e implementar/testar
-OptimizeLines antes de usar o corredor para waypoints.
+provada igual a `roomInfo.Entities`, e clearance, estado dinâmico de portas e
+integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
+reproduz parcialmente o corner-cutting do `OptimizeLines` Simitone com
+`dirIn=null`, HiP preservado e limites fail-closed. Ainda não é chamado pelo
+probe: os goldens foram derivados, não comparados com um oracle C# executado.
+Próxima unidade: executar comparação C# em fixtures, implementar a correção de
+entrada de portal `dirIn`, alinhar a ordem das entidades e então aplicar a
+otimização ao diagnóstico House07 sem promover clearance ou movimento.

@@ -140,5 +140,70 @@ int main() {
     for (std::size_t i = 0; i < rough.size(); ++i)
         require(rough[i].x1 == original[i].x1,
                 "invalid RoughBalanced prefix must leave input unchanged");
+
+    const auto empty_lines = optimize_rect_route_lines({}, {1, 1});
+    require(empty_lines.status == RectRouteStatus::found && empty_lines.corridor.empty() &&
+            !empty_lines.incoming_direction_applied,
+            "empty line optimization is a no-op without an incoming direction");
+    const std::vector<RectRouteCorridorEntry> one_line = {{{0, 0, 10, 10}, {1, 1}}};
+    const auto single_lines = optimize_rect_route_lines(one_line, {9, 9});
+    require(single_lines.status == RectRouteStatus::found && single_lines.corridor.size() == 1 &&
+            single_lines.corridor[0].entry_hip.x == 32768 && single_lines.corridor[0].line_id == -1,
+            "single rectangle must retain its entry and unassigned LineID");
+
+    const std::vector<RectRouteCorridorEntry> straight = {
+        {{0, 0, 10, 10}, {1, 1}}, {{10, 0, 20, 10}, {10, 8}}, {{20, 0, 30, 10}, {20, 8}}};
+    const auto lines = optimize_rect_route_lines(straight, {29, 9});
+    require(lines.status == RectRouteStatus::found && lines.corridor.size() == 3 &&
+            !lines.incoming_direction_applied,
+            "ordered adjacent rectangles must support a safe line cut");
+    // Exact ray arithmetic for (1,1)->(29,9): t=floor((x-1)*32768/28),
+    // yHiP=32768+t*8. These expected crossings retain the fractional component.
+    require(lines.corridor[1].entry_hip.x == 327680 && lines.corridor[1].entry_hip.y == 117024 &&
+            lines.corridor[2].entry_hip.x == 655360 && lines.corridor[2].entry_hip.y == 210648,
+            "safe cut must preserve exact fixed-point crossings, including fractions");
+    require(lines.corridor[1].entry.y == 3 && lines.corridor[2].entry.y == 6 &&
+            lines.corridor[1].line_id == 0 && lines.corridor[2].line_id == -1,
+            "source world entries truncate HiP and LineID excludes the immediate predecessor");
+    const std::vector<RectRouteCorridorEntry> duplicate = {
+        {{0, 0, 10, 10}, {1, 1}}, {{10, 0, 10, 10}, {10, 5}}, {{10, 0, 20, 10}, {10, 5}}};
+    const auto deduplicated = optimize_rect_route_lines(duplicate, {19, 5});
+    require(deduplicated.status == RectRouteStatus::found && deduplicated.corridor.size() == 2 &&
+            deduplicated.corridor.front().entry.x == 1 &&
+            deduplicated.corridor.back().rectangle.x2 == 20,
+            "duplicate pass must remove only an intermediate node, preserving first and last");
+    const std::vector<RectRouteCorridorEntry> gap = {
+        {{0, 0, 10, 10}, {1, 5}}, {{20, 0, 30, 10}, {20, 5}}};
+    const auto gap_lines = optimize_rect_route_lines(gap, {25, 5});
+    require(gap_lines.status == RectRouteStatus::found && gap_lines.corridor.size() == 2 &&
+            gap_lines.corridor[1].entry_hip.x == 20 * 32768 &&
+            gap_lines.corridor[1].entry_hip.y == 5 * 32768 && gap_lines.corridor[1].line_id == -1,
+            "a ray leaving the previous rectangle outside the next cannot cut across the gap");
+    // The direct ray to (18,19) misses the middle rectangle. The previous
+    // approved ray to the final rectangle's entry (18,10) must be retained.
+    const std::vector<RectRouteCorridorEntry> turn = {
+        {{0, 0, 10, 10}, {1, 1}}, {{10, 0, 20, 10}, {10, 8}}, {{10, 10, 20, 20}, {18, 10}}};
+    const auto turn_lines = optimize_rect_route_lines(turn, {18, 19});
+    require(turn_lines.status == RectRouteStatus::found &&
+            turn_lines.corridor[1].entry_hip.x == 10 * 32768 &&
+            turn_lines.corridor[1].entry_hip.y == 188891 &&
+            turn_lines.corridor[2].entry_hip.x == 18 * 32768 &&
+            turn_lines.corridor[2].entry_hip.y == 10 * 32768,
+            "failed longer cut must retain the last approved endpoint and its crossings");
+    RectRouteLineLimits line_limits;
+    line_limits.corridor_entries = 1;
+    const auto limited_lines = optimize_rect_route_lines(straight, {29, 9}, line_limits);
+    require(limited_lines.status == RectRouteStatus::budget_exhausted && limited_lines.corridor.empty(),
+            "line entry budget must fail without partial output");
+    line_limits = {}; line_limits.work_units = 5;
+    const auto limited_work = optimize_rect_route_lines(straight, {29, 9}, line_limits);
+    require(limited_work.status == RectRouteStatus::budget_exhausted && limited_work.corridor.empty(),
+            "line work budget must fail without partially optimized output");
+    const auto overflow_lines = optimize_rect_route_lines({{{-60000,-1,60000,1}, {-50000,0}},
+                                                          {{-60000,-1,60000,1}, {50000,0}}}, {55000,0});
+    require(overflow_lines.status == RectRouteStatus::unsupported_coordinates && overflow_lines.corridor.empty(),
+            "line source subtraction overflow must fail closed");
+    require(optimize_rect_route_lines(one_line, {20, 20}).status == RectRouteStatus::invalid_input,
+            "line destination must belong to the final corridor rectangle");
     std::cout << "Rectangle corridor routing checks passed\n";
 }

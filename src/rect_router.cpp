@@ -6,16 +6,17 @@
 #include <deque>
 #include <limits>
 #include <new>
+#include <optional>
 #include <utility>
 
 // Own bounded implementation of the corridor mechanics observed at Simitone
 // 4906db3156616bfaffc10ce0963cf08062975fef / FreeSO
 // f86bbd34b2112296ed786741f640a0535886d180:
-// FreeSO/TSOClient/tso.simantics/Engine/Routing/VMRectRouter.cs:18-98,234-466;
+// FreeSO/TSOClient/tso.simantics/Engine/Routing/VMRectRouter.cs:18-226,234-466;
 // FreeSO/TSOClient/tso.simantics/Model/Routing/VMFreeList.cs:12-69;
 // FreeSO/TSOClient/tso.simantics/Model/Routing/VMObstacleSet.cs:119-270,352-360.
-// Input obstacle insertion order is explicit; RoughBalanced/.NET Random and
-// OptimizeLines are outside this module. This is not original TS1 equivalence.
+// Input obstacle insertion order is explicit. The separate line optimizer
+// implements OptimizeLines with dirIn=null only. This is not TS1 equivalence.
 
 namespace odh {
 namespace {
@@ -383,6 +384,165 @@ RectRouteResult route_rectangles(const std::vector<RectRouteObstacle>& input,
 }
 
 namespace {
+constexpr std::int32_t hip_scale = 0x8000;
+
+std::int32_t source_int(std::int64_t value) {
+    if (value < std::numeric_limits<std::int32_t>::min() ||
+        value > std::numeric_limits<std::int32_t>::max())
+        throw Stop{RectRouteStatus::unsupported_coordinates};
+    return static_cast<std::int32_t>(value);
+}
+
+Point hip(Point point) {
+    return {source_int(std::int64_t(point.x) * hip_scale),
+            source_int(std::int64_t(point.y) * hip_scale)};
+}
+
+bool contains_hip(const Rect& rectangle, Point point) {
+    const auto low = hip({rectangle.x1, rectangle.y1});
+    const auto high = hip({rectangle.x2, rectangle.y2});
+    return point.x >= low.x && point.x <= high.x &&
+           point.y >= low.y && point.y <= high.y;
+}
+
+// Mirrors VMObstacle.RaycastLineHiP, including truncation toward zero and the
+// strict y-t tie test. Refuse every int32 overflow instead of emulating wrap.
+std::optional<Point> ray_exit_hip(const Rect& rectangle, Point from, Point to) {
+    const Point diff{source_int(std::int64_t(to.x) - from.x),
+                     source_int(std::int64_t(to.y) - from.y)};
+    std::int32_t best = std::numeric_limits<std::int32_t>::max();
+    std::optional<Point> leaves;
+    const auto low = hip({rectangle.x1, rectangle.y1});
+    const auto high = hip({rectangle.x2, rectangle.y2});
+    const auto x_out = diff.x > 0 ? high.x : low.x;
+    const auto x_diff = source_int(std::int64_t(x_out) - from.x);
+    if (diff.x != 0) {
+        const auto t = source_int((std::int64_t(x_diff) * hip_scale) / diff.x);
+        const auto dy = source_int((std::int64_t(t) * diff.y) / hip_scale);
+        const auto y_hit = source_int(std::int64_t(from.y) + dy);
+        if (y_hit >= low.y && y_hit <= high.y) {
+            best = t;
+            leaves = Point{x_out, y_hit};
+        }
+    }
+    const auto y_out = diff.y > 0 ? high.y : low.y;
+    const auto y_diff = source_int(std::int64_t(y_out) - from.y);
+    if (diff.y != 0) {
+        const auto t = source_int((std::int64_t(y_diff) * hip_scale) / diff.y);
+        const auto dx = source_int((std::int64_t(t) * diff.x) / hip_scale);
+        const auto x_hit = source_int(std::int64_t(from.x) + dx);
+        if (x_hit >= low.x && x_hit <= high.x && t < best)
+            leaves = Point{x_hit, y_out};
+    }
+    return leaves;
+}
+
+class LineOptimizer {
+public:
+    LineOptimizer(const std::vector<RectRouteCorridorEntry>& input,
+                  RectRoutePoint destination, const RectRouteLineLimits& limits)
+        : destination_(hip(destination)), limits_(limits) {
+        entries_.reserve(input.size());
+        for (const auto& step : input) {
+            spend();
+            const auto& r = step.rectangle;
+            if (r.x1 > r.x2 || r.y1 > r.y2 || !contains(r, step.entry))
+                throw Stop{RectRouteStatus::invalid_input};
+            // Check all HiP rectangle endpoints even when the ray never uses one.
+            (void)hip({r.x1, r.y1});
+            (void)hip({r.x2, r.y2});
+            entries_.push_back({r, step.entry, hip(step.entry), -1});
+        }
+        if (!entries_.empty() && !contains_hip(entries_.back().rectangle, destination_))
+            throw Stop{RectRouteStatus::invalid_input};
+    }
+
+    void optimize() {
+        // Original linked-list pass begins at First.Next and never removes Last.
+        for (std::size_t i = 1; i + 1 < entries_.size();) {
+            spend();
+            if (equal(entries_[i].entry, entries_[i + 1].entry)) {
+                // Account for the bounded vector shift, not just the comparison.
+                for (std::size_t shift = i; shift + 1 < entries_.size(); ++shift) spend();
+                entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(i));
+            } else ++i;
+        }
+        std::size_t node = 0;
+        std::int32_t line_id = 0;
+        while (node + 1 < entries_.size()) {
+            spend();
+            const auto start = entries_[node].entry_hip;
+            bool success = false;
+            auto before_destination = node + 1;
+            auto destination = node + 2;
+            bool set_next = false;
+            while (true) {
+                spend();
+                bool good_line = before_destination < entries_.size();
+                auto last_exit = start;
+                const auto end = destination == entries_.size() ? destination_ : entries_[destination].entry_hip;
+                if (good_line) {
+                    for (auto rect = node; rect != destination; ++rect) {
+                        spend();
+                        if (!contains_hip(entries_[rect].rectangle, last_exit)) {
+                            good_line = false; break;
+                        }
+                        const auto exit = ray_exit_hip(entries_[rect].rectangle, start, end);
+                        if (!exit) { good_line = false; break; }
+                        last_exit = *exit;
+                    }
+                }
+                if (good_line && destination < entries_.size())
+                    good_line = contains_hip(entries_[destination].rectangle, last_exit);
+                if (good_line) {
+                    success = true;
+                    before_destination = destination;
+                    if (destination < entries_.size()) ++destination;
+                } else {
+                    if (!success) break;
+                    const auto accepted_end = before_destination == entries_.size()
+                        ? destination_ : entries_[before_destination].entry_hip;
+                    last_exit = start;
+                    for (auto rect = node; rect != before_destination; ++rect) {
+                        spend();
+                        if (rect != node) {
+                            if (rect + 1 != before_destination) entries_[rect].line_id = line_id;
+                            entries_[rect].entry_hip = last_exit;
+                            entries_[rect].entry = {last_exit.x / hip_scale, last_exit.y / hip_scale};
+                        }
+                        const auto exit = ray_exit_hip(entries_[rect].rectangle, start, accepted_end);
+                        if (!exit) throw Stop{RectRouteStatus::invalid_input};
+                        last_exit = *exit;
+                    }
+                    set_next = true;
+                    node = before_destination;
+                    ++line_id;
+                    break;
+                }
+            }
+            if (!set_next) ++node;
+        }
+    }
+
+    RectRouteLineResult finish() {
+        RectRouteLineResult result;
+        result.status = RectRouteStatus::found;
+        result.corridor = std::move(entries_);
+        result.work_units = work_;
+        return result;
+    }
+
+private:
+    std::vector<RectRouteLineEntry> entries_;
+    Point destination_;
+    const RectRouteLineLimits& limits_;
+    std::size_t work_ = 0;
+    void spend() {
+        if (work_ >= limits_.work_units) throw Stop{RectRouteStatus::budget_exhausted};
+        ++work_;
+    }
+};
+
 class DotNetSeedOneRandom {
 public:
     DotNetSeedOneRandom() {
@@ -427,6 +587,25 @@ private:
     std::int32_t inextp_ = 21;
 };
 } // namespace
+
+RectRouteLineResult optimize_rect_route_lines(
+    const std::vector<RectRouteCorridorEntry>& corridor, RectRoutePoint destination,
+    const RectRouteLineLimits& limits) {
+    RectRouteLineResult result;
+    if (!limits.corridor_entries || limits.corridor_entries > 16384 ||
+        !limits.work_units || limits.work_units > 16777216) return result;
+    if (corridor.size() > limits.corridor_entries) {
+        result.status = RectRouteStatus::budget_exhausted; return result;
+    }
+    if (corridor.empty()) { result.status = RectRouteStatus::found; return result; }
+    try {
+        LineOptimizer optimizer(corridor, destination, limits);
+        optimizer.optimize();
+        return optimizer.finish();
+    } catch (const Stop& stop) { result.status = stop.status; }
+      catch (const std::bad_alloc&) { result.status = RectRouteStatus::budget_exhausted; }
+    return result;
+}
 
 bool rough_balance_obstacle_prefix(std::vector<RectRouteObstacle>& obstacles,
                                    std::size_t architectural_count) {

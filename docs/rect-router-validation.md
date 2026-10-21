@@ -15,10 +15,43 @@ emitido por `System.Random(1)` no .NET 10 confirma a permutação de 16 índices
 o Simitone fixado mira .NET 9, e a reprodução usa o algoritmo legado de seed
 explícito. A CLI aplica o shuffle somente a `wallObs + roomObs`, antes das
 quatro bandas e das entidades, igual à ordem de construção observada.
-`OptimizeLines`, geração de waypoints, portais e movimento continuam fora do
-módulo. A ordem das entidades runtime ODH ainda não foi provada idêntica a
+O cálculo do corredor não aplica `OptimizeLines` automaticamente. A ordem das
+entidades runtime ODH ainda não foi provada idêntica a
 `roomInfo.Entities`; por isso nenhum resultado afirma equivalência integral ou
 clearance do executável original.
+
+## Otimização de linhas com `dirIn=null`
+
+`optimize_rect_route_lines` é uma API separada para a geometria de
+`VMRectRouter.OptimizeLines` da revisão acima, com o ramo de direção de entrada
+omitido explicitamente (`incoming_direction_applied=false`). Ela remove nós
+intermediários com entradas consecutivas iguais e tenta cortes progressivos,
+exigindo que cada saída de raio HiP pertença ao próximo retângulo livre na
+sequência. O primeiro corte que falha encerra a tentativa; o último aprovado
+recalcula os crossings intermediários e os `LineID`. O vetor de entrada não é
+alterado.
+
+A saída preserva `entry_hip` em escala fixa 0x8000 e também a entrada inteira
+truncada para zero como na referência; descartar a fração alteraria os futuros
+segmentos. O raio usa divisão inteira, teste de borda inclusivo e desempate
+estrito de t em y. Aritmética que excederia um resultado int32 da referência é
+rejeitada como `unsupported_coordinates`; limites de entradas e trabalho
+falham sem saída parcial. O chamador deve fornecer um corredor encontrado,
+com entradas nos respectivos retângulos e destino no último retângulo. Uma
+cadeia arbitrária com gap não é promovida a rota válida pelo otimizador.
+
+Os goldens sintéticos são derivados da fórmula inteira, sem comparação
+executada com o C# da referência nesta etapa. Para a linha `(1,1) -> (29,9)`,
+os crossings nas bordas x=10 e x=20 são `(327680,117024)` e
+`(655360,210648)` em HiP. Os testes cobrem no-op vazio/retângulo único,
+duplicata intermediária, frações, último corte aprovado antes de uma falha,
+gap, overflow e limites. O teste focal `rect_router` passou com compilação
+warning-enabled.
+
+Esta API ainda não é chamada pelos probes. O ajuste de entrada vindo de portal
+(`dirIn`), geração de waypoints, Bezier, clearance e movimento continuam
+pendentes; isto é uma implementação parcial de `OptimizeLines`, não uma
+alegação de equivalência completa ao Simitone ou ao executável original.
 
 ## House07
 
