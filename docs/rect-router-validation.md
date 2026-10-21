@@ -76,10 +76,13 @@ respectivamente `(7,10)` e `(3,10)`, e o crossing seguinte foi
 `(327680,0)`, `(655360,65535)` e `(983040,131070)` HiP. São fixtures
 sintéticas; não houve execução do Simitone compilado nem do jogo original.
 
-Esta API ainda não é chamada pelos probes. Geração de waypoints, Bezier,
-clearance e movimento continuam pendentes; isto é uma implementação bounded
-de `OptimizeLines`, não uma
-alegação de equivalência completa ao Simitone ou ao executável original.
+O diagnóstico de rota AttemptWalk de `odh-person` chama esta API quando o
+corredor bruto retorna `found` e mantém os dois corredores em campos separados.
+Para esse probe, `dirIn` fica omitido porque o estado da rota-pai e
+`PortalTurns` não são reconstruídos; o JSON expõe essa limitação. Geração de
+waypoints, Bezier, clearance e movimento continuam pendentes. Esta é uma
+implementação bounded de geometria `OptimizeLines`, não uma alegação de
+equivalência completa ao Simitone ou ao executável original.
 
 ## House07
 
@@ -95,8 +98,19 @@ Resultado na instalação local:
 | (408, 456) | found | 3 | 2 |
 | (376, 456) | found | 3 | 2 |
 
+Na amostra viva House07, Main tick 214, o corredor para `(408,456)` passou
+pelo otimizador. A busca bruta gerou sete retângulos, expandiu três e produziu
+as entradas `(392,440)` e `(399,449)`. A saída otimizada preservou a primeira
+entrada e ajustou a segunda para `(401,449)` (`entry_hip` igual a
+`[13139968,14712832]`); ambos os `line_id` são `-1`. O JSON mantém o corredor
+bruto para comparação, indica `optimize_lines_applied=true` e
+`incoming_direction_context=not_reconstructed`. A execução terminou no limite
+de 214 ticks (código 3), como esperado para essa amostra.
+
 O primeiro destino coincide com a posição salva do ator; esse caso retorna
-corredor vazio e não representa um deslocamento. Os demais resultados são
+corredor vazio e não representa um deslocamento. No JSON vivo, ele retorna
+`optimize_lines_status=not_applicable_turn_only` e
+`optimized_corridor=null`. Os demais resultados são
 cálculos sobre snapshot salvo, incluindo caixas geométricas de quatro portas
 sem estado runtime validado. `route_clearance`, `runtime_door_state_validated`
 e `main_movement_integrated` permanecem false. Com RoughBalanced habilitado,

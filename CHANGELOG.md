@@ -10,10 +10,11 @@ validação indicados por versão.
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com
   crossings fixos HiP. O ajuste opcional `dirIn` usa o orçamento inicial de
-  oito unidades e as conversões float32/Point da referência; a integração aos
-  diagnósticos vivos permanece pendente. Os casos sintéticos foram
-  comparados com uma transcrição C#/.NET 10 das rotinas e MonoGame 3.8.4, não com o Simitone
-  compilado. Consulte
+  oito unidades e as conversões float32/Point da referência; o diagnóstico
+  AttemptWalk de House07 preserva o corredor bruto e emite a saída otimizada.
+  `dirIn` permanece omitido porque o estado da rota-pai não é reconstruído.
+  Os casos sintéticos foram comparados com uma transcrição C#/.NET 10 das
+  rotinas e MonoGame 3.8.4, não com o Simitone compilado. Consulte
   `docs/rect-router-validation.md`.
 
 - `snapshot_world_room_info` expõe o inventário bounded e completo de

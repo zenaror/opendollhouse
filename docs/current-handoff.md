@@ -722,15 +722,17 @@ um runtime multissím completo. A ordem das entidades por ID ainda não foi
 provada igual a `roomInfo.Entities`, e clearance, estado dinâmico de portas e
 integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
 reproduz o corner-cutting e o ajuste opcional de entrada `dirIn` do
-`OptimizeLines` Simitone, com HiP preservado e limites fail-closed. O ajuste
-usa float32 e offset `ToPoint` truncado antes da soma inteira; o sqrt da
-distância restante é convertido diretamente a float, sem truncamento para int.
-Ainda não é chamado pelo
-probe. Uma transcrição temporária C#/.NET 10 das rotinas da referência confirmou
+`OptimizeLines` Simitone, com HiP preservado e limites fail-closed. O
+diagnóstico de rota House07 já chama a API e mantém os corredores bruto e
+otimizado separados. O JSON informa
+`incoming_direction_context=not_reconstructed`: o estado da rota-pai que
+decide `dirIn` não está disponível neste probe. Uma transcrição temporária
+C#/.NET 10 das rotinas da referência confirmou
 os casos reto, curva, gap e duplicata; não invocou Simitone compilado nem o jogo
 original. Os casos de portal também coincidiram com harness C#/.NET 10 usando
 MonoGame 3.8.4: projeção >=8, clamp com vários crossings, offsets positivos e
 negativos e dois nós. ODH falha fechado no domínio em que as somas inteiras de
-quadrados da referência transbordariam.
-Próxima unidade: alinhar a ordem das entidades e então aplicar a otimização ao diagnóstico House07 sem
-promover clearance ou movimento.
+quadrados da referência transbordariam. Próxima unidade: investigar a ordem
+`RoomInfo.Entities` frente ao snapshot ODH e avançar na seleção real de
+objetivo/estado de portais. Não promover a saída geométrica a clearance,
+execução de waypoints ou movimento.

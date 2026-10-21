@@ -723,7 +723,9 @@ int main(int argc,char** argv) {
         std::optional<RuntimeAttemptWalkProbe> attempt_walk;
         std::optional<odh::RectRoutePoint> attempt_walk_destination;
         std::optional<odh::RectRouteResult> attempt_walk_route;
+        std::optional<odh::RectRouteLineResult> attempt_walk_lines;
         std::string attempt_walk_route_state="not_requested";
+        std::string attempt_walk_lines_state="not_run";
     };
 struct PlacementCandidateProbe {
     odh::EntityPosition position;
@@ -1158,6 +1160,16 @@ struct PlacementCandidateProbe {
                                     {actor->position->x,actor->position->y},*attempt_walk_destination,heading);
                                 room_info_probe->attempt_walk_route_state=odh::rect_route_status_name(
                                     room_info_probe->attempt_walk_route->status);
+                                if(room_info_probe->attempt_walk_route->status==odh::RectRouteStatus::found){
+                                    if(room_info_probe->attempt_walk_route->corridor.empty())
+                                        room_info_probe->attempt_walk_lines_state="not_applicable_turn_only";
+                                    else{
+                                        room_info_probe->attempt_walk_lines=odh::optimize_rect_route_lines(
+                                            room_info_probe->attempt_walk_route->corridor,*attempt_walk_destination);
+                                        room_info_probe->attempt_walk_lines_state=odh::rect_route_status_name(
+                                            room_info_probe->attempt_walk_lines->status);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1597,7 +1609,11 @@ struct PlacementCandidateProbe {
                 <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false}";
         }
         if(probe.attempt_walk_destination){
-            std::cout<<",\"attempt_walk_route_diagnostic\":{\"evidence\":\"live_World_AttemptWalk_snapshot_and_pinned_corridor_model\",\"goal_selection_validated\":false,\"optimize_lines_applied\":false,\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false,\"entity_order_matches_reference\":false,\"status\":"
+            const bool optimize_lines_applied=probe.attempt_walk_lines&&
+                probe.attempt_walk_lines->status==odh::RectRouteStatus::found;
+            std::cout<<",\"attempt_walk_route_diagnostic\":{\"evidence\":\"live_World_AttemptWalk_snapshot_and_pinned_corridor_model\",\"goal_selection_validated\":false,\"optimize_lines_applied\":"<<(optimize_lines_applied?"true":"false")
+                <<",\"optimize_lines_evidence\":\"bounded_pinned_Simitone_geometry_only\",\"incoming_direction_supplied\":false,\"incoming_direction_context\":\"not_reconstructed\",\"incoming_direction_applied\":"<<(probe.attempt_walk_lines&&probe.attempt_walk_lines->incoming_direction_applied?"true":"false")
+                <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false,\"entity_order_matches_reference\":false,\"status\":"
                 <<json_bytes(probe.attempt_walk_route_state)<<",\"destination\":["
                 <<probe.attempt_walk_destination->x<<','<<probe.attempt_walk_destination->y<<']';
             if(probe.attempt_walk_route){
@@ -1614,6 +1630,22 @@ struct PlacementCandidateProbe {
                 }
                 std::cout<<']';
             }
+            if(probe.attempt_walk_lines){
+                const auto& optimized=*probe.attempt_walk_lines;
+                std::cout<<",\"optimize_lines_status\":"<<json_bytes(odh::rect_route_status_name(optimized.status))
+                    <<",\"optimize_lines_work_units\":"<<optimized.work_units<<",\"optimized_corridor\":[";
+                for(std::size_t n=0;n<optimized.corridor.size();++n){
+                    if(n)std::cout<<',';
+                    const auto& step=optimized.corridor[n];
+                    std::cout<<"{\"entry\":["<<step.entry.x<<','<<step.entry.y
+                        <<"],\"entry_hip\":["<<step.entry_hip.x<<','<<step.entry_hip.y
+                        <<"],\"line_id\":"<<step.line_id<<",\"rect\":["
+                        <<step.rectangle.x1<<','<<step.rectangle.y1<<','
+                        <<step.rectangle.x2<<','<<step.rectangle.y2<<"]}";
+                }
+                std::cout<<']';
+            }else std::cout<<",\"optimize_lines_status\":"<<json_bytes(probe.attempt_walk_lines_state)
+                <<",\"optimized_corridor\":null";
             std::cout<<'}';
         }
         std::cout<<'}';

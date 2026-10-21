@@ -38,16 +38,29 @@ footprints. O novo `attempt_walk_snapshot` reportou:
   inicial, percorreu o snapshot vivo com a ordem RoughBalanced seed-1 e
   retornou `found`: 7 retângulos gerados, 3 expandidos, 2.258 unidades de
   trabalho e duas entradas de corredor, `[392,440]` e `[399,449]`.
+- O mesmo corredor passou pela API bounded `optimize_rect_route_lines`; o
+  diagnóstico JSON preserva o corredor bruto e emite o otimizado separadamente.
+  Para `(408,456)`, a segunda entrada ajustou de `[399,449]` para `[401,449]`,
+  com `entry_hip=[13139968,14712832]` e ambos os `line_id=-1`.
+- `dirIn` não foi fornecido porque o contexto da rota-pai/`PortalTurns` não é
+  reconstruído por este comando. O JSON marca
+  `incoming_direction_context=not_reconstructed` e
+  `incoming_direction_applied=false`.
+- Quando o destino é a posição inicial `(392,440)`, o corredor fica vazio e o
+  JSON marca `optimize_lines_status=not_applicable_turn_only`; não o confunde
+  com uma otimização executada nem inventa um trecho de movimento.
 
 Os números demonstram que a composição bounded e o cálculo de corredor
 funcionaram sobre o World construído pelo Main para esse estado e arquitetura
 inicial. `ready` só indica que os dados usados para montar a lista estavam
 completos. A ordem de inserção das entidades ODH por owner ID ainda não foi
-provada igual a `roomInfo.Entities`; `OptimizeLines` também não foi aplicado.
+provada igual a `roomInfo.Entities`; a saída `OptimizeLines` é somente um
+diagnóstico geométrico sobre essa ordem.
 O adaptador não atualiza a geometria ao abrir/fechar uma porta, não prova
 equivalência com o executável original, não calcula clearance, não move o
 avatar e não integra Route45 ao Main. Esses campos continuam explicitamente
-falsos.
+falsos. Consulte [`rect-router-validation.md`](rect-router-validation.md) para
+comparar os corredores bruto e otimizado.
 
 ## Testes
 
