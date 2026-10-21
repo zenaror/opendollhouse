@@ -923,10 +923,30 @@ O CLI `odh-bhav` ganhou opções de probe para inicializar palavras explícitas 
 Caller e StackObject no mundo construído; os valores são apenas estado sintético
 do harness, não valores restaurados do save. Testes comprovam execução
 assíncrona somente quando o host valida um ponto exato livre; destino bloqueado
-falha sem movimento e operandos fora do perfil são recusados. No trace
-comercial, o ponto do StackObject construído está bloqueado, então opcode27
-retorna false e a árvore segue `4105 pc4 -> 4162 -> 4114`, parando em opcode11.
-O fluxo ainda não completa a interação nem chega a 4113. Próxima unidade:
-auditar `GetDistanceTo` opcode11 de `Doors.iff:4114` e determinar a política
-correta de colocação/obstáculo da meta Door com uma instância do save antes de
-afirmar que o ramo de rota pode alcançar 4113.
+falha sem movimento e operandos fora do perfil são recusados. Na primeira
+análise, o trace comercial foi interpretado como se parasse no opcode11; a
+reexecução e a correção dessa leitura estão registradas abaixo. O probe ainda
+não completa a interação nem valida a rota com o clearance de uma Door
+restaurada do save.
+
+### Reexecução headless da árvore de Portal15 (2026-10-21)
+
+Reexecutei `odh-bhav` contra `Objects.far:Doors.iff:4105` e a ligação
+`DoorGlobals.iff`, com OBJD15089, caller word 9=0 e atributo1=1 no StackObject
+sintético. O trace completo (135 instruções) confirma que `GetDistanceTo`
+(`4114` opcode11) é executado e a árvore segue até Route45; portanto a anotação
+acima de que a execução parava no opcode11 estava incorreta. O probe termina
+`returned_false`, com o diagnóstico apontando a falha anterior: o host rejeita
+o ponto exato do StackObject em `[64,64]` porque essa célula pertence à região
+bloqueada pela grade deliberadamente sintética. Essa grade não usa o lote
+House07, footprint real da porta ou clearance resolvido por EntryPoint5; não é
+evidência de que o portal comercial falha no jogo.
+
+`tests/door_route_probe.py --binary ./odh-bhav --game-root '../referencias/The Sims'`
+passou novamente com BHAV/SLOTs reais de `Doors.iff:4113`: atributo1=0
+seleciona o ramo pc2 e termina em `[64,80,1,3]` após 53 ticks; atributo1=1
+seleciona pc1 e termina em `[64,48,1,1]` após 48 ticks. Isso valida o roteamento
+isolado de 4113 no mundo construído, não conecta a frame Portal15 nem prova uma
+travessia entre salas. Próximo passo: substituir o ponto/clearance sintético do
+probe por uma Door restaurada e sua resolução EntryPoint5 antes de mudar a
+semântica de opcode27.
