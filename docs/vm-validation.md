@@ -42,6 +42,23 @@ O orçamento de instruções é resumível e não representa passagem de tempo.
 Loops não descartam estado para caber no orçamento. Callbacks não podem reentrar
 em start/run; exceções externas se propagam sem invalidar frames.
 
+## Continuação externa de frame
+
+Um serviço em `WAIT` pode agora usar `call_pending(ticket, VmCall)` para empilhar
+uma BHAV filha sem perder o ticket de espera do pai. Esperas filhas mantêm seus
+próprios tickets; ao retorno da rotina filha, a VM publica
+`VmExternalFrameReturn`, restaura a espera-pai e cede ao host sem reexecutar a
+instrução BHAV original. `resume_external_frame` retoma o frame de serviço em
+estado waiting, que pode então agendar outra filha ou concluir seu ticket. As
+chamadas são limitadas pelo mesmo teto de stack. Isso fornece um mecanismo de
+continuação para futuros frames externos de rota; ainda não há invocação de
+portal BHAV pelo `Routing`, nem integração de `Route45` com Main.
+
+`odh-vm-tests` usa uma fixture sintética com Route45-like wait, BHAV filha que
+também aguarda, uma segunda filha aninhada, restauração LIFO de tickets e
+conclusão pela aresta original do pai. Chamadas com ticket stale ou rotina
+ausente preservam o wait-pai.
+
 ## Diferenças e lacunas explícitas
 
 Primitivas fora da 2, scopes externos ausentes, rotinas faltantes, índices
@@ -56,12 +73,16 @@ SimAntics completa. Interfaces de memória não substituem os serviços do mundo
 
 ## Checks e corpus
 
-CTest 6/6 passou em Debug e ASan/UBSan. A suíte da VM possui 53 checks
-sintéticos: parsing de metadata, sinais e truncamento, flags, aliases, chamadas
-aninhadas nos três scopes, retorno false, isolamento de locais, substituição
-de argumentos, loops retomados, limites, diagnósticos e reentrada de callback.
+No checkpoint de 2026-10-21, a build Debug completa e CTest passaram com
+158/158; `linux_window_backend` foi pulado por falta de X11. A suíte focal
+`odh-vm-tests` possui 112 checks sintéticos atuais: parsing de metadata, sinais
+e truncamento, flags, aliases, chamadas aninhadas nos três scopes, retorno
+false, isolamento de locais, substituição de argumentos, loops retomados,
+limites, diagnósticos, reentrada de callback e continuação de frames externos.
 A integração CLI testa dados sintéticos de FAR/IFF/BHAV e JSON de trace.
-LSan continua desativado por ptrace (`detect_leaks=0`); leaks não validados.
+Sanitizers cobrem checkpoints anteriores da VM; a continuação externa desta
+revisão não foi executada com ASan/UBSan. LSan estava desativado por ptrace
+(`detect_leaks=0`) naquela validação, então leaks não foram verificados.
 
 Após ampliar a leitura de metadata, o inspector com sanitizadores percorreu
 todo o corpus e produziu relatório idêntico ao checkpoint TTAB, com os 14

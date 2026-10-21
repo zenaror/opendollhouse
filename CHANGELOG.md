@@ -24,6 +24,12 @@ validação indicados por versão.
   frames-pai e a máquina completa ainda faltam. Consulte
   `docs/routing-validation.md`.
 
+- A VM pode empilhar uma BHAV filha a partir de um serviço em espera, manter os
+  tickets aninhados de forma LIFO e retornar ao serviço sem reexecutar a
+  instrução pai. `odh-vm-tests` cobre esperas e retornos aninhados; o
+  `Routing` ainda não usa esse mecanismo para chamar BHAVs de portal. Consulte
+  `docs/vm-validation.md`.
+
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com
   crossings fixos HiP. O ajuste opcional `dirIn` usa o orçamento inicial de

@@ -219,6 +219,59 @@ int main() {
                 second_only.temps()[0]==42 && second_only.temps()[19]==-7 &&
                 second_only.stack()[0].arguments[0]==99,
                 "second temp can publish without first temp");
+
+        const auto service_wait=[](std::uint16_t opcode) {
+            return odh::Instruction{opcode,1,2,{0,0,0,0,0,0,0,0}};
+        };
+        odh::RoutineSet external_routines{
+            {key(),routine({service_wait(45),expr(0,1,0,7,7),expr(2,0,0,7,7,254,253)})},
+            {key(4097),routine({service_wait(46),expr(0,1,0,7,7),expr(2,0,0,7,7,254,253)})},
+            {key(4098),routine({expr(0,1,0,7,7)})}
+        };
+        odh::Vm external(std::move(external_routines),{}, {},
+            [](const auto&,const auto& instruction,const auto&,const auto&) {
+                if(instruction.opcode==45||instruction.opcode==46)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                return odh::PrimitiveOutcome{};
+            });
+        external.start(key());
+        require(external.run(1)==odh::VmStatus::waiting&&external.pending(),
+                "service parent waits before executing an external child BHAV");
+        const auto parent_ticket=external.pending()->ticket;
+        require(!external.call_pending(parent_ticket+1,{key(4097),{},{}})&&
+                !external.call_pending(parent_ticket,{key(4099),{},{}})&&
+                external.status()==odh::VmStatus::waiting&&external.pending()->ticket==parent_ticket&&
+                external.stack().size()==1,
+                "stale ticket and missing child routine preserve the suspended parent atomically");
+        require(external.call_pending(parent_ticket,{key(4097),{},{}})&&
+                external.status()==odh::VmStatus::running&&external.stack().size()==2&&!external.pending(),
+                "external child call suspends the parent ticket without re-dispatching its BHAV");
+        require(external.run(1)==odh::VmStatus::waiting&&external.pending(),
+                "external child can own a separate service wait");
+        const auto child_ticket=external.pending()->ticket;
+        require(child_ticket!=parent_ticket&&external.call_pending(child_ticket,{key(4098),{},{}}),
+                "nested external frame suspends the child wait independently");
+        require(external.run(1)==odh::VmStatus::yielded&&external.external_frame_return()&&
+                external.external_frame_return()->ticket==child_ticket&&
+                external.external_frame_return()->result&&
+                external.external_frame_return()->code_owner==0&&
+                external.external_frame_return()->run_generation==external.run_generation()&&
+                external.pending()&&external.pending()->ticket==child_ticket,
+                "nested BHAV return publishes identity/result and restores the exact child ticket");
+        require(external.resume_external_frame(child_ticket)&&external.status()==odh::VmStatus::waiting&&
+                external.complete(child_ticket,true),
+                "service resumes after nested return and completes the waiting child BHAV");
+        require(external.run(2)==odh::VmStatus::yielded&&external.external_frame_return()&&
+                external.external_frame_return()->ticket==parent_ticket&&
+                external.external_frame_return()->result&&
+                external.pending()&&external.pending()->ticket==parent_ticket,
+                "outer portal BHAV return restores the original route service wait");
+        require(external.resume_external_frame(parent_ticket)&&external.status()==odh::VmStatus::waiting,
+                "outer service can resume after its portal BHAV returns");
+        require(external.complete(parent_ticket,true),
+                "outer route service completes the exact parent ticket");
+        require(external.run(1)==odh::VmStatus::returned_true&&external.stack().empty(),
+                "root BHAV follows the completed route result without re-dispatch");
         std::cout << checks << " VM checks passed (synthetic fixtures only)\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "VM test failed: " << e.what() << '\n'; return 1; }

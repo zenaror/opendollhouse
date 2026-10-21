@@ -23,7 +23,7 @@ using RoutineOwners = std::map<CodeOwner, RoutineSet>;
 RoutineKey routine_key(std::uint16_t id);
 
 enum class VmStatus { ready, running, budget_exhausted, waiting, returned_true, returned_false, fault, yielded };
-enum class VmCallReturnMode { ordinary, interaction_next_tick };
+enum class VmCallReturnMode { ordinary, interaction_next_tick, external_frame_next_tick };
 const char* vm_status_name(VmStatus);
 struct VmContext {
     std::int16_t caller = 0;
@@ -114,6 +114,12 @@ struct VmInteractionReturn {
     CodeOwner code_owner;
     std::uint64_t run_generation;
 };
+struct VmExternalFrameReturn {
+    std::uint64_t ticket;
+    bool result;
+    CodeOwner code_owner;
+    std::uint64_t run_generation;
+};
 
 // Host-independent, resumable instruction kernel. Owns immutable routine sets.
 // No scheduler, entities, queue, routing, animation, or clock is implied.
@@ -141,9 +147,15 @@ public:
     std::uint64_t run_generation() const { return run_generation_; } // Every start attempt, including faults.
     const std::optional<VmPending>& pending() const { return pending_; }
     const std::optional<VmInteractionReturn>& interaction_return() const { return interaction_return_; }
+    const std::optional<VmExternalFrameReturn>& external_frame_return() const { return external_frame_return_; }
     // Host must enforce the next tick boundary. This only releases a matching
     // yielded interaction and leaves the parent on its original instruction.
     bool resume_interaction(std::uint64_t ticket);
+    // Push a BHAV child on behalf of a waiting service frame. The parent wait is
+    // retained; child waits use their own tickets and child return yields back
+    // to the service without re-dispatching the parent's BHAV instruction.
+    bool call_pending(std::uint64_t ticket, const VmCall& call);
+    bool resume_external_frame(std::uint64_t ticket);
     // Accept one matching service completion. Stale/duplicate tickets do nothing.
     // An invalid frame output rejects the entire completion without consuming its ticket.
     // Completion follows the saved instruction's branch; it does not dispatch again.
@@ -175,7 +187,9 @@ private:
     bool executing_ = false;
     VmPrimitive primitive_;
     std::optional<VmPending> pending_;
+    std::vector<VmPending> suspended_pending_;
     std::optional<VmInteractionReturn> interaction_return_;
+    std::optional<VmExternalFrameReturn> external_frame_return_;
     std::uint64_t ticket_sequence_ = 0; // Never reset by start().
     std::uint64_t run_generation_ = 0;
 };

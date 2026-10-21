@@ -86,7 +86,8 @@ const Bhav& Vm::current_routine(const VmFrame& frame) const {
 
 void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args,
               VmCallReturnMode mode, std::uint64_t ticket) {
-    if (mode != VmCallReturnMode::ordinary && mode != VmCallReturnMode::interaction_next_tick)
+    if (mode != VmCallReturnMode::ordinary && mode != VmCallReturnMode::interaction_next_tick &&
+        mode != VmCallReturnMode::external_frame_next_tick)
         throw VmError("invalid child return mode");
     if (mode == VmCallReturnMode::interaction_next_tick &&
         std::any_of(stack_.begin(), stack_.end(), [](const auto& frame) {
@@ -121,7 +122,9 @@ VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int
     ++run_generation_;
     stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
     pending_.reset();
+    suspended_pending_.clear();
     interaction_return_.reset();
+    external_frame_return_.reset();
     status_ = VmStatus::running;
     try { push(key, context, args); }
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
@@ -234,6 +237,16 @@ void Vm::branch(bool result) {
             status_ = VmStatus::yielded;
             return;
         }
+        if (frame.return_mode == VmCallReturnMode::external_frame_next_tick) {
+            if (suspended_pending_.empty()) throw VmError("external frame returned without parent wait");
+            external_frame_return_ = VmExternalFrameReturn{frame.invocation_ticket, result,
+                                                           frame.context.code_owner, run_generation_};
+            stack_.pop_back();
+            pending_ = std::move(suspended_pending_.back());
+            suspended_pending_.pop_back();
+            status_ = VmStatus::yielded;
+            return;
+        }
         stack_.pop_back();
     }
     status_ = result ? VmStatus::returned_true : VmStatus::returned_false;
@@ -302,6 +315,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                 switch (outcome.disposition) {
                 case PrimitiveDisposition::call:
                     if(!outcome.call)throw VmError("primitive call requires child");
+                    if(outcome.call->return_mode==VmCallReturnMode::external_frame_next_tick)
+                        throw VmError("external frame child must be scheduled by its pending service");
                     if(outcome.write && !frame_output(stack_.back(),*outcome.write))
                         throw VmError("primitive call output outside parent frame");
                     {
@@ -387,6 +402,37 @@ bool Vm::resume_interaction(std::uint64_t ticket) {
         interaction_return_->run_generation != run_generation_) return false;
     interaction_return_.reset();
     status_ = VmStatus::running;
+    return true;
+}
+bool Vm::call_pending(std::uint64_t ticket, const VmCall& call) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter pending child calls");
+    if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket ||
+        external_frame_return_ || call.return_mode != VmCallReturnMode::ordinary) return false;
+    suspended_pending_.push_back(*pending_);
+    try {
+        push(call.key, call.context, call.arguments,
+             VmCallReturnMode::external_frame_next_tick, ticket);
+    } catch (const VmError& error) {
+        suspended_pending_.pop_back();
+        diagnostic_ = error.what();
+        return false;
+    } catch (...) {
+        suspended_pending_.pop_back();
+        throw;
+    }
+    pending_.reset();
+    diagnostic_.clear();
+    status_ = VmStatus::running;
+    return true;
+}
+bool Vm::resume_external_frame(std::uint64_t ticket) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter external frame resume");
+    if (status_ != VmStatus::yielded || !external_frame_return_ ||
+        external_frame_return_->ticket != ticket ||
+        external_frame_return_->run_generation != run_generation_ ||
+        !pending_ || pending_->ticket != ticket) return false;
+    external_frame_return_.reset();
+    status_ = VmStatus::waiting;
     return true;
 }
 } // namespace odh
