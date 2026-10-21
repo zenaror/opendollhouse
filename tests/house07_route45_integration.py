@@ -27,6 +27,8 @@ def parse_args():
                         help="schedule saved Portal15 on a restored House07 portal, using the original Main")
     parser.add_argument("--second-route-room-refresh", action="store_true",
                         help="run synthetic Main: reach StackObject26, then validate two Route45 SLOT orders on room 1's refreshed grid")
+    parser.add_argument("--cross-room-entrypoint", action="store_true",
+                        help="move the saved avatar to room 1, then use Main and Door26's real EntryPoint15 to route back to room 3")
     parser.add_argument("--expect-route-goal", nargs=2, type=int, metavar=("X", "Y"),
                         help="assert that Route45 reached this XY before the scheduled portal BHAV continues")
     parser.add_argument("--architecture-resource", action="append", type=pathlib.Path, default=[],
@@ -35,7 +37,8 @@ def parse_args():
 
 
 def patch_root_with_route45(source, destination, routine_id, literal_slot=False,
-                            goto_relative=False, second_route_room_refresh=False):
+                            goto_relative=False, second_route_room_refresh=False,
+                            cross_room_entrypoint=False):
     data = source.read_bytes()
     if len(data) < 64:
         raise ValueError("avatar IFF is shorter than its header")
@@ -58,6 +61,14 @@ def patch_root_with_route45(source, destination, routine_id, literal_slot=False,
             (27, 1, 255, [0, 0, 254, 0, 0, 0, 2, 0]),
             (45, 2, 255, [0, 0, 1, 0, 1, 0, 0, 0]),
             (45, 254, 255, [0, 0, 1, 0, 1, 0, 0, 0]),
+        ]
+    elif cross_room_entrypoint:
+        # Set Main argument 0, then Sleep one tick so the host can place the
+        # avatar in room 1 before Route45 enters Door26's real EntryPoint15.
+        instructions = [
+            (2, 1, 255, [0, 0, 1, 0, 0, 5, 9, 7]),
+            (0, 2, 255, [0, 0, 0, 0, 0, 0, 0, 0]),
+            (45, 254, 255, [2, 0, 1, 0, 1, 0, 0, 0]),
         ]
     else:
         opcode = 27 if goto_relative else 45
@@ -102,10 +113,10 @@ def main():
     if not 1 <= args.ticks <= 4096:
         raise SystemExit("ticks must be in 1..4096")
     if sum((args.literal_slot, args.goto_relative, args.portal_id is not None,
-            args.second_route_room_refresh)) > 1:
-        raise SystemExit("--literal-slot, --goto-relative, --portal-id, and --second-route-room-refresh are mutually exclusive")
-    if args.second_route_room_refresh and args.stack_object_id != 26:
-        raise SystemExit("--second-route-room-refresh requires --stack-object-id 26")
+            args.second_route_room_refresh, args.cross_room_entrypoint)) > 1:
+        raise SystemExit("route diagnostic modes are mutually exclusive")
+    if (args.second_route_room_refresh or args.cross_room_entrypoint) and args.stack_object_id != 26:
+        raise SystemExit("the House07 portal route modes require --stack-object-id 26")
     if args.expect_route_goal is not None and args.portal_id is None:
         raise SystemExit("--expect-route-goal requires --portal-id")
 
@@ -154,6 +165,9 @@ def main():
         invocation[invocation.index("--avatar-file") + 1] = str(avatar_path)
         if stack_object_id is not None:
             invocation += ["--headless-stack-object", str(stack_object_id)]
+            if args.cross_room_entrypoint:
+                invocation += ["--headless-move-entity", str(args.avatar_id),
+                               "320", "320", "1", "3", "1"]
         if scheduled_move is not None:
             entity_id, position, tick = scheduled_move
             invocation += ["--headless-move-entity", str(entity_id),
@@ -211,8 +225,55 @@ def main():
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
         patch_root_with_route45(original_avatar, probe_avatar, root_id,
                                 args.literal_slot, args.goto_relative,
-                                args.second_route_room_refresh)
+                                args.second_route_room_refresh,
+                                args.cross_room_entrypoint)
         exit_code, report = run(probe_avatar, args.stack_object_id)
+        if args.cross_room_entrypoint:
+            route = report.get("route_runtime") or {}
+            main_trace = [record for record in report.get("trace", [])
+                          if record.get("phase") == "root_probe" and
+                          record.get("routine") == root_id]
+            actual_instructions = [(record.get("pc"), record.get("opcode"))
+                                   for record in main_trace]
+            expected_instructions = [(0, 2), (1, 0), (2, 45)]
+            reached_door = any(position[:2] == [408, 408]
+                               for position in route.get("movement_positions", []))
+            scheduled_move = route.get("scheduled_world_mutation") or {}
+            route_summary = {key: route.get(key) for key in (
+                "state", "room_id", "start_position", "end_position", "active",
+                "movement_callbacks", "snapshot_refreshes", "cross_room_portal_execution",
+                "portal_planned_calls", "portal_returns", "portal_room_transitions",
+                "diagnostic")}
+            print(json.dumps({
+                "main_routine": root_id,
+                "probe_exit": exit_code,
+                "vm_status": report.get("status"),
+                "vm_diagnostic": report.get("diagnostic"),
+                "host_failed": report.get("host_failed"),
+                "host_diagnostic": report.get("host_diagnostic"),
+                "main_instructions": actual_instructions,
+                "route_runtime": route_summary,
+                "scheduled_start_position": scheduled_move.get("position"),
+                "reached_door_approach": reached_door,
+                "evidence": "House07 saved World; synthetic Main and starting position; original Door26 EntryPoint15 through ordinary Route45 room scheduler",
+            }, indent=2))
+            if (exit_code != 0 or report.get("status") != "returned_true" or
+                    report.get("host_failed") or report.get("host_diagnostic") or
+                    actual_instructions != expected_instructions or
+                    route.get("active") or route.get("diagnostic") is not None or
+                    route.get("portal_planned_calls", 0) < 1 or
+                    route.get("portal_returns", 0) < 1 or
+                    route.get("portal_room_transitions", 0) < 1 or
+                    route.get("cross_room_portal_execution") is not True or
+                    route.get("room_id") != 3 or
+                    route.get("snapshot_refreshes", 0) < 1 or
+                    route.get("movement_callbacks", 0) <= 0 or
+                    not route.get("scheduled_world_mutation_applied") or
+                    scheduled_move.get("entity") != args.avatar_id or
+                    scheduled_move.get("position", [])[:2] != [320, 320] or
+                    not reached_door):
+                raise SystemExit("House07 ordinary EntryPoint15 room-crossing probe failed")
+            return
         if args.second_route_room_refresh:
             route = report.get("route_runtime") or {}
             main_trace = [record for record in report.get("trace", [])

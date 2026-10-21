@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O scheduler Route45 agora executa a travessia real EntryPoint15 de Door26 no
+  House07. O probe coloca o avatar na sala 1, chama Route45 pelo Main sintético,
+  executa a ação da porta, confirma a mudança para a sala 3, atualiza a grade e
+  continua até a aproximação do SLOT; terminou `returned_true` sem diagnóstico.
+  O começo da rota foi preparado pelo teste, então isso ainda não confirma
+  controles normais nem uma sessão Linux jogável.
+
 - Route45 agora pode suspender o ticket raiz para planejar salas em uma grade
   completa de portais, executar EntryPoint15 validado, confirmar a sala real
   após o retorno, atualizar a grade e retomar a rota local. O provider mantém

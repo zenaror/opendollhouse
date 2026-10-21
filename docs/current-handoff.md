@@ -1,5 +1,25 @@
 # Continuidade atual
 
+## Travessia real EntryPoint15 pelo scheduler Route45 (2026-10-21)
+
+`odh-person` agora prepara a grade para o cômodo onde o avatar está antes de
+começar uma travessia, e mantém os pedidos Route45 feitos por rotinas-filhas
+da porta dentro da chamada externa ativa. O probe executou `Main` sintética
+em uma cópia temporária do avatar House07, colocou o avatar na sala 1 pelo
+harness e pediu um Route45 normal até o SLOT do Door26. A rotina comercial
+EntryPoint15 foi planejada e retornou; o avatar mudou para a sala 3, a grade
+foi atualizada 5 vezes, ele chegou à aproximação da porta e o VM terminou com
+`returned_true`, sem diagnóstico. Isso prova a travessia pelo caminho de
+execução da porta. A posição inicial foi preparada pelo teste: ainda não prova
+que o jogador consiga iniciar essa rota por controles normais, nem que o jogo
+esteja jogável.
+
+Build Linux concluída e CTest passou 160/160. O modo anterior
+`--second-route-room-refresh` também passou depois da mudança. Próximos passos:
+validar o caminho inverso sala 3→1, depois iniciar uma sessão Linux com input
+normal e confirmar movimento/uso de portas com evidência visual. Preservar a
+separação entre probes com posição preparada e gameplay natural.
+
 ## Integração Sit/Stand após deslocamento Route45 (2026-10-21)
 
 O harness de House07 agora pode agendar uma posição inicial do avatar e exige

@@ -245,13 +245,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             job_.reset();suspended_jobs_.clear();
         } else {
             const auto& stack=vm_->stack();
-            const bool in_external_parent=job_->external_frame_active&&!stack.empty()&&
-                stack.back().return_mode==VmCallReturnMode::external_frame_next_tick&&
-                stack.back().invocation_ticket==job_->ticket&&
-                stack.back().context.caller==frame.context.caller&&
-                stack.back().context.callee==frame.context.callee&&
-                stack.back().context.stack_object==frame.context.stack_object&&
-                stack.back().context.code_owner==frame.context.code_owner;
+            const bool in_external_parent=job_->external_frame_active&&
+                std::any_of(stack.begin(),stack.end(),[&](const auto& active_frame){
+                    return active_frame.return_mode==VmCallReturnMode::external_frame_next_tick&&
+                        active_frame.invocation_ticket==job_->ticket&&
+                        active_frame.context.code_owner==job_->external_frame_owner;
+                });
             if(!in_external_parent)
                 return unsupported("routing request already active outside a portal BHAV child frame");
             if(suspended_jobs_.size()+1>=max_nested_jobs_)

@@ -136,6 +136,9 @@ public:
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
     bool external_frame_active() const {return job_&&job_->external_frame_active;}
+    bool waiting_for_room_portal_step() const noexcept {
+        return job_&&job_->deferred_room_route&&!job_->external_frame_active;
+    }
     std::optional<RouteFrameContext> active_frame_context() const;
     std::optional<float> incoming_direction(float caller_radian_direction) const noexcept;
     bool consume_portal_turn() noexcept;

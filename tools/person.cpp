@@ -1886,7 +1886,8 @@ struct PlacementCandidateProbe {
             headless_entity_move_applied=true;
         }
         if(runtime_routing&&runtime_routing->active()){
-            if(!runtime_routing->external_frame_active()&&!refresh_route_obstacles(true)){
+            if(!runtime_routing->external_frame_active()&&
+               !refresh_route_obstacles(!runtime_routing->waiting_for_room_portal_step())){
                 host_failed=true;
                 host_diagnostic=route_runtime_reason;
                 break;
