@@ -92,6 +92,10 @@ def main():
                         if entry["owner"] < 0x80000000 and entry["mode"] == 8]
     action_routines = {entry["routine"] for entry in action_trace}
     action_opcodes = {entry["opcode"] for entry in action_trace}
+    action_route_calls = [
+        {key: entry[key] for key in ("step", "routine", "pc", "operands", "true", "false")}
+        for entry in action_trace if entry["opcode"] == 45
+    ]
     actor = interaction["actor"]
     route = report["route_runtime"]
     evidence = {
@@ -108,6 +112,7 @@ def main():
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
         "action_opcodes": sorted(action_opcodes),
+        "action_route_calls": action_route_calls,
         "main_same_tile_queries": main_entity_next,
         "main_run_tree_by_name": main_run_tree_by_name,
         "run_tree_false_continued": run_tree_false_continued,

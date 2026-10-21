@@ -363,9 +363,16 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(allow_goal(candidate.position))goals.push_back(candidate.position);
         }
         if(goals.empty()) {
-            diagnostic_=direction_compatible_candidate?
-                "host goal validator rejected every direction-compatible SLOT candidate":
-                "SLOT direction mask rejects every candidate";
+            if(direction_compatible_candidate) {
+                diagnostic_="host goal validator rejected every direction-compatible SLOT candidate";
+            } else {
+                diagnostic_="SLOT direction mask rejects every candidate (type3 index "+
+                    std::to_string(slot_index)+", flags "+std::to_string(slot->flags)+")";
+            }
+            diagnostic_+=" (target "+std::to_string(target->id)+" at "+
+                std::to_string(target->position->x)+","+std::to_string(target->position->y)+","+
+                std::to_string(target->position->level)+" direction "+
+                std::to_string(target->position->direction)+")";
             return {PrimitiveDisposition::goto_false,{}};
         }
         if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {

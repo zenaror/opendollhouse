@@ -12,21 +12,21 @@ jogador ou navegação por portas/portais. Reproduzir com o comando em
 `docs/person-main-render-validation.md`.
 
 No teste headless, deslocar o avatar para `(320,320,1,direction3)` fez a mesma
-cadeira retornar `false`, sem callbacks de movimento. Reexecutado após a correção
-do diagnóstico, o caso continua informando `SLOT direction mask rejects every
-candidate`: nenhum candidato elegível passou pela máscara direcional. A fixture
-de regressão separada confirma que a rejeição pelo validador do host agora tem
-uma mensagem própria. A causa dos slots incompatíveis para essa origem e a
-matriz ampliada de origens continuam pendentes.
+cadeira retornar `false`, sem callbacks de movimento. O diagnóstico do
+validador mostrou `actor room 1 differs from prepared route room 3`; `(376,408)`
+falha pela mesma fronteira. Isso não é uma rota longa no mesmo cômodo: o adapter
+atual só prepara uma sala e ainda não executa portal/transição. Origens
+`(376,424)` e `(360,440)` completaram Sit/Stand com 16 callbacks, além do caso
+anterior `(376,440)`. Essa é evidência de deslocamento dentro do cômodo, não de
+input do jogador ou navegação entre salas.
 
 ## Diagnóstico de destinos Route45 (2026-10-21)
 
-`Routing` agora informa separadamente quando a máscara direcional não deixa
-candidato algum e quando o validador do host rejeita todos os destinos
-direcionalmente válidos. `routing` passou 1/1 com uma fixture na qual o host
-rejeita todos os candidatos. Reexecutado headlessly, House07 em
-`(320,320,1,direction3)` foi classificado como ausência de candidato compatível
-com a máscara direcional, sem callbacks de movimento.
+`Routing` diferencia ausência de candidato compatível com a máscara direcional
+da rejeição pelo validador do host. O relatório headless também expõe por que o
+validador rejeitou: para `(320,320)` e `(376,408)`, o avatar está na sala 1 e a
+malha ativa é da sala 3. `routing` passou 1/1 com fixture que rejeita todos os
+candidatos válidos pela direção.
 
 ## Cache de sprites ao mudar a câmera (2026-10-21)
 

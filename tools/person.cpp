@@ -858,6 +858,7 @@ int main(int argc,char** argv) {
     };
     std::string route_runtime_state=saved_world_main?"unavailable":"not_applicable";
     std::string route_runtime_reason=saved_world_main?"runtime_route_context_not_prepared":"requires_saved_world_main";
+    std::string route_goal_validation_diagnostic;
     std::size_t route_runtime_movement_callbacks=0;
     std::vector<odh::EntityPosition> route_runtime_movement_positions;
     std::size_t route_runtime_snapshot_refreshes=0;
@@ -1329,12 +1330,29 @@ struct PlacementCandidateProbe {
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
                             const auto* route_actor=world.find(frame.context.caller);
-                            if(!route_actor||!route_actor->position||!render_lot||!runtime_route_grid)return false;
+                            if(!route_actor||!route_actor->position||!render_lot||!runtime_route_grid) {
+                                route_goal_validation_diagnostic="route actor, position, lot, or prepared room unavailable";
+                                return false;
+                            }
                             const auto actor_room=render_lot->runtime_room_at(*route_actor->position);
-                            if(!actor_room||*actor_room!=runtime_route_grid->room_id)return false;
+                            if(!actor_room||*actor_room!=runtime_route_grid->room_id) {
+                                route_goal_validation_diagnostic="actor room "+
+                                    (actor_room?std::to_string(*actor_room):std::string("unresolved"))+
+                                    " differs from prepared route room "+
+                                    std::to_string(runtime_route_grid->room_id);
+                                return false;
+                            }
                             auto goal=*route_actor->position;goal.x=point.x;goal.y=point.y;
                             const auto goal_room=render_lot->runtime_room_at(goal);
-                            return goal_room&&*goal_room==runtime_route_grid->room_id;
+                            if(!goal_room||*goal_room!=runtime_route_grid->room_id) {
+                                route_goal_validation_diagnostic="candidate room "+
+                                    (goal_room?std::to_string(*goal_room):std::string("unresolved"))+
+                                    " differs from prepared route room "+
+                                    std::to_string(runtime_route_grid->room_id);
+                                return false;
+                            }
+                            route_goal_validation_diagnostic.clear();
+                            return true;
                         });
                         if(!runtime_routing->bind(vm))route_runtime_reason="route_controller_vm_binding_failed";
                         else {
@@ -2189,6 +2207,9 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
         <<",\"reason\":"<<json_bytes(route_runtime_reason)
+        <<",\"goal_validation_diagnostic\":"<<json_bytes(runtime_routing&&
+            runtime_routing->diagnostic().rfind("host goal validator rejected",0)==0?
+                route_goal_validation_diagnostic:std::string{})
         <<",\"stackobject_slot_resolutions\":"<<route_stack_slot_resolutions
         <<",\"stackobject_slot_loads\":"<<route_stack_slot_loads
         <<",\"movement_callbacks\":"<<route_runtime_movement_callbacks
