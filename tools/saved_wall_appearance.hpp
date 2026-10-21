@@ -17,7 +17,7 @@ struct SavedWallAppearance {
 };
 struct SavedPortalFunction {
     odh::EntryPointSource source;
-    std::uint16_t action;
+    std::uint16_t condition,action;
     bool action_bhav_in_asset;
     // Preserve the resource identity needed by a runtime CodeOwner catalog.
     // These are asset provenance values, never World entity IDs.
@@ -104,7 +104,8 @@ inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate&
     const auto resource=saved_entry_point_resource(candidate);
     if(resource.table.entries.size()<=15) throw odh::FormatError("portal probe entry 15 unavailable");
     const auto action=resource.table.entries[15].action;
-    return {resource.table.source,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end(),
+    const auto condition=resource.table.entries[15].condition;
+    return {resource.table.source,condition,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end(),
             resource.source,resource.asset,resource.chunk_id};
 }
 

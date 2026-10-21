@@ -24,6 +24,21 @@ proveniência, o parse da rotina e os casos zero/ausente. Isso não executa a
 BHAV, não valida um portal do lote e não prova o dispatch do executável
 original. O teste do backend X11 é independente deste reader.
 
+`saved_portal_vm_call_plan` avança essa fronteira para um `SavedWorldEntity`
+tipo portal: confere caller avatar, identidade do portal vivo, EntryPoint 15
+copiado para a entidade e definição única no `DefinitionIndex`. Retorna a
+closure privada alcançável, argumentos zerados segundo a metadata e um `VmCall`
+com Caller=avatar e Callee/StackObject=portal. O caller fornece um `CodeOwner`
+não zero; a função não o deriva do ID da entidade. Chamadas globais são
+listadas em `global_dependencies` para validação pelo banco compartilhado do
+host. ConditionFunction não zero e qualquer dependência semiglobal falham
+fechados nesta fatia.
+
+O plano ainda não instala a closure no VM nem chama
+`Routing::call_external_frame`; não há descoberta automática de portais,
+replanejamento entre salas ou navegação jogável. `odh-saved-entry-point-resource`
+valida este contrato apenas com IFFs sintéticos.
+
 ## Referência e readers
 
 FreeSO main `4c6b3e8f5835b228723caea3c9f683c62f244f73`, MPL-2.0:

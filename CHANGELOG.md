@@ -7,11 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
-- A resolução estática de `Portal` agora preserva a origem exata do recurso e
-  carrega a BHAV privada indicada por `EntryPoint 15` somente do mesmo asset.
-  Ação zero, ID fora do intervalo privado ou BHAV ausente falham fechados;
-  dispatch global/semiglobal e execução da rotina continuam pendentes. Fixtures
-  sintéticas cobrem seleção, proveniência e falhas. Consulte
+- O host agora pode preparar uma chamada VM para `Portal15`: valida o registro
+  salvo e a tabela ligada à entidade, preserva a proveniência do recurso,
+  carrega a closure BHAV privada e constrói Caller/Callee/StackObject com um
+  `CodeOwner` alocado explicitamente. Condições e chamadas semiglobais
+  continuam fora do perfil; as dependências globais são reportadas ao host.
+  A rotina ainda não é despachada pelo loop de rota. Consulte
   `docs/entry-points-validation.md`.
 
 - `Entity` agora mantém `radian_direction` contínuo para avatares, enquanto
