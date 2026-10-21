@@ -1,5 +1,21 @@
 # Continuidade atual
 
+## Integração Sit/Stand após deslocamento Route45 (2026-10-21)
+
+O harness de House07 agora pode agendar uma posição inicial do avatar e exige
+callbacks de movimento nesse perfil. Cadeira ObjectID128: avatar105 partiu de
+`(376,440,1,direction3)`, Route45 produziu16 movimentos, Sit/4097 e
+Stand/4102 retornaram `true`, e o avatar terminou solto em postura0. Main
+permaneceu `waiting` no tick1024; a conclusão do Stand foi no tick551. Esse
+setup de posição é sintético e headless; não prova movimento por input do
+jogador ou navegação por portas/portais. Reproduzir com o comando em
+`docs/person-main-render-validation.md`.
+
+No teste headless, deslocar o avatar para `(320,320,1,direction3)` fez a mesma
+cadeira retornar `false` com `SLOT direction mask rejects every candidate`.
+Investigar a máscara/EntryPoint e ampliar a cobertura de origens continua sendo
+um próximo passo antes de afirmar navegação geral.
+
 ## Cache de sprites ao mudar a câmera (2026-10-21)
 
 `SavedObjectRenderer` agora marca os SPR2 usados no quadro e evicta frames de

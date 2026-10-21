@@ -15,7 +15,16 @@ def main():
     parser.add_argument("--object-id", type=int, default=128)
     parser.add_argument("--stand-tick", type=int, default=241)
     parser.add_argument("--ticks", type=int, default=512)
+    parser.add_argument("--move-avatar-to", nargs=4, type=int,
+                        metavar=("X", "Y", "LEVEL", "DIRECTION"),
+                        help="schedule the saved avatar at this World position on tick 1")
     args = parser.parse_args()
+
+    if args.move_avatar_to:
+        x, y, level, direction = args.move_avatar_to
+        if not (0 <= x <= 32767 and 0 <= y <= 32767 and
+                1 <= level <= 2 and 0 <= direction <= 7):
+            parser.error("--move-avatar-to is outside the supported World profile")
 
     game = args.game_root.resolve()
     expansion_shared = game / "ExpansionShared" / "ExpansionShared.far"
@@ -55,6 +64,9 @@ def main():
         "--ticks", str(args.ticks), "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
     ]
+    if args.move_avatar_to:
+        command += ["--headless-move-entity", str(args.avatar_id),
+                    *(str(value) for value in args.move_avatar_to), "1"]
     for path in architecture:
         command += ["--architecture-resource", str(path)]
 
@@ -81,12 +93,16 @@ def main():
     action_routines = {entry["routine"] for entry in action_trace}
     action_opcodes = {entry["opcode"] for entry in action_trace}
     actor = interaction["actor"]
+    route = report["route_runtime"]
     evidence = {
         "process_exit": result.returncode,
         "main_status": report["status"],
         "main_diagnostic": report["diagnostic"],
         "ticks": report["ticks"],
         "route_runtime": report["route_runtime"],
+        "route_movement_callbacks": route["movement_callbacks"],
+        "route_start_position": route["start_position"],
+        "route_end_position": route["end_position"],
         "interaction": interaction,
         "stand": stand,
         "completion": report["completion"],
@@ -115,6 +131,7 @@ def main():
         not stand["actor_attached"] and 4102 in action_routines and
         report["status"] in ("waiting", "yielded") and
         (args.ticks < 512 or report["status"] == "waiting") and
+        (not args.move_avatar_to or route["movement_callbacks"] > 0) and
         not report["host_failed"]
     )
     if not completed_sit:

@@ -1,5 +1,31 @@
 # Headless frame do Main via Playback
 
+## Sit/Stand após deslocamento Route45 em House07 (2026-10-21)
+
+O harness `tests/house07_interaction_integration.py` aceita
+`--move-avatar-to X Y LEVEL DIRECTION` para agendar uma posição inicial de
+teste no tick 1 e exige callbacks de movimento quando essa opção é usada. Com
+os recursos originais preservados em `../referencias/The Sims`, House07 e a
+cadeira ObjectID128, o avatar 105 foi colocado em `(376,440,1,direction 3)`;
+Route45 percorreu 16 posições até o SLOT, Sit/Action4097 retornou `true`, e
+Stand/Action4102 retornou `true` no mesmo Main/World. A fila ficou vazia, o
+avatar terminou em postura 0 e sem attachment; a conclusão de Stand foi no
+tick551. O Main continuou `waiting`, sem diagnóstico.
+
+Reprodução:
+
+```sh
+python3 tests/house07_interaction_integration.py \
+  --binary ./odh-person --game-root '../referencias/The Sims' \
+  --object-id 128 --move-avatar-to 376 440 1 3 \
+  --stand-tick 320 --ticks 1024
+```
+
+O perfil de integração passou. Isso valida uma sequência headless controlada
+com recursos do jogo e movimentação Route45 no mesmo cômodo. A posição inicial
+foi agendada pelo harness; não comprova navegação acionada pelo jogador, clique
+na janela, portas/portais ou conclusão de uma sessão geral jogável.
+
 ## Resultado
 
 `odh-person` possui uma opção de diagnóstico para exportar um único frame PPM
