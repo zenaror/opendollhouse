@@ -29,6 +29,8 @@
 #include "odh/floor_placement.hpp"
 #include "odh/route_geometry.hpp"
 #include "odh/rect_router.hpp"
+#include "odh/routing.hpp"
+#include "odh/world_room_route_grid.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "json.hpp"
@@ -188,7 +190,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> render_saved_id;
     std::optional<odh::EntityPosition> placement_candidate;
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
-    bool render_window=false,saved_world_main=false;
+    bool render_window=false,saved_world_main=false,headless_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
     SavedLotView render_lot_view;
@@ -258,6 +260,7 @@ int main(int argc,char** argv) {
             render_lot_view.terrain_theme=static_cast<odh::TerrainTheme>(theme);
         }
         else if(option=="--saved-world-main"&&!saved_world_main){saved_world_main=true;}
+        else if(option=="--headless-main"&&!saved_world_main){saved_world_main=true;headless_main=true;}
         else if(option=="--object-definition-entry"&&n+2<argc){
             if(definition_sources.size()>=person_definition_source_limit)throw odh::FormatError("definition source count exceeds bounded host profile");
             PersonDefinitionSource source;source.path=argv[++n];source.entry=argv[++n];
@@ -281,14 +284,15 @@ int main(int argc,char** argv) {
        (render_level_set&&!render_floors)||(render_wall_mode_set&&!render_walls)||
        (render_lot_view.terrain_theme&&!render_floors))
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
-    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_saved_id||render_window;
+    const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_id&&!headless_main);
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
-       (render_saved_id&&((!render_output&&!render_window)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
-       (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||!render_requested||definition_sources.empty()))||
+       (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
+       (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
+       (headless_main&&(!render_floors||render_requested))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -668,6 +672,16 @@ int main(int argc,char** argv) {
         if(sound_records.size()<4096)sound_records.push_back({request,status});
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
+    std::string route_runtime_state=saved_world_main?"unavailable":"not_applicable";
+    std::string route_runtime_reason=saved_world_main?"runtime_route_context_not_prepared":"requires_saved_world_main";
+    std::size_t route_runtime_movement_callbacks=0;
+    std::optional<odh::EntityPosition> route_runtime_start_position;
+    std::optional<odh::WorldRoomRouteGrid> runtime_route_grid;
+    std::unique_ptr<odh::Routing> runtime_routing;
+    odh::VmPrimitive routing_handler=[&](const auto&,const auto&,const auto&,const auto&){
+        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+            "Route45 runtime unavailable: "+route_runtime_reason};
+    };
     odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==17)return queue_handler(f,i,t,d);
@@ -680,6 +694,7 @@ int main(int argc,char** argv) {
         if(i.opcode==44&&animation_handler)return animation_handler(f,i,t,d);
         if(i.opcode==23)return sound_handler(f,i,t,d);
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
+        if(i.opcode==45)return routing_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
@@ -968,6 +983,47 @@ struct PlacementCandidateProbe {
                        "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
+    if(headless_main){
+        render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
+            *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
+    }
+    if(saved_world_main){
+        const auto* actor=world.find(runtime_avatar_id);
+        if(!render_lot)route_runtime_reason="prepared_lot_renderer_required";
+        else if(!shared.routing_slots)route_runtime_reason="global_SLOT100_unavailable";
+        else if(!render_lot->prepared_architecture())route_runtime_reason="prepared_architecture_unavailable";
+        else if(!actor||!actor->position)route_runtime_reason="runtime_avatar_position_unavailable";
+        else if(actor->position->level<1||actor->position->level>2)route_runtime_reason="runtime_avatar_level_unsupported";
+        else {
+            const auto room=render_lot->runtime_room_at(*actor->position);
+            if(!room)route_runtime_reason="runtime_avatar_room_unresolved";
+            else {
+                const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+                    render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
+                    static_cast<std::uint8_t>(actor->position->level-1),runtime_avatar_id,
+                    true,{},resolve_read_only_ep5);
+                if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
+                    route_runtime_reason=std::string("attempt_walk_snapshot_")+odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
+                else {
+                    auto grid=odh::build_world_room_route_grid(probe.snapshot);
+                    if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
+                        route_runtime_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);
+                    else {
+                        runtime_route_grid.emplace(std::move(grid));
+                        runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
+                                                                       *shared.routing_slots);
+                        if(!runtime_routing->bind(vm))route_runtime_reason="route_controller_vm_binding_failed";
+                        else {
+                            routing_handler=runtime_routing->primitive();
+                            route_runtime_state="ready_static_single_room_grid";
+                            route_runtime_reason.clear();
+                            route_runtime_start_position=actor->position;
+                        }
+                    }
+                }
+            }
+        }
+    }
     std::uint64_t ticks=0;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
@@ -1089,6 +1145,17 @@ struct PlacementCandidateProbe {
         if(ticks>=ticks_limit||total_steps()>=10000||
            (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded))break;
         ++ticks;
+        if(runtime_routing&&runtime_routing->active()){
+            const bool route_ok=runtime_routing->tick(ticks,[&](const odh::RouteMovement&){
+                ++route_runtime_movement_callbacks;
+            });
+            if(!route_ok&&runtime_routing->active()){
+                host_failed=true;
+                host_diagnostic=runtime_routing->diagnostic().empty()?
+                    "Route45 scheduler rejected a host tick":runtime_routing->diagnostic();
+                break;
+            }
+        }
         if(!queue.tick(ticks)||!sleep.tick(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
         if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
             if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
@@ -1587,7 +1654,30 @@ struct PlacementCandidateProbe {
         std::cout<<"{\"event_id\":"<<record.request.event_id<<",\"name\":"<<json_bytes(record.request.name)
             <<",\"source\":"<<record.request.source<<",\"status\":"<<json_bytes(record.status)<<'}';
     }
-    std::cout<<"],\"room_info_probe\":{";
+    std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
+        <<",\"reason\":"<<json_bytes(route_runtime_reason)
+        <<",\"movement_callbacks\":"<<route_runtime_movement_callbacks
+        <<",\"active\":"<<(runtime_routing&&runtime_routing->active()?"true":"false")
+        <<",\"dynamic_obstacle_refresh\":false,\"cross_room_portal_execution\":false"
+        <<",\"room_id\":";
+    if(runtime_route_grid)std::cout<<runtime_route_grid->room_id;else std::cout<<"null";
+    std::cout<<",\"floor\":";
+    if(runtime_route_grid)std::cout<<static_cast<unsigned>(runtime_route_grid->level);else std::cout<<"null";
+    std::cout<<",\"start_position\":";
+    if(route_runtime_start_position)std::cout<<'['<<route_runtime_start_position->x<<','
+        <<route_runtime_start_position->y<<','<<route_runtime_start_position->level<<','
+        <<static_cast<unsigned>(route_runtime_start_position->direction)<<']';
+    else std::cout<<"null";
+    const auto* route_runtime_actor=world.find(runtime_avatar_id);
+    std::cout<<",\"end_position\":";
+    if(route_runtime_actor&&route_runtime_actor->position)std::cout<<'['<<route_runtime_actor->position->x<<','
+        <<route_runtime_actor->position->y<<','<<route_runtime_actor->position->level<<','
+        <<static_cast<unsigned>(route_runtime_actor->position->direction)<<']';
+    else std::cout<<"null";
+    std::cout<<",\"diagnostic\":";
+    if(runtime_routing&&!runtime_routing->diagnostic().empty())std::cout<<json_bytes(runtime_routing->diagnostic());
+    else std::cout<<"null";
+    std::cout<<"},\"room_info_probe\":{";
     if(room_info_probe){
         const auto& probe=*room_info_probe;
         std::cout<<"\"evidence\":\"current_avatar_position_and_complete_room_inventory\",\"profile\":\"immutable_prepared_room_map_plus_live_World_obstacles\",\"status\":"

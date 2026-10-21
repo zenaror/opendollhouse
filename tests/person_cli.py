@@ -41,6 +41,9 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  malformed_slot100=struct.pack('<II4sI',0,3,b'TOLS',0)
  setup(global_extra=[('SLOT',100,malformed_slot100)]);r=run()
  assert r.returncode==2 and not r.stdout and 'unsupported SLOT version' in r.stderr
+ setup();r=run();d=json.loads(r.stdout);assert r.returncode==0 and d['route_runtime']['state']=='not_applicable'
+ setup(main=[call(45,254,255,bytes([1,0,2,0,0,0,0,0]))]);r=run();d=json.loads(r.stdout)
+ assert r.returncode==3 and d['status']=='fault' and 'Route45 runtime unavailable' in d['diagnostic']
  for candidate in [['--placement-candidate','bad','20','1','0'],
                    ['--placement-candidate','10','20','0','0'],
                    ['--placement-candidate','10','20','1','8']]:

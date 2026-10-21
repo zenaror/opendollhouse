@@ -75,6 +75,7 @@ public:
         const std::optional<SavedLotMaterialOptions>& materials = {});
     const std::optional<odh::ResolvedArchitectureAliases>& material_aliases() const{return aliases_;}
     const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
+    const SavedArchitectureResource& architecture_resource() const{return architecture_;}
     odh::GraphicsEntity avatar(std::int16_t id);
     // Available only when the immutable prepared architecture has unambiguous
     // floor/wall identities. Matches GetRoomAt room-zero fallback outside the
