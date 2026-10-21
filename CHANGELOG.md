@@ -7,6 +7,9 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Probe offline de portas em saves: liga faces de porta, grupos multitile,
+  salas geométricas e ação authored da entrada Portal 15 via OBJD/OBJf; o
+  reporte deixa explícito que a BHAV e o clearance de rota não foram executados.
 - Consultas de piso preparado e sala geométrica em posições de 1/16 tile,
   incluindo a seleção distinta das metades diagonais. As respostas espaciais
   não validam placement, portais ou aceitação de destinos.
@@ -37,6 +40,10 @@ validação indicados por versão.
 
 ### Validação
 
+- Probe Portal15 no House07 da instalação: arquitetura preparada com 23 fontes
+  loose explícitas; seis portas/grupos apontam para OBJf action 4105, cujo BHAV
+  está presente no asset Doors.iff, e seis salas geométricas foram geradas.
+  Sem execução BHAV/runtime ou clearance; nenhum recurso comercial foi incluído.
 - Consultas geométricas: build Linux e 139/139 CTests passaram; teste X11
   `linux_window_backend` foi pulado por ausência de DISPLAY. As consultas
   validam ambos os IDs packed da diagonal, bounds e ownership; isso é apenas

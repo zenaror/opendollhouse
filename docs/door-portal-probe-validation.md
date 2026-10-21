@@ -1,0 +1,64 @@
+# Inventário estático de portas e Portal15
+
+`odh-wall-appearance --portal-probe` amplia o snapshot de House07 com um
+inventário das faces de porta e dos membros do grupo multitile. Para cada
+entidade, o probe abre o asset explícito que forneceu sua OBJD, escolhe a tabela
+OBJf quando `UsesFnTable` é não zero ou gera as entradas da OBJD no perfil
+legado, e registra a ação da entrada 15. Também indica se o ID dessa ação está
+presente como chunk BHAV no mesmo asset. A propriedade `Portal` do Simitone é
+`EntryPoints[15].ActionFunction != 0`; por isso `portal_property_authored`
+descreve a função salva, não uma BHAV executada.
+
+O probe constrói o mapa de salas a partir da arquitetura preparada quando
+recebe todos os arquivos `.flr`/`.wll` como fontes explícitas. Sem essas fontes,
+usa o perfil cru e identifica essa limitação no JSON. As posições dos membros
+são consultadas no mapa para expor os IDs de sala associados ao grupo. Isso
+permite conferir os candidatos a ligação de sala que
+`VMRoomMap.GenerateRoomObs` usa ao procurar uma entidade Portal no grupo da
+porta. O resultado ainda não abre tiles de obstáculo: não resolve o estado
+operacional do objeto, não executa a função Portal, não acrescenta colisões de
+objetos e não produz clearance ou caminho. Os campos
+`portal_bhav_executed`, `runtime_portal_state` e `routing_clearance` permanecem
+false.
+
+Referências locais pinadas: Simitone
+`4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
+`f86bbd34b2112296ed786741f640a0535886d180`, `VMEntity.cs` (propriedade
+`Portal`) e `Model/VMRoomMap.cs:390-446` (abertura de obstáculos por grupo e
+Portal15). A consulta à presença do chunk BHAV é restrita ao asset de definição;
+ela não procura dependências Global/SemiGlobal nem valida/executa o bytecode.
+Também não prova equivalência com o executável original.
+
+## Evidência local House07
+
+Os arquivos comerciais permanecem em `../referencias/The Sims`, fora do Git.
+Execução reproduzível a partir da raiz do checkout:
+
+```sh
+mapfile -d '' architecture_sources < <(
+  find '../referencias/The Sims' -type f \
+    \( -iname '*.flr' -o -iname '*.wll' \) -print0 | sort -z
+)
+architecture_args=()
+for source in "${architecture_sources[@]}"; do
+  architecture_args+=(--architecture-resource "$source")
+done
+build/odh-wall-appearance '../referencias/The Sims/UserData/Houses/House07.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
+  --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
+  "${architecture_args[@]}" --route-edges --portal-probe
+```
+
+Com as 23 fontes loose `.flr`/`.wll` presentes nesta instalação, o probe
+preparou a arquitetura e gerou seis salas. Foram localizadas seis faces de
+porta. Cada grupo de duas entidades aponta para `OBJf` action `4105`, e esse
+ID existe como BHAV no respectivo asset `Doors.iff`. Os pares de IDs de sala
+consultados para os seis grupos foram `(2,3)`, `(3,4)`, `(4,2)`, `(1,3)`,
+`(1,2)` e `(3,1)`. Esses dados validam a leitura estática da instalação e do
+save, não a abertura runtime dos obstáculos nem movimento de Sims.
+
+`tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima
+valida a junção com arquivos comerciais reais; nenhum asset ou relatório com
+conteúdo comercial é versionado.

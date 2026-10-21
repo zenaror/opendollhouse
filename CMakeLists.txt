@@ -317,7 +317,7 @@ target_link_libraries(odh_wall_appearance PUBLIC odh_world odh_saved_architectur
 add_library(odh_wall_route_state src/wall_route_state.cpp)
 target_link_libraries(odh_wall_route_state PUBLIC odh_route_geometry odh_wall_appearance)
 add_executable(odh-wall-appearance tools/wall_appearance.cpp)
-target_link_libraries(odh-wall-appearance PRIVATE odh_wall_appearance odh_saved_world odh_wall_route_state)
+target_link_libraries(odh-wall-appearance PRIVATE odh_wall_appearance odh_saved_world odh_wall_route_state odh_room_map odh_architecture_aliases)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_wall_appearance PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
   target_compile_options(odh-wall-appearance PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
