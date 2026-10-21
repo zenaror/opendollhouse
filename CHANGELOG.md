@@ -26,6 +26,10 @@ validação indicados por versão.
   externas de um tile de `VMRoutingFrame.AttemptWalk`. Os grupos são contados
   separadamente; interseção ou ausência de interseção não vira caminho livre
   ou clearance.
+- Grade candidata por sala rasteriza pertencimento, RoomObs, WallObs fornecido
+  e footprints salvos em coordenadas 1/16 tile, com tetos para memória e trabalho.
+  Entradas incompletas falham fechadas. O adaptador não gera WallObs nem cobre
+  regras runtime; ainda não habilita Routing45.
 - O room map preparado distingue misses estritos de `TryGetValue` dos aliases
   FLRm declarados-sem-resolução efetivamente usados. Mantém o contador legado de
   misses, considera os bytes retidos por fallback como identidade e continua

@@ -1,5 +1,20 @@
 # Continuidade atual
 
+## Grade candidata por sala (2026-10-20)
+
+Commit `28403d3` foi publicado em `origin/main` após CTest 143/143, teste X11
+isolado 1/1 e revisão do escopo do checkpoint anterior. Na árvore atual, um
+novo adapter `odh_saved_room_route_grid` transforma uma sala pronta em grade
+1/16 tile, bloqueando áreas fora da sala, RoomObs, WallObs fornecido e caixas
+de entidade com margem do AttemptWalk. O teste focal passou com 15 checks.
+Build completa passou; CTest 144/144, com `linux_window_backend` repetido em
+`:0` e aprovado 1/1.
+Limites: 262.144 células, 4.096 entidades, 16.384 retângulos e 4.194.304
+células rasterizadas; o adapter falha fechado em entradas incompletas. Ele não
+gera WallObs nem executa política runtime, EntryPoint 5, estado de portas,
+validação de SLOT/goal, portal ou VMRectRouter. `ready` ainda não significa
+clearance, e Main continua sem usar o novo resultado.
+
 ## Estado verificado da interação e auditoria de limites (2026-10-20)
 
 A nota abaixo sobre a fila parada foi superada: no teste posterior registrado em
