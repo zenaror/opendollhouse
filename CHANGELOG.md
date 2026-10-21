@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Módulo puro `odh_saved_avatar_place_overlap` modela uma regra limitada de
+  sobreposição de `GetAvatarPlace`: grupo multitile, exceção/tri-state de
+  EntryPoint 5, flags de interseção e preferência de parada de EntryPoint 26.
+  Os 16 casos sintéticos preservam dados ausentes como unsupported. O módulo
+  não executa BHAV nem descobre obstáculos dinâmicos; não prova colocação
+  runtime. Consulte
+  `docs/saved-avatar-place-overlap-validation.md`.
 - Módulo puro `odh_slot_scoring` calcula e ordena scores do perfil SLOT
   House07 standing/círculo com RNG explícito e ordem de entrada fornecida.
   Preserva consumo de RNG para candidatos rejeitados após score e empates
