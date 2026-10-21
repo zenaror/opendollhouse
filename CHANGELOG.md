@@ -9,9 +9,10 @@ validação indicados por versão.
 
 - Diagnóstico Route45 House07 agora exige a entrada/chunk SLOT explícitos,
   gera os oito candidatos do círculo type-3 de raio exato e publica máscara
-  direcional, sala, bounds e caminhabilidade. O círculo é um perfil ODH
-  restrito; resultado encontrado na grade candidata não prova clearance ou
-  equivalência com o jogo.
+  direcional, sala, bounds, piso FloorChangeValid, RaycastWall contra a fotografia
+  salva e caminhabilidade. O círculo é um perfil ODH restrito; esses gates
+  estáticos não cobrem GetAvatarPlace runtime, e resultado encontrado não prova
+  clearance ou equivalência com o jogo.
 - Probe offline de portas em saves: liga faces de porta, grupos multitile,
   salas geométricas e ação authored da entrada Portal 15 via OBJD/OBJf; o
   reporte deixa explícito que a BHAV e o clearance de rota não foram executados.
@@ -39,9 +40,6 @@ validação indicados por versão.
   Simitone e tratam faces de porta ausentes como sólidas. O inventário não é
   mesclado por sala como no runtime; consulte a cobertura e os limites em
   `docs/room-obstacles-validation.md`.
-- Probe opcional executa `find_route` em uma grade candidata de sala salva até
-  pontos geométricos ao redor de uma entidade alvo. Resultado `found` não
-  valida SLOT, movimento do jogo, `VMRectRouter` nem clearance runtime.
 - Controller Route45 do ODH agora filtra destinos do perfil exact-radius pela
   máscara direcional usando os setores angulares, coordenadas floor em tiles
   e rotação do alvo de `VMSlotParser.GetSearchDirection` do Simitone fixado.

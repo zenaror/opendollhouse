@@ -11,6 +11,8 @@
 #include "odh/route.hpp"
 #include "odh/routing.hpp"
 #include "odh/formats.hpp"
+#include "odh/saved_floor_placement.hpp"
+#include "odh/prepared_architecture.hpp"
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -59,6 +61,18 @@ const char* route_status_name(odh::RouteStatus status) {
  }
  return "invalid_status";
 }
+const char* floor_check_name(odh::SavedFloorPlacementState state) {
+ switch(state){case odh::SavedFloorPlacementState::allowed:return "allowed";
+ case odh::SavedFloorPlacementState::rejected:return "rejected";
+ case odh::SavedFloorPlacementState::unsupported:return "unsupported";}
+ return "invalid_state";
+}
+const char* wall_raycast_name(odh::WallRaycastState state) {
+ switch(state){case odh::WallRaycastState::clear:return "clear";
+ case odh::WallRaycastState::blocked:return "blocked";
+ case odh::WallRaycastState::unsupported:return "unsupported";}
+ return "invalid_state";
+}
 
 void emit_route_grid_diagnostic(
  std::ostream& out, std::int16_t actor_id, std::int16_t target_id,
@@ -66,7 +80,8 @@ void emit_route_grid_diagnostic(
  const odh::GeometricRoomMap& rooms,
  const std::vector<odh::RoomObstacleCandidateSet>& room_obstacles,
  const std::vector<odh::SavedCollisionCandidate>& entities,
- const odh::SlotTable& slots,std::size_t slot_type3_index) {
+ const odh::SlotTable& slots,std::size_t slot_type3_index,
+ const odh::SavedWorldEntity* actor_record,const odh::PreparedArchitecture* prepared) {
  const auto find_entity=[&](std::int16_t id)->const odh::SavedCollisionCandidate*{
   for(const auto& entity:entities)if(entity.object_id==id)return &entity;
   return nullptr;
@@ -114,10 +129,13 @@ void emit_route_grid_diagnostic(
    <<",\"start_walkable\":"<<(grid.grid->walkable({actor->position->x,actor->position->y})?"true":"false");
  }else{out<<",\"status\":\"unsupported\"}";return;}
  if(grid.state!=odh::SavedRoomRouteGridState::ready){out<<",\"status\":\"unsupported\"}";return;}
+ const auto edge_state=odh::resolve_initial_wall_edges(architecture,appearance,actor->position->level);
  std::vector<odh::RoutePoint> goals;
  out<<",\"approach_model\":\"global_slot_type3_candidate_circle\",\"slot_type3_index\":"<<slot_type3_index
   <<",\"slot_offset_bits\":["<<selected_slot->offset_bits[0]<<','<<selected_slot->offset_bits[1]<<','
-  <<selected_slot->offset_bits[2]<<"],\"slot_candidates\":[";
+  <<selected_slot->offset_bits[2]<<"],\"wall_raycast_profile\":\"initial_saved_edge_snapshot\""
+  <<",\"static_goal_gate_model\":\"bounds+room+FloorChangeValid+RaycastWall+saved_grid\""
+  <<",\"runtime_occupancy_validated\":false,\"slot_candidates\":[";
  for(std::size_t i=0;i<slot_candidates.size();++i){
   if(i)out<<',';
   const auto& candidate=slot_candidates[i];
@@ -125,12 +143,27 @@ void emit_route_grid_diagnostic(
   const auto candidate_room=odh::geometric_room_at(rooms,candidate.position.x,candidate.position.y,target->position->level);
   const bool same_room=candidate_room&&*candidate_room==*actor_room;
   const bool walkable=in_bounds&&grid.grid->walkable(candidate.position);
+  const auto floor=actor_record&&prepared
+   ?odh::check_saved_floor_placement(*actor_record,*prepared,candidate.position.x,candidate.position.y,actor->position->level)
+   :odh::SavedFloorPlacementCheck{};
+  const auto wall=edge_state.status==odh::WallEdgeBuildStatus::ready&&candidate.position.x>=0&&candidate.position.y>=0
+   ?odh::saved_wall_raycast(architecture,actor->position->level,
+      candidate.position.x/16,candidate.position.y/16,target->position->x/16,target->position->y/16,edge_state.edges)
+   :odh::WallRaycastResult{};
+  const bool position_valid_static=candidate.entry_flags&&in_bounds&&same_room&&walkable&&
+       floor.state==odh::SavedFloorPlacementState::allowed&&wall.state==odh::WallRaycastState::clear;
   out<<"{\"x\":"<<candidate.position.x<<",\"y\":"<<candidate.position.y
    <<",\"entry_flags\":"<<unsigned(candidate.entry_flags)<<",\"mask_accepted\":"<<(candidate.entry_flags?"true":"false")
    <<",\"in_bounds\":"<<(in_bounds?"true":"false")<<",\"room\":";
   if(candidate_room)out<<*candidate_room;else out<<"null";
-  out<<",\"same_room\":"<<(same_room?"true":"false")<<",\"grid_walkable\":"<<(walkable?"true":"false")<<'}';
-  if(candidate.entry_flags&&same_room&&walkable)goals.push_back(candidate.position);
+  out<<",\"same_room\":"<<(same_room?"true":"false")<<",\"grid_walkable\":"<<(walkable?"true":"false")
+   <<",\"floor_change_valid\":"<<json_bytes(floor_check_name(floor.state))<<",\"floor\":";
+  if(floor.floor)out<<*floor.floor;else out<<"null";
+  out<<",\"wall_raycast\":"<<json_bytes(wall_raycast_name(wall.state))
+   <<",\"wall_hit_tile\":";
+  if(wall.tile_x>=0&&wall.tile_y>=0)out<<'['<<wall.tile_x<<','<<wall.tile_y<<']';else out<<"null";
+  out<<",\"static_goal_gates_passed\":"<<(position_valid_static?"true":"false")<<'}';
+  if(position_valid_static)goals.push_back(candidate.position);
  }
  out<<"],\"approach_candidates\":"<<goals.size();
  if(goals.empty()){out<<",\"status\":\"no_approach_cell\"}";return;}
@@ -331,8 +364,10 @@ int main(int argc,char** argv){try{
    <<",\"intersects_outer_room_bounds_entities\":"<<outer_bounds_intersections<<",\"unsupported\":"<<boundary_unsupported
    <<",\"not_applicable\":"<<boundary_not_applicable<<"}}}";
   if(route_grid_diagnostic){std::cout<<",\"route_grid_diagnostic\":";
+   const auto route_actor_record=records_by_id.find(route_grid_diagnostic->first);
    emit_route_grid_diagnostic(std::cout,route_grid_diagnostic->first,route_grid_diagnostic->second,
-    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,*route_slots,slot_resource->index);
+    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,*route_slots,slot_resource->index,
+    route_actor_record==records_by_id.end()?nullptr:route_actor_record->second,prepared?&*prepared:nullptr);
   }
   std::cout<<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
   bool first_door=true;

@@ -49,10 +49,15 @@ restrito a SLOT v10 type-3 isotrópico com resolução 16; o arredondamento
 diagonal é uma regra de candidato ODH, não equivalência comprovada com o jogo.
 O modelo falha fechado fora do perfil observado House07 (`flags=0x55`, offsets
 zero, postura em pé, facing=-2 e demais campos v10 verificados).
-Isso ainda não resolve `WallRaycast`, flags de ocupação, portas runtime,
-EntryPoint 5, portais ou `VMRectRouter`; `found` significa apenas caminho na
-grade candidata ODH. Salas diferentes retornam `cross_room_unmodeled`; entradas
-incompletas falham fechadas.
+Cada candidato também reporta o `FloorChangeValid` do avatar e `RaycastWall`
+entre os tiles do destino e do alvo, usando a fotografia inicial salva das
+arestas; a grade caminhável atua como teste conservador de ocupação salva.
+`static_goal_gates_passed` agrega esses filtros e a máscara. Isso ainda não é
+uma chamada completa a `PositionValid`/`GetAvatarPlace`: ocupação dinâmica,
+flags `AllowPersonIntersection`/`DisallowPersonIntersection`, EntryPoint 5
+bilateral e estado vivo de portas permanecem desconhecidos. `found` significa
+apenas caminho na grade candidata ODH. Salas diferentes retornam
+`cross_room_unmodeled`; entradas incompletas falham fechadas.
 `route_clearance` e o `routing_clearance` geral continuam false.
 
 Referências locais pinadas: Simitone
