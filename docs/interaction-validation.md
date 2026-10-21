@@ -166,17 +166,19 @@ prova de comportamento do executável original.
 
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
-No preview de lote salvo, Space/Return solicita a primeira linha com teste
-`eligible`, perfil de flags suportado e ActionFunction privado. Flags zero são
-aceitas; `AllowVisitors` (bit `0x1`) é aceito depois de conferir o perfil do
-ator. Um visitor actor (`PersonType==1 && GreetStatus<2`) requer esse bit.
+No preview de lote salvo, Tab/Shift+Tab percorre as linhas elegíveis com perfil
+de flags suportado e ActionFunction privado; Space/Return solicita a linha
+indicada no título. A elegibilidade é reavaliada ao percorrer e imediatamente
+antes de enfileirar. Flags zero são aceitas; `AllowVisitors` (bit `0x1`) é
+aceito depois de conferir o perfil do ator. Um visitor actor
+(`PersonType==1 && GreetStatus<2`) requer esse bit.
 Pets, perfil de ator ausente e bits desconhecidos continuam fora do perfil.
 O recurso exato
 `source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner
 de alta faixa, instalado na VM Main já viva. A fila valida novamente actor,
 target e geração antes de aceitar caller/target/StackObject. Não reinicia Main.
-O preview não apresenta pie menu ainda; só a primeira opção elegível do perfil
-manual. O JSON diferencia `not_requested`, `queued`, rejeição, falha da VM e
+O preview oferece um seletor mínimo por teclado e título, ainda sem pie menu.
+O JSON diferencia `not_requested`, `queued`, rejeição, falha da VM e
 retorno true/false. Um retorno BHAV apenas informa o resultado do filho; não
 prova que o avatar sentou nem que o objeto atualizou os slots corretamente.
 Os owners da VM são append-only e o limite padrão é 64 incluindo o owner zero;

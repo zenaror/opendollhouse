@@ -1097,6 +1097,7 @@ struct PlacementCandidateProbe {
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
     std::optional<SavedObjectInteractions> render_interactions;
+    std::optional<std::size_t> render_selected_interaction_row;
     std::vector<SavedTestFunctionResult> render_test_results;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
     bool render_interaction_requested=false,render_interaction_enqueued=false,saved_owner_ids_exhausted=false;
@@ -1110,7 +1111,7 @@ struct PlacementCandidateProbe {
     odh::CodeOwner next_saved_code_owner=0x80000000U;
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
-        render_interactions.reset();render_test_results.clear();
+        render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
         if(!candidate)return;
@@ -1122,6 +1123,9 @@ struct PlacementCandidateProbe {
         for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
         render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
             render_selection->id,tests,4096,128);
+        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+            world.find(runtime_avatar_id));
+        if(!eligible.empty())render_selected_interaction_row=eligible.front();
         for(std::size_t n=render_test_results.size();n<rows.size();++n)
             render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
                 "interaction row exceeds bounded selection-time probe profile"});
@@ -1157,11 +1161,16 @@ struct PlacementCandidateProbe {
             current_tests.push_back(render_interactions->table->interactions[n].test);
         render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,selected.id,
             current_tests,4096,128);
-        const auto selected_row=first_eligible_saved_interaction(*render_interactions,render_test_results,actor);
-        if(!selected_row){
+        const auto eligible_rows=eligible_saved_interaction_rows(*render_interactions,render_test_results,actor);
+        if(eligible_rows.empty()){
             render_interaction_status="unsupported";render_interaction_diagnostic="no supported private TTAB row has a matching eligible ODH TestFunction";return;
         }
-        const auto& row=render_interactions->table->interactions[*selected_row];
+        if(!render_selected_interaction_row||std::find(eligible_rows.begin(),eligible_rows.end(),
+            *render_selected_interaction_row)==eligible_rows.end()){
+            render_interaction_status="ineligible";
+            render_interaction_diagnostic="selected TTAB action is no longer eligible at the input boundary";return;
+        }
+        const auto& row=render_interactions->table->interactions[*render_selected_interaction_row];
         const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action);
         auto owner=saved_code_owners.find(owner_key);
         if(owner==saved_code_owners.end()){
@@ -1199,6 +1208,30 @@ struct PlacementCandidateProbe {
         render_interaction_target=selected;
         previous_completion_uid=queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::optional<std::uint64_t>{};
         render_interaction_diagnostic.clear();
+    };
+    const auto interaction_window_title=[&]{
+        std::string title="OpenDollhouse Main preview";
+        if(render_selection){
+            title+=" | object "+std::to_string(render_selection->id)+" GUID "+
+                std::to_string(render_selection->guid)+" TTAB "+std::to_string(render_selection->tree_table_id);
+            const auto eligible=render_interactions?eligible_saved_interaction_rows(*render_interactions,
+                render_test_results,world.find(runtime_avatar_id)):std::vector<std::size_t>{};
+            if(eligible.empty())title+=" | no supported eligible action";
+            else {
+                auto selected=render_selected_interaction_row.value_or(eligible.front());
+                if(std::find(eligible.begin(),eligible.end(),selected)==eligible.end())selected=eligible.front();
+                const auto position=static_cast<std::size_t>(std::distance(eligible.begin(),
+                    std::find(eligible.begin(),eligible.end(),selected)));
+                const auto label=selected<render_interactions->row_labels.size()&&
+                    render_interactions->row_labels[selected]?*render_interactions->row_labels[selected]:
+                    std::string("eligible action");
+                title+=" | action "+std::to_string(position+1)+"/"+
+                    std::to_string(eligible.size())+": "+label;
+                if(eligible.size()>1)title+=" (Tab/Shift+Tab to choose)";
+                title+="; Space/Enter to queue";
+            }
+        }
+        return title+" | P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> render_window_host;
@@ -1428,21 +1461,32 @@ struct PlacementCandidateProbe {
                     render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
-                std::string title="OpenDollhouse Main preview: ";
-                if(render_selection)title+="object "+std::to_string(render_selection->id)+" GUID "+std::to_string(render_selection->guid)+
-                    " TTAB "+std::to_string(render_selection->tree_table_id);
-                else title+="no object selected";
-                if(render_selection){
-                    const auto row=render_interactions?first_eligible_saved_interaction(
-                        *render_interactions,render_test_results,world.find(runtime_avatar_id)):std::nullopt;
-                    if(row){
-                        title+=" | Space/Return: ";
-                        if(*row<render_interactions->row_labels.size()&&render_interactions->row_labels[*row])
-                            title+=*render_interactions->row_labels[*row];
-                        else title+="eligible interaction";
-                    }
+                render_window_host->set_title(interaction_window_title());
+            }
+            if(input.interaction_selection_delta&&!input.primary_click&&render_selection&&render_interactions&&
+               queue.size()==0&&!render_interaction_enqueued){
+                const auto* candidate=definition_index?definition_index->unique(render_selection->guid):nullptr;
+                std::vector<std::uint16_t> tests;
+                if(candidate&&candidate->source==render_interactions->source&&
+                   candidate->asset==render_interactions->asset&&render_interactions->table&&
+                   render_interactions->table->status==odh::TtabStatus::decoded){
+                    const auto count=std::min<std::size_t>(render_interactions->table->interactions.size(),32);
+                    tests.reserve(count);
+                    for(std::size_t n=0;n<count;++n)tests.push_back(render_interactions->table->interactions[n].test);
+                    render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
+                        render_selection->id,tests,4096,128);
+                }else render_test_results.clear();
+                const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+                    world.find(runtime_avatar_id));
+                if(eligible.empty())render_selected_interaction_row.reset();
+                else {
+                    auto current=std::find(eligible.begin(),eligible.end(),render_selected_interaction_row.value_or(eligible.front()));
+                    std::int64_t index=current==eligible.end()?0:std::distance(eligible.begin(),current);
+                    const auto count=static_cast<std::int64_t>(eligible.size());
+                    index=((index+input.interaction_selection_delta)%count+count)%count;
+                    render_selected_interaction_row=eligible[static_cast<std::size_t>(index)];
                 }
-                render_window_host->set_title(title+" | P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(interaction_window_title());
             }
             if(input.action&&!input.primary_click){
                 render_interaction_requested=true;

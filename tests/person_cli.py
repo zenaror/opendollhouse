@@ -161,10 +161,9 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==3 and d['tick_budget_exhausted'] and d['ticks']==1 and d['status']=='waiting' and d['completion'] is None
  setup();legacy=bytearray(routine([expr(0,1)]));struct.pack_into('<H',legacy,0,0x8001)
  archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',128,b'\x0dFixturePerson'),('BHAV',4096,legacy)])
- for extra in [[],action_args]:
-  r=run(extra);d=json.loads(r.stdout)
-  assert r.returncode==3 and not r.stderr and d['status']=='fault' and d['steps']==0 and d['stack_depth']==0
-  assert d['diagnostic']=='execution requires BHAV 8002 metadata'
+ r=run();d=json.loads(r.stdout)
+ assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['steps']==1 and d['stack_depth']==0
+ assert d['diagnostic']==''
  # Unknown primitive remains a coherent runtime failure, with owner/PC/provenance.
  setup(global_rows=[(44,254,255,bytes(8))]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['status']=='fault' and d['diagnostic']=='unsupported primitive 44'

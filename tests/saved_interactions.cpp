@@ -44,6 +44,18 @@ int main(){try{
     const auto* actor=actor_world.find(1);
     check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
         "zero-flag private action accepts resident with matching eligible TestFunction");
+    auto multiple=no_labels;
+    multiple.table->interactions.push_back(multiple.table->interactions[0]);
+    multiple.table->interactions.push_back(multiple.table->interactions[0]);
+    multiple.table->interactions[1].action=0x1003;multiple.table->interactions[1].test=0x1004;
+    multiple.table->interactions[2].action=0x1005;multiple.table->interactions[2].test=0x1006;
+    const std::vector<SavedTestFunctionResult> mixed_rows{
+        {SavedTestFunctionResult::State::eligible,0x1002,3,{}},
+        {SavedTestFunctionResult::State::ineligible,0x1004,1,{}},
+        {SavedTestFunctionResult::State::eligible,0x1006,2,{}}};
+    const auto eligible_rows=eligible_saved_interaction_rows(multiple,mixed_rows,actor);
+    check(eligible_rows==std::vector<std::size_t>{0,2},
+        "interaction chooser enumerates eligible rows in TTAB order and filters failed tests");
     auto visitor_allowed=no_labels;visitor_allowed.table->interactions[0].flags=1;
     check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
         "AllowVisitors flag accepts resident adult");

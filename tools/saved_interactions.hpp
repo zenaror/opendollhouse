@@ -144,28 +144,36 @@ struct SavedTestFunctionResult {
 // Current manual host action profile supports ordinary private actions, the
 // TS1 AllowVisitors flag, and a matching successful ODH TestFunction. All
 // other TTAB permission bits remain unsupported.
-inline std::optional<std::size_t> first_eligible_saved_interaction(
+inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
     const odh::Entity* actor) {
-    if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return {};
+    std::vector<std::size_t> result;
+    if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return result;
     // Simitone CheckTS1Action reads these saved person-data fields directly:
     // PersonType, GreetStatus, and Gender (pet bits). Missing state is unknown.
-    if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=65)return {};
+    if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=65)return result;
     constexpr std::uint32_t allow_visitors=0x00000001U;
     constexpr std::int16_t person_type=32,greet_status=34,gender=65;
     const auto is_visitor=actor->person_data[person_type]==1&&actor->person_data[greet_status]<2;
     const auto gender_flags=static_cast<std::uint16_t>(actor->person_data[gender]);
     const auto is_pet=(gender_flags&(8U|16U))!=0;
-    if(is_pet)return {}; // Pet-specific interactions are outside this profile.
+    if(is_pet)return result; // Pet-specific interactions are outside this profile.
     const auto count=std::min<std::size_t>({interactions.table->interactions.size(),tests.size(),32});
     for(std::size_t n=0;n<count;++n){
         const auto& row=interactions.table->interactions[n];
         if((row.flags&~allow_visitors)!=0||(is_visitor&&(row.flags&allow_visitors)==0)||
            tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
            odh::routine_key(row.action).scope!=odh::RoutineScope::private_object)continue;
-        return n;
+        result.push_back(n);
     }
-    return {};
+    return result;
+}
+
+inline std::optional<std::size_t> first_eligible_saved_interaction(
+    const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
+    const odh::Entity* actor) {
+    const auto rows=eligible_saved_interaction_rows(interactions,tests,actor);
+    return rows.empty()?std::nullopt:std::optional<std::size_t>(rows.front());
 }
 
 // Run TestFunction in an isolated VM, against live entities and a read-only

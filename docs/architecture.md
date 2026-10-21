@@ -256,10 +256,12 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
 7. **Ports prioritários:** transportar o núcleo validado para New 3DS, Vita e
    Android, implementar backends e controles próprios; medir memória, CPU,
    renderização e carregamento em hardware real.
-8. **Builds desktop futuras:** adicionar Windows e macOS arm64/x86_64 após a
-   base Linux e os ports prioritários. Definir toolchains e empacotamento e
-   validar em CI ou máquinas dedicadas; o usuário não tem equipamento para
-   testes manuais nesses sistemas.
+8. **Builds futuras:** avaliar Nintendo Switch e adicionar Windows e macOS
+   arm64/x86_64 após a base Linux e os ports prioritários. Para cada alvo,
+   definir toolchain, backend e empacotamento; validar em CI, máquinas dedicadas
+   ou hardware compatível. Switch é apenas uma possibilidade de build: suporte
+   de toolchain, distribuição e validação em hardware ainda não foi confirmado.
+   O usuário não tem equipamento para testes manuais de Windows ou macOS.
 
 Primeira versão Linux candidata a teste: abrir um cenário controlado com recursos
 originais externos, exibir a cena, executar uma interação completa (sentar/levantar),

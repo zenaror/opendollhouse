@@ -129,6 +129,10 @@ int main() {
         require(legacy.start(key())==odh::VmStatus::running && legacy.stack()[0].arguments.size()==4 &&
                 legacy.stack()[0].locals.size()==4,"legacy frame uses bounded four-argument/no-local profile");
         require(legacy.run(1)==odh::VmStatus::returned_true,"8001 BHAV executes under legacy frame profile");
+        auto called_legacy_bhav=routine({expr(2,0,42,9,7)});called_legacy_bhav.version=0x8001;called_legacy_bhav.metadata.reset();
+        odh::Vm legacy_call({{key(),routine({call(4097)})},{key(4097),called_legacy_bhav}});
+        legacy_call.start(key());legacy_call.temps()[0]=42;
+        require(legacy_call.run(3)==odh::VmStatus::returned_true,"8002 caller can invoke a four-argument 8001 BHAV");
         auto empty = machine(routine({})); require(empty.start(key())==odh::VmStatus::fault,"empty routine not success");
         odh::Vm recursive({{key(),routine({call(4096)})}}, {}, {3,4096}); recursive.start(key());
         require(recursive.run(10)==odh::VmStatus::fault && recursive.stack().size()==3,"recursion bounded");

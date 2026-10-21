@@ -237,9 +237,20 @@ lote e cinco CTests (`saved_lot_renderer`, `saved_object_renderer`,
 
 Com `--saved-world-main --render-floors ... --render-window`, Button1 seleciona
 o objeto sob o pixel do último frame apresentado. O título mostra
-ID/GUID/TreeTableID ou `no object selected`. O backend retém o último clique drenado em cada `poll`,
-incluindo coordenadas fora do drawable; Space/Enter não inventam uma posição.
-O clique é resolvido antes de aplicar rotação/zoom que vieram no mesmo poll.
+ID/GUID/TreeTableID e a ação selecionada; Tab e Shift+Tab percorrem as opções
+elegíveis, e Space/Enter solicita a opção indicada. A elegibilidade é recalculada
+ao percorrer e novamente antes de enfileirar. O backend retém o último clique
+drenado em cada `poll`, incluindo coordenadas fora do drawable; Space/Enter não
+inventam uma posição. O clique é resolvido antes de aplicar rotação/zoom que
+vieram no mesmo poll. Esse seletor pelo título e teclado ainda não é um pie menu.
+
+Em 2026-10-21, a execução X11 atualizada no House07 mostrou a cadeira 128
+(GUID 650099497, TTAB 128) com `action 1/1: Sit`. Tab manteve a única opção
+elegível; Space mudou o recibo visível para `interaction queued BHAV4097`.
+Isso valida clique, apresentação da opção, ciclo unitário e enfileiramento
+pela janela. Não valida a escolha entre várias ações elegíveis nem a conclusão
+da ação; a enumeração de várias linhas e o mapeamento Tab/Shift+Tab também têm
+testes automatizados separados.
 
 `composite_sprites` pode registrar opcionalmente `owner_ids` uint16 no próprio
 passe que compara depth e escreve cor. Alpha zero não grava ID, fragmentos
