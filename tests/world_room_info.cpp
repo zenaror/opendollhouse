@@ -50,6 +50,16 @@ int main() {
             return p.x < 32 ? std::optional<std::uint16_t>{1} : std::optional<std::uint16_t>{2};
         };
         const auto alive_avatar = [](std::int16_t, std::uint64_t) -> std::optional<std::int32_t> { return -1; };
+        auto inventory = odh::snapshot_world_room_info(world, defs, room_for, alive_avatar, 1);
+        require(inventory.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    inventory.obstacles.size() == 2 && inventory.obstacles[0].owner_id == 1 &&
+                    inventory.obstacles[0].collection == odh::RoomInfoObstacleCollection::dynamic_list &&
+                    inventory.obstacles[1].owner_id == 2,
+                "live RoomInfo snapshot exposes the complete room inventory and collections");
+        inventory = odh::snapshot_world_room_info(world, defs, room_for, alive_avatar, 2);
+        require(inventory.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    inventory.obstacles.size() == 1 && inventory.obstacles[0].owner_id == 3,
+                "live RoomInfo snapshot filters by runtime room membership");
         auto query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
                                                1, {13, 13, 19, 19}, 1);
         require(query.status == odh::RoomInfoObstacleIndexStatus::complete &&
@@ -66,6 +76,11 @@ int main() {
         require(world.set_static_footprint(1, false), "avatar returns to dynamic RoomInfo membership");
 
         require(world.set_position(2, {40, 16, 1, 0}), "live object moves to another room");
+        inventory = odh::snapshot_world_room_info(world, defs, room_for, alive_avatar, 2);
+        require(inventory.status == odh::RoomInfoObstacleIndexStatus::complete &&
+                    inventory.obstacles.size() == 2 && inventory.obstacles[0].owner_id == 2 &&
+                    inventory.obstacles[1].owner_id == 3,
+                "next complete snapshot reflects live movement and footprint room change");
         query = odh::query_world_room_info(world, defs, room_for, alive_avatar,
                                           1, {13, 13, 19, 19}, 1);
         require(query.status == odh::RoomInfoObstacleIndexStatus::complete && query.intersections.empty(),

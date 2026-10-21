@@ -7,7 +7,7 @@ namespace {
 constexpr std::int16_t flags_index = 8;
 constexpr std::uint16_t has_zero_extent = 1U << 2;
 
-RoomInfoObstacleQuery unsupported(RoomInfoObstacleIndexReason reason) {
+RoomInfoObstacleSnapshot unsupported(RoomInfoObstacleIndexReason reason) {
     return {RoomInfoObstacleIndexStatus::unsupported, reason, {}};
 }
 
@@ -72,19 +72,18 @@ bool matches_world(const World& world, const std::vector<ObstacleState>& source)
 
 } // namespace
 
-RoomInfoObstacleQuery query_world_room_info(
+RoomInfoObstacleSnapshot snapshot_world_room_info(
     const World& world, const DefinitionIndex& definitions,
     const RuntimeRoomResolver& room_for, const AvatarKillTimeoutResolver& kill_timeout_for,
-    std::uint16_t room, const CollisionBox& candidate, std::int32_t target_id,
-    std::size_t entity_limit) {
-    static thread_local bool query_active = false;
-    if (query_active)
+    std::uint16_t room, std::size_t entity_limit) {
+    static thread_local bool snapshot_active = false;
+    if (snapshot_active)
         return unsupported(RoomInfoObstacleIndexReason::inventory_incomplete);
     struct QueryGuard {
         bool& active;
         explicit QueryGuard(bool& value) : active(value) { active = true; }
         ~QueryGuard() { active = false; }
-    } guard(query_active);
+    } guard(snapshot_active);
 
     if (entity_limit == 0 || entity_limit > 4096)
         return unsupported(RoomInfoObstacleIndexReason::inventory_over_budget);
@@ -153,7 +152,38 @@ RoomInfoObstacleQuery query_world_room_info(
 
     if (!index.rebuild(obstacles, true))
         return unsupported(index.reason());
-    return index.query(room, candidate, target_id);
+    return index.snapshot(room);
+}
+
+RoomInfoObstacleQuery query_world_room_info(
+    const World& world, const DefinitionIndex& definitions,
+    const RuntimeRoomResolver& room_for, const AvatarKillTimeoutResolver& kill_timeout_for,
+    std::uint16_t room, const CollisionBox& candidate, std::int32_t target_id,
+    std::size_t entity_limit) {
+    const auto inventory = snapshot_world_room_info(world, definitions, room_for,
+        kill_timeout_for, room, entity_limit);
+    RoomInfoObstacleQuery result;
+    result.status = inventory.status;
+    result.reason = inventory.reason;
+    if (result.status != RoomInfoObstacleIndexStatus::complete) return result;
+    if (target_id <= 0 || target_id > 32767) {
+        result.status = RoomInfoObstacleIndexStatus::unsupported;
+        result.reason = RoomInfoObstacleIndexReason::owner_identity_invalid;
+        return result;
+    }
+    if (candidate.x1 >= candidate.x2 || candidate.y1 >= candidate.y2) {
+        result.status = RoomInfoObstacleIndexStatus::unsupported;
+        result.reason = RoomInfoObstacleIndexReason::geometry_invalid;
+        return result;
+    }
+    for (const auto& obstacle : inventory.obstacles) {
+        if (obstacle.collection == RoomInfoObstacleCollection::dynamic_list &&
+            obstacle.owner_id == target_id)
+            continue;
+        if (collision_boxes_intersect(candidate, obstacle.box))
+            result.intersections.push_back(obstacle);
+    }
+    return result;
 }
 
 } // namespace odh

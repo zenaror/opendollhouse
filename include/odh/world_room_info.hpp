@@ -30,4 +30,12 @@ RoomInfoObstacleQuery query_world_room_info(
     const CollisionBox& candidate, std::int32_t target_id,
     std::size_t entity_limit = 4096);
 
+// Rebuilds a complete, bounded inventory of current RoomInfo obstacles in one
+// room. This exposes live entity footprints to planners; it does not add static
+// WallObs/RoomObs, execute EntryPoint5, or establish AttemptWalk clearance.
+RoomInfoObstacleSnapshot snapshot_world_room_info(
+    const World&, const DefinitionIndex&, const RuntimeRoomResolver&,
+    const AvatarKillTimeoutResolver&, std::uint16_t room,
+    std::size_t entity_limit = 4096);
+
 } // namespace odh

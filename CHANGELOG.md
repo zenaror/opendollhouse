@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `snapshot_world_room_info` expõe o inventário bounded e completo de
+  footprints atuais por sala, com coleção estática/dinâmica e ordem por ID;
+  `query_world_room_info` deriva a query candidata do mesmo contrato. O Main
+  diagnóstico publica o inventário vivo junto do probe atual. House07 no tick
+  214 retornou 19 footprints na sala 3. Isso ainda não compõe WallObs/RoomObs,
+  EntryPoint5 ou clearance. Consulte
+  `docs/world-room-info-validation.md`.
 - Router bounded de corredores baseado nas primitivas observadas em
   `VMRectRouter`/`VMObstacleSet` do Simitone. O diagnóstico House07 rodou sobre
   o snapshot salvo de 153 retângulos e encontrou corredor para os três destinos

@@ -1,5 +1,18 @@
 # Continuidade atual
 
+## Inventário RoomInfo completo do World vivo (2026-10-21)
+
+`snapshot_world_room_info` reconstrói e valida o inventário completo de
+footprints RoomInfo por sala, preservando coleção e ordenação por owner ID;
+`query_world_room_info` agora filtra a caixa candidata dessa mesma fotografia,
+mantendo a semântica de inclusão estática/exclusão dinâmica do alvo. O
+`odh-person --saved-world-main` exporta o inventário junto do probe atual.
+House07 no tick 214 retornou 19 footprints completos na sala 3, todos
+estáticos nessa amostra. Build completa e 157 CTests passaram; o teste de
+janela ficou pulado sem display X11. Próximo: combinar essa lista do World com
+RoomObs/WallObs e regras de AttemptWalk no mesmo processo, incluindo portais e
+EntryPoint5 antes de qualquer alegação de clearance ou uso no Main.
+
 ## Snapshot de obstáculos AttemptWalk no House07 (2026-10-21)
 
 O módulo puro `odh_saved_attempt_walk_obstacles` compõe WallObs + RoomObs,

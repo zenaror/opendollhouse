@@ -1,9 +1,13 @@
 # Consulta RoomInfo reconstruída do World vivo
 
-`query_world_room_info` enumera o `World` atual e deriva um snapshot limitado a
-4096 entidades antes de cada consulta. Isso evita reusar uma fotografia depois
-de movimentos, contenção, remoção, mudança de flags ou reclassificação entre as
-consultas. Footprints são calculados com `object_collision_shape`, Definition
+`snapshot_world_room_info` enumera o `World` atual e deriva o inventário
+completo de RoomInfo limitado a 4096 entidades para uma sala. A resposta
+preserva coleção estática/dinâmica e ordena por owner ID. A query
+`query_world_room_info` usa esse mesmo snapshot antes de filtrar a caixa
+candidata e aplica a regra GetAvatarPlace de reter o alvo estático e excluir o
+alvo dinâmico. Isso evita reusar uma fotografia depois de movimentos,
+contenção, remoção, mudança de flags ou reclassificação entre as consultas.
+Footprints são calculados com `object_collision_shape`, Definition
 Index único por GUID, flags vivas em ObjectData[8] e `Entity::static_footprint`.
 Entidades fora do mundo, contidas e objetos com `HasZeroExtent` não entram no
 índice. Avatares usam `World::Entity::kill_timeout`, inicializado em -1 para
@@ -52,9 +56,10 @@ e radius 3; `VMEntity.cs:1436-1452` move o footprint entre coleções; e
 `VMContext.cs:937-1032,1190-1235` registra posição e consulta as duas listas.
 São regras da referência, sem confirmação contra o executável original.
 
-`odh-world-room-info-tests` cobre fixture sintética com movimento entre salas,
-contenção, zero extent, inclusão/exclusão do alvo estático/dinâmico, ordenação,
-falha fechada para flags/definição/sala/KillTimeout desconhecidos e orçamento.
+`odh-world-room-info-tests` cobre fixture sintética com inventário completo por
+sala, coleção estática/dinâmica, movimento entre salas, contenção, zero extent,
+inclusão/exclusão do alvo estático/dinâmico, ordenação, falha fechada para
+flags/definição/sala/KillTimeout desconhecidos e orçamento.
 Também cobre mutação de posição, remoção e lifecycle disparadas por callbacks.
 `odh-person` inclui `room_info_probe` no JSON do saved-world preview quando há
 renderer com mapa preparado; consulta somente a caixa do avatar na posição
@@ -72,6 +77,15 @@ resultado não classifica EntryPoint 5/26 nem afirma que a posição passou por
 `GetAvatarPlace`. O frame CPU produzido na mesma execução mostra Bob e o lote
 compostos. Os 152 CTests passaram, incluindo `linux_window_backend` quando
 executado com acesso autorizado ao display.
+
+Com a API de inventário, a mesma execução House07/tick 214 foi repetida pelo
+`odh-person --saved-world-main` após adicionar as 23 fontes arquitetônicas ao
+renderer. `room_inventory` retornou complete para a sala 3 com 19 footprints,
+todos na coleção estática nessa amostra. IDs: 18, 19, 26, 57, 105, 106, 111,
+112, 113, 114, 115, 124, 125, 126, 127, 128, 130, 135 e 137. Isso confirma a
+enumeração da sala a partir do World construído no Main e das posições atuais;
+não é ainda uma tentativa de rota. Os footprints não incluem portal/wall
+obstacles, filtro AttemptWalk, EntryPoint5 ou movimentação do avatar.
 
 ## Candidate placement diagnostic
 

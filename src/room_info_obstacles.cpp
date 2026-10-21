@@ -190,6 +190,23 @@ RoomInfoObstacleQuery RoomInfoObstacleIndex::query(
     return result;
 }
 
+RoomInfoObstacleSnapshot RoomInfoObstacleIndex::snapshot(std::uint16_t room) const {
+    RoomInfoObstacleSnapshot result;
+    if (status_ != RoomInfoObstacleIndexStatus::complete) {
+        result.reason = reason_;
+        return result;
+    }
+    if (room > 32767) {
+        result.reason = RoomInfoObstacleIndexReason::room_invalid;
+        return result;
+    }
+    for (const auto& obstacle : obstacles_)
+        if (obstacle.room == room) result.obstacles.push_back(obstacle);
+    result.status = RoomInfoObstacleIndexStatus::complete;
+    result.reason = RoomInfoObstacleIndexReason::none;
+    return result;
+}
+
 const char* room_info_obstacle_index_status_name(RoomInfoObstacleIndexStatus status) noexcept {
     switch (status) {
     case RoomInfoObstacleIndexStatus::complete: return "complete";

@@ -33,6 +33,15 @@ struct RoomInfoObstacleQuery {
     std::vector<RoomInfoObstacle> intersections;
 };
 
+struct RoomInfoObstacleSnapshot {
+    RoomInfoObstacleIndexStatus status = RoomInfoObstacleIndexStatus::unsupported;
+    RoomInfoObstacleIndexReason reason = RoomInfoObstacleIndexReason::inventory_incomplete;
+    // Complete obstacle inventory for one room, sorted by owner ID. Includes
+    // static and dynamic membership; movement planners apply their own actor
+    // and AttemptWalk filtering rules.
+    std::vector<RoomInfoObstacle> obstacles;
+};
+
 // A bounded owner-keyed model of RoomInfo.StaticObstacles/DynamicObstacles.
 // Membership and geometry must come from explicit runtime events or a complete
 // enumeration; saved geometry alone must not be used to mark this complete.
@@ -60,6 +69,7 @@ public:
     // the target; dynamic membership excludes it. Results are owner-ID sorted.
     RoomInfoObstacleQuery query(std::uint16_t room, const CollisionBox& candidate,
                                 std::int32_t target_id) const;
+    RoomInfoObstacleSnapshot snapshot(std::uint16_t room) const;
 
 private:
     bool valid(const RoomInfoObstacle&) const noexcept;

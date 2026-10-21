@@ -712,6 +712,7 @@ int main(int argc,char** argv) {
         std::uint16_t room;
         odh::CollisionBox candidate;
         odh::RoomInfoObstacleQuery query;
+        odh::RoomInfoObstacleSnapshot inventory;
     };
 struct PlacementCandidateProbe {
     odh::EntityPosition position;
@@ -1065,7 +1066,8 @@ struct PlacementCandidateProbe {
                 };
                 room_info_probe=RoomInfoProbe{*room,candidate.box,
                     odh::query_world_room_info(world,*definition_index,room_for,kill_timeout_for,
-                                               *room,candidate.box,runtime_avatar_id)};
+                                               *room,candidate.box,runtime_avatar_id),
+                    odh::snapshot_world_room_info(world,*definition_index,room_for,kill_timeout_for,*room)};
             }
         }
     }
@@ -1503,7 +1505,7 @@ struct PlacementCandidateProbe {
     std::cout<<"],\"room_info_probe\":{";
     if(room_info_probe){
         const auto& probe=*room_info_probe;
-        std::cout<<"\"evidence\":\"current_selected_avatar_position_only\",\"profile\":\"immutable_prepared_room_map_plus_live_World_obstacles\",\"status\":"
+        std::cout<<"\"evidence\":\"current_avatar_position_and_complete_room_inventory\",\"profile\":\"immutable_prepared_room_map_plus_live_World_obstacles\",\"status\":"
             <<json_bytes(odh::room_info_obstacle_index_status_name(probe.query.status))
             <<",\"reason\":"<<json_bytes(odh::room_info_obstacle_index_reason_name(probe.query.reason))
             <<",\"room\":"<<probe.room<<",\"candidate_box\":["<<probe.candidate.x1<<','<<probe.candidate.y1<<','
@@ -1515,7 +1517,18 @@ struct PlacementCandidateProbe {
                 <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
                 <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
         }
-        std::cout<<"]}";
+        std::cout<<"],\"room_inventory\":{\"status\":"
+            <<json_bytes(odh::room_info_obstacle_index_status_name(probe.inventory.status))
+            <<",\"reason\":"<<json_bytes(odh::room_info_obstacle_index_reason_name(probe.inventory.reason))
+            <<",\"count\":"<<probe.inventory.obstacles.size()<<",\"obstacles\":[";
+        for(std::size_t n=0;n<probe.inventory.obstacles.size();++n){
+            if(n)std::cout<<',';
+            const auto& obstacle=probe.inventory.obstacles[n];
+            std::cout<<"{\"owner_id\":"<<obstacle.owner_id<<",\"collection\":"
+                <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
+                <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
+        }
+        std::cout<<"]}}";
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
     if(placement_candidate_probe){
         const auto& probe=*placement_candidate_probe;
