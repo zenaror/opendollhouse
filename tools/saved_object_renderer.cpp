@@ -41,12 +41,24 @@ using FrameKey=std::tuple<std::string,std::string,std::uint16_t,std::uint32_t>;
 
 struct SavedObjectRenderer::Impl {
     const odh::DefinitionIndex& index;
+    struct CachedFrame { odh::Spr2Frame image; bool used=false; };
     std::map<std::string,std::unique_ptr<Source>> sources;
     std::map<AssetKey,Asset> assets;
     std::map<GroupKey,odh::Dgrp> groups;
-    std::map<FrameKey,odh::Spr2Frame> frames;
+    std::map<FrameKey,CachedFrame> frames;
     std::uint64_t chunks=0,images=0,group_sprites=0,pixels=0,frame_bytes=0,provenance_bytes=0;
     explicit Impl(const odh::DefinitionIndex& definitions):index(definitions){}
+    bool evict_unused_frames(){
+        bool evicted=false;
+        for(auto it=frames.begin();it!=frames.end();){
+            if(it->second.used){++it;continue;}
+            const auto& image=it->second.image;
+            pixels-=image.pixels.size();
+            frame_bytes-=4*image.pixels.size()+image.indices.size()+image.z.size();
+            it=frames.erase(it);evicted=true;
+        }
+        return evicted;
+    }
     Asset& asset(const odh::DefinitionCandidate& candidate) {
         const AssetKey key{candidate.source,candidate.asset};
         auto existing=assets.find(key);if(existing!=assets.end())return existing->second;
@@ -99,8 +111,8 @@ struct SavedObjectRenderer::Impl {
     const odh::Spr2Frame& frame(const odh::DefinitionCandidate& candidate,Asset& resource,
                               std::uint16_t id,std::uint32_t number) {
         const FrameKey key{candidate.source,candidate.asset,id,number};
-        auto existing=frames.find(key);if(existing!=frames.end())return existing->second;
-        if(frames.size()>=4096)throw odh::FormatError("saved object frame cache budget exceeded");
+        auto existing=frames.find(key);if(existing!=frames.end()){existing->second.used=true;return existing->second.image;}
+        if(frames.size()>=4096){evict_unused_frames();if(frames.size()>=4096)throw odh::FormatError("saved object frame cache budget exceeded");}
         const auto* chunk=resource.find("SPR2",id);
         if(!chunk){
             if(resource.find("SPR#",id))throw odh::FormatError("saved object SPR# rendering unsupported");
@@ -109,14 +121,21 @@ struct SavedObjectRenderer::Impl {
         if(chunk->payload.le32(0)!=1000)throw odh::FormatError("saved object SPR2 version unsupported");
         const auto palette_id=static_cast<std::uint16_t>(chunk->payload.le32(8));
         const auto palette=odh::read_palt(resource.require("PALT",palette_id));
-        odh::SpriteLimits limits;limits.pixels=static_cast<std::uint32_t>(pixel_budget-pixels);
-        auto result=odh::read_spr2_frame(chunk->payload,number,palette,limits);
+        const auto read_frame=[&]{odh::SpriteLimits limits;limits.pixels=static_cast<std::uint32_t>(pixel_budget-pixels);
+            return odh::read_spr2_frame(chunk->payload,number,palette,limits);};
+        odh::Spr2Frame result;
+        try{result=read_frame();}
+        catch(const odh::FormatError& error){
+            if(std::string(error.what())!="SPR2 dimensions exceed configured allocation budget"||
+               !evict_unused_frames())throw;
+            result=read_frame();
+        }
         if((result.flags&3U)!=3U||(result.flags&~7U)!=0)
             throw odh::FormatError("saved object sprite requires pixel and Z flags");
         const auto count=result.pixels.size();
         const auto bytes=4*count+result.indices.size()+result.z.size();
-        auto inserted=frames.emplace(key,std::move(result));pixels+=count;frame_bytes+=bytes;
-        return inserted.first->second;
+        auto inserted=frames.emplace(key,CachedFrame{std::move(result),true});pixels+=count;frame_bytes+=bytes;
+        return inserted.first->second.image;
     }
 };
 
@@ -132,6 +151,7 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
     if(base.width!=projection.width||base.height!=projection.height)
         throw odh::FormatError("saved object camera and base dimensions disagree");
     odh::project_tile(projection,projection.center_tile);
+    for(auto& entry:impl_->frames)entry.second.used=false;
     SavedObjectRenderResult result;
     std::vector<odh::SpriteLayer> layers;std::set<std::int16_t> ids;
     std::uint64_t flags=0,record_provenance=0;
@@ -192,6 +212,7 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
     if(layer_pixels>4*1048576)throw odh::FormatError("saved object repeated layer extent exceeds compositor profile: "+std::to_string(layer_pixels)+" pixels");
     odh::CompositorLimits compositor_limits;compositor_limits.pixels=4*1048576;
     result.composite=odh::composite_sprites(base,layers,compositor_limits,record_picks);
+    impl_->evict_unused_frames();
     result.layers=layers.size();result.cached_assets=impl_->assets.size();result.cached_groups=impl_->groups.size();
     result.cached_frames=impl_->frames.size();result.cached_pixels=impl_->pixels;result.cached_frame_bytes=impl_->frame_bytes;
     return result;

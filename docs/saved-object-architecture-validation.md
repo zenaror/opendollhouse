@@ -73,10 +73,16 @@ Viewport:até2048 por eixo e1.048.576 pixels. Draw extents repetidos:4.194.304
 pixels; samples do compositor:16.777.216. A soma de extents repetidos não duplica
 pixels do cache: House07r0z3 usa1.865.647 extents e1.029.033 pixels únicos.
 
-Trocar a câmera usando o mesmo renderer acumula frames até esse limite; o host
-CLI desta etapa usa uma câmera e um cache novo por execução. Evicção/deduplicação
-entre cenas, RAM máxima e velocidade no New3DS não foram medidas. Não se
-exclui simulação fora da tela para economizar recursos gráficos.
+Em cada render, o cache de frames marca as imagens requeridas pela vista atual.
+Ao atingir o limite, frames sem uso nesta vista são evictados antes de tentar
+decodificar a imagem nova; após composição bem-sucedida, o cache retém apenas os
+frames dessa vista. Um teste sintético alterna entre direções que exigem cada
+uma 1.048.576 pixels e confirma que ambas cabem sem acumular as imagens antigas.
+No preview X11 com House07, a cena passou por comandos de rotação e zoom e foi
+fechada normalmente: o relatório terminou em `waiting` no tick 131, sem
+diagnóstico, com 1.538.700 bytes de frames de objetos no último quadro. Isso
+valida as mudanças ensaiadas, não RAM/velocidade máxima nem desempenho no New3DS.
+Não se exclui simulação fora da tela para economizar recursos gráficos.
 
 ## Arquitetura: estrutura preservada
 

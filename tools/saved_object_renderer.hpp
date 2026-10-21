@@ -30,9 +30,10 @@ struct SavedObjectRenderResult {
 };
 // Host resource cache: immutable DefinitionIndex must outlive this object.
 // Strict SPR2+pixel+Z profile; SPR# and no-depth sprites fail explicitly.
-// Unique decoded frame cache <=1Mi pixels (RGBA+index+Z <=6MiB); repeated
-// draw extents <=4Mi pixels, compositor samples <=16Mi, viewport <=1Mi pixels.
-// Empty decoded frames are retained in cache and counted without placement.
+// Decoded frames used by one view <=1Mi pixels (RGBA+index+Z <=6MiB); obsolete
+// frames are evicted on pixel pressure and after successful composition.
+// Repeated draw extents <=4Mi pixels, compositor samples <=16Mi, viewport <=1Mi.
+// Empty decoded frames used by the view are retained without placement.
 // Whole render failures leave inputs unchanged, but may populate bounded cache.
 // Optional record_picks returns per-pixel object IDs in composite.owner_ids;
 // the same alpha/depth pass decides ownership. Disabled leaves that array empty.

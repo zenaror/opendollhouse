@@ -1,5 +1,21 @@
 # Continuidade atual
 
+## Cache de sprites ao mudar a câmera (2026-10-21)
+
+`SavedObjectRenderer` agora marca os SPR2 usados no quadro e evicta frames de
+vistas anteriores quando o orçamento de 1.048.576 pixels fica sem espaço; após
+composição bem-sucedida, conserva somente os frames da vista atual. As caches de
+assets e DGRPs continuam reutilizadas. Teste sintético alterna orientações que
+requerem cada uma 1 Mi pixels e verifica que o cache permanece limitado a uma
+vista.
+
+No preview House07 em X11, comandos de rotação e zoom foram aceitos, a janela
+fechou normalmente e o relatório final ficou `waiting` no tick131, sem
+diagnóstico. `object_cached_frame_bytes` no último quadro: 1.538.700. Antes, o
+cache de ângulos acumulados chegava a 6.174.198 bytes e podia fazer o preview
+falhar com `SPR2 dimensions exceed configured allocation budget`. Essa prova é
+do host Linux e das mudanças ensaiadas; não mede desempenho de portáteis.
+
 ## Seletor de ações no preview Linux (2026-10-21)
 
 O preview Main agora enumera todas as linhas privadas TTAB elegíveis para o
