@@ -7,6 +7,9 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Consultas de piso preparado e sala geométrica em posições de 1/16 tile,
+  incluindo a seleção distinta das metades diagonais. As respostas espaciais
+  não validam placement, portais ou aceitação de destinos.
 - Resolução dos aliases FLRm/WALm contra catálogos de nomes explícitos e
   ordenados, com IDs dentro da política ODH, diagnósticos de misses e duplicatas.
   A descoberta de arquivos comerciais e a precedência dos providers seguem
@@ -34,6 +37,10 @@ validação indicados por versão.
 
 ### Validação
 
+- Consultas geométricas: build Linux e 139/139 CTests passaram; teste X11
+  `linux_window_backend` foi pulado por ausência de DISPLAY. As consultas
+  validam ambos os IDs packed da diagonal, bounds e ownership; isso é apenas
+  geometria preparada, sem integração de roteamento ou prova de gameplay.
 - Resolver FLRm/WALm: testes sintéticos de nomes, precedência, duplicatas,
   misses, ASCII suportado, imutabilidade e limites. Catálogo de instalação e
   equivalência com o jogo original não são afirmados.

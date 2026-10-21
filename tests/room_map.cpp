@@ -54,6 +54,43 @@ int main() { try {
     require(result.levels[0] == std::vector<std::uint32_t>(6, 0x00010001U) &&
         result.levels[1] == std::vector<std::uint32_t>(6, 0x00020002U), "packed repeated IDs");
     complete(result);
+    {
+        odh::GeometricRoomMap locations;
+        locations.width=2;locations.height=1;locations.rooms.resize(6);
+        for(std::uint16_t id=1;id<locations.rooms.size();++id)
+            locations.rooms[id]={id,static_cast<std::uint8_t>(id==5?1:0),1,{},false,false,{}};
+        const auto packed=[](std::uint16_t a,std::uint16_t b){return std::uint32_t(a)|(std::uint32_t(b)<<16);};
+        locations.levels[0]={packed(1,2),0x80000000U|packed(3,4)};
+        locations.levels[1]={packed(5,5),packed(0,0)};
+        require(odh::geometric_room_at(locations,4,5,1)==2&&
+                odh::geometric_room_at(locations,5,5,1)==2&&
+                odh::geometric_room_at(locations,6,5,1)==1,
+                "vertical diagonal chooses second half at equality and first only when x exceeds y");
+        require(odh::geometric_room_at(locations,16+8,6,1)==3&&
+                odh::geometric_room_at(locations,16+8,7,1)==3&&
+                odh::geometric_room_at(locations,16+8,8,1)==4,
+                "horizontal diagonal chooses second half only when coordinate sum exceeds fifteen");
+        require(odh::geometric_room_at(locations,0,0,2)==5&&
+                odh::geometric_room_at(locations,16,0,2)==0,
+                "same-half room and explicit room zero are values on the selected level");
+        require(!odh::geometric_room_at(locations,-1,0,1)&&
+                !odh::geometric_room_at(locations,32,0,1)&&
+                !odh::geometric_room_at(locations,0,0,0)&&
+                !odh::geometric_room_at(locations,0,0,3),
+                "out-of-bounds coordinates and levels are unsupported");
+        auto malformed=locations;malformed.levels[1].pop_back();
+        require(!odh::geometric_room_at(malformed,0,0,1),"malformed room-grid extent is unsupported");
+        malformed=locations;malformed.levels[1][0]=packed(6,6);
+        require(!odh::geometric_room_at(malformed,0,0,2),"unknown packed room identity is unsupported");
+        malformed=locations;malformed.levels[1][0]=packed(1,1);
+        require(!odh::geometric_room_at(malformed,0,0,2),"room owned by another level is unsupported");
+        malformed=locations;malformed.levels[0][0]=packed(1,6);
+        require(!odh::geometric_room_at(malformed,6,5,1),
+                "a valid selected half does not hide an unknown opposite half");
+        malformed=locations;malformed.levels[0][0]=packed(1,5);
+        require(!odh::geometric_room_at(malformed,6,5,1),
+                "a valid selected half does not hide opposite-half ownership by another level");
+    }
 
     // Wrap joins the outer columns; cutting only the middle boundary cannot
     // divide a toroidal map. Both seams are needed to make two rooms.

@@ -1,4 +1,5 @@
 #include "odh/route_geometry.hpp"
+#include "odh/prepared_architecture.hpp"
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -55,6 +56,34 @@ int main() {
                 !odh::saved_precise_floor(architecture,80,0,1)&&
                 !odh::saved_precise_floor(architecture,0,0,0),
                 "invalid precise-floor coordinates and levels are unsupported");
+
+        odh::PreparedArchitecture prepared;
+        prepared.width=prepared.height=2;
+        for(auto& level:prepared.levels){level.floors={0,11,12,13};level.walls.resize(4);}
+        require(odh::prepared_precise_floor(prepared,16,16,1)==13&&
+                odh::prepared_precise_floor(prepared,16,16,2)==13&&
+                odh::prepared_precise_floor(prepared,0,0,1)==0,
+                "prepared precise floor reads row-major values on either level and preserves zero");
+        auto& prepared_vertical=prepared.levels[0].walls[1];
+        prepared_vertical.segments=odh::wall_vertical_diagonal;
+        prepared_vertical.top_left_style=21;prepared_vertical.top_left_pattern=22;
+        require(odh::prepared_precise_floor(prepared,16+4,5,1)==21&&
+                odh::prepared_precise_floor(prepared,16+5,5,1)==21&&
+                odh::prepared_precise_floor(prepared,16+6,5,1)==22,
+                "prepared vertical diagonal uses strict x-minus-y threshold");
+        auto& prepared_horizontal=prepared.levels[1].walls[2];
+        prepared_horizontal.segments=odh::wall_horizontal_diagonal;
+        prepared_horizontal.top_left_style=31;prepared_horizontal.top_left_pattern=32;
+        require(odh::prepared_precise_floor(prepared,8,16+6,2)==31&&
+                odh::prepared_precise_floor(prepared,8,16+7,2)==31&&
+                odh::prepared_precise_floor(prepared,8,16+8,2)==32,
+                "prepared horizontal diagonal uses strict sum threshold");
+        auto malformed_prepared=prepared;malformed_prepared.levels[1].floors.pop_back();
+        require(!odh::prepared_precise_floor(malformed_prepared,0,0,1)&&
+                !odh::prepared_precise_floor(prepared,-1,0,1)&&
+                !odh::prepared_precise_floor(prepared,0,32,1)&&
+                !odh::prepared_precise_floor(prepared,0,0,3),
+                "prepared precise floor rejects malformed extent, bounds, and level");
         auto malformed=architecture;malformed.levels[1].floors.pop_back();
         require(!odh::saved_precise_floor(malformed,0,0,1),
                 "malformed unused level rejects the architecture snapshot");

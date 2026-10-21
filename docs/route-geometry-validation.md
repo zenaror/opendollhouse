@@ -1,7 +1,7 @@
 # Geometria de rota sobre arquitetura salva
 
-`odh_route_geometry` acrescenta duas consultas puras para preparar a validação
-de destinos do lote:
+`odh_route_geometry` acrescenta consultas puras para preparar a validação
+espacial do lote:
 
 - `saved_precise_floor` reproduz a seleção de piso de
   `VMArchitecture.GetPreciseFloor` para coordenadas em 1/16 tile. Em tiles
@@ -17,6 +17,11 @@ de destinos do lote:
   retorna `unsupported`, nunca caminho livre. `non_solid` representa
   `WallTile.TopLeftSolid/TopRightSolid == false`, como na regra de porta da
   referência; não modela abrir/fechar nem a navegação do cômodo.
+- `prepared_precise_floor` aplica a mesma seleção espacial de piso aos grids
+  preparados por `prepare_saved_architecture`, sem convertê-los de volta ao
+  snapshot cru. Um alias não resolvido continua sendo consultável como valor
+  retido; `floor_aliases_resolved()` deve ser avaliado separadamente e nenhum
+  resultado equivale a `FloorChangeValid`.
 
 Proveniência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
 submódulo `f86bbd34b2112296ed786741f640a0535886d180`;
@@ -24,7 +29,8 @@ submódulo `f86bbd34b2112296ed786741f640a0535886d180`;
 `tso.world/Model/WallTile.cs:TopLeftSolid/TopRightSolid`. Os valores de piso,
 segmentos e padrões vêm de `SavedArchitecture` já interpretado.
 
-`odh-route-geometry-tests` cobre tiles e níveis, diagonais de piso, bounds,
+`odh-route-geometry-tests` cobre grids crus e preparados, tiles e níveis,
+limites estritos de seleção de piso em diagonais, pattern zero, bounds,
 Bresenham em oito octantes, travessia reversa, aresta sólida, não sólida e
 desconhecida, diagonais não consultadas pelo RaycastWall da referência e
 extensões inconsistentes.

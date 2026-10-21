@@ -263,4 +263,38 @@ GeometricRoomMap generate_prepared_room_map(const PreparedArchitecture& architec
         generate_level(architecture.levels[level], level, result, limits);
     return result;
 }
+
+std::optional<std::uint16_t> geometric_room_at(
+    const GeometricRoomMap& map, std::int32_t x, std::int32_t y, std::int16_t level) {
+    if (!map.width || !map.height || map.width > 64 || map.height > 64 ||
+        level < 1 || level > 2 || x < 0 || y < 0 || map.rooms.empty() || map.rooms.size() > 32768)
+        return std::nullopt;
+    const auto cells = std::size_t(map.width) * map.height;
+    for (const auto& room_level : map.levels)
+        if (room_level.size() != cells) return std::nullopt;
+    const auto tile_x = static_cast<std::uint32_t>(x / 16);
+    const auto tile_y = static_cast<std::uint32_t>(y / 16);
+    if (tile_x >= map.width || tile_y >= map.height) return std::nullopt;
+
+    const auto packed = map.levels[static_cast<std::size_t>(level - 1)]
+        [std::size_t(tile_y) * map.width + tile_x];
+    const auto first = static_cast<std::uint16_t>(packed & 0xffffU);
+    const auto second = static_cast<std::uint16_t>((packed >> 16) & 0x7fffU);
+    const auto valid_room = [&](std::uint16_t id) {
+        return id == 0 || (id < map.rooms.size() && map.rooms[id].id == id &&
+            map.rooms[id].level == static_cast<std::uint8_t>(level - 1));
+    };
+    if (!valid_room(first) || !valid_room(second)) return std::nullopt;
+    auto selected = first;
+    if (first != second) {
+        const auto local_x = x % 16;
+        const auto local_y = y % 16;
+        if ((packed & 0x80000000U) != 0) {
+            if (local_x + local_y > 15) selected = second;
+        } else if (local_x - local_y <= 0) {
+            selected = second;
+        }
+    }
+    return selected;
+}
 } // namespace odh

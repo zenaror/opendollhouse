@@ -1,4 +1,5 @@
 #include "odh/route_geometry.hpp"
+#include "odh/prepared_architecture.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +10,8 @@ constexpr std::uint8_t segment_top_left = 1;
 constexpr std::uint8_t segment_top_right = 2;
 constexpr std::uint32_t maximum_dimension = 64;
 
-bool valid_architecture(const SavedArchitecture& architecture) {
+template<class Architecture>
+bool valid_architecture(const Architecture& architecture) {
     if (!architecture.width || !architecture.height ||
         architecture.width > maximum_dimension || architecture.height > maximum_dimension)
         return false;
@@ -18,6 +20,25 @@ bool valid_architecture(const SavedArchitecture& architecture) {
         if (level.floors.size() != cells || level.walls.size() != cells) return false;
     }
     return true;
+}
+
+template<class Architecture>
+std::optional<std::uint16_t> precise_floor(
+    const Architecture& architecture, std::int32_t x, std::int32_t y, std::int16_t level) {
+    if (!valid_architecture(architecture) || level < 1 || level > 2 || x < 0 || y < 0)
+        return std::nullopt;
+    const auto tile_x = static_cast<std::uint32_t>(x / 16);
+    const auto tile_y = static_cast<std::uint32_t>(y / 16);
+    if (tile_x >= architecture.width || tile_y >= architecture.height) return std::nullopt;
+    const auto offset = std::size_t(tile_y) * architecture.width + tile_x;
+    const auto& wall = architecture.levels[static_cast<std::size_t>(level - 1)].walls[offset];
+    const auto local_x = x % 16;
+    const auto local_y = y % 16;
+    if ((wall.segments & wall_vertical_diagonal) != 0)
+        return local_x - local_y > 0 ? wall.top_left_pattern : wall.top_left_style;
+    if ((wall.segments & wall_horizontal_diagonal) != 0)
+        return local_x + local_y > 15 ? wall.top_left_pattern : wall.top_left_style;
+    return architecture.levels[static_cast<std::size_t>(level - 1)].floors[offset];
 }
 
 std::optional<std::uint16_t> crossed_edge(
@@ -47,20 +68,12 @@ WallRaycastResult check_edge(
 
 std::optional<std::uint16_t> saved_precise_floor(
     const SavedArchitecture& architecture, std::int32_t x, std::int32_t y, std::int16_t level) {
-    if (!valid_architecture(architecture) || level < 1 || level > 2 || x < 0 || y < 0)
-        return std::nullopt;
-    const auto tile_x = static_cast<std::uint32_t>(x / 16);
-    const auto tile_y = static_cast<std::uint32_t>(y / 16);
-    if (tile_x >= architecture.width || tile_y >= architecture.height) return std::nullopt;
-    const auto offset = std::size_t(tile_y) * architecture.width + tile_x;
-    const auto& wall = architecture.levels[static_cast<std::size_t>(level - 1)].walls[offset];
-    const auto local_x = x % 16;
-    const auto local_y = y % 16;
-    if ((wall.segments & odh::wall_vertical_diagonal) != 0)
-        return local_x - local_y > 0 ? wall.top_left_pattern : wall.top_left_style;
-    if ((wall.segments & odh::wall_horizontal_diagonal) != 0)
-        return local_x + local_y > 15 ? wall.top_left_pattern : wall.top_left_style;
-    return architecture.levels[static_cast<std::size_t>(level - 1)].floors[offset];
+    return precise_floor(architecture, x, y, level);
+}
+
+std::optional<std::uint16_t> prepared_precise_floor(
+    const PreparedArchitecture& architecture, std::int32_t x, std::int32_t y, std::int16_t level) {
+    return precise_floor(architecture, x, y, level);
 }
 
 WallRaycastResult saved_wall_raycast(

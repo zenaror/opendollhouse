@@ -7,11 +7,19 @@
 
 namespace odh {
 
+struct PreparedArchitecture;
+
 // Simitone's GetPreciseFloor profile for positions in 1/16-tile units.
 // A missing result means the position, level, or retained grid is unsupported.
 // Floor pattern 0 is a valid value and is therefore not used as a sentinel.
 std::optional<std::uint16_t> saved_precise_floor(
     const SavedArchitecture&, std::int32_t x, std::int32_t y, std::int16_t level);
+
+// Same coordinate/diagonal selection over VMTS1ActivatorNew's prepared grids.
+// Alias misses remain visible through PreparedArchitecture diagnostics; this
+// query returns the retained prepared value and does not certify floor validity.
+std::optional<std::uint16_t> prepared_precise_floor(
+    const PreparedArchitecture&, std::int32_t x, std::int32_t y, std::int16_t level);
 
 enum class WallEdgeKnowledge : std::uint8_t { unresolved, non_solid, solid };
 struct ResolvedWallEdges {

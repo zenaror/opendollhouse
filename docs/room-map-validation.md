@@ -73,6 +73,25 @@ O perfil preserva:
   inserção do HashSet usado pela referência; a linguagem C# não especifica
   uma ordem universal para HashSet.
 
+## Consulta por posição
+
+`geometric_room_at` consulta a metade do tile para posições em unidades de
+1/16 tile. Para tile comum retorna o ID repetido; em diagonal vertical, escolhe
+o primeiro ID quando `local_x > local_y` e o segundo também na igualdade; em
+diagonal horizontal, escolhe o segundo somente quando `local_x + local_y > 15`.
+O mapa e os registros de salas precisam ter extents e ownership de nível
+coerentes. As duas metades packed são validadas antes da seleção; coordenadas
+inválidas, IDs não atribuídos ou salas de outra história retornam ausência,
+mesmo quando a metade escolhida seria válida. O ID zero explícito permanece
+distinguível da ausência.
+
+Essas comparações seguem `GetRoomAt` em Simitone
+`4906db3156616bfaffc10ce0963cf08062975fef`,
+`FreeSO/TSOClient/tso.simantics/VMContext.cs:1314-1343`. A API consulta o mapa
+geométrico de ODH; não cria salas do runtime, não resolve portais e não autoriza
+transições entre salas. `floor_resources_resolved` continua sendo apenas uma
+medida de cobertura dos aliases, não validade de piso.
+
 ## Limites explícitos
 
 Grids devem ter dimensões positivas de no máximo 64x64 e extents exatos nas
@@ -102,7 +121,9 @@ preservação dos dados de entrada e dos estilos diagonais, propagação exterio
 `noFloorBad`, padrões de piscina, sobreposições pool/water e sua precedência,
 fallback diagonal e sua ordem em relação às sobreposições,
 ambas diagonais e suas quatro entradas cardinais, IDs globais entre histórias,
-área e limites geométricos, dimensão máxima e rejeições de grids/limites.
+área e limites geométricos, dimensão máxima, rejeições de grids/limites e
+consultas posicionais para tiles comuns/diagonais, room zero, bounds, ownership
+de nível e extents inválidos.
 Os valores esperados são fixtures sintéticas derivadas do contrato acima.
 Não foi executado um comparador diferencial com o runtime C#.
 

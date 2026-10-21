@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace odh {
@@ -58,4 +59,11 @@ GeometricRoomMap generate_saved_room_map(
 // portal/lighting maps and runtime placement remain absent.
 GeometricRoomMap generate_prepared_room_map(
     const PreparedArchitecture&, const RoomMapLimits& limits = {});
+
+// Resolves the geometric room ID at 1/16-tile world coordinates using the
+// packed tile halves and the reference's distinct diagonal selection rules.
+// Invalid coordinates, malformed grids, and unassigned/unknown room IDs return
+// absence; room ID 0 is a value when explicitly present in the packed map.
+std::optional<std::uint16_t> geometric_room_at(
+    const GeometricRoomMap&, std::int32_t x, std::int32_t y, std::int16_t level);
 } // namespace odh
