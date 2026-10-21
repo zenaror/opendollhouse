@@ -1154,6 +1154,7 @@ struct PlacementCandidateProbe {
     std::unique_ptr<SavedGraphicsResources> render_graphics;
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
+    std::optional<SavedGroundSelection> render_ground_selection;
     std::optional<SavedObjectInteractions> render_interactions;
     std::optional<std::size_t> render_selected_interaction_row;
     std::vector<SavedTestFunctionResult> render_test_results;
@@ -1289,6 +1290,10 @@ struct PlacementCandidateProbe {
                 if(eligible.size()>1)title+=" (Tab/Shift+Tab to choose)";
                 title+="; Space/Enter to queue";
             }
+        }else if(render_ground_selection){
+            const auto& ground=*render_ground_selection;
+            title+=" | ground ("+std::to_string(ground.x)+","+std::to_string(ground.y)+") level "+
+                std::to_string(ground.level)+" room "+std::to_string(ground.room)+"; walking not connected yet";
         }
         return title+" | P pause, arrows rotate, +/- zoom, Escape close";
     };
@@ -1347,7 +1352,7 @@ struct PlacementCandidateProbe {
         }
 #ifdef ODH_HAVE_X11
         if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
-            render_lot?"OpenDollhouse Main preview: click selects object, Space/Return requests first eligible interaction, P pause, arrows rotate, +/- zoom, Escape close":
+            render_lot?"OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, P pause, arrows rotate, +/- zoom, Escape close":
                        "OpenDollhouse Main preview: P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
@@ -1697,8 +1702,11 @@ struct PlacementCandidateProbe {
             if(input.quit){window_closed=true;break;}
             if(input.pause)window_paused=!window_paused;
             if(input.primary_click&&render_lot&&render_lot_evidence){
-                prepare_selected_object(render_lot->pick(*render_lot_evidence,
-                    (*input.primary_click)[0],(*input.primary_click)[1]));
+                const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
+                auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
+                render_ground_selection.reset();
+                if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
+                prepare_selected_object(std::move(object));
                 if(!render_interaction_enqueued||queue.size()==0){
                     render_interaction_requested=false;render_interaction_enqueued=false;
                     render_interaction_status="not_requested";render_interaction_diagnostic.clear();
