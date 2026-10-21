@@ -134,6 +134,40 @@ int main() {
         route_grid.grid->contains({-16,-16})&&!route_grid.grid->contains({96,0}),
         "live RoomInfo and EP5 snapshot rasterizes into a bounded padded-room grid");
 
+    World dynamic_world;
+    require(setup(dynamic_world, 4108) &&
+            set_attribute16(dynamic_world, 1, 1, 0) &&
+            set_attribute16(dynamic_world, 1, 2, 0) &&
+            dynamic_world.set_static_footprint(2, false),
+            "dynamic footprint fixture initializes a blocking object");
+    auto dynamic_before = build_world_attempt_walk_obstacles(dynamic_world, defs, room_for, timeout,
+        rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
+        [&](std::int16_t caller, std::int16_t stack_object) {
+            return resolve_ep5(dynamic_world, ep5, caller, stack_object);
+        });
+    require(dynamic_before.state == AttemptWalkObstacleState::ready &&
+            dynamic_before.entity_obstacle_ids == std::vector<std::int16_t>{2} &&
+            !dynamic_before.obstacles.empty(),
+            "AttemptWalk includes a dynamic RoomInfo footprint after bilateral EP5");
+    const auto old_box = dynamic_before.obstacles.back();
+    const auto old_revision = dynamic_world.spatial_revision();
+    require(dynamic_world.set_position(2, {58, 52, 1, 0}) &&
+            dynamic_world.spatial_revision() > old_revision,
+            "moving a dynamic footprint advances the spatial revision");
+    auto dynamic_after = build_world_attempt_walk_obstacles(dynamic_world, defs, room_for, timeout,
+        rooms, 1, 0, 1, room_obstacles, wall_obstacles, true, {},
+        [&](std::int16_t caller, std::int16_t stack_object) {
+            return resolve_ep5(dynamic_world, ep5, caller, stack_object);
+        });
+    require(dynamic_after.state == AttemptWalkObstacleState::ready &&
+            dynamic_after.entity_obstacle_ids == std::vector<std::int16_t>{2} &&
+            !dynamic_after.obstacles.empty(),
+            "refreshed dynamic footprint snapshot remains complete");
+    const auto new_box = dynamic_after.obstacles.back();
+    require((old_box.x1 != new_box.x1 || old_box.y1 != new_box.y1 ||
+             old_box.x2 != new_box.x2 || old_box.y2 != new_box.y2),
+            "a refreshed AttemptWalk snapshot follows the moved dynamic footprint");
+
     World exempt_world;
     require(setup(exempt_world, 4108), "EP5 integration fixture uses private actions");
     require(set_attribute16(exempt_world, 1, 1, 1) &&

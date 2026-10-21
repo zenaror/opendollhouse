@@ -27,6 +27,18 @@ canonicaliza. Isso fornece o dado angular que `OptimizeLines` pode consumir,
 mas o diagnóstico ainda não instancia `VMRoutingFrame`, não recupera
 `PortalTurns`/direção de entrada e não passa esse ângulo por `Route45`.
 
+## Footprints dinâmicos
+
+O Simitone coloca um footprint em `DynamicObstacles` quando
+`StaticFootprint=false`, mas `VMRoutingFrame.AttemptWalk` forma seus obstáculos
+percorrendo `RoomInfo.Entities` e lendo `obj.Footprint` diretamente; portanto,
+ser dinâmico não elimina o bloqueador dessa consulta. O ODH recalcula o
+snapshot live a partir das posições atuais. Um teste agora confirma que um
+objeto com footprint dinâmico continua sujeito ao EP5 bilateral e que um novo
+snapshot após movimento contém sua caixa atualizada. Isso valida o adaptador
+sintético e o mecanismo de revisão espacial; não demonstra porta comercial
+abrindo/fechando, refresh de `RoomObs` por `RegenRoomObs` nem clearance runtime.
+
 ## House07 no Main
 
 Em 2026-10-21, `odh-person` foi compilado em Debug e executado com dados

@@ -13,6 +13,11 @@ validação indicados por versão.
   fora de ordem. A composição por sala, avatares considerados e estado dinâmico
   de portas seguem sem validação.
 
+- O teste do snapshot live AttemptWalk cobre um bloqueador com footprint
+  dinâmico antes e depois de mover a entidade. A nova montagem conserva o
+  bloqueador e atualiza sua caixa; isso não valida a transição de estado de
+  portas comerciais nem clearance runtime.
+
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
   limite da sala e preservando o motivo de snapshots incompletos. Há uma
