@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A resolução estática de `Portal` agora preserva a origem exata do recurso e
+  carrega a BHAV privada indicada por `EntryPoint 15` somente do mesmo asset.
+  Ação zero, ID fora do intervalo privado ou BHAV ausente falham fechados;
+  dispatch global/semiglobal e execução da rotina continuam pendentes. Fixtures
+  sintéticas cobrem seleção, proveniência e falhas. Consulte
+  `docs/entry-points-validation.md`.
+
 - `Entity` agora mantém `radian_direction` contínuo para avatares, enquanto
   `EntityPosition.direction` e ObjectData expõem o notch arredondado de oito
   direções. Movimentos que permanecem no mesmo notch preservam o ângulo; um

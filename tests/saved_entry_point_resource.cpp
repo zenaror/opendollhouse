@@ -35,8 +35,14 @@ std::string objf(){
     std::string bytes(16,'\0');put(bytes,4,1,4);bytes.replace(8,4,"fJBO");put(bytes,12,27,4);
     for(unsigned index=0;index<27;++index){
         const std::size_t at=bytes.size();bytes.resize(at+4,'\0');
-        put(bytes,at,0,2);put(bytes,at+2,index==1?5001:index==5?5005:index==26?5026:0,2);
+        put(bytes,at,0,2);put(bytes,at+2,index==1?5001:index==5?5005:index==15?5015:index==26?5026:0,2);
     }
+    return bytes;
+}
+std::string portal_bhav(){
+    std::string bytes(24,'\0');put(bytes,0,0x8002,2);put(bytes,2,1,2);put(bytes,5,4,1);
+    put(bytes,12,2,2);put(bytes,14,254,1);put(bytes,15,255,1);
+    bytes[18]=0;bytes[19]=0;bytes[20]=11;bytes[21]=0;bytes[22]=0;bytes[23]=2;
     return bytes;
 }
 }
@@ -54,13 +60,25 @@ int main(){try{
         "generated Main, EP5 and EP26 identities decoded");
     check(generated.bhavs.count(4101)&&generated.bhavs.count(4126)&&!generated.bhavs.count(4097),
         "private BHAV presence inventory is scoped to exact asset");
+    bool zero_portal=false;
+    try{(void)saved_portal_action(candidate);}catch(const odh::FormatError&){zero_portal=true;}
+    check(zero_portal,"zero Portal action is rejected instead of creating a call");
 
-    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})));
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
+                    chunk("BHAV",5015,portal_bhav())));
     const auto tabled=saved_entry_point_resource(candidate);
     check(tabled.functions.uses_function_table==1&&tabled.table.source==odh::EntryPointSource::objf&&
         tabled.table.entries.size()==27,"selected OBJf function table decoded");
     check(tabled.table.entries[1].action==5001&&tabled.table.entries[5].action==5005&&
-        tabled.table.entries[26].action==5026&&tabled.bhavs.count(5005),"OBJf entries and matching asset BHAV reported");
+        tabled.table.entries[15].action==5015&&tabled.table.entries[26].action==5026&&
+        tabled.bhavs.count(5005)&&tabled.bhavs.count(5015),"OBJf entries and matching asset BHAV reported");
+    const auto portal=saved_portal_function(candidate);
+    check(portal.action==5015&&portal.action_bhav_in_asset&&portal.source==odh::EntryPointSource::objf&&
+        portal.resource_source==candidate.source&&portal.resource_asset.empty()&&portal.chunk_id==candidate.chunk_id,
+        "Portal entry preserves exact definition resource provenance separately from runtime entity IDs");
+    const auto portal_action=saved_portal_action(candidate);
+    check(portal_action.function.action==5015&&portal_action.routine.instructions.size()==1,
+        "Portal EntryPoint resolves and parses its private BHAV from the selected definition asset");
 
     bool missing_objf=false;write(path,iff(chunk("OBJD",7,objd(1))));
     try{(void)saved_entry_point_resource(candidate);}catch(const odh::FormatError&){missing_objf=true;}
@@ -68,6 +86,10 @@ int main(){try{
     bool duplicate_objd=false;write(path,iff(chunk("OBJD",7,objd(0))+chunk("OBJD",7,objd(0))));
     try{(void)saved_entry_point_resource(candidate);}catch(const odh::FormatError&){duplicate_objd=true;}
     check(duplicate_objd,"ambiguous selected OBJD fails closed");
+    bool missing_portal_bhav=false;
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())));
+    try{(void)saved_portal_action(candidate);}catch(const odh::FormatError&){missing_portal_bhav=true;}
+    check(missing_portal_bhav,"authored Portal action without same-asset private BHAV fails closed");
     std::error_code ignored;std::filesystem::remove(path,ignored);
     std::cout<<"saved entry-point resource checks: "<<checks<<"\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

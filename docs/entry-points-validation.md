@@ -9,6 +9,21 @@ StackObjectFunction35. A seleção usa a entidade StackObject do frame, não
 CodeOwner, Caller, Callee ou EntityKind. Uma ação0 válida difere de uma tabela
 ausente e de um índice fora do banco; escrita scope35 continua unsupported.
 
+## Resolução estática de Portal15
+
+`saved_portal_function` seleciona o índice15 da tabela de EntryPoints do
+recurso exato e conserva `source`, `asset` e `chunk_id` da definição para uso
+posterior em um catálogo de `CodeOwner`; esses campos são proveniência do
+asset, não IDs de entidade do `World`. `saved_portal_action` aceita apenas
+ações privadas no intervalo 4096–8191 e lê/parsa a BHAV do mesmo asset.
+Ação zero, BHAV ausente e IDs globais/semiglobais falham fechados até existir
+um resolvedor de banco correspondente.
+
+O teste focal usa um IFF sintético com `OBJf` e BHAV 5015: confirma a
+proveniência, o parse da rotina e os casos zero/ausente. Isso não executa a
+BHAV, não valida um portal do lote e não prova o dispatch do executável
+original. O teste do backend X11 é independente deste reader.
+
 ## Referência e readers
 
 FreeSO main `4c6b3e8f5835b228723caea3c9f683c62f244f73`, MPL-2.0:

@@ -19,6 +19,14 @@ struct SavedPortalFunction {
     odh::EntryPointSource source;
     std::uint16_t action;
     bool action_bhav_in_asset;
+    // Preserve the resource identity needed by a runtime CodeOwner catalog.
+    // These are asset provenance values, never World entity IDs.
+    std::string resource_source,resource_asset;
+    std::uint16_t chunk_id;
+};
+struct SavedPortalAction {
+    SavedPortalFunction function;
+    odh::Bhav routine;
 };
 
 struct SavedEntryPointResource {
@@ -96,7 +104,21 @@ inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate&
     const auto resource=saved_entry_point_resource(candidate);
     if(resource.table.entries.size()<=15) throw odh::FormatError("portal probe entry 15 unavailable");
     const auto action=resource.table.entries[15].action;
-    return {resource.table.source,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end()};
+    return {resource.table.source,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end(),
+            resource.source,resource.asset,resource.chunk_id};
+}
+
+// Resolve and parse the private Portal action BHAV from the same selected
+// definition asset. Global/semiglobal actions and missing/zero actions remain
+// explicit unsupported cases until their resource-bank resolver is available.
+inline SavedPortalAction saved_portal_action(const odh::DefinitionCandidate& candidate) {
+    const auto function=saved_portal_function(candidate);
+    if(function.action==0) throw odh::FormatError("portal EntryPoint 15 action is zero");
+    if(function.action<4096||function.action>=8192)
+        throw odh::FormatError("portal EntryPoint 15 is not a private BHAV");
+    if(!function.action_bhav_in_asset)
+        throw odh::FormatError("portal EntryPoint 15 BHAV missing from selected definition asset");
+    return {function,saved_private_entry_point_bhav(candidate,function.action)};
 }
 
 inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,const odh::DefinitionIndex& index,const odh::SavedArchitecture& architecture,bool allow_removed=false){
