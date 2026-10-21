@@ -65,6 +65,11 @@ continua sem política completa de clearance.
 da rota conforme o perfil Simitone fixado. O índice RoomInfo não é persistido:
 cada consulta o reconstrói a partir do World vivo, mas o caminho de clearance
 da rota ainda não chama essa consulta.
+O builder de snapshot salvo agora espelha a composição de obstáculos de
+`VMRoutingFrame.AttemptWalk` até a etapa anterior ao `VMRectRouter`: WallObs,
+RoomObs, faixas de limite, flags, margem de footprint e EP5 bilateral. Ele
+falha fechado diante de entidade/porta sem geometria runtime comprovada e não
+alimenta Route45/Snap46.
 [`query_world_room_info`](world-room-info-validation.md) reconstrói o índice
 diretamente do World antes de cada consulta, usando resolvers explícitos para
 salas e KillTimeout de avatares. O saved-world preview consulta candidatos

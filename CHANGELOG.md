@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Snapshot bounded de obstáculos `AttemptWalk`: compõe WallObs/RoomObs, as
+  quatro faixas externas de um tile, footprints com margem 3, flags de
+  interseção e EP5 bilateral; inventário incerto ou fora do orçamento falha
+  fechado. O diagnóstico House07 resolve as tabelas EP5 dos assets exatos e
+  inclui portas com caixa salva e HasZeroExtent desligado sem afirmar estado
+  runtime. O snapshot House07 fica pronto com 153 retângulos, mas nenhuma rota
+  é calculada e `route_clearance` segue false. Consulte
+  `docs/saved-attempt-walk-obstacles-validation.md`.
 - Adaptador de auditoria para política de sobreposição entre entidades de um
   `World` restaurado: resolve flags e EntryPoints vinculados, preserva
   inventário incompleto como unsupported e respeita a parada sequencial por

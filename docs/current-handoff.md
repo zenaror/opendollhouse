@@ -1,5 +1,32 @@
 # Continuidade atual
 
+## Snapshot de obstáculos AttemptWalk no House07 (2026-10-21)
+
+O módulo puro `odh_saved_attempt_walk_obstacles` compõe WallObs + RoomObs,
+faixas externas de um tile (coordenadas inclusivas zero-based), footprints
+elegíveis expandidos por 3 unidades, flags e EP5 bilateral. Action IDs <=255
+resultam em false; acima disso o chamador precisa de um resolver restrito. O
+curto-circuito do EP5 do ator evita exigir a tabela do bloqueador quando já
+retorna true. Limites de entidades/retângulos/chamadas e dados desconhecidos
+falham fechados, sem expor lista parcial. Teste focal e build completa passaram;
+CTest registrou 156 testes sem falhas, com `linux_window_backend` pulado porque
+`DISPLAY=:0` está inacessível.
+
+O diagnóstico House07 lê tabelas EP5 da definição exata e avalia apenas o
+subconjunto read-only existente. Quatro portas com caixa salva e HasZeroExtent
+desligado fornecem footprint candidato apesar do estado runtime desconhecido;
+o snapshot ficou `ready` com 153 retângulos. O JSON mantém
+`vmrectrouter_invoked=false` e `route_clearance=false`; nenhum caminho novo foi
+enviado ao Main. Próximo: validar RoomObs/WallObs por sala com abertura de
+portal, então executar a busca VMRectRouter alinhada em fixture antes de
+integrar Route45. Não tratar a grade 8-vizinhos existente como equivalência ao
+router Simitone.
+
+Validação real usou `House07.iff`, `Objects.far`, duas definições de avatar,
+Neighborhood, 23 fontes arquitetônicas e `Global.far/Global.iff/SLOT100`.
+`git diff --check` passou. Sem validação visual: a única janela do CTest foi
+pulada pelo display X11 inacessível.
+
 ## BHAV read-only EP5 e House07 bloqueadores (2026-10-21)
 
 `odh-person --placement-candidate` agora passa um resolver de EP5 que só executa

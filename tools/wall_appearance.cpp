@@ -9,6 +9,8 @@
 #include "odh/saved_room_route_grid.hpp"
 #include "odh/saved_slot_goal_selection.hpp"
 #include "odh/saved_room_boundary_audit.hpp"
+#include "odh/saved_attempt_walk_obstacles.hpp"
+#include "odh/entry_point5_readonly.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include "odh/route.hpp"
 #include "odh/routing.hpp"
@@ -84,6 +86,7 @@ void emit_route_grid_diagnostic(
  const std::vector<odh::SavedCollisionCandidate>& entities,
  const std::vector<odh::SavedMultitileGroup>& groups,
  const odh::SlotTable& slots,std::size_t slot_type3_index,
+ const odh::SavedWorld& saved,const odh::DefinitionIndex& definitions,
  const odh::SavedWorldEntity* actor_record,const odh::PreparedArchitecture* prepared) {
  const auto find_entity=[&](std::int16_t id)->const odh::SavedCollisionCandidate*{
   for(const auto& entity:entities)if(entity.object_id==id)return &entity;
@@ -117,6 +120,126 @@ void emit_route_grid_diagnostic(
  odh::WallObstacleCandidateSet wall_obstacles;wall_obstacles.level=level;
  if(edges.status==odh::WallEdgeBuildStatus::ready)
   wall_obstacles=odh::generate_wall_obstacle_candidates(architecture,level,edges.edges);
+ std::map<std::int16_t,const odh::SavedWorldEntity*> records_by_id;
+ for(const auto& record:saved.records)
+  records_by_id.emplace(static_cast<std::int16_t>(record.saved.object_id),&record);
+ std::vector<odh::AttemptWalkObstacleEntity> attempt_entities;
+ bool attempt_inventory_complete=saved.world&&saved.records.size()<=4096;
+ std::size_t saved_door_footprints=0;
+ std::map<std::uint32_t,SavedEntryPointResource> attempt_entry_point_resources;
+ std::set<std::uint32_t> attempt_entry_point_errors;
+ const auto entry_point5_action_for=[&](std::int16_t id)->std::optional<std::uint16_t>{
+  const auto* entity=saved.world?saved.world->find(id):nullptr;
+  if(!entity||!entity->definition)return std::nullopt;
+  if(entity->entry_points)
+   return entity->entry_points->size()>5?(*entity->entry_points)[5].action:0;
+  const auto guid=entity->definition->guid;
+  auto resource=attempt_entry_point_resources.find(guid);
+  if(resource==attempt_entry_point_resources.end()&&attempt_entry_point_errors.find(guid)==attempt_entry_point_errors.end()){
+   if(attempt_entry_point_resources.size()>=256){attempt_entry_point_errors.insert(guid);return std::nullopt;}
+   const auto* candidate=definitions.unique(guid);
+   if(!candidate){attempt_entry_point_errors.insert(guid);return std::nullopt;}
+   try{resource=attempt_entry_point_resources.emplace(guid,saved_entry_point_resource(*candidate)).first;}
+   catch(const std::exception&){attempt_entry_point_errors.insert(guid);}
+  }
+  if(resource==attempt_entry_point_resources.end())return std::nullopt;
+  return resource->second.table.entries.size()>5?resource->second.table.entries[5].action:0;
+ };
+ for(const auto& record:saved.records){
+  const auto id=static_cast<std::int16_t>(record.saved.object_id);
+  const auto* entity=saved.world?saved.world->find(id):nullptr;
+  if(!entity){attempt_inventory_complete=false;continue;}
+  // RoomInfo.Entities excludes contained and unpositioned entities. For every
+  // remaining entity, use the exact prepared room map and require a resolved
+  // room before deciding whether it belongs to this local snapshot.
+  if(entity->attachment||!entity->position)continue;
+  const auto entity_room=odh::geometric_room_at_runtime(rooms,entity->position->x,
+      entity->position->y,entity->position->level);
+  if(!entity_room){attempt_inventory_complete=false;continue;}
+  if(*entity_room!=*actor_room)continue;
+  const auto* collision=find_entity(id);
+  odh::AttemptWalkObstacleEntity candidate;
+  candidate.id=id;candidate.avatar=entity->kind==odh::EntityKind::avatar;
+  candidate.room=*entity_room;
+  if(collision){
+   if(collision->state==odh::SavedCollisionCandidateState::candidate&&collision->box){
+    candidate.footprint_state=odh::AttemptWalkFootprintState::present;
+    candidate.footprint=collision->box;
+   }else if(collision->state==odh::SavedCollisionCandidateState::unsupported&&
+       collision->reason==odh::SavedCollisionCandidateReason::architectural_door_runtime_state_unavailable&&
+       collision->box){
+    // VMGameObject.GetObstacle still exposes OBJD geometry when the saved
+    // HasZeroExtent bit is clear. Include that saved footprint while keeping
+    // live portal/door state explicitly outside this diagnostic.
+    candidate.footprint_state=odh::AttemptWalkFootprintState::present;
+    candidate.footprint=collision->box;
+    ++saved_door_footprints;
+   }else if(collision->state==odh::SavedCollisionCandidateState::absent){
+    candidate.footprint_state=odh::AttemptWalkFootprintState::absent;
+   }
+  }
+  const odh::VmFrame frame{odh::routine_key(4096),0,{id,id,id,0},{},{}};
+  const auto flags=saved.world->read(frame,3,8);
+  if(flags)candidate.flags=static_cast<std::uint16_t>(*flags);
+  candidate.entry_point5_action=entry_point5_action_for(id);
+  attempt_entities.push_back(std::move(candidate));
+ }
+ const auto* actor_entity=saved.world?saved.world->find(actor_id):nullptr;
+ const odh::VmFrame actor_frame{odh::routine_key(4096),0,{actor_id,actor_id,actor_id,0},{},{}};
+ const auto actor_flags=actor_entity?saved.world->read(actor_frame,3,8):std::nullopt;
+ const auto actor_ep5_action=entry_point5_action_for(actor_id);
+ std::map<std::pair<std::uint32_t,std::uint16_t>,odh::Bhav> ep5_cache;
+ std::set<std::pair<std::uint32_t,std::uint16_t>> ep5_errors;
+ const odh::AttemptWalkEntryPoint5Resolver ep5_resolver=[&](std::int16_t caller_id,
+     std::int16_t stack_object_id)->std::optional<bool>{
+  const auto* caller=saved.world?saved.world->find(caller_id):nullptr;
+  const auto* stack_object=saved.world?saved.world->find(stack_object_id):nullptr;
+  if(!caller||!caller->definition||!stack_object||!stack_object->definition)return std::nullopt;
+  const auto caller_action=entry_point5_action_for(caller_id);
+  if(!caller_action)return std::nullopt;
+  const auto action=*caller_action;
+  if(action<=255)return false;
+  const auto* definition=definitions.unique(caller->definition->guid);
+  if(!definition)return std::nullopt;
+  const auto key=std::make_pair(caller->definition->guid,action);
+  auto routine=ep5_cache.find(key);
+  if(routine==ep5_cache.end()&&ep5_errors.find(key)==ep5_errors.end()){
+   try{routine=ep5_cache.emplace(key,saved_private_entry_point_bhav(*definition,action)).first;}
+   catch(const std::exception&){ep5_errors.insert(key);}
+  }
+  if(routine==ep5_cache.end())return std::nullopt;
+  const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
+  const auto attribute16=saved.world->read(frame,1,16);
+  const auto execution=odh::evaluate_read_only_entry_point5(action,routine->second,
+      stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
+  if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)return true;
+  if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)return false;
+  return std::nullopt;
+ };
+ odh::AttemptWalkObstacleSnapshot attempt_snapshot;
+ if(!actor_flags){
+  attempt_snapshot.reason=odh::AttemptWalkObstacleReason::entity_flags_unknown;
+ }else{
+  // This diagnostic represents a newly created root route, whose pinned
+  // Simitone VMRoutingFrame starts with an empty AvatarsToConsider set.
+  attempt_snapshot=odh::build_attempt_walk_obstacles(rooms,*actor_room,level,
+      *actor->position,actor_id,static_cast<std::uint16_t>(*actor_flags),actor_ep5_action,
+      *obstacle_it,wall_obstacles,attempt_entities,attempt_inventory_complete,true,{},ep5_resolver);
+ }
+ out<<",\"attempt_walk_obstacle_snapshot\":{\"evidence\":\"saved_World_and_initial_architecture_snapshot_not_live_RoomInfo\""
+  <<",\"route_clearance\":false,\"vmrectrouter_invoked\":false,\"runtime_door_state_validated\":false"
+  <<",\"avatar_consideration\":\"new_root_route_empty_AvatarsToConsider\",\"state\":"
+  <<json_bytes(attempt_snapshot.state==odh::AttemptWalkObstacleState::ready?"ready":"unsupported")
+  <<",\"reason\":"<<json_bytes(odh::attempt_walk_obstacle_reason_name(attempt_snapshot.reason))
+  <<",\"unsupported_entity_id\":";
+ if(attempt_snapshot.unsupported_entity_id)out<<*attempt_snapshot.unsupported_entity_id;else out<<"null";
+ out<<",\"obstacle_rectangles\":"<<attempt_snapshot.obstacles.size()
+  <<",\"saved_architectural_door_footprints\":"<<saved_door_footprints
+  <<",\"entity_obstacle_ids\":[";
+ for(std::size_t i=0;i<attempt_snapshot.entity_obstacle_ids.size();++i){if(i)out<<',';out<<attempt_snapshot.entity_obstacle_ids[i];}
+ out<<"],\"entry_point5_calls\":"<<attempt_snapshot.entry_point5_calls
+  <<",\"ep5_exemptions\":"<<attempt_snapshot.exempted_by_entry_point5
+  <<",\"start_intersects\":"<<(attempt_snapshot.start_intersects?"true":"false")<<'}';
  const auto grid=odh::build_saved_room_route_grid(rooms,*actor_room,level,*obstacle_it,wall_obstacles,
   entities,actor_id,true);
  out<<",\"grid_state\":"<<json_bytes(grid.state==odh::SavedRoomRouteGridState::ready?"ready":"unsupported")
@@ -419,6 +542,7 @@ int main(int argc,char** argv){try{
    const auto route_actor_record=records_by_id.find(route_grid_diagnostic->first);
    emit_route_grid_diagnostic(std::cout,route_grid_diagnostic->first,route_grid_diagnostic->second,
     architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,world->multitile_groups,*route_slots,slot_resource->index,
+    *world,*index,
     route_actor_record==records_by_id.end()?nullptr:route_actor_record->second,prepared?&*prepared:nullptr);
   }
   std::cout<<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
