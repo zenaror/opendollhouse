@@ -14,9 +14,10 @@ faltam inicialização/encerramento fiel das poses, lote, persistência, serviç
 completos de simulação e validação em consoles.
 
 Plataformas planejadas: Linux primeiro; depois New Nintendo 3DS, PlayStation Vita
-e Android; Windows e macOS (Apple Silicon arm64 e Intel x86_64) ficam como alvos
-futuros. O New 3DS continua orientando consumo, carregamento e decisões
-portáveis desde o início. Cada console exige validação própria em hardware.
+e Android; Nintendo Switch, Windows e macOS (Apple Silicon arm64 e Intel x86_64)
+ficam como alvos futuros. O New 3DS continua orientando consumo, carregamento e
+decisões portáveis desde o início. Cada console exige toolchain e validação
+próprias; não há build ou teste de hardware do Switch validado neste projeto.
 Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão
 de CI ou máquinas dedicadas antes de qualquer declaração de suporte.
 

@@ -18,6 +18,11 @@ O usuário não dispõe de máquinas Windows ou Mac para validar essas builds; e
 exigirão CI ou colaboradores com esses sistemas e não serão declaradas funcionais
 com base apenas na compilação Linux.
 
+Decisão de planejamento de 2026-10-21: incluir Nintendo Switch como possível
+build futura, após o candidato Linux e os ports prioritários. Toolchain,
+permissões de distribuição, backends e validação em hardware não foram
+investigados nem confirmados; a meta não implica compatibilidade atual.
+
 Decisão de entrada de dados de 2026-10-14: o motor lê assets fornecidos pelo
 jogador, sem depender de executável original ou realizar checagem de CD.
 Priorizar a árvore de dados copiados/extraídos tanto no Linux quanto no

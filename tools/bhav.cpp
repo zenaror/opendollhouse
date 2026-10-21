@@ -134,6 +134,8 @@ int main(int argc, char** argv) {
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
                      "  [--route-slot-probe --object-def ID [--route-attribute1 0|1]] loads StackObject OBJD/SLOT.\n"
+                     "  [--stack-object-word INDEX VALUE] initializes one word on the constructed StackObject.\n"
+                     "  [--caller-object-word INDEX VALUE] initializes one word on the constructed Caller.\n"
                      "  [--animation-probe ARCHIVE.far ENTRY.bcf [--age 0..32767]] requires --snap-probe; silent animation.\n"
                      "  [--reset-probe ENTRY.bcf [--post-ticks 0..4096]] requires --animation-probe; explicit global posture loops.\n"
                      "  [--stand-after] requires reset, sound, animation and snap probes; legacy selected OBJD Stand.\n"
@@ -166,6 +168,8 @@ int main(int argc, char** argv) {
         std::vector<ScenePart> view_parts;
         bool view_window=false,view_auto=false,view_readback=false;
         std::optional<std::uint16_t> object_def,route_attribute1;
+        std::optional<std::pair<std::uint16_t,std::uint16_t>> stack_object_word;
+        std::optional<std::pair<std::uint16_t,std::uint16_t>> caller_object_word;
         std::optional<std::uint16_t> occupant, posture, age, post_ticks, hold_ticks;
         std::optional<std::string> reset_entry;
         std::optional<std::pair<std::string,std::string>> animation;
@@ -185,6 +189,16 @@ int main(int argc, char** argv) {
             else if (option == "--route-probe" && !route_probe) route_probe=true;
             else if (option == "--route-slot-probe" && !route_slot_probe) route_slot_probe=true;
             else if (option == "--route-attribute1" && !route_attribute1 && n + 1 < argc) route_attribute1=identifier(argv[++n]);
+            else if (option == "--stack-object-word" && !stack_object_word && n + 2 < argc) {
+                const auto index=identifier(argv[++n]);
+                const auto value=identifier(argv[++n]);
+                stack_object_word=std::make_pair(index,value);
+            }
+            else if (option == "--caller-object-word" && !caller_object_word && n + 2 < argc) {
+                const auto index=identifier(argv[++n]);
+                const auto value=identifier(argv[++n]);
+                caller_object_word=std::make_pair(index,value);
+            }
             else if (option == "--sound-probe" && !sound_probe) sound_probe=true;
             else if (option == "--audio-probe" && !audio_probe && n+3<argc) {
                 audio_probe=audio_option_seen=true;
@@ -258,6 +272,8 @@ int main(int argc, char** argv) {
             (route_slot_probe && (!route_probe || !object_def || snap_probe)) ||
             (object_def && !snap_probe && !route_slot_probe) ||
             (route_attribute1 && (!route_slot_probe || *route_attribute1>1)) ||
+            (stack_object_word && (!world_probe || stack_object_word->first>67 || stack_object_word->second>32767)) ||
+            (caller_object_word && (!world_probe || caller_object_word->first>67 || caller_object_word->second>32767)) ||
             (occupant && *occupant != 0 && *occupant != 1 && *occupant != 3) ||
             (posture && *posture > 32767) || (animation && !snap_probe) ||
             (age && (!animation || *age>32767)) || (sound_probe && !animation) || (reset_entry && !animation) ||
@@ -401,6 +417,12 @@ int main(int argc, char** argv) {
                 if(!world.write(object_frame,1,1,static_cast<std::int16_t>(route_attribute1.value_or(0))))
                     throw odh::FormatError("cannot initialize constructed StackObject attribute 1");
             }
+            if(stack_object_word&&!world.declare_object_word(2,static_cast<std::int16_t>(stack_object_word->first),
+                    static_cast<std::int16_t>(stack_object_word->second)))
+                throw odh::FormatError("cannot initialize constructed StackObject word");
+            if(caller_object_word&&!world.declare_object_word(1,static_cast<std::int16_t>(caller_object_word->first),
+                    static_cast<std::int16_t>(caller_object_word->second)))
+                throw odh::FormatError("cannot initialize constructed Caller word");
         }
         if(main_probe && (!world.declare_definition_word(1,9,2) || !world.set_motive(1,6,0)))
             throw odh::FormatError("cannot construct avatar motive and definition profile");
@@ -579,6 +601,8 @@ int main(int argc, char** argv) {
                 <<",\"initial_attribute_1\":"<<route_attribute1.value_or(0)
                 <<",\"attribute_source\":\"constructed StackObject probe parameter\"}";
         }
+        if(stack_object_word)std::cout<<",\"stackobject_word\":["<<stack_object_word->first<<','<<stack_object_word->second<<']';
+        if(caller_object_word)std::cout<<",\"caller_word\":["<<caller_object_word->first<<','<<caller_object_word->second<<']';
         if (world_probe) std::cout << ",\"initial_world\":{\"caller\":1,\"callee\":2,\"stack_object\":2,\"occupant\":"
             << occupant.value_or(0) << ",\"posture\":" << posture.value_or(0)
             << ",\"age\":" << (animation?age.value_or(21):0)

@@ -411,10 +411,11 @@ Só depois avançar para ações contínuas, tempo/necessidades e persistência 
 [validação do frame do Main](person-main-render-validation.md).
 
 Meta integral: primeira versão funcional e verificável no Linux; New 3DS, Vita
-e Android são etapas futuras com validação própria. ODH exige dados do jogo
-fornecidos pelo usuário, sem dependência do executável original ou checagem de
-CD. Preservar os milestones de leitores, VM, cena/interação, tempo e save; os
-resultados Linux não comprovam compatibilidade dos ports.
+e Android são etapas futuras com validação própria. Nintendo Switch também é
+um possível build futuro, ainda sem estudo de toolchain ou validação. ODH exige
+dados do jogo fornecidos pelo usuário, sem dependência do executável original ou
+checagem de CD. Preservar os milestones de leitores, VM, cena/interação, tempo
+e save; os resultados Linux não comprovam compatibilidade dos ports.
 
 ## Incremento atual — manager HIT por `TrackID`
 
@@ -788,3 +789,27 @@ natural nem execução de Doors.iff:4113 dentro do save; Portal15 e equivalênci
 ao jogo original seguem abertos. Próximo: roteamento a partir da interação
 normal selecionada, preservando a frame tree e code owner, depois portal filho
 e reconstrução da grade após mudança de sala.
+
+## Probe de Portal15 Door e bloqueio opcode 27 — 2026-10-21
+
+Com `odh-bhav` e os recursos externos originais, a execução bounded de
+`Doors.iff:4105` foi iniciada no VM sobre mundo construído com caller word 9=0,
+StackObject OBJD15089 (GUID1017, SubIndex1, SLOT128) e atributo1=1. O trace
+executa 4105, chama 4112 e 4115, depois falha em `Doors.iff:4112` pc5:
+opcode27, operandos `[0,0,254,0,0,0,2,0]`. A referência FreeSO fixa
+identifica opcode27 como `goto_relative`: cria SLOT type3 standing e agenda
+uma nova frame de routing para o StackObject; aqui location `-2` é OnTopOf,
+direction 0 SameDirection e flag 2 NoFailureTrees. ODH ainda não implementa
+esse adaptador. Não presumir que equivale ao Route45 Literal: a geometria,
+seleção do destino e continuação assíncrona precisam ser validadas antes de
+habilitar o restante do Portal15.
+
+O CLI `odh-bhav` ganhou opções de probe para inicializar palavras explícitas de
+Caller e StackObject no mundo construído; os valores são apenas estado sintético
+do harness, não valores restaurados do save. O probe pára antes da rotina 4113,
+por isso não prova interação de porta, animação ou mudança de sala.
+Próximo: implementar `goto_relative` como adaptador de routing com operandos e
+perfis estritos, usando routing/frame de rota já existente, e adicionar teste
+que confirme `Doors.iff:4112` ultrapassa esse ponto somente com uma resolução e
+rota validadas; caso os requisitos espaciais não estejam disponíveis, falhar
+fechado e ampliar a integração do World/save em vez de aproximar sucesso.

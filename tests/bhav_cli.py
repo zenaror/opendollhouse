@@ -42,6 +42,15 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     result=run(rows,'--run')
     report=json.loads(result.stdout)
     assert result.returncode==0 and report['status']=='returned_true' and report['steps']==1
+    result=run(rows,'--run','--world-probe','--caller-object-word','9','0',
+               '--stack-object-word','10','1')
+    report=json.loads(result.stdout)
+    assert result.returncode==0 and report['caller_word']==[9,0]
+    assert report['stackobject_word']==[10,1] and report['status']=='returned_true'
+    for options in [('--run','--world-probe','--caller-object-word','68','0'),
+                    ('--run','--world-probe','--stack-object-word','0','32768')]:
+        result=run(rows,*options)
+        assert result.returncode==2 and not result.stdout
     result=run([(4096,routine(4097,bytes([255])*8)),(4097,routine(49))],'--run')
     report=json.loads(result.stdout)
     assert result.returncode==3 and report['status']=='fault' and report['stack_depth']==2
