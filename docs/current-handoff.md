@@ -20,6 +20,19 @@ atual só prepara uma sala e ainda não executa portal/transição. Origens
 anterior `(376,440)`. Essa é evidência de deslocamento dentro do cômodo, não de
 input do jogador ou navegação entre salas.
 
+## Plano de cômodos para o destino cruzado (2026-10-21)
+
+No probe headless `--saved-world-main`, House07 restaurado partiu da sala 3 e
+`--attempt-walk-destination 320 320` resolveu o destino na sala 1. O inventário
+Portal15 estava completo (24 aberturas, 12 arestas) e o planejador de grafo
+retornou `cross_room_portal_plan_ready`: sala 3 → sala 1 via portal26, em
+`[408,424,1]` (2 expansões; custo 9,92891). Isso comprova somente a cadeia
+estática de salas/portais do save. O BHAV EntryPoint15 não foi executado, o
+avatar não percorreu até a porta e nenhuma mudança de sala ou clearance runtime
+foi validada. A próxima etapa é ligar essa cadeia ao scheduler Route45, executar
+a ação Portal15 com owner/EntryPoint corretos e reconstruir a malha da sala após
+o retorno antes de continuar até o SLOT.
+
 ## Diagnóstico de destinos Route45 (2026-10-21)
 
 `Routing` diferencia ausência de candidato compatível com a máscara direcional
