@@ -12,20 +12,21 @@ jogador ou navegação por portas/portais. Reproduzir com o comando em
 `docs/person-main-render-validation.md`.
 
 No teste headless, deslocar o avatar para `(320,320,1,direction3)` fez a mesma
-cadeira retornar `false`. O diagnóstico observado antes deste checkpoint dizia
-`SLOT direction mask rejects every candidate`, mas a inspeção mostrou que essa
-mensagem também cobria a rejeição de destinos pelo validador do lote. O
-controller agora distingue os dois casos e um teste de regressão exercita a
-rejeição pelo host. Repetir a origem distante para identificar a causa real e
-ampliar a cobertura de origens continua pendente.
+cadeira retornar `false`, sem callbacks de movimento. Reexecutado após a correção
+do diagnóstico, o caso continua informando `SLOT direction mask rejects every
+candidate`: nenhum candidato elegível passou pela máscara direcional. A fixture
+de regressão separada confirma que a rejeição pelo validador do host agora tem
+uma mensagem própria. A causa dos slots incompatíveis para essa origem e a
+matriz ampliada de origens continuam pendentes.
 
 ## Diagnóstico de destinos Route45 (2026-10-21)
 
 `Routing` agora informa separadamente quando a máscara direcional não deixa
 candidato algum e quando o validador do host rejeita todos os destinos
 direcionalmente válidos. `routing` passou 1/1 com uma fixture na qual o host
-rejeita todos os candidatos. O cenário House07 distante ainda precisa ser
-reexecutado para classificar a causa, sem usar a tela.
+rejeita todos os candidatos. Reexecutado headlessly, House07 em
+`(320,320,1,direction3)` foi classificado como ausência de candidato compatível
+com a máscara direcional, sem callbacks de movimento.
 
 ## Cache de sprites ao mudar a câmera (2026-10-21)
 
