@@ -1,4 +1,5 @@
 #include "odh/world.hpp"
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -61,6 +62,11 @@ int main() {
         require(w.read(frame(),3,2)==0 && w.read(frame(),3,3)==-1 && w.read(frame(),3,11)==1 &&
                 w.read(frame(),3,67)==1 && w.read(frame(),3,1)==7,
                 "derived fields preserve uncontained baseline and ordinary direction");
+        require(w.set_position(1,{16,16,1,7}) &&
+                    std::abs(e->radian_direction-7.0f*0.7853981633974483f)<0.00001f &&
+                    w.set_radian_direction(1,-0.3f) && e->position->direction==0 &&
+                    e->saved_object_banks->object_data==original,
+                "restored avatar derives radians from its saved notch and runtime turns preserve raw save data");
         for (const auto index : {2,3,11,67})
             require(!e->object_words.count(static_cast<std::int16_t>(index)),"derived words excluded from runtime map");
         require(!import(w) && w.word_count()==145 && e->generation==1,"duplicate import leaves existing entity unchanged");

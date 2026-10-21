@@ -1,5 +1,6 @@
 #include "odh/world.hpp"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace odh {
@@ -11,6 +12,24 @@ bool derived(std::int16_t index) { return index == 2 || index == 3 || index == 1
 bool valid_position(EntityPosition position) {
     return position.x>=0 && position.y>=0 && position.x<=32767 && position.y<=32767 &&
            position.level>=1 && position.direction<=7;
+}
+std::uint8_t direction_notch(float radians) {
+    constexpr double pi = 3.141592653589793238462643383279502884;
+    const auto notch = static_cast<double>(radians) / (pi / 4.0);
+    const auto lower = std::floor(notch);
+    const auto fraction = notch - lower;
+    // Match Math.Round's midpoint-to-even rule without inheriting the process
+    // floating-point rounding mode as nearbyint would.
+    const auto rounded = fraction < 0.5 ? lower
+                       : fraction > 0.5 ? lower + 1.0
+                       : std::fmod(std::abs(lower), 2.0) == 0.0 ? lower : lower + 1.0;
+    auto modulo = std::fmod(rounded, 8.0);
+    if (modulo < 0.0) modulo += 8.0;
+    return static_cast<std::uint8_t>(modulo);
+}
+float radians_for_notch(std::uint8_t direction) {
+    constexpr float pi_over_four = 0.78539816339744830962f;
+    return static_cast<float>(direction) * pi_over_four;
 }
 std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
     if (scope == 35) return frame.context.stack_object;
@@ -182,13 +201,17 @@ std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
     return descendants;
 }
 void World::apply_position(const std::vector<std::int16_t>& descendants,EntityPosition position) {
-    entities_.at(descendants[0]).position=position;
-    if (auto direction=entities_.at(descendants[0]).object_words.find(1);
-        direction!=entities_.at(descendants[0]).object_words.end())
+    auto& root=entities_.at(descendants[0]);
+    root.position=position;
+    if(root.kind==EntityKind::avatar && direction_notch(root.radian_direction)!=position.direction)
+        root.radian_direction=radians_for_notch(position.direction);
+    if (auto direction=root.object_words.find(1); direction!=root.object_words.end())
         direction->second=position.direction;
     for(std::size_t n=1;n<descendants.size();++n) {
         auto& child=entities_.at(descendants[n]);
         auto p=position;p.direction=child.position->direction;child.position=p;
+        if(child.kind==EntityKind::avatar && direction_notch(child.radian_direction)!=p.direction)
+            child.radian_direction=radians_for_notch(p.direction);
         if (auto direction=child.object_words.find(1); direction!=child.object_words.end())
             direction->second=p.direction;
     }
@@ -198,6 +221,18 @@ bool World::set_position(std::int16_t id,EntityPosition position) {
     if(found==entities_.end() || found->second.attachment || !valid_position(position)) return false;
     const auto descendants=position_tree(id); // Allocation happens before any mutation.
     apply_position(descendants,position);return true;
+}
+bool World::set_radian_direction(std::int16_t id,float radians) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end() || found->second.kind!=EntityKind::avatar || !std::isfinite(radians))
+        return false;
+    auto& avatar=found->second;
+    const auto notch=direction_notch(radians);
+    avatar.radian_direction=radians;
+    if(avatar.position) avatar.position->direction=notch;
+    if(auto direction=avatar.object_words.find(1);direction!=avatar.object_words.end())
+        direction->second=notch;
+    return true;
 }
 bool World::place_on_floor(std::int16_t id,EntityPosition position) {
     const auto found=entities_.find(id);
@@ -338,6 +373,8 @@ bool World::write(const VmFrame& frame, std::uint8_t scope, std::int16_t index, 
         if (index == 1) {
             if (value < 0 || value > 7) return false;
             if (entity.position) entity.position->direction = static_cast<std::uint8_t>(value);
+            if (entity.kind==EntityKind::avatar)
+                entity.radian_direction=radians_for_notch(static_cast<std::uint8_t>(value));
         }
         field->second = value; return true;
     }

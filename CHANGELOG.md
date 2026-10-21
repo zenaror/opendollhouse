@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `Entity` agora mantém `radian_direction` contínuo para avatares, enquanto
+  `EntityPosition.direction` e ObjectData expõem o notch arredondado de oito
+  direções. Movimentos que permanecem no mesmo notch preservam o ângulo; um
+  notch explícito novo o canonicaliza. Isso prepara o dado necessário para
+  `OptimizeLines`, mas ainda não o conecta a `Route45`, `PortalTurns` ou ao
+  movimento do avatar. Testes World/save-bank passaram; veja também
+  `docs/world-attempt-walk-validation.md`.
+
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com
   crossings fixos HiP. O ajuste opcional `dirIn` usa o orçamento inicial de

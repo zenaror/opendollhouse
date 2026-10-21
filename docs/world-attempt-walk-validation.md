@@ -19,6 +19,14 @@ conjunto para este probe isolado; não reconstrói `WaitTime`/`VMRoutingFrame` d
 um simulador multithread nem pode ser generalizado para um pedido futuro no
 jogo.
 
+`Entity` também mantém `radian_direction` contínuo para avatares. O notch de
+oito direções em `EntityPosition`/ObjectData é derivado com arredondamento
+midpoint-to-even, como na conversão usada pela referência Simitone; movimentos
+no mesmo notch preservam o ângulo e uma mudança explícita de notch o
+canonicaliza. Isso fornece o dado angular que `OptimizeLines` pode consumir,
+mas o diagnóstico ainda não instancia `VMRoutingFrame`, não recupera
+`PortalTurns`/direção de entrada e não passa esse ângulo por `Route45`.
+
 ## House07 no Main
 
 Em 2026-10-21, `odh-person` foi compilado em Debug e executado com dados
@@ -71,9 +79,11 @@ comparar os corredores bruto e otimizado.
 
 `world_attempt_walk` usa um World sintético para confirmar caixas live,
 aplicação da política/EP5 bilateral e invalidação quando uma callback muda o
-World durante a montagem. O teste focal passou. Build Debug completa em
-`/tmp/odh-attemptwalk-build` e CTest passaram com 158/158; o teste
-`linux_window_backend` foi pulado por falta de X11 acessível.
+World durante a montagem. Os testes `odh-world-tests` e
+`odh-world-saved-bank-tests` também cobrem persistência do ângulo contínuo,
+derivação do notch e preservação dos bancos salvos. O teste focal passou. A
+build Debug completa em `/tmp/odh-attemptwalk-build` e o CTest passaram com
+158/158; `linux_window_backend` foi pulado por falta de X11 acessível.
 
 ## Proveniência
 

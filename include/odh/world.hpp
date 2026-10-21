@@ -49,6 +49,9 @@ struct Entity {
     // New VM avatars start alive. Death/leave controllers may update this;
     // absent state remains possible for imported profiles that cannot prove it.
     std::optional<std::int32_t> kill_timeout;
+    // VMAvatar.RadianDirection is continuous during turns; EntityPosition only
+    // exposes the derived eight-notch direction used by saved-object adapters.
+    float radian_direction = 0.0f;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -104,6 +107,7 @@ public:
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_static_footprint(std::int16_t id, bool is_static);
     bool set_avatar_kill_timeout(std::int16_t id, std::int32_t value);
+    bool set_radian_direction(std::int16_t id, float radians);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,

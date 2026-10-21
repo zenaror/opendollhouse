@@ -1,4 +1,5 @@
 #include "odh/world.hpp"
+#include <cmath>
 #include <iostream>
 #include <limits>
 
@@ -38,6 +39,24 @@ int main() {
                 "invalid ObjectData direction leaves live orientation unchanged");
         require(w.set_position(1,{16,16,1,4}) && w.read(f,3,1)==4,
                 "live position updates the ObjectData direction");
+        constexpr float fractional_turn=0.3f;
+        require(w.set_radian_direction(1,fractional_turn) &&
+                    w.find(1)->radian_direction==fractional_turn &&
+                    w.find(1)->position->direction==0 && w.read(f,3,1)==0,
+                "avatar keeps continuous radians while exposing the rounded direction notch");
+        require(w.set_position(1,{17,16,1,0}) &&
+                    w.find(1)->radian_direction==fractional_turn,
+                "movement within the same direction notch preserves continuous avatar angle");
+        require(!w.set_radian_direction(2,0.5f) &&
+                    !w.set_radian_direction(1,std::numeric_limits<float>::quiet_NaN()) &&
+                    w.find(1)->radian_direction==fractional_turn,
+                "radian direction rejects non-avatars and non-finite values atomically");
+        require(w.set_radian_direction(1,0.9f) && w.find(1)->position->direction==1 &&
+                    w.read(f,3,1)==1,
+                "continuous angle rounds to the source eight-notch direction");
+        require(w.set_position(1,{18,16,1,3}) &&
+                    std::abs(w.find(1)->radian_direction-3.0f*0.7853981633974483f)<0.00001f,
+                "explicit notch changes reset avatar radians to the canonical notch angle");
         for (const auto index : {2,3,11,67}) {
             require(!w.declare_object_word(1,static_cast<std::int16_t>(index),9),"derived words cannot be replaced");
             require(!w.write(f,3,static_cast<std::int16_t>(index),9),"derived identity/relation cannot be written");
