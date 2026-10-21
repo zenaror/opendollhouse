@@ -90,6 +90,8 @@ AttemptWalkObstacleSnapshot build_attempt_walk_obstacles(
         return unsupported(AttemptWalkObstacleReason::actor_room_mismatch);
 
     AttemptWalkObstacleSnapshot result;
+    result.room_id = room;
+    result.level = level;
     // Simitone room bounds are zero-based inclusive cell bounds. AttemptWalk
     // pads those coordinates by one tile on each side before multiplying by 16.
     const auto left = (std::int64_t(bounds.x) - 1) * 16;

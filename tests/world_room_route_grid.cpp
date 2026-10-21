@@ -12,6 +12,7 @@ odh::AttemptWalkObstacleSnapshot snapshot() {
     odh::AttemptWalkObstacleSnapshot value;
     value.state=odh::AttemptWalkObstacleState::ready;
     value.reason=odh::AttemptWalkObstacleReason::none;
+    value.room_id=1;value.level=0;
     value.room_min_x=0;value.room_min_y=0;value.room_max_x=64;value.room_max_y=64;
     value.obstacles={{-16,-16,80,0},{-16,64,80,80},{-16,-16,0,80},{64,-16,80,80},
                      {31,0,33,64}};
@@ -24,6 +25,8 @@ int main() {
     auto result=odh::build_world_room_route_grid(input);
     require(result.state==odh::WorldRoomRouteGridState::ready&&result.grid,
             "complete AttemptWalk snapshot produces a runtime route grid");
+    require(result.room_id==1&&result.level==0,
+            "runtime grid retains its source room and level identity");
     require(result.grid->contains({-16,-16})&&result.grid->contains({79,79})&&
             !result.grid->contains({80,79})&&result.grid->cells()==96U*96U,
             "grid bounds include one-tile outer bands around the padded room");
@@ -58,6 +61,14 @@ int main() {
     result=odh::build_world_room_route_grid(input);
     require(result.reason==odh::WorldRoomRouteGridReason::room_bounds_invalid&&!result.grid,
             "misaligned room bounds are rejected instead of rounded");
+    input=snapshot();input.room_id=0;
+    result=odh::build_world_room_route_grid(input);
+    require(result.reason==odh::WorldRoomRouteGridReason::snapshot_identity_invalid&&!result.grid,
+            "ready snapshots without a room identity are rejected");
+    input=snapshot();input.level=2;
+    result=odh::build_world_room_route_grid(input);
+    require(result.reason==odh::WorldRoomRouteGridReason::snapshot_identity_invalid&&!result.grid,
+            "snapshots with an unsupported level are rejected");
     input=snapshot();input.obstacles.push_back({10,10,10,12});
     result=odh::build_world_room_route_grid(input);
     require(result.reason==odh::WorldRoomRouteGridReason::obstacle_invalid&&!result.grid,

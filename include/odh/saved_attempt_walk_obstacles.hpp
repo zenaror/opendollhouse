@@ -58,6 +58,8 @@ struct AttemptWalkObstacleLimits {
 struct AttemptWalkObstacleSnapshot {
     AttemptWalkObstacleState state = AttemptWalkObstacleState::unsupported;
     AttemptWalkObstacleReason reason = AttemptWalkObstacleReason::entity_inventory_incomplete;
+    std::uint16_t room_id = 0;
+    std::uint8_t level = 0;
     std::vector<RoomObstacleRect> obstacles;
     std::vector<std::int16_t> entity_obstacle_ids;
     std::optional<std::int16_t> unsupported_entity_id;

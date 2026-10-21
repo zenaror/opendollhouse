@@ -13,6 +13,7 @@ enum class WorldRoomRouteGridState : std::uint8_t { ready, unsupported };
 enum class WorldRoomRouteGridReason : std::uint8_t {
     none,
     obstacle_snapshot_incomplete,
+    snapshot_identity_invalid,
     room_bounds_invalid,
     route_grid_over_budget,
     obstacle_invalid,
@@ -30,6 +31,8 @@ struct WorldRoomRouteGrid {
     WorldRoomRouteGridReason reason = WorldRoomRouteGridReason::obstacle_snapshot_incomplete;
     std::optional<AttemptWalkObstacleReason> source_obstacle_reason;
     std::optional<RouteGrid> grid;
+    std::uint16_t room_id = 0;
+    std::uint8_t level = 0;
     std::size_t obstacle_rectangles = 0;
     std::size_t rasterized_cells = 0;
     std::size_t newly_blocked_cells = 0;

@@ -109,6 +109,8 @@ int main() {
         result.entity_obstacle_ids == std::vector<std::int16_t>{2} &&
         result.entry_point5_calls == 2,
         "adapter feeds live RoomInfo boxes, flags and bilateral EP5 into AttemptWalk");
+    require(result.room_id==1&&result.level==0,
+        "live AttemptWalk snapshot retains its room and floor identity");
     require(result.obstacles.size() == 7,
         "live AttemptWalk output combines wall, room, bands and expanded entity footprints");
     const auto route_grid=build_world_room_route_grid(result);

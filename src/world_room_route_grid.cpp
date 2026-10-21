@@ -18,6 +18,8 @@ WorldRoomRouteGrid build_world_room_route_grid(
     const AttemptWalkObstacleSnapshot& snapshot,const WorldRoomRouteGridLimits& limits) {
     if(snapshot.state!=AttemptWalkObstacleState::ready)
         return unsupported(WorldRoomRouteGridReason::obstacle_snapshot_incomplete,snapshot.reason);
+    if(!snapshot.room_id || snapshot.level>1)
+        return unsupported(WorldRoomRouteGridReason::snapshot_identity_invalid);
     if(snapshot.obstacles.size()>limits.rectangles)
         return unsupported(WorldRoomRouteGridReason::route_grid_over_budget);
     const auto min_x=static_cast<std::int64_t>(snapshot.room_min_x);
@@ -44,6 +46,8 @@ WorldRoomRouteGrid build_world_room_route_grid(
         return unsupported(WorldRoomRouteGridReason::route_grid_over_budget);
 
     WorldRoomRouteGrid result;
+    result.room_id=snapshot.room_id;
+    result.level=snapshot.level;
     result.obstacle_rectangles=snapshot.obstacles.size();
     result.grid.emplace(static_cast<std::uint32_t>(width),static_cast<std::uint32_t>(height),
                         limits.cells,RoutePoint{static_cast<std::int32_t>(origin_x),
@@ -77,6 +81,7 @@ const char* world_room_route_grid_reason_name(WorldRoomRouteGridReason reason) n
     switch(reason) {
     case WorldRoomRouteGridReason::none:return "none";
     case WorldRoomRouteGridReason::obstacle_snapshot_incomplete:return "obstacle_snapshot_incomplete";
+    case WorldRoomRouteGridReason::snapshot_identity_invalid:return "snapshot_identity_invalid";
     case WorldRoomRouteGridReason::room_bounds_invalid:return "room_bounds_invalid";
     case WorldRoomRouteGridReason::route_grid_over_budget:return "route_grid_over_budget";
     case WorldRoomRouteGridReason::obstacle_invalid:return "obstacle_invalid";
