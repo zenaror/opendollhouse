@@ -71,6 +71,7 @@ private:
         std::uint64_t ticket,actor_generation,target_generation;
         std::int16_t actor,target;
         EntityPosition expected,target_position;
+        float expected_radian_direction;
         std::vector<RoutePoint> path;
         std::size_t next=1;
         std::int16_t entry_flags;

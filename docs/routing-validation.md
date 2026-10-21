@@ -33,6 +33,15 @@ Proveniência: Simitone fixado, submódulo FreeSO
 `TSOClient/tso.simantics/Engine/VMRoutingFrame.cs` (`StartWalkAnimation`,
 `PreExit`) e `Entities/VMEntity.cs` (`StaticFootprint`, `SetObstacleStatic`).
 
+Desde 2026-10-21, cada job também captura `Entity.radian_direction` junto da
+posição. Callback de destinos e tick ativo invalidam a rota se o ângulo muda,
+inclusive quando o notch de oito direções permanece igual. Passos que o próprio
+job publica atualizam o snapshot angular; a chegada define o ângulo contínuo
+canônico do facing final. Isso evita usar uma rota planejada com direção de
+entrada obsoleta, mas ainda não implementa `VMRoutingFrame`, `PortalTurns`,
+curva de virada nem animação de caminhada. Teste fixture cobre a mudança
+fracionária no mesmo notch e cancelamento sem deslocamento adicional.
+
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,
 movimento externo ou novo obstáculo cancelam o percurso. Falhas de percurso

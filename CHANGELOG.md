@@ -11,9 +11,16 @@ validação indicados por versão.
   `EntityPosition.direction` e ObjectData expõem o notch arredondado de oito
   direções. Movimentos que permanecem no mesmo notch preservam o ângulo; um
   notch explícito novo o canonicaliza. Isso prepara o dado necessário para
-  `OptimizeLines`, mas ainda não o conecta a `Route45`, `PortalTurns` ou ao
-  movimento do avatar. Testes World/save-bank passaram; veja também
+  `OptimizeLines`, mas ainda não o aplica à busca angular ou a estados de
+  portal. Testes World/save-bank passaram; veja também
   `docs/world-attempt-walk-validation.md`.
+
+- Jobs de `Routing` agora capturam e revalidam o ângulo contínuo do avatar,
+  cancelando se ele muda durante uma busca pendente mesmo que o notch continue
+  igual; passos do job atualizam esse snapshot e a chegada canonicaliza o
+  facing final. Teste focal `odh-routing-tests` cobre invalidação angular e
+  chegada. Isso não implementa o frame/state machine de roteamento do Simitone.
+  Consulte `docs/routing-validation.md`.
 
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com

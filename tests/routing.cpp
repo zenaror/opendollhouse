@@ -1,5 +1,6 @@
 #include "odh/routing.hpp"
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -166,7 +167,9 @@ int main() {
          require(f.vm.status()==odh::VmStatus::returned_true&&actor->position->x==44&&actor->position->y==12,
                  "controller follows provider preference to farther SLOT goal");
          require(actor->person_data[37]==4&&actor->position->direction==7,
-                 "arrival preserves provider entry flags and final facing rather than recomputing them");}
+                 "arrival preserves provider entry flags and final facing rather than recomputing them");
+         require(std::abs(actor->radian_direction-7.0f*0.7853981633974483f)<0.00001f,
+                 "route arrival publishes the canonical continuous angle for its selected facing");}
         {Fixture f([](const auto&,auto,const auto&,const auto&) {
              return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7},{{12,12},64,2}};
          },{1,262144});f.start();
@@ -204,7 +207,9 @@ int main() {
          require(p.x==12 && p.y==12 && p.direction==2 && movements==8,"arrives and faces object");
          require(f.world.find(1)->person_data[37]==64 && f.vm.status()==odh::VmStatus::returned_true &&
                  !f.routing.active()&&f.world.find(1)->static_footprint,
-                 "arrival updates route flags, restores a static footprint and completes exact wait");}
+                 "arrival updates route flags, restores a static footprint and completes exact wait");
+         require(std::abs(f.world.find(1)->radian_direction-2.0f*0.7853981633974483f)<0.00001f,
+                 "Route45 arrival keeps continuous and eight-notch facing state synchronized");}
         {Fixture* fixture=nullptr;
          Fixture f([&](const auto&,auto,const auto&,const auto&) {
              fixture->world.remove(2);
@@ -230,6 +235,12 @@ int main() {
                  f.world.find(1)->position->x==4,"new obstacle invalidates next segment");}
         {Fixture f;f.start();f.world.set_position(2,{29,12,1,0});
          require(f.routing.tick(1) && f.vm.status()==odh::VmStatus::returned_false,"target movement cancels route");}
+        {Fixture f;f.start();
+         require(f.world.set_radian_direction(1,0.1f)&&f.world.find(1)->position->direction==0,
+                 "test changes the continuous angle without changing its direction notch");
+         require(f.routing.tick(1)&&f.vm.status()==odh::VmStatus::returned_false&&
+                 f.world.find(1)->position->x==4&&!f.routing.active(),
+                 "active Route45 job cancels when its captured continuous angle changes within one notch");}
         {Fixture f;f.start();const auto generation=f.world.find(1)->generation;
          f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,0});f.world.set_position(1,{4,12,1,0});
          require(f.world.find(1)->generation!=generation && f.routing.tick(1) &&

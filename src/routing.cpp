@@ -222,6 +222,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
+        const auto actor_radian_direction=actor->radian_direction;
         const auto candidates=[&] {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
             return ranked_goals_(globals_,data,actor_position,target_position);
@@ -229,7 +230,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         actor=world_.find(actor_id);target=world_.find(target_id);
         if(!actor || !target || actor->generation!=actor_generation || target->generation!=target_generation ||
            !actor->position || !target->position || !(*actor->position==actor_position) ||
-           !(*target->position==target_position) || actor->attachment || actor->person_data.size()<=37)
+           !(*target->position==target_position) ||
+           actor->radian_direction!=actor_radian_direction || actor->attachment || actor->person_data.size()<=37)
             return unsupported("entity changed during pre-ranked SLOT goal provider");
         // The provider owns ranking and destination validation, but cannot
         // bypass this controller's supported direction mask/facing profile.
@@ -264,7 +266,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
-             *actor->position,*target->position,std::move(path.points),1,entry_flags,
+             *actor->position,*target->position,actor->radian_direction,std::move(path.points),1,entry_flags,
              selected?selected->facing:heading(goal,{target->position->x,target->position->y})};
     return {PrimitiveDisposition::wait,{}};
 }
@@ -291,7 +293,8 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     const auto* actor=world_.find(job_->actor);const auto* target=world_.find(job_->target);
     if(!actor || !target || actor->generation!=job_->actor_generation || target->generation!=job_->target_generation ||
        !actor->position || !target->position || !(*actor->position==job_->expected) ||
-       !(*target->position==job_->target_position) || actor->attachment)
+       !(*target->position==job_->target_position) ||
+       actor->radian_direction!=job_->expected_radian_direction || actor->attachment)
         return finish(false,"route canceled by entity change");
     std::optional<RouteMovement> event;
     if(job_->next<job_->path.size()) {
@@ -304,13 +307,18 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         }
         auto position=*actor->position;position.x=point.x;position.y=point.y;position.direction=heading(from,point);
         if(!world_.set_position(actor->id,position)) return finish(false,"position update rejected");
-        job_->expected=position;++job_->next;
+        job_->expected=position;
+        job_->expected_radian_direction=world_.find(actor->id)->radian_direction;
+        ++job_->next;
         event=RouteMovement{now,actor->id,position};
     }
     if(job_->next==job_->path.size()) {
         auto position=job_->expected;position.direction=job_->facing;
         if(!world_.set_position(job_->actor,position) || !world_.set_person_data(job_->actor,37,job_->entry_flags))
             return finish(false,"route arrival fields rejected");
+        constexpr float pi_over_four=0.78539816339744830962f;
+        if(!world_.set_radian_direction(job_->actor,static_cast<float>(job_->facing)*pi_over_four))
+            return finish(false,"route arrival facing rejected");
         if(event) event->position=position;
         const auto accepted=finish(true,{});
         if(event && moved) moved(*event);
