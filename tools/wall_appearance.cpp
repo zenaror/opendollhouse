@@ -6,6 +6,7 @@
 #include "odh/room_obstacles.hpp"
 #include "odh/saved_collision_candidates.hpp"
 #include "odh/saved_room_route_grid.hpp"
+#include "odh/saved_slot_goal_selection.hpp"
 #include "odh/saved_room_boundary_audit.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include "odh/route.hpp"
@@ -80,6 +81,7 @@ void emit_route_grid_diagnostic(
  const odh::GeometricRoomMap& rooms,
  const std::vector<odh::RoomObstacleCandidateSet>& room_obstacles,
  const std::vector<odh::SavedCollisionCandidate>& entities,
+ const std::vector<odh::SavedMultitileGroup>& groups,
  const odh::SlotTable& slots,std::size_t slot_type3_index,
  const odh::SavedWorldEntity* actor_record,const odh::PreparedArchitecture* prepared) {
  const auto find_entity=[&](std::int16_t id)->const odh::SavedCollisionCandidate*{
@@ -131,11 +133,15 @@ void emit_route_grid_diagnostic(
  if(grid.state!=odh::SavedRoomRouteGridState::ready){out<<",\"status\":\"unsupported\"}";return;}
  const auto edge_state=odh::resolve_initial_wall_edges(architecture,appearance,actor->position->level);
  std::vector<odh::RoutePoint> goals;
+ std::size_t selection_clear=0,selection_object_overlap=0,selection_avatar_penalty=0,selection_unsupported=0,selection_eligible=0;
  out<<",\"approach_model\":\"global_slot_type3_candidate_circle\",\"slot_type3_index\":"<<slot_type3_index
   <<",\"slot_offset_bits\":["<<selected_slot->offset_bits[0]<<','<<selected_slot->offset_bits[1]<<','
   <<selected_slot->offset_bits[2]<<"],\"wall_raycast_profile\":\"initial_saved_edge_snapshot\""
   <<",\"static_goal_gate_model\":\"bounds+room+FloorChangeValid+RaycastWall+saved_grid\""
-  <<",\"runtime_occupancy_validated\":false,\"slot_candidates\":[";
+  <<",\"runtime_occupancy_validated\":false,\"goal_selection_profile\":\"conservative_solid_saved_footprints\""
+  <<",\"route_search_goal_model\":\"static_gates_and_snapshot_goal_selection\""
+  <<",\"goal_selection_unmodeled\":[\"dynamic_obstacles\",\"AllowPersonIntersection\",\"DisallowPersonIntersection\",\"bilateral_EntryPoint5\",\"doors\",\"multitile_policy\",\"sitting_positive_EntryPoint26\"]"
+  <<",\"slot_candidates\":[";
  for(std::size_t i=0;i<slot_candidates.size();++i){
   if(i)out<<',';
   const auto& candidate=slot_candidates[i];
@@ -152,6 +158,17 @@ void emit_route_grid_diagnostic(
    :odh::WallRaycastResult{};
   const bool position_valid_static=candidate.entry_flags&&in_bounds&&same_room&&walkable&&
        floor.state==odh::SavedFloorPlacementState::allowed&&wall.state==odh::WallRaycastState::clear;
+  const auto selection=odh::assess_saved_slot_goal_selection(slots,slot_type3_index,rooms,actor_id,
+      {candidate.position.x,candidate.position.y,actor->position->level,0},entities,groups,true);
+  switch(selection.state){
+   case odh::SavedSlotGoalSelectionState::snapshot_clear:++selection_clear;break;
+   case odh::SavedSlotGoalSelectionState::object_overlap_rejected:++selection_object_overlap;break;
+   case odh::SavedSlotGoalSelectionState::avatar_overlap_score_penalty:++selection_avatar_penalty;break;
+   case odh::SavedSlotGoalSelectionState::unsupported:++selection_unsupported;break;
+  }
+  const auto snapshot_eligible=selection.snapshot_eligible();
+  if(snapshot_eligible&&*snapshot_eligible)++selection_eligible;
+  const bool route_search_goal=position_valid_static&&snapshot_eligible&&*snapshot_eligible;
   out<<"{\"x\":"<<candidate.position.x<<",\"y\":"<<candidate.position.y
    <<",\"entry_flags\":"<<unsigned(candidate.entry_flags)<<",\"mask_accepted\":"<<(candidate.entry_flags?"true":"false")
    <<",\"in_bounds\":"<<(in_bounds?"true":"false")<<",\"room\":";
@@ -162,10 +179,21 @@ void emit_route_grid_diagnostic(
   out<<",\"wall_raycast\":"<<json_bytes(wall_raycast_name(wall.state))
    <<",\"wall_hit_tile\":";
   if(wall.tile_x>=0&&wall.tile_y>=0)out<<'['<<wall.tile_x<<','<<wall.tile_y<<']';else out<<"null";
-  out<<",\"static_goal_gates_passed\":"<<(position_valid_static?"true":"false")<<'}';
-  if(position_valid_static)goals.push_back(candidate.position);
+  out<<",\"static_goal_gates_passed\":"<<(position_valid_static?"true":"false")
+   <<",\"goal_selection\":{\"state\":"<<json_bytes(odh::saved_slot_goal_selection_state_name(selection.state))
+   <<",\"reason\":"<<json_bytes(odh::saved_slot_goal_selection_reason_name(selection.reason))
+   <<",\"snapshot_eligible\":";
+  if(snapshot_eligible)out<<(*snapshot_eligible?"true":"false");else out<<"null";
+  out<<",\"object_overlaps\":"<<selection.object_overlaps<<",\"avatar_overlaps\":"<<selection.avatar_overlaps
+   <<",\"related_entity_id\":";
+  if(selection.blocker)out<<*selection.blocker;else out<<"null";
+  out<<"},\"route_search_goal\":"<<(route_search_goal?"true":"false")<<'}';
+  if(route_search_goal)goals.push_back(candidate.position);
  }
- out<<"],\"approach_candidates\":"<<goals.size();
+ out<<"],\"goal_selection_counts\":{\"snapshot_clear\":"<<selection_clear
+  <<",\"object_overlap_rejected\":"<<selection_object_overlap<<",\"avatar_overlap_score_penalty\":"<<selection_avatar_penalty
+  <<",\"unsupported\":"<<selection_unsupported<<",\"snapshot_eligible\":"<<selection_eligible
+  <<"},\"approach_candidates\":"<<goals.size();
  if(goals.empty()){out<<",\"status\":\"no_approach_cell\"}";return;}
  const auto path=odh::find_route(*grid.grid,{actor->position->x,actor->position->y},goals);
  out<<",\"status\":"<<json_bytes(route_status_name(path.status))<<",\"route_cost\":"<<path.cost
@@ -366,7 +394,7 @@ int main(int argc,char** argv){try{
   if(route_grid_diagnostic){std::cout<<",\"route_grid_diagnostic\":";
    const auto route_actor_record=records_by_id.find(route_grid_diagnostic->first);
    emit_route_grid_diagnostic(std::cout,route_grid_diagnostic->first,route_grid_diagnostic->second,
-    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,*route_slots,slot_resource->index,
+    architecture.architecture,result.appearance,rooms,room_obstacles,collision_candidates,world->multitile_groups,*route_slots,slot_resource->index,
     route_actor_record==records_by_id.end()?nullptr:route_actor_record->second,prepared?&*prepared:nullptr);
   }
   std::cout<<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";

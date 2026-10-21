@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Seleção de destino SLOT sobre footprints salvos: o perfil v10
+  standing=1/sitting=0 diferencia box livre, objeto sobreposto rejeitado e
+  avatar sólido conhecido mantido com penalidade de score. O diagnóstico
+  informa elegibilidade nullable e exige uma classificação suportada antes
+  de enviar o destino à busca na grade. Portas, multipartes e candidatos
+  incertos continuam unsupported; flags/EntryPoint5 e ocupação runtime não
+  são executados. Isso não estabelece PositionValid ou clearance.
 - Diagnóstico Route45 House07 agora exige a entrada/chunk SLOT explícitos,
   gera os oito candidatos do círculo type-3 de raio exato e publica máscara
   direcional, sala, bounds, piso FloorChangeValid, RaycastWall contra a fotografia

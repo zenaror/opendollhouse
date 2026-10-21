@@ -1,5 +1,45 @@
 # Continuidade atual
 
+## Seleção de destino SLOT sobre footprints salvos
+
+`assess_saved_slot_goal_selection` separa seleção de destino da caminhabilidade
+da grade. No perfil v10 type-3 standing=1/sitting=0, unsnapped, ele testa o box
+do avatar na posição candidata contra os footprints salvos da mesma sala.
+Box livre é `snapshot_clear`; objeto sólido sobreposto é
+`object_overlap_rejected`; avatar sólido conhecido é
+`avatar_overlap_score_penalty`, conservando a distinção da referência entre
+rejeitar o destino e reduzir seu score. A API não calcula o score nem executa
+GetAvatarPlace: trata os footprints conhecidos como sólidos conservadores.
+
+Geometria ausente, inventário incompleto, avatar incerto sobreposto, porta
+relevante e multipartes sobrepostos são `unsupported`, com elegibilidade
+`null`. Auxiliares de identidade ocupam três bitsets fixos de 4 KiB e o
+inventário padrão limita entidades/membros a 4.096. A CLI reporta estado,
+motivo, elegibilidade e contagens por candidato; só envia à busca os destinos
+que passam os gates estáticos anteriores **e** têm elegibilidade de snapshot
+`true`. A grade continua bloqueando os mesmos footprints para o caminho.
+Flags Allow/Disallow, EntryPoint 5 bilateral, registro dinâmico, consulta de
+portas, política multitile e sitting>0/EntryPoint26 seguem não modelados.
+`runtime_occupancy_validated` e `route_clearance` continuam false; Main não usa
+o resultado.
+
+Proveniência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, submódulo
+FreeSO `f86bbd34b2112296ed786741f640a0535886d180`:
+`Engine/VMSlotParser.cs:264-321` faz a seleção objeto/avatar/assento e penaliza
+avatar/porta; `VMContext.cs:1190-1235` monta os obstáculos de GetAvatarPlace,
+aplica EntryPoint5 e flags. O modelo atual usa apenas o ramo sitting=0 sobre
+footprints conservadores; não afirma equivalência ao executável original.
+
+No House07 local com as 23 fontes arquitetônicas externas, a CLI reportou
+oito candidatos: seis `snapshot_clear`, dois `unsupported` por sobreposição
+com multipartes (IDs 106 e 125), zero objetos simples rejeitados e zero
+avatares conhecidos com penalidade. Permaneceram três destinos da busca,
+com caminho de um ponto/custo zero pois o avatar já estava em um deles. Os
+ramos objeto/avatar foram testados com fixtures sintéticas. O teste focal
+passou 32 checks e o build completo concluiu. CTest passou 145/145 com
+`DISPLAY=:0` acessível, incluindo `linux_window_backend`, sem skips.
+`git diff --check` passou. Incremento revisado; ainda sem commit nesta etapa.
+
 ## Gates estáticos para candidatos SLOT Route45 (2026-10-21)
 
 `odh-wall-appearance --route-grid-diagnostic` exige

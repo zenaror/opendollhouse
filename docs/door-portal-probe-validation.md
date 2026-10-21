@@ -58,6 +58,14 @@ flags `AllowPersonIntersection`/`DisallowPersonIntersection`, EntryPoint 5
 bilateral e estado vivo de portas permanecem desconhecidos. `found` significa
 apenas caminho na grade candidata ODH. Salas diferentes retornam
 `cross_room_unmodeled`; entradas incompletas falham fechadas.
+O bloco `goal_selection` classifica separadamente os footprints do snapshot
+para o perfil estreito v10 standing=1/sitting=0: `snapshot_clear`, objeto
+sólido sobreposto rejeitado, avatar conhecido sobreposto com penalidade de
+score, ou `unsupported`. Isso não calcula o score nem os flags vivos. Um
+destino só entra na busca se passar os gates estáticos e tiver elegibilidade
+positiva conhecida pelo snapshot; células ainda bloqueadas na grade continuam
+fora do A*. Candidatos multipartes sobrepostos e colisões incertas ficam
+`unsupported`.
 `route_clearance` e o `routing_clearance` geral continuam false.
 
 Referências locais pinadas: Simitone
@@ -114,6 +122,14 @@ usava aproximações pela caixa expandida e não deve ser confundida com o novo
 diagnóstico de candidatos SLOT. Mesmo com candidatos SLOT, `found` será apenas
 um resultado de `find_route` 8-vizinhos na grade ODH, não rota aprovada pelo
 jogo nem prova de que a interação Sit funcione.
+
+Na consulta validada de 2026-10-21, oito candidatos do House07 tiveram seis
+classificados `snapshot_clear` e dois `unsupported` por sobreposição com
+multipartes (IDs 106 e 125). Três passaram os demais gates e entraram no A*;
+o resultado foi um ponto/custo zero porque Bob já ocupa um deles. Os testes
+focais de seleção passaram 32 checks, e CTest passou 145/145 com o display
+X11 acessível, sem skips. Isso não executa a escolha do destino nem o caminho
+na simulação original.
 
 `tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima
 valida a junção com arquivos comerciais reais; nenhum asset ou relatório com
