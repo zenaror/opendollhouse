@@ -315,6 +315,12 @@ python3 tests/house07_route45_integration.py \
   --go-here-interrupt-at-tick 5 --go-here-expect-cancelled
 ```
 
+O backend X11 também foi exercitado com eventos sintéticos dirigidos à janela
+de teste: Backspace gera um único pedido, não se repete enquanto fica segurado
+e volta a funcionar após a liberação. Isso valida a entrega da tecla pelo
+backend; a janela completa do lote ainda não foi testada visualmente com esse
+cancelamento.
+
 O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
 (`Doors.iff`), e o personagem conseguiu chegar ali; ele não foi contado como
 prova de mobília bloqueando o destino. Escadas e passagem entre cômodos

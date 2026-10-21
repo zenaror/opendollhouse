@@ -24,6 +24,9 @@ int main(){try{
     key(XK_Tab);input=window.poll();if(input.interaction_selection_delta!=1||input.action)throw std::runtime_error("Tab interaction selection mapping failed");
     key(XK_Tab,KeyPress,ShiftMask);input=window.poll();if(input.interaction_selection_delta!=-1||input.action)throw std::runtime_error("Shift+Tab interaction selection mapping failed");
     key(XK_space);if(window.poll().action)throw std::runtime_error("held action repeated");key(XK_space,KeyRelease);window.poll();key(XK_space);if(!window.poll().action)throw std::runtime_error("released action not rearmed");
+    key(XK_BackSpace);input=window.poll();if(!input.interrupt||input.action||input.quit)throw std::runtime_error("Backspace interrupt mapping failed");
+    key(XK_BackSpace);if(window.poll().interrupt)throw std::runtime_error("held interrupt repeated");
+    key(XK_BackSpace,KeyRelease);window.poll();key(XK_BackSpace);if(!window.poll().interrupt)throw std::runtime_error("released interrupt not rearmed");
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
     key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
@@ -35,5 +38,5 @@ int main(){try{
     click(Button1,-2,98);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{-2,98})throw std::runtime_error("outside click coordinates clamped");
     click(Button1,2,3);click(Button1,127,95);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{127,95})throw std::runtime_error("last drained primary click not retained");
     key(XK_Escape);if(!window.poll().quit)throw std::runtime_error("quit mapping failed");
-    std::cout<<"Own native X11 window: all12288RGB pixels equal; frame validation and keyboard mappings passed (synthetic app-directed events).\n";return 0;
+    std::cout<<"Own native X11 window: all12288RGB pixels equal; frame validation, Backspace interrupt, and keyboard mappings passed (synthetic app-directed events).\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
