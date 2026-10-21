@@ -14,6 +14,11 @@ validação indicados por versão.
   não executa BHAV nem descobre obstáculos dinâmicos; não prova colocação
   runtime. Consulte
   `docs/saved-avatar-place-overlap-validation.md`.
+- Auditoria de bloqueadores agrega uma lista completa em ordem crescente de
+  ObjectID, preserva o último bloqueador e a parada por EntryPoint 26. Falha
+  fechada para inventário incompleto, IDs fora do domínio VM ou resultados
+  ambíguos. São 14 casos sintéticos; não descobre geometria nem executa BHAV.
+  Consulte `docs/saved-avatar-place-audit-validation.md`.
 - Módulo puro `odh_slot_scoring` calcula e ordena scores do perfil SLOT
   House07 standing/círculo com RNG explícito e ordem de entrada fornecida.
   Preserva consumo de RNG para candidatos rejeitados após score e empates
