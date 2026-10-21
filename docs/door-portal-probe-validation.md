@@ -15,10 +15,14 @@ usa o perfil cru e identifica essa limitação no JSON. As posições dos membro
 são consultadas no mapa para expor os IDs de sala associados ao grupo. Isso
 permite conferir os candidatos a ligação de sala que
 `VMRoomMap.GenerateRoomObs` usa ao procurar uma entidade Portal no grupo da
-porta. O resultado ainda não abre tiles de obstáculo: não resolve o estado
-operacional do objeto, não executa a função Portal, não acrescenta colisões de
-objetos e não produz clearance ou caminho. Os campos
-`portal_bhav_executed`, `runtime_portal_state` e `routing_clearance` permanecem
+porta. O probe também produz os candidatos geométricos de obstáculo por sala,
+usando pares explícitos tile/room derivados dos membros posicionados com
+Portal15 não zero. O mapa ainda não habilita completude: House07 tem 115 misses
+de lookup de piso no preparo, e `generation_complete` permanece false em todas
+as salas. Esses misses podem incluir padrões globais sem alias declarado; o
+probe não os reinterpreta como espaço livre. Também não acrescenta colisões de
+objetos ou calcula clearance/caminho. `portal_bhav_executed`,
+`runtime_portal_state` (runtime não simulado) e `routing_clearance` continuam
 false.
 
 Referências locais pinadas: Simitone
@@ -56,8 +60,11 @@ preparou a arquitetura e gerou seis salas. Foram localizadas seis faces de
 porta. Cada grupo de duas entidades aponta para `OBJf` action `4105`, e esse
 ID existe como BHAV no respectivo asset `Doors.iff`. Os pares de IDs de sala
 consultados para os seis grupos foram `(2,3)`, `(3,4)`, `(4,2)`, `(1,3)`,
-`(1,2)` e `(3,1)`. Esses dados validam a leitura estática da instalação e do
-save, não a abertura runtime dos obstáculos nem movimento de Sims.
+`(1,2)` e `(3,1)`. A expansão por peças de porta produziu 24 pares
+tile/room-alvo. Os candidatos de obstáculo emitiram 8, 7, 8, 6 e 0 retângulos
+para as salas 1–5; todos permanecem `generation_complete=false` por causa dos
+floor lookups e nenhum vira caminho. Isso valida leitura e junção estática da
+instalação/save, não abertura runtime, colisões completas ou movimento de Sims.
 
 `tests/entry_points.cpp` cobre o reader de OBJf/OBJD. O teste manual acima
 valida a junção com arquivos comerciais reais; nenhum asset ou relatório com

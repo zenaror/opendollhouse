@@ -3,8 +3,11 @@
 #include "saved_tail_json.hpp"
 #include "odh/wall_route_state.hpp"
 #include "odh/room_map.hpp"
+#include "odh/room_obstacles.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include <iostream>
+#include <set>
+#include <tuple>
 int main(int argc,char** argv){try{
  if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe]");
  const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false;
@@ -66,12 +69,72 @@ int main(int argc,char** argv){try{
   for(const auto& record:world->records)records_by_id.emplace(static_cast<std::int16_t>(record.saved.object_id),&record);
   std::map<std::int16_t,const odh::SavedMultitileGroup*> groups_by_member;
   for(const auto& group:world->multitile_groups)for(const auto id:group.members)groups_by_member.emplace(id,&group);
+  std::map<std::uint32_t,SavedPortalFunction> portal_cache;
+  const auto portal_for=[&](const odh::SavedWorldEntity& record)->SavedPortalFunction {
+   const auto found=portal_cache.find(record.definition.guid);
+   if(found!=portal_cache.end())return found->second;
+   const auto* candidate=index->unique(record.definition.guid);
+   if(!candidate)throw odh::FormatError("portal probe definition missing or ambiguous");
+   const auto function=saved_portal_function(*candidate);
+   portal_cache.emplace(record.definition.guid,function);return function;
+  };
+  std::vector<odh::RoomPortalOpening> portal_openings;
+  std::set<std::tuple<std::uint16_t,std::uint32_t,std::uint32_t,std::uint8_t>> unique_openings;
+  std::set<std::int16_t> processed_door_groups;
+  bool portal_inventory_complete=true;
+  for(const auto& input:result.inputs){
+   if(input.kind!=odh::EntityKind::object||input.contained||!input.position||!(input.flags2&0x8000U))continue;
+   const auto group_it=groups_by_member.find(input.id);
+   const auto group=group_it==groups_by_member.end()?nullptr:group_it->second;
+   const auto leader=group?group->leader:input.id;
+   if(!processed_door_groups.insert(leader).second)continue;
+   const std::vector<std::int16_t> members=group?group->members:std::vector<std::int16_t>{input.id};
+   std::set<std::uint16_t> target_rooms;
+   for(const auto member:members){
+    const auto member_record=records_by_id.find(member);
+    if(member_record==records_by_id.end())throw odh::FormatError("portal probe multitile member missing from saved World");
+    const auto function=portal_for(*member_record->second);
+    if(!function.action)continue;
+    const auto* entity=world->world->find(member);
+    if(!entity||!entity->position){portal_inventory_complete=false;continue;}
+    const auto room=odh::geometric_room_at(rooms,entity->position->x,entity->position->y,entity->position->level);
+    if(!room){portal_inventory_complete=false;continue;}
+    target_rooms.insert(*room);
+   }
+   for(const auto member:members){
+    const auto member_record=records_by_id.find(member);
+    if(member_record==records_by_id.end())throw odh::FormatError("portal probe door member missing from saved World");
+    const auto* entity=world->world->find(member);
+    const auto frame=odh::VmFrame{odh::routine_key(4096),0,{member,member,member,0},{},{}};
+    const auto flags=world->world->read(frame,3,40);
+    if(!flags||!entity){portal_inventory_complete=false;continue;}
+    if((static_cast<std::uint16_t>(*flags)&0x8000U)==0||!entity->position)continue;
+    const auto& p=*entity->position;
+    if(p.level<1||p.level>2){portal_inventory_complete=false;continue;}
+    const auto tile_x=static_cast<std::uint32_t>(p.x/16),tile_y=static_cast<std::uint32_t>(p.y/16);
+    if(tile_x>=rooms.width||tile_y>=rooms.height)continue;
+    for(const auto target_room:target_rooms){
+     const auto key=std::make_tuple(target_room,tile_x,tile_y,static_cast<std::uint8_t>(p.level-1));
+     if(unique_openings.insert(key).second)portal_openings.push_back({target_room,tile_x,tile_y,static_cast<std::uint8_t>(p.level-1)});
+    }
+   }
+  }
+  std::vector<odh::RoomObstacleCandidateSet> room_obstacles;
+  for(std::size_t room=1;room<rooms.rooms.size();++room){
+   const auto level=rooms.rooms[room].level;
+   room_obstacles.push_back(odh::generate_room_obstacle_candidates(rooms,static_cast<std::uint16_t>(room),level,portal_openings,portal_inventory_complete));
+  }
   std::map<std::int16_t,std::vector<const odh::WallAppearanceFace*>> door_faces;
   for(const auto& face:result.appearance.faces)if(face.door)door_faces[face.door_owner].push_back(&face);
   std::cout<<",\"portal_probe\":{\"evidence\":\"authored_entry_point15_inventory_only\",\"room_map_profile\":"<<json_bytes(prepared?"prepared_alias_resolved":"saved_raw_no_floor_alias_remap")
    <<",\"architecture_prepared\":"<<(prepared?"true":"false")<<",\"floor_alias_misses\":"<<(prepared?prepared->diagnostics.floor_alias_misses:0)
    <<",\"wall_alias_misses\":"<<(prepared?prepared->diagnostics.wall_alias_misses:0)<<",\"room_count\":"<<rooms.rooms.size()
-   <<",\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
+   <<",\"room_floor_lookups_complete\":"<<(rooms.floor_resources_resolved?"true":"false")
+   <<",\"portal_opening_tile_room_pairs\":"<<portal_openings.size()<<",\"portal_inventory_complete\":"<<(portal_inventory_complete?"true":"false")
+   <<",\"room_obstacle_candidates\":[";
+  for(std::size_t i=0;i<room_obstacles.size();++i){if(i)std::cout<<',';const auto& candidate=room_obstacles[i];
+   std::cout<<"{\"room\":"<<candidate.room<<",\"level\":"<<unsigned(candidate.level)<<",\"generation_complete\":"<<(candidate.complete?"true":"false")<<",\"rectangles\":"<<candidate.rectangles.size()<<'}';}
+  std::cout<<"],\"portal_bhav_executed\":false,\"runtime_portal_state\":false,\"routing_clearance\":false,\"doors\":[";
   bool first_door=true;
   for(const auto& [door_id,faces]:door_faces){
    const auto found=records_by_id.find(door_id);

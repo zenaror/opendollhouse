@@ -10,6 +10,9 @@ validação indicados por versão.
 - Probe offline de portas em saves: liga faces de porta, grupos multitile,
   salas geométricas e ação authored da entrada Portal 15 via OBJD/OBJf; o
   reporte deixa explícito que a BHAV e o clearance de rota não foram executados.
+- Geração geométrica de obstáculos aceita pares explícitos tile/sala de portais
+  e imita a interrupção de runs de `GenerateRoomObs`; a completude do snapshot
+  continua condicionada à resolução de pisos e não equivale a clearance total.
 - Consultas de piso preparado e sala geométrica em posições de 1/16 tile,
   incluindo a seleção distinta das metades diagonais. As respostas espaciais
   não validam placement, portais ou aceitação de destinos.
@@ -44,6 +47,10 @@ validação indicados por versão.
   loose explícitas; seis portas/grupos apontam para OBJf action 4105, cujo BHAV
   está presente no asset Doors.iff, e seis salas geométricas foram geradas.
   Sem execução BHAV/runtime ou clearance; nenhum recurso comercial foi incluído.
+- Candidatos room-obstacle: fixture sintética confirma abertura de tile Portal15
+  e merge de retângulos igual ao perfil da referência. No House07, 24 pares
+  tile/sala deram 8/7/8/6/0 retângulos para salas 1–5; todos incompletos devido
+  a floor lookups, sem uso pelo Routing45.
 - Consultas geométricas: build Linux e 139/139 CTests passaram; teste X11
   `linux_window_backend` foi pulado por ausência de DISPLAY. As consultas
   validam ambos os IDs packed da diagonal, bounds e ownership; isso é apenas

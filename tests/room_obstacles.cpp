@@ -60,6 +60,21 @@ int main() {
         require(result.rectangles[3].x1 == 13 && result.rectangles[3].y1 == 45 &&
                 result.rectangles[3].x2 == 67 && result.rectangles[3].y2 == 67,
                 "bottom run stays separate when source merge cannot join it");
+        rooms.floor_resources_resolved = true;
+        const std::vector<odh::RoomPortalOpening> door_opening{{1, 2, 1, 0}};
+        result = odh::generate_room_obstacle_candidates(rooms, 1, 0, door_opening, true);
+        require(result.complete, "prepared map and complete portal inventory complete room-obstacle generation");
+        require(result.rectangles.size() == 3 &&
+                result.rectangles[0].x1 == 13 && result.rectangles[0].x2 == 35 &&
+                result.rectangles[0].y1 == 13 && result.rectangles[0].y2 == 51 &&
+                result.rectangles[1].x1 == 45 && result.rectangles[1].x2 == 67 &&
+                result.rectangles[1].y1 == 13 && result.rectangles[1].y2 == 51,
+                "portal tile splits the boundary run exactly as GenerateRoomObs");
+        require(!odh::generate_room_obstacle_candidates(rooms, 1, 0, door_opening, false).complete,
+                "unknown portal inventory keeps room-obstacle generation incomplete");
+        rooms.floor_resources_resolved = false;
+        require(!odh::generate_room_obstacle_candidates(rooms, 1, 0, door_opening, true).complete,
+                "unprepared floor resources keep room-obstacle generation incomplete");
 
         // Room zero uses the expanded interior, which covers every tile. A
         // contiguous outside map collapses to a single border candidate.
@@ -91,6 +106,7 @@ int main() {
             (void)odh::generate_room_obstacle_candidates(broken, 1, 0); });
         bad([&] { auto broken = rooms; broken.width = 65;
             (void)odh::generate_room_obstacle_candidates(broken, 1, 0); });
+        bad([&] { (void)odh::generate_room_obstacle_candidates(rooms, 1, 0, {{1, 3, 0, 0}}, true); });
         std::cout << checks << " room obstacle checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

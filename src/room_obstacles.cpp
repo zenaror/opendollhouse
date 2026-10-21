@@ -50,6 +50,13 @@ void optimize(std::vector<RoomObstacleRect>& rectangles) {
 
 RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level) {
+    return generate_room_obstacle_candidates(map, room, level, {}, false);
+}
+
+RoomObstacleCandidateSet generate_room_obstacle_candidates(
+    const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level,
+    const std::vector<RoomPortalOpening>& portal_openings,
+    bool portal_inventory_complete) {
     if (!map.width || !map.height || map.width > maximum_dimension ||
         map.height > maximum_dimension || level >= map.levels.size())
         throw std::runtime_error("room obstacle map dimensions or level unsupported");
@@ -88,12 +95,21 @@ RoomObstacleCandidateSet generate_room_obstacle_candidates(
     result.room = room;
     result.level = level;
     const auto& packed = map.levels[level];
+    std::vector<std::uint8_t> open_tiles(cells, 0);
+    for (const auto& opening : portal_openings) {
+        if (opening.tile_x >= map.width || opening.tile_y >= map.height ||
+            opening.tile_level >= map.levels.size() || opening.target_room >= map.rooms.size())
+            throw std::runtime_error("room obstacle portal opening outside map or level");
+        if (opening.target_room == room && opening.tile_level == level)
+            open_tiles[std::size_t(opening.tile_y) * map.width + opening.tile_x] = 1;
+    }
+    result.complete = map.floor_resources_resolved && portal_inventory_complete;
     for (auto y = y1; y < y2; ++y) {
         bool run = false;
         std::size_t run_index = 0;
         for (auto x = x1; x < x2; ++x) {
             const auto index = std::size_t(y) * map.width + x;
-            const bool blocked = !belongs_to(packed[index], room);
+            const bool blocked = !belongs_to(packed[index], room) && !open_tiles[index];
             if (blocked) {
                 if (run) {
                     result.rectangles[run_index].x2 += 16;

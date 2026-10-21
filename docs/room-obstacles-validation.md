@@ -11,13 +11,18 @@ unidades e executa o merge ordenado de `OptimizeObstacles`.
 Referência: Simitone submódulo FreeSO `4906db3156616bfaffc10ce0963cf08062975fef`,
 FreeSO `f86bbd34b2112296ed786741f640a0535886d180`,
 `TSOClient/tso.simantics/Model/VMRoomMap.cs` (`GenerateRoomObs`,
-`OptimizeObstacles`). A função original consulta entidades de porta
-arquitetônica e seus grupos multitile; se um objeto do grupo estiver no quarto e
-marcado como portal, a linha de obstáculo é interrompida. O snapshot salvo e o
-mapa geométrico atual não carregam estado suficiente para reproduzir essa
-abertura. Este porte mantém esses tiles bloqueados e retorna sempre
-`complete=false`; nunca interpreta evidência de portal ausente como passagem
-livre.
+`OptimizeObstacles`). A função original consulta objetos de porta nos tiles e
+seus grupos multitile; se um membro do grupo pertencer ao quarto alvo e seu
+Portal15 for não zero, a execução encerra a linha de obstáculo e omite o tile.
+
+A sobrecarga simples não recebe essa evidência e mantém todos esses tiles
+bloqueados, com `complete=false`. A sobrecarga com `RoomPortalOpening` aceita
+os pares explícitos (sala alvo, tile e andar); só omite os pares fornecidos e
+valida seus limites. O caller precisa declarar `portal_inventory_complete`.
+`complete` nessa sobrecarga descreve apenas a geração dos obstáculos de sala e
+fica verdadeiro somente quando o mapa declara todos os floor lookups resolvidos
+e o inventário de portais está completo. Não significa clearance total para
+roteamento ou placement: colisão de entidades continua separada.
 
 Quando recebe o mapa cru de `generate_saved_room_map`, o resultado também herda
 a ausência do remapeamento de pisos/flags. O caminho de
@@ -29,6 +34,7 @@ de movimento.
 
 `tests/room_obstacles.cpp` cobre bounds expandidos, coordenadas/margens de
 tile, sala 0, ambos os IDs de tile diagonal (incluindo a máscara do bit de
-orientação), ordem/merge de retângulos, estado incompleto e entradas inválidas.
-Os testes são sintéticos; não são um diferencial executável com FreeSO nem
-prova do comportamento do TS1 original.
+orientação), ordem/merge de retângulos, portal que interrompe um run como na
+referência, estado incompleto e entradas inválidas. Os testes são sintéticos;
+não são um diferencial executável com FreeSO nem prova do comportamento do TS1
+original.
