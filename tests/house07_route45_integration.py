@@ -25,6 +25,8 @@ def parse_args():
                         help="diagnose opcode27 against the restored StackObject and live route grid")
     parser.add_argument("--portal-id", type=int,
                         help="schedule saved Portal15 on a restored House07 portal, using the original Main")
+    parser.add_argument("--second-route-room-refresh", action="store_true",
+                        help="run synthetic Main: reach StackObject26, then validate two Route45 SLOT orders on room 1's refreshed grid")
     parser.add_argument("--expect-route-goal", nargs=2, type=int, metavar=("X", "Y"),
                         help="assert that Route45 reached this XY before the scheduled portal BHAV continues")
     parser.add_argument("--architecture-resource", action="append", type=pathlib.Path, default=[],
@@ -33,7 +35,7 @@ def parse_args():
 
 
 def patch_root_with_route45(source, destination, routine_id, literal_slot=False,
-                            goto_relative=False):
+                            goto_relative=False, second_route_room_refresh=False):
     data = source.read_bytes()
     if len(data) < 64:
         raise ValueError("avatar IFF is shorter than its header")
@@ -48,15 +50,24 @@ def patch_root_with_route45(source, destination, routine_id, literal_slot=False,
         chunks.append(bytearray(data[position:position + length]))
         position += length
 
-    # One synthetic Main instruction calls Route45 for the selected live
-    # StackObject. The original commercial IFF remains untouched.
-    opcode = 27 if goto_relative else 45
-    operands = ([0, 0, 254, 0, 0, 0, 2, 0] if goto_relative else
-                [1, 0, 1, 0, 1, 0, 0, 0] if literal_slot else
-                [1, 0, 2, 0, 0, 0, 0, 0])
-    bhav = struct.pack("<HH8sHBB8s", 0x8002, 1,
-                       bytes([0, 4, 0, 0, 0, 0, 0, 0]),
-                       opcode, 254, 255, bytes(operands))
+    # Synthetic Main instructions only replace the temporary avatar copy;
+    # the commercial IFF is read-only and remains untouched.
+    metadata = bytes([0, 4, 0, 0, 0, 0, 0, 0])
+    if second_route_room_refresh:
+        instructions = [
+            (27, 1, 255, [0, 0, 254, 0, 0, 0, 2, 0]),
+            (45, 2, 255, [0, 0, 1, 0, 1, 0, 0, 0]),
+            (45, 254, 255, [0, 0, 1, 0, 1, 0, 0, 0]),
+        ]
+    else:
+        opcode = 27 if goto_relative else 45
+        operands = ([0, 0, 254, 0, 0, 0, 2, 0] if goto_relative else
+                    [1, 0, 1, 0, 1, 0, 0, 0] if literal_slot else
+                    [1, 0, 2, 0, 0, 0, 0, 0])
+        instructions = [(opcode, 254, 255, operands)]
+    bhav = struct.pack("<HH8s", 0x8002, len(instructions), metadata) + b"".join(
+        struct.pack("<HBB8s", opcode, on_true, on_false, bytes(operands))
+        for opcode, on_true, on_false, operands in instructions)
     replaced = 0
     output = bytearray(data[:64])
     for chunk in chunks:
@@ -90,8 +101,11 @@ def main():
         raise SystemExit("avatar and StackObject IDs must be in 1..32767")
     if not 1 <= args.ticks <= 4096:
         raise SystemExit("ticks must be in 1..4096")
-    if sum((args.literal_slot, args.goto_relative, args.portal_id is not None)) > 1:
-        raise SystemExit("--literal-slot, --goto-relative, and --portal-id are mutually exclusive")
+    if sum((args.literal_slot, args.goto_relative, args.portal_id is not None,
+            args.second_route_room_refresh)) > 1:
+        raise SystemExit("--literal-slot, --goto-relative, --portal-id, and --second-route-room-refresh are mutually exclusive")
+    if args.second_route_room_refresh and args.stack_object_id != 26:
+        raise SystemExit("--second-route-room-refresh requires --stack-object-id 26")
     if args.expect_route_goal is not None and args.portal_id is None:
         raise SystemExit("--expect-route-goal requires --portal-id")
 
@@ -196,8 +210,39 @@ def main():
     with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
         patch_root_with_route45(original_avatar, probe_avatar, root_id,
-                                args.literal_slot, args.goto_relative)
+                                args.literal_slot, args.goto_relative,
+                                args.second_route_room_refresh)
         exit_code, report = run(probe_avatar, args.stack_object_id)
+        if args.second_route_room_refresh:
+            route = report.get("route_runtime") or {}
+            main_trace = [record for record in report.get("trace", [])
+                          if record.get("phase") == "root_probe" and
+                          record.get("routine") == root_id]
+            actual_instructions = [(record.get("pc"), record.get("opcode"))
+                                   for record in main_trace]
+            expected_instructions = [(0, 27), (1, 45), (2, 45)]
+            reached_door = any(position[:2] == [408, 408]
+                               for position in route.get("movement_positions", []))
+            print(json.dumps({
+                "main_routine": root_id,
+                "probe_exit": exit_code,
+                "vm_status": report.get("status"),
+                "vm_diagnostic": report.get("diagnostic"),
+                "host_failed": report.get("host_failed"),
+                "host_diagnostic": report.get("host_diagnostic"),
+                "main_instructions": actual_instructions,
+                "route_runtime": route,
+                "reached_door_goal": reached_door,
+                "evidence": "House07 saved World and live StackObject26; synthetic Main; no commercial resource writes",
+            }, indent=2))
+            if (exit_code != 0 or report.get("status") != "returned_true" or
+                    report.get("host_failed") or report.get("host_diagnostic") or
+                    actual_instructions != expected_instructions or not reached_door or
+                    route.get("active") or route.get("diagnostic") is not None or
+                    route.get("room_id") != 1 or route.get("grid_windowed") is not True or
+                    route.get("stackobject_slot_resolutions", 0) < 2):
+                raise SystemExit("House07 second-route room-grid validation probe failed")
+            return
         if args.goto_relative:
             route = report["route_runtime"]
             print(json.dumps({
