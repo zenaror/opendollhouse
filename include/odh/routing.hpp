@@ -169,6 +169,12 @@ private:
         std::optional<Instruction> replay_instruction;
         std::size_t portal_steps=0;
         bool room_context_open=false;
+        bool call_failure_trees=false;
+        bool failure_tree_invoked=false;
+        bool failure_pending=false;
+        std::int16_t failure_code=3;
+        std::int16_t failure_blocker=0;
+        std::string failure_reason{};
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);

@@ -567,6 +567,65 @@ int main() {
                  world.find(1)->position->x==12&&world.find(1)->position->y==12&&
                  world.find(1)->position->direction!=world.find(2)->position->direction,
                  "Go Here walks to target in steps and leaves arrival facing unrestricted");}
+        for(const bool destination_walkable:{false,true})
+        for(const bool failure_tree_returns_true:{false,true}) {
+         odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+         auto code=goto_relative(go_here);
+         code.emplace(odh::routine_key(398),odh::Bhav{0x8002,
+             {{2,254,255,{0,0,static_cast<std::uint8_t>(failure_tree_returns_true?0:1),0,0,2,7,7}}},
+             {},odh::Bhav::Metadata{0,4,0,0}});
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         if(destination_walkable) {
+             for(std::int32_t y=0;y<32;++y)grid.block({8,y});
+         } else grid.block({12,12});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         vm.temps()[1]=failure_tree_returns_true?0:1;
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
+                 "blocked saved Go Here waits for its failure routine instead of skipping it");
+         require(routing.tick(1)&&routing.external_frame_active()&&vm.stack().back().key.id==398&&
+                 vm.stack().back().arguments==std::vector<std::int16_t>{
+                     static_cast<std::int16_t>(destination_walkable?3:7),0,0,0},
+                 "Go Here calls global 398 with NoPath or NoValidGoals and no identified blocker");
+         const auto failure_return=vm.run(1);
+         require(failure_return==odh::VmStatus::yielded&&vm.external_frame_return(),
+                 "global 398 returns to the route service at a scheduler boundary");
+         const auto failure_resumed=routing.tick(2);
+         require(failure_resumed&&!routing.active()&&vm.status()==odh::VmStatus::returned_false,
+                 ("route service resumes after global 398 and completes the original wait (tick="+
+                  std::to_string(failure_resumed)+", active="+std::to_string(routing.active())+
+                  ", status="+std::to_string(static_cast<int>(vm.status()))+", diag="+
+                  vm.diagnostic()+", route="+routing.diagnostic()+")").c_str());
+         require(vm.run(1)==odh::VmStatus::returned_false,
+                 "Go Here reports a failed walk whether its failure routine returns true or false");
+        }
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+         auto code=goto_relative(go_here);
+         code.emplace(odh::routine_key(398),odh::Bhav{0x8002,
+             {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}});
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
+                 "walkable Go Here first schedules a route without moving the avatar");
+         grid.block({5,12});
+         require(routing.tick(1)&&routing.external_frame_active()&&
+                 vm.stack().back().arguments==std::vector<std::int16_t>{3,0,0,0}&&
+                 world.find(1)->position->x==4,
+                 "a newly blocked first step calls global 398 with NoPath and does not teleport");
+         require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(2)&&!routing.active()&&
+                 vm.status()==odh::VmStatus::returned_false&&world.find(1)->position->x==4,
+                 "route failure returns false after global 398 while preserving the avatar position");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});

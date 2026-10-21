@@ -349,20 +349,32 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
         return goal_validator_(frame,point);
     };
+    const auto fail_route=[&](std::int16_t code,const std::string& reason) -> PrimitiveOutcome {
+        diagnostic_=reason;
+        if(!saved_go_here_relative||nested_request)
+            return {PrimitiveDisposition::goto_false,reason};
+        Job failed{};
+        failed.ticket=dispatch.ticket;
+        failed.actor_generation=actor->generation;failed.target_generation=target->generation;
+        failed.actor=actor->id;failed.target=target->id;
+        failed.expected=*actor->position;failed.target_position=*target->position;
+        failed.expected_radian_direction=actor->radian_direction;
+        failed.run_generation=vm_->run_generation();
+        failed.call_failure_trees=true;failed.failure_pending=true;
+        failed.failure_code=code;failed.failure_reason=reason;
+        job_=std::move(failed);
+        return {PrimitiveDisposition::wait,reason};
+    };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
     if(goto_relative) {
         if(!goal_validator_)
             return unsupported("GotoRelativePosition exact-point goal requires a host bounds/room/clearance validator");
         const RoutePoint goal{target->position->x,target->position->y};
-        if(!grid_.contains(goal)) {
-            diagnostic_="GotoRelativePosition target lies outside the active route grid";
-            return {PrimitiveDisposition::goto_false,{}};
-        }
-        if(!allow_goal(goal)) {
-            diagnostic_="GotoRelativePosition target rejected by host room/clearance validator";
-            return {PrimitiveDisposition::goto_false,{}};
-        }
+        if(!grid_.contains(goal))
+            return fail_route(7,"GotoRelativePosition target lies outside the active route grid");
+        if(!allow_goal(goal))
+            return fail_route(7,"GotoRelativePosition target rejected by host room/clearance validator");
         if(start==goal) {
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
@@ -428,7 +440,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     }
     if(path.status==RouteStatus::budget_exhausted) return unsupported("routing search budget exhausted");
     if(path.status==RouteStatus::invalid_input) return unsupported("routing start or pre-ranked goal input invalid");
-    if(path.status==RouteStatus::no_path) {diagnostic_="no path in supplied clearance grid";return {PrimitiveDisposition::goto_false,{}};}
+    if(path.status==RouteStatus::no_path) return fail_route(3,"no path in supplied clearance grid");
     const auto goal=path.points.back();
     const std::int16_t entry_flags=goto_relative?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
         {target->position->x,target->position->y},target->position->direction,goal,
@@ -451,6 +463,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
              arrival_facing,goto_relative?i.operands[3]==255:slot->facing==-3,
              false,0,false,0,{},0,false,false,{}, {},0,false};
     job_->run_generation=vm_->run_generation();
+    job_->call_failure_trees=saved_go_here_relative&&!nested_request;
     return {PrimitiveDisposition::wait,{}};
 }
 void Routing::end_room_context(Job& job) {
@@ -534,6 +547,25 @@ bool Routing::advance_room_route(const std::optional<VmCall>& previous_call,
     return finish(false,reason);
 }
 bool Routing::finish(bool result,const std::string& reason) {
+    if(!result&&job_->call_failure_trees&&!job_->failure_tree_invoked) {
+        const auto pending=vm_->pending();
+        if(pending&&pending->ticket==job_->ticket) {
+            const auto* actor=world_.find(job_->actor);
+            if(actor&&actor->generation==job_->actor_generation)
+                world_.set_static_footprint(job_->actor,true);
+            VmCall failure{routine_key(398),pending->context,
+                           {job_->failure_code,job_->failure_blocker,0,0}};
+            if(vm_->call_pending(job_->ticket,failure)) {
+                job_->failure_tree_invoked=true;
+                job_->failure_reason=reason;
+                job_->external_frame_active=true;
+                job_->external_frame_owner=failure.context.code_owner;
+                job_->external_frame_call=std::move(failure);
+                job_->frame.state=RouteFrameState::room_portal;
+                return true;
+            }
+        }
+    }
     end_room_context(*job_);
     const auto ticket=job_->ticket;
     if(suspended_jobs_.empty()) {
@@ -574,6 +606,10 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
     if(last_tick_ && (now<=*last_tick_ || now-*last_tick_!=1)) return false;
     last_tick_=now;
     if(!vm_ || !job_) return false;
+    if(job_->failure_pending) {
+        job_->failure_pending=false;
+        return finish(false,job_->failure_reason);
+    }
     if(job_->external_frame_active) {
         if(vm_->run_generation()!=job_->run_generation) {
             cancel_chain("route canceled by VM restart during external frame");return false;
@@ -586,6 +622,8 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 cancel_chain("external route frame returned with mismatched ownership");return false;
             }
             job_->external_frame_active=false;
+            if(job_->failure_tree_invoked)
+                return finish(false,job_->failure_reason);
             job_->frame.state=RouteFrameState::room_portal;
             const auto* actor=world_.find(job_->actor);
             const auto* target=world_.find(job_->target);

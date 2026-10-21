@@ -177,8 +177,18 @@ A referência VMSlotParser e VMRoutingFrame exige posições, salas/arquitetura,
 obstáculos/portais, candidatos na grade e RNG. O estado avança por ticks,
 movimento e animação. Falhas com trees habilitadas podem chamar global398
 com failureCode/blocker, gravam PersonData.RouteResult62; chegada grava
-RouteEntryFlags37 e aplica facing. Não se atribuem esses resultados para
-recursos espaciais que o host ainda não inicializou.
+RouteEntryFlags37 e aplica facing. O teste de roteamento também confirma que
+uma falha do perfil Go Here salvo chama global398 com código e bloqueador, e
+que o resultado da rotina não substitui o resultado falso da caminhada. Esse
+teste usa um mundo construído e uma rotina398 sintética; não se atribuem esses
+resultados para recursos espaciais que o host ainda não inicializou.
+
+Para o destino rejeitado pelo validador, o teste espera NoValidGoals (7) e
+blocker0, pois o validador ainda não sabe qual objeto impediu a caminhada.
+Falha de busca sem caminho e bloqueio que surge depois do início usam NoPath
+(3); a segunda prova confirma que o SIM fica onde parou. A chamada está
+limitada à ação Go Here exata; chamadas naturais de clique, níveis diferentes
+e IDs reais de bloqueadores ainda não foram validados.
 
 A próxima integração precisa de estado espacial do lote e suporte real ao
 perfil SLOT8, além da escolha explícita de residentes/FAMI e controladores.
