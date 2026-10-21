@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Módulo puro `odh_slot_scoring` calcula e ordena scores do perfil SLOT
+  House07 standing/círculo com RNG explícito e ordem de entrada fornecida.
+  Preserva consumo de RNG para candidatos rejeitados após score e empates
+  estáveis, e aceita penalidade conhecida de avatar/porta/reserva. Entradas
+  incertas ou malformadas falham antes de alterar o seed; teto de 4.096.
+  Ramos RandomScoring/FSOEqualProximityScore têm testes sintéticos. Não executa
+  gates geométricos/PositionValid/EP5 nem liga seed ou ranking ao Main;
+  equivalência ao executável original permanece não demonstrada.
 - Routing aceita provider opcional de destinos SLOT previamente ordenados e
   tenta um por vez, avançando apenas após `no_path` definitivo. Empates mantêm
   a ordem de entrada; expansões acumulam entre tentativas e limites/entrada

@@ -1,0 +1,121 @@
+#include "odh/slot_scoring.hpp"
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+
+namespace {
+int checks = 0;
+void require(bool condition, const char* message) {
+    ++checks;
+    if (!condition) throw std::runtime_error(message);
+}
+using Verification = odh::ReferenceSlotVerification;
+odh::SlotTable table(std::uint32_t flags = 0x55) {
+    odh::SlotRecord r{};
+    r.type=3; r.standing=1; r.flags=flags; r.snap_target_slot=-1;
+    r.proximity=std::array<std::int32_t,3>{16,16,16}; r.max_size=0; r.unknown_i10=0;
+    r.gradient_bits=0x3E400000; r.height=0; r.facing=-2; r.resolution=16;
+    return {0,10,{r},0};
+}
+odh::ReferenceSlotScoreInput input(odh::RoutePoint p, Verification v = Verification::eligible) {
+    return {{p,4,2},16,v};
+}
+template<class F> void invalid_unchanged(odh::RandomState& random, F operation) {
+    const auto before=random.seed();
+    bool rejected=false;
+    try { operation(); } catch (const std::invalid_argument&) { rejected=true; }
+    catch (const std::length_error&) { rejected=true; }
+    require(rejected,"malformed input rejected");
+    require(random.seed()==before,"malformed input preserves RNG");
+}
+void formulas() {
+    odh::RandomState random(1), expected(1);
+    const auto first = expected.next(1024);
+    expected.next(1024);
+    const auto third = expected.next(1024);
+    // object distance floor(sqrt(2^2+3^2))=3. maxScore=(3+16)/3+2=8.
+    // candidate distance floor(sqrt(1^2+2^2))=2, subtract 2/3.0.
+    const auto result=odh::score_reference_slot_candidates(table(),0,{2,3},{0,0},
+        {input({1,2}),input({5,5},Verification::rejected_after_score),
+         input({1,2},Verification::eligible_with_penalty)},random);
+    require(result.random_calls==3,"reject after score consumes one random draw");
+    require(result.seed_before==1 && result.seed_after==expected.seed() && random.seed()==expected.seed(),"explicit seed snapshot");
+    require(result.records.size()==3 && result.ranked_goals.size()==2,"reject retained only in diagnostic records");
+    require(result.records[0].base_score==static_cast<float>(first)/1024.0f+8,"normal base and integer maxScore");
+    require(*result.records[0].final_score==result.records[0].base_score-2/3.0,"1/16 distance truncates before fractional divide");
+    require(!result.records[1].final_score,"rejected candidate has no final score");
+    require(result.records[1].verification==Verification::rejected_after_score,"rejection classification preserved");
+    require(*result.records[2].final_score==(static_cast<float>(third)/1024.0f+8-2/3.0)/100000,"known avatar door or claim penalty once");
+    require(result.records[0].seed_before==1 && result.records[0].seed_after==result.records[1].seed_before &&
+        result.records[1].seed_after==result.records[2].seed_before,"per-record RNG chain");
+    require(result.ranked_input_indices==std::vector<std::size_t>{0,2},"descending accepted scores");
+    require(result.ranked_goals[0].position==odh::RoutePoint{1,2} && result.ranked_goals[0].facing==2 &&
+        result.ranked_goals[0].entry_flags==4,"ranked output carries runtime goal metadata");
+}
+void branches() {
+    odh::RandomState random(1), expected(1);
+    const double draw=static_cast<float>(expected.next(1024))/1024.0f;
+    auto result=odh::score_reference_slot_candidates(table(0x55|8192),0,{2,2},{0,0},{input({16,16})},random);
+    require(result.records[0].base_score==draw && *result.records[0].final_score==draw,"random scoring omits proximity and caller distance");
+    require(result.random_calls==1 && random.seed()==expected.seed(),"random scoring consumes RNG");
+    random.reset(99);
+    result=odh::score_reference_slot_candidates(table(0x55|(1U<<29)),0,{2,2},{0,0},
+        {input({1,2}),input({3,3},Verification::rejected_after_score)},random);
+    require(result.random_calls==0 && random.seed()==99 && result.seed_after==99,"equal proximity consumes no RNG even rejects");
+    require(result.records[0].base_score==8 && *result.records[0].final_score==8-2/3.0,"equal proximity skips proximity bonus then subtracts caller distance");
+    result=odh::score_reference_slot_candidates(table(0x55|8192|(1U<<29)),0,{2,2},{0,0},
+        {input({17,16}),input({1,2}),input({1,1},Verification::eligible_with_penalty)},random);
+    require(result.random_calls==0 && random.seed()==99,"equal priority supersedes random draw");
+    require(*result.records[0].final_score==8 && *result.records[1].final_score==8,"combined flags omit distance");
+    require(result.ranked_input_indices==std::vector<std::size_t>{0,1,2},"equal score sort preserves enumeration order");
+    require(*result.records[2].final_score==8.0/100000,"equal mode penalty");
+    random.reset(0);
+    result=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},{input({16,0}),input({0,16})},random);
+    require(result.random_calls==2 && random.seed()==0,"zero is explicit valid absorbing seed");
+    require(result.ranked_input_indices==std::vector<std::size_t>{0,1},"normal-score ties stable");
+    result=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},
+        {input({16,0}),input({0,0}),input({1,0})},random);
+    require(result.ranked_input_indices==std::vector<std::size_t>{1,2,0},"descending rank uses score rather than input or route cost");
+    result=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},
+        {input({16,0},Verification::rejected_after_score)},random);
+    require(result.ranked_goals.empty() && result.random_calls==1 && result.records.size()==1,"all rejected still consumes scoring draws");
+    result=odh::score_reference_slot_candidates(table(),0,{0,0},{0,0},{},random);
+    require(result.records.empty() && result.ranked_goals.empty() && result.random_calls==0,"empty prefiltered list valid without draw");
+}
+void invalid_inputs() {
+    odh::RandomState random(42);
+    auto invoke=[&](const odh::SlotTable& slots,const std::vector<odh::ReferenceSlotScoreInput>& inputs,
+                    odh::RoutePoint object=odh::RoutePoint{0,0}) {
+        return odh::score_reference_slot_candidates(slots,0,object,{0,0},inputs,random);
+    };
+    for (const auto v : {Verification::unknown,static_cast<Verification>(255)})
+        invalid_unchanged(random,[&]{invoke(table(),{input({16,0}),input({0,16},v)});});
+    for (const auto value : {std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::infinity(),-1.0,15.5}) {
+        auto bad=input({16,0}); bad.slot_distance=value;
+        invalid_unchanged(random,[&]{invoke(table(),{input({0,16}),bad});});
+    }
+    for (auto field : {0,1,2}) {
+        auto bad=input({16,0});
+        if (field==0) bad.goal.entry_flags=0;
+        if (field==1) bad.goal.entry_flags=2;
+        if (field==2) bad.goal.facing=8;
+        invalid_unchanged(random,[&]{invoke(table(),{bad});});
+    }
+    auto bad=table(); bad.records[0].standing=2;
+    invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
+    bad=table(0x55|4096);
+    invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
+    bad=table(); bad.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
+    invalid_unchanged(random,[&]{invoke(bad,{input({16,0})});});
+    invalid_unchanged(random,[&]{invoke(table(),{input({32768,0})});});
+    invalid_unchanged(random,[&]{invoke(table(),{input({16,0})},{32768,0});});
+    invalid_unchanged(random,[&]{invoke(table(),{input({-32768,-32768})});});
+    invalid_unchanged(random,[&]{invoke(table(),std::vector<odh::ReferenceSlotScoreInput>(4097,input({16,0})));});
+    const auto result=invoke(table(),std::vector<odh::ReferenceSlotScoreInput>(4096,input({16,0})));
+    require(result.random_calls==4096 && result.ranked_goals.size()==4096,"inclusive 4096 candidate bound");
+}
+}
+int main() {
+    try { formulas(); branches(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
+}

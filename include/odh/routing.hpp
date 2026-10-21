@@ -32,7 +32,8 @@ struct ReferenceSlotCircleCandidate { RoutePoint position; std::uint8_t entry_fl
 std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
     const SlotTable&,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction);
 // Input order is already ranked by the caller, including stable score ties.
-// ODH does not compute Simitone's SLOT score or VM RNG ordering here.
+// This routing consumer does not compute score/RNG. The separate explicit
+// score_reference_slot_candidates adapter can supply this ranked output.
 struct PreRankedSlotGoal {
     RoutePoint position;
     std::uint8_t entry_flags;

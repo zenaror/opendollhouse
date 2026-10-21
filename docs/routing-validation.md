@@ -84,6 +84,63 @@ ranking, elegibilidade e validação do destino; fornecer uma lista construída
 não valida score/RNG, reserva, colisão runtime ou fidelidade ao jogo original.
 O cancelamento durante movimento ainda conclui false, sem tentar outro destino.
 
+### Score de referência com seed explícito — 2026-10-20
+
+`odh_slot_scoring` / `score_reference_slot_candidates` é um adaptador puro
+separado do controller. Aceita o perfil House07 v10 type-3 já descrito,
+standing=1/sitting=0/ground=0, sem snap, proximidade min=max=optimal positiva
+até 4.096. Também reconhece os bits RandomScoring (8192) e
+FSOEqualProximityScore (1<<29), cobertos por fixtures sintéticas. Não modela
+perfis sitting/ground, ranges, offsets, on-point ou SnapToDirection.
+
+O chamador entrega em ordem explícita somente registros que já passaram pelos
+gates de proximidade, sala e direção. Cada registro tem posição 1/16 tile,
+distância medida pela enumeração (no círculo, o raio SLOT mesmo nas diagonais),
+entry flags, facing final e resultado conhecido da verificação posterior:
+elegível, elegível com penalidade ou rejeitado após score. `unknown` é inválido,
+inclusive em um registro posterior a outros válidos. Isso não implementa
+enumeração, geometria, bounds, raycast, cadeira, PositionValid, EP5, reserva ou
+ocupação; classificar um registro como elegível é responsabilidade do chamador.
+Não converte automaticamente snapshots incertos em elegibilidade runtime.
+
+Cada registro normal consome `RandomState::next(1024)` antes da verificação,
+inclusive rejeitados. A fração é calculada como float32 e promovida a double.
+`maxScore = (floor(distance(objeto,ator)) + raio)/3 + 2`, com divisão inteira;
+normalmente soma esse valor à fração e subtrai
+`floor(distance(candidato,ator))/3.0`. As distâncias são euclidianas nas unidades
+1/16, sem divisão por 16 antes do cálculo. RandomScoring omite ambas as
+correções. FSOEqualProximityScore usa maxScore sem RNG e não soma o ajuste de
+proximidade; ainda subtrai a distância ao ator se RandomScoring estiver
+desativado. Multiplica pelo peso
+standing (1 neste perfil) e divide uma única vez por 100.000 se houver
+penalidade conhecida de avatar, porta ou destino reivindicado.
+
+Retorna scores base/seed antes/depois por entrada e resultado global, além de
+`ranked_goals` diretamente utilizável por um provider explícito e índices das
+entradas aceitas. Ordena por score decrescente com estabilidade nos empates.
+Rejeitados conservam score base, sem score final: a rejeição pode anteceder
+as correções posteriores. Limita a 4.096 entradas e valida perfil, metadados,
+finiteza, coordenadas short e distâncias sem overflow do int32 da referência
+antes de consumir RNG. Entrada malformada preserva o seed. Lista vazia é
+válida. Não presume seed inicial, estado da VM ou ordem do círculo ODH;
+nenhum Main foi ligado a esse módulo.
+
+Proveniência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
+submódulo `f86bbd34b2112296ed786741f640a0535886d180`,
+`tso.simantics/Engine/VMSlotParser.cs:141-173,207-321`,
+`tso.simantics/VMContext.cs:524-531` e
+`tso.world/Model/LotTilePos.cs:42-45`. Esta é evidência de comportamento da
+referência fixada; equivalência ao executável original permanece não provada.
+
+Validação focada em builds separados Debug (`/tmp/odh-slot-scoring-debug`) e
+ASan/UBSan (`/tmp/odh-slot-scoring-sanitize`, `ASAN_OPTIONS=detect_leaks=0`):
+CTest `slot_scoring|random_state|routing`, 3/3 em cada build, com
+`slot scoring: 57 checks passed`, `131 checks passed` de RNG e
+`74 routing checks passed (constructed world only)`. Cobre fórmulas dos ramos,
+divisão inteira de maxScore, truncamento euclidiano 1/16, consumo em rejeições,
+empates, penalidade, seed zero explícito e entradas inválidas/over-budget sem
+alteração do seed. Não é validação de seleção em lote real ou hardware.
+
 A máscara da malha é fornecida explicitamente e deve considerar clearance.
 O atalho sem movimento (`start == goal`) só é aceito quando a célula também
 está dentro da malha e livre; coincidência geométrica não valida destino.
