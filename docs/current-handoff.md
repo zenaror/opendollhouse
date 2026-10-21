@@ -731,13 +731,19 @@ reproduz o corner-cutting e o ajuste opcional de entrada `dirIn` do
 diagnóstico de rota House07 já chama a API e mantém os corredores bruto e
 otimizado separados. O JSON informa
 `incoming_direction_context=not_reconstructed`: o estado da rota-pai que
-decide `dirIn` não está disponível neste probe. Uma transcrição temporária
+decide `dirIn` não está disponível neste probe. A origem foi confirmada:
+`VMRoutingFrame.GetParentFrame()` procura outro `VMRoutingFrame` na pilha do
+thread, enquanto o `odh-person` expõe frames BHAV do `Vm`; o destino solicitado
+pelo probe também não veio de um Route45 ativo. Portanto, não há estado-pai ou
+`PortalTurns` vivo que esse diagnóstico possa recuperar. Integrar um frame de
+rota ao runtime real é pré-requisito para alimentar `dirIn` e validar
+waypoints/movimento. Uma transcrição temporária
 C#/.NET 10 das rotinas da referência confirmou
 os casos reto, curva, gap e duplicata; não invocou Simitone compilado nem o jogo
 original. Os casos de portal também coincidiram com harness C#/.NET 10 usando
 MonoGame 3.8.4: projeção >=8, clamp com vários crossings, offsets positivos e
 negativos e dois nós. ODH falha fechado no domínio em que as somas inteiras de
 quadrados da referência transbordariam. Próxima unidade: investigar a ordem
-`RoomInfo.Entities` frente ao snapshot ODH e avançar na seleção real de
-objetivo/estado de portais. Não promover a saída geométrica a clearance,
-execução de waypoints ou movimento.
+implementação de frame de rota ligada ao Route45 real, com estado-pai,
+`PortalTurns` e continuidade de execução. Não promover a saída geométrica a
+clearance, execução de waypoints ou movimento.
