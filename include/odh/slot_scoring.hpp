@@ -38,4 +38,10 @@ ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable&, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>&,
     RandomState&);
+// Generates, filters by ranged proximity/direction, scores and stably ranks the
+// pinned Simitone Door 16-to-32 profile. Room and clearance eligibility remain
+// the Routing host's responsibility; the supplied RNG is explicit and mutable.
+std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
+    const SlotTable&,std::size_t type3_index,const EntityPosition& caller,
+    const EntityPosition& target,RandomState&);
 } // namespace odh

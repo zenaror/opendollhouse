@@ -1,4 +1,5 @@
 #include "odh/slot_scoring.hpp"
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -118,6 +119,28 @@ void door_range() {
     invalid_unchanged(random,[&]{(void)odh::score_reference_slot_candidates(door_range_table(),0,
         {100,100},{0,100},bad,random);});
 }
+void door_range_generation() {
+    odh::RandomState random(0);
+    const odh::EntityPosition caller{0,0,1,0},target{0,0,1,0};
+    const auto goals=odh::rank_reference_door_range_slot(door_range_table(),0,caller,target,random);
+    require(!goals.empty()&&goals.size()<=25,"Door range provider bounds candidates to its 5x5 Simitone lattice");
+    require(goals.size()>=3&&goals[0].position==odh::RoutePoint{-16,0}&&
+            goals[1].position==odh::RoutePoint{0,16}&&goals[2].position==odh::RoutePoint{16,0},
+            "Door range provider preserves x-outer/y-inner order for equal-score optimal goals");
+    for(const auto& goal:goals) {
+        const auto dx=goal.position.x-target.x,dy=goal.position.y-target.y;
+        const auto distance=std::sqrt(static_cast<double>(dx*dx+dy*dy));
+        require(distance>=15.5&&distance<=32.5&&goal.entry_flags!=0&&
+                (goal.entry_flags&static_cast<std::uint8_t>(~0x54U))==0&&goal.facing<8,
+                "Door provider emits only in-band, direction-masked and faced goals");
+    }
+    require(random.seed()==0,"explicit zero seed remains an absorbing RNG state during range generation");
+    auto malformed=door_range_table();malformed.records[0].facing=-3;
+    const auto before=random.seed();bool rejected=false;
+    try{(void)odh::rank_reference_door_range_slot(malformed,0,caller,target,random);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected&&random.seed()==before,"unsupported facing profile is rejected without consuming route RNG");
+}
 void invalid_inputs() {
     odh::RandomState random(42);
     auto invoke=[&](const odh::SlotTable& slots,const std::vector<odh::ReferenceSlotScoreInput>& inputs,
@@ -152,6 +175,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); door_range_generation(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

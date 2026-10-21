@@ -374,12 +374,18 @@ com teste dedicado de resolução e conclusão assíncrona. Em `Doors.iff:4114`,
 trace real percorre GetDistanceTo e chamadas 4115, então chega ao Route45 de
 pc4 com Data0/scope0. A expressão anterior grava 3 em Args[0], logo o alvo é
 SLOT128 type3 índice3. Esse registro real possui `flags=0x54`, facing -2 e
-faixa de proximidade 16–32; o motor retorna `unsupported` porque ainda não
-implementa seleção/pontuação de SLOT de faixa. Isso é um novo ponto de parada,
-não uma rota ou interação concluída.
+faixa de proximidade 16–32. A integração gera offsets limitados, filtra
+proximidade/direção e classifica os candidatos antes de entregá-los ao Route45,
+com estado RNG explícito. O probe com os recursos reais termina após 21
+instruções em `Doors.iff:4162` pc1 com `unsupported primitive 28`
+(`RunTreeByName`). Antes disso, a rota construída percorre 33 células até
+`[48,64,1,2]`, com `RouteEntryFlags=64`, e opcode8 avança.
 
-Verificação: 140 checks de `odh-routing-tests`, 4 checks de
-`odh-distance-to-tests` e 160/160 CTests passaram. `linux_window_backend` foi
-pulado sem display X11. Nenhum dado comercial foi alterado. A referência de
-primitiva é FreeSO `VMGotoRoutingSlot.cs` no snapshot usado pelo checkpoint
-98ecb50; compatibilidade com o executável original não é inferida desses testes.
+A grade usa walkability raw construída e bounds de piso, sem clearance dinâmico
+de avatar. Isso não valida interação natural, porta restaurada em House07,
+Portal15, gameplay jogável ou equivalência ao executável original. Verificação:
+142 checks de `odh-routing-tests`, 76 de `odh-slot-scoring-tests`, 4 de
+`odh-distance-to-tests` e 160/160 CTests passaram; `linux_window_backend`
+passou nesta sessão. Nenhum dado comercial foi alterado. Os caminhos TS1 do
+Simitone fixado `4906db3156616bfaffc10ce0963cf08062975fef` orientam a malha, sem
+provar equivalência ao original.

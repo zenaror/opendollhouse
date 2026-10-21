@@ -1,5 +1,6 @@
 #include "odh/routing.hpp"
 #include "odh/route_frame.hpp"
+#include "odh/slot_scoring.hpp"
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -127,6 +128,41 @@ void pre_ranked_goal_tests() {
     require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
             "empty candidate entry flags stop before fallback");
 }
+void door_range_route_tests() {
+    auto doors=slot();
+    doors.records[0].flags=0x54;doors.records[0].facing=-2;
+    doors.records[0].proximity=std::array<std::int32_t,3>{16,32,16};
+    odh::World world;odh::RouteGrid grid{64,64};auto globals=slot();globals.version=9;
+    odh::RandomState random{0};
+    odh::PreRankedSlotGoalProvider provider=[&](const auto& table,std::size_t index,
+        const auto& actor,const auto& target) {
+        if(index!=0)return std::vector<odh::PreRankedSlotGoal>{};
+        return odh::rank_reference_door_range_slot(table,index,actor,target,random);
+    };
+    odh::Routing routing{world,grid,globals};
+    routing.set_door_range_goal_provider(provider);
+    routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame)->const odh::SlotTable* {
+        return frame.context.stack_object==2?&doors:nullptr;
+    });
+    routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
+        const auto* actor=world.find(frame.context.caller);const auto* target=world.find(frame.context.stack_object);
+        return actor&&target&&actor->position&&target->position&&
+            actor->position->level==target->position->level&&grid.contains(point)&&grid.walkable(point);
+    });
+    odh::RoutineSet route_code{{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{45,254,255,{0,0,0,0,1,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+    odh::Vm vm{std::move(route_code),world.vm_memory(),{},routing.primitive()};
+    world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+    world.set_position(1,{4,20,1,0});world.set_position(2,{28,20,1,0});grid.block({28,20});
+    routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2},{0});
+    require(vm.run(10)==odh::VmStatus::waiting&&routing.active()&&random.seed()==0,
+        "Door range Route45 consumes explicit RNG and schedules its highest-ranked clear goal");
+    for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
+    require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
+        world.find(1)->position->x==12&&world.find(1)->position->y==20&&
+        world.find(1)->person_data[37]==0x40,
+        "Door range Route45 reaches the ranked west approach while preserving entry flags");
+}
 void route_frame_context_tests() {
     odh::RouteFrameContext root;
     require(!odh::route_incoming_direction(root,nullptr,0.25f),
@@ -192,6 +228,7 @@ int main() {
         reference_slot_direction_tests();
         reference_slot_circle_tests();
         pre_ranked_goal_tests();
+        door_range_route_tests();
         route_frame_context_tests();
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};

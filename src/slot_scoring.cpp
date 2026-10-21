@@ -104,4 +104,41 @@ ReferenceSlotScores score_reference_slot_candidates(
     random = next_random;
     return result;
 }
+std::vector<PreRankedSlotGoal> rank_reference_door_range_slot(
+    const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
+    const EntityPosition& target,RandomState& random) {
+    const auto* slot=slot_of_type(table,3,type3_index);
+    if(table.version!=10||!slot||slot->flags!=0x54||slot->facing!=-2||
+       slot->offset_bits!=std::array<std::uint32_t,3>{0,0,0}||
+       slot->proximity!=std::optional<std::array<std::int32_t,3>>{{16,32,16}}||
+       slot->resolution!=16||slot->standing!=1||slot->sitting!=0||slot->ground!=0||
+       slot->snap_target_slot!=-1||slot->max_size!=0||slot->unknown_i10!=0||
+       slot->gradient_bits!=0x3E400000||slot->height!=0)
+        throw std::invalid_argument("Door range generation requires the exact SLOT128 16-to-32 profile");
+    const RoutePoint center{target.x,target.y};
+    const auto offsets=enumerate_reference_slot_range_lattice(table,type3_index,4096);
+    const auto ranged=filter_reference_slot_range_proximity(table,type3_index,offsets);
+    constexpr std::array<RoutePoint,8> headings={{{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}}};
+    std::vector<ReferenceSlotScoreInput> inputs;
+    inputs.reserve(ranged.size());
+    for(const auto offset:ranged) {
+        const auto x=static_cast<std::int64_t>(center.x)+offset.x;
+        const auto y=static_cast<std::int64_t>(center.y)+offset.y;
+        if(x<-32768||x>32767||y<-32768||y>32767)
+            throw std::invalid_argument("Door range candidate exceeds LotTilePos short coordinates");
+        const RoutePoint position{static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)};
+        const auto entry_flags=reference_slot_entry_flags(center,target.direction,position,
+            static_cast<std::uint8_t>(slot->flags));
+        if(entry_flags==0)continue;
+        const auto dx=(target.x>position.x)-(target.x<position.x);
+        const auto dy=(target.y>position.y)-(target.y<position.y);
+        std::uint8_t facing=0;
+        for(std::uint8_t n=0;n<headings.size();++n)
+            if(headings[n]==RoutePoint{dx,dy}){facing=n;break;}
+        const auto ox=static_cast<double>(offset.x),oy=static_cast<double>(offset.y);
+        const auto proximity=std::sqrt(ox*ox+oy*oy);
+        inputs.push_back({{position,entry_flags,facing},proximity,ReferenceSlotVerification::eligible});
+    }
+    return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random).ranked_goals;
+}
 } // namespace odh

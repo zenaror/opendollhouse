@@ -79,6 +79,11 @@ public:
         if(executing_||job_)throw std::logic_error("cannot replace Route45 goal validator while active");
         goal_validator_=std::move(validator);
     }
+    // Profile-specific provider used only by the bounded Door range SLOT.
+    void set_door_range_goal_provider(PreRankedSlotGoalProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Door range provider while active");
+        door_range_goals_=std::move(provider);
+    }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
     // The host must supply the correct routine, code owner and VM context;
@@ -115,6 +120,7 @@ private:
     RouteGrid& grid_;
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
+    PreRankedSlotGoalProvider door_range_goals_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
     RouteLimits limits_;

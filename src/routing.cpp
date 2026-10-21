@@ -27,6 +27,14 @@ bool supported_circle_slot_profile(const SlotRecord& slot) {
         (*slot.proximity)[0]==(*slot.proximity)[1] &&
         (*slot.proximity)[0]==(*slot.proximity)[2] && (*slot.proximity)[0]<=4096;
 }
+bool supported_door_range_slot_profile(const SlotRecord& slot) {
+    return slot.flags==0x54&&slot.facing==-2&&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&slot.proximity&&
+        *slot.proximity==std::array<std::int32_t,3>{16,32,16}&&
+        slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0x3E400000&&
+        slot.height==0&&slot.resolution==16;
+}
 std::int32_t floor_tile(std::int32_t coordinate) {
     auto quotient=coordinate/16;
     if(coordinate<0 && coordinate%16) --quotient;
@@ -273,12 +281,18 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         slot_index=static_cast<std::size_t>(frame.arguments[data]);
     }
     const auto* slot=goto_relative?nullptr:slot_of_type(*selected_slots,3,slot_index);
+    const bool ranged_slot=!goto_relative&&slot&&selected_slots->version==10&&
+        supported_door_range_slot_profile(*slot);
     if(!goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
-        // Explicit first profile: circle in the same floor with zero offset. Other
-        // SLOT rules must be implemented, not approximated as successful routing.
-        if(selected_slots->version!=10 || !supported_circle_slot_profile(*slot))
+        // Door range routing has separate explicit scoring and host validation.
+        if(selected_slots->version!=10 ||
+           (!supported_circle_slot_profile(*slot)&&!ranged_slot))
             return unsupported("SLOT runtime profile not implemented");
+        if(ranged_slot&&!door_range_goals_)
+            return unsupported("Door range SLOT requires an explicit scoring provider");
+        if(ranged_slot&&!goal_validator_)
+            return unsupported("Door range SLOT requires a host room/clearance validator");
         if((slot->flags&0x0800U)!=0&&!goal_validator_)
             return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
     }
@@ -309,14 +323,15 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
         } else path=find_route(grid_,start,{goal},limits_);
-    } else if(ranked_goals_) {
+    } else if((ranged_slot&&door_range_goals_)||(!ranged_slot&&ranked_goals_)) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
         const auto actor_radian_direction=actor->radian_direction;
         const auto candidates=[&] {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
-            return ranked_goals_(*selected_slots,slot_index,actor_position,target_position);
+            const auto& provider=ranged_slot?door_range_goals_:ranked_goals_;
+            return provider(*selected_slots,slot_index,actor_position,target_position);
         }();
         actor=world_.find(actor_id);target=world_.find(target_id);
         if(!actor || !target || actor->generation!=actor_generation || target->generation!=target_generation ||

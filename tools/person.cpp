@@ -25,6 +25,7 @@
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
 #include "odh/distance_to.hpp"
+#include "odh/slot_scoring.hpp"
 #include "odh/world_room_info.hpp"
 #include "odh/saved_attempt_walk_obstacles.hpp"
 #include "runtime_attempt_walk_probe.hpp"
@@ -1285,8 +1286,13 @@ struct PlacementCandidateProbe {
                         route_runtime_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);
                     else {
                         runtime_route_grid.emplace(std::move(grid));
+                        odh::PreRankedSlotGoalProvider range_slot_goals=[&](const auto& table,std::size_t index,
+                            const auto& caller,const auto& target) {
+                            return odh::rank_reference_door_range_slot(table,index,caller,target,random);
+                        };
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
-                                                                       *shared.routing_slots);
+                            *shared.routing_slots);
+                        runtime_routing->set_door_range_goal_provider(std::move(range_slot_goals));
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
                             const auto* route_actor=world.find(frame.context.caller);

@@ -1,36 +1,24 @@
 # Continuidade atual
 
-## Score SLOT de alcance Door (2026-10-21)
+## Door SLOT de alcance e estado atual da rota (2026-10-21)
 
-O adaptador puro `score_reference_slot_candidates` também cobre o perfil
-SLOT128 type3 índice3 de `Doors.iff`: v10, flags `0x54`, min/max/optimal
-`16/32/16`, facing -2, resolução16. O scorer implementa o termo de score
-`max(abs(optimal-min),abs(max-optimal))`, preserva o draw por candidato antes
-da rejeição pós-score e ordena estavelmente. O perfil de círculo mantém os
-resultados anteriores. `odh-slot-scoring-tests` passou com 66 checks. Ainda
-opera sobre candidatos e elegibilidade fornecidos pelo chamador; enumeração,
-colisões e RNG não estão ligados ao runtime Route45. Próxima etapa: integrar a
-malha de offsets Simitone e os gates de room/clearance no provider runtime.
+Route45 integra seleção de candidatos para SLOT128 type3 índice3 de
+`Doors.iff` (`flags=0x54`, facing -2, proximity16–32), usando offsets
+limitados, scorer e RNG explícito. O runtime `odh-person` e o probe BHAV
+executam esse perfil. Uma rota construída termina em `[48,64,1,2]` após 33
+movimentos, com flags64, e opcode8 avança a VM.
 
-## Door BHAV: GetDistanceTo e Route45 StackVariable (2026-10-21)
+No probe com `Objects.far`, `Global.far`, `Doors.iff:4105` e OBJD15089, a
+execução para em `Doors.iff:4162` pc1 por `unsupported primitive 28`
+(`RunTreeByName`). A grade usa walkability raw e bounds de piso, sem clearance
+dinâmico de avatar. Não representa interação natural, porta restaurada de
+House07, travessia de Portal15, gameplay jogável ou equivalência ao original.
+Simitone TS1 revision `4906db3156616bfaffc10ce0963cf08062975fef` orienta a
+malha, sem provar equivalência.
 
-Após o checkpoint 98ecb50, opcode11 GetDistanceTo foi implementado no perfil
-same-level observado em `Doors.iff:4114` (Temp0, Caller default, distância
-euclidiana truncada em tiles). Route45 scope0 agora resolve o índice SLOT pelo
-argumento BHAV e usa a tabela vinculada ao StackObject. Testes focais: 140
-checks de routing e 4 de distância. CTest completo: 160/160 passou; X11 foi
-pulando por indisponibilidade do display.
-
-O probe real com `Objects.far`, `Global.far`, `Doors.iff:4105`, OBJD15089 e
-SLOT128 agora atravessa o opcode11, as chamadas 4115 e chega a `Doors.iff:4114`
-pc4 Route45 (Data0, scope StackVariable). A expressão anterior define Args[0]
-como 3, selecionando SLOT128 type3 índice3. O registro usa `flags=0x54`, facing
--2 e proximidade variável 16–32, fora do perfil de círculo já implementado; o
-probe para com `SLOT runtime profile not implemented`. Não foi escolhida nem
-forçada uma posição destino. Próximo: estudar enumeração, elegibilidade e
-pontuação da faixa contra fontes FreeSO/Simitone e a instância House07 antes de
-abrir esse perfil. Não declarar rota de porta, interação natural ou travessia
-de portal.
+Verificação: 142 checks de routing, 76 de slot scoring, 4 de distância e
+160/160 CTests passaram; `linux_window_backend` passou nesta sessão. Switch,
+Windows e macOS continuam alvos futuros sem validação nesta plataforma.
 
 ## Inventário RoomInfo completo do World vivo (2026-10-21)
 

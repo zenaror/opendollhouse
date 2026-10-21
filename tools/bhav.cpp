@@ -1,5 +1,6 @@
 #include "odh/routing.hpp"
 #include "odh/distance_to.hpp"
+#include "odh/slot_scoring.hpp"
 #include "odh/snap.hpp"
 #include "odh/notify.hpp"
 #include "odh/playback.hpp"
@@ -435,7 +436,14 @@ int main(int argc, char** argv) {
             for(int y=0;y<128;++y) if(y<50 || y>55) grid.wall({39,y},{40,y});
         }
         const odh::SlotTable empty_slots{0,10,{},0};
+        odh::RandomState route_slot_random{1};
+        const auto route_slot_random_handler=odh::random_primitive(route_slot_random);
+        odh::PreRankedSlotGoalProvider route_slot_goals=[&](const auto& table,std::size_t index,
+            const auto& actor,const auto& target) {
+            return odh::rank_reference_door_range_slot(table,index,actor,target,route_slot_random);
+        };
         odh::Routing routing(world,grid,routing_slots?*routing_slots:empty_slots);
+        if(route_slot_probe)routing.set_door_range_goal_provider(route_slot_goals);
         std::size_t stackobject_slot_resolutions=0;
         if(route_slot_probe) {
             routing.set_stack_object_slot_table_provider([&](const odh::VmFrame& frame)->const odh::SlotTable* {
@@ -561,6 +569,7 @@ int main(int argc, char** argv) {
             if(i.opcode==23 && sound_handler)return sound_handler(f,i,t,d);
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
             if(i.opcode==11)return distance_to_handler(f,i,t,d);
+            if(i.opcode==8&&route_slot_probe)return route_slot_random_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
         const auto world_memory=world.vm_memory();
