@@ -320,3 +320,29 @@ grade construídos, não interação normal, instância Door restaurada, hierarq
 multitile, clearance dinâmico, portal/transição de sala ou equivalência ao
 executável original. O script é manual/opcional e recebe os arquivos externos;
 eles não são adicionados ao repositório.
+
+### Instância Door multitile em House07 — 2026-10-21
+
+O import real de House07 contém portas ID25, 27 e 57 com GUID985 e
+`master_guid=458`; ID25 pertence ao grupo `[25,26]`. O provider de
+`odh-person` agora aceita partes multitile somente se o OBJD da parte concorda
+com o índice (GUID, MasterID e SubIndex), há um master único (`SubIndex=-1`) e
+o `master_guid` restaurado da instância bate com esse master. Continua usando
+o SLOT indicado pelo OBJD da parte (SLOT128 para GUID985); falha fechado se a
+identidade for ausente ou ambígua.
+
+`tests/house07_route45_integration.py --binary ./odh-person --game-root
+'../referencias/The Sims' --stack-object-id 25 --literal-slot` injeta Route45
+Literal no Main de uma cópia temporária do avatar, usando a instância Door25
+restaurada e a grade dinâmica da sala ativa. Bob saiu de `[392,440,1,3]` e
+chegou a `[408,424,1,1]` em Room3 com16 movimentos, uma resolução e uma carga
+de SLOT. Na variante com mutação, um obstáculo móvel causou retorno false após
+um movimento; o diagnóstico foi `next segment blocked during route`. O teste
+valida a relação multitile, o provider runtime e refresh/cancelamento no mundo
+salvo.
+
+A chamada Route45 ainda é injetada num Main temporário: não valida interação
+natural do jogador nem executa a BHAV 4113 em House07. O probe anterior executa
+4113/4115 reais, mas constrói a entidade e a grade. Juntos eles não demonstram
+travessia de Portal15, simulação completa de portas/clearance ou equivalência
+ao executável original.

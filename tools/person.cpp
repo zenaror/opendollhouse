@@ -872,6 +872,8 @@ int main(int argc,char** argv) {
         const auto guid=entity->definition->guid;
         const auto* candidate=definition_index->unique(guid);
         if(!candidate)return nullptr;
+        const auto* master=candidate->definition.master_id!=0?
+            definition_index->unique_master(*candidate):nullptr;
         std::optional<odh::ObjdBinding> binding;
         try {
             const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
@@ -884,7 +886,22 @@ int main(int argc,char** argv) {
                     }
                 },limits);
             });
-            if(!binding||binding->guid!=guid||binding->master_id!=0||binding->slot_table==0)return nullptr;
+            if(!binding||binding->guid!=guid||
+               binding->master_id!=candidate->definition.master_id||
+               binding->sub_index!=candidate->definition.sub_index||binding->slot_table==0) {
+                route_runtime_reason="runtime_stackobject_OBJD_binding_mismatch";
+                return nullptr;
+            }
+            if(binding->master_id!=0) {
+                if(!master||!entity->definition->master_guid||
+                   *entity->definition->master_guid!=master->definition.guid) {
+                    route_runtime_reason="runtime_stackobject_multitile_master_missing_ambiguous_or_mismatched";
+                    return nullptr;
+                }
+            } else if(entity->definition->master_guid) {
+                route_runtime_reason="runtime_stackobject_unexpected_multitile_master";
+                return nullptr;
+            }
             const auto key=std::make_pair(guid,binding->slot_table);
             const auto cached=route_stack_slot_cache.find(key);
             if(cached!=route_stack_slot_cache.end())return cached->second.get();

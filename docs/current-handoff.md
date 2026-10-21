@@ -767,3 +767,24 @@ porta, hierarquia multitile, interação natural, clearance dinâmico, Portal15 
 equivalência ao executável original. Próximo: localizar e vincular uma instância
 Door real no mundo/salvamento suportado, preservando a resolução de code owner e
 MasterID, e testar a rota na sala ativa antes de integrar travessia de portais.
+
+## Route45 Literal em Door multitile restaurada de House07 — 2026-10-21
+
+House07 real contém Door25 (GUID985, master_guid458; grupo `[25,26]`). O
+provider de `odh-person` agora permite parte multitile quando GUID/MasterID/
+SubIndex do OBJD conferem com a definição indexada, existe master único e o
+`master_guid` restaurado bate com ele; continua falhando fechado em dados
+ausentes/ambíguos. Um Main de avatar temporário chamou Route45 Literal nessa
+instância restaurada usando SLOT128. Bob (`105`) saiu de `[392,440,1,3]` e
+chegou a `[408,424,1,1]` na Room3: 16 movimentos, 1 resolução e 1 carga de SLOT.
+Com obstáculo movido durante a tentativa, o runtime cancelou após um passo e
+retornou false (`next segment blocked during route`). O script é
+`tests/house07_route45_integration.py --binary ./odh-person --game-root
+'../referencias/The Sims' --stack-object-id 25 --literal-slot`.
+
+Evidência: mundo/save House07 restaurado, geometria/snapshot dinâmicos e Door
+multitile real; a chamada ainda é injetada em Main temporário. Não é interação
+natural nem execução de Doors.iff:4113 dentro do save; Portal15 e equivalência
+ao jogo original seguem abertos. Próximo: roteamento a partir da interação
+normal selecionada, preservando a frame tree e code owner, depois portal filho
+e reconstrução da grade após mudança de sala.

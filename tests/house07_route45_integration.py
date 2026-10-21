@@ -17,10 +17,12 @@ def parse_args():
     parser.add_argument("--stack-object-id", type=int, default=18)
     parser.add_argument("--mutation-entity-id", type=int, default=106)
     parser.add_argument("--ticks", type=int, default=214)
+    parser.add_argument("--literal-slot", action="store_true",
+                        help="route through the selected live StackObject's OBJD SLOT")
     return parser.parse_args()
 
 
-def patch_root_with_route45(source, destination, routine_id):
+def patch_root_with_route45(source, destination, routine_id, literal_slot=False):
     data = source.read_bytes()
     if len(data) < 64:
         raise ValueError("avatar IFF is shorter than its header")
@@ -39,7 +41,8 @@ def patch_root_with_route45(source, destination, routine_id):
     # StackObject. The original commercial IFF remains untouched.
     bhav = struct.pack(
         "<HH8sHBB8s", 0x8002, 1, bytes([0, 4, 0, 0, 0, 0, 0, 0]),
-        45, 254, 255, bytes([1, 0, 2, 0, 0, 0, 0, 0]),
+        45, 254, 255, bytes([1, 0, 1, 0, 1, 0, 0, 0] if literal_slot else
+                            [1, 0, 2, 0, 0, 0, 0, 0]),
     )
     replaced = 0
     output = bytearray(data[:64])
@@ -118,7 +121,7 @@ def main():
     root_id = baseline["avatar"]["main"]
     with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
         probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
-        patch_root_with_route45(original_avatar, probe_avatar, root_id)
+        patch_root_with_route45(original_avatar, probe_avatar, root_id, args.literal_slot)
         exit_code, report = run(probe_avatar, args.stack_object_id)
         movement_positions = report["route_runtime"]["movement_positions"]
         if len(movement_positions) < 2:
@@ -139,6 +142,7 @@ def main():
         "obstacle_mutation_exit": blocked_code,
         "obstacle_mutation_vm_status": blocked_report["status"],
         "obstacle_mutation": blocked_route,
+        "route_scope": "StackObject Literal" if args.literal_slot else "Global",
     }
     print(json.dumps(evidence, indent=2))
     if (exit_code != 0 or report["status"] != "returned_true" or
@@ -148,6 +152,9 @@ def main():
             route["snapshot_refresh_policy"] != "on_world_spatial_revision_change" or
             not route["dynamic_obstacle_refresh"] or route["active"] or start == end):
         raise SystemExit("House07 Route45 integration probe failed its movement/ticket checks")
+    if args.literal_slot and (route["stackobject_slot_resolutions"] != 1 or
+                              route["stackobject_slot_loads"] != 1):
+        raise SystemExit("House07 StackObject Literal probe did not resolve one live OBJD SLOT")
     if (blocked_code != 0 or blocked_report["status"] != "returned_false" or
             blocked_route["movement_callbacks"] != 1 or
             blocked_route["snapshot_refreshes"] < 2 or
