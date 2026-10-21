@@ -259,10 +259,13 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }
     }
     diagnostic_.clear();
-    if(goto_relative && (i.operands[0]!=0 || i.operands[1]!=0 || i.operands[2]!=254 ||
-        (i.operands[3]!=0&&i.operands[3]!=4) || i.operands[4]!=0 || i.operands[5]!=0 ||
-        i.operands[6]!=2 || i.operands[7]!=0))
-        return unsupported("GotoRelativePosition outside the bounded OnTopOf/SameDirection-or-Opposing/NoFailureTrees profile");
+    const bool saved_go_here_relative=goto_relative&&
+        i.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
+    const bool bounded_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
+        i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
+        i.operands[5]==0&&i.operands[6]==2&&i.operands[7]==0;
+    if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative)
+        return unsupported("GotoRelativePosition outside the synthetic route profiles or the exact saved Go Here profile");
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
     if(!goto_relative && scope!=0&&scope!=1&&scope!=2)
@@ -436,7 +439,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     // 0 keeps its direction and 4 faces the opposite way. Other values remain
     // unsupported until their authored placement behavior is modeled.
     const auto arrival_facing=goto_relative?
-        static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U):
+        (i.operands[3]==255?actor->position->direction:
+         static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U)):
         (selected?selected->facing:heading(goal,{target->position->x,target->position->y}));
     RouteFrameContext frame_context;
     if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
@@ -444,7 +448,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
-             arrival_facing,!goto_relative&&slot->facing==-3,false,0,false,0,{},0,false,false,{}, {},0,false};
+             arrival_facing,goto_relative?i.operands[3]==255:slot->facing==-3,
+             false,0,false,0,{},0,false,false,{}, {},0,false};
     job_->run_generation=vm_->run_generation();
     return {PrimitiveDisposition::wait,{}};
 }

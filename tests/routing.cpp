@@ -550,6 +550,24 @@ int main() {
          require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->direction==7,
                  "OpposingDirection turns the avatar four eighth-turns from the target facing");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+         odh::Vm vm{goto_relative(go_here),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p) {
+             const auto* actor=world.find(frame.context.caller);const auto* target=world.find(frame.context.stack_object);
+             return actor&&target&&actor->position&&target->position&&
+                 actor->position->level==target->position->level&&
+                 p==odh::RoutePoint{target->position->x,target->position->y}&&grid.contains(p)&&grid.walkable(p);
+         });routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::waiting&&routing.active(),
+                 "saved Destination Go Here GotoRelativePosition schedules the exact selected point");
+         for(std::uint64_t tick=1;tick<=8&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
+                 world.find(1)->position->x==12&&world.find(1)->position->y==12&&
+                 world.find(1)->position->direction!=world.find(2)->position->direction,
+                 "Go Here walks to target in steps and leaves arrival facing unrestricted");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
          world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});grid.block({12,12});
