@@ -30,6 +30,11 @@ validação indicados por versão.
   Isso valida o refresh/fail-closed no host, não interação natural ou travessia
   de portais.
 
+- A inspeção estática da ação Portal15 `Doors.iff:4105` encontrou chamada à
+  rotina privada 4113, que contém dois opcodes Route45. A árvore também chama
+  outros BHAVs privados; a dependência semiglobal 8197 permanece sem binding
+  GLOB128 resolvido. Não foram inferidos operandos nem efeitos runtime.
+
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
   limite da sala e preservando o motivo de snapshots incompletos. Há uma

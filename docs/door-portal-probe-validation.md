@@ -115,6 +115,25 @@ para as salas 1–5; com inventário completo, todos têm
 `routing_clearance` segue false. Isso valida leitura e junção estática da
 instalação/save, não abertura runtime, colisões completas ou movimento de Sims.
 
+### Árvore BHAV do Portal15 (2026-10-21)
+
+`odh-bhav Objects.far Doors.iff 4105` decodifica estaticamente a ação Portal15
+presente nos membros. A rotina chama os BHAVs privados 4112, 4113, 8197, 4162,
+4106 e 4107 em ramos distintos. `4113`, que é chamada pela instrução 2 de
+4105, contém duas instruções de opcode 45 (Route45 no mapeamento ODH). Os
+BHAVs privados diretamente referenciados (4112, 4113, 4162, 4106 e 4107)
+existem no asset `Doors.iff`; a inspeção de 4113 confirma o código dos dois
+Route45.
+
+O ID 8197 pertence ao escopo semiglobal pelo particionamento atual de IDs,
+mas o GLOB128 de `Doors.iff` ainda não foi ligado a uma entrada semiglobal
+explícita. Tentar `Global.far/Global.iff` não correspondeu ao nome declarado
+pelo recurso proprietário, então essa chamada permanece sem resolução. Os
+operandos dos Route45 e os efeitos das outras chamadas não foram interpretados
+nem executados. Assim, isto mostra uma ligação estrutural entre Portal15 e
+rotinas de rota, mas não valida o ciclo de travessia, estados de porta, mutação
+de sala ou equivalência com o jogo.
+
 Na amostra 2026-10-20, `--route-grid-diagnostic 105 128` colocou Bob (105) e o
 alvo salvo 128 na sala geométrica 3. A grade candidata ficou `ready` com
 10.240 células, 4.529 caminháveis e start caminhável. Essa medição anterior
