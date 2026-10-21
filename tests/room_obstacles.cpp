@@ -152,11 +152,29 @@ int main() {
         require(!live_portals.unregister_member(portal_group[1].id) &&
                 live_portals.generation() == generation_before_rejected_update + 2,
                 "unknown removal leaves published generation unchanged");
+        require(live_portals.replace_members(portal_group) &&
+                live_portals.current().openings.size() == 1 &&
+                live_portals.generation() == generation_before_rejected_update + 3,
+                "batch replacement rebuilds a complete grouped portal snapshot");
+        auto duplicate_batch = portal_group;
+        duplicate_batch.push_back(portal_group[0]);
+        const auto generation_before_bad_batch = live_portals.generation();
+        require(!live_portals.replace_members(duplicate_batch) &&
+                live_portals.current().openings.size() == 1 &&
+                live_portals.generation() == generation_before_bad_batch,
+                "duplicate batch identity is rejected without replacing the published snapshot");
+        require(live_portals.replace_members({}) && live_portals.member_count() == 0 &&
+                live_portals.current().openings.empty() &&
+                live_portals.generation() == generation_before_bad_batch + 1,
+                "empty batch replacement removes all stale portal edges");
         odh::DynamicRoomPortalInventory bounded_portals(portal_rooms, 1);
         require(bounded_portals.register_member(portal_group[0]) &&
                 !bounded_portals.register_member(portal_group[1]) &&
                 bounded_portals.member_count() == 1 && bounded_portals.generation() == 1,
                 "member bound rejects excess live portal records without partial publication");
+        require(!bounded_portals.replace_members(portal_group) &&
+                bounded_portals.member_count() == 1 && bounded_portals.generation() == 1,
+                "batch replacement enforces member bound before publication");
         auto duplicate_member = portal_group;
         duplicate_member.push_back(portal_group.front());
         inventory = odh::build_room_portal_inventory(portal_rooms, duplicate_member);

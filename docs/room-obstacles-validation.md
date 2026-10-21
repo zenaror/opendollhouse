@@ -40,12 +40,17 @@ novo estado no thread chamador; a classe não é thread-safe. Geração e membro
 permanecem intactos quando identidade/capacidade rejeitam a operação. Uma
 atualização aceita com posição ausente publica um inventário incompleto,
 removendo aberturas potencialmente obsoletas. O limite padrão é
-4.096 membros e o host pode reduzi-lo. A classe guarda uma cópia do mapa
-geométrico e depende de o host enviar todas as alterações relevantes. Ela não
-recebe eventos de `World`, não detecta abertura/fechamento de portas e ainda
-não cria adjacency usada pelo `Routing`; os testes exercitam registro de grupo,
-movimento entre salas, posição desconhecida, remoção e limite com mapas
-sintéticos.
+4.096 membros e o host pode reduzi-lo. `replace_members` aceita um snapshot
+completo em lote, sem repetir uma reconstrução por membro. A classe guarda uma
+cópia do mapa geométrico e depende de o host enviar todas as alterações
+relevantes. Ela não recebe eventos de `World` e ainda não cria adjacency usada
+pelo `Routing`. No Simitone consultado, `Portal15` é estrutural e o cálculo de
+`RoomObs` não consulta animação/estado aberto-fechado
+(`refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/Model/VMRoomMap.cs`,
+`GenerateRoomObs`). Assim, esta camada representa a atualização de membership,
+posição e vínculos do grupo, sem alegar uma máquina de estado de portas. Os
+testes exercitam registro em lote/individual, movimento entre salas, posição
+desconhecida, remoção e limite com mapas sintéticos.
 
 Quando recebe o mapa cru de `generate_saved_room_map`, o resultado também herda
 a ausência do remapeamento de pisos/flags. O caminho de

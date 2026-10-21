@@ -70,7 +70,8 @@ RoomPortalInventory build_room_portal_inventory(
 // incomplete inventory is still published (fail-closed for routing); rejected
 // capacity/identity operations leave the previous generation untouched. This
 // type is not thread-safe. The host must feed all relevant runtime changes;
-// this class is not connected to World callbacks.
+// this class is not connected to World callbacks. replace_members supports
+// rebuilding the complete bounded snapshot without repeated per-member scans.
 class DynamicRoomPortalInventory {
 public:
     explicit DynamicRoomPortalInventory(GeometricRoomMap map,
@@ -79,6 +80,7 @@ public:
     bool register_member(const RoomPortalMemberSnapshot&);
     bool update_member(const RoomPortalMemberSnapshot&);
     bool unregister_member(std::int16_t id);
+    bool replace_members(const std::vector<RoomPortalMemberSnapshot>&);
 
     const RoomPortalInventory& current() const noexcept { return inventory_; }
     std::size_t member_count() const noexcept { return members_.size(); }

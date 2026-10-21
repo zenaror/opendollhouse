@@ -197,6 +197,17 @@ bool DynamicRoomPortalInventory::unregister_member(std::int16_t id) {
     return publish(std::move(candidate));
 }
 
+bool DynamicRoomPortalInventory::replace_members(
+    const std::vector<RoomPortalMemberSnapshot>& members) {
+    if (members.size() > member_limit_) return false;
+    std::map<std::int16_t, RoomPortalMemberSnapshot> candidate;
+    for (const auto& member : members) {
+        if (member.id <= 0 || !candidate.emplace(member.id, member).second)
+            return false;
+    }
+    return publish(std::move(candidate));
+}
+
 RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level) {
     return generate_room_obstacle_candidates(map, room, level, {}, false);
