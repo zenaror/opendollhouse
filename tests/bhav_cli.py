@@ -115,6 +115,17 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     assert d['final_position']==[48,64,1,2] and d['route_entry_flags']==64
     assert len(d['movements'])==33 and d['evidence']=='ODH_VM_constructed_route_world'
     assert [m['tick'] for m in d['movements']]==list(range(1,34))
+    tree_call=routine(28,bytes([47,0,1,0,1,2,0,0]),yes=255,no=254)
+    r=run([(4096,tree_call)],'--run','--world-probe','--route-probe','--global',str(global_path),'test.iff')
+    d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true' and d['steps']==1
+    global_with_name=archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2,
+                             strings=[(47,struct.pack('<hH',0,1)+bytes([4])+b'Door')])
+    global_path.write_bytes(global_with_name)
+    r=run([(4096,tree_call)],'--run','--world-probe','--route-probe','--global',str(global_path),'test.iff')
+    d=json.loads(r.stdout)
+    assert r.returncode==3 and d['status']=='fault' and 'TreeByName catalog is not available' in d['diagnostic']
+    global_path.write_bytes(archive([],struct.pack('<II4sI',0,10,b'TOLS',2)+record*2))
     r=run([(4096,routine())],'--run','--world-probe','--route-probe')
     assert r.returncode==2 and not r.stdout
     prefix=bytearray(42);struct.pack_into('<I',prefix,0,138);struct.pack_into('<H',prefix,26,129)
@@ -432,7 +443,8 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     r=main_sequence(main=routine(2,expr(9,2,5,21,7)));d=json.loads(r.stdout)
     assert r.returncode==3 and d['scene_status']=='fault' and 'write scope 21' in d['object_thread']['diagnostic']
     r=main_sequence(main=struct.pack('<HH',0x8000,1)+bytes(8)+struct.pack('<HBB',2,254,255)+expr(0,1,5,8,7));d=json.loads(r.stdout)
-    assert r.returncode==3 and d['scene_status']=='fault' and 'metadata' in d['object_thread']['diagnostic']
+    assert r.returncode==0 and d['scene_status']=='returned' and d['object_thread']['status']=='returned_true'
+    assert d['object_thread']['steps']==1
     r=main_sequence(main=routine(50));d=json.loads(r.stdout)
     assert r.returncode==3 and d['scene_status']=='fault' and len(d['object_thread']['trace'])==1
     r=main_sequence(main=routine(2,expr(0,1,5,8,7),yes=0),extra=('--hold-ticks','6','--post-ticks','2'));d=json.loads(r.stdout)

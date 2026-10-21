@@ -137,12 +137,22 @@ o código:
   DoorGlobals.iff 8197
 ```
 
-No asset ligado, 8197 tem versão `0x8001`, sem metadata, e uma expressão
-(`opcode=2`, `op=5`) com escopo 7/literal 0 como origem e escopo 9/argumento 0
-como destino; no mapeamento atual de `Vm::expression`, op 5 atribui o literal
-zero ao argumento 0 e retorna true. A versão `0x8001` sem metadata não é
-executável pelo perfil bounded atual, que exige BHAV `0x8002`; essa leitura
-descreve a estrutura e o mapeamento ODH, não prova o efeito observável no jogo.
+No asset ligado, 8197 tem versão `0x8001`, sem metadata serializada, e uma
+expressão (`opcode=2`, `op=5`) com escopo 7/literal 0 como origem e escopo
+9/argumento 0 como destino; op 5 atribui zero ao argumento 0 e retorna true.
+O VM agora aceita o perfil legado limitado de quatro argumentos e zero locais,
+conforme `SimsLib/IFF/Old/BHAV.cs` no checkout Simitone/FreeSO pinado. Isso
+permite executar este BHAV; não prova a equivalência geral dos formatos 8000/
+8001 nem a semântica do executável original.
+
+O probe construído de `Doors.iff:4105`, OBJD15089, caller words `[9,0]` e
+`attribute1=1` agora avança até 135 instruções e termina `returned_false`.
+Em `Doors.iff:4162`, opcode 28 resolve `STR#303` para “do idle”; nenhum BHAV
+privado ou semiglobal carregado tem esse nome, então o ramo falso é tomado.
+Depois `DoorGlobals.iff:8197` executa, seguido de `Doors.iff:4105` pc7. O
+resultado é evidência deste percurso no VM ODH, não uma travessia de portal ou
+execução em gameplay. A grade segue construída e não verifica clearance
+dinâmico do avatar.
 
 O BHAV privado 4115 foi decodificado separadamente com `odh-bhav`: versão
 `0x8002`, metadata sem argumentos/locais, uma expressão (`opcode=2`) com

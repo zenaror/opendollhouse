@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 namespace {
@@ -116,6 +117,34 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
         });
         if(!definition->slots) throw odh::FormatError("selected OBJD SLOT missing");
     }
+}
+std::map<std::uint16_t,odh::StringTable> load_tree_name_strings(
+    const std::string& path,const std::string& name,const std::set<std::uint16_t>& ids) {
+    if(ids.size()>256)throw odh::FormatError("RunTreeByName string-table budget exceeded");
+    std::map<std::uint16_t,odh::StringTable> result;
+    std::uint64_t payload_bytes=0;
+    with_far_entry(path,name,[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="STR#"||!ids.count(chunk.id))return;
+            if(chunk.payload.size()>8U*1024U*1024U-payload_bytes)
+                throw odh::FormatError("RunTreeByName string-table byte budget exceeded");
+            payload_bytes+=chunk.payload.size();
+            if(!result.emplace(chunk.id,odh::read_strings(chunk.payload)).second)
+                throw odh::FormatError("ambiguous RunTreeByName STR# ID");
+        },limits);
+    });
+    return result;
+}
+void add_tree_names(const std::string& path,const std::string& name,
+                    std::map<std::string,std::uint16_t>& trees) {
+    with_far_entry(path,name,[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="BHAV")return;
+            auto label=chunk.label;
+            if(const auto nul=label.find('\0');nul!=std::string::npos)label.resize(nul);
+            trees.emplace(std::move(label),chunk.id);
+        },limits);
+    });
 }
 void instruction(const odh::Instruction& i, std::uint16_t pc) {
     std::cout << "{\"pc\":" << pc << ",\"opcode\":" << i.opcode
@@ -325,6 +354,28 @@ int main(int argc, char** argv) {
         };
         if (global) load(global->first, global->second, routines, true,route_probe?&routing_slots:nullptr,nullptr,sound_probe?&global_sounds:nullptr);
         if(route_probe && !routing_slots) throw odh::FormatError("route probe requires global SLOT100");
+        std::set<std::uint16_t> tree_name_global_tables,tree_name_local_tables,tree_name_semi_tables;
+        for(const auto& routine:routines)for(const auto& item:routine.second.instructions){
+            if(item.opcode!=28)continue;
+            const auto table=static_cast<std::uint16_t>(item.operands[0]|(item.operands[1]<<8));
+            if(item.operands[2]==1)tree_name_global_tables.insert(table);
+            else if(item.operands[2]==0){
+                tree_name_local_tables.insert(table);
+                if(routine.first.id>=8192&&semiglobal)tree_name_semi_tables.insert(table);
+            }
+        }
+        std::map<std::uint16_t,odh::StringTable> tree_name_global_strings,tree_name_local_strings,tree_name_semi_strings;
+        if(global&&!tree_name_global_tables.empty())
+            tree_name_global_strings=load_tree_name_strings(global->first,global->second,tree_name_global_tables);
+        if(!tree_name_local_tables.empty())
+            tree_name_local_strings=load_tree_name_strings(argv[1],argv[2],tree_name_local_tables);
+        if(semiglobal&&!tree_name_semi_tables.empty())
+            tree_name_semi_strings=load_tree_name_strings(semiglobal->first,semiglobal->second,tree_name_semi_tables);
+        std::map<std::string,std::uint16_t> tree_by_name;
+        if(route_slot_probe){
+            add_tree_names(argv[1],argv[2],tree_by_name);
+            if(semiglobal)add_tree_names(semiglobal->first,semiglobal->second,tree_by_name);
+        }
         if(stand_after) {
             const auto& f=*definition.functions;
             if(f.uses_function_table!=0)throw odh::FormatError("OBJD function table dispatch unsupported");
@@ -562,6 +613,36 @@ int main(int argc, char** argv) {
         const auto route_handler=routing.primitive();
         const auto distance_to_handler=odh::get_distance_to_primitive(world);
         const auto snap_handler=snap_probe?snap->primitive():odh::VmPrimitive{};
+        const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& item,
+            const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+            if(item.opcode!=28)return {};
+            if(!world.find(frame.context.stack_object))return {odh::PrimitiveDisposition::goto_false,{}};
+            if(item.operands[2]>1)
+                return {odh::PrimitiveDisposition::unsupported,"RunTreeByName string scope is outside the supported TS1 profile"};
+            const auto table_id=static_cast<std::uint16_t>(item.operands[0]|(item.operands[1]<<8));
+            const auto string_id=item.operands[4];
+            if(string_id==0)return {odh::PrimitiveDisposition::goto_false,{}};
+            const odh::StringTable* table=nullptr;
+            if(item.operands[2]==1){
+                const auto found=tree_name_global_strings.find(table_id);
+                if(found!=tree_name_global_strings.end())table=&found->second;
+            }else{
+                if(frame.key.id>=8192){
+                    const auto semi=tree_name_semi_strings.find(table_id);
+                    if(semi!=tree_name_semi_strings.end())table=&semi->second;
+                }
+                if(!table){const auto local=tree_name_local_strings.find(table_id);
+                    if(local!=tree_name_local_strings.end())table=&local->second;}
+            }
+            if(!table)return {odh::PrimitiveDisposition::goto_false,{}};
+            const auto* tree_name=odh::string_in_language(*table,1,static_cast<std::uint32_t>(string_id-1));
+            if(!tree_name)return {odh::PrimitiveDisposition::goto_false,{}};
+            if(!route_slot_probe||!definition.binding)
+                return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target TreeByName catalog is not available"};
+            const auto tree=tree_by_name.find(tree_name->value);
+            if(tree==tree_by_name.end())return {odh::PrimitiveDisposition::goto_false,{}};
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName found a named BHAV but subroutine dispatch is not installed"};
+        };
         odh::VmPrimitive handler;
         if(route_probe) handler=[&](const auto& f,const auto& i,const auto& t,const auto& d) {
             if(i.opcode==49 && notify_handler)return notify_handler(f,i,t,d);
@@ -570,6 +651,7 @@ int main(int argc, char** argv) {
             if(i.opcode==44 && animation_handler)return animation_handler(f,i,t,d);
             if(i.opcode==11)return distance_to_handler(f,i,t,d);
             if(i.opcode==8&&route_slot_probe)return route_slot_random_handler(f,i,t,d);
+            if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
             return i.opcode==46 && snap_handler?snap_handler(f,i,t,d):route_handler(f,i,t,d);
         };
         const auto world_memory=world.vm_memory();

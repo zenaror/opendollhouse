@@ -11,8 +11,10 @@ A meta Linux funcional continua aberta.
 ## Perfil implementado
 
 - Metadata 8002: type, argumentos, locais e tree version; bytes desconhecidos
-  preservados. Versões 8000/8001 continuam legíveis, mas execução é recusada
-  enquanto não houver perfil explícito de frames legados.
+  preservados. Versões 8000/8001 continuam sem metadata serializada; execução
+  usa o perfil legado limitado de quatro argumentos e zero locais, conforme o
+  parser antigo do SimsLib no checkout Simitone/FreeSO. Isso habilita rotinas
+  desse perfil, mas não estabelece equivalência completa dos formatos legados.
 - Chamadas diretas opcode >= 256: global abaixo de 4096, privado abaixo de
   8192, semiglobal a partir de 8192. O conjunto de recursos é explícito para
   um code owner no checkpoint inicial. O avanço posterior de bancos por owner

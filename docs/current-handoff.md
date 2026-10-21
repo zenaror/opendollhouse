@@ -8,17 +8,23 @@ limitados, scorer e RNG explícito. O runtime `odh-person` e o probe BHAV
 executam esse perfil. Uma rota construída termina em `[48,64,1,2]` após 33
 movimentos, com flags64, e opcode8 avança a VM.
 
-No probe com `Objects.far`, `Global.far`, `Doors.iff:4105` e OBJD15089, a
-execução para em `Doors.iff:4162` pc1 por `unsupported primitive 28`
-(`RunTreeByName`). A grade usa walkability raw e bounds de piso, sem clearance
-dinâmico de avatar. Não representa interação natural, porta restaurada de
-House07, travessia de Portal15, gameplay jogável ou equivalência ao original.
-Simitone TS1 revision `4906db3156616bfaffc10ce0963cf08062975fef` orienta a
-malha, sem provar equivalência.
+No probe com `Objects.far`, `Global.far`, `Doors.iff:4105` e OBJD15089,
+`RunTreeByName` (opcode 28) resolve `STR#303` local para “do idle”; não há uma
+BHAV com esse nome no catálogo privado/semiglobal carregado e o VM toma o ramo
+false, como no Simitone. O percurso então executa `DoorGlobals.iff:8197`
+(`0x8001`) e retorna false em 135 passos. A execução aceita apenas o perfil
+legado limitado a quatro argumentos e zero locais, respaldado pelo leitor
+SimsLib do checkout Simitone. A rota construída ainda usa walkability raw e
+bounds de piso, sem clearance dinâmico de avatar. Não representa interação
+natural, porta restaurada de House07, travessia de Portal15, gameplay jogável
+ou equivalência ao original. Simitone TS1 revision
+`4906db3156616bfaffc10ce0963cf08062975fef` orienta a malha, sem provar
+equivalência.
 
 Verificação: 142 checks de routing, 76 de slot scoring, 4 de distância e
-160/160 CTests passaram; `linux_window_backend` passou nesta sessão. Switch,
-Windows e macOS continuam alvos futuros sem validação nesta plataforma.
+160/160 CTests passaram; `linux_window_backend` foi pulado por falta de display
+X11. Switch, Windows e macOS continuam alvos futuros sem validação nesta
+plataforma.
 
 ## Inventário RoomInfo completo do World vivo (2026-10-21)
 

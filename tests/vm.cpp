@@ -125,7 +125,10 @@ int main() {
         auto invalid = machine(routine({expr(2,0,0,7,7,1)}));
         require(invalid.start(key()) == odh::VmStatus::fault, "invalid branch rejected at start");
         auto legacy_bhav = routine({expr(2,0,0,7,7)}); legacy_bhav.version=0x8001; legacy_bhav.metadata.reset();
-        auto legacy = machine(legacy_bhav); require(legacy.start(key())==odh::VmStatus::fault,"legacy frame not guessed");
+        auto legacy = machine(legacy_bhav);
+        require(legacy.start(key())==odh::VmStatus::running && legacy.stack()[0].arguments.size()==4 &&
+                legacy.stack()[0].locals.size()==4,"legacy frame uses bounded four-argument/no-local profile");
+        require(legacy.run(1)==odh::VmStatus::returned_true,"8001 BHAV executes under legacy frame profile");
         auto empty = machine(routine({})); require(empty.start(key())==odh::VmStatus::fault,"empty routine not success");
         odh::Vm recursive({{key(),routine({call(4096)})}}, {}, {3,4096}); recursive.start(key());
         require(recursive.run(10)==odh::VmStatus::fault && recursive.stack().size()==3,"recursion bounded");

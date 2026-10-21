@@ -29,6 +29,14 @@ std::int16_t* frame_output(VmFrame& frame, const VmFrameWrite& output) {
     }
     return output.index < bank->size() ? &(*bank)[output.index] : nullptr;
 }
+std::optional<Bhav::Metadata> execution_metadata(const Bhav& routine) {
+    if (routine.metadata) return routine.metadata;
+    // The legacy SimAntics reader profile treats 8000/8001 as four arguments
+    // and no locals; unlike 8002, these versions do not serialize that metadata.
+    if (routine.version == 0x8000 || routine.version == 0x8001)
+        return Bhav::Metadata{0, 4, 0, 0};
+    return std::nullopt;
+}
 } // namespace
 
 RoutineKey routine_key(std::uint16_t id) {
@@ -98,16 +106,16 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
     const auto* found = resolve(key,context.code_owner);
     if (!found) throw VmError("routine not supplied: " + std::to_string(key.id) + " code owner " + std::to_string(context.code_owner));
     const auto& routine = *found;
-    if (routine.version != 0x8002 || !routine.metadata)
-        throw VmError("execution requires BHAV 8002 metadata");
+    const auto metadata = execution_metadata(routine);
+    if (!metadata) throw VmError("execution requires supported BHAV metadata");
     if (routine.instructions.empty()) throw VmError("empty routine has no entry instruction");
     for (const auto& instruction : routine.instructions)
         for (const auto target : {instruction.on_true, instruction.on_false})
             if (target < 0xFD && target >= routine.instructions.size())
                 throw VmError("branch outside routine");
     if (stack_.size() >= limits_.stack_depth) throw VmError("stack depth limit");
-    const auto arg_count = std::max<std::size_t>(4, routine.metadata->arguments);
-    const auto local_count = std::max<std::size_t>(routine.metadata->locals, routine.metadata->arguments);
+    const auto arg_count = std::max<std::size_t>(4, metadata->arguments);
+    const auto local_count = std::max<std::size_t>(metadata->locals, metadata->arguments);
     if (arg_count > limits_.frame_variables || local_count > limits_.frame_variables || args.size() > arg_count)
         throw VmError("frame variable limit or too many arguments");
     VmFrame frame{key, 0, context, std::vector<std::int16_t>(arg_count),
@@ -272,11 +280,12 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
             if (instruction.opcode >= 256) {
                 const auto key = routine_key(instruction.opcode);
                 const auto* found = resolve(key,frame.context.code_owner);
-                if (!found || !found->metadata) {
+                const auto metadata = found ? execution_metadata(*found) : std::nullopt;
+                if (!metadata) {
                     push(key, frame.context, {}); // Produce the specific missing/metadata diagnostic.
                     continue;
                 }
-                const auto count = std::max<std::size_t>(4, found->metadata->arguments);
+                const auto count = std::max<std::size_t>(4, metadata->arguments);
                 if (count > temps_.size()) throw VmError("call argument count exceeds supported temp mapping");
                 std::vector<std::int16_t> args(count);
                 const bool substitute = operand_word(instruction, 2) != 0 ||
