@@ -137,6 +137,28 @@ int main() {
         require(mutated && query.status == odh::RoomInfoObstacleIndexStatus::unsupported &&
                     query.reason == odh::RoomInfoObstacleIndexReason::inventory_incomplete,
                 "World mutation during resolver invalidates the whole snapshot");
+        odh::World lifecycle_world;
+        require(lifecycle_world.create(1, odh::EntityKind::avatar, {0, 88, 1}) &&
+                    lifecycle_world.declare_object_word(1, 8, 0) &&
+                    lifecycle_world.set_position(1, {16, 16, 1, 0}),
+                "avatar lifecycle query fixture");
+        const auto lifecycle_timeout = [&](std::int16_t id, std::uint64_t generation)
+            -> std::optional<std::int32_t> {
+            const auto* entity = lifecycle_world.find(id);
+            return entity && entity->generation == generation ? entity->kill_timeout : std::nullopt;
+        };
+        bool lifecycle_changed = false;
+        const auto lifecycle_room = [&](odh::EntityPosition) -> std::optional<std::uint16_t> {
+            if (!lifecycle_changed) {
+                lifecycle_changed = true;
+                require(lifecycle_world.set_avatar_kill_timeout(1, 0), "resolver changes avatar lifecycle");
+            }
+            return 1;
+        };
+        query = odh::query_world_room_info(lifecycle_world, defs, lifecycle_room, lifecycle_timeout,
+                                          1, {13, 13, 19, 19}, 1);
+        require(lifecycle_changed && query.status == odh::RoomInfoObstacleIndexStatus::unsupported,
+                "avatar lifecycle mutation invalidates the captured obstacle state");
 
         std::cout << checks << " live World RoomInfo checks passed (synthetic fixtures only)\n";
         return 0;

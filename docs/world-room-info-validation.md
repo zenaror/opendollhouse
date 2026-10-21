@@ -6,13 +6,23 @@ de movimentos, contenção, remoção, mudança de flags ou reclassificação en
 consultas. Footprints são calculados com `object_collision_shape`, Definition
 Index único por GUID, flags vivas em ObjectData[8] e `Entity::static_footprint`.
 Entidades fora do mundo, contidas e objetos com `HasZeroExtent` não entram no
-índice. Avatares usam o raio 3 de `GetObstacle` somente quando o chamador fornece
-o `KillTimeout` runtime atual; o World ainda não armazena esse campo.
+índice. Avatares usam `World::Entity::kill_timeout`, inicializado em -1 para
+avatares recém-criados/restaurados e atualizável pelo controller de lifecycle.
+Providers consultam por ID+generation; o snapshot também detecta mudanças desse
+campo durante a query.
 
-O chamador também fornece um resolver de sala para a posição viva. A API não
-usa automaticamente `GeometricRoomMap`: o mapa atual é um candidato geométrico
-sem portas/portais e só pode ser fornecido como resolver quando for conhecido
-que coincide com a sala runtime. Definição ausente/ambígua, flag não inicializada,
+O chamador também fornece um resolver de sala para a posição viva. No host
+`saved-world-main` sem edição de arquitetura, `SavedLotRenderer` mantém um mapa
+congelado gerado de `PreparedArchitecture`, desde que aliases de piso e parede
+tenham identidades não ambíguas. Simitone `VMContext.GetRoomAt` lê diretamente
+`Architecture.Rooms[level-1].Map`; portal e janela constroem listas de
+obstáculos/portais sem reescrever esse mapa. Portanto este resolver representa
+pertencimento geométrico para o perfil de arquitetura imutável de duas alturas.
+Uma mudança em pisos, segmentos, dimensões, aliases ou overlays requer preparar
+e gerar o mapa novamente; ODH Main ainda não oferece mutação arquitetônica.
+Isso não fornece `RoomObs`, `WallObs`, portais ou clearance de rota.
+
+Definição ausente/ambígua, flag não inicializada,
 sala não resolvida, `KillTimeout` desconhecido, geometria inválida ou excesso
 de entidades torna a consulta `unsupported`, sem retornar interseções parciais.
 Os resolvers recebem cópias dos dados, nunca referências a entidades. A API
@@ -34,7 +44,9 @@ São regras da referência, sem confirmação contra o executável original.
 `odh-world-room-info-tests` cobre fixture sintética com movimento entre salas,
 contenção, zero extent, inclusão/exclusão do alvo estático/dinâmico, ordenação,
 falha fechada para flags/definição/sala/KillTimeout desconhecidos e orçamento.
-Também cobre mutação do World disparada pelo resolver de sala.
-Esses testes comprovam somente a transformação `World`→índice para providers
-explicitamente fornecidos. Main ainda não chama a API; não é prova de clearance,
-rota ou interação jogável no lote.
+Também cobre mutação de posição, remoção e lifecycle disparadas por callbacks.
+`odh-person` inclui `room_info_probe` no JSON do saved-world preview quando há
+renderer com mapa preparado; consulta somente a caixa do avatar na posição
+atual e lista interseções owner-keyed. Status unsupported é preservado. A saída
+é diagnóstica e não bloqueia nem aprova interação. Nem os testes nem esse probe
+comprovam clearance, rota ou interação jogável no lote.

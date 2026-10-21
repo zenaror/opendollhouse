@@ -77,6 +77,11 @@ int main(){try{
  SavedLotMaterialOptions options;options.catalog=far_catalog;options.preparation.target_size=4;
  auto raw=architecture();SavedLotRenderer lot(raw,saved,definitions,gf.string(),gw.string(),{},options);
  check(lot.material_aliases()->diagnostics.floor_map_resolved==1&&lot.prepared_architecture()->levels[0].floors[5]==256);
+ check(lot.runtime_room_map_available());
+ const auto runtime_room=lot.runtime_room_at({24,24,1,0});
+ check(runtime_room&&runtime_room==odh::geometric_room_at(
+     odh::generate_prepared_room_map(*lot.prepared_architecture()),24,24,1));
+ check(!lot.runtime_room_at({32767,32767,1,0}));
  odh::WorldProjection camera;camera.width=camera.height=128;camera.center_tile={1,1,0};
  auto result=lot.render(camera,odh::rasterize(128,128,{},{}));check(result.floor_draws==1&&result.wall_layers==1&&result.wall_junctions==2);
  check(raw.architecture.levels[0].floors[65]==42&&raw.maps[2].second.entries[0].name=="FOO.flr");

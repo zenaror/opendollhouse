@@ -13,8 +13,8 @@ namespace odh {
 // room map may be used only when it is known to match the runtime room map.
 using RuntimeRoomResolver = std::function<std::optional<std::uint16_t>(EntityPosition)>;
 
-// Simitone's avatar obstacle depends on VMAvatar.KillTimeout, which is not
-// stored in World. Callers provide it by stable entity identity, not by pointer.
+// Callers provide Simitone's VMAvatar.KillTimeout by stable identity, not by
+// pointer. Unknown lifecycle state makes the query unsupported.
 using AvatarKillTimeoutResolver = std::function<std::optional<std::int32_t>(
     std::int16_t entity_id, std::uint64_t generation)>;
 

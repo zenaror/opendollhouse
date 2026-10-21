@@ -4,6 +4,7 @@
 #include "saved_wall_renderer.hpp"
 #include "saved_object_renderer.hpp"
 #include "odh/graphics_state.hpp"
+#include "odh/room_map.hpp"
 #include "odh/saved_world.hpp"
 #include "odh/terrain_surface.hpp"
 #include <map>
@@ -75,6 +76,10 @@ public:
     const std::optional<odh::ResolvedArchitectureAliases>& material_aliases() const{return aliases_;}
     const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
     odh::GraphicsEntity avatar(std::int16_t id);
+    // Available only when the immutable prepared architecture has unambiguous
+    // floor/wall identities. This resolves room membership, not portal clearance.
+    std::optional<std::uint16_t> runtime_room_at(const odh::EntityPosition&) const;
+    bool runtime_room_map_available() const noexcept { return runtime_rooms_.has_value(); }
     SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,bool record_picks=false);
     // Last presented pixel ownership, revalidated against live generation,
     // definition GUID and visibility; out-of-bounds/scenery/stale IDs select none.
@@ -85,6 +90,7 @@ private:
     std::optional<odh::ResolvedArchitectureAliases> aliases_;
     std::optional<odh::PreparedArchitecture> prepared_;
     std::optional<odh::SavedArchitecture> prepared_render_;
+    std::optional<odh::GeometricRoomMap> runtime_rooms_;
     const odh::SavedArchitecture& render_architecture() const {
         return prepared_render_?*prepared_render_:architecture_.architecture;
     }

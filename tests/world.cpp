@@ -16,6 +16,11 @@ int main() {
     try {
         odh::World w;
         require(w.create(1,odh::EntityKind::avatar,{2,88,1}),"create avatar");
+        require(w.find(1)->kill_timeout==std::optional<std::int32_t>{-1} &&
+                    !w.set_avatar_kill_timeout(2,0) && !w.set_avatar_kill_timeout(1,-2) &&
+                    w.set_avatar_kill_timeout(1,0) && w.find(1)->kill_timeout==std::optional<std::int32_t>{0} &&
+                    w.set_avatar_kill_timeout(1,-1),
+                "avatar lifecycle starts alive and accepts only valid runtime updates");
         require(w.create(2,odh::EntityKind::object,{3,0,2}),"create object");
         require(w.create(3,odh::EntityKind::avatar,{0,88,0}),"create second avatar");
         const auto f=frame();

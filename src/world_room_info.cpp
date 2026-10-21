@@ -20,6 +20,7 @@ struct ObstacleState {
     std::optional<std::uint32_t> guid;
     std::optional<std::int16_t> flags;
     bool static_footprint;
+    std::optional<std::int32_t> kill_timeout;
 };
 
 bool same_attachment(const std::optional<Attachment>& a,
@@ -45,7 +46,7 @@ ObstacleState capture(const Entity& entity) {
     const auto guid = entity.definition
         ? std::optional<std::uint32_t>{entity.definition->guid} : std::nullopt;
     return {entity.id, entity.kind, entity.generation, entity.position, entity.attachment,
-            guid, object_flags(entity), entity.static_footprint};
+            guid, object_flags(entity), entity.static_footprint, entity.kill_timeout};
 }
 
 bool matches_world(const World& world, const std::vector<ObstacleState>& source) {
@@ -62,7 +63,8 @@ bool matches_world(const World& world, const std::vector<ObstacleState>& source)
             current.generation != before.generation || !same_position(current.position, before.position) ||
             !same_attachment(current.attachment, before.attachment) ||
             current.guid != before.guid || current.flags != before.flags ||
-            current.static_footprint != before.static_footprint)
+            current.static_footprint != before.static_footprint ||
+            current.kill_timeout != before.kill_timeout)
             return false;
     }
     return index == source.size();

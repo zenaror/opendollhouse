@@ -10,13 +10,19 @@ entidades por consulta. O caller precisa fornecer a sala runtime e o
 ambígua e geometria/sala sem suporte falham fechados. A API preserva a regra de
 RoomInfo de incluir o alvo na coleção estática e excluir da dinâmica.
 
+`SavedLotRenderer` agora guarda mapa de sala derivado de arquitetura preparada
+com aliases de piso/parede não ambíguos. O saved-world preview adiciona ao JSON
+`room_info_probe`, consulta diagnóstica do avatar selecionado contra obstáculos
+live no mapa congelado. `World` inicia avatares com KillTimeout=-1 e expõe
+setter validado; lifecycle também faz parte da checagem de snapshot.
 `odh-world-room-info-tests` passou com fixtures sintéticas para movimento entre
 salas, contenção, zero extent, classificação, ordem, entradas desconhecidas e
-orçamento, incluindo mutação disparada por callback. Callbacks recebem cópias e
-a API verifica a projeção do World antes de aceitar o índice. `World` sincroniza
+orçamento, incluindo mutação disparada por callback. Callback recebe cópias e a
+API verifica a projeção do World antes de aceitar o índice. `World` sincroniza
 ObjectData[1] com a direção espacial em escritas VM e mudanças de posição. O
-build completo e CTest passaram com 151/151 testes sem falhas; `git diff --check`
-passou. Esse contrato ainda não é consumido
+probe não executa EntryPoint5/26, policy allow/disallow, nem clearance, rota ou
+interação; a arquitetura ainda é imutável no host. Build/CTest: revalidar após
+este incremento. Esse contrato ainda não alimenta
 por Main e não valida clearances, EntryPoint5/26, portas/portais, movimento ou
 Sit/Stand no lote. Próximo: fornecer um resolver de sala runtime derivado do
 lote Main sem promover o mapa geométrico salvo a estado de porta/portal; depois

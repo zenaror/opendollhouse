@@ -102,6 +102,8 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
         // Remap misses without declarations can represent global road/base
         // patterns; they are preserved and exposed in preparation diagnostics.
         prepared_render_=prepared_render_architecture(architecture_.architecture,*prepared_);
+        if(prepared_->floor_identity_unambiguous() && prepared_->wall_aliases_resolved())
+            runtime_rooms_=odh::generate_prepared_room_map(*prepared_);
     }else if((floor_map&&!floor_map->entries.empty())||(walls&&wall_map&&!wall_map->entries.empty()))
         throw odh::FormatError("live saved lot custom materials require a resource resolver");
     group_centers_=terrain_group_centers(saved_);
@@ -224,4 +226,10 @@ std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& 
     if(!hidden||*hidden)return {};
     return SavedObjectSelection{id,entity->definition->guid,entity->generation,
                                 definition->definition.tree_table_id};
+}
+
+std::optional<std::uint16_t> SavedLotRenderer::runtime_room_at(
+    const odh::EntityPosition& position) const {
+    return runtime_rooms_ ? odh::geometric_room_at(*runtime_rooms_,position.x,position.y,position.level)
+                          : std::nullopt;
 }

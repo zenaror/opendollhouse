@@ -21,6 +21,7 @@
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
+#include "odh/world_room_info.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "json.hpp"
@@ -652,7 +653,14 @@ int main(int argc,char** argv) {
         std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
         std::uint64_t vertices=0,triangles=0,texture_bytes=0,shaded_samples=0;
     };
+    struct RoomInfoProbe {
+        std::uint16_t room;
+        odh::CollisionBox candidate;
+        odh::RoomInfoObstacleQuery query;
+    };
     std::optional<RenderEvidence> render_evidence;
+    std::optional<RoomInfoProbe> room_info_probe;
+    std::string room_info_probe_unavailable;
     std::unique_ptr<SavedAppearanceResources> render_appearances;
     std::unique_ptr<SceneRenderer> render_renderer;
     std::unique_ptr<SavedLotRenderer> render_lot;
@@ -953,6 +961,35 @@ int main(int argc,char** argv) {
         }
         capture_frame();
     }
+    if(!saved_world_main) room_info_probe_unavailable="requires_saved_world_main";
+    else if(!render_lot) room_info_probe_unavailable="requires_loaded_lot_renderer";
+    else if(!render_lot->runtime_room_map_available()) room_info_probe_unavailable="prepared_runtime_room_map_unavailable";
+    else {
+        const auto* actor=world.find(runtime_avatar_id);
+        if(!actor || !actor->position) room_info_probe_unavailable="selected_avatar_position_unavailable";
+        else {
+            const auto room=render_lot->runtime_room_at(*actor->position);
+            const auto candidate=odh::avatar_candidate_collision_shape(*actor->position);
+            if(!room) room_info_probe_unavailable="selected_avatar_room_unresolved";
+            else if(candidate.state!=odh::CollisionShapeState::present)
+                room_info_probe_unavailable="selected_avatar_candidate_geometry_unsupported";
+            else {
+                const odh::RuntimeRoomResolver room_for=[&](odh::EntityPosition position) {
+                    return render_lot->runtime_room_at(position);
+                };
+                const odh::AvatarKillTimeoutResolver kill_timeout_for=[&](std::int16_t id,std::uint64_t generation)
+                    ->std::optional<std::int32_t> {
+                    const auto* entity=world.find(id);
+                    if(!entity || entity->generation!=generation || entity->kind!=odh::EntityKind::avatar)
+                        return std::nullopt;
+                    return entity->kill_timeout;
+                };
+                room_info_probe=RoomInfoProbe{*room,candidate.box,
+                    odh::query_world_room_info(world,*definition_index,room_for,kill_timeout_for,
+                                               *room,candidate.box,runtime_avatar_id)};
+            }
+        }
+    }
     const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
         (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
@@ -1252,7 +1289,24 @@ int main(int argc,char** argv) {
         std::cout<<"{\"event_id\":"<<record.request.event_id<<",\"name\":"<<json_bytes(record.request.name)
             <<",\"source\":"<<record.request.source<<",\"status\":"<<json_bytes(record.status)<<'}';
     }
-    std::cout<<"],\"render\":";
+    std::cout<<"],\"room_info_probe\":{";
+    if(room_info_probe){
+        const auto& probe=*room_info_probe;
+        std::cout<<"\"evidence\":\"current_selected_avatar_position_only\",\"profile\":\"immutable_prepared_room_map_plus_live_World_obstacles\",\"status\":"
+            <<json_bytes(odh::room_info_obstacle_index_status_name(probe.query.status))
+            <<",\"reason\":"<<json_bytes(odh::room_info_obstacle_index_reason_name(probe.query.reason))
+            <<",\"room\":"<<probe.room<<",\"candidate_box\":["<<probe.candidate.x1<<','<<probe.candidate.y1<<','
+            <<probe.candidate.x2<<','<<probe.candidate.y2<<"],\"intersections\":[";
+        for(std::size_t n=0;n<probe.query.intersections.size();++n){
+            if(n)std::cout<<',';
+            const auto& obstacle=probe.query.intersections[n];
+            std::cout<<"{\"owner_id\":"<<obstacle.owner_id<<",\"collection\":"
+                <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
+                <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
+        }
+        std::cout<<"]}";
+    }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
+    std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")
             <<",\"window_clock\":"<<(render_window?json_bytes("preview_25Hz_unvalidated"):"null")

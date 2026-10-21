@@ -36,7 +36,9 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     const auto count = layout.attributes + layout.person_data + layout.slots + layout.motives;
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
-        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),{},{},{}});
+        std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),
+        {},{},{},std::int16_t{-1},true,std::nullopt});
+    if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     words_ += count;
     return true;
 }
@@ -67,10 +69,12 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     const auto generation=generation_sequence_+1;
     Entity candidate{id,kind,attributes,person_data,std::vector<std::int16_t>(slots),{},
         {},{},generation,EntityType{guid,master_guid},motives,{},{},
-        SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1}};
+        SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1},
+        true,std::nullopt};
     for (std::int16_t index=0;index<68;++index)
         if (!derived(index)) candidate.object_words.emplace(index,object_data[static_cast<std::size_t>(index)]);
     entities_.emplace(id,std::move(candidate));
+    if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     generation_sequence_=generation;
     words_+=count;
     return true;
@@ -162,6 +166,12 @@ bool World::set_static_footprint(std::int16_t id, bool is_static) {
     const auto found=entities_.find(id);
     if(found==entities_.end()) return false;
     found->second.static_footprint=is_static;
+    return true;
+}
+bool World::set_avatar_kill_timeout(std::int16_t id, std::int32_t value) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end() || found->second.kind!=EntityKind::avatar || value < -1) return false;
+    found->second.kill_timeout=value;
     return true;
 }
 std::vector<std::int16_t> World::position_tree(std::int16_t id) const {
