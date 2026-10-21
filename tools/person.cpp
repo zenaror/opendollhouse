@@ -190,6 +190,7 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> render_saved_id;
     std::optional<odh::EntityPosition> placement_candidate;
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
+    std::optional<std::int16_t> headless_stack_object;
     bool render_window=false,saved_world_main=false,headless_main=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
@@ -261,6 +262,11 @@ int main(int argc,char** argv) {
         }
         else if(option=="--saved-world-main"&&!saved_world_main){saved_world_main=true;}
         else if(option=="--headless-main"&&!saved_world_main){saved_world_main=true;headless_main=true;}
+        else if(option=="--headless-stack-object"&&!headless_stack_object&&n+1<argc){
+            const auto value=selector(argv[++n]);
+            if(value==0||value>32767)throw odh::FormatError("headless StackObject ID is outside the supported World range");
+            headless_stack_object=static_cast<std::int16_t>(value);
+        }
         else if(option=="--object-definition-entry"&&n+2<argc){
             if(definition_sources.size()>=person_definition_source_limit)throw odh::FormatError("definition source count exceeds bounded host profile");
             PersonDefinitionSource source;source.path=argv[++n];source.entry=argv[++n];
@@ -290,9 +296,10 @@ int main(int argc,char** argv) {
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||render_requested))||
+       (headless_stack_object&&!headless_main)||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -722,7 +729,9 @@ int main(int argc,char** argv) {
     if(!host_failed){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
-        vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,static_cast<std::int16_t>(initialize?0:1),static_cast<odh::CodeOwner>(runtime_avatar_id)});
+        vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,
+            headless_stack_object.value_or(static_cast<std::int16_t>(initialize?0:1)),
+            static_cast<odh::CodeOwner>(runtime_avatar_id)});
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}

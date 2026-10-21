@@ -30,6 +30,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'render-window' in r.stderr
  setup();r=run(['--saved-world-main'])
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
+ setup();r=run(['--headless-stack-object','10'])
+ assert r.returncode==2 and not r.stdout and 'headless-stack-object' in r.stderr
+ setup();r=run(['--headless-stack-object','0'])
+ assert r.returncode==2 and not r.stdout and 'headless StackObject ID' in r.stderr
  setup();r=run(['--initialize','--saved-world-main'])
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
  setup();r=run(['--placement-candidate','10','20','1','0'])

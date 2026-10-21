@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Run a Route45 Main-host integration probe against an external TS1 install."""
+import argparse
+import json
+import pathlib
+import struct
+import subprocess
+import tempfile
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", required=True, type=pathlib.Path)
+    parser.add_argument("--game-root", required=True, type=pathlib.Path)
+    parser.add_argument("--avatar-id", type=int, default=105)
+    parser.add_argument("--avatar-file", default="UserData/Characters/User00000.iff")
+    parser.add_argument("--stack-object-id", type=int, default=18)
+    parser.add_argument("--ticks", type=int, default=214)
+    return parser.parse_args()
+
+
+def patch_root_with_route45(source, destination, routine_id):
+    data = source.read_bytes()
+    if len(data) < 64:
+        raise ValueError("avatar IFF is shorter than its header")
+    chunks = []
+    position = 64
+    while position < len(data):
+        if position + 76 > len(data):
+            raise ValueError(f"truncated IFF chunk header at {position}")
+        length = struct.unpack_from(">I", data, position + 4)[0]
+        if length < 76 or position + length > len(data):
+            raise ValueError(f"invalid IFF chunk length {length} at {position}")
+        chunks.append(bytearray(data[position:position + length]))
+        position += length
+
+    # One synthetic Main instruction calls Route45 for the selected live
+    # StackObject. The original commercial IFF remains untouched.
+    bhav = struct.pack(
+        "<HH8sHBB8s", 0x8002, 1, bytes([0, 4, 0, 0, 0, 0, 0, 0]),
+        45, 254, 255, bytes([1, 0, 2, 0, 0, 0, 0, 0]),
+    )
+    replaced = 0
+    output = bytearray(data[:64])
+    for chunk in chunks:
+        if (chunk[:4] == b"BHAV" and
+                struct.unpack_from(">H", chunk, 8)[0] == routine_id):
+            chunk = bytearray(chunk[:76] + bhav)
+            struct.pack_into(">I", chunk, 4, len(chunk))
+            replaced += 1
+        output.extend(chunk)
+    if replaced != 1:
+        raise ValueError(f"expected one Main BHAV {routine_id}, replaced {replaced}")
+    destination.write_bytes(output)
+
+
+def main():
+    args = parse_args()
+    game = args.game_root.resolve()
+    original_avatar = game / args.avatar_file
+    object_archive = game / "GameData/Objects/Objects.far"
+    global_archive = game / "GameData/Global/Global.far"
+    floor_file = game / "GameData/floors.iff"
+    house = game / "UserData/Houses/House07.iff"
+    zoning = game / "UserData/LotZoning.iff"
+    neighborhood = game / "UserData/Neighborhood.iff"
+    required = [args.binary, original_avatar, object_archive, global_archive,
+                floor_file, house, zoning, neighborhood]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise SystemExit("required game/test file missing: " + ", ".join(missing))
+    if not 1 <= args.avatar_id <= 32767 or not 1 <= args.stack_object_id <= 32767:
+        raise SystemExit("avatar and StackObject IDs must be in 1..32767")
+    if not 1 <= args.ticks <= 4096:
+        raise SystemExit("ticks must be in 1..4096")
+
+    object_files = [game / "UserData/Characters/User00000.iff",
+                    game / "UserData/Characters/User00001.iff"]
+    animations = [game / "GameData/Animation/Animation.far",
+                  game / "ExpansionShared/ExpansionShared.far"]
+    missing = [str(path) for path in object_files + animations if not path.is_file()]
+    if missing:
+        raise SystemExit("required character/animation file missing: " + ", ".join(missing))
+
+    command = [str(args.binary.resolve()), "--avatar-file", str(original_avatar), "128",
+               "--semiglobal", str(global_archive), "PersonGlobals.iff",
+               "--global", str(global_archive), "Global.iff",
+               "--lot", str(house), "7", "--zoning", str(zoning),
+               "--neighborhood", str(neighborhood),
+               "--object-definitions", str(object_archive)]
+    for path in object_files:
+        command += ["--object-definition-file", str(path)]
+    for path in animations:
+        command += ["--animation-source", str(path)]
+    command += ["--headless-main", "--render-saved-avatar", str(args.avatar_id),
+                "--ticks", str(args.ticks), "--render-floors", str(floor_file)]
+    architecture = sorted(game.rglob("*.flr")) + sorted(game.rglob("*.wll"))
+    for path in architecture:
+        command += ["--architecture-resource", str(path)]
+
+    def run(avatar_path, stack_object_id=None):
+        invocation = command.copy()
+        invocation[invocation.index("--avatar-file") + 1] = str(avatar_path)
+        if stack_object_id is not None:
+            invocation += ["--headless-stack-object", str(stack_object_id)]
+        result = subprocess.run(invocation, check=False, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if not result.stdout.strip():
+            raise RuntimeError(f"odh-person exited {result.returncode}: {result.stderr.strip()}")
+        return result.returncode, json.loads(result.stdout)
+
+    baseline_code, baseline = run(original_avatar)
+    root_id = baseline["avatar"]["main"]
+    with tempfile.TemporaryDirectory(prefix="odh-house07-route45-") as temp:
+        probe_avatar = pathlib.Path(temp) / "User00000-route45.iff"
+        patch_root_with_route45(original_avatar, probe_avatar, root_id)
+        exit_code, report = run(probe_avatar, args.stack_object_id)
+
+    route = report["route_runtime"]
+    start, end = route["start_position"], route["end_position"]
+    evidence = {
+        "main_routine": root_id,
+        "baseline_exit": baseline_code,
+        "probe_exit": exit_code,
+        "vm_status": report["status"],
+        "ticks": report["ticks"],
+        "route_runtime": route,
+    }
+    print(json.dumps(evidence, indent=2))
+    if (exit_code != 0 or report["status"] != "returned_true" or
+            route["state"] != "ready_static_single_room_grid" or
+            route["movement_callbacks"] <= 0 or route["active"] or start == end):
+        raise SystemExit("House07 Route45 integration probe failed its movement/ticket checks")
+
+
+if __name__ == "__main__":
+    main()
