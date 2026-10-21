@@ -13,6 +13,35 @@ struct SavedSemiglobalCodeBank {
     odh::RoutineSet routines;
 };
 
+struct SavedGlobalCodeBank {
+    std::string archive,entry;
+    odh::RoutineSet routines;
+};
+
+inline SavedGlobalCodeBank load_saved_global_code_bank(
+    const std::string& archive,const std::string& entry) {
+    const auto filename=std::filesystem::path(entry).filename().string();
+    if(filename!=entry||filename.size()<5||filename.substr(filename.size()-4)!=".iff")
+        throw odh::FormatError("global entry must be a flat .iff resource name");
+    SavedGlobalCodeBank result{archive,entry,{}};
+    std::size_t instructions=0;
+    with_far_entry(archive,entry,[&](const odh::View& view){
+        odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+            if(chunk.type!="BHAV"||odh::routine_key(chunk.id).scope!=odh::RoutineScope::global)return;
+            if(result.routines.size()>=1024)throw odh::FormatError("global BHAV bank exceeds routine budget");
+            auto routine=odh::read_bhav(chunk.payload);
+            if(routine.instructions.size()>32768-instructions)
+                throw odh::FormatError("global BHAV bank exceeds instruction budget");
+            instructions+=routine.instructions.size();
+            if(!result.routines.emplace(odh::routine_key(chunk.id),std::move(routine)).second)
+                throw odh::FormatError("duplicate global BHAV in linked resource");
+        },limits);
+    });
+    if(result.routines.empty())throw odh::FormatError("explicit global resource contains no routines");
+    return result;
+}
+
 inline SavedSemiglobalCodeBank load_saved_semiglobal_code_bank(
     const std::string& archive,const std::string& entry) {
     const auto filename=std::filesystem::path(entry).filename().string();
@@ -63,7 +92,8 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
     const odh::SavedWorldEntity& record,const odh::World& world,
     const odh::DefinitionIndex& definitions,std::int16_t caller_id,
     std::int16_t portal_id,odh::CodeOwner code_owner,
-    const SavedSemiglobalCodeBank* semiglobal=nullptr) {
+    const SavedSemiglobalCodeBank* semiglobal=nullptr,
+    const SavedGlobalCodeBank* globals=nullptr) {
     if(caller_id<=0||portal_id<=0||code_owner==0)
         throw odh::FormatError("portal call identities and resource CodeOwner must be explicit and valid");
     if(record.saved.object_id!=static_cast<std::uint16_t>(portal_id)||record.serialized_object_type!=8)
@@ -134,6 +164,25 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
         scan_dependencies(one,true);
     }
     std::sort(global_dependencies.begin(),global_dependencies.end());
+    if(!global_dependencies.empty()){
+        if(!globals)throw odh::FormatError("portal closure requires its explicitly linked global bank");
+        std::set<std::uint16_t> checked_globals;
+        for(std::size_t cursor=0;cursor<global_dependencies.size();++cursor){
+            const auto id=global_dependencies[cursor];
+            if(!checked_globals.insert(id).second)continue;
+            const auto found=globals->routines.find(odh::routine_key(id));
+            if(found==globals->routines.end())throw odh::FormatError("global BHAV dependency absent from linked resource");
+            for(const auto& instruction:found->second.instructions){
+                if(instruction.opcode<256)continue;
+                const auto dependency=odh::routine_key(instruction.opcode);
+                if(dependency.scope!=odh::RoutineScope::global)
+                    throw odh::FormatError("global BHAV crosses into a non-global code owner");
+                if(std::find(global_dependencies.begin(),global_dependencies.end(),instruction.opcode)==global_dependencies.end())
+                    global_dependencies.push_back(instruction.opcode);
+            }
+        }
+        std::sort(global_dependencies.begin(),global_dependencies.end());
+    }
     odh::VmCall call{key,{caller_id,portal_id,portal_id,code_owner},
         std::vector<std::int16_t>(entry->second.metadata->arguments,0)};
     return {std::move(call),std::move(routines),function,std::move(global_dependencies),

@@ -73,7 +73,7 @@ int main(){try{
     check(zero_portal,"zero Portal action is rejected instead of creating a call");
 
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
-                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(301))));
+                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(2))));
     const auto tabled=saved_entry_point_resource(candidate);
     check(tabled.functions.uses_function_table==1&&tabled.table.source==odh::EntryPointSource::objf&&
         tabled.table.entries.size()==27,"selected OBJf function table decoded");
@@ -106,8 +106,8 @@ int main(){try{
     check(call_plan.call.arguments.size()==4&&std::all_of(call_plan.call.arguments.begin(),call_plan.call.arguments.end(),
         [](auto value){return value==0;}),"portal call supplies zeroed arguments sized by BHAV metadata");
     check(call_plan.owner_routines.size()==2&&call_plan.owner_routines.count(odh::routine_key(5016))&&
-        call_plan.global_dependencies==std::vector<std::uint16_t>{301},
-        "portal plan resolves exact private closure and reports shared-bank dependencies");
+        call_plan.global_dependencies.empty(),
+        "portal plan resolves exact private closure without inventing shared-bank dependencies");
     auto bad_portal_record=portal_record;bad_portal_record.serialized_object_type=7;
     bool wrong_portal_type=false;try{(void)saved_portal_vm_call_plan(bad_portal_record,portal_world,portal_definitions,12,37,0x80000037U);}
     catch(const odh::FormatError&){wrong_portal_type=true;}
@@ -159,40 +159,53 @@ int main(){try{
     const auto bank_asset=iff(chunk("BHAV",8192,portal_bhav(301)));
     write_far(bank_path,"DoorGlobals.iff",bank_asset);
     const auto bank=load_saved_semiglobal_code_bank(bank_path.string(),"DoorGlobals.iff");
+    const auto globals_path=path.parent_path()/(path.stem().string()+"-shared.far");
+    const auto global_asset=iff(chunk("BHAV",301,portal_bhav(302))+chunk("BHAV",302,portal_bhav(2)));
+    write_far(globals_path,"Global.iff",global_asset);
+    const auto global_bank=load_saved_global_code_bank(globals_path.string(),"Global.iff");
     odh::World linked_world;
     check(linked_world.create(12,odh::EntityKind::avatar)&&linked_world.create(37,odh::EntityKind::object)&&
         linked_world.define_type(37,candidate.definition.guid)&&
         linked_world.define_entry_points(37,linked_resource.table.entries),
         "explicit semiglobal portal World initialized");
+    bool missing_global_bank=false;
+    try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003cU,&bank);}
+    catch(const odh::FormatError&){missing_global_bank=true;}
+    check(missing_global_bank,"portal global dependency requires an explicit shared bank");
+    auto incomplete_global_bank=global_bank;
+    incomplete_global_bank.routines.erase(odh::routine_key(302));
+    bool missing_transitive_global=false;
+    try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,
+        0x8000003dU,&bank,&incomplete_global_bank);}
+    catch(const odh::FormatError&){missing_transitive_global=true;}
+    check(missing_transitive_global,"portal plan validates transitive global dependencies");
     const auto linked_plan=saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,
-        12,37,0x8000003aU,&bank);
+        12,37,0x8000003aU,&bank,&global_bank);
     check(linked_plan.owner_routines.count(odh::routine_key(5015))&&
         linked_plan.owner_routines.count(odh::routine_key(8192))&&
-        linked_plan.global_dependencies==std::vector<std::uint16_t>{301}&&
+        linked_plan.global_dependencies==std::vector<std::uint16_t>({301,302})&&
         linked_plan.semiglobal_name==std::optional<std::string>{"DoorGlobals"},
         "portal private closure and explicitly linked semiglobal closure share the planned CodeOwner");
     odh::VmLimits linked_limits;linked_limits.code_owners=2;
-    odh::Bhav global_dependency{0x8002,{{2,254,255,{0,0,0,0,0,0,0,0}}},{},
-        odh::Bhav::Metadata{0,0,0,3}};
-    odh::RoutineSet shared_globals{{odh::routine_key(301),global_dependency}};
-    odh::Vm linked_vm(std::move(shared_globals), {}, linked_limits);
+    odh::Vm linked_vm(global_bank.routines, {}, linked_limits);
     check(install_saved_portal_vm_call_plan(linked_vm,linked_plan),
         "portal private and semiglobal closure installs as one explicit VM owner");
     std::vector<odh::RoutineKey> linked_trace;
     check(linked_vm.start(linked_plan.call.key,linked_plan.call.context,linked_plan.call.arguments)==odh::VmStatus::running&&
-        linked_vm.run(2,[&](const odh::VmTrace& event){linked_trace.push_back(event.key);})==odh::VmStatus::budget_exhausted&&
-        linked_trace.size()==2&&linked_trace[0].id==5015&&linked_trace[1].id==8192&&
-        linked_vm.stack().size()==3&&
+        linked_vm.run(3,[&](const odh::VmTrace& event){linked_trace.push_back(event.key);})==odh::VmStatus::budget_exhausted&&
+        linked_trace.size()==3&&linked_trace[0].id==5015&&linked_trace[1].id==8192&&linked_trace[2].id==301&&
+        linked_vm.stack().size()==4&&
         linked_vm.stack()[0].context.code_owner==0x8000003aU&&
         linked_vm.stack()[1].context.code_owner==0x8000003aU&&
-        linked_vm.stack()[2].key.id==301,
-        "installed Portal15 plan resolves private then linked semiglobal call before shared-global dependency");
+        linked_vm.stack()[2].key.id==301&&linked_vm.stack()[3].key.id==302,
+        "installed Portal15 plan resolves private, semiglobal and transitive shared-global calls");
     auto wrong_bank=bank;wrong_bank.entry="OtherGlobals.iff";wrong_bank.name="OtherGlobals";
     bool mismatched_portal_bank=false;
     try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_bank);}
     catch(const odh::FormatError&){mismatched_portal_bank=true;}
     check(mismatched_portal_bank,"portal semiglobal binding rejects a different explicit resource");
     std::error_code ignored;std::filesystem::remove(bank_path,ignored);
+    std::filesystem::remove(globals_path,ignored);
     std::filesystem::remove(path,ignored);
     std::cout<<"saved entry-point resource checks: "<<checks<<"\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

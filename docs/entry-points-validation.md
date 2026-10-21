@@ -35,12 +35,18 @@ host. `load_saved_semiglobal_code_bank` abre somente o `.iff` explícito e
 limitado; o plano confere seu nome contra o GLOB128 e incorpora ao mesmo
 CodeOwner apenas a closure semiglobal alcançável. ConditionFunction não zero,
 bank ausente/ambíguo e rotina dependente ausente continuam falhando fechados.
+`load_saved_global_code_bank` lê o banco global explicitamente fornecido. O
+plano valida a presença da closure global transitiva nesse banco, mas mantém
+essas rotinas no owner compartilhado zero; chamadas globais para outro escopo
+são rejeitadas.
 
 `install_saved_portal_vm_call_plan` instala a closure no VM em um ponto seguro.
 O teste sintético inicia a ação privada e confirma que a chamada alcança o
 semiglobal e, em seguida, para na dependência global declarada. Essa dependência
-precisa estar no banco compartilhado antes da execução completa. Ainda não há
-chamada de `Routing::call_external_frame`, descoberta automática de portais,
+fica no banco compartilhado antes da execução completa. O probe de recursos
+comerciais contou 2 BHAVs em `DoorGlobals.iff`, 251 em `Global.iff`, e encontrou
+as dependências 277 e 301 da árvore de `Doors.iff:4105` no banco global. Ainda
+não há chamada de `Routing::call_external_frame`, descoberta automática de portais,
 replanejamento entre salas ou navegação jogável. `odh-saved-entry-point-resource`
 valida o contrato com IFF/FAR sintéticos. O comando `odh-bhav` também confirmou
 `Objects.far:Doors.iff` → GLOB128 `DoorGlobals` → `Global.far:DoorGlobals.iff`;
