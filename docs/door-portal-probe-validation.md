@@ -144,14 +144,27 @@ zero ao argumento 0 e retorna true. A versão `0x8001` sem metadata não é
 executável pelo perfil bounded atual, que exige BHAV `0x8002`; essa leitura
 descreve a estrutura e o mapeamento ODH, não prova o efeito observável no jogo.
 
+O BHAV privado 4115 foi decodificado separadamente com `odh-bhav`: versão
+`0x8002`, metadata sem argumentos/locais, uma expressão (`opcode=2`) com
+operandos `[1,0,0,0,0,2,1,7]`, ramo verdadeiro `0xff` e falso `0xfe`. Pela
+codificação de `VMExpressionOperand.Read` e `VMVariableScope` no submódulo
+FreeSO pinado pelo Simitone, isso representa `StackObject` atributo 1 igual ao
+literal 0. Os destinos `0xff` e `0xfe` correspondem, respectivamente, a retorno
+false e true no interpretador de referência; portanto o resultado é true quando
+o atributo 1 difere de zero. O teste `world` usa uma BHAV sintética com esses
+mesmos bytes e confirma os dois ramos pelo backend `World`; também confirma
+falha se a identidade do StackObject não existe. É uma validação do decoder e
+do perfil ODH à luz da referência, não execução de `Doors.iff:4115` nem prova
+da semântica do executável original.
+
 O FreeSO pinado em `f86bbd34b2112296ed786741f640a0535886d180`, arquivo
 `VMRoutingFrame.cs`, documenta a sequência de sala: calcular a cadeia de
 portais, chamar EP15 do próximo portal e aguardar seu retorno; retorno falso
 descarta aquele portal e recalcula a rota. A rotina `Doors.iff:4113` conter dois
-Route45 é compatível com essa função de portal. Não conhecemos ainda o
-significado dos operandos de Route45 em 4113, nem os efeitos dos demais BHAVs
-4105; nenhum deles foi executado aqui. Isso não valida travessia, estado de
-porta, mutação de sala ou equivalência com o jogo.
+Route45 é compatível com essa função de portal. Os operandos Route45 de 4113
+seguem sem interpretação confirmada, assim como os efeitos dos demais BHAVs
+chamados por 4105; nenhum deles foi executado aqui. Isso não valida travessia,
+estado de porta, mutação de sala ou equivalência com o jogo.
 
 Na amostra 2026-10-20, `--route-grid-diagnostic 105 128` colocou Bob (105) e o
 alvo salvo 128 na sala geométrica 3. A grade candidata ficou `ready` com
