@@ -42,6 +42,18 @@ entrada obsoleta, mas ainda não implementa `VMRoutingFrame`, `PortalTurns`,
 curva de virada nem animação de caminhada. Teste fixture cobre a mudança
 fracionária no mesmo notch e cancelamento sem deslocamento adicional.
 
+`RouteFrameContext` agora dá forma ao contexto de um frame raiz ativo em ODH,
+com estados enumerados INITIAL/BEGIN_TURN/WALKING/TURN_ONLY/END_TURN/SHOOED/
+ROOM_PORTAL/STAND_FUNC/FAILED. O controller expõe o estado ativo e transita de
+INITIAL para WALKING no primeiro passo, ou usa TURN_ONLY quando já está no
+destino. Helpers puros reproduzem a seleção parent-or-self para `dirIn` e o
+orçamento de `CanPortalTurn`, inclusive incrementando `PortalTurns` em chamadas
+repetidas. Testes com contextos sintéticos cobrem raízes e filhos; ODH ainda
+não mantém a pilha de parent frames nem chama esses helpers durante uma rota.
+Referência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`,
+`FreeSO/TSOClient/tso.simantics/Engine/VMRoutingFrame.cs` (`GetParentFrame`,
+`CanPortalTurn`, `AttemptWalk`).
+
 Antes de cada passo, verifica ticket, gerações, posições esperadas, vínculo de
 ocupação e próximo segmento na malha. Restart, exclusão, recriação de ID,
 movimento externo ou novo obstáculo cancelam o percurso. Falhas de percurso

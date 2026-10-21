@@ -183,6 +183,10 @@ VmPrimitive Routing::primitive() {
         return request(frame,instruction,dispatch);
     };
 }
+std::optional<RouteFrameContext> Routing::active_frame_context() const {
+    if(!job_) return {};
+    return job_->frame;
+}
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch) {
     if(i.opcode!=45) return {};
     if(executing_) return unsupported("routing callback cannot reenter controller");
@@ -265,8 +269,11 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         target->position->direction,goal,static_cast<std::uint8_t>(slot->flags));
     if(entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
+    RouteFrameContext frame_context;
+    if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
-             *actor->position,*target->position,actor->radian_direction,std::move(path.points),1,entry_flags,
+             *actor->position,*target->position,actor->radian_direction,frame_context,
+             std::move(path.points),1,entry_flags,
              selected?selected->facing:heading(goal,{target->position->x,target->position->y})};
     return {PrimitiveDisposition::wait,{}};
 }
@@ -305,6 +312,7 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 return finish(false,"dynamic route footprint update rejected");
             job_->walking_started=true;
         }
+        job_->frame.state=RouteFrameState::walking;
         auto position=*actor->position;position.x=point.x;position.y=point.y;position.direction=heading(from,point);
         if(!world_.set_position(actor->id,position)) return finish(false,"position update rejected");
         job_->expected=position;

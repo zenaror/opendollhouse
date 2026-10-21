@@ -1,7 +1,9 @@
 #include "odh/routing.hpp"
+#include "odh/route_frame.hpp"
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -125,6 +127,37 @@ void pre_ranked_goal_tests() {
     require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
             "empty candidate entry flags stop before fallback");
 }
+void route_frame_context_tests() {
+    odh::RouteFrameContext root;
+    require(!odh::route_incoming_direction(root,nullptr,0.25f),
+            "root route without portal state has no incoming direction");
+    root.portal_turns=1;
+    require(odh::route_incoming_direction(root,nullptr,0.25f)==0.25f,
+            "root PortalTurns enables continuous incoming direction");
+    root.portal_turns=0;root.state=odh::RouteFrameState::room_portal;
+    require(odh::route_incoming_direction(root,nullptr,-0.5f)==-0.5f,
+            "root room portal state enables signed continuous direction");
+    require(odh::consume_route_portal_turn(root,nullptr)&&root.portal_turns==1,
+            "first portal turn is allowed and increments the route counter");
+    require(!odh::consume_route_portal_turn(root,nullptr)&&root.portal_turns==2,
+            "later portal turns are rejected but remain counted");
+
+    odh::RouteFrameContext child;
+    odh::RouteFrameContext parent;parent.state=odh::RouteFrameState::room_portal;
+    require(odh::route_incoming_direction(child,&parent,1.25f)==1.25f,
+            "nested route inherits its parent's room portal state");
+    require(odh::consume_route_portal_turn(child,&parent)&&parent.portal_turns==1,
+            "nested route consumes the parent's one portal-turn allowance");
+    require(!odh::consume_route_portal_turn(child,&parent)&&parent.portal_turns==2,
+            "nested route increments the effective parent counter on repeated checks");
+
+    parent.state=odh::RouteFrameState::initial;parent.portal_turns=0;
+    child.state=odh::RouteFrameState::room_portal;
+    require(!odh::route_incoming_direction(child,&parent,1.25f),
+            "nested route consults parent context instead of its own portal state");
+    require(!odh::route_incoming_direction(root,nullptr,std::numeric_limits<float>::quiet_NaN()),
+            "non-finite avatar angle is never published as route context");
+}
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;
     r.proximity=std::array<std::int32_t,3>{16,16,16};r.max_size=0;r.unknown_i10=0;
@@ -155,6 +188,7 @@ int main() {
         reference_slot_direction_tests();
         reference_slot_circle_tests();
         pre_ranked_goal_tests();
+        route_frame_context_tests();
         {bool invoked=false;
          Fixture f([&](const auto& table,std::size_t index,const auto& actor,const auto& target) {
              invoked=table.version==10&&index==1&&actor.x==4&&target.x==28;
@@ -196,9 +230,15 @@ int main() {
                  world.find(105)->position->x==392&&world.find(105)->position->y==440,
                  "constructed clear grid exercises the already-at-goal Route45 path without movement");}
         {Fixture f;f.start();require(f.vm.status()==odh::VmStatus::waiting,"route dispatch waits");
+         require(f.routing.active_frame_context()&&
+                 f.routing.active_frame_context()->state==odh::RouteFrameState::initial,
+                 "active Route45 job exposes its live root route-frame state");
          require(f.world.find(1)->position->x==4&&f.world.find(1)->static_footprint,"planning does not move actor or change RoomInfo class");
          require(f.routing.tick(1) && f.world.find(1)->position->x==5&&!f.world.find(1)->static_footprint,
                  "first walking step moves one unit and registers a dynamic footprint");
+         require(f.routing.active_frame_context()&&
+                 f.routing.active_frame_context()->state==odh::RouteFrameState::walking,
+                 "route-frame state advances from initial to walking with the first published step");
          require(!f.routing.tick(1) && !f.routing.tick(0) && !f.routing.tick(3) &&
                  f.world.find(1)->position->x==5,"duplicates/backwards/gaps do not consume movement");
          std::size_t movements=1;
@@ -219,6 +259,9 @@ int main() {
                  "provider entity removal is rejected without stale world pointer access");}
         {Fixture f;f.world.set_position(1,{12,12,1,0});f.start();
          require(f.vm.status()==odh::VmStatus::waiting&&f.routing.active(),"validated start at SLOT goal creates turn-only route");
+         require(f.routing.active_frame_context()&&
+                 f.routing.active_frame_context()->state==odh::RouteFrameState::turn_only,
+                 "coincident validated goal uses an explicit turn-only route-frame state");
          require(f.routing.tick(1)&&f.vm.status()==odh::VmStatus::returned_true&&!f.routing.active(),
                  "validated turn-only route completes without movement");
          const auto* actor=f.world.find(1);

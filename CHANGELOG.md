@@ -18,9 +18,11 @@ validação indicados por versão.
 - Jobs de `Routing` agora capturam e revalidam o ângulo contínuo do avatar,
   cancelando se ele muda durante uma busca pendente mesmo que o notch continue
   igual; passos do job atualizam esse snapshot e a chegada canonicaliza o
-  facing final. Teste focal `odh-routing-tests` cobre invalidação angular e
-  chegada. Isso não implementa o frame/state machine de roteamento do Simitone.
-  Consulte `docs/routing-validation.md`.
+  facing final. O controller também expõe estados explícitos para o frame raiz,
+  e helpers testados reproduzem a seleção de direção de entrada e o limite de
+  viradas em portal. `odh-routing-tests` cobre esses contratos; a pilha de
+  frames-pai e a máquina completa ainda faltam. Consulte
+  `docs/routing-validation.md`.
 
 - `optimize_rect_route_lines` adiciona a otimização parcial de corredores do
   Simitone: deduplicação e corner-cutting validado por retângulos livres, com

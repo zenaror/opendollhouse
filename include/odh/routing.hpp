@@ -1,6 +1,7 @@
 #pragma once
 #include "odh/world.hpp"
 #include "odh/route.hpp"
+#include "odh/route_frame.hpp"
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -65,6 +66,7 @@ public:
     VmPrimitive primitive();
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
+    std::optional<RouteFrameContext> active_frame_context() const;
     const std::string& diagnostic() const {return diagnostic_;}
 private:
     struct Job {
@@ -72,6 +74,7 @@ private:
         std::int16_t actor,target;
         EntityPosition expected,target_position;
         float expected_radian_direction;
+        RouteFrameContext frame;
         std::vector<RoutePoint> path;
         std::size_t next=1;
         std::int16_t entry_flags;
