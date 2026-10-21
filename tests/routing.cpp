@@ -230,6 +230,19 @@ int main() {
         pre_ranked_goal_tests();
         door_range_route_tests();
         route_frame_context_tests();
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
+         auto object_slots=slot();odh::Routing routing{world,grid,globals};
+         routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {
+             return &object_slots;
+         });
+         routing.set_route_goal_validator([](const odh::VmFrame&,odh::RoutePoint){return false;});
+         odh::Vm vm{routines(1,1),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::returned_false&&
+                 routing.diagnostic()=="host goal validator rejected every direction-compatible SLOT candidate",
+                 "Route45 distinguishes host-rejected SLOT goals from direction-mask rejection");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});

@@ -355,10 +355,19 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         path=std::move(result.path);
     }else {
         std::vector<RoutePoint> goals;
+        bool direction_compatible_candidate=false;
         for(const auto& candidate:enumerate_reference_slot_circle_candidates(*selected_slots,slot_index,
-                {target->position->x,target->position->y},target->position->direction))
-            if(candidate.entry_flags!=0&&allow_goal(candidate.position)) goals.push_back(candidate.position);
-        if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
+                {target->position->x,target->position->y},target->position->direction)) {
+            if(candidate.entry_flags==0)continue;
+            direction_compatible_candidate=true;
+            if(allow_goal(candidate.position))goals.push_back(candidate.position);
+        }
+        if(goals.empty()) {
+            diagnostic_=direction_compatible_candidate?
+                "host goal validator rejected every direction-compatible SLOT candidate":
+                "SLOT direction mask rejects every candidate";
+            return {PrimitiveDisposition::goto_false,{}};
+        }
         if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
             // Validate clearance even for the turn-only shortcut.
             if(!grid_.contains(start)) path={RouteStatus::invalid_input,{},0,0};
