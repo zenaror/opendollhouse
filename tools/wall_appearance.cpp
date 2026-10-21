@@ -1,13 +1,16 @@
 #include "saved_wall_appearance.hpp"
 #include "saved_architecture_resources.hpp"
 #include "saved_tail_json.hpp"
+#include "odh/wall_route_state.hpp"
 #include <iostream>
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF]");
- const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--route-edges]");
+ const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;bool route_edges=false;
  for(int n=2;n<argc;++n){const std::string option=argv[n];
   if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");sources.push_back({argv[++n],option=="--object-definition-file"});}
-  else if(option=="--neighborhood"&&!neighborhood&&n+1<argc)neighborhood=argv[++n];else throw odh::FormatError("invalid wall appearance option");}
+  else if(option=="--neighborhood"&&!neighborhood&&n+1<argc)neighborhood=argv[++n];
+  else if(option=="--route-edges"&&!route_edges)route_edges=true;
+  else throw odh::FormatError("invalid wall appearance option");}
  if(sources.empty())throw odh::FormatError("wall appearance requires explicit definitions");
  auto index=saved_definition_index(sources);auto records=saved_world_records(house,*index);std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
  auto world=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);auto architecture=saved_architecture_resource(house);
@@ -18,5 +21,26 @@ int main(int argc,char** argv){try{
  for(std::size_t n=0;n<result.bindings.size();++n){if(n)std::cout<<',';const auto& b=result.bindings[n];std::cout<<"{\"guid\":"<<b.guid<<",\"source\":"<<json_bytes(b.source)<<",\"asset\":"<<json_bytes(b.asset)<<",\"objd_id\":"<<b.chunk_id<<",\"version\":"<<b.binding.version<<",\"wall_style\":"<<b.binding.wall_style<<",\"sprite_base\":"<<(b.binding.sprite_base?std::to_string(*b.binding.sprite_base):"null")<<",\"header_extent\":"<<b.binding.header_extent<<",\"remaining_bytes\":"<<b.binding.remaining_bytes<<'}';}
  std::cout<<"],\"applications\":[";for(std::size_t n=0;n<result.appearance.applications.size();++n){if(n)std::cout<<',';const auto& a=result.appearance.applications[n];std::cout<<"{\"id\":"<<a.id<<",\"applied_sides\":"<<unsigned(a.applied_sides)<<",\"ignored_sides\":"<<unsigned(a.ignored_sides)<<'}';}
  std::cout<<"],\"faces\":[";for(std::size_t n=0;n<result.appearance.faces.size();++n){if(n)std::cout<<',';const auto& f=result.appearance.faces[n];std::cout<<"{\"x\":"<<f.x<<",\"y\":"<<f.y<<",\"level\":"<<unsigned(f.level)<<",\"segment\":"<<unsigned(f.segment)<<",\"segment_present\":"<<(f.segment_present?"true":"false")<<",\"owner\":"<<f.owner<<",\"generation\":"<<f.generation<<",\"door\":"<<(f.door?"true":"false")<<",\"door_owner\":"<<f.door_owner<<",\"door_generation\":"<<f.door_generation<<",\"raw_style\":"<<f.style.raw_style<<",\"resource_guid\":"<<f.style.resource_guid<<",\"sprites\":";odh_tools::saved_bank(std::cout,f.style.sprites);std::cout<<'}';}
- std::cout<<"]}\n";return 0;
+ std::cout<<']';
+ if(route_edges){
+  std::cout<<",\"initial_wall_edges\":{\"initial_snapshot_only\":true,\"dynamic_portals\":false,\"object_collision\":false,\"runtime_equivalence\":false,\"levels\":[";
+  for(std::int16_t level=1;level<=2;++level){
+   const auto edges=odh::resolve_initial_wall_edges(architecture.architecture,result.appearance,level);
+   if(edges.status!=odh::WallEdgeBuildStatus::ready)throw odh::FormatError("initial wall edge resolution unsupported: "+edges.diagnostic);
+   std::uint64_t present=0,solid=0,non_solid=0,doors=0;
+   const auto& walls=architecture.architecture.levels[level-1].walls;
+   for(std::size_t i=0;i<walls.size();++i){
+    if(walls[i].segments&1U)++present;
+    if(walls[i].segments&2U)++present;
+    if(edges.edges[i].top_left==odh::WallEdgeKnowledge::solid)++solid;else ++non_solid;
+    if(edges.edges[i].top_right==odh::WallEdgeKnowledge::solid)++solid;else ++non_solid;
+   }
+   for(const auto& face:result.appearance.faces)if(face.level==level&&face.door)++doors;
+   if(level>1)std::cout<<',';
+   std::cout<<"{\"level\":"<<level<<",\"width\":"<<architecture.architecture.width<<",\"height\":"<<architecture.architecture.height
+    <<",\"present_wall_segments\":"<<present<<",\"solid_edges\":"<<solid<<",\"non_solid_edges\":"<<non_solid<<",\"door_faces\":"<<doors<<'}';
+  }
+  std::cout<<"]}";
+ }
+ std::cout<<"}\n";return 0;
 }catch(const std::exception& e){std::cerr<<"wall appearance error: "<<e.what()<<'\n';return 2;}}
