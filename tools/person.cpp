@@ -1,5 +1,8 @@
 #include "odh/interaction.hpp"
 #include "odh/sleep.hpp"
+#include "odh/snap.hpp"
+#include "odh/object_type.hpp"
+#include "odh/notify.hpp"
 #include "odh/tuning.hpp"
 #include "odh/lot.hpp"
 #include "odh/lot_context.hpp"
@@ -628,6 +631,7 @@ int main(int argc,char** argv) {
     std::vector<odh::PlaybackEvent> animation_events;
     std::uint64_t animation_event_bytes=0;
     std::optional<odh::Playback> playback;
+    std::function<bool(std::int16_t)> bind_world_object_tables;
     if(!animation_sources.empty()){
         animation_catalog.emplace(animation_sources);
         global_animation_tables=load_strings(*globals,{128,130,150,151,156,157});
@@ -637,6 +641,30 @@ int main(int argc,char** argv) {
             private_animation_tables.emplace(owner,load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130}));
         };
         bind_tables(runtime_avatar_id,*avatar,person);if(action)bind_tables(2,*action,*action_data);
+        bind_world_object_tables=[&](std::int16_t owner){
+            if(private_animation_tables.count(owner))return true;
+            const auto* entity=world.find(owner);
+            if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!definition_index)return false;
+            const auto* candidate=definition_index->unique(entity->definition->guid);
+            if(!candidate)return false;
+            const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+            std::optional<odh::ObjdBinding> binding;
+            with_resource(resource,[&](const auto& view){
+                odh::Limits limits;limits.iff_chunks=4096;
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id){
+                        if(binding)throw odh::FormatError("ambiguous animation-owner OBJD");
+                        binding=odh::read_objd_binding(chunk.payload);
+                    }
+                },limits);
+            });
+            if(!binding||binding->guid!=candidate->definition.guid||binding->master_id!=0)return false;
+            const auto base=binding->animation_table;
+            auto tables=load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130});
+            animation_table_ids.emplace(owner,base);
+            private_animation_tables.emplace(owner,std::move(tables));
+            return true;
+        };
     }
     const auto resolve_animation=[&](const odh::VmFrame& frame,std::uint32_t source,std::uint16_t id,std::optional<std::int16_t> posture)
         ->std::shared_ptr<const odh::AnimationHeader>{
@@ -656,8 +684,17 @@ int main(int argc,char** argv) {
             }
             if(posture){table=find_table(global_animation_tables,child?151:150);id=static_cast<std::uint16_t>(*posture);}
             else if(source==0||source==65536){
-                const auto owner=source==0?frame.context.code_owner:frame.context.stack_object;
-                const auto tables=private_animation_tables.find(owner);const auto base=animation_table_ids.find(owner);
+                auto owner=source==0?frame.context.code_owner:frame.context.stack_object;
+                auto tables=private_animation_tables.find(owner);
+                if(tables==private_animation_tables.end()&&source==0&&frame.context.stack_object>0&&
+                   frame.context.stack_object<=32767){
+                    const auto stack_owner=static_cast<std::int16_t>(frame.context.stack_object);
+                    if(bind_world_object_tables&&bind_world_object_tables(stack_owner)){
+                        owner=static_cast<std::uint32_t>(stack_owner);
+                        tables=private_animation_tables.find(owner);
+                    }
+                }
+                const auto base=animation_table_ids.find(owner);
                 if(tables==private_animation_tables.end()||base==animation_table_ids.end())throw odh::FormatError("animation owner not supplied by host");
                 table=find_table(tables->second,static_cast<std::uint16_t>(base->second+(child?1:0)));
                 if(!table)table=find_table(tables->second,child?130:129);
@@ -692,6 +729,61 @@ int main(int argc,char** argv) {
         if(sound_records.size()<4096)sound_records.push_back({request,status});
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
+    const auto object_type_handler=odh::object_type_primitive(world);
+    const auto notify_handler=odh::notify_idle_primitive(world);
+    struct SnapRuntime {
+        odh::SlotTable slots;
+        std::unique_ptr<odh::Snap> controller;
+        odh::VmPrimitive primitive;
+    };
+    std::map<std::int16_t,std::unique_ptr<SnapRuntime>> snap_runtimes;
+    odh::VmPrimitive snap_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+                                      const auto& tuning,const odh::VmDispatch& dispatch) {
+        const auto stack_object=frame.context.stack_object;
+        if(stack_object<=0||stack_object>32767)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap stack object is outside the World ID range"};
+        const auto object_id=static_cast<std::int16_t>(stack_object);
+        auto runtime=snap_runtimes.find(object_id);
+        if(runtime==snap_runtimes.end()) {
+            const auto* entity=world.find(object_id);
+            if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!definition_index)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is unavailable"};
+            const auto* candidate=definition_index->unique(entity->definition->guid);
+            if(!candidate)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is missing or ambiguous"};
+            const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+            std::optional<odh::ObjdBinding> binding;
+            std::optional<odh::SlotTable> slots;
+            with_resource(resource,[&](const auto& view){
+                odh::Limits limits;limits.iff_chunks=4096;
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id) {
+                        if(binding)throw odh::FormatError("ambiguous Snap OBJD resource");
+                        binding=odh::read_objd_binding(chunk.payload);
+                    }
+                },limits);
+                if(!binding||binding->guid!=candidate->definition.guid||binding->master_id!=0)
+                    throw odh::FormatError("Snap OBJD identity or single-tile profile mismatch");
+                if(binding->slot_table==0)throw odh::FormatError("Snap OBJD has no SLOT binding");
+                with_resource(resource,[&](const auto& second_view){
+                    odh::iff_chunks(second_view,[&](const auto& chunk){
+                        if(chunk.type=="SLOT"&&chunk.id==binding->slot_table) {
+                            if(slots)throw odh::FormatError("ambiguous Snap SLOT resource");
+                            slots=odh::read_slot(chunk.payload);
+                        }
+                    },limits);
+                });
+            });
+            if(!slots) return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap SLOT resource is absent"};
+            auto entry=std::make_unique<SnapRuntime>();entry->slots=std::move(*slots);
+            entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table);
+            if(!entry->controller->bind(*dispatch.origin))
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap controller could not bind to VM"};
+            entry->primitive=entry->controller->primitive();
+            runtime=snap_runtimes.emplace(object_id,std::move(entry)).first;
+        }
+        return runtime->second->primitive(frame,instruction,tuning,dispatch);
+    };
     std::string route_runtime_state=saved_world_main?"unavailable":"not_applicable";
     std::string route_runtime_reason=saved_world_main?"runtime_route_context_not_prepared":"requires_saved_world_main";
     std::size_t route_runtime_movement_callbacks=0;
@@ -712,12 +804,15 @@ int main(int argc,char** argv) {
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
         if(i.opcode==31&&((i.operands[4]&127)<=2||(i.operands[4]&127)==4))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
+        if(i.opcode==32)return object_type_handler(f,i,t,d);
+        if(i.opcode==49)return notify_handler(f,i,t,d);
         if((i.opcode==26||i.opcode==24)&&relationship_handler)return relationship_handler(f,i,t,d);
         if(i.opcode==51&&inventory_handler)return inventory_handler(f,i,t,d);
         if(i.opcode==44&&animation_handler)return animation_handler(f,i,t,d);
         if(i.opcode==23)return sound_handler(f,i,t,d);
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
         if(i.opcode==45)return routing_handler(f,i,t,d);
+        if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");

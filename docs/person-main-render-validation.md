@@ -298,6 +298,29 @@ O próximo bloqueio concreto é conectar um Routing45 alimentado por clearance
 construído e validado; não se deve fornecer a malha sintética de teste ou
 tratar candidatos geométricos incompletos como destinos seguros.
 
+### Continuação de Sit: Routing45, Snap46 e animação do objeto
+
+Em 2026-10-21, uma nova sessão X11 com o lote, catálogo de arquitetura,
+Neighborhood, objetos e animações externos repetiu a seleção da cadeira 128 e
+`Sit`. O trace entrou em `Routing45`, depois em `Snap46` com operandos
+`[0,0,3,0,4,0,0,0]`, e prosseguiu até `Animation44`. O Main host agora liga o
+opcode 46 ao controlador Snap usando o SLOT indicado pelo OBJD único da entidade
+StackObject; para fonte 0 de animação, resolve também a tabela privada da
+definição única do StackObject quando o owner do código é o sentinel privado.
+O receipt mostra a posição do avatar de `[392,440,1,3]` para `[392,456,1,4]`
+e inicia `a2o-sit-behind` (161 frames), sem falha de host. Uma captura durante
+a transição mostra o avatar parcialmente encoberto pela cadeira.
+
+A animação avançou até o frame 132 e a primeira execução encontrou `unsupported
+primitive 32` em BHAV 4099, PC 15. Após ligar ObjectType32, a repetição gráfica
+passou desse ponto e chegou a `NotifyOutOfIdle49`, que então também foi ligado
+ao Main host. Os CTests de Snap, ObjectType, Notify e `person_cli` passaram.
+Uma tentativa posterior com Notify ligado não reteve a sequência privada
+4097→4100→4099 no trace, então ela não serve como prova adicional de execução.
+O teste interativo mais forte ainda termina com a ação ativa durante a animação
+`a2o-sit-behind`, sem falha até o opcode49; falta observar um receipt que
+comprove a conclusão da fila e a pose final sentada.
+
 ### Probe com recursos de House07
 
 O probe atualizado usou a instalação local com House07, LotZoning, Neighborhood,

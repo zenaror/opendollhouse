@@ -32,7 +32,7 @@ Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable&
         throw std::invalid_argument("snap owner or SLOT binding mismatch");
     generation_=entity->generation;
 }
-bool Snap::bind(Vm& vm) {if(vm_ && vm_!=&vm)return false;vm_=&vm;return true;}
+bool Snap::bind(const Vm& vm) {if(vm_ && vm_!=&vm)return false;vm_=&vm;return true;}
 VmPrimitive Snap::primitive() {
     return [this](const VmFrame& frame,const Instruction& i,const auto&,const VmDispatch& dispatch) -> PrimitiveOutcome {
         if(i.opcode!=46) return {};

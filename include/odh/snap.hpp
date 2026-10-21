@@ -12,7 +12,7 @@ public:
          PlacementValidator placement_validator={});
     Snap(const Snap&)=delete;
     Snap& operator=(const Snap&)=delete;
-    bool bind(Vm& vm);
+    bool bind(const Vm& vm);
     VmPrimitive primitive();
 private:
     World& world_;
@@ -22,6 +22,6 @@ private:
     const SlotTable& slots_;
     PlacementValidator placement_validator_;
     bool executing_=false;
-    Vm* vm_=nullptr;
+    const Vm* vm_=nullptr;
 };
 }
