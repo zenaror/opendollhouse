@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `DynamicRoomPortalInventory` mantém um conjunto bounded de membros informados
+  pelo host e recompõe/publica o inventário após registro, movimento ou remoção.
+  Posição desconhecida publica estado incompleto para não reter uma abertura
+  antiga; identidade duplicada, remoção desconhecida e excesso do limite não
+  alteram a geração. Ainda exige notificações do host e não está ligado aos
+  callbacks de `World`, ao estado aberto/fechado da porta ou ao replanejamento.
+  Consulte `docs/room-obstacles-validation.md`.
+
 - O host agora pode preparar uma chamada VM para `Portal15`: valida o registro
   salvo e a tabela ligada à entidade, preserva a proveniência do recurso,
   carrega a closure BHAV privada e constrói Caller/Callee/StackObject com um

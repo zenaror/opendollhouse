@@ -33,6 +33,20 @@ contador estrito de floor lookup misses pode continuar positivo para IDs sem
 declaração FLRm, cujo byte é preservado pelo fallback Simitone. Isso não significa clearance total para
 roteamento ou placement: colisão de entidades continua separada.
 
+`DynamicRoomPortalInventory` acrescenta uma camada bounded para o host
+reconstruir esse inventário em registro, movimento e remoção de membros. Cada
+operação válida monta o conjunto e resultado candidatos antes de publicar o
+novo estado no thread chamador; a classe não é thread-safe. Geração e membros
+permanecem intactos quando identidade/capacidade rejeitam a operação. Uma
+atualização aceita com posição ausente publica um inventário incompleto,
+removendo aberturas potencialmente obsoletas. O limite padrão é
+4.096 membros e o host pode reduzi-lo. A classe guarda uma cópia do mapa
+geométrico e depende de o host enviar todas as alterações relevantes. Ela não
+recebe eventos de `World`, não detecta abertura/fechamento de portas e ainda
+não cria adjacency usada pelo `Routing`; os testes exercitam registro de grupo,
+movimento entre salas, posição desconhecida, remoção e limite com mapas
+sintéticos.
+
 Quando recebe o mapa cru de `generate_saved_room_map`, o resultado também herda
 a ausência do remapeamento de pisos/flags. O caminho de
 [arquitetura preparada](prepared-architecture-validation.md) trata essa etapa

@@ -5,6 +5,7 @@
 #include "odh/world.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -62,6 +63,36 @@ struct RoomPortalInventory {
 // incomplete because Simitone selects the first architectural door at a tile.
 RoomPortalInventory build_room_portal_inventory(
     const GeometricRoomMap&, const std::vector<RoomPortalMemberSnapshot>&);
+
+// Bounded host-side index for live room/portal membership updates. Each
+// accepted registration, movement or removal rebuilds a candidate inventory
+// and then publishes it with the member set on the calling thread. An
+// incomplete inventory is still published (fail-closed for routing); rejected
+// capacity/identity operations leave the previous generation untouched. This
+// type is not thread-safe. The host must feed all relevant runtime changes;
+// this class is not connected to World callbacks.
+class DynamicRoomPortalInventory {
+public:
+    explicit DynamicRoomPortalInventory(GeometricRoomMap map,
+                                        std::size_t member_limit = 4096);
+
+    bool register_member(const RoomPortalMemberSnapshot&);
+    bool update_member(const RoomPortalMemberSnapshot&);
+    bool unregister_member(std::int16_t id);
+
+    const RoomPortalInventory& current() const noexcept { return inventory_; }
+    std::size_t member_count() const noexcept { return members_.size(); }
+    std::uint64_t generation() const noexcept { return generation_; }
+
+private:
+    bool publish(std::map<std::int16_t, RoomPortalMemberSnapshot>&&);
+
+    GeometricRoomMap map_;
+    std::size_t member_limit_;
+    std::map<std::int16_t, RoomPortalMemberSnapshot> members_;
+    RoomPortalInventory inventory_;
+    std::uint64_t generation_ = 0;
+};
 
 // Geometric port of VMRoomMap.GenerateRoomObs's room-membership raster and
 // rectangle optimization. Every tile outside `room` is conservatively kept

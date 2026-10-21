@@ -116,6 +116,47 @@ int main() {
         inventory = odh::build_room_portal_inventory(portal_rooms, same_group_overlap);
         require(inventory.complete && inventory.overlapping_door_tiles == 0,
                 "members of one door group sharing a tile are not an ordering ambiguity");
+        odh::DynamicRoomPortalInventory live_portals(portal_rooms, 2);
+        require(live_portals.current().openings.empty() && !live_portals.current().complete,
+                "live portal inventory starts unavailable until host membership is supplied");
+        require(live_portals.register_member(portal_group[0]) &&
+                live_portals.current().complete && live_portals.current().openings.empty(),
+                "registered architectural door without its portal member has no inferred opening");
+        require(live_portals.register_member(portal_group[1]) &&
+                live_portals.current().openings.size() == 1 &&
+                live_portals.current().openings[0].target_room == 2 &&
+                live_portals.generation() == 2,
+                "registration publishes grouped door edge after rebuilding it");
+        auto moved_portal = portal_group[1];
+        moved_portal.position->x = 0;
+        require(live_portals.update_member(moved_portal) &&
+                live_portals.current().openings.size() == 1 &&
+                live_portals.current().openings[0].target_room == 1 &&
+                live_portals.generation() == 3,
+                "moving a live portal member republishes its destination room");
+        const auto generation_before_rejected_update = live_portals.generation();
+        auto missing_live_position = moved_portal;
+        missing_live_position.position.reset();
+        require(live_portals.update_member(missing_live_position) &&
+                !live_portals.current().complete &&
+                live_portals.current().openings.empty() &&
+                live_portals.generation() == generation_before_rejected_update + 1,
+                "unknown live position is published as incomplete rather than retaining a stale edge");
+        require(!live_portals.register_member(portal_group[1]) &&
+                live_portals.member_count() == 2,
+                "duplicate registration is rejected without changing membership");
+        require(live_portals.unregister_member(portal_group[1].id) &&
+                live_portals.current().complete && live_portals.current().openings.empty() &&
+                live_portals.generation() == generation_before_rejected_update + 2,
+                "removing portal member publishes state without its stale room edge");
+        require(!live_portals.unregister_member(portal_group[1].id) &&
+                live_portals.generation() == generation_before_rejected_update + 2,
+                "unknown removal leaves published generation unchanged");
+        odh::DynamicRoomPortalInventory bounded_portals(portal_rooms, 1);
+        require(bounded_portals.register_member(portal_group[0]) &&
+                !bounded_portals.register_member(portal_group[1]) &&
+                bounded_portals.member_count() == 1 && bounded_portals.generation() == 1,
+                "member bound rejects excess live portal records without partial publication");
         auto duplicate_member = portal_group;
         duplicate_member.push_back(portal_group.front());
         inventory = odh::build_room_portal_inventory(portal_rooms, duplicate_member);

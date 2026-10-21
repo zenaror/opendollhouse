@@ -151,6 +151,52 @@ RoomPortalInventory build_room_portal_inventory(
     return result;
 }
 
+DynamicRoomPortalInventory::DynamicRoomPortalInventory(
+    GeometricRoomMap map, std::size_t member_limit)
+    : map_(std::move(map)), member_limit_(member_limit) {
+    inventory_.complete = false;
+}
+
+bool DynamicRoomPortalInventory::publish(
+    std::map<std::int16_t, RoomPortalMemberSnapshot>&& candidate) {
+    std::vector<RoomPortalMemberSnapshot> snapshots;
+    snapshots.reserve(candidate.size());
+    for (const auto& [id, member] : candidate) {
+        (void)id;
+        snapshots.push_back(member);
+    }
+    auto candidate_inventory = build_room_portal_inventory(map_, snapshots);
+    members_.swap(candidate);
+    inventory_ = std::move(candidate_inventory);
+    ++generation_;
+    return true;
+}
+
+bool DynamicRoomPortalInventory::register_member(
+    const RoomPortalMemberSnapshot& member) {
+    if (member.id <= 0 || members_.find(member.id) != members_.end() ||
+        members_.size() >= member_limit_)
+        return false;
+    auto candidate = members_;
+    candidate.emplace(member.id, member);
+    return publish(std::move(candidate));
+}
+
+bool DynamicRoomPortalInventory::update_member(
+    const RoomPortalMemberSnapshot& member) {
+    if (member.id <= 0 || members_.find(member.id) == members_.end()) return false;
+    auto candidate = members_;
+    candidate[member.id] = member;
+    return publish(std::move(candidate));
+}
+
+bool DynamicRoomPortalInventory::unregister_member(std::int16_t id) {
+    if (id <= 0 || members_.find(id) == members_.end()) return false;
+    auto candidate = members_;
+    candidate.erase(id);
+    return publish(std::move(candidate));
+}
+
 RoomObstacleCandidateSet generate_room_obstacle_candidates(
     const GeometricRoomMap& map, std::uint16_t room, std::uint8_t level) {
     return generate_room_obstacle_candidates(map, room, level, {}, false);
