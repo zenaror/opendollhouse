@@ -1,5 +1,25 @@
 # Continuidade atual
 
+## BHAV read-only EP5 e House07 bloqueadores (2026-10-21)
+
+`odh-person --placement-candidate` agora passa um resolver de EP5 que só executa
+BHAVs com formato validado: TestObjectType(StackObject), seguido de igualdade
+de StackObjectAttributes[16] com literal 1. Cada execução usa VM e World
+temporários, no máximo duas instruções, e não tem opcode de escrita permitido.
+Todo formato, dado de atributo ou rotina fora desse perfil permanece
+unsupported. Flamingos 155/156 do House07 fornecem EP5 4108 no asset exato
+`Objects.far/flamingo.iff`; `(280,376,1,3)` intersectou o 155 e classificou
+EP5(Bob 105)=false em uma instrução. `(456,504,1,3)` encontrou IDs 35/101 e
+classificou a posição como bloqueada por 35, com dois pares e EP26=false.
+RoomInfo completo descreve o inventário de entidades do World restaurado; essas
+posições são probes, não movimento real. Todos deixam
+`placement_decision=not_evaluated` e `route_clearance=false`.
+
+Testes focais passam para o executor read-only, auditor de overlap e CLI. A
+próxima etapa é clearance arquitetônico/portal e busca de rota limitada no World
+atual; não conectar Routing45 ao Main até validar esse clearance e estados de
+porta/ocupação runtime.
+
 ## Consulta RoomInfo a partir do World vivo (2026-10-21)
 
 `query_world_room_info` enumera o World atual, deriva OBJD boxes, salas e

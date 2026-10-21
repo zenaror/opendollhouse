@@ -12,9 +12,17 @@ validação indicados por versão.
   inventário incompleto como unsupported e respeita a parada sequencial por
   EP26 sem consultar bloqueadores posteriores. O teste sintético cobre também
   esse curto-circuito. O CLI informa apenas uma auditoria de sobreposição de
-  entidades, não uma decisão final de colocação; BHAVs EP5 e obstáculos de
-  arquitetura/portais continuam fora do escopo. Consulte
+  entidades, não uma decisão final de colocação; BHAVs EP5 fora da pequena
+  allowlist read-only e obstáculos de arquitetura/portais continuam fora do
+  escopo. Consulte
   `docs/world-avatar-place-audit-validation.md`.
+- Executor isolado de uma forma BHAV EP5 read-only validada estruturalmente:
+  `TestObjectType(StackObject)` seguido de igualdade entre
+  `StackObjectAttributes[16]` e literal 1. Um World temporário e dois ticks
+  limitados garantem que esse perfil não muta o Main; todas as outras formas
+  retornam unsupported. House07 executou o Flamingo BHAV4108 para o candidato
+  `(280,376,1,3)` e obteve false após uma instrução. Isso não prova isenção
+  bilateral nem compatibilidade com o executável original.
 - Módulo puro `odh_saved_avatar_place_overlap` modela uma regra limitada de
   sobreposição de `GetAvatarPlace`: grupo multitile, exceção/tri-state de
   EntryPoint 5, flags de interseção e preferência de parada de EntryPoint 26.

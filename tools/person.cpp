@@ -23,6 +23,7 @@
 #include "odh/look_towards.hpp"
 #include "odh/world_room_info.hpp"
 #include "odh/world_avatar_place_audit.hpp"
+#include "odh/entry_point5_readonly.hpp"
 #include "odh/floor_placement.hpp"
 #include "odh/route_geometry.hpp"
 #include "animation_catalog.hpp"
@@ -723,6 +724,17 @@ struct PlacementCandidateProbe {
     std::optional<odh::WorldAvatarPlaceAuditResult> overlap_audit;
     std::string room_info_reason;
 };
+    struct EntryPoint5BhvEvidence {
+        std::int16_t caller=0,stack_object=0;
+        std::uint16_t action=0;
+        std::string source,asset,status="unsupported",reason;
+        std::optional<bool> result;
+        std::uint64_t steps=0;
+    };
+    std::vector<EntryPoint5BhvEvidence> entry_point5_bhav_evidence;
+    using EntryPoint5CacheKey=std::pair<std::uint32_t,std::uint16_t>;
+    std::map<EntryPoint5CacheKey,odh::Bhav> entry_point5_bhav_cache;
+    std::map<EntryPoint5CacheKey,std::string> entry_point5_bhav_errors;
     std::optional<RenderEvidence> render_evidence;
     std::optional<RoomInfoProbe> room_info_probe;
     std::string room_info_probe_unavailable;
@@ -1125,10 +1137,64 @@ struct PlacementCandidateProbe {
                             }
                             return false;
                         };
+                        const odh::WorldAvatarPlaceEntryPoint5Resolver resolve_read_only_ep5=
+                            [&](std::int16_t caller_id,std::int16_t stack_object_id)->std::optional<bool>{
+                            EntryPoint5BhvEvidence evidence;
+                            evidence.caller=caller_id;evidence.stack_object=stack_object_id;
+                            const auto* caller=world.find(caller_id);
+                            const auto* stack_object=world.find(stack_object_id);
+                            if(!caller||!caller->definition||!caller->entry_points||caller->entry_points->size()<=5){
+                                evidence.reason="caller_entry_point5_or_definition_unavailable";
+                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+                                return std::nullopt;
+                            }
+                            evidence.action=(*caller->entry_points)[5].action;
+                            const auto* definition=definition_index?definition_index->unique(caller->definition->guid):nullptr;
+                            if(!definition){
+                                evidence.reason="caller_definition_missing_or_ambiguous";
+                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+                                return std::nullopt;
+                            }
+                            evidence.source=definition->source;evidence.asset=definition->asset;
+                            const EntryPoint5CacheKey key{caller->definition->guid,evidence.action};
+                            auto routine=entry_point5_bhav_cache.find(key);
+                            if(routine==entry_point5_bhav_cache.end()&&entry_point5_bhav_errors.find(key)==entry_point5_bhav_errors.end()){
+                                try{
+                                    auto loaded=saved_private_entry_point_bhav(*definition,evidence.action);
+                                    routine=entry_point5_bhav_cache.emplace(key,std::move(loaded)).first;
+                                }catch(const std::exception& error){
+                                    entry_point5_bhav_errors.emplace(key,error.what());
+                                }
+                            }
+                            const auto load_error=entry_point5_bhav_errors.find(key);
+                            if(load_error!=entry_point5_bhav_errors.end()){
+                                evidence.reason="selected_asset_bhav_unavailable";
+                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+                                return std::nullopt;
+                            }
+                            if(routine==entry_point5_bhav_cache.end()||!stack_object||!stack_object->definition){
+                                evidence.reason="stack_object_identity_unavailable";
+                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+                                return std::nullopt;
+                            }
+                            const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
+                            const auto attribute16=world.read(frame,1,16);
+                            const auto execution=odh::evaluate_read_only_entry_point5(evidence.action,routine->second,
+                                stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
+                            evidence.status=odh::read_only_entry_point5_state_name(execution.state);
+                            evidence.reason=execution.reason;
+                            evidence.steps=execution.steps;
+                            if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)
+                                evidence.result=true;
+                            else if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)
+                                evidence.result=false;
+                            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+                            return evidence.result;
+                        };
                         // A preview has no explicit place-request flags. The reference default
                         // is zero, so AllAvatarsSolid=false; this remains overlap-only.
                         probe.overlap_audit=odh::audit_world_avatar_place_overlaps(
-                            world,runtime_avatar_id,*probe.query,false,same_saved_group);
+                            world,runtime_avatar_id,*probe.query,false,same_saved_group,resolve_read_only_ep5);
                     }
                 }
                 placement_candidate_probe=std::move(probe);
@@ -1453,7 +1519,9 @@ struct PlacementCandidateProbe {
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
     if(placement_candidate_probe){
         const auto& probe=*placement_candidate_probe;
-        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_candidate_floor_RoomInfo_and_entity_overlap_policy_only\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":false,\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
+        const bool read_only_bhav_executed=std::any_of(entry_point5_bhav_evidence.begin(),entry_point5_bhav_evidence.end(),
+            [](const auto& evidence){return evidence.steps!=0;});
+        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_subset\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"allowlisted_read_only_TestObjectType_and_attribute16_equality\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
             <<",\"position\":["<<probe.position.x<<','<<probe.position.y<<','<<probe.position.level<<','<<unsigned(probe.position.direction)<<']'
             <<",\"inside_lot\":"<<(probe.inside_lot?"true":"false")<<",\"room\":";
         if(probe.room)std::cout<<*probe.room;else std::cout<<"null";
@@ -1488,7 +1556,7 @@ struct PlacementCandidateProbe {
             const auto& audit=*probe.overlap_audit;
             const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":
                 audit.rules.status==odh::SavedAvatarPlaceAuditStatus::blocked?"blocked":"unsupported";
-            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bound_EntryPoint_ids\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":false,\"status\":"<<json_bytes(status)
+            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bound_EntryPoint_ids\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"status\":"<<json_bytes(status)
                 <<",\"reason\":"<<json_bytes(odh::world_avatar_place_audit_reason_name(audit.reason))
                 <<",\"pair_classifications\":"<<audit.rules.pair_classifications
                 <<",\"final_blocker_id\":"<<audit.rules.final_blocker_id
@@ -1497,6 +1565,18 @@ struct PlacementCandidateProbe {
             else std::cout<<"null";
             std::cout<<'}';
         }
+        std::cout<<",\"entry_point5_bhav_evidence\":[";
+        for(std::size_t i=0;i<entry_point5_bhav_evidence.size();++i){
+            if(i)std::cout<<',';
+            const auto& evidence=entry_point5_bhav_evidence[i];
+            std::cout<<"{\"caller\":"<<evidence.caller<<",\"stack_object\":"<<evidence.stack_object
+                <<",\"action\":"<<evidence.action<<",\"source\":"<<json_bytes(evidence.source)
+                <<",\"asset\":"<<json_bytes(evidence.asset)<<",\"status\":"<<json_bytes(evidence.status)
+                <<",\"result\":";
+            if(evidence.result)std::cout<<(*evidence.result?"true":"false");else std::cout<<"null";
+            std::cout<<",\"steps\":"<<evidence.steps<<",\"reason\":"<<json_bytes(evidence.reason)<<'}';
+        }
+        std::cout<<']';
         std::cout<<'}';
     }else if(placement_candidate)std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"unavailable\",\"reason\":"
         <<json_bytes(placement_candidate_probe_unavailable)<<'}';

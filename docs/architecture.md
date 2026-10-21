@@ -69,8 +69,10 @@ da rota ainda não chama essa consulta.
 diretamente do World antes de cada consulta, usando resolvers explícitos para
 salas e KillTimeout de avatares. O saved-world preview consulta candidatos
 usando mapa de sala congelado e estado live do World; o auditor classifica
-somente overlap entre entidades usando flags e IDs de EntryPoint. Não executa
-EntryPoint 5 BHAV, não avalia arquitetura/portais nem decide a posição final.
+somente overlap entre entidades usando flags e IDs de EntryPoint. Para EP5,
+executa em World temporário apenas uma forma read-only estritamente allowlisted;
+outras formas ficam unsupported. Não avalia arquitetura/portais nem decide a
+posição final.
 A API ainda não alimenta Route45 ou Snap46.
 
 Saída PCM Linux inicial em `odh_linux_audio`, opcional via `ODH_SDL_AUDIO`,

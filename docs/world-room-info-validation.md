@@ -112,6 +112,14 @@ restored save snapshot; the World does not yet model runtime group mutation.
 The complete contract and synthetic coverage are in
 [`world-avatar-place-audit-validation.md`](world-avatar-place-audit-validation.md).
 
+A further House07 candidate `(456,504,1,3)` intersected entities 35 and 101;
+the audit returned blocked by 35 after two classifications, with EP26 known
+false. Candidate `(280,376,1,3)` intersected flamingo 155 and exercised its
+authored BHAV4108 through the bounded read-only EP5 evaluator; it returned
+false after one TestObjectType instruction because Bob's GUID did not match.
+These remain hypothetical candidate queries, not avatar movement or original
+engine placement evidence.
+
 The synthetic World test now also runs repeated queries through live flag toggles,
 container attach/detach, ID removal/reuse with a new generation, and avatar
 kill-timeout death/revival. It checks that each next query rebuild reflects the

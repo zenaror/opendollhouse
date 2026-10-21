@@ -65,6 +65,30 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
     return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,std::move(bhavs)};
 }
 
+// Read one private BHAV only from the exact asset selected for the entity's
+// DefinitionIndex candidate. This does not merge globals or other FAR assets.
+inline odh::Bhav saved_private_entry_point_bhav(const odh::DefinitionCandidate& candidate,
+                                                std::uint16_t routine_id) {
+    if (routine_id < 4096 || routine_id >= 8192)
+        throw odh::FormatError("EntryPoint BHAV ID is not a private routine");
+    std::optional<odh::Bhav> selected;
+    auto load=[&](const auto& view) {
+        odh::Limits limits;limits.iff_chunks=4096;
+        odh::iff_chunks(view,[&](const odh::Chunk& chunk) {
+            if(chunk.type!="BHAV"||chunk.id!=routine_id)return;
+            if(selected)throw odh::FormatError("ambiguous EntryPoint BHAV in selected asset");
+            selected=odh::read_bhav(chunk.payload);
+        },limits);
+    };
+    if(candidate.asset.empty())with_iff_file(candidate.source,load);
+    else {
+        odh::Limits far_limits;far_limits.far_entries=8192;far_limits.far_name_bytes=256*1024;
+        with_far_entry(candidate.source,candidate.asset,load,far_limits);
+    }
+    if(!selected)throw odh::FormatError("EntryPoint BHAV missing from selected definition asset");
+    return std::move(*selected);
+}
+
 // Resolve the authored Portal entry (index 15) from the exact OBJD/OBJf asset
 // selected for a saved entity. This reads a function reference only: it does
 // not execute the BHAV or establish live portal/route state.
