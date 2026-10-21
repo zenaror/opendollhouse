@@ -30,7 +30,7 @@ private:
     std::vector<std::uint8_t> blocked_,walls_;
 };
 enum class RouteStatus { found,no_path,invalid_input,budget_exhausted };
-struct RouteLimits {std::size_t expanded=262144,frontier=262144;};
+struct RouteLimits {std::size_t expanded=262144,frontier=262144,candidates=4096;};
 struct RoutePath {
     RouteStatus status;
     std::vector<RoutePoint> points; // Includes start and goal.

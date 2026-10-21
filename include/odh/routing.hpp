@@ -2,6 +2,9 @@
 #include "odh/world.hpp"
 #include "odh/route.hpp"
 #include <cstddef>
+#include <functional>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace odh {
@@ -28,11 +31,33 @@ struct ReferenceSlotCircleCandidate { RoutePoint position; std::uint8_t entry_fl
 // Eight positions are returned, including those rejected by the SLOT mask.
 std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(
     const SlotTable&,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction);
+// Input order is already ranked by the caller, including stable score ties.
+// ODH does not compute Simitone's SLOT score or VM RNG ordering here.
+struct PreRankedSlotGoal {
+    RoutePoint position;
+    std::uint8_t entry_flags;
+    std::uint8_t facing;
+};
+struct PreRankedSlotRoute {
+    RoutePath path;
+    std::optional<std::size_t> selected;
+};
+// Try one goal at a time; only definitive no_path advances. Expanded work is
+// cumulative; frontier is a per-attempt live-memory ceiling. Invalid metadata
+// or a goal outside the supplied grid stops with invalid_input.
+PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid&,RoutePoint start,
+    const std::vector<PreRankedSlotGoal>&,RouteLimits limits={});
+// Supplies already eligible destinations for the supported SLOT profile.
+// Called synchronously; reentry or changes to actor/target are rejected.
+using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
+    const SlotTable&,std::size_t,const EntityPosition&,const EntityPosition&)>;
 // Initial controlled route adapter. One stable VM per controller; all referenced
 // objects must outlive calls. This is not the complete TS1 routing policy.
 class Routing {
 public:
-    Routing(World& world,RouteGrid& grid,const SlotTable& globals):world_(world),grid_(grid),globals_(globals) {}
+    Routing(World& world,RouteGrid& grid,const SlotTable& globals,
+            PreRankedSlotGoalProvider goals={},RouteLimits limits={})
+        :world_(world),grid_(grid),globals_(globals),ranked_goals_(std::move(goals)),limits_(limits) {}
     Routing(const Routing&)=delete;
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
@@ -55,6 +80,8 @@ private:
     World& world_;
     RouteGrid& grid_;
     const SlotTable& globals_;
+    PreRankedSlotGoalProvider ranked_goals_;
+    RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;
     std::optional<std::uint64_t> last_tick_;

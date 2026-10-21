@@ -82,6 +82,48 @@ void reference_slot_circle_tests() {
     catch(const std::invalid_argument&){rejected=true;}
     require(rejected,"circle model fails closed for an unsupported SLOT offset");
 }
+void pre_ranked_goal_tests() {
+    odh::RouteGrid grid(9,3);
+    const std::vector<odh::PreRankedSlotGoal> goals={{{8,1},1,5},{{1,1},4,2}};
+    auto result=odh::find_pre_ranked_slot_route(grid,{0,1},goals);
+    require(result.path.status==odh::RouteStatus::found&&result.selected==0&&
+            result.path.points.back()==odh::RoutePoint{8,1},"ranked farther preference wins over nearest destination");
+    const std::vector<odh::PreRankedSlotGoal> ties={{{1,2},4,2},{{1,0},1,5}};
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},ties);
+    require(result.selected==0&&result.path.points.back()==ties[0].position,
+            "equal distance goals retain provider tie order rather than grid index order");
+    grid.block({8,1});
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals);
+    require(result.path.status==odh::RouteStatus::found&&result.selected==1,
+            "definitively blocked goal falls through to next preference");
+    grid.block({8,1},false);
+    for(int y=0;y<3;++y) grid.wall({4,y},{5,y});
+    const auto failed=odh::find_route(grid,{0,1},{{8,1}});
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals);
+    require(failed.status==odh::RouteStatus::no_path&&result.selected==1&&
+            result.path.expanded>failed.expanded,"unreachable first goal retries and accumulates expanded work");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{failed.expanded,100});
+    require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected&&
+            result.path.expanded==failed.expanded,"next attempt cannot reset cumulative expansion budget");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{1,100});
+    require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected,
+            "unfinished first search never falls through to a reachable second goal");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{100,0});
+    require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected,
+            "frontier exhaustion never falls through");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},goals,{100,100,1});
+    require(result.path.status==odh::RouteStatus::budget_exhausted&&!result.selected,
+            "candidate count is bounded before ordered searches");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},{{{9,1},1,0},goals[1]});
+    require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
+            "out of grid preferred candidate stops rather than masquerading as no path");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},{{{8,1},1,8},goals[1]});
+    require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
+            "unsupported facing stops before fallback");
+    result=odh::find_pre_ranked_slot_route(grid,{0,1},{{{8,1},0,0},goals[1]});
+    require(result.path.status==odh::RouteStatus::invalid_input&&!result.selected,
+            "empty candidate entry flags stop before fallback");
+}
 odh::SlotTable slot() {
     odh::SlotRecord r{};r.type=3;r.standing=1;r.flags=0x55;r.snap_target_slot=-1;
     r.proximity=std::array<std::int32_t,3>{16,16,16};r.max_size=0;r.unknown_i10=0;
@@ -98,7 +140,8 @@ struct Fixture {
     odh::World world;odh::RouteGrid grid{64,32};odh::SlotTable slots=slot();
     odh::Routing routing{world,grid,slots};
     odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
-    Fixture() {
+    Fixture(odh::PreRankedSlotGoalProvider provider={},odh::RouteLimits limits={})
+        :routing(world,grid,slots,std::move(provider),limits) {
         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});routing.bind(vm);
     }
@@ -110,6 +153,33 @@ int main() {
         reference_slot_lattice_tests();
         reference_slot_direction_tests();
         reference_slot_circle_tests();
+        pre_ranked_goal_tests();
+        {bool invoked=false;
+         Fixture f([&](const auto& table,std::size_t index,const auto& actor,const auto& target) {
+             invoked=table.version==10&&index==1&&actor.x==4&&target.x==28;
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7},{{12,12},64,2}};
+         });
+         f.start();require(invoked&&f.vm.status()==odh::VmStatus::waiting,
+                 "explicit ranked provider receives selected SLOT and actor/target positions");
+         for(std::uint64_t tick=1;tick<=64&&f.routing.active();++tick) f.routing.tick(tick);
+         const auto* actor=f.world.find(1);
+         require(f.vm.status()==odh::VmStatus::returned_true&&actor->position->x==44&&actor->position->y==12,
+                 "controller follows provider preference to farther SLOT goal");
+         require(actor->person_data[37]==4&&actor->position->direction==7,
+                 "arrival preserves provider entry flags and final facing rather than recomputing them");}
+        {Fixture f([](const auto&,auto,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7},{{12,12},64,2}};
+         },{1,262144});f.start();
+         require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active()&&f.world.find(1)->position->x==4,
+                 "controller fails unsupported on ranked budget exhaustion without movement");}
+        {Fixture f([](const auto&,auto,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},2,7},{{12,12},64,2}};
+         });f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active(),
+                 "provider cannot bypass supported SLOT direction mask");}
+        {Fixture f([](const auto&,auto,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},1,7},{{12,12},64,2}};
+         });f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active(),
+                 "provider flags must match the SLOT direction for each candidate");}
         {odh::World world;odh::RouteGrid grid{32,33,262144,{376,424}};auto slots=slot();
          odh::Routing routing{world,grid,slots};odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
          world.create(105,odh::EntityKind::avatar,{0,88,0});world.create(128,odh::EntityKind::object,{0,0,1});
@@ -133,6 +203,13 @@ int main() {
          require(p.x==12 && p.y==12 && p.direction==2 && movements==8,"arrives and faces object");
          require(f.world.find(1)->person_data[37]==64 && f.vm.status()==odh::VmStatus::returned_true &&
                  !f.routing.active(),"arrival updates route flags and completes exact wait");}
+        {Fixture* fixture=nullptr;
+         Fixture f([&](const auto&,auto,const auto&,const auto&) {
+             fixture->world.remove(2);
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7}};
+         });fixture=&f;f.start();
+         require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active(),
+                 "provider entity removal is rejected without stale world pointer access");}
         {Fixture f;f.world.set_position(1,{12,12,1,0});f.start();
          require(f.vm.status()==odh::VmStatus::waiting&&f.routing.active(),"validated start at SLOT goal creates turn-only route");
          require(f.routing.tick(1)&&f.vm.status()==odh::VmStatus::returned_true&&!f.routing.active(),

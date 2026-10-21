@@ -148,6 +148,32 @@ std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candid
     }
     return candidates;
 }
+PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid& grid,RoutePoint start,
+    const std::vector<PreRankedSlotGoal>& goals,RouteLimits limits) {
+    PreRankedSlotRoute result{{RouteStatus::invalid_input,{},0,0},std::nullopt};
+    if(!grid.walkable(start) || goals.empty()) return result;
+    if(goals.size()>limits.candidates) {
+        result.path.status=RouteStatus::budget_exhausted;return result;
+    }
+    std::size_t expanded=0;
+    for(std::size_t n=0;n<goals.size();++n) {
+        const auto& goal=goals[n];
+        if(!grid.contains(goal.position) || goal.entry_flags==0 || goal.facing>=8) {
+            result.path={RouteStatus::invalid_input,{},0,expanded};return result;
+        }
+        // Exhaustion cannot be interpreted as proof that this goal failed.
+        if(expanded>=limits.expanded) {
+            result.path={RouteStatus::budget_exhausted,{},0,expanded};return result;
+        }
+        auto path=find_route(grid,start,{goal.position},{limits.expanded-expanded,limits.frontier});
+        expanded+=path.expanded;
+        path.expanded=expanded;
+        result.path=std::move(path);
+        if(result.path.status==RouteStatus::found) {result.selected=n;return result;}
+        if(result.path.status!=RouteStatus::no_path) return result;
+    }
+    return result;
+}
 bool Routing::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
     vm_=&vm;return true;
@@ -186,33 +212,57 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
        actor->person_data.size()<=37 || actor->attachment || actor->position->level!=target->position->level)
         return unsupported("routing requires positioned free avatar and target on one level");
-    std::vector<RoutePoint> goals;
-    for(const auto& candidate:enumerate_reference_slot_circle_candidates(globals_,data,
-            {target->position->x,target->position->y},target->position->direction))
-        if(candidate.entry_flags!=0)goals.push_back(candidate.position);
-    if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
     const RoutePoint start{actor->position->x,actor->position->y};
     RoutePath path{RouteStatus::invalid_input,{},0,0};
-    if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
-        // Simitone validates candidate SLOT positions before AttemptWalk can
-        // take its TURN_ONLY shortcut. Require equivalent evidence from the
-        // supplied clearance grid; coincidence alone does not prove a valid
-        // destination.
-        if(!grid_.contains(start)) path={RouteStatus::invalid_input,{},0,0};
-        else if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
-        else path={RouteStatus::found,{start},0,0};
-    }else path=find_route(grid_,start,goals);
+    std::optional<PreRankedSlotGoal> selected;
+    if(ranked_goals_) {
+        const auto actor_id=actor->id,target_id=target->id;
+        const auto actor_generation=actor->generation,target_generation=target->generation;
+        const auto actor_position=*actor->position,target_position=*target->position;
+        const auto candidates=[&] {
+            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            return ranked_goals_(globals_,data,actor_position,target_position);
+        }();
+        actor=world_.find(actor_id);target=world_.find(target_id);
+        if(!actor || !target || actor->generation!=actor_generation || target->generation!=target_generation ||
+           !actor->position || !target->position || !(*actor->position==actor_position) ||
+           !(*target->position==target_position) || actor->attachment || actor->person_data.size()<=37)
+            return unsupported("entity changed during pre-ranked SLOT goal provider");
+        // The provider owns ranking and destination validation, but cannot
+        // bypass this controller's supported direction mask/facing profile.
+        for(const auto& candidate:candidates)
+            if((candidate.entry_flags&static_cast<std::uint8_t>(~slot->flags))!=0 ||
+               candidate.entry_flags!=reference_slot_entry_flags(
+                   {target_position.x,target_position.y},target_position.direction,
+                   candidate.position,static_cast<std::uint8_t>(slot->flags)))
+                return unsupported("pre-ranked SLOT goal has unsupported entry flags");
+        auto result=find_pre_ranked_slot_route(grid_,start,candidates,limits_);
+        if(result.selected) selected=candidates[*result.selected];
+        path=std::move(result.path);
+    }else {
+        std::vector<RoutePoint> goals;
+        for(const auto& candidate:enumerate_reference_slot_circle_candidates(globals_,data,
+                {target->position->x,target->position->y},target->position->direction))
+            if(candidate.entry_flags!=0) goals.push_back(candidate.position);
+        if(goals.empty()) {diagnostic_="SLOT direction mask rejects every candidate";return {PrimitiveDisposition::goto_false,{}};}
+        if(std::find(goals.begin(),goals.end(),start)!=goals.end()) {
+            // Validate clearance even for the turn-only shortcut.
+            if(!grid_.contains(start)) path={RouteStatus::invalid_input,{},0,0};
+            else if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
+            else path={RouteStatus::found,{start},0,0};
+        }else path=find_route(grid_,start,goals,limits_);
+    }
     if(path.status==RouteStatus::budget_exhausted) return unsupported("routing search budget exhausted");
-    if(path.status==RouteStatus::invalid_input) return unsupported("routing start outside walkable grid");
+    if(path.status==RouteStatus::invalid_input) return unsupported("routing start or pre-ranked goal input invalid");
     if(path.status==RouteStatus::no_path) {diagnostic_="no path in supplied clearance grid";return {PrimitiveDisposition::goto_false,{}};}
     const auto goal=path.points.back();
-    const auto entry_flags=reference_slot_entry_flags({target->position->x,target->position->y},
+    const auto entry_flags=selected?selected->entry_flags:reference_slot_entry_flags({target->position->x,target->position->y},
         target->position->direction,goal,static_cast<std::uint8_t>(slot->flags));
     if(entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,std::move(path.points),1,entry_flags,
-             heading(goal,{target->position->x,target->position->y})};
+             selected?selected->facing:heading(goal,{target->position->x,target->position->y})};
     return {PrimitiveDisposition::wait,{}};
 }
 bool Routing::finish(bool result,const std::string& reason) {

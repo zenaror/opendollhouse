@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Routing aceita provider opcional de destinos SLOT previamente ordenados e
+  tenta um por vez, avançando apenas após `no_path` definitivo. Empates mantêm
+  a ordem de entrada; expansões acumulam entre tentativas e limites/entrada
+  inválida interrompem sem fallback. A lista é limitada a 4.096 candidatos.
+  Chegada preserva entry flags/facing do
+  candidato escolhido. A política sequencial segue o Simitone fixado; score,
+  RNG e elegibilidade continuam sob responsabilidade do chamador. Sem provider,
+  mantém a seleção anterior por menor custo na malha construída.
 - Seleção de destino SLOT sobre footprints salvos: o perfil v10
   standing=1/sitting=0 diferencia box livre, objeto sobreposto rejeitado e
   avatar sólido conhecido mantido com penalidade de score. O diagnóstico

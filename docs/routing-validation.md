@@ -36,9 +36,9 @@ flags0x55, standing1/sitting0/ground0, snap-1, height0, facing-2, resolution16,
 maxsize/i10 zero e gradientbits0x3e400000. Outros layouts ou regras falham
 explicitamente como unsupported.
 
-Gera oito destinos do círculo exact-radius do perfil e usa menor custo de
-malha, com tie determinístico. Antes da busca, cada destino passa pela máscara
-direcional do SLOT; os `RouteEntryFlags` de chegada reproduzem
+Sem provider explícito, gera oito destinos do círculo exact-radius do perfil
+e usa menor custo de malha, com tie determinístico. Antes da busca, cada
+destino passa pela máscara direcional do SLOT; os `RouteEntryFlags` de chegada reproduzem
 `VMSlotParser.GetSearchDirection` da revisão Simitone fixada: convertem posição
 1/16 tile em tiles por floor, subtraem a rotação discreta do objeto, aplicam os
 setores angulares do código-fonte e intersectam com os bits direcionais do
@@ -52,6 +52,37 @@ Proveniência do filtro direcional: Simitone `4906db3156616bfaffc10ce0963cf08062
 FreeSO submódulo `f86bbd34b2112296ed786741f640a0535886d180`,
 `TSOClient/tso.simantics/Engine/VMSlotParser.cs:GetSearchDirection` e
 `tso.common/Utils/DirectionUtils.cs:NormalizeDegrees`.
+
+### Destinos previamente ordenados — 2026-10-20
+
+`Routing` aceita opcionalmente um `PreRankedSlotGoalProvider`, chamado com a
+tabela SLOT, índice type-3 e posições do ator/alvo. O chamador fornece candidatos
+já elegíveis e ordenados, incluindo a ordem estável dos empates; cada item leva
+posição, `entry_flags` e facing final (0..7). O controller recusa reentrada e
+alterações do ator/alvo durante o callback, mantém o gate do perfil SLOT
+restrito e recusa flags fora da máscara suportada. Não ordena os itens, não
+calcula score e não consome RNG da VM. A enumeração N/NE/E existente
+é apenas ordem geométrica ODH; não se tornou uma ordem de score Simitone.
+
+`find_pre_ranked_slot_route` tenta cada destino isoladamente. Apenas `no_path`
+definitivo permite tentar o próximo. Destino bloqueado é `no_path`; célula fora
+da grade, flags vazias, facing inválido, origem inválida ou lista vazia são
+`invalid_input`. A lista é limitada a 4.096 candidatos. Expansões acumulam entre tentativas; esgotamento interrompe a
+seleção como `budget_exhausted`, inclusive quando a tentativa anterior consumiu
+exatamente o teto. O limite de frontier é por tentativa e limita memória viva.
+O resultado identifica o índice escolhido e as expansões totais. Ao chegar,
+`Routing` aplica exatamente flags/facing desse item, sem recalcular a política.
+Sem provider, o caminho de menor custo e o atalho turn-only anteriores continuam.
+
+Proveniência da política sequencial: Simitone
+`4906db3156616bfaffc10ce0963cf08062975fef`, núcleo FreeSO
+`f86bbd34b2112296ed786741f640a0535886d180`,
+`VMRoutingFrame` (seleção de um destino SLOT ordenado e nova tentativa após
+falha). A busca Dijkstra e os limites cumulativos são implementação própria ODH.
+O provider é uma fronteira explícita: o chamador ainda deve demonstrar
+ranking, elegibilidade e validação do destino; fornecer uma lista construída
+não valida score/RNG, reserva, colisão runtime ou fidelidade ao jogo original.
+O cancelamento durante movimento ainda conclui false, sem tentar outro destino.
 
 A máscara da malha é fornecida explicitamente e deve considerar clearance.
 O atalho sem movimento (`start == goal`) só é aceito quando a célula também
@@ -68,11 +99,18 @@ reservas de destino ainda precisam ser implementados.
 ## Evidência
 
 CTest12/12 passou em Debug e ASan/UBSan no checkpoint anterior. No checkout
-atual, `odh-routing-tests` passa 51 checks e `odh-route-tests` 71 checks; são
+atual, `odh-routing-tests` passa 72 checks e `odh-route-tests` 71 checks; são
 malhas/mundos construídos, não validação do lote nativo. Cobrem espera/avanço,
 relógio, chegada, restart, obstáculo novo,
 entidade movida/removida/recriada, profiles unsupported, nível, outro VM e
-reentrada. A CLI usa FAR/IFF/BHAV/SLOT sintéticos para testar a integração.
+reentrada. O incremento de destinos ordenados passou os dois testes CTest
+`route|routing` em builds separados Debug (`/tmp/odh-ordered-goals-debug`) e
+ASan/UBSan (`/tmp/odh-ordered-goals-sanitize`, `ASAN_OPTIONS=detect_leaks=0`),
+com 71 checks de route e 72 de routing em cada build. Inclui preferência
+distante, desempate estável, fallback após destino bloqueado/inalcançável,
+limites cumulativos e de frontier, entrada inválida e chegada com flags/facing
+do provider. A CLI usa
+FAR/IFF/BHAV/SLOT sintéticos para testar a integração.
 LSan permanece não validado (`detect_leaks=0`, ptrace).
 
 Probe com `DiningChairs.iff`/BHAV1001 e `Global.iff`/SLOT100 reais, identidades
