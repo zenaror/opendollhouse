@@ -63,6 +63,7 @@ template<class F>void with_resource(const Resource& resource,F read){
 struct Loaded {
     odh::RoutineSet routines;
     odh::TuningTables tuning;
+    std::optional<odh::SlotTable> routing_slots;
     std::optional<odh::ObjdBinding> binding;
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::ObjdStartup> startup;
@@ -97,6 +98,10 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
                 const auto key=odh::routine_key(chunk.id);
                 if(key.scope!=role)throw odh::FormatError("BHAV outside explicit resource role");
                 if(!result.routines.emplace(key,odh::read_bhav(chunk.payload)).second)throw odh::FormatError("ambiguous BHAV");
+            }
+            if(role==odh::RoutineScope::global&&chunk.type=="SLOT"&&chunk.id==100){
+                if(result.routing_slots)throw odh::FormatError("ambiguous global SLOT100");
+                result.routing_slots=odh::read_slot(chunk.payload);
             }
             if(definition&&chunk.type=="OBJf"&&chunk.id==*definition){
                 ++objf_count;if(!objf_payload)objf_payload=chunk.payload;

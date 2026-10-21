@@ -16,10 +16,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  root=Path(folder);avatar=root/'avatar.far';semi=root/'semi.far';glob=root/'global.far';action=root/'action.far'
  def bcons(tables):
   return [('BCON',rid,bytes([len(values),0])+struct.pack('<'+'H'*len(values),*values)) for rid,values in tables]
- def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=()):
+ def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=(),global_extra=()):
   archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+bcons(private_bcons))
   archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))]+bcons(semi_bcons))
-  archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))]+bcons(global_bcons))
+  archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))]+list(global_extra)+bcons(global_bcons))
   archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
@@ -34,6 +34,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
  setup();r=run(['--placement-candidate','10','20','1','0'])
  assert r.returncode==2 and not r.stdout and 'placement-candidate' in r.stderr
+ slot100=struct.pack('<II4sI',0,10,b'TOLS',0)
+ setup(global_extra=[('SLOT',100,slot100)]);r=run();assert r.returncode==0
+ setup(global_extra=[('SLOT',100,slot100),('SLOT',100,slot100)]);r=run()
+ assert r.returncode==2 and not r.stdout and 'ambiguous global SLOT100' in r.stderr
+ malformed_slot100=struct.pack('<II4sI',0,3,b'TOLS',0)
+ setup(global_extra=[('SLOT',100,malformed_slot100)]);r=run()
+ assert r.returncode==2 and not r.stdout and 'unsupported SLOT version' in r.stderr
  for candidate in [['--placement-candidate','bad','20','1','0'],
                    ['--placement-candidate','10','20','0','0'],
                    ['--placement-candidate','10','20','1','8']]:
