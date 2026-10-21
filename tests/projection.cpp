@@ -73,6 +73,32 @@ int main() {
         close(odd[0], 200.5, "odd viewport horizontal center");
         close(odd[1], 150.5, "odd viewport vertical center");
 
+        camera={};
+        camera.center_tile={21.5f,17.25f,2.0f};
+        for(unsigned rotation=0;rotation<4;++rotation)for(unsigned zoom=1;zoom<=3;++zoom){
+            camera.rotation=static_cast<std::uint8_t>(rotation);
+            camera.zoom=static_cast<std::uint8_t>(zoom);
+            const std::array<float,3> target{24.75f,12.5f,0.75f};
+            const auto projected=odh::project_tile(camera,target);
+            const auto restored=odh::unproject_tile(camera,projected[0],projected[1],target[2]);
+            for(unsigned axis=0;axis<3;++axis)
+                close(restored[axis],target[axis],"screen-to-tile inverse across camera rotations and zooms");
+        }
+        rejects([&]{odh::unproject_tile(camera,std::numeric_limits<float>::infinity(),0,0);},
+                "screen-to-tile rejects nonfinite screen position");
+        rejects([&]{odh::unproject_tile(camera,0,std::numeric_limits<float>::infinity(),0);},
+                "screen-to-tile rejects nonfinite vertical position");
+        rejects([&]{odh::unproject_tile(camera,0,0,std::numeric_limits<float>::quiet_NaN());},
+                "screen-to-tile rejects nonfinite floor level");
+        camera.rotation=0;
+        const auto lower_plane=odh::unproject_tile(camera,200,200,0);
+        const auto higher_plane=odh::unproject_tile(camera,200,200,1);
+        const double plane_shift=2*std::sqrt(3.0/8.0);
+        close(higher_plane[0]-lower_plane[0],plane_shift,
+              "higher floor plane shifts inverse tile X by the independent isometric oracle");
+        close(higher_plane[1]-lower_plane[1],plane_shift,
+              "higher floor plane shifts inverse tile Y by the independent isometric oracle");
+
         odh::DgrpSprite sprite{};
         sprite.x = 3; sprite.y = 4;
         odh::Spr2Frame frame{};

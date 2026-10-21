@@ -1,5 +1,17 @@
 # Continuidade atual
 
+## Conversão de pixel para posição isométrica do lote (2026-10-21)
+
+`unproject_tile` inverte a projeção compartilhada da câmera para um pixel e um
+nível de piso fornecido pelo chamador. O teste compara a volta com a posição
+original nas quatro rotações, três zooms e uma câmera deslocada. Esse passo
+prepara a futura ação de clicar no chão para andar, seguindo o caminho de
+destino temporário usado pelo Simitone; não escolhe o piso, não rejeita
+obstáculos e não move o avatar. Próximo: resolver o nível/piso e a ocupação no
+mapa preparado, depois ligar um destino validado ao Route45 existente e cobrir
+cliques sem teletransportar o Sim. O comportamento exato do executável original
+para esse menu ainda não foi confirmado.
+
 ## Travessia real EntryPoint15 pelo scheduler Route45 (2026-10-21)
 
 `odh-person` agora prepara a grade para o cômodo onde o avatar está antes de

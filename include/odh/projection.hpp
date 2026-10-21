@@ -25,6 +25,11 @@ std::array<float, 3> project_world(const WorldProjection&,
                                  std::array<float, 3> world);
 std::array<float, 3> project_tile(const WorldProjection&,
                                 std::array<float, 3> tile);
+// Invert the shared isometric projection on a caller-specified horizontal
+// floor plane. This returns a continuous tile position; it does not resolve
+// floors, rooms, occupancy, or whether the location can be walked to.
+std::array<float, 3> unproject_tile(const WorldProjection&,float screen_x,
+                                   float screen_y,float level);
 
 struct SpritePlacement {
     std::int32_t x, y;

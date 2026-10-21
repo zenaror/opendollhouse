@@ -110,6 +110,27 @@ std::array<float, 3> project_tile(const WorldProjection& projection,
     return narrow(screen(projection, tile_world(point(tile))));
 }
 
+std::array<float, 3> unproject_tile(const WorldProjection& projection,
+                                  float screen_x,float screen_y,float level) {
+    camera(projection);
+    const auto sx=checked_float(screen_x),sy=checked_float(screen_y);
+    const auto floor=checked_float(level);
+    const double width=tile_width(projection);
+    const double relative_world_y=3.0*(double(floor)-projection.center_tile[2]);
+    const double horizontal=6.0*(double(sx)-projection.width/2.0)/width;
+    const double forward=12.0*(double(sy)-projection.height/2.0)/width+
+        4.0*root_half*cos_pitch*relative_world_y;
+    double relative_x,relative_z;
+    switch(projection.rotation){
+    case 0: relative_x=(horizontal+forward)/2.0;relative_z=(forward-horizontal)/2.0;break;
+    case 1: relative_x=(forward-horizontal)/2.0;relative_z=-(horizontal+forward)/2.0;break;
+    case 2: relative_x=-(horizontal+forward)/2.0;relative_z=(horizontal-forward)/2.0;break;
+    default: relative_x=(horizontal-forward)/2.0;relative_z=(horizontal+forward)/2.0;break;
+    }
+    return narrow({projection.center_tile[0]+relative_x/3.0,
+                   projection.center_tile[1]+relative_z/3.0,double(floor)});
+}
+
 SpritePlacement place_sprite(const WorldProjection& projection, const DgrpSprite& sprite,
                              const Spr2Frame& frame, std::array<float, 3> object_tile,
                              float object_radians) {

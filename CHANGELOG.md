@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
+  um pixel e o nível do piso escolhido pelo host, calcula a posição contínua
+  correspondente no lote, cobrindo as quatro câmeras e três níveis de zoom.
+  Isso é a base matemática para um clique no chão apontar um destino; ainda não
+  detecta piso/ocupação nem inicia movimento do avatar.
+
 - O scheduler Route45 agora executa a travessia real EntryPoint15 de Door26 no
   House07. O probe coloca o avatar na sala 1, chama Route45 pelo Main sintético,
   executa a ação da porta, confirma a mudança para a sala 3, atualiza a grade e
