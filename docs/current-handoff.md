@@ -718,9 +718,14 @@ Main tick 214, avatar 105 até o destino SLOT `(408,456)`, a busca encontrou
 corredor com 7 retângulos gerados, 3 expandidos, 2.258 unidades de trabalho e
 entradas `[392,440]`, `[399,449]`. O host declara raiz isolada e threads salvas
 dormentes, embora exista outro avatar na sala; isso não modela as threads de
-um runtime multissím completo. A ordem das entidades por ID ainda não foi
-provada igual a `roomInfo.Entities`, e clearance, estado dinâmico de portas e
-integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
+um runtime multissím completo. A referência Simitone mantém `RoomInfo.Entities`
+ordenada por `ObjectID` em `VM.AddToObjList`; o snapshot vivo ODH enumera o
+`World` e os obstáculos por ID crescente. O JSON agora confirma somente
+`entity_obstacle_order_matches_reference` quando a sequência efetivamente
+serializada é estritamente crescente. `entity_order_matches_reference` continua
+falso: essa prova cobre a subsequência de obstáculos, não todas as entidades
+da sala nem equivalência comportamental com TS1. Clearance, estado dinâmico de
+portas e integração de movimento permanecem falsos. `optimize_rect_route_lines` agora
 reproduz o corner-cutting e o ajuste opcional de entrada `dirIn` do
 `OptimizeLines` Simitone, com HiP preservado e limites fail-closed. O
 diagnóstico de rota House07 já chama a API e mantém os corredores bruto e

@@ -141,6 +141,11 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
             actor_id, room_obstacles, wall_obstacles,
             result.avatar_consideration_complete, avatars_to_consider, resolve_entry_point5);
         if (result.snapshot.state == odh::AttemptWalkObstacleState::ready) {
+            const auto& ids = result.snapshot.entity_obstacle_ids;
+            result.entity_obstacle_order_matches_reference =
+                std::adjacent_find(ids.begin(), ids.end(), std::greater_equal<>()) == ids.end();
+        }
+        if (result.snapshot.state == odh::AttemptWalkObstacleState::ready) {
             std::vector<odh::RectRouteObstacle> architecture_order;
             architecture_order.reserve(result.roughbalanced_architecture_rectangles);
             for (std::size_t i = 0; i < result.roughbalanced_architecture_rectangles; ++i) {

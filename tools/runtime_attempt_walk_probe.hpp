@@ -11,7 +11,7 @@ struct RuntimeAttemptWalkProbe {
     bool avatar_consideration_complete = false;
     std::size_t other_avatars_in_room = 0;
     std::size_t roughbalanced_architecture_rectangles = 0;
-    bool entity_order_matches_reference = false;
+    bool entity_obstacle_order_matches_reference = false;
     std::size_t portal_openings = 0;
     std::size_t room_obstacle_rectangles = 0;
     std::size_t wall_obstacle_rectangles = 0;

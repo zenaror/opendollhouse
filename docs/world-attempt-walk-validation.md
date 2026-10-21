@@ -53,9 +53,14 @@ footprints. O novo `attempt_walk_snapshot` reportou:
 Os números demonstram que a composição bounded e o cálculo de corredor
 funcionaram sobre o World construído pelo Main para esse estado e arquitetura
 inicial. `ready` só indica que os dados usados para montar a lista estavam
-completos. A ordem de inserção das entidades ODH por owner ID ainda não foi
-provada igual a `roomInfo.Entities`; a saída `OptimizeLines` é somente um
-diagnóstico geométrico sobre essa ordem.
+completos. O Simitone fixado insere `RoomInfo.Entities` em ordem crescente de
+`ObjectID` por `VM.AddToObjList`; ODH captura o World vivo por ID crescente e o
+snapshot de obstáculos preserva essa ordem. O JSON agora informa
+`entity_obstacle_order_matches_reference=true` somente quando a sequência
+serializada de IDs de obstáculos é estritamente crescente. O campo mais amplo
+`entity_order_matches_reference` continua falso, pois esta checagem não inclui
+entidades sem obstáculos. É uma comparação de ordenação baseada no código-fonte,
+não prova de comportamento TS1 ou de equivalência da seleção de entidades.
 O adaptador não atualiza a geometria ao abrir/fechar uma porta, não prova
 equivalência com o executável original, não calcula clearance, não move o
 avatar e não integra Route45 ao Main. Esses campos continuam explicitamente
