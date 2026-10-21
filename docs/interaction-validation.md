@@ -266,6 +266,22 @@ O avatar não se moveu, a fila terminou vazia e o marcador sumiu. O jogo chamou
 Global BHAV398, embora BHAV4096 tenha retornado `true`; por isso o host informa
 separadamente que a caminhada falhou.
 
+Também foi testado um destino ocupado por mobília. O objeto salvo 106 é uma
+mesa de jantar (`DiningTables.iff`), localizada no centro do tile `(25,29)`.
+O teste confere a posição e o arquivo do objeto e que seu ID consta na lista de
+obstáculos usada pelo passeio. Ao pedir Go Here para esse mesmo tile, o avatar
+não se moveu, a caminhada falhou, Global BHAV398 foi chamada, a fila terminou
+vazia e o marcador sumiu. BHAV4096 ainda retornou `true`. Reprodução:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-build-release/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --ticks 256 --go-here 25 29 1 \
+  --go-here-expect-route-failure \
+  --go-here-blocker-id 106 --go-here-blocker-asset DiningTables.iff
+```
+
 Também foi testada uma mudança no mundo enquanto Go Here caminhava. O teste
 move uma entidade salva para perto do caminho no passo 40. O avatar já havia
 andado dois passos, para `[394,440,1,2]`; a rota parou ali, chamou Global
@@ -283,10 +299,11 @@ python3 tests/house07_route45_integration.py \
   --go-here-expect-interruption
 ```
 
-Um objeto salvo no centro de `(25,26)` não bloqueou essa caminhada. Esse ponto
-não serve como teste de destino ocupado; ainda falta identificar e validar um
-objeto que realmente impeça o personagem de ocupar o destino. Escadas,
-cancelamento pelo jogador e passagem entre cômodos continuam pendentes.
+O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
+(`Doors.iff`), e o personagem conseguiu chegar ali; ele não foi contado como
+prova de mobília bloqueando o destino. A parada após mudança no caminho não
+equivale a apertar um botão de cancelar. Cancelamento pelo jogador, escadas e
+passagem entre cômodos continuam pendentes.
 
 ## Integração Sit/Stand em House07
 

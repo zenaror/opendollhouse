@@ -33,6 +33,10 @@ def parse_args():
                         help="expected terminal state for --go-here diagnostics")
     parser.add_argument("--go-here-expect-route-failure", action="store_true",
                         help="assert that saved Go Here runs its failure callback and leaves the avatar still")
+    parser.add_argument("--go-here-blocker-id", type=int,
+                        help="also verify that this saved object occupies the requested Go Here destination")
+    parser.add_argument("--go-here-blocker-asset",
+                        help="require the saved blocker to resolve to this OBJD asset, for example DiningTables.iff")
     parser.add_argument("--go-here-expect-interruption", action="store_true",
                         help="assert that a live world change stops saved Go Here during movement")
     parser.add_argument("--go-here-mutation", nargs=6, type=int,
@@ -137,6 +141,11 @@ def main():
         raise SystemExit("--expect-route-goal cannot be combined with --go-here")
     if args.go_here_mutation is not None and args.go_here is None:
         raise SystemExit("--go-here-mutation requires --go-here")
+    if (args.go_here_blocker_id is None) != (args.go_here_blocker_asset is None):
+        raise SystemExit("--go-here-blocker-id and --go-here-blocker-asset must be used together")
+    if args.go_here_blocker_id is not None and (args.go_here is None or
+                                                 not args.go_here_expect_route_failure):
+        raise SystemExit("saved blocker identity checks require --go-here and --go-here-expect-route-failure")
     if args.go_here_expect_interruption and args.go_here_mutation is None:
         raise SystemExit("--go-here-expect-interruption requires --go-here-mutation")
     if args.go_here_expect_interruption and args.go_here_expect_route_failure:
@@ -224,6 +233,29 @@ def main():
         end = route.get("end_position") or []
         failure_tree_trace = [record for record in baseline.get("trace", [])
                               if record.get("routine") == 398]
+        blocker_validation = None
+        if args.go_here_blocker_id is not None:
+            prefix_snapshot = baseline.get("saved_object_prefixes") or {}
+            blocker = next((record for record in prefix_snapshot.get("records", [])
+                            if record.get("object_id") == args.go_here_blocker_id), None)
+            definition = next((record for record in baseline.get("saved_definition_records", [])
+                               if record.get("object_id") == args.go_here_blocker_id), None)
+            assets = [candidate.get("asset") for candidate in (definition or {}).get("candidates", [])]
+            blocker_position = None if blocker is None else [blocker.get("x"), blocker.get("y"),
+                                                              blocker.get("level")]
+            attempt_walk_snapshot = ((baseline.get("room_info_probe") or {}).get(
+                "attempt_walk_snapshot") or {})
+            obstacle_ids = attempt_walk_snapshot.get("entity_obstacle_ids", [])
+            blocker_validation = {
+                "object_id": args.go_here_blocker_id,
+                "position": blocker_position,
+                "guid": None if blocker is None else blocker.get("guid"),
+                "definition_assets": assets,
+                "matches_requested_ground": blocker_position == destination,
+                "matches_expected_asset": (definition or {}).get("status") == "unique" and
+                                          args.go_here_blocker_asset in assets,
+                "included_in_route_obstacles": args.go_here_blocker_id in obstacle_ids,
+            }
         print(json.dumps({
             "probe_exit": baseline_code,
             "vm_status": baseline.get("status"),
@@ -235,6 +267,7 @@ def main():
             "scheduled_world_mutation")},
             "goal_validation_diagnostic": route.get("goal_validation_diagnostic"),
             "global_398_trace": failure_tree_trace,
+            "blocker_validation": blocker_validation,
             "evidence": "House07 restored World and original Main; saved Destination BHAV4096; temporary UI-only marker",
         }, indent=2))
         expected_status = args.go_here_expect_status
@@ -264,7 +297,11 @@ def main():
                   route.get("diagnostic") != "GotoRelativePosition target rejected by host room/clearance validator" or
                   route.get("goal_validation_diagnostic") !=
                     "candidate lies outside the prepared room grid or inside an obstacle" or
-                  not failure_tree_trace)) or
+                  not failure_tree_trace or
+                  (blocker_validation is not None and
+                   (not blocker_validation["matches_requested_ground"] or
+                    not blocker_validation["matches_expected_asset"] or
+                    not blocker_validation["included_in_route_obstacles"])))) or
                 (route_interruption and
                  (baseline_code != 0 or baseline.get("host_failed") or
                   go_here.get("route_status") != "failed" or
