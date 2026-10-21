@@ -4,6 +4,7 @@
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
+#include <cstdint>
 
 // TTAB/TTAs discovery is static. The separate evaluator below reports only an
 // isolated ODH VM TestFunction result; neither operation exposes a pie menu or
@@ -167,6 +168,18 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
         result.push_back(n);
     }
     return result;
+}
+
+inline std::optional<std::size_t> cycle_eligible_saved_interaction_row(
+    const std::vector<std::size_t>& eligible,std::optional<std::size_t> selected,int delta) {
+    if(eligible.empty())return std::nullopt;
+    const auto current=selected?std::find(eligible.begin(),eligible.end(),*selected):eligible.end();
+    if(current==eligible.end())return eligible.front();
+    if(delta==0)return *current;
+    const auto count=static_cast<std::int64_t>(eligible.size());
+    auto index=static_cast<std::int64_t>(std::distance(eligible.begin(),current));
+    index=((index+static_cast<std::int64_t>(delta))%count+count)%count;
+    return eligible[static_cast<std::size_t>(index)];
 }
 
 inline std::optional<std::size_t> first_eligible_saved_interaction(

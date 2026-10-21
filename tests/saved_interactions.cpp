@@ -56,6 +56,14 @@ int main(){try{
     const auto eligible_rows=eligible_saved_interaction_rows(multiple,mixed_rows,actor);
     check(eligible_rows==std::vector<std::size_t>{0,2},
         "interaction chooser enumerates eligible rows in TTAB order and filters failed tests");
+    check(cycle_eligible_saved_interaction_row(eligible_rows,0,1)==2&&
+          cycle_eligible_saved_interaction_row(eligible_rows,2,1)==0&&
+          cycle_eligible_saved_interaction_row(eligible_rows,0,-1)==2,
+        "interaction chooser cycles forward and backward across eligible rows");
+    check(cycle_eligible_saved_interaction_row(eligible_rows,1,1)==0&&
+          cycle_eligible_saved_interaction_row(eligible_rows,2,0)==2&&
+          !cycle_eligible_saved_interaction_row({},std::nullopt,1),
+        "interaction chooser recovers a stale selection at the first live row and handles empty rows");
     auto visitor_allowed=no_labels;visitor_allowed.table->interactions[0].flags=1;
     check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
         "AllowVisitors flag accepts resident adult");

@@ -7,7 +7,8 @@ objeto clicado. Tab/Shift+Tab percorre essas linhas pela ordem da tabela, e o
 título apresenta a ação selecionada; Space/Enter volta a executar os testes de
 elegibilidade no limite da entrada e enfileira a opção selecionada. Se a opção
 ficar inelegível antes do envio, a ação não é enfileirada. O seletor é mínimo e
-não implementa o pie menu do jogo.
+não implementa o pie menu do jogo. O ciclo entre índices foi extraído para um
+helper puro que cobre avanço, retorno, wrap-around, seleção stale e lista vazia.
 
 Build completa e 160/160 CTests passaram. `linux_window_backend` foi pulado no
 CTest headless, mas executado com X11 e passou 1/1. No preview House07, clique na
@@ -15,8 +16,12 @@ cadeira 128 mostrou `action 1/1: Sit`; Tab manteve a opção única e Space most
 `interaction queued BHAV4097`. Isso prova apresentação, entrada e enfileiramento
 para essa linha, não seleção entre múltiplas ações elegíveis nem conclusão de
 gameplay. `docs/person-main-render-validation.md` registra o teste visual.
-Próximo: integrar o estado real de portas/RoomInfo ao fluxo natural de interação
-e avançar rumo a uma sessão contínua jogável em Linux.
+House07 fornece um candidato adicional: objeto112/GUID1734088879 resolve a
+`Fridges.iff`/TTAB128, com nove linhas decodificadas; o agendamento headless
+enfileirou Action4103 no tick1. Isso não prova que duas linhas estão elegíveis
+ao mesmo tempo. Próximo: testar essa tabela ou outro objeto na janela X11,
+depois integrar o estado real de portas/RoomInfo ao fluxo natural e avançar rumo
+a uma sessão contínua jogável em Linux.
 
 ## Door SLOT de alcance e estado atual da rota (2026-10-21)
 

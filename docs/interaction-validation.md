@@ -172,6 +172,9 @@ indicada no título. A elegibilidade é reavaliada ao percorrer e imediatamente
 antes de enfileirar. Flags zero são aceitas; `AllowVisitors` (bit `0x1`) é
 aceito depois de conferir o perfil do ator. Um visitor actor
 (`PersonType==1 && GreetStatus<2`) requer esse bit.
+Se a linha selecionada deixou de ser elegível quando a lista é recalculada,
+Tab/Shift+Tab seleciona a primeira linha ainda elegível; o envio também revalida
+a linha selecionada antes de enfileirar.
 Pets, perfil de ator ausente e bits desconhecidos continuam fora do perfil.
 O recurso exato
 `source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner

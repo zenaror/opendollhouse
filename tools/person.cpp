@@ -1478,14 +1478,8 @@ struct PlacementCandidateProbe {
                 }else render_test_results.clear();
                 const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
                     world.find(runtime_avatar_id));
-                if(eligible.empty())render_selected_interaction_row.reset();
-                else {
-                    auto current=std::find(eligible.begin(),eligible.end(),render_selected_interaction_row.value_or(eligible.front()));
-                    std::int64_t index=current==eligible.end()?0:std::distance(eligible.begin(),current);
-                    const auto count=static_cast<std::int64_t>(eligible.size());
-                    index=((index+input.interaction_selection_delta)%count+count)%count;
-                    render_selected_interaction_row=eligible[static_cast<std::size_t>(index)];
-                }
+                render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
+                    render_selected_interaction_row,input.interaction_selection_delta);
                 render_window_host->set_title(interaction_window_title());
             }
             if(input.action&&!input.primary_click){
