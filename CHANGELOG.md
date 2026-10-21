@@ -37,10 +37,9 @@ validação indicados por versão.
   argumento 0 no mapeamento atual do decoder, mas não tem metadata 0x8002 e não
   foi executada. A documentação também relaciona esse fluxo ao contrato
   Portal15/child-route do FreeSO pinado, sem afirmar equivalência runtime.
-  O BHAV 4115 compara, na interpretação dos operandos da referência, o atributo
-  1 do StackObject com o literal 0 e retorna true quando difere; um teste
-  sintético cobre os ramos no kernel ODH, sem executar o recurso comercial nem
-  provar semântica do original.
+  O BHAV 4113 ramifica por 4115 e escolhe SLOT type-3 literal 0/1 do StackObject
+  com `NoFailureTrees`; um teste sintético cobre essa seleção no kernel VM.
+  `Routing` ainda recusa esse escopo e flag, e nenhum BHAV comercial foi executado.
 
 - `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
   RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de

@@ -150,21 +150,34 @@ operandos `[1,0,0,0,0,2,1,7]`, ramo verdadeiro `0xff` e falso `0xfe`. Pela
 codificação de `VMExpressionOperand.Read` e `VMVariableScope` no submódulo
 FreeSO pinado pelo Simitone, isso representa `StackObject` atributo 1 igual ao
 literal 0. Os destinos `0xff` e `0xfe` correspondem, respectivamente, a retorno
-false e true no interpretador de referência; portanto o resultado é true quando
-o atributo 1 difere de zero. O teste `world` usa uma BHAV sintética com esses
-mesmos bytes e confirma os dois ramos pelo backend `World`; também confirma
-falha se a identidade do StackObject não existe. É uma validação do decoder e
-do perfil ODH à luz da referência, não execução de `Doors.iff:4115` nem prova
-da semântica do executável original.
+false e true no interpretador de referência; portanto 4115 retorna true quando
+o atributo 1 difere de zero.
+
+`Doors.iff:4113` começa chamando 4115 e, conforme o retorno, seleciona uma de
+duas instruções Route45. Seus operandos são `[0,0,1,0,1,0,0,0]` e
+`[1,0,1,0,1,0,0,0]`. `VMGotoRoutingSlotOperand.Read` no mesmo submódulo lê os
+campos como `Data=0/1`, `Type=1` (`Literal`) e `Flags=1` (`NoFailureTrees`).
+`VMMemory.GetSlot` resolve `Literal` no SLOT type-3 do StackObject. Assim, no
+interpretador de referência, 4113 escolhe o slot literal 0 quando o atributo 1
+é diferente de zero e o slot literal 1 quando é zero.
+
+O teste `world` usa uma sequência BHAV sintética com os bytes observados de
+4113/4115 e confirma a ramificação, a identidade do StackObject, o índice,
+escopo e flag que chegam ao serviço Route45; a ausência do StackObject falha
+fechado. Ele não carrega os SLOTs comerciais nem move uma entidade. O `Routing`
+atual exige escopo global 2 e flags zero, então rejeita explicitamente essa
+forma de operandos. É uma leitura estática e uma validação sintética à luz da
+referência, não execução dos BHAVs comerciais nem prova da semântica do
+executável original.
 
 O FreeSO pinado em `f86bbd34b2112296ed786741f640a0535886d180`, arquivo
 `VMRoutingFrame.cs`, documenta a sequência de sala: calcular a cadeia de
 portais, chamar EP15 do próximo portal e aguardar seu retorno; retorno falso
 descarta aquele portal e recalcula a rota. A rotina `Doors.iff:4113` conter dois
-Route45 é compatível com essa função de portal. Os operandos Route45 de 4113
-seguem sem interpretação confirmada, assim como os efeitos dos demais BHAVs
-chamados por 4105; nenhum deles foi executado aqui. Isso não valida travessia,
-estado de porta, mutação de sala ou equivalência com o jogo.
+Route45 é compatível com essa função de portal. Os efeitos dos demais BHAVs
+chamados por 4105 seguem sem interpretação confirmada; nenhum deles foi
+executado aqui. Isso não valida travessia, estado de porta, mutação de sala ou
+equivalência com o jogo.
 
 Na amostra 2026-10-20, `--route-grid-diagnostic 105 128` colocou Bob (105) e o
 alvo salvo 128 na sala geométrica 3. A grade candidata ficou `ready` com

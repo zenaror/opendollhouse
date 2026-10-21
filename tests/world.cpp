@@ -208,25 +208,45 @@ int main() {
         require(vm.run(1)==odh::VmStatus::returned_true,"bound world reads live occupation");
         w.remove(2); vm.start(odh::routine_key(4096),f.context);
         require(vm.run(1)==odh::VmStatus::fault,"deleted entity never becomes implicit zero");
-        // Observed Doors.iff BHAV 4115 operand profile: StackObject attribute 1 == literal 0.
+        // Synthetic copy of the observed Doors.iff 4113 -> 4115 Route45 decision.
         odh::World door_world;
         require(door_world.create(40,odh::EntityKind::object,{2,0,0,0}),
-                "create object with bounded attributes for BHAV 4115 profile");
+                "create object with bounded attributes for the portal Route45 profile");
         odh::Bhav portal_condition{0x8002,{{2,255,254,{1,0,0,0,0,2,1,7}}},{},
                                    odh::Bhav::Metadata{0,0,0,0}};
-        odh::Vm portal_condition_vm({{odh::routine_key(4115),portal_condition}},door_world.vm_memory());
+        odh::Bhav portal_routes{0x8002,{
+            {4115,1,2,{255,255,255,255,255,255,255,255}},
+            {45,254,255,{0,0,1,0,1,0,0,0}},
+            {45,254,255,{1,0,1,0,1,0,0,0}}},{},odh::Bhav::Metadata{0,0,0,0}};
+        unsigned route_calls=0,route_data=99,route_scope=99,route_flags=0;
+        std::int16_t route_stack_object=0;
+        odh::VmPrimitive route_probe=[&](const odh::VmFrame& vm_frame,const odh::Instruction& instruction,
+                                         const auto&,const auto&) {
+            if(instruction.opcode!=45)return odh::PrimitiveOutcome{};
+            ++route_calls;
+            route_data=static_cast<unsigned>(instruction.operands[0]|(instruction.operands[1]<<8));
+            route_scope=static_cast<unsigned>(instruction.operands[2]|(instruction.operands[3]<<8));
+            route_flags=instruction.operands[4];
+            route_stack_object=vm_frame.context.stack_object;
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        };
+        odh::Vm portal_vm({{odh::routine_key(4113),portal_routes},
+                           {odh::routine_key(4115),portal_condition}},
+                          door_world.vm_memory(),{},route_probe);
         const auto portal_context=frame(1,40).context;
-        portal_condition_vm.start(odh::routine_key(4115),portal_context);
-        require(portal_condition_vm.run(1)==odh::VmStatus::returned_false,
-                "4115-shaped equality branches to false when StackObject attribute 1 is zero");
-        require(door_world.write(frame(1,40),1,1,1),"change bounded StackObject attribute");
-        portal_condition_vm.start(odh::routine_key(4115),portal_context);
-        require(portal_condition_vm.run(1)==odh::VmStatus::returned_true,
-                "4115-shaped equality branches to true when StackObject attribute 1 differs");
-        require(door_world.remove(40),"remove StackObject used by 4115 profile");
-        portal_condition_vm.start(odh::routine_key(4115),portal_context);
-        require(portal_condition_vm.run(1)==odh::VmStatus::fault,
-                "4115-shaped condition faults when StackObject identity is unavailable");
+        portal_vm.start(odh::routine_key(4113),portal_context);
+        require(portal_vm.run(10)==odh::VmStatus::returned_true&&route_calls==1&&
+                    route_data==1&&route_scope==1&&route_flags==1&&route_stack_object==40,
+                "4113 routes to literal slot 1 when StackObject attribute 1 equals zero");
+        require(door_world.write(frame(1,40),1,1,1),"change portal StackObject attribute");
+        route_calls=0;portal_vm.start(odh::routine_key(4113),portal_context);
+        require(portal_vm.run(10)==odh::VmStatus::returned_true&&route_calls==1&&
+                    route_data==0&&route_scope==1&&route_flags==1&&route_stack_object==40,
+                "4113 routes to literal slot 0 when StackObject attribute 1 is nonzero");
+        require(door_world.remove(40),"remove StackObject used by the 4113 profile");
+        route_calls=0;portal_vm.start(odh::routine_key(4113),portal_context);
+        require(portal_vm.run(10)==odh::VmStatus::fault&&route_calls==0,
+                "4113 condition faults closed when the StackObject identity is unavailable");
         std::cout<<checks<<" world checks passed (synthetic fixtures only)\n";
         return 0;
     } catch(const std::exception& e) { std::cerr<<"World test failed: "<<e.what()<<'\n'; return 1; }
