@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Router bounded de corredores baseado nas primitivas observadas em
+  `VMRectRouter`/`VMObstacleSet` do Simitone. O diagnóstico House07 rodou sobre
+  o snapshot salvo de 153 retângulos e encontrou corredor para os três destinos
+  que passaram pelos gates ODH; mantém clearance runtime e integração com Main
+  explicitamente falsos. Não implementa `OptimizeLines`, RoomInfo/portais vivos
+  nem movimento. Consulte `docs/rect-router-validation.md`.
 - Snapshot bounded de obstáculos `AttemptWalk`: compõe WallObs/RoomObs, as
   quatro faixas externas de um tile, footprints com margem 3, flags de
   interseção e EP5 bilateral; inventário incerto ou fora do orçamento falha

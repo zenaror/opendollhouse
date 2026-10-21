@@ -39,17 +39,21 @@ No estado validado em 2026-10-21, portas com caixa salva e HasZeroExtent
 desligado entram no snapshot por sua geometria OBJD, mesmo quando o estado da
 porta segue runtime e desconhecido. Outras entidades unsupported, como avatares
 sem KillTimeout, não são convertidas em footprints. O snapshot ficou `ready`
-com 153 retângulos e 4 footprints de porta. O JSON mantém
-`runtime_door_state_validated: false`, `vmrectrouter_invoked: false` e
-`route_clearance: false`. O router e o movimento permanecem pendentes até o
-World runtime fornecer a classificação de porta e o RoomInfo vivo fornecer os
-obstáculos de portal corretos.
+com 153 retângulos e 4 footprints de porta. O diagnóstico de corredor passou a
+consumir esse snapshot com o módulo bounded `odh_rect_router`, descrito em
+`docs/rect-router-validation.md`. O snapshot em si não chama o router
+(`router_invoked_by_snapshot_builder: false`); a seção irmã
+`attempt_walk_rect_router_diagnostic` executa a busca salva e mantém
+`runtime_door_state_validated: false`, `route_clearance: false` e
+`main_movement_integrated: false`. A rota runtime ainda depende do World vivo,
+da classificação de portas e dos obstáculos de portal produzidos por RoomInfo.
 
-Verificação nesta revisão: o teste focal `saved_attempt_walk_obstacles` passou;
-build Debug completa passou; CTest registrou 156 testes sem falhas, com
-`linux_window_backend` pulado porque `DISPLAY=:0` não era acessível;
-`git diff --check` passou. O diagnóstico CLI real produziu JSON válido. Não
-houve validação visual nem de gameplay.
+Verificação do checkpoint inicial: o teste focal `saved_attempt_walk_obstacles`
+passou; build Debug completa e 156 testes CTest passaram, com
+`linux_window_backend` pulado por falta do display X11. A validação posterior
+do router e o total atual de 157 testes estão em
+`docs/rect-router-validation.md`. O diagnóstico CLI real produziu JSON válido;
+não houve validação visual nem de gameplay.
 
 ## Proveniência
 

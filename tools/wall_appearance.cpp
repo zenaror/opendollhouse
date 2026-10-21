@@ -10,6 +10,7 @@
 #include "odh/saved_slot_goal_selection.hpp"
 #include "odh/saved_room_boundary_audit.hpp"
 #include "odh/saved_attempt_walk_obstacles.hpp"
+#include "odh/rect_router.hpp"
 #include "odh/entry_point5_readonly.hpp"
 #include "odh/architecture_resource_catalog.hpp"
 #include "odh/route.hpp"
@@ -227,7 +228,7 @@ void emit_route_grid_diagnostic(
       *obstacle_it,wall_obstacles,attempt_entities,attempt_inventory_complete,true,{},ep5_resolver);
  }
  out<<",\"attempt_walk_obstacle_snapshot\":{\"evidence\":\"saved_World_and_initial_architecture_snapshot_not_live_RoomInfo\""
-  <<",\"route_clearance\":false,\"vmrectrouter_invoked\":false,\"runtime_door_state_validated\":false"
+  <<",\"route_clearance\":false,\"router_invoked_by_snapshot_builder\":false,\"runtime_door_state_validated\":false"
   <<",\"avatar_consideration\":\"new_root_route_empty_AvatarsToConsider\",\"state\":"
   <<json_bytes(attempt_snapshot.state==odh::AttemptWalkObstacleState::ready?"ready":"unsupported")
   <<",\"reason\":"<<json_bytes(odh::attempt_walk_obstacle_reason_name(attempt_snapshot.reason))
@@ -340,6 +341,47 @@ void emit_route_grid_diagnostic(
   <<",\"object_overlap_rejected\":"<<selection_object_overlap<<",\"avatar_overlap_score_penalty\":"<<selection_avatar_penalty
   <<",\"unsupported\":"<<selection_unsupported<<",\"snapshot_eligible\":"<<selection_eligible
   <<"},\"approach_candidates\":"<<goals.size();
+ out<<",\"attempt_walk_rect_router_diagnostic\":{\"evidence\":\"pinned_simitone_corridor_model_on_saved_snapshot\""
+  <<",\"route_clearance\":false,\"vmrectrouter_invoked\":true,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false"
+  <<",\"input_state\":"<<json_bytes(attempt_snapshot.state==odh::AttemptWalkObstacleState::ready?"ready":"unsupported")
+  <<",\"initial_heading_source\":\"saved_avatar_direction_eight_notches_rounded_to_cardinal_ties_to_even\"";
+ const auto direction=actor->position->direction;
+ const auto half=static_cast<unsigned>(direction/2);
+ const auto initial_heading=static_cast<std::uint8_t>((half+((direction%2!=0&&half%2!=0)?1u:0u))%4u);
+ std::vector<odh::RectRouteObstacle> rect_obstacles;
+ if(attempt_snapshot.state==odh::AttemptWalkObstacleState::ready){
+  rect_obstacles.reserve(attempt_snapshot.obstacles.size());
+  for(const auto& obstacle:attempt_snapshot.obstacles)
+   rect_obstacles.push_back({obstacle.x1,obstacle.y1,obstacle.x2,obstacle.y2});
+ }
+ std::size_t total_router_work=0;
+ if(attempt_snapshot.state!=odh::AttemptWalkObstacleState::ready){
+  out<<",\"status\":\"snapshot_unsupported\",\"routes\":[]}";
+ }else if(goals.empty()){
+  out<<",\"status\":\"no_goals\",\"routes\":[]}";
+ }else if(goals.size()>16){
+  out<<",\"status\":\"candidate_limit_exceeded\",\"routes\":[]}";
+ }else{
+  out<<",\"status\":\"evaluated\",\"initial_heading\":"<<unsigned(initial_heading)<<",\"routes\":[";
+  for(std::size_t i=0;i<goals.size();++i){
+   if(i)out<<',';
+   if(total_router_work>=4194304){
+    out<<"{\"goal\":["<<goals[i].x<<','<<goals[i].y<<"],\"status\":\"budget_exhausted\",\"generated_rectangles\":0,\"expanded_rectangles\":0,\"work_units\":0,\"corridor_entries\":0}";
+    break;
+   }
+   odh::RectRouteLimits limits;
+   limits.work_units=4194304-total_router_work;
+   const auto routed=odh::route_rectangles(rect_obstacles,{actor->position->x,actor->position->y},
+      {goals[i].x,goals[i].y},initial_heading,limits);
+   total_router_work+=routed.work_units;
+   out<<"{\"goal\":["<<goals[i].x<<','<<goals[i].y<<"],\"status\":"
+    <<json_bytes(odh::rect_route_status_name(routed.status))<<",\"generated_rectangles\":"
+    <<routed.generated_rectangles<<",\"expanded_rectangles\":"<<routed.expanded_rectangles
+    <<",\"work_units\":"<<routed.work_units<<",\"corridor_entries\":"<<routed.corridor.size()<<'}';
+   if(routed.status==odh::RectRouteStatus::budget_exhausted)break;
+  }
+  out<<"],\"total_work_units\":"<<total_router_work<<'}';
+ }
  if(goals.empty()){out<<",\"status\":\"no_approach_cell\"}";return;}
  const auto path=odh::find_route(*grid.grid,{actor->position->x,actor->position->y},goals);
  out<<",\"status\":"<<json_bytes(route_status_name(path.status))<<",\"route_cost\":"<<path.cost

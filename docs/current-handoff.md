@@ -8,24 +8,32 @@ elegíveis expandidos por 3 unidades, flags e EP5 bilateral. Action IDs <=255
 resultam em false; acima disso o chamador precisa de um resolver restrito. O
 curto-circuito do EP5 do ator evita exigir a tabela do bloqueador quando já
 retorna true. Limites de entidades/retângulos/chamadas e dados desconhecidos
-falham fechados, sem expor lista parcial. Teste focal e build completa passaram;
-CTest registrou 156 testes sem falhas, com `linux_window_backend` pulado porque
-`DISPLAY=:0` está inacessível.
+falham fechados, sem expor lista parcial. Nesta revisão a build completa passou
+e CTest registrou 157 testes sem falhas, com `linux_window_backend` pulado
+porque `DISPLAY=:0` está inacessível.
 
 O diagnóstico House07 lê tabelas EP5 da definição exata e avalia apenas o
 subconjunto read-only existente. Quatro portas com caixa salva e HasZeroExtent
 desligado fornecem footprint candidato apesar do estado runtime desconhecido;
-o snapshot ficou `ready` com 153 retângulos. O JSON mantém
-`vmrectrouter_invoked=false` e `route_clearance=false`; nenhum caminho novo foi
-enviado ao Main. Próximo: validar RoomObs/WallObs por sala com abertura de
-portal, então executar a busca VMRectRouter alinhada em fixture antes de
-integrar Route45. Não tratar a grade 8-vizinhos existente como equivalência ao
-router Simitone.
+o snapshot ficou `ready` com 153 retângulos. O módulo bounded
+`odh_rect_router` agora reproduz o corredor de `VMRectRouter`/`VMObstacleSet`
+sobre ordem explícita de obstáculos, interseção de área estrita, Contains
+inclusivo, expansão inicial por heading, ordenação A* estável e limites
+fail-closed. `OptimizeLines`, a aleatorização RoughBalanced, portais e movimento
+continuam fora dele. No probe House07, os três destinos já aprovados pelos
+gates estáticos deram `found`; dois tiveram corredores de 2 entradas e o
+destino igual à posição salva do ator retornou corredor vazio. O heading
+derivou da direção salva em oito notches, com arredondamento ties-to-even. A
+busca somou 4.564 unidades de trabalho e manteve `route_clearance=false`,
+`runtime_door_state_validated=false` e `main_movement_integrated=false`. Isso
+aplica o modelo Simitone à fotografia salva, não prova a rota runtime do jogo.
+Próximo: resolver RoomInfo/portas e portais no mesmo World e testar destinos
+fora da posição inicial antes de integrar Route45.
 
 Validação real usou `House07.iff`, `Objects.far`, duas definições de avatar,
 Neighborhood, 23 fontes arquitetônicas e `Global.far/Global.iff/SLOT100`.
-`git diff --check` passou. Sem validação visual: a única janela do CTest foi
-pulada pelo display X11 inacessível.
+`git diff --check` passou. Sem validação visual: a janela do CTest foi pulada
+pelo display X11 inacessível.
 
 ## BHAV read-only EP5 e House07 bloqueadores (2026-10-21)
 
