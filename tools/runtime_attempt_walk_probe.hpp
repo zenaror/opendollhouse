@@ -8,6 +8,10 @@ struct RuntimeAttemptWalkProbe {
     odh::AttemptWalkObstacleSnapshot snapshot;
     bool architecture_complete = false;
     bool portal_inventory_complete = false;
+    bool avatar_consideration_complete = false;
+    std::size_t other_avatars_in_room = 0;
+    std::size_t roughbalanced_architecture_rectangles = 0;
+    bool entity_order_matches_reference = false;
     std::size_t portal_openings = 0;
     std::size_t room_obstacle_rectangles = 0;
     std::size_t wall_obstacle_rectangles = 0;

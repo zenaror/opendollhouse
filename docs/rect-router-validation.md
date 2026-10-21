@@ -9,11 +9,16 @@ topo/direita/baixo/esquerda, empates A* estáveis e distâncias inteiras
 truncadas. Orçamento excedido e aritmética fora do domínio suportado falham sem
 corredor parcial.
 
-O módulo não gera a ordem RoughBalanced do .NET, não executa OptimizeLines,
-não atravessa portais e não move entidades. Logo, mesmo com as primitivas
-alinhadas ao Simitone, caminhos empatados podem diferir se a ordem de entrada
-não for a mesma da árvore viva. Não há alegação de equivalência com o
-executável original.
+`rough_balance_obstacle_prefix` reproduz o shuffle parcial `new Random(1)` de
+`VMObstacleSet.RoughBalanced` para o prefixo arquitetônico. Um vetor golden
+emitido por `System.Random(1)` no .NET 10 confirma a permutação de 16 índices;
+o Simitone fixado mira .NET 9, e a reprodução usa o algoritmo legado de seed
+explícito. A CLI aplica o shuffle somente a `wallObs + roomObs`, antes das
+quatro bandas e das entidades, igual à ordem de construção observada.
+`OptimizeLines`, geração de waypoints, portais e movimento continuam fora do
+módulo. A ordem das entidades runtime ODH ainda não foi provada idêntica a
+`roomInfo.Entities`; por isso nenhum resultado afirma equivalência integral ou
+clearance do executável original.
 
 ## House07
 
@@ -33,14 +38,16 @@ O primeiro destino coincide com a posição salva do ator; esse caso retorna
 corredor vazio e não representa um deslocamento. Os demais resultados são
 cálculos sobre snapshot salvo, incluindo caixas geométricas de quatro portas
 sem estado runtime validado. `route_clearance`, `runtime_door_state_validated`
-e `main_movement_integrated` permanecem false. A soma foi 4.564 unidades de
-trabalho.
+e `main_movement_integrated` permanecem false. Com RoughBalanced habilitado,
+esta reexecução somou 4.402 unidades de trabalho. A ordem de entidades continua
+sendo a sequência owner-ID do snapshot ODH.
 
 ## Validação
 
 O teste focal `rect_router` cobre corredor simples, passagem por aresta,
 destino na borda, início bloqueado, destino bloqueado, parede separadora,
-heading oposto, determinismo da ordem, limites, coordenadas sem suporte e
-entrada inválida. Compilação warning-enabled e CTest focal passaram. A build
+heading oposto, determinismo da ordem, limites, coordenadas sem suporte,
+entrada inválida e vetor golden do shuffle seed-1 comparado com .NET 10.
+Compilação warning-enabled e CTest focal passaram. A build
 completa e os 157 testes CTest também passaram; `linux_window_backend` foi
 pulada pela ausência de display X11.

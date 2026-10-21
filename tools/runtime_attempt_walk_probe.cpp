@@ -2,6 +2,7 @@
 
 #include "odh/room_map.hpp"
 #include "odh/room_obstacles.hpp"
+#include "odh/rect_router.hpp"
 #include "odh/wall_route_state.hpp"
 
 #include <algorithm>
@@ -118,10 +119,46 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
                 return std::nullopt;
             return entity->kill_timeout;
         };
+        // odh-person runs one new root diagnostic and leaves all restored
+        // per-avatar threads dormant; it has no concurrent routing frames.
+        // Therefore this host profile's AvatarsToConsider set is exactly
+        // empty even when other avatar entities are present in the room.
+        result.avatar_consideration_complete = avatar_consideration_complete;
+        auto avatar_cursor = std::int16_t{0};
+        while (const auto next = world.next_entity(avatar_cursor)) {
+            avatar_cursor = *next;
+            if (avatar_cursor == actor_id) continue;
+            const auto* entity = world.find(avatar_cursor);
+            if (!entity) return result;
+            if (entity->kind != odh::EntityKind::avatar || !entity->position) continue;
+            const auto avatar_room = room_for(*entity->position);
+            if (!avatar_room || *avatar_room == room) ++result.other_avatars_in_room;
+        }
+        result.roughbalanced_architecture_rectangles =
+            room_obstacles.rectangles.size() + wall_obstacles.rectangles.size();
         result.snapshot = odh::build_world_attempt_walk_obstacles(
             world, definitions, room_for, kill_timeout_for, rooms, room, level,
             actor_id, room_obstacles, wall_obstacles,
-            avatar_consideration_complete, avatars_to_consider, resolve_entry_point5);
+            result.avatar_consideration_complete, avatars_to_consider, resolve_entry_point5);
+        if (result.snapshot.state == odh::AttemptWalkObstacleState::ready) {
+            std::vector<odh::RectRouteObstacle> architecture_order;
+            architecture_order.reserve(result.roughbalanced_architecture_rectangles);
+            for (std::size_t i = 0; i < result.roughbalanced_architecture_rectangles; ++i) {
+                const auto& obstacle = result.snapshot.obstacles[i];
+                architecture_order.push_back({obstacle.x1, obstacle.y1, obstacle.x2, obstacle.y2});
+            }
+            if (!odh::rough_balance_obstacle_prefix(architecture_order,
+                    result.roughbalanced_architecture_rectangles)) {
+                result.snapshot = {};
+                result.snapshot.reason = odh::AttemptWalkObstacleReason::obstacle_set_mismatch;
+            } else {
+                for (std::size_t i = 0; i < result.roughbalanced_architecture_rectangles; ++i) {
+                    result.snapshot.obstacles[i] = {
+                        architecture_order[i].x1, architecture_order[i].y1,
+                        architecture_order[i].x2, architecture_order[i].y2};
+                }
+            }
+        }
         return result;
     } catch (const std::exception&) {
         return result;

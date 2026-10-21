@@ -122,5 +122,23 @@ int main() {
             "source int squared-distance overflow must fail without a partial corridor");
     require(route_rectangles({}, {0, 0}, {80, 80}, 0).status == RectRouteStatus::no_path,
             "unbounded nearest-ray extension cannot fabricate a corridor");
+    std::vector<RectRouteObstacle> rough;
+    for (std::int32_t i = 0; i < 16; ++i) rough.push_back({i, 0, i + 1, 1});
+    rough.push_back({100, 0, 101, 1});
+    rough.push_back({101, 0, 102, 1});
+    require(rough_balance_obstacle_prefix(rough, 16),
+            "RoughBalanced must accept the architectural prefix");
+    const std::int32_t net10_prefix[] = {4, 3, 9, 13, 12, 10, 5, 15, 2, 1, 11, 0, 8, 7, 6, 14};
+    for (std::size_t i = 0; i < 16; ++i)
+        require(rough[i].x1 == net10_prefix[i],
+                ".NET Random(1) RoughBalanced permutation must match the pinned Simitone runtime");
+    require(rough[16].x1 == 100 && rough[17].x1 == 101,
+            "RoughBalanced must leave AttemptWalk's appended bounds/entities in place");
+    const auto original = rough;
+    require(!rough_balance_obstacle_prefix(rough, 19) && rough.size() == original.size(),
+            "invalid RoughBalanced prefix must fail without changing vector size");
+    for (std::size_t i = 0; i < rough.size(); ++i)
+        require(rough[i].x1 == original[i].x1,
+                "invalid RoughBalanced prefix must leave input unchanged");
     std::cout << "Rectangle corridor routing checks passed\n";
 }

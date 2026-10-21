@@ -32,12 +32,16 @@ o snapshot ficou `ready` com 153 retângulos. O módulo bounded
 `odh_rect_router` agora reproduz o corredor de `VMRectRouter`/`VMObstacleSet`
 sobre ordem explícita de obstáculos, interseção de área estrita, Contains
 inclusivo, expansão inicial por heading, ordenação A* estável e limites
-fail-closed. `OptimizeLines`, a aleatorização RoughBalanced, portais e movimento
-continuam fora dele. No probe House07, os três destinos já aprovados pelos
+fail-closed. `rough_balance_obstacle_prefix` agora reproduz o shuffle parcial
+seed-1 aplicado por Simitone ao prefixo `wallObs+roomObs`; vetor de 16 itens
+confere com .NET 10. A CLI reordena esse prefixo, mantendo bandas e entidades
+depois dele. `OptimizeLines`, portais e movimento continuam fora dele; ordem
+`roomInfo.Entities` ainda não foi provada contra owner-ID ODH. No probe House07,
+os três destinos já aprovados pelos
 gates estáticos deram `found`; dois tiveram corredores de 2 entradas e o
 destino igual à posição salva do ator retornou corredor vazio. O heading
 derivou da direção salva em oito notches, com arredondamento ties-to-even. A
-busca somou 4.564 unidades de trabalho e manteve `route_clearance=false`,
+busca com shuffle somou 4.402 unidades de trabalho e manteve `route_clearance=false`,
 `runtime_door_state_validated=false` e `main_movement_integrated=false`. Isso
 aplica o modelo Simitone à fotografia salva, não prova a rota runtime do jogo.
 Próximo: resolver RoomInfo/portas e portais no mesmo World e testar destinos
@@ -704,3 +708,18 @@ Próxima unidade: auditar lacunas entre a composição atual e o pedido Route45
 real (lista de avatares, estado/footprints dinâmicos de portais e seleção de
 obstáculos por sala), validar destinos de SLOT fora da posição inicial e então
 conectar a busca sem chamar isso de movimentação até o Main consumir a rota.
+
+## Corredor de destino sobre AttemptWalk vivo (2026-10-21)
+
+`--attempt-walk-destination X Y` agora executa `route_rectangles` no snapshot
+vivo de AttemptWalk quando a meta está na mesma sala. RoughBalanced seed-1
+ordena o prefixo RoomObs/WallObs; bandas e entidades seguem depois. Em House07
+Main tick 214, avatar 105 até o destino SLOT `(408,456)`, a busca encontrou
+corredor com 7 retângulos gerados, 3 expandidos, 2.258 unidades de trabalho e
+entradas `[392,440]`, `[399,449]`. O host declara raiz isolada e threads salvas
+dormentes, embora exista outro avatar na sala; isso não modela as threads de
+um runtime multissím completo. A ordem das entidades por ID ainda não foi
+provada igual a `roomInfo.Entities`, `OptimizeLines` não roda, e clearance,
+estado dinâmico de portas e integração de movimento permanecem falsos. Próxima
+unidade: alinhar a ordem das entidades com a referência e implementar/testar
+OptimizeLines antes de usar o corredor para waypoints.

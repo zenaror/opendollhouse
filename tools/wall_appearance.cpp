@@ -353,6 +353,12 @@ void emit_route_grid_diagnostic(
   rect_obstacles.reserve(attempt_snapshot.obstacles.size());
   for(const auto& obstacle:attempt_snapshot.obstacles)
    rect_obstacles.push_back({obstacle.x1,obstacle.y1,obstacle.x2,obstacle.y2});
+  // Simitone shuffles only the initial wallObs+roomObs prefix when creating
+  // VMRoom.RoutingObstacles; AttemptWalk appends bounds and entity obstacles.
+  if(!odh::rough_balance_obstacle_prefix(rect_obstacles,
+      wall_obstacles.rectangles.size()+obstacle_it->rectangles.size())){
+   out<<",\"status\":\"unsupported\",\"reason\":\"routing_obstacle_prefix_invalid\"}";return;
+  }
  }
  std::size_t total_router_work=0;
  if(attempt_snapshot.state!=odh::AttemptWalkObstacleState::ready){

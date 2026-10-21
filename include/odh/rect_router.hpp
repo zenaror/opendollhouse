@@ -39,6 +39,13 @@ struct RectRouteResult {
     std::size_t work_units = 0;
 };
 
+// Reproduces Simitone VMObstacleSet.RoughBalanced's seeded shuffle for only
+// the supplied architectural prefix, leaving AttemptWalk's appended bounds
+// and entity obstacles in their original order. Returns false for an invalid
+// prefix length and leaves the input untouched in that case.
+bool rough_balance_obstacle_prefix(std::vector<RectRouteObstacle>& obstacles,
+                                   std::size_t architectural_count);
+
 // Pinned-Simitone corridor model, not original TS1 equivalence. Coordinates are
 // integer world units and heading is 0=top, 1=right, 2=bottom, 3=left. Input order
 // is the insertion order of the initial VMObstacleSet; callers reproducing a

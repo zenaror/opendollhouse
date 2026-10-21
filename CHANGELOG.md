@@ -20,6 +20,13 @@ validação indicados por versão.
   que passaram pelos gates ODH; mantém clearance runtime e integração com Main
   explicitamente falsos. Não implementa `OptimizeLines`, RoomInfo/portais vivos
   nem movimento. Consulte `docs/rect-router-validation.md`.
+- `rough_balance_obstacle_prefix` replica a permutação `new Random(1)` de
+  Simitone para o prefixo arquitetônico WallObs+RoomObs, deixando bandas de
+  limite e obstáculos de entidades depois dele. Um vetor golden com 16
+  entradas corresponde ao runtime .NET 10 instalado; a CLI passou a ordenar
+  esse prefixo antes da busca House07. `OptimizeLines` e a ordem exata de
+  `roomInfo.Entities` seguem pendentes. Consulte
+  `docs/rect-router-validation.md`.
 - Snapshot bounded de obstáculos `AttemptWalk`: compõe WallObs/RoomObs, as
   quatro faixas externas de um tile, footprints com margem 3, flags de
   interseção e EP5 bilateral; inventário incerto ou fora do orçamento falha
@@ -35,6 +42,12 @@ validação indicados por versão.
   retângulos RoomObs, 128 WallObs e 153 obstáculos; início sem interseção.
   Clearance, estado mutável de portas e movimento no Main continuam falsos.
   Consulte `docs/world-attempt-walk-validation.md`.
+- `odh-person --attempt-walk-destination X Y` expõe uma busca de corredor
+  diagnóstica no snapshot vivo para destinos na mesma sala. House07 Main,
+  avatar 105 até `(408,456)`, retornou `found` com duas entradas. O perfil de
+  avatar é uma raiz isolada com threads salvas dormentes; ordem de entidades,
+  `OptimizeLines`, clearance, estado de portas e movimento continuam sem
+  validação. Consulte `docs/world-attempt-walk-validation.md`.
 - Adaptador de auditoria para política de sobreposição entre entidades de um
   `World` restaurado: resolve flags e EntryPoints vinculados, preserva
   inventário incompleto como unsupported e respeita a parada sequencial por

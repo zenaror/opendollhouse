@@ -382,6 +382,66 @@ RectRouteResult route_rectangles(const std::vector<RectRouteObstacle>& input,
     return result;
 }
 
+namespace {
+class DotNetSeedOneRandom {
+public:
+    DotNetSeedOneRandom() {
+        constexpr std::int32_t mbig = 2147483647;
+        constexpr std::int32_t mseed = 161803398;
+        std::int32_t mj = mseed - 1;
+        seed_[55] = mj;
+        std::int32_t mk = 1;
+        for (std::int32_t i = 1; i < 55; ++i) {
+            const auto ii = (21 * i) % 55;
+            seed_[static_cast<std::size_t>(ii)] = mk;
+            mk = mj - mk;
+            if (mk < 0) mk += mbig;
+            mj = seed_[static_cast<std::size_t>(ii)];
+        }
+        for (std::int32_t pass = 1; pass < 5; ++pass) {
+            for (std::int32_t i = 1; i < 56; ++i) {
+                seed_[static_cast<std::size_t>(i)] -=
+                    seed_[static_cast<std::size_t>(1 + (i + 30) % 55)];
+                if (seed_[static_cast<std::size_t>(i)] < 0)
+                    seed_[static_cast<std::size_t>(i)] += mbig;
+            }
+        }
+    }
+
+    std::int32_t next(std::int32_t maximum) {
+        constexpr std::int32_t mbig = 2147483647;
+        if (maximum <= 0) return 0;
+        if (++inext_ >= 56) inext_ = 1;
+        if (++inextp_ >= 56) inextp_ = 1;
+        auto sample = seed_[static_cast<std::size_t>(inext_)] -
+                      seed_[static_cast<std::size_t>(inextp_)];
+        if (sample == mbig) --sample;
+        if (sample < 0) sample += mbig;
+        seed_[static_cast<std::size_t>(inext_)] = sample;
+        return static_cast<std::int32_t>((static_cast<double>(sample) / mbig) * maximum);
+    }
+
+private:
+    std::array<std::int32_t, 56> seed_{};
+    std::int32_t inext_ = 0;
+    std::int32_t inextp_ = 21;
+};
+} // namespace
+
+bool rough_balance_obstacle_prefix(std::vector<RectRouteObstacle>& obstacles,
+                                   std::size_t architectural_count) {
+    if (architectural_count > obstacles.size() ||
+        architectural_count > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+        return false;
+    DotNetSeedOneRandom random;
+    for (std::size_t i = 1; i < architectural_count; ++i) {
+        const auto remaining = architectural_count - i;
+        const auto index = i + static_cast<std::size_t>(random.next(static_cast<std::int32_t>(remaining)));
+        std::swap(obstacles[i - 1], obstacles[index]);
+    }
+    return true;
+}
+
 const char* rect_route_status_name(RectRouteStatus status) noexcept {
     switch (status) {
     case RectRouteStatus::found: return "found";

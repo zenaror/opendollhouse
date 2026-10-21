@@ -11,9 +11,13 @@ O adapter revalida o inventário após callbacks EP5 e falha fechado se entidade
 ou projeções espaciais mudarem. Uma porta ou outro objeto arquitetônico criado
 no World sem grupo/estilo salvo identificável deixa o inventário incompleto.
 Não são inventados dados para entidades, geometrias ou resultados EP5
-desconhecidos. O conjunto `AvatarsToConsider` é explicitamente vazio para esta
-raiz de rota; isso não cobre avatares que possam entrar em um pedido de
-movimento futuro.
+desconhecidos. O conjunto `AvatarsToConsider` é explicitamente vazio para a
+raiz isolada do `odh-person`: o host executa apenas o Main escolhido e mantém
+as demais stacks e filas salvas dormentes. House07 tem um avatar adicional na
+sala, mas não há thread de roteamento concorrente nesse host. Isso completa o
+conjunto para este probe isolado; não reconstrói `WaitTime`/`VMRoutingFrame` de
+um simulador multithread nem pode ser generalizado para um pedido futuro no
+jogo.
 
 ## House07 no Main
 
@@ -30,12 +34,18 @@ footprints. O novo `attempt_walk_snapshot` reportou:
 - 153 retângulos totais após faixas externas e obstáculos RoomInfo;
 - 13 IDs de entidades presentes como obstáculos, zero chamadas EP5 nesta
   amostra e início sem interseção.
+- Um diagnóstico solicitado para `(408,456)`, destino SLOT fora da posição
+  inicial, percorreu o snapshot vivo com a ordem RoughBalanced seed-1 e
+  retornou `found`: 7 retângulos gerados, 3 expandidos, 2.258 unidades de
+  trabalho e duas entradas de corredor, `[392,440]` e `[399,449]`.
 
-Os números demonstram que a composição bounded funcionou sobre o World
-construído pelo Main para esse estado e arquitetura inicial. `ready` só indica
-que os dados usados para montar a lista estavam completos. O adaptador não
-atualiza a geometria ao abrir/fechar uma porta, não prova a equivalência com o
-executável original, não roda `VMRectRouter`, não calcula clearance, não move o
+Os números demonstram que a composição bounded e o cálculo de corredor
+funcionaram sobre o World construído pelo Main para esse estado e arquitetura
+inicial. `ready` só indica que os dados usados para montar a lista estavam
+completos. A ordem de inserção das entidades ODH por owner ID ainda não foi
+provada igual a `roomInfo.Entities`; `OptimizeLines` também não foi aplicado.
+O adaptador não atualiza a geometria ao abrir/fechar uma porta, não prova
+equivalência com o executável original, não calcula clearance, não move o
 avatar e não integra Route45 ao Main. Esses campos continuam explicitamente
 falsos.
 
