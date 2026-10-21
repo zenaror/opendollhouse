@@ -685,3 +685,22 @@ histórico de contratos, testes e proveniência.
 
 Preservar originais, saves, refs pinadas, relatórios, builds, runners antigos e
 artefatos da raiz. Não usar `git add -A` nem limpeza genérica.
+
+## AttemptWalk composto com o World vivo (2026-10-21)
+
+O `odh-person` agora monta RoomObs/WallObs da arquitetura preparada, inventaria
+portais Portal15 e aplica a política AttemptWalk sobre o inventário RoomInfo do
+World após Main. House07 no tick 214 ficou `ready` na sala 3: 24 aberturas de
+portal, 8 RoomObs, 128 WallObs e 153 retângulos totais; 13 entidades entraram
+como obstáculos e o início não intersecta a lista. O teste sintético cobre
+flags/caixas/EP5 e mutação durante callback. Debug completo e CTest 158/158
+passaram; `linux_window_backend` foi pulado sem X11. A execução real do Main
+terminou no limite documentado de ticks (código 3), com JSON válido e frame
+CPU. `route_clearance`, estado mutável das portas e integração de movimento
+permanecem falsos. Não declara jogabilidade. Evidência detalhada em
+[`world-attempt-walk-validation.md`](world-attempt-walk-validation.md).
+
+Próxima unidade: auditar lacunas entre a composição atual e o pedido Route45
+real (lista de avatares, estado/footprints dinâmicos de portais e seleção de
+obstáculos por sala), validar destinos de SLOT fora da posição inicial e então
+conectar a busca sem chamar isso de movimentação até o Main consumir a rota.

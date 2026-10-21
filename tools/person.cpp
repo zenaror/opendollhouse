@@ -22,6 +22,8 @@
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
 #include "odh/world_room_info.hpp"
+#include "odh/saved_attempt_walk_obstacles.hpp"
+#include "runtime_attempt_walk_probe.hpp"
 #include "odh/world_avatar_place_audit.hpp"
 #include "odh/entry_point5_readonly.hpp"
 #include "odh/floor_placement.hpp"
@@ -713,6 +715,7 @@ int main(int argc,char** argv) {
         odh::CollisionBox candidate;
         odh::RoomInfoObstacleQuery query;
         odh::RoomInfoObstacleSnapshot inventory;
+        std::optional<RuntimeAttemptWalkProbe> attempt_walk;
     };
 struct PlacementCandidateProbe {
     odh::EntityPosition position;
@@ -736,6 +739,54 @@ struct PlacementCandidateProbe {
     using EntryPoint5CacheKey=std::pair<std::uint32_t,std::uint16_t>;
     std::map<EntryPoint5CacheKey,odh::Bhav> entry_point5_bhav_cache;
     std::map<EntryPoint5CacheKey,std::string> entry_point5_bhav_errors;
+    const odh::AttemptWalkEntryPoint5Resolver resolve_read_only_ep5=
+        [&](std::int16_t caller_id,std::int16_t stack_object_id)->std::optional<bool>{
+        EntryPoint5BhvEvidence evidence;
+        evidence.caller=caller_id;evidence.stack_object=stack_object_id;
+        const auto* caller=world.find(caller_id);
+        const auto* stack_object=world.find(stack_object_id);
+        if(!caller||!caller->definition||!caller->entry_points||caller->entry_points->size()<=5){
+            evidence.reason="caller_entry_point5_or_definition_unavailable";
+            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            return std::nullopt;
+        }
+        evidence.action=(*caller->entry_points)[5].action;
+        const auto* definition=definition_index?definition_index->unique(caller->definition->guid):nullptr;
+        if(!definition){
+            evidence.reason="caller_definition_missing_or_ambiguous";
+            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            return std::nullopt;
+        }
+        evidence.source=definition->source;evidence.asset=definition->asset;
+        const EntryPoint5CacheKey key{caller->definition->guid,evidence.action};
+        auto routine=entry_point5_bhav_cache.find(key);
+        if(routine==entry_point5_bhav_cache.end()&&entry_point5_bhav_errors.find(key)==entry_point5_bhav_errors.end()){
+            try{
+                auto loaded=saved_private_entry_point_bhav(*definition,evidence.action);
+                routine=entry_point5_bhav_cache.emplace(key,std::move(loaded)).first;
+            }catch(const std::exception& error){entry_point5_bhav_errors.emplace(key,error.what());}
+        }
+        if(entry_point5_bhav_errors.find(key)!=entry_point5_bhav_errors.end()){
+            evidence.reason="selected_asset_bhav_unavailable";
+            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            return std::nullopt;
+        }
+        if(routine==entry_point5_bhav_cache.end()||!stack_object||!stack_object->definition){
+            evidence.reason="stack_object_identity_unavailable";
+            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            return std::nullopt;
+        }
+        const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
+        const auto attribute16=world.read(frame,1,16);
+        const auto execution=odh::evaluate_read_only_entry_point5(evidence.action,routine->second,
+            stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
+        evidence.status=odh::read_only_entry_point5_state_name(execution.state);
+        evidence.reason=execution.reason;evidence.steps=execution.steps;
+        if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)evidence.result=true;
+        else if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)evidence.result=false;
+        if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+        return evidence.result;
+    };
     std::optional<RenderEvidence> render_evidence;
     std::optional<RoomInfoProbe> room_info_probe;
     std::string room_info_probe_unavailable;
@@ -1068,6 +1119,14 @@ struct PlacementCandidateProbe {
                     odh::query_world_room_info(world,*definition_index,room_for,kill_timeout_for,
                                                *room,candidate.box,runtime_avatar_id),
                     odh::snapshot_world_room_info(world,*definition_index,room_for,kill_timeout_for,*room)};
+                if(restored_world&&definition_index&&lot_path&&render_lot->prepared_architecture()){
+                    auto architecture=saved_architecture_resource(*lot_path);
+                    room_info_probe->attempt_walk=build_runtime_attempt_walk_probe(
+                        *restored_world,world,*definition_index,architecture,
+                        *render_lot->prepared_architecture(),*room,
+                        static_cast<std::uint8_t>(actor->position->level-1),runtime_avatar_id,
+                        true,{},resolve_read_only_ep5);
+                }
             }
         }
     }
@@ -1138,60 +1197,6 @@ struct PlacementCandidateProbe {
                                 if(actor_member||blocker_member)return false;
                             }
                             return false;
-                        };
-                        const odh::WorldAvatarPlaceEntryPoint5Resolver resolve_read_only_ep5=
-                            [&](std::int16_t caller_id,std::int16_t stack_object_id)->std::optional<bool>{
-                            EntryPoint5BhvEvidence evidence;
-                            evidence.caller=caller_id;evidence.stack_object=stack_object_id;
-                            const auto* caller=world.find(caller_id);
-                            const auto* stack_object=world.find(stack_object_id);
-                            if(!caller||!caller->definition||!caller->entry_points||caller->entry_points->size()<=5){
-                                evidence.reason="caller_entry_point5_or_definition_unavailable";
-                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
-                                return std::nullopt;
-                            }
-                            evidence.action=(*caller->entry_points)[5].action;
-                            const auto* definition=definition_index?definition_index->unique(caller->definition->guid):nullptr;
-                            if(!definition){
-                                evidence.reason="caller_definition_missing_or_ambiguous";
-                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
-                                return std::nullopt;
-                            }
-                            evidence.source=definition->source;evidence.asset=definition->asset;
-                            const EntryPoint5CacheKey key{caller->definition->guid,evidence.action};
-                            auto routine=entry_point5_bhav_cache.find(key);
-                            if(routine==entry_point5_bhav_cache.end()&&entry_point5_bhav_errors.find(key)==entry_point5_bhav_errors.end()){
-                                try{
-                                    auto loaded=saved_private_entry_point_bhav(*definition,evidence.action);
-                                    routine=entry_point5_bhav_cache.emplace(key,std::move(loaded)).first;
-                                }catch(const std::exception& error){
-                                    entry_point5_bhav_errors.emplace(key,error.what());
-                                }
-                            }
-                            const auto load_error=entry_point5_bhav_errors.find(key);
-                            if(load_error!=entry_point5_bhav_errors.end()){
-                                evidence.reason="selected_asset_bhav_unavailable";
-                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
-                                return std::nullopt;
-                            }
-                            if(routine==entry_point5_bhav_cache.end()||!stack_object||!stack_object->definition){
-                                evidence.reason="stack_object_identity_unavailable";
-                                if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
-                                return std::nullopt;
-                            }
-                            const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
-                            const auto attribute16=world.read(frame,1,16);
-                            const auto execution=odh::evaluate_read_only_entry_point5(evidence.action,routine->second,
-                                stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
-                            evidence.status=odh::read_only_entry_point5_state_name(execution.state);
-                            evidence.reason=execution.reason;
-                            evidence.steps=execution.steps;
-                            if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)
-                                evidence.result=true;
-                            else if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)
-                                evidence.result=false;
-                            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
-                            return evidence.result;
                         };
                         // A preview has no explicit place-request flags. The reference default
                         // is zero, so AllAvatarsSolid=false; this remains overlap-only.
@@ -1528,7 +1533,30 @@ struct PlacementCandidateProbe {
                 <<json_bytes(obstacle.collection==odh::RoomInfoObstacleCollection::static_set?"static":"dynamic")
                 <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
         }
-        std::cout<<"]}}";
+        std::cout<<"]}";
+        if(probe.attempt_walk){
+            const auto& attempt=*probe.attempt_walk;
+            const auto& snapshot=attempt.snapshot;
+            std::cout<<",\"attempt_walk_snapshot\":{\"evidence\":\"live_World_RoomInfo_plus_prepared_RoomObs_WallObs_and_saved_Portal15\",\"state\":\""
+                <<(snapshot.state==odh::AttemptWalkObstacleState::ready?"ready":"unsupported")
+                <<"\",\"reason\":"<<json_bytes(odh::attempt_walk_obstacle_reason_name(snapshot.reason))
+                <<",\"architecture_complete\":"<<(attempt.architecture_complete?"true":"false")
+                <<",\"portal_inventory_complete\":"<<(attempt.portal_inventory_complete?"true":"false")
+                <<",\"portal_openings\":"<<attempt.portal_openings
+                <<",\"room_obstacle_rectangles\":"<<attempt.room_obstacle_rectangles
+                <<",\"wall_obstacle_rectangles\":"<<attempt.wall_obstacle_rectangles
+                <<",\"obstacle_rectangles\":"<<snapshot.obstacles.size()
+                <<",\"entity_obstacle_ids\":[";
+            for(std::size_t n=0;n<snapshot.entity_obstacle_ids.size();++n){
+                if(n)std::cout<<',';
+                std::cout<<snapshot.entity_obstacle_ids[n];
+            }
+            std::cout<<"],\"entry_point5_calls\":"<<snapshot.entry_point5_calls
+                <<",\"entry_point5_exemptions\":"<<snapshot.exempted_by_entry_point5
+                <<",\"start_intersects\":"<<(snapshot.start_intersects?"true":"false")
+                <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false}";
+        }
+        std::cout<<'}';
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
     if(placement_candidate_probe){
         const auto& probe=*placement_candidate_probe;

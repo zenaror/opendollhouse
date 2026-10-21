@@ -28,6 +28,13 @@ validação indicados por versão.
   runtime. O snapshot House07 fica pronto com 153 retângulos, mas nenhuma rota
   é calculada e `route_clearance` segue false. Consulte
   `docs/saved-attempt-walk-obstacles-validation.md`.
+- Adaptador runtime liga o inventário RoomInfo do `World` a RoomObs/WallObs
+  preparados e aos portais Portal15 do lote, aplicando flags e EP5 bilateral
+  por meio da política AttemptWalk existente. House07 Main no tick 214 ficou
+  `ready`: arquitetura e inventário de portais completos, 24 aberturas, 8
+  retângulos RoomObs, 128 WallObs e 153 obstáculos; início sem interseção.
+  Clearance, estado mutável de portas e movimento no Main continuam falsos.
+  Consulte `docs/world-attempt-walk-validation.md`.
 - Adaptador de auditoria para política de sobreposição entre entidades de um
   `World` restaurado: resolve flags e EntryPoints vinculados, preserva
   inventário incompleto como unsupported e respeita a parada sequencial por
