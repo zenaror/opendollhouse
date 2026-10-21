@@ -216,7 +216,8 @@ bool Routing::call_external_frame(const VmCall& call) {
     return true;
 }
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch) {
-    if(i.opcode!=45) return {};
+    const bool goto_relative=i.opcode==27;
+    if(i.opcode!=45&&!goto_relative) return {};
     if(executing_) return unsupported("routing callback cannot reenter controller");
     if(!vm_ || dispatch.origin!=vm_) return unsupported("routing controller bound to another VM");
     bool nested_request=false;
@@ -245,14 +246,18 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }
     }
     diagnostic_.clear();
+    if(goto_relative && (i.operands[0]!=0 || i.operands[1]!=0 || i.operands[2]!=254 ||
+        i.operands[3]!=0 || i.operands[4]!=0 || i.operands[5]!=0 ||
+        i.operands[6]!=2 || i.operands[7]!=0))
+        return unsupported("GotoRelativePosition outside the exact OnTopOf/SameDirection/NoFailureTrees profile");
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
-    if(scope!=1&&scope!=2)
+    if(!goto_relative && scope!=1&&scope!=2)
         return unsupported("routing operand scope requires StackObject Literal or Global");
-    if((i.operands[4]&0xFEU)!=0 || i.operands[5] || i.operands[6] || i.operands[7])
+    if(!goto_relative && ((i.operands[4]&0xFEU)!=0 || i.operands[5] || i.operands[6] || i.operands[7]))
         return unsupported("routing operand flags/tail outside NoFailureTrees profile");
     const SlotTable* selected_slots=&globals_;
-    if(scope==1) {
+    if(!goto_relative && scope==1) {
         if(!stack_object_slots_)
             return unsupported("StackObject Literal SLOT table provider unavailable");
         struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
@@ -260,14 +265,16 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(!selected_slots)
             return unsupported("StackObject Literal SLOT table missing or ambiguous");
     }
-    const auto* slot=slot_of_type(*selected_slots,3,data);
-    if(!slot) return {PrimitiveDisposition::goto_false,{}};
-    // Explicit first profile: circle in the same floor with zero offset. Other
-    // SLOT rules must be implemented, not approximated as successful routing.
-    if(selected_slots->version!=10 || !supported_circle_slot_profile(*slot))
-        return unsupported("SLOT runtime profile not implemented");
-    if((slot->flags&0x0800U)!=0&&!goal_validator_)
-        return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
+    const auto* slot=goto_relative?nullptr:slot_of_type(*selected_slots,3,data);
+    if(!goto_relative) {
+        if(!slot) return {PrimitiveDisposition::goto_false,{}};
+        // Explicit first profile: circle in the same floor with zero offset. Other
+        // SLOT rules must be implemented, not approximated as successful routing.
+        if(selected_slots->version!=10 || !supported_circle_slot_profile(*slot))
+            return unsupported("SLOT runtime profile not implemented");
+        if((slot->flags&0x0800U)!=0&&!goal_validator_)
+            return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
+    }
     const auto* actor=world_.find(frame.context.caller);
     const auto* target=world_.find(frame.context.stack_object);
     if(!actor || !target || !actor->position || !target->position || actor->kind!=EntityKind::avatar ||
@@ -283,7 +290,19 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
-    if(ranked_goals_) {
+    if(goto_relative) {
+        if(!goal_validator_)
+            return unsupported("GotoRelativePosition exact-point goal requires a host bounds/room/clearance validator");
+        const RoutePoint goal{target->position->x,target->position->y};
+        if(!grid_.contains(goal) || !allow_goal(goal)) {
+            diagnostic_="GotoRelativePosition exact StackObject point rejected by host validator";
+            return {PrimitiveDisposition::goto_false,{}};
+        }
+        if(start==goal) {
+            if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
+            else path={RouteStatus::found,{start},0,0};
+        } else path=find_route(grid_,start,{goal},limits_);
+    } else if(ranked_goals_) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
@@ -329,18 +348,20 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     if(path.status==RouteStatus::invalid_input) return unsupported("routing start or pre-ranked goal input invalid");
     if(path.status==RouteStatus::no_path) {diagnostic_="no path in supplied clearance grid";return {PrimitiveDisposition::goto_false,{}};}
     const auto goal=path.points.back();
-    const auto entry_flags=selected?selected->entry_flags:reference_slot_entry_flags({target->position->x,target->position->y},
-        target->position->direction,goal,static_cast<std::uint8_t>(slot->flags));
-    if(entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
+    const std::int16_t entry_flags=goto_relative?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
+        {target->position->x,target->position->y},target->position->direction,goal,
+        static_cast<std::uint8_t>(slot->flags)));
+    if(!goto_relative && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
+    const auto arrival_facing=goto_relative?target->position->direction:
+        (selected?selected->facing:heading(goal,{target->position->x,target->position->y}));
     RouteFrameContext frame_context;
     if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
     if(nested_request) suspended_jobs_.push_back(std::move(*job_));
     job_=Job{dispatch.ticket,actor->generation,target->generation,actor->id,target->id,
              *actor->position,*target->position,actor->radian_direction,frame_context,
              std::move(path.points),1,entry_flags,
-             selected?selected->facing:heading(goal,{target->position->x,target->position->y}),
-             slot->facing==-3};
+             arrival_facing,!goto_relative&&slot->facing==-3};
     job_->run_generation=vm_->run_generation();
     return {PrimitiveDisposition::wait,{}};
 }

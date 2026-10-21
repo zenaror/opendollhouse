@@ -170,6 +170,10 @@ odh::SlotTable slot() {
 odh::RoutineSet routines(std::uint8_t scope=2,std::uint8_t flags=0,std::uint8_t data=1) {
     return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{data,0,scope,0,flags,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
 }
+odh::RoutineSet goto_relative(std::array<std::uint8_t,8> operands={0,0,254,0,0,0,2,0}) {
+    return {{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{27,254,255,operands}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+}
 struct Fixture {
     odh::World world;odh::RouteGrid grid{64,32};odh::SlotTable slots=slot();
     odh::Routing routing{world,grid,slots};
@@ -189,6 +193,38 @@ int main() {
         reference_slot_circle_tests();
         pre_ranked_goal_tests();
         route_frame_context_tests();
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,3});
+         routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p) {
+             const auto* actor=world.find(frame.context.caller);const auto* target=world.find(frame.context.stack_object);
+             return actor&&target&&actor->position&&target->position&&actor->position->level==target->position->level&&
+                 p==odh::RoutePoint{target->position->x,target->position->y}&&grid.contains(p)&&grid.walkable(p);
+         });routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::waiting&&routing.active()&&world.find(1)->position->x==4,
+                 "bounded GotoRelativePosition creates an asynchronous exact StackObject route");
+         for(std::uint64_t tick=1;tick<=8&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
+                 world.find(1)->position->x==12&&world.find(1)->position->y==12&&
+                 world.find(1)->position->direction==3&&world.find(1)->person_data[37]==0,
+                 "OnTopOf reaches the validated exact point with SameDirection and zero entry flags");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});grid.block({12,12});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p){return grid.contains(p)&&grid.walkable(p);});
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::returned_false&&!routing.active()&&world.find(1)->position->x==4,
+                 "blocked exact StackObject point fails without starting or bypassing the route");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         auto operands=std::array<std::uint8_t,8>{0,0,254,0,0,0,0,0};
+         odh::Vm vm{goto_relative(operands),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::fault&&!routing.active()&&world.find(1)->position->x==4,
+                 "GotoRelativePosition with failure-tree policy outside the supported profile is rejected");}
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();bool provider_seen=false;
          odh::PreRankedSlotGoalProvider goals=[&](const auto& table,std::size_t index,const auto&,const auto&) {

@@ -59,8 +59,9 @@ using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
 using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&)>;
 // Read-only host filter for candidates constrained to the active route room.
 using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
-// Initial controlled route adapter. One stable VM per controller; all referenced
-// objects must outlive calls. This is not the complete TS1 routing policy.
+// Controlled async route adapter: Route45's profiled SLOTs plus opcode27's
+// exact-point OnTopOf/SameDirection/NoFailureTrees profile. Opcode27 requires
+// a host goal validator; this is not the complete TS1 routing policy.
 class Routing {
 public:
     Routing(World& world,RouteGrid& grid,const SlotTable& globals,

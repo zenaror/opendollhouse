@@ -790,26 +790,26 @@ ao jogo original seguem abertos. Próximo: roteamento a partir da interação
 normal selecionada, preservando a frame tree e code owner, depois portal filho
 e reconstrução da grade após mudança de sala.
 
-## Probe de Portal15 Door e bloqueio opcode 27 — 2026-10-21
+## Probe de Portal15 Door e perfil estrito de opcode 27 — 2026-10-21
 
 Com `odh-bhav` e os recursos externos originais, a execução bounded de
 `Doors.iff:4105` foi iniciada no VM sobre mundo construído com caller word 9=0,
 StackObject OBJD15089 (GUID1017, SubIndex1, SLOT128) e atributo1=1. O trace
-executa 4105, chama 4112 e 4115, depois falha em `Doors.iff:4112` pc5:
+executa 4105, chama 4112 e 4115, depois chega a `Doors.iff:4112` pc5:
 opcode27, operandos `[0,0,254,0,0,0,2,0]`. A referência FreeSO fixa
 identifica opcode27 como `goto_relative`: cria SLOT type3 standing e agenda
 uma nova frame de routing para o StackObject; aqui location `-2` é OnTopOf,
-direction 0 SameDirection e flag 2 NoFailureTrees. ODH ainda não implementa
-esse adaptador. Não presumir que equivale ao Route45 Literal: a geometria,
-seleção do destino e continuação assíncrona precisam ser validadas antes de
-habilitar o restante do Portal15.
+direction 0 SameDirection e flag 2 NoFailureTrees. O adaptador ODH usa uma meta
+distinta de ponto exato; não equivale ao Route45 Literal.
 
 O CLI `odh-bhav` ganhou opções de probe para inicializar palavras explícitas de
 Caller e StackObject no mundo construído; os valores são apenas estado sintético
-do harness, não valores restaurados do save. O probe pára antes da rotina 4113,
-por isso não prova interação de porta, animação ou mudança de sala.
-Próximo: implementar `goto_relative` como adaptador de routing com operandos e
-perfis estritos, usando routing/frame de rota já existente, e adicionar teste
-que confirme `Doors.iff:4112` ultrapassa esse ponto somente com uma resolução e
-rota validadas; caso os requisitos espaciais não estejam disponíveis, falhar
-fechado e ampliar a integração do World/save em vez de aproximar sucesso.
+do harness, não valores restaurados do save. Testes comprovam execução
+assíncrona somente quando o host valida um ponto exato livre; destino bloqueado
+falha sem movimento e operandos fora do perfil são recusados. No trace
+comercial, o ponto do StackObject construído está bloqueado, então opcode27
+retorna false e a árvore segue `4105 pc4 -> 4162 -> 4114`, parando em opcode11.
+O fluxo ainda não completa a interação nem chega a 4113. Próxima unidade:
+auditar `GetDistanceTo` opcode11 de `Doors.iff:4114` e determinar a política
+correta de colocação/obstáculo da meta Door com uma instância do save antes de
+afirmar que o ramo de rota pode alcançar 4113.
