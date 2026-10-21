@@ -16,10 +16,10 @@ regra de raio/diagonal é perfil ODH e não foi demonstrada no executável origi
 `odh-routing-tests` passou 56 checks. Build completa e 143 testes passaram;
 `linux_window_backend` foi pulado porque o X11 retornou `DISPLAY inaccessible`
 mesmo com `DISPLAY=:0` e socket X11 presente. Não houve validação visual neste
-checkpoint. `git diff --check` passou. Próxima etapa é investigar filtros
-PositionValid/GetAvatarPlace e WallRaycast antes de afirmar clearance ou ligar
-Route45 ao Main. O acesso DNS ao remoto falhou nesta sessão; publicação ainda
-precisa ser confirmada quando o host resolver.
+checkpoint. `git diff --check` passou. O commit `d6df60939be6fae46de67a0246f43946d24c1641`
+foi publicado em `origin/main` e confirmado por `git ls-remote`. Próxima etapa
+é investigar filtros PositionValid/GetAvatarPlace e WallRaycast antes de
+afirmar clearance ou ligar Route45 ao Main.
 
 ## Máscara direcional do SLOT no Route45 (2026-10-20)
 
