@@ -228,8 +228,8 @@ void emit_route_grid_diagnostic(
 }
 
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
- const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false;
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
+ const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false,entry_point_probe=false;
  std::optional<std::pair<std::int16_t,std::int16_t>> route_grid_diagnostic;
  std::optional<SlotResource> slot_resource;
  const auto parse_id=[](const char* value){
@@ -245,6 +245,7 @@ int main(int argc,char** argv){try{
   else if(option=="--architecture-resource"&&n+1<argc){if(architecture_resources.size()>=256)throw odh::FormatError("architecture resource source count exceeds limit");architecture_resources.push_back(argv[++n]);}
   else if(option=="--route-edges"&&!route_edges)route_edges=true;
   else if(option=="--portal-probe"&&!portal_probe)portal_probe=true;
+  else if(option=="--entry-point-probe"&&!entry_point_probe)entry_point_probe=true;
   else if(option=="--route-grid-diagnostic"&&!route_grid_diagnostic&&n+2<argc){
    const auto actor_id=parse_id(argv[++n]);const auto target_id=parse_id(argv[++n]);
    route_grid_diagnostic=std::make_pair(actor_id,target_id);portal_probe=true;
@@ -454,6 +455,46 @@ int main(int argc,char** argv){try{
    std::cout<<"],\"faces\":[";
    for(std::size_t i=0;i<faces.size();++i){if(i)std::cout<<',';const auto& face=*faces[i];std::cout<<"{\"x\":"<<face.x<<",\"y\":"<<face.y<<",\"level\":"<<unsigned(face.level)<<",\"segment\":"<<unsigned(face.segment)<<'}';}
    std::cout<<"]}";
+  }
+  std::cout<<"]}";
+ }
+ if(entry_point_probe){
+  std::map<std::uint32_t,SavedEntryPointResource> entry_cache;
+  std::map<std::uint32_t,std::string> entry_errors;
+  std::cout<<",\"entry_point_probe\":{\"evidence\":\"authored_entry_point_table_and_asset_inventory_only\",\"bhav_executed\":false,\"runtime_placement_semantics\":false,\"entities\":[";
+  bool first_entry=true;
+  for(const auto& record:world->records){
+   const auto id=static_cast<std::int16_t>(record.saved.object_id);
+   if(!first_entry)std::cout<<',';
+   first_entry=false;
+   std::cout<<"{\"id\":"<<id<<",\"guid\":"<<record.definition.guid;
+   auto resource=entry_cache.find(record.definition.guid);
+   auto error=entry_errors.find(record.definition.guid);
+   if(resource==entry_cache.end()&&error==entry_errors.end()){
+    const auto* candidate=index->unique(record.definition.guid);
+    try{
+     if(!candidate)throw odh::FormatError("entry-point definition missing or ambiguous");
+     const auto decoded=saved_entry_point_resource(*candidate);
+     resource=entry_cache.emplace(record.definition.guid,decoded).first;
+    }catch(const std::exception& e){error=entry_errors.emplace(record.definition.guid,e.what()).first;}
+   }
+   if(error!=entry_errors.end()){
+    std::cout<<",\"state\":\"unknown\",\"reason\":"<<json_bytes(error->second)<<'}';continue;
+   }
+   const auto& decoded=resource->second;
+   const auto emit_entry=[&](unsigned index_value){
+    std::cout<<"\"ep"<<index_value<<"\":";
+    if(index_value>=decoded.table.entries.size()){std::cout<<"null";return;}
+    const auto& entry=decoded.table.entries[index_value];
+    std::cout<<"{\"condition\":"<<entry.condition<<",\"action\":"<<entry.action<<",\"action_bhav_in_definition_asset\":"
+     <<(entry.action!=0&&decoded.bhavs.count(entry.action)?"true":"false")<<'}';
+   };
+   std::cout<<",\"state\":\"resolved\",\"source\":"<<json_bytes(decoded.source)<<",\"asset\":"<<json_bytes(decoded.asset)
+    <<",\"objd_id\":"<<decoded.chunk_id<<",\"objd_version\":"<<decoded.functions.version
+    <<",\"uses_function_table\":"<<decoded.functions.uses_function_table<<",\"entry_source\":"
+    <<json_bytes(decoded.table.source==odh::EntryPointSource::objf?"OBJf":"OBJD")
+    <<",\"entry_version\":"<<decoded.table.version<<",\"entry_count\":"<<decoded.table.entries.size()<<',';
+   emit_entry(1);std::cout<<',';emit_entry(5);std::cout<<',';emit_entry(26);std::cout<<'}';
   }
   std::cout<<"]}";
  }

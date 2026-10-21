@@ -21,35 +21,54 @@ struct SavedPortalFunction {
     bool action_bhav_in_asset;
 };
 
-// Resolve the authored Portal entry (index 15) from the exact OBJD/OBJf asset
-// selected for a saved entity. This reads a function reference only: it does
-// not execute the BHAV or establish live portal/route state.
-inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate& candidate) {
+struct SavedEntryPointResource {
+    std::string source,asset;
+    std::uint16_t chunk_id;
+    odh::ObjdFunctions functions;
+    odh::EntryPointTable table;
+    std::set<std::uint16_t> bhavs;
+};
+
+// Resolve the exact OBJD/OBJf function table and private BHAV inventory from
+// one saved entity's selected definition asset. This is static resource
+// inspection only; it never executes any entry-point routine.
+inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionCandidate& candidate) {
+    std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::EntryPointTable> table;
     std::set<std::uint16_t> bhavs;
     auto load=[&](const auto& view) {
         std::optional<odh::View> objd,objf;
         std::size_t objd_count=0,objf_count=0;
+        odh::Limits limits;limits.iff_chunks=4096;
         odh::iff_chunks(view,[&](const odh::Chunk& chunk) {
             if(chunk.type=="OBJD"&&chunk.id==candidate.chunk_id) { ++objd_count; objd=chunk.payload; }
             else if(chunk.type=="OBJf"&&chunk.id==candidate.chunk_id) { ++objf_count; objf=chunk.payload; }
             else if(chunk.type=="BHAV") bhavs.insert(chunk.id);
-        });
-        if(objd_count!=1||!objd) throw odh::FormatError("portal probe OBJD identity absent or ambiguous");
-        const auto functions=odh::read_objd_functions(*objd);
-        if(functions.uses_function_table==0) {
-            if(objf_count!=0) throw odh::FormatError("portal probe has unexpected OBJf for generated function table");
+        },limits);
+        if(objd_count!=1||!objd) throw odh::FormatError("entry-point probe OBJD identity absent or ambiguous");
+        functions=odh::read_objd_functions(*objd);
+        if(functions->uses_function_table==0) {
+            if(objf_count!=0) throw odh::FormatError("entry-point probe has unexpected OBJf for generated function table");
             table=odh::read_objd_entry_points(*objd);
         } else {
-            if(objf_count!=1||!objf) throw odh::FormatError("portal probe selected OBJf absent or ambiguous");
+            if(objf_count!=1||!objf) throw odh::FormatError("entry-point probe selected OBJf absent or ambiguous");
             table=odh::read_objf(*objf);
         }
     };
     if(candidate.asset.empty()) with_iff_file(candidate.source,load);
     else with_far_entry(candidate.source,candidate.asset,load);
-    if(!table||table->entries.size()<=15) throw odh::FormatError("portal probe entry 15 unavailable");
-    const auto action=table->entries[15].action;
-    return {table->source,action,action!=0&&bhavs.find(action)!=bhavs.end()};
+    if(!functions||!table) throw odh::FormatError("entry-point probe function table unavailable");
+    return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,std::move(bhavs)};
+}
+
+// Resolve the authored Portal entry (index 15) from the exact OBJD/OBJf asset
+// selected for a saved entity. This reads a function reference only: it does
+// not execute the BHAV or establish live portal/route state.
+inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate& candidate) {
+    const auto resource=saved_entry_point_resource(candidate);
+    if(resource.table.entries.size()<=15) throw odh::FormatError("portal probe entry 15 unavailable");
+    const auto action=resource.table.entries[15].action;
+    return {resource.table.source,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end()};
 }
 
 inline SavedWallAppearance saved_wall_appearance(const odh::SavedWorld& saved,const odh::DefinitionIndex& index,const odh::SavedArchitecture& architecture,bool allow_removed=false){
