@@ -7,6 +7,21 @@ roteamento original; a meta Linux funcional permanece aberta.
 
 ## Estado e contrato
 
+`build_world_room_route_grid` agora converte um `AttemptWalkObstacleSnapshot`
+runtime completo em uma malha local bounded. Usa os limites Room.Bounds já
+ajustados, inclui as quatro faixas externas da política AttemptWalk e rasteriza
+os retângulos no lattice 1/16 tile com interior estrito (`x1+1 <= x < x2`,
+`y1+1 <= y < y2`). Os limites padrão são 16.384 retângulos, 262.144 células
+alocadas e 262.144 células acumuladas para rasterização. Snapshot incompleto,
+limites desalinhados, retângulos inválidos ou orçamento excedido não publicam
+malha parcial; o motivo original do snapshot é preservado.
+
+O teste sintético cobre limites, faixas, convenção de borda e orçamentos; o
+teste de integração passa o snapshot vivo já montado com RoomInfo e EP5 por esse
+conversor. Isso valida apenas a conversão para RouteGrid. A grade ainda não é
+consumida por `Routing`/Main, não replica a geometria contínua do VMRectRouter
+nem prova `GetAvatarPlace`/PositionValid por passo.
+
 World tem posição opcional (x/y inteiros, nível positivo e direção 0..7), com
 unidades de 1/16 tile no adaptador. Posições fora da faixa, entidades ausentes
 ou vinculadas a um recipiente recusam mudança. Posição não integra ainda todos

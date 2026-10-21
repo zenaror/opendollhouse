@@ -1,4 +1,5 @@
 #include "odh/world_attempt_walk.hpp"
+#include "odh/world_room_route_grid.hpp"
 #include "odh/entry_point5_readonly.hpp"
 
 #include <cstdlib>
@@ -110,6 +111,11 @@ int main() {
         "adapter feeds live RoomInfo boxes, flags and bilateral EP5 into AttemptWalk");
     require(result.obstacles.size() == 7,
         "live AttemptWalk output combines wall, room, bands and expanded entity footprints");
+    const auto route_grid=build_world_room_route_grid(result);
+    require(route_grid.state==WorldRoomRouteGridState::ready&&route_grid.grid&&
+        route_grid.obstacle_rectangles==result.obstacles.size()&&
+        route_grid.grid->contains({-16,-16})&&!route_grid.grid->contains({96,0}),
+        "live RoomInfo and EP5 snapshot rasterizes into a bounded padded-room grid");
 
     World exempt_world;
     require(setup(exempt_world, 4108), "EP5 integration fixture uses private actions");

@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `build_world_room_route_grid` rasteriza um snapshot AttemptWalk completo de
+  RoomInfo/RoomObs/WallObs/EP5 numa grade local bounded, incluindo as faixas de
+  limite da sala e preservando o motivo de snapshots incompletos. Há uma
+  fixture de geometrias e um teste integrado ao snapshot vivo. A grade ainda
+  não alimenta o `Routing` nem substitui o VMRectRouter do Simitone.
+
 - `Routing` agora preserva até 16 jobs Route45 aninhados quando uma BHAV
   externa em execução dispara outro Route45. O controller valida o vínculo
   entre frame VM, ticket e identidade do avatar, mantém o job pai suspenso,
