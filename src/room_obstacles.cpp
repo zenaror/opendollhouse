@@ -1,9 +1,11 @@
 #include "odh/room_obstacles.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <map>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -103,9 +105,12 @@ RoomPortalInventory build_room_portal_inventory(
     for (const auto& [group_id, group_members] : groups) {
         const bool has_door = std::any_of(group_members.begin(), group_members.end(),
             [](const auto* member) { return member->architectural_door && !member->contained; });
-        if (!has_door) continue;
-
-        std::set<std::uint16_t> target_rooms;
+        struct PortalLocation {
+            std::int16_t id;
+            std::uint16_t room;
+            EntityPosition position;
+        };
+        std::vector<PortalLocation> portal_locations;
         for (const auto* member : group_members) {
             if (!member->portal) continue;
             std::uint32_t tile_x = 0, tile_y = 0;
@@ -115,8 +120,24 @@ RoomPortalInventory build_room_portal_inventory(
                 result.complete = false;
                 continue;
             }
-            target_rooms.insert(*room);
+            portal_locations.push_back({member->id, *room, *member->position});
         }
+
+        // VMContext.AddRoomPortal creates one directed edge per portal object,
+        // to the first other portal object in a different room, preserving
+        // multitile-group iteration order.
+        for (const auto& source : portal_locations) {
+            const auto target = std::find_if(portal_locations.begin(), portal_locations.end(),
+                [&](const auto& candidate) {
+                    return candidate.id != source.id && candidate.room != source.room;
+                });
+            if (target != portal_locations.end())
+                result.edges.push_back({source.room, target->room, source.id, source.position});
+        }
+
+        if (!has_door) continue;
+        std::set<std::uint16_t> target_rooms;
+        for (const auto& portal : portal_locations) target_rooms.insert(portal.room);
 
         std::set<TileKey> door_tiles;
         for (const auto* member : group_members) {
@@ -151,6 +172,126 @@ RoomPortalInventory build_room_portal_inventory(
     return result;
 }
 
+RoomPortalRoute find_room_portal_route(
+    const RoomPortalInventory& inventory, std::uint16_t source_room,
+    std::uint16_t target_room, EntityPosition start, EntityPosition destination,
+    const std::vector<IgnoredRoomPortal>& ignored,
+    std::size_t edge_limit, std::size_t expansion_limit,
+    std::size_t frontier_limit) {
+    RoomPortalRoute result;
+    if (!inventory.complete) return result;
+    const auto& edges = inventory.edges;
+    const auto valid_position = [](const EntityPosition& position) {
+        return position.x >= 0 && position.x <= 32767 && position.y >= 0 &&
+               position.y <= 32767 && position.level >= 1 && position.level <= 2;
+    };
+    if (!valid_position(start) || !valid_position(destination)) return result;
+    if (edges.size() > edge_limit || ignored.size() > edge_limit) {
+        result.status = RoomPortalRouteStatus::budget_exhausted;
+        return result;
+    }
+    std::set<std::pair<std::int16_t, std::uint16_t>> identities;
+    for (const auto& edge : edges) {
+        if (edge.portal_id <= 0 || edge.source_room == edge.target_room ||
+            !valid_position(edge.position) ||
+            !identities.emplace(edge.portal_id, edge.target_room).second)
+            return result;
+    }
+    for (const auto& portal : ignored)
+        if (portal.portal_id <= 0) return result;
+
+    result.status = RoomPortalRouteStatus::no_path;
+    if (source_room == target_room) {
+        result.status = RoomPortalRouteStatus::found;
+        return result;
+    }
+    if (expansion_limit == 0 || frontier_limit == 0) {
+        result.status = RoomPortalRouteStatus::budget_exhausted;
+        return result;
+    }
+
+    const auto distance = [](const EntityPosition& from, const EntityPosition& to) {
+        const auto dx = static_cast<double>(from.x) - to.x;
+        const auto dy = static_cast<double>(from.y) - to.y;
+        const auto levels = std::abs(static_cast<int>(from.level) - to.level);
+        return std::sqrt(dx * dx + dy * dy) / 16.0 + levels * 10.0;
+    };
+    struct QueueEntry { double score; double cost; std::size_t node; std::size_t order; };
+    struct Later {
+        bool operator()(const QueueEntry& left, const QueueEntry& right) const noexcept {
+            if (left.score != right.score) return left.score > right.score;
+            return left.order > right.order;
+        }
+    };
+    const auto start_node = edges.size();
+    const auto missing = std::numeric_limits<std::size_t>::max();
+    std::vector<double> best(edges.size() + 1, std::numeric_limits<double>::infinity());
+    std::vector<std::size_t> parent(edges.size() + 1, missing);
+    std::vector<bool> closed(edges.size() + 1, false);
+    std::priority_queue<QueueEntry, std::vector<QueueEntry>, Later> open;
+    std::size_t order = 0;
+    best[start_node] = 0.0;
+    open.push({distance(start, destination), 0.0, start_node, order++});
+    std::size_t frontier_size = 1;
+
+    while (!open.empty()) {
+        const auto current = open.top();
+        open.pop();
+        --frontier_size;
+        if (closed[current.node] || current.cost != best[current.node]) continue;
+        if (result.expanded >= expansion_limit) {
+            result.status = RoomPortalRouteStatus::budget_exhausted;
+            result.portals.clear();
+            return result;
+        }
+        ++result.expanded;
+        const auto current_room = current.node == start_node
+            ? source_room : edges[current.node].target_room;
+        const auto current_position = current.node == start_node
+            ? start : edges[current.node].position;
+        if (current_room == target_room) {
+            result.status = RoomPortalRouteStatus::found;
+            result.cost = current.cost + distance(current_position, destination);
+            auto node = current.node;
+            while (node != start_node) {
+                result.portals.push_back(edges[node]);
+                node = parent[node];
+                if (node == missing) {
+                    result.portals.clear();
+                    result.status = RoomPortalRouteStatus::invalid_input;
+                    return result;
+                }
+            }
+            std::reverse(result.portals.begin(), result.portals.end());
+            return result;
+        }
+        closed[current.node] = true;
+
+        for (std::size_t next = 0; next < edges.size(); ++next) {
+            const auto& edge = edges[next];
+            if (edge.source_room != current_room || closed[next]) continue;
+            if (std::any_of(ignored.begin(), ignored.end(), [&](const auto& portal) {
+                    return portal.portal_id == edge.portal_id &&
+                           portal.target_room == edge.target_room;
+                }))
+                continue;
+            const auto next_cost = current.cost + distance(current_position, edge.position);
+            if (next_cost >= best[next]) continue;
+            if (frontier_size >= frontier_limit) {
+                result.status = RoomPortalRouteStatus::budget_exhausted;
+                result.portals.clear();
+                return result;
+            }
+            best[next] = next_cost;
+            parent[next] = current.node;
+            open.push({next_cost + distance(edge.position, destination), next_cost,
+                       next, order++});
+            ++frontier_size;
+        }
+    }
+    return result;
+}
+
 DynamicRoomPortalInventory::DynamicRoomPortalInventory(
     GeometricRoomMap map, std::size_t member_limit)
     : map_(std::move(map)), member_limit_(member_limit) {
@@ -158,15 +299,19 @@ DynamicRoomPortalInventory::DynamicRoomPortalInventory(
 }
 
 bool DynamicRoomPortalInventory::publish(
-    std::map<std::int16_t, RoomPortalMemberSnapshot>&& candidate) {
+    std::map<std::int16_t, RoomPortalMemberSnapshot>&& candidate,
+    std::vector<std::int16_t>&& order) {
+    if (order.size() != candidate.size()) return false;
     std::vector<RoomPortalMemberSnapshot> snapshots;
     snapshots.reserve(candidate.size());
-    for (const auto& [id, member] : candidate) {
-        (void)id;
-        snapshots.push_back(member);
+    for (const auto id : order) {
+        const auto found = candidate.find(id);
+        if (found == candidate.end()) return false;
+        snapshots.push_back(found->second);
     }
     auto candidate_inventory = build_room_portal_inventory(map_, snapshots);
     members_.swap(candidate);
+    member_order_.swap(order);
     inventory_ = std::move(candidate_inventory);
     ++generation_;
     return true;
@@ -179,7 +324,9 @@ bool DynamicRoomPortalInventory::register_member(
         return false;
     auto candidate = members_;
     candidate.emplace(member.id, member);
-    return publish(std::move(candidate));
+    auto order = member_order_;
+    order.push_back(member.id);
+    return publish(std::move(candidate), std::move(order));
 }
 
 bool DynamicRoomPortalInventory::update_member(
@@ -187,25 +334,31 @@ bool DynamicRoomPortalInventory::update_member(
     if (member.id <= 0 || members_.find(member.id) == members_.end()) return false;
     auto candidate = members_;
     candidate[member.id] = member;
-    return publish(std::move(candidate));
+    auto order = member_order_;
+    return publish(std::move(candidate), std::move(order));
 }
 
 bool DynamicRoomPortalInventory::unregister_member(std::int16_t id) {
     if (id <= 0 || members_.find(id) == members_.end()) return false;
     auto candidate = members_;
     candidate.erase(id);
-    return publish(std::move(candidate));
+    auto order = member_order_;
+    order.erase(std::remove(order.begin(), order.end(), id), order.end());
+    return publish(std::move(candidate), std::move(order));
 }
 
 bool DynamicRoomPortalInventory::replace_members(
     const std::vector<RoomPortalMemberSnapshot>& members) {
     if (members.size() > member_limit_) return false;
     std::map<std::int16_t, RoomPortalMemberSnapshot> candidate;
+    std::vector<std::int16_t> order;
+    order.reserve(members.size());
     for (const auto& member : members) {
         if (member.id <= 0 || !candidate.emplace(member.id, member).second)
             return false;
+        order.push_back(member.id);
     }
-    return publish(std::move(candidate));
+    return publish(std::move(candidate), std::move(order));
 }
 
 RoomObstacleCandidateSet generate_room_obstacle_candidates(

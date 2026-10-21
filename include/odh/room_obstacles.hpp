@@ -38,6 +38,16 @@ struct RoomPortalOpening {
     std::uint32_t tile_x = 0, tile_y = 0;
     std::uint8_t tile_level = 0;
 };
+struct RoomPortalEdge {
+    std::uint16_t source_room = 0;
+    std::uint16_t target_room = 0;
+    std::int16_t portal_id = 0;
+    EntityPosition position{};
+};
+struct IgnoredRoomPortal {
+    std::int16_t portal_id = 0;
+    std::uint16_t target_room = 0;
+};
 
 // Minimal saved-World evidence used to conservatively enumerate Portal15
 // openings. group_leader <= 0 denotes a singleton whose own id is its group.
@@ -54,13 +64,33 @@ struct RoomPortalInventory {
     bool complete = true;
     std::size_t overlapping_door_tiles = 0;
     std::vector<RoomPortalOpening> openings;
+    std::vector<RoomPortalEdge> edges;
 };
 
-// Builds room/tile openings from architectural-door groups. A missing or
-// out-of-lot door/portal position, unknown room, duplicate ID, or tile claimed
-// by different door groups makes the inventory incomplete. Overlapping doors
-// still produce diagnostic openings, but callers must keep room obstacles
-// incomplete because Simitone selects the first architectural door at a tile.
+enum class RoomPortalRouteStatus : std::uint8_t {
+    found, no_path, invalid_input, budget_exhausted
+};
+struct RoomPortalRoute {
+    RoomPortalRouteStatus status = RoomPortalRouteStatus::invalid_input;
+    std::vector<RoomPortalEdge> portals;
+    std::size_t expanded = 0;
+    double cost = 0.0;
+};
+// Bounded A* over directed Portal15 room edges. The score follows Simitone's
+// distance metric (XY Euclidean units plus 10 per floor); ignored entries
+// identify one Portal object -> target-room connection.
+RoomPortalRoute find_room_portal_route(
+    const RoomPortalInventory&, std::uint16_t source_room,
+    std::uint16_t target_room, EntityPosition start, EntityPosition destination,
+    const std::vector<IgnoredRoomPortal>& ignored = {},
+    std::size_t edge_limit = 4096, std::size_t expansion_limit = 4096,
+    std::size_t frontier_limit = 4096);
+
+// Builds room/tile openings from architectural-door groups and directed room
+// edges from portal members. A missing/out-of-lot door or portal position,
+// unknown room, duplicate ID, or tile claimed by different door groups makes
+// the inventory incomplete. Edges follow the first other Portal member in
+// group order, matching VMContext.AddRoomPortal.
 RoomPortalInventory build_room_portal_inventory(
     const GeometricRoomMap&, const std::vector<RoomPortalMemberSnapshot>&);
 
@@ -87,11 +117,13 @@ public:
     std::uint64_t generation() const noexcept { return generation_; }
 
 private:
-    bool publish(std::map<std::int16_t, RoomPortalMemberSnapshot>&&);
+    bool publish(std::map<std::int16_t, RoomPortalMemberSnapshot>&&,
+                 std::vector<std::int16_t>&&);
 
     GeometricRoomMap map_;
     std::size_t member_limit_;
     std::map<std::int16_t, RoomPortalMemberSnapshot> members_;
+    std::vector<std::int16_t> member_order_;
     RoomPortalInventory inventory_;
     std::uint64_t generation_ = 0;
 };

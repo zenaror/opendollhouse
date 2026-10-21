@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O inventário de portal agora preserva arestas dirigidas por ID de objeto e
+  sala destino, escolhendo a primeira outra parte Portal na ordem do grupo como
+  faz `AddRoomPortal` no Simitone. `find_room_portal_route` busca uma sequência
+  bounded com a métrica de distância do `VMRoutingFrame` e permite ignorar uma
+  conexão que falhou para encontrar alternativa. Ainda não executa a BHAV nem
+  monta caminhos geométricos por sala; veja
+  `docs/room-portal-routing-validation.md`.
+
 - `DynamicRoomPortalInventory` mantém um conjunto bounded de membros informados
   pelo host e recompõe/publica o inventário após registro, movimento ou remoção,
   incluindo substituição em lote para snapshots do host.

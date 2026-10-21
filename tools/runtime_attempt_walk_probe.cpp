@@ -97,6 +97,7 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         const auto& portal_inventory = portal_index.current();
         result.portal_inventory_complete = portal_inventory.complete;
         result.portal_openings = portal_inventory.openings.size();
+        result.portal_edges = portal_inventory.edges;
 
         const auto room_obstacles = odh::generate_room_obstacle_candidates(
             rooms, room, level, portal_inventory.openings, portal_inventory.complete);

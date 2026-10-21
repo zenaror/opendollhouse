@@ -89,6 +89,33 @@ int main() {
                 inventory.openings.size() == 1 && inventory.openings[0].target_room == 2 &&
                 inventory.openings[0].tile_x == 1 && inventory.openings[0].tile_y == 1,
                 "portal group opens its positioned door tile toward the member's geometric room");
+        require(inventory.edges.empty(),
+                "one Portal15 member without another portal member has no room edge");
+
+        auto graph_rooms = portal_rooms;
+        add_room(graph_rooms, 3, 0, {0, 0, 4, 3});
+        graph_rooms.levels[0][1 * 4 + 0] = 0x00030003U;
+        const std::vector<odh::RoomPortalMemberSnapshot> graph_group{
+            {30, 30, true, false, false, odh::EntityPosition{16, 16, 1, 0}},
+            {31, 30, false, true, false, odh::EntityPosition{32, 16, 1, 0}},
+            {32, 30, false, true, false, odh::EntityPosition{0, 0, 1, 0}},
+            {33, 30, false, true, false, odh::EntityPosition{0, 16, 1, 0}}};
+        inventory = odh::build_room_portal_inventory(graph_rooms, graph_group);
+        require(inventory.complete && inventory.edges.size() == 3 &&
+                inventory.edges[0].portal_id == 31 && inventory.edges[0].source_room == 2 &&
+                inventory.edges[0].target_room == 1 &&
+                inventory.edges[1].portal_id == 32 && inventory.edges[1].source_room == 1 &&
+                inventory.edges[1].target_room == 2 &&
+                inventory.edges[2].portal_id == 33 && inventory.edges[2].source_room == 3 &&
+                inventory.edges[2].target_room == 2,
+                "portal graph is directed and selects first other portal in group order");
+        odh::DynamicRoomPortalInventory ordered_portals(graph_rooms);
+        require(ordered_portals.replace_members(graph_group) &&
+                ordered_portals.current().edges.size() == 3 &&
+                ordered_portals.current().edges[0].portal_id == 31 &&
+                ordered_portals.current().edges[1].portal_id == 32 &&
+                ordered_portals.current().edges[2].portal_id == 33,
+                "batch portal snapshots preserve the supplied multitile-group ordering");
 
         auto missing_door = portal_group;
         missing_door[0].position.reset();
@@ -175,6 +202,52 @@ int main() {
         require(!bounded_portals.replace_members(portal_group) &&
                 bounded_portals.member_count() == 1 && bounded_portals.generation() == 1,
                 "batch replacement enforces member bound before publication");
+
+        odh::RoomPortalInventory route_graph;
+        route_graph.edges = {
+            {1, 2, 10, {16, 16, 1, 0}}, {2, 4, 20, {32, 16, 1, 0}},
+            {1, 3, 11, {16, 32, 1, 0}}, {3, 4, 30, {32, 32, 1, 0}}};
+        auto room_route = odh::find_room_portal_route(route_graph, 1, 4,
+            {0, 0, 1, 0}, {48, 24, 1, 0});
+        require(room_route.status == odh::RoomPortalRouteStatus::found &&
+                room_route.portals.size() == 2 && room_route.portals[0].portal_id == 10 &&
+                room_route.portals[1].portal_id == 20,
+                "bounded room A* chooses the lower-cost directed portal path");
+        auto incomplete_graph = route_graph;
+        incomplete_graph.complete = false;
+        require(odh::find_room_portal_route(incomplete_graph, 1, 4,
+                    {0, 0, 1, 0}, {48, 24, 1, 0}).status ==
+                    odh::RoomPortalRouteStatus::invalid_input,
+                "incomplete portal inventory cannot be used to plan a route");
+        room_route = odh::find_room_portal_route(route_graph, 1, 4,
+            {0, 0, 1, 0}, {48, 24, 1, 0}, {{20, 4}});
+        require(room_route.status == odh::RoomPortalRouteStatus::found &&
+                room_route.portals.size() == 2 && room_route.portals[0].portal_id == 11 &&
+                room_route.portals[1].portal_id == 30,
+                "failed portal edge can be ignored while an alternate room path is replanned");
+        room_route = odh::find_room_portal_route(route_graph, 1, 4,
+            {0, 0, 1, 0}, {48, 24, 1, 0}, {{20, 4}, {30, 4}});
+        require(room_route.status == odh::RoomPortalRouteStatus::no_path &&
+                room_route.portals.empty(),
+                "exhausted ignored portal alternatives report no room path");
+        require(odh::find_room_portal_route(route_graph, 1, 1,
+                    {0, 0, 1, 0}, {0, 0, 1, 0}).status ==
+                    odh::RoomPortalRouteStatus::found,
+                "same-room goal requires no portal transitions");
+        require(odh::find_room_portal_route(route_graph, 1, 4,
+                    {0, 0, 1, 0}, {48, 24, 1, 0}, {}, 2).status ==
+                    odh::RoomPortalRouteStatus::budget_exhausted,
+                "portal graph edge inventory is bounded before search");
+        require(odh::find_room_portal_route(route_graph, 1, 4,
+                    {0, 0, 1, 0}, {48, 24, 1, 0}, {}, 4096, 4096, 1).status ==
+                    odh::RoomPortalRouteStatus::budget_exhausted,
+                "portal A* frontier is bounded even when a room has many exits");
+        auto duplicate_graph = route_graph;
+        duplicate_graph.edges.push_back(route_graph.edges.front());
+        require(odh::find_room_portal_route(duplicate_graph, 1, 4,
+                    {0, 0, 1, 0}, {48, 24, 1, 0}).status ==
+                    odh::RoomPortalRouteStatus::invalid_input,
+                "ambiguous duplicate Portal object-to-room edge is rejected");
         auto duplicate_member = portal_group;
         duplicate_member.push_back(portal_group.front());
         inventory = odh::build_room_portal_inventory(portal_rooms, duplicate_member);

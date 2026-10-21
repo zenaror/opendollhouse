@@ -76,6 +76,15 @@ void different_render_path(const std::string& output,const std::string& input) {
         throw odh::FormatError("person frame output aliases an input");
 }
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
+const char* room_portal_route_status_name(odh::RoomPortalRouteStatus status) {
+    switch (status) {
+    case odh::RoomPortalRouteStatus::found: return "found";
+    case odh::RoomPortalRouteStatus::no_path: return "no_path";
+    case odh::RoomPortalRouteStatus::invalid_input: return "invalid_input";
+    case odh::RoomPortalRouteStatus::budget_exhausted: return "budget_exhausted";
+    }
+    return "invalid_input";
+}
 Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::uint16_t> definition={},bool startup=false) {
     Loaded result;
     with_resource(resource,[&](const auto& view){
@@ -722,6 +731,7 @@ int main(int argc,char** argv) {
         odh::RoomInfoObstacleSnapshot inventory;
         std::optional<RuntimeAttemptWalkProbe> attempt_walk;
         std::optional<odh::RectRoutePoint> attempt_walk_destination;
+        std::optional<odh::RoomPortalRoute> attempt_walk_room_route;
         std::optional<odh::RectRouteResult> attempt_walk_route;
         std::optional<odh::RectRouteLineResult> attempt_walk_lines;
         std::string attempt_walk_route_state="not_requested";
@@ -1146,7 +1156,25 @@ struct PlacementCandidateProbe {
                                 attempt_walk_destination->x,attempt_walk_destination->y,
                                 actor->position->level,actor->position->direction});
                             if(!goal_room) room_info_probe->attempt_walk_route_state="goal_room_unknown";
-                            else if(*goal_room!=*room) room_info_probe->attempt_walk_route_state="cross_room_unmodeled";
+                            else if(*goal_room!=*room){
+                                odh::RoomPortalInventory portal_graph;
+                                portal_graph.complete=room_info_probe->attempt_walk->portal_inventory_complete;
+                                portal_graph.edges=room_info_probe->attempt_walk->portal_edges;
+                                room_info_probe->attempt_walk_room_route=odh::find_room_portal_route(
+                                    portal_graph,*room,*goal_room,*actor->position,
+                                    {attempt_walk_destination->x,attempt_walk_destination->y,
+                                     actor->position->level,actor->position->direction});
+                                switch(room_info_probe->attempt_walk_room_route->status){
+                                case odh::RoomPortalRouteStatus::found:
+                                    room_info_probe->attempt_walk_route_state="cross_room_portal_plan_ready";break;
+                                case odh::RoomPortalRouteStatus::no_path:
+                                    room_info_probe->attempt_walk_route_state="cross_room_no_portal_path";break;
+                                case odh::RoomPortalRouteStatus::invalid_input:
+                                    room_info_probe->attempt_walk_route_state="cross_room_portal_inventory_unsupported";break;
+                                case odh::RoomPortalRouteStatus::budget_exhausted:
+                                    room_info_probe->attempt_walk_route_state="cross_room_portal_budget_exhausted";break;
+                                }
+                            }
                             else{
                                 const auto direction=actor->position->direction;
                                 const auto half=static_cast<unsigned>(direction/2);
@@ -1593,6 +1621,7 @@ struct PlacementCandidateProbe {
                 <<",\"avatar_consideration_mode\":\"isolated_new_root_saved_threads_dormant_empty_set\""
                 <<",\"other_avatars_in_room\":"<<attempt.other_avatars_in_room
                 <<",\"portal_openings\":"<<attempt.portal_openings
+                <<",\"portal_edges\":"<<attempt.portal_edges.size()
                 <<",\"room_obstacle_rectangles\":"<<attempt.room_obstacle_rectangles
                 <<",\"wall_obstacle_rectangles\":"<<attempt.wall_obstacle_rectangles
                 <<",\"roughbalanced_architecture_rectangles\":"<<attempt.roughbalanced_architecture_rectangles
@@ -1617,6 +1646,22 @@ struct PlacementCandidateProbe {
                 <<",\"route_clearance\":false,\"runtime_door_state_validated\":false,\"main_movement_integrated\":false,\"entity_order_matches_reference\":false,\"entity_obstacle_order_matches_reference\":"<<(probe.attempt_walk&&probe.attempt_walk->entity_obstacle_order_matches_reference?"true":"false")<<",\"status\":"
                 <<json_bytes(probe.attempt_walk_route_state)<<",\"destination\":["
                 <<probe.attempt_walk_destination->x<<','<<probe.attempt_walk_destination->y<<']';
+            if(probe.attempt_walk_room_route){
+                const auto& route=*probe.attempt_walk_room_route;
+                std::cout<<",\"portal_route\":{\"planner\":\"room_graph_only_no_BHAV_or_within_room_movement\",\"status\":"
+                    <<json_bytes(room_portal_route_status_name(route.status))
+                    <<",\"expanded\":"<<route.expanded<<",\"cost\":"<<route.cost<<",\"sequence\":[";
+                for(std::size_t n=0;n<route.portals.size();++n){
+                    if(n)std::cout<<',';
+                    const auto& portal=route.portals[n];
+                    std::cout<<"{\"portal_id\":"<<portal.portal_id
+                        <<",\"source_room\":"<<portal.source_room
+                        <<",\"target_room\":"<<portal.target_room
+                        <<",\"position\":["<<portal.position.x<<','<<portal.position.y
+                        <<','<<portal.position.level<<"]}";
+                }
+                std::cout<<"]}";
+            }else std::cout<<",\"portal_route\":null";
             if(probe.attempt_walk_route){
                 const auto& route=*probe.attempt_walk_route;
                 std::cout<<",\"generated_rectangles\":"<<route.generated_rectangles

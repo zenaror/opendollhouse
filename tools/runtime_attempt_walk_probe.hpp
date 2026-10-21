@@ -3,6 +3,7 @@
 #include "odh/world_attempt_walk.hpp"
 #include "saved_architecture_resources.hpp"
 #include "saved_wall_appearance.hpp"
+#include <vector>
 
 struct RuntimeAttemptWalkProbe {
     odh::AttemptWalkObstacleSnapshot snapshot;
@@ -13,6 +14,7 @@ struct RuntimeAttemptWalkProbe {
     std::size_t roughbalanced_architecture_rectangles = 0;
     bool entity_obstacle_order_matches_reference = false;
     std::size_t portal_openings = 0;
+    std::vector<odh::RoomPortalEdge> portal_edges;
     std::size_t room_obstacle_rectangles = 0;
     std::size_t wall_obstacle_rectangles = 0;
 };
