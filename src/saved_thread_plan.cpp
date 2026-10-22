@@ -6,6 +6,52 @@
 
 namespace odh {
 
+SavedWorldSession::SavedWorldSession(std::unique_ptr<SavedWorld> saved,
+                                     std::size_t thread_limit)
+    : saved_(std::move(saved)), thread_limit_(thread_limit) {
+    if (!saved_ || !saved_->world || !thread_limit_ || thread_limit_ > 64)
+        throw FormatError("saved World session needs a World and a bounded thread capacity");
+}
+
+void SavedWorldSession::retain_dormant_thread(std::int16_t id, std::unique_ptr<Vm> vm) {
+    if (id <= 0 || !vm || vm->status() != VmStatus::dormant || vm->steps() != 0 ||
+        vm->stack().empty())
+        throw FormatError("saved thread must be a nonempty dormant VM with no executed steps");
+    if (threads_.count(id) || threads_.size() >= thread_limit_)
+        throw FormatError("saved World session has a duplicate thread or reached its thread limit");
+    const auto* entity = saved_->world->find(id);
+    const auto saved_person = std::find_if(saved_->records.begin(), saved_->records.end(),
+        [id](const SavedWorldEntity& record) {
+            return record.saved.object_id == static_cast<std::uint16_t>(id) &&
+                record.tail.person.has_value();
+        });
+    if (!entity || entity->kind != EntityKind::avatar ||
+        saved_person == saved_->records.end())
+        throw FormatError("saved thread actor is absent or is not a saved avatar");
+    if (std::any_of(vm->stack().begin(), vm->stack().end(),
+            [id](const VmFrame& frame) { return frame.context.caller != id; }))
+        throw FormatError("saved thread frames do not belong to the saved avatar");
+    threads_.emplace(id, Thread{entity->generation, std::move(vm)});
+}
+
+bool SavedWorldSession::valid_binding(std::int16_t id, const Thread& thread) const {
+    const auto* entity = saved_->world->find(id);
+    return entity && entity->kind == EntityKind::avatar &&
+        entity->generation == thread.entity_generation && thread.vm &&
+        thread.vm->status() == VmStatus::dormant && thread.vm->steps() == 0;
+}
+
+const Vm* SavedWorldSession::dormant_thread(std::int16_t id) const {
+    const auto found = threads_.find(id);
+    return found != threads_.end() && valid_binding(id, found->second) ?
+        found->second.vm.get() : nullptr;
+}
+
+bool SavedWorldSession::all_dormant_bindings_valid() const {
+    return std::all_of(threads_.begin(), threads_.end(),
+        [this](const auto& item) { return valid_binding(item.first, item.second); });
+}
+
 void restore_simitone_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& plan) {
     std::vector<VmFrame> frames;
     frames.reserve(plan.frames.size());

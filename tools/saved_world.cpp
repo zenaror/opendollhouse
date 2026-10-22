@@ -28,11 +28,10 @@ int main(int argc,char** argv){try{
         throw odh::FormatError("saved-thread resource path exceeds limit");
     auto index=saved_definition_index(sources);odh::Objt object_types;auto records=saved_world_records(house,*index,&object_types);
     std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
-    auto loaded=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
+    odh::SavedWorldSession session(odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr));
+    auto* loaded=&session.saved_world();
     std::vector<std::optional<odh::SimitoneSavedThreadPlan>> thread_plans(records.size());
     std::vector<std::vector<SavedThreadCodeCheck>> thread_checks(records.size());
-    std::vector<std::optional<std::size_t>> thread_vm_imports(records.size());
-    std::size_t dormant_threads_imported=0;
     for(std::size_t n=0;n<records.size();++n){
         if(!records[n].tail.person)continue;
         thread_plans[n]=odh::make_simitone_saved_thread_plan(records[n],object_types);
@@ -40,19 +39,21 @@ int main(int argc,char** argv){try{
             thread_checks[n]=audit_saved_thread_plan(*thread_plans[n],*index,semiglobal,global);
             if(import_saved_threads_dormant&&!thread_plans[n]->frames.empty()){
                 auto banks=load_saved_thread_routine_banks(*thread_plans[n],thread_checks[n]);
-                odh::Vm vm(std::move(banks.global),{},{},{},std::move(banks.owners));
-                odh::restore_simitone_saved_thread_plan(vm,*thread_plans[n]);
-                if(vm.status()!=odh::VmStatus::dormant)
-                    throw odh::FormatError("saved-thread VM did not remain dormant after import");
-                thread_vm_imports[n]=vm.stack().size();
-                ++dormant_threads_imported;
+                auto vm=std::make_unique<odh::Vm>(std::move(banks.global),session.world().vm_memory(),
+                    odh::VmLimits{},odh::VmPrimitive{},std::move(banks.owners));
+                odh::restore_simitone_saved_thread_plan(*vm,*thread_plans[n]);
+                session.retain_dormant_thread(thread_plans[n]->entity_id,std::move(vm));
             }
         }
     }
+    if(!session.all_dormant_bindings_valid())
+        throw odh::FormatError("saved World session lost a dormant thread entity binding");
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
         <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"rendered\":false"
         <<",\"saved_thread_vm_import\":{\"requested\":"<<(import_saved_threads_dormant?"true":"false")
-        <<",\"executed\":false,\"threads_loaded_dormant\":"<<dormant_threads_imported<<'}'
+        <<",\"executed\":false,\"threads_loaded_dormant\":"<<session.thread_count()
+        <<",\"threads_retained_dormant\":"<<session.thread_count()
+        <<",\"all_retained_bindings_valid\":true}"
         <<",\"profile\":\"saved identity/banks/positions/containment/object relationships; dormant frames and raw source retained; no original runtime proof\""
         <<",\"definition_guids\":"<<index->guid_count()<<",\"entities\":"<<loaded->records.size()
         <<",\"world_words\":"<<loaded->world->word_count()<<",\"relationship_sources\":"<<loaded->relationships->source_count()
@@ -101,8 +102,12 @@ int main(int argc,char** argv){try{
                 std::cout<<'}';
             }
             std::cout<<']';
-            if(thread_vm_imports[n])
-                std::cout<<",\"vm_state\":\"dormant\",\"vm_imported_frames\":"<<*thread_vm_imports[n];
+            if(import_saved_threads_dormant&&!plan.frames.empty()){
+                const auto* vm=session.dormant_thread(plan.entity_id);
+                if(!vm)throw odh::FormatError("saved thread is no longer bound to its World entity");
+                std::cout<<",\"vm_state\":\"dormant\",\"vm_imported_frames\":"<<vm->stack().size()
+                    <<",\"vm_entity_generation\":"<<entity->generation<<",\"vm_steps\":"<<vm->steps();
+            }
             std::cout<<'}';
         }else std::cout<<"null";
         std::cout<<",\"saved_stack_depth\":"<<raw.common.stack.size()<<",\"object_relationships\":[";

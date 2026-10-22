@@ -142,7 +142,63 @@ int main() {
 
         types.entries[0].guid = 0;
         rejects([](auto&) {}, "zero GUID code owner rejected");
-        std::cout << "saved Simitone thread plan checks passed\n";
+
+        auto saved_world=std::make_unique<odh::SavedWorld>();
+        saved_world->world=std::make_unique<odh::World>();
+        for(const auto id:{std::int16_t{101},std::int16_t{102},std::int16_t{104}}){
+            require(saved_world->world->create(id,odh::EntityKind::avatar),
+                    "synthetic saved session avatar exists");
+            odh::SavedWorldEntity actor{};
+            actor.saved.object_id=static_cast<std::uint16_t>(id);
+            actor.tail.person.emplace();
+            saved_world->records.push_back(std::move(actor));
+        }
+        require(saved_world->world->create(103,odh::EntityKind::object),
+                "synthetic saved session non-avatar exists");
+        odh::SavedWorldSession session(std::move(saved_world),2);
+        auto dormant_for=[&](std::int16_t id){
+            odh::RoutineSet global{{odh::routine_key(280),
+                odh::Bhav{0x8002,{odh::Instruction{2,0xFE,0xFF,{}}},{},
+                    odh::Bhav::Metadata{0,4,0,0}}}};
+            auto vm=std::make_unique<odh::Vm>(std::move(global),
+                session.world().vm_memory());
+            const odh::VmFrame saved_frame{odh::routine_key(280),0,{id,id,id,0},{},{}};
+            vm->restore_dormant_state({saved_frame},{});
+            return vm;
+        };
+        auto session_rejects=[&](auto action,const char* message){
+            try{action();}catch(const odh::FormatError&){return;}
+            throw std::runtime_error(message);
+        };
+        session.retain_dormant_thread(101,dormant_for(101));
+        session_rejects([&]{session.retain_dormant_thread(101,dormant_for(101));},
+                        "duplicate saved avatar VM rejected");
+        session_rejects([&]{session.retain_dormant_thread(999,dormant_for(999));},
+                        "missing saved avatar rejected");
+        session_rejects([&]{session.retain_dormant_thread(103,dormant_for(103));},
+                        "non-avatar saved thread rejected");
+        session_rejects([&]{session.retain_dormant_thread(104,dormant_for(101));},
+                        "wrong frame caller rejected");
+        session_rejects([&]{session.retain_dormant_thread(104,std::make_unique<odh::Vm>(odh::RoutineSet{}));},
+                        "ready VM rejected as saved dormant thread");
+        session.retain_dormant_thread(102,dormant_for(102));
+        require(session.thread_count()==2 && session.all_dormant_bindings_valid() &&
+                session.dormant_thread(101) && session.dormant_thread(102) &&
+                session.dormant_thread(101)->status()==odh::VmStatus::dormant &&
+                session.dormant_thread(101)->steps()==0 &&
+                session.dormant_thread(102)->stack()[0].context.caller==102,
+                "two saved avatar VMs retained independently without execution");
+        session_rejects([&]{session.retain_dormant_thread(104,dormant_for(104));},
+                        "saved thread capacity enforced");
+        require(session.thread_count()==2 && session.all_dormant_bindings_valid(),
+                "rejected thread imports leave the two valid saved VMs intact");
+        require(session.world().remove(101) &&
+                session.world().create(101,odh::EntityKind::avatar),
+                "synthetic actor can be replaced at the same ID");
+        require(!session.dormant_thread(101) && session.dormant_thread(102) &&
+                !session.all_dormant_bindings_valid(),
+                "generation change invalidates only the replaced avatar's saved VM");
+        std::cout << "saved Simitone thread plan and session checks passed\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "saved thread plan test failed: " << e.what() << '\n';

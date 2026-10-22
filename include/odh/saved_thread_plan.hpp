@@ -4,6 +4,8 @@
 #include "odh/vm.hpp"
 
 #include <functional>
+#include <map>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -54,6 +56,26 @@ void apply_simitone_saved_return_mapping(SimitoneSavedThreadPlan&,
 // state is supported. The VM validates every routine and address; it remains
 // dormant and does not execute Main. The caller supplies the intended resources.
 void restore_simitone_saved_thread_plan(Vm&, const SimitoneSavedThreadPlan&);
+
+// Owns a decoded saved World and the imported VM state of its saved avatars.
+// Admission binds each dormant VM to the World entity generation. Only const
+// VM views are exposed; this session offers no activation or scheduler path.
+class SavedWorldSession {
+public:
+    explicit SavedWorldSession(std::unique_ptr<SavedWorld>, std::size_t thread_limit = 64);
+    const SavedWorld& saved_world() const { return *saved_; }
+    World& world() { return *saved_->world; }
+    void retain_dormant_thread(std::int16_t entity_id, std::unique_ptr<Vm>);
+    const Vm* dormant_thread(std::int16_t entity_id) const;
+    bool all_dormant_bindings_valid() const;
+    std::size_t thread_count() const { return threads_.size(); }
+private:
+    struct Thread { std::uint64_t entity_generation; std::unique_ptr<Vm> vm; };
+    bool valid_binding(std::int16_t, const Thread&) const;
+    std::unique_ptr<SavedWorld> saved_;
+    std::size_t thread_limit_;
+    std::map<std::int16_t, Thread> threads_;
+};
 
 // Resolve frame code-owner type indices through the serialized OBJT table,
 // preserve the saved stack, and apply Simitone's ObjectUses callee mapping.

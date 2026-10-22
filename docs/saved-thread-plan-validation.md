@@ -52,16 +52,47 @@ Isso não executa a VM nem substitui a restauração das filas e do relógio.
 
 `odh-saved-world --verify-saved-threads --import-saved-threads-dormant` repete
 a auditoria e carrega, de cada fonte exata aprovada, somente as BHAVs citadas
-pela pilha. Então importa cada Sim numa VM temporária, confirma o estado
-`dormant` e descarta a VM sem ativá-la. O JSON informa
-`saved_thread_vm_import.executed:false`; `saved_threads_restored` continua
-`false`. Esse teste não carrega as chamadas feitas por essas BHAVs e não deixa
-uma partida pronta para execução.
+pela pilha. A sessão possui o World restaurado e mantém uma VM por Sim salvo,
+ligada ao ID e à geração da entidade. O banco de leitura/escrita da VM aponta
+para esse mesmo World. A admissão exige avatar salvo, pilha não vazia, quadros
+com o mesmo chamador e estado `dormant` sem instruções executadas; o limite é
+64 VMs. Se a entidade for substituída sob o mesmo ID, a consulta à VM falha
+pela geração diferente. O JSON informa quantas VMs continuam guardadas,
+`all_retained_bindings_valid:true` e `executed:false`; `saved_threads_restored`
+continua `false`. Nenhuma VM é ativada. O carregador não traz as chamadas
+futuras dessas BHAVs nem fornece controladores de rota, animação ou fila.
 
 Essa conferência não executa os quadros. Ainda não restaura o estado especial
 de retorno entre frames nem retoma o relógio, a fila de interações ou os
 serviços de rota. Portanto esta etapa prepara e confere dados; não é
 continuação da partida nem teste de gameplay.
+
+## House05 da instalação local
+
+O mesmo caminho de importação foi exercitado em House05 com `Objects.far`,
+`Global.far` e os recursos de personagem `User00009.iff`, `User00010.iff` e
+`User00011.iff`. O World contém 245 entidades; os Sims 16, 18 e 21 têm três
+quadros cada, todos conferidos nos recursos e guardados em três VMs dormentes.
+Cada VM permanece com zero instruções executadas e vinculada à geração atual
+do Sim correspondente. O hash SHA-256 de `House05.iff` foi
+`a6d18d81c5072c507b118b68598ee12ea57403634d6507c39b7a04ad4c6cdd99`;
+os arquivos comerciais lidos preservaram seus hashes antes/depois do probe.
+A fila salva desses três Sims está vazia. Esses resultados são leitura e
+importação inativa de dados nativos, não retomada de uma partida.
+
+Reprodução, após compilar `odh-saved-world`:
+
+```sh
+./build/bridge-validation/odh-saved-world \
+  '../referencias/The Sims/UserData/Houses/House05.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00009.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00010.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00011.iff' \
+  --semiglobal '../referencias/The Sims/GameData/Global/Global.far' PersonGlobals.iff \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff \
+  --verify-saved-threads --import-saved-threads-dormant
+```
 
 ## House07 da instalação local
 
@@ -107,8 +138,8 @@ Para também conferir os quadros contra as rotinas reais do jogo:
 
 Para também importar as doze frames reais, sem ativar nenhuma delas, acrescente
 `--import-saved-threads-dormant` ao comando acima. No checkpoint local, Bob
-(ID105) e membro47 (ID137) foram importados em duas VMs temporárias; cada VM
-ficou parada com seis frames. Todas as doze rotinas vieram dos recursos
+(ID105) e membro47 (ID137) foram importados em duas VMs mantidas pela sessão;
+cada VM ficou parada com seis frames. Todas as doze rotinas vieram dos recursos
 identificados na auditoria. Isso confirma o caminho de leitura e importação,
 mas não a continuação da partida, a semântica do executável original ou o
 funcionamento de interações.
@@ -122,7 +153,7 @@ do adaptador.
 
 Os testes sintéticos cobrem resolução do dono, padding, `ObjectUses`, os quatro
 grupos de opcode usados para classificar a volta, extensão de `action_tree` e
-recusa de opcode chamador ausente. A build Linux limpa em `/tmp` concluiu, e
-CTest passou **164/164**; `linux_window_backend` foi pulado por falta de
-display. A conferência do diff (`git diff --check`) também passou. Esses testes
+recusa de opcode chamador ausente. Neste checkpoint de retenção, a build Linux de `odh-saved-world` e
+`odh-saved-thread-plan-tests` concluiu, e os três testes focados passaram.
+A conferência do diff (`git diff --check`) também passou. Esses testes
 não executam as pilhas salvas nem provam gameplay.
