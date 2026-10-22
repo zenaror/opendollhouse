@@ -10,7 +10,9 @@ validação indicados por versão.
 - O núcleo agora oferece um scheduler limitado para estados de VM por entidade:
   ele compartilha o tick, alterna a ordem inicial de execução e limita o trabalho
   total e por Sim. Um teste sintético com dois Sims confirma filas independentes
-  sobre o mesmo World; o scheduler ainda não está ligado ao host jogável.
+  sobre o mesmo World. `tools/person` usa o scheduler nos turnos Main após a
+  preparação inicial; o host ainda controla um só avatar e a rota continua fora
+  do scheduler.
 
 - A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
   um pixel e o nível do piso escolhido pelo host, calcula a posição contínua

@@ -81,7 +81,7 @@ como Caller e o GOTO como Callee e StackObject. A TTAB comercial do GOTO já foi
 conferida: a interação3 seleciona a ação4107 e o teste4108. Essa leitura confirma
 a ligação entre os dados, mas não executa a ação em uma fila real do bloqueador.
 
-### Modelo de execução por Sim — limite da próxima integração
+### Modelo de execução por Sim — integração em andamento
 
 Na revisão Simitone fixada `4906db3156616bfaffc10ce0963cf08062975fef` (FreeSO
 `f86bbd34b2112296ed786741f640a0535886d180`), `VM.InternalTick` avança o relógio
@@ -92,10 +92,7 @@ dentro da mesma VM do lote, não uma segunda VM completa. Fontes: `VM.cs:380-429
 `Engine/VMScheduler.cs:79-97`, `Entities/VMEntity.cs:61,490`.
 
 No ODH, cada `Vm` possui uma pilha e registradores próprios
-(`include/odh/vm.hpp`), e ainda não existe um scheduler de entidades que avance
-várias pilhas com um mesmo tick e orçamento compartilhado. O teste de duas filas
-usa dois objetos `Vm` e chama seus métodos diretamente; portanto, não representa
-o scheduler do Simitone. O primeiro subpasso já está implementado: `VmProgram`
+(`include/odh/vm.hpp`). `VmProgram`
 permite compartilhar o banco BHAV imutável entre objetos `Vm`, enquanto os
 owners instalados em tempo de execução continuam locais a cada VM. O teste
 `vm_code_owners` verifica que um owner exclusivo de uma entidade não aparece na
@@ -105,13 +102,18 @@ chama os hooks de observação depois. O orçamento total e o limite por Sim sã
 explícitos; a ordem inicial alterna entre ticks e a lista tem capacidade máxima.
 `entity_vm_scheduler` testa duas VMs, duas filas e um World compartilhado: a
 ação endereçada ao bloqueador altera o objeto compartilhado, sem consumir a fila
-do outro Sim. Isso ainda é uma prova sintética do scheduler, não integração com
-`tools/person`, rota, animação ou dados comerciais. Compartilhar as rotinas
-evita copiá-las para cada Sim, importante para os ports portáteis.
+do outro Sim. `tools/person` agora usa esse scheduler para os turnos Main depois
+da execução inicial de preparação; os hooks observam a fila já existente antes
+e depois de cada fatia. A janela e a rota continuam dirigidas pelo loop externo,
+e esse host ainda cria uma única VM/avatar. Portanto o teste com dois Sims segue
+sintético: não demonstra threads comerciais simultâneas, Notify para outra
+entidade, movimento do bloqueador ou animação. Compartilhar as rotinas evita
+copiá-las para cada Sim, importante para os ports portáteis.
 
-O caminho restante é conectar ao `tools/person` os hooks de fila/espera e as
-rotinas de cada avatar carregado; então o host pode executar BHAV4107 no
-bloqueador e medir sua posição, em vez de apenas escrever um campo de fixture.
+O próximo passo é separar do `tools/person` o pacote de execução de cada avatar:
+VM, fila, sono e dispatch de primitivas. Depois o host poderá registrar vários
+pacotes no mesmo relógio e executar BHAV4107 no bloqueador, medindo sua posição
+em vez de apenas escrever um campo de fixture.
 
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,

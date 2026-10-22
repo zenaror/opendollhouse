@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include "odh/entity_scheduler.hpp"
 #include "odh/sleep.hpp"
 #include "odh/snap.hpp"
 #include "odh/object_type.hpp"
@@ -1191,6 +1192,10 @@ int main(int argc,char** argv) {
     },std::move(owners));
     if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
     if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
+    odh::EntityVmScheduler entity_scheduler(1);
+    if(!entity_scheduler.add(runtime_avatar_id,vm,
+        [&](std::uint64_t){return queue.observe();},[&]{return queue.observe();}))
+        throw odh::FormatError("person VM could not join the entity scheduler");
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
     struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
@@ -2042,14 +2047,24 @@ struct PlacementCandidateProbe {
             render_lot!=nullptr,render_lot!=nullptr};
     };
     const auto total_steps=[&]{return startup_steps+vm.steps();};
-    const auto execute=[&] {
+    const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
+        const auto budget=total_steps()<10000?10000-total_steps():0;
+        if(scheduled_tick) {
+            const auto phase_trace=trace_in(initialize?"main":"root_probe");
+            const odh::EntityVmScheduler::Trace scheduled_trace=[&](std::int16_t,const odh::VmTrace& record){phase_trace(record);};
+            if(!entity_scheduler.tick(ticks,budget,budget,scheduled_trace)) {
+                host_failed=true;
+                host_diagnostic=entity_scheduler.diagnostic();
+            }
+            return;
+        }
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
-        vm.run(total_steps()<10000?10000-total_steps():0,trace_in(initialize?"main":"root_probe"));
+        vm.run(budget,trace_in(initialize?"main":"root_probe"));
         if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
     };
     profile_mark("host-runtime-ready");
-    execute();
+    execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
     profile_mark("first-main-execution");
     capture_frame();
     bool window_paused=false,window_closed=false;
@@ -2335,7 +2350,7 @@ struct PlacementCandidateProbe {
             if(bytes>256*1024-animation_event_bytes)throw odh::FormatError("animation event log bytes exceed bounded host profile");
             animation_events.push_back(event);animation_event_bytes+=bytes;
         });
-        execute();
+        execute(true);
         if(go_here_status=="queued"){
             if(queue.completion()&&(!go_here_previous_completion_uid||
                queue.completion()->uid!=*go_here_previous_completion_uid)){
