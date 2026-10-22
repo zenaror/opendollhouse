@@ -1,5 +1,23 @@
 # Continuidade atual
 
+## Atualização: teste de móvel no ponto de chegada da escada (2026-10-22)
+
+Foi acrescentado `tests/snap_arrival_blockers.cpp`. Ele liga o caminho real de
+montagem de obstáculos por móveis, o mapa de caminhada e o `Snap` da escada:
+com um móvel sintético cobrindo a chegada, o Snap retorna falso e o Sim
+permanece no piso e na posição de origem; sem o móvel, a troca de piso termina.
+O teste usa coordenadas e patamar sintéticos, não altera House03 ou outros
+dados do jogo e não prova comportamento do executável original. A House03
+continua passando nas quatro combinações já cobertas (subida/descida, idades
+fixture 0/21). `cmake --build /tmp/odh-stair-build -j2` terminou e 160 testes
+do CTest passaram; `linux_window_backend` foi pulado por não haver display.
+
+O teste confirma a regra local para um móvel; ainda falta uma prova integrada
+com móvel salvo no cômodo de chegada. Outro avatar continua levando resultado
+`unsupported`, pois a ação “Shoo” não foi implementada. Próximo: testar essa
+recusa com dois avatares sintéticos e avaliar chegada bloqueada por parede ou
+objeto do lote, sem generalizar o Snap antes disso.
+
 ## Atualização: subida e descida compostas com o lote (2026-10-22)
 
 O `--capture-tick` ainda acompanha o grande deslocamento já gravado em

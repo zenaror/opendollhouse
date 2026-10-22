@@ -1,5 +1,20 @@
 # Snap, binding e ocupação — 2026-10-13
 
+### Bloqueio de móvel no ponto de chegada da escada — 2026-10-22
+
+`tests/snap_arrival_blockers.cpp` compõe as três etapas usadas pelo teste de
+chegada: um retângulo de colisão de móvel entra no retrato de obstáculos, o
+mapa marca a coordenada do patamar como ocupada e o validador do Snap devolve
+“bloqueado”. A VM retorna falso e mantém o avatar no ponto de partida. O caso
+de controle sem móvel mantém a chegada livre e troca o avatar para o outro
+piso. CTest: `snap_arrival_blockers` passou.
+
+É uma fixture sintética que testa a ligação entre os componentes locais; ainda
+não injeta um móvel real salvo na House03. Não afirma como o executável original
+trata esse caso. O teste de integração da House03 segue validando os dois
+sentidos sem bloqueadores. Para outro avatar no cômodo, o comportamento host
+atual é `unsupported`: “Shoo” ainda não está implementado.
+
 `odh_snap` implementa um perfil inicial do snap46 Literal para ocupar um
 recipiente. Ele permite avançar o BHAV real da cadeira até a animação44,
 ainda ausente. Não comprova sentar visualmente ou compatibilidade completa.
