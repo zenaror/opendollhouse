@@ -1,5 +1,5 @@
 """Resource owner + native entry host integration, entirely synthetic inputs."""
-import json,struct,subprocess,sys,tempfile
+import json,os,struct,subprocess,sys,tempfile
 from pathlib import Path
 binary=sys.argv[1]
 def routine(rows):
@@ -23,9 +23,14 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
  args=[binary,'--avatar',str(avatar),'Person.iff','128','--semiglobal',str(semi),'FixturePerson.iff','--global',str(glob),'Global.iff']
  action_args=['--action',str(action),'Chair.iff','128','4096']
- def run(extra=()):return subprocess.run(args+list(extra),capture_output=True,text=True)
+ def run(extra=()):
+  env=os.environ.copy();env['XDG_STATE_HOME']=str(root/'xdg-state')
+  return subprocess.run(args+list(extra),capture_output=True,text=True,env=env)
  setup();r=run(['--render-saved-avatar','105'])
  assert r.returncode==2 and not r.stdout and 'render-frame' in r.stderr
+ log=root/'xdg-state'/'opendollhouse'/'logs'/'odh-person.log'
+ assert log.exists() and 'fatal exception:' in log.read_text() and 'session ended exit_code=2' in log.read_text()
+ assert 'log saved to' in r.stderr,repr(r.stderr)
  setup();r=run(['--render-window'])
  assert r.returncode==2 and not r.stdout and 'render-window' in r.stderr
  setup();r=run(['--saved-world-main'])
@@ -163,6 +168,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==3 and d['rng_seed_final']==1 and d['random_reads']==[] and d['actor_state']['person_data']==[0]*101
  setup();r=run(action_args);d=json.loads(r.stdout)
  assert r.returncode==0 and not r.stderr and d['status']=='returned_true' and d['ticks']==1 and d['steps']==7
+ assert Path(d['session_log']).exists() and 'session ended exit_code=0' in Path(d['session_log']).read_text()
  assert d['completion']['result'] is False and d['queue_size']==0 and not d['queue_active']
  assert [t['owner'] for t in d['trace']]==[1,1,1,2,1,1,1]
  assert d['trace'][2]['routine']==d['trace'][4]['routine']==256 and d['trace'][2]['pc']==d['trace'][4]['pc']==0

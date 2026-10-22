@@ -57,6 +57,9 @@
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
 #include "linux_text_renderer.hpp"
 #endif
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+#include "linux_session_log.hpp"
+#endif
 #include <iostream>
 #include <memory>
 #include <charconv>
@@ -192,11 +195,17 @@ const char* floor_result_name(odh::FloorPlacementResult result){
 }
 }
 int main(int argc,char** argv) {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+ odh_host::LinuxSessionLog session_log;
+#endif
  try {
     const bool profile_startup=std::getenv("ODH_PROFILE_STARTUP")!=nullptr;
     const auto profile_started=std::chrono::steady_clock::now();
     auto profile_previous=profile_started;
     const auto profile_mark=[&](const char* phase){
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.stage(phase);
+#endif
         if(!profile_startup)return;
         const auto now=std::chrono::steady_clock::now();
         const auto phase_ms=std::chrono::duration_cast<std::chrono::milliseconds>(now-profile_previous).count();
@@ -476,6 +485,9 @@ int main(int argc,char** argv) {
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
     profile_mark("arguments-parsed");
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    session_log.event("selected language code="+std::to_string(game_language));
+#endif
     if(render_output){
         // Treat every supplied resource as input before catalog or payload reads.
         // Canonical paths and equivalent files cover lexical/symlink/hardlink aliases.
@@ -2833,7 +2845,13 @@ struct PlacementCandidateProbe {
         }
         throw odh::FormatError(failure+")");
     }
-    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)<<",\"initialization\":"<<json_bytes(saved_world_main?
+    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        <<",\"session_log\":"<<(session_log.enabled()?json_bytes(session_log.path().string()):"null")
+#else
+        <<",\"session_log\":null"
+#endif
+        <<",\"initialization\":"<<json_bytes(saved_world_main?
         "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
@@ -3578,6 +3596,17 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<"}\n";
-    return host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
- }catch(const std::exception& e){std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;}
+    const int exit_code=host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    session_log.finish(exit_code);
+#endif
+    return exit_code;
+ }catch(const std::exception& e){
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    const bool log_available=session_log.enabled();const auto log_path=session_log.path();
+    session_log.event(std::string("fatal exception: ")+e.what());session_log.finish(2);
+    if(log_available)std::cerr<<"odh-person: log saved to "<<log_path<<'\n';
+#endif
+    std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;
+ }
 }

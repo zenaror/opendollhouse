@@ -17,6 +17,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A prévia Linux grava logs locais com versão/commit, etapas de inicialização,
+  idioma, erros e sinal fatal. Mantém até três arquivos anteriores e limita cada
+  sessão a 1 MiB; na próxima execução, registra a última etapa conhecida se a
+  anterior terminou inesperadamente.
+
 - A prévia Linux desenha o rótulo da interação selecionada sobre o cenário,
   usando PangoCairo, shaping e fallback para fontes do sistema. O teste sintético
   confirma amostras em português, japonês, chinês simplificado, hebraico e

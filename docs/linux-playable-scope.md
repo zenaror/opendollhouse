@@ -74,18 +74,24 @@ prova rápida de regressão, não o critério de conclusão do objetivo.
 ## Logs e diagnóstico
 
 A build jogável deve gravar logs locais automaticamente e indicar ao jogador
-onde encontrá-los. Cada sessão deve registrar versão/commit, horário, idioma,
+onde encontrá-los. No Linux, o caminho padrão será
+`$XDG_STATE_HOME/opendollhouse/logs/odh-person.log`, ou
+`~/.local/state/opendollhouse/logs/odh-person.log` quando `XDG_STATE_HOME` não
+estiver definido. Cada sessão deve registrar versão/commit, horário, idioma,
 expansões detectadas, etapas de inicialização, avisos, erros e contexto útil de
 VM/interação. Uma falha fatal deve deixar ao menos um registro da última etapa
 conhecida e indicar encerramento inesperado na próxima inicialização.
 
-Os logs devem ter rotação e limite de tamanho configurado para não crescerem
-sem controle. Não devem incluir conteúdo bruto dos arquivos comerciais nem
-enviar dados pela rede. Um modo de diagnóstico pode acrescentar traces mais
+Os logs devem ter rotação com até três cópias anteriores e limite de 1 MiB por
+sessão, para não crescerem sem controle. Não devem incluir conteúdo bruto dos
+arquivos comerciais nem enviar dados pela rede. Um modo de diagnóstico pode acrescentar traces mais
 detalhados quando o jogador quiser reproduzir um problema. Captura de stack ou
 core dump nativo pode ser opcional, pois precisa de limites e consentimento
 explícitos de armazenamento.
 
-O contrato técnico de caminho, rotação, níveis e relatório de crash será
-definido antes de ligar o logger ao jogo; esta lista é requisito, não afirmação
-de que o logger já exista.
+A prévia Linux já tem um logger inicial com caminho local, rotação, limite de
+tamanho, identificação de build e etapa de inicialização, exceções e falhas por
+sinal. A indicação de encerramento inesperado e a gravação da última etapa são
+checadas no próximo início. Ligar o logger a todos os fluxos do jogo e registrar
+idioma/expansões detectadas ainda é trabalho pendente; esta implementação não
+significa que exista um jogo completo ou captura de stack nativa.
