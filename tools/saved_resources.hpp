@@ -50,7 +50,17 @@ inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string&
     std::uint64_t common_available=65536,tail_available=65536,strings_available=256*1024;
     for(std::size_t n=0;n<prefixes.size();++n){
         auto& prefix=prefixes[n];const auto* candidate=index.unique(prefix.guid);
-        if(!candidate)throw odh::FormatError("saved World definition missing or ambiguous for object "+std::to_string(prefix.object_id));
+        if(!candidate){
+            const auto* matches=index.candidates(prefix.guid);
+            if(!matches)throw odh::FormatError("saved World definition missing for object "+
+                std::to_string(prefix.object_id)+" GUID "+std::to_string(prefix.guid));
+            std::string message="saved World definition ambiguous for object "+
+                std::to_string(prefix.object_id)+" GUID "+std::to_string(prefix.guid)+
+                " ("+std::to_string(matches->size())+" candidates):";
+            for(const auto& match:*matches)
+                message+=" "+match.source+"!"+match.asset+"#"+std::to_string(match.chunk_id);
+            throw odh::FormatError(message);
+        }
         odh::ObjmCommonLimits common_limits;common_limits.decoded_words=common_available;
         auto common=odh::read_objm_common(objects->blocks[n],prefix.prefix,common_limits);common_available-=common.decoded_words;
         odh::ObjmTailLimits tail_limits;tail_limits.decoded_words=tail_available;tail_limits.string_bytes=strings_available;

@@ -14,7 +14,12 @@ validação indicados por versão.
   interação pendente na fila de Hecuba (ID 11). A importação completa do World
   continua sem sucesso: com `Objects.far` sozinho, falta a definição do
   objeto 649; ao acrescentar algumas fontes de expansão, a leitura avança e
-  para no objeto 211. Os detalhes e limites da descoberta estão em
+  para no objeto 211. Diagnósticos agora separam definição ausente de duplicada.
+  A auditoria estrutural localizou 649 e 211 em recursos de expansão/download;
+  com os downloads identificados, o próximo bloqueio é a definição do
+  personagem Menelaus, ainda sem OBJD correspondente na cópia examinada. Os
+  detalhes e limites da descoberta estão em
+  [`saved-world-definition-audit.md`](docs/saved-world-definition-audit.md) e
   [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
 
 - `odh-saved-world` agora inclui um plano somente de leitura para as pilhas
