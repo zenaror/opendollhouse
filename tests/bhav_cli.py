@@ -47,6 +47,12 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     report=json.loads(result.stdout)
     assert result.returncode==0 and report['caller_word']==[9,0]
     assert report['stackobject_word']==[10,1] and report['status']=='returned_true'
+    # A constructed StackObject has the explicit first attribute needed by
+    # BHAVs that write StackObject attribute 0; this is a synthetic CLI fixture.
+    result=run([(4096,routine(2,bytes([0,0,1,0,0,5,1,7])))],
+               '--run','--world-probe')
+    report=json.loads(result.stdout)
+    assert result.returncode==0 and report['status']=='returned_true'
     for options in [('--run','--world-probe','--caller-object-word','68','0'),
                     ('--run','--world-probe','--stack-object-word','0','32768')]:
         result=run(rows,*options)

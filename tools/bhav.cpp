@@ -462,7 +462,10 @@ int main(int argc, char** argv) {
         if(snap_probe) {storage_slots=0;for(const auto& r:definition.slots->records) if(r.type==0) ++storage_slots;}
         if (world_probe) {
             if (!world.create(1,odh::EntityKind::avatar,{0,88,reset_entry?1u:0u,main_probe?16u:0u}) ||
-                !world.create(2,odh::EntityKind::object,{route_slot_probe?2u:0u,0,storage_slots}) ||
+                // BHAV diagnostic fixtures give StackObject the smallest
+                // attribute bank needed by the selected probe. Destination
+                // writes attribute 0; routing probes also use attribute 1.
+                !world.create(2,odh::EntityKind::object,{route_slot_probe?2u:1u,0,storage_slots}) ||
                 !world.create(3,odh::EntityKind::avatar,{0,88,0}) ||
                 !world.set_person_data(1,0,static_cast<std::int16_t>(posture.value_or(0))) ||
                 (animation && (!world.set_person_data(1,58,static_cast<std::int16_t>(age.value_or(21))) ||
