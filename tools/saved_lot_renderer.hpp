@@ -49,7 +49,7 @@ struct SavedLotFrame {
     std::uint64_t terrain_triangles=0,terrain_reserved_bytes=0;
     std::uint64_t wall_layers=0,wall_junctions=0,wall_cached_frame_bytes=0;
     std::uint64_t wall_tested_samples=0,wall_shaded_samples=0;
-    std::uint64_t objects=0,object_layers=0,object_cached_frame_bytes=0;
+    std::uint64_t objects=0,object_layers=0,object_offscreen_layers=0,object_cached_frame_bytes=0;
     std::uint64_t object_tested_samples=0,object_shaded_samples=0;
     std::uint64_t object_hidden=0,object_above_level=0,object_outside=0,object_removed=0;
 };
@@ -83,6 +83,9 @@ public:
     const std::optional<odh::PreparedArchitecture>& prepared_architecture() const{return prepared_;}
     const SavedArchitectureResource& architecture_resource() const{return architecture_;}
     odh::GraphicsEntity avatar(std::int16_t id);
+    // Runtime projection anchor including the same terrain/group-centre rules
+    // used when drawing a saved object in this lot.
+    odh::GraphicsEntity entity_graphics(std::int16_t id);
     // Available only when the immutable prepared architecture has unambiguous
     // floor/wall identities. Matches GetRoomAt room-zero fallback outside the
     // lot; it resolves room membership, not portal clearance.

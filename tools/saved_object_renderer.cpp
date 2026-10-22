@@ -203,8 +203,14 @@ SavedObjectRenderResult SavedObjectRenderer::render(const std::vector<SavedObjec
             // ObjectComponent maps only cardinals to radians; diagonal default is zero.
             constexpr std::array<float,8> radians{0,0,1.5707963267948966F,0,3.1415926535897932F,0,4.71238898038469F,0};
             const auto placement=odh::place_sprite(projection,sprite,frame,object.tile_position,radians[object.direction]);
-            layers.push_back({&frame,placement.x,placement.y,placement.back_depth,placement.front_depth_delta,placement.flip,static_cast<std::uint16_t>(object.id)});
             ++record.layers;
+            const auto left=std::int64_t{placement.x},top=std::int64_t{placement.y};
+            const auto right=left+frame.width,bottom=top+frame.height;
+            if(left>=projection.width||top>=projection.height||right<=0||bottom<=0){
+                ++record.offscreen_layers;++result.offscreen_layers;
+                continue;
+            }
+            layers.push_back({&frame,placement.x,placement.y,placement.back_depth,placement.front_depth_delta,placement.flip,static_cast<std::uint16_t>(object.id)});
         }
         result.records.push_back(std::move(record));
     }

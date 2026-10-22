@@ -1,21 +1,25 @@
 # Continuidade atual
 
-## Atualização: imagem da pose durante a escada (2026-10-22)
+## Atualização: Sim composto com o lote na escada (2026-10-22)
 
-O `--capture-tick` de `tests/house03_stair_approach.py` exporta uma imagem do
-Playback vivo. Para `a2o-stair-climb`, a câmera da captura diagnóstica acompanha
-o deslocamento grande que já vem gravado na animação; a posição do Sim no World
-permanece a mesma. Ticks14,16 e20 geram quadros diferentes, com o Sim inteiro
-visível. Essa imagem contém só o Sim sobre fundo claro: escada, objetos e lote
-não foram compostos. É prova de poses animadas chegando ao desenho, não prova
-de travessia visual na escada. CTest passou 160/160; `linux_window_backend` foi
-ignorado por não haver display.
+O `--capture-tick` ainda acompanha o grande deslocamento já gravado em
+`a2o-stair-climb`, sem alterar a posição do Sim no World. Agora a câmera usa o
+ponto gráfico da escada real. A vista escolhe o piso de apoio para que o piso de
+cima não cubra o Sim. A captura `/tmp/house03-support-floor-verified.ppm` mostra
+o Sim na escada junto do piso e dos móveis visíveis; inclui 22 camadas de
+sprites e preserva as demais entidades do lote, pulando apenas sprites que
+ficam inteiramente fora da tela. O hash é
+`2313a49457a8c341488c672a8d9837c68854954e708cac58d538634de12da864`.
+O contador registra 4103 pixels da pose do Sim antes da composição; a inspeção
+visual confirma que ele também aparece na imagem final. Esta captura não inclui
+paredes e não estabelece equivalência visual com o original.
 
-Próximo: enquadrar a pose usando o ponto de apoio da própria escada e então
-compor o Sim com o lote. Antes disso, resolver o limite do compositor que
-recusa uma camada de objeto com extensão repetida muito grande; não omitir os
-objetos e chamar a imagem de “lote completo”. Preservar as imagens de pose como
-diagnóstico separado até haver composição que inclua a escada.
+O probe de simulação também percorreu a subida e a descida, com avatares de
+idades 0 e21. A imagem exportada acima é só da subida no tick14; a descida ainda
+não tem captura visual equivalente. CTest passou 160/160; `linux_window_backend`
+foi ignorado por não haver display. Próximo: validar outros tempos da pose
+composta e capturar a descida, depois revisar os bloqueios de chegada antes de
+generalizar o perfil de escada.
 
 ## Escadas da House03: localizar a porta entre andares (2026-10-22)
 

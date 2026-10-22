@@ -1218,6 +1218,7 @@ int main(int argc,char** argv) {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
         std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
         std::uint64_t vertices=0,triangles=0,texture_bytes=0,tested_samples=0,shaded_samples=0;
+        std::uint64_t actor_raster_pixels=0;
         bool lot_composited=true,lot_objects_included=true;
     };
     struct RoomInfoProbe {
@@ -1952,30 +1953,35 @@ struct PlacementCandidateProbe {
         if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=runtime_avatar_id)
             throw odh::FormatError("person frame sample actor identity is stale or outside this host");
         if(saved_world_main){
-            const auto graphics=render_lot?render_lot->avatar(sample->actor):render_graphics->entity(world,sample->actor);
+            const bool stair_anchor_view=headless_main&&render_output&&sample->clip&&
+                sample->clip->name=="a2o-stair-climb"&&headless_portal&&render_lot;
+            const auto graphics=render_lot?(stair_anchor_view?
+                render_lot->entity_graphics(sample->actor):render_lot->avatar(sample->actor)):
+                render_graphics->entity(world,sample->actor);
             render_position=graphics.tile_position;render_direction=graphics.direction;
             render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
-            // Diagnostic-only framing: the A2O stair clip carries about five
-            // tiles of root offset from the landing. Keep the actor's world
-            // position unchanged, but look toward the authored pose so the
-            // headless image can show whether the mesh itself rasterizes.
-            if(headless_main&&render_output&&sample->clip&&sample->clip->name=="a2o-stair-climb"){
-                render_camera.center_tile[1]+=5.0f;
-                render_camera.center_tile[2]-=2.5f;
+            // The stair A2O pose is authored relative to its stair object.
+            // For a headless diagnostic, look at that real object anchor while
+            // leaving the avatar's World position and animation untouched.
+            if(headless_main&&render_output&&sample->clip&&sample->clip->name=="a2o-stair-climb"&&
+               headless_portal&&render_lot){
+                const auto anchor=render_lot->entity_graphics(headless_portal->id);
+                render_camera.center_tile={anchor.tile_position[0],anchor.tile_position[1],
+                                           anchor.tile_position[2]+0.75f};
             }
         }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
-        auto frame=render_renderer->render(scene_state,render_camera);
-        const bool capture_actor_only=headless_main&&render_output;
+        const bool track_actor_pixels=headless_main&&render_output;
+        if(track_actor_pixels)scene_state.owner_id=std::numeric_limits<std::uint16_t>::max();
+        odh::RasterOptions scene_options;scene_options.record_owner_ids=track_actor_pixels;
+        auto frame=render_renderer->render(scene_state,render_camera,scene_options);
+        std::uint64_t actor_raster_pixels=0;
+        if(track_actor_pixels&&frame.image.owner_ids.size()==frame.image.pixels.size())
+            actor_raster_pixels=std::count(frame.image.owner_ids.begin(),frame.image.owner_ids.end(),scene_state.owner_id);
         if(render_lot){
-            // The headless diagnostic writes the actor frame alone. Still
-            // prepare floor evidence, but do not claim that its pixels were
-            // merged into the exported actor image.
-            const bool include_objects=!capture_actor_only;
-            auto lot=render_lot->render(render_camera,frame.image,render_window,include_objects);
-            if(!capture_actor_only)frame.image=std::move(lot.image);
-            render_lot_evidence=std::move(lot);
+            auto lot=render_lot->render(render_camera,frame.image,render_window);
+            frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
 #ifdef ODH_HAVE_X11
         if(render_window_host)render_window_host->present(frame.image);
@@ -1992,7 +1998,8 @@ struct PlacementCandidateProbe {
         render_evidence=RenderEvidence{sample->clip->name,sample->frame,sample->actor,ticks,
             sample->actor_generation,sample->vm_generation,usage.cfp_samples,render_renderer->vertices(),
             render_renderer->triangles(),render_renderer->texture_bytes(),frame.image.tested_samples,frame.image.shaded_samples,
-            render_lot&&!capture_actor_only,render_lot&&!capture_actor_only};
+            actor_raster_pixels,
+            render_lot!=nullptr,render_lot!=nullptr};
     };
     const auto total_steps=[&]{return startup_steps+vm.steps();};
     const auto execute=[&] {
@@ -3247,6 +3254,7 @@ struct PlacementCandidateProbe {
             <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
             <<",\"texture_bytes\":"<<v.texture_bytes<<",\"raster_tested_samples\":"<<v.tested_samples<<",\"catalog_cfp_samples\":"<<v.cfp_samples
             <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples
+            <<",\"actor_raster_pixels\":"<<v.actor_raster_pixels
             <<",\"lot_composited\":"<<(v.lot_composited?"true":"false")
             <<",\"lot_objects_included\":"<<(v.lot_objects_included?"true":"false")
             <<",\"object_selection\":{\"clicks\":"<<render_selection_clicks<<",\"tick\":"<<render_selection_tick
@@ -3310,6 +3318,7 @@ struct PlacementCandidateProbe {
                 <<",\"wall_junctions\":"<<lot.wall_junctions<<",\"wall_cached_frame_bytes\":"<<lot.wall_cached_frame_bytes
                 <<",\"wall_tested_samples\":"<<lot.wall_tested_samples<<",\"wall_shaded_samples\":"<<lot.wall_shaded_samples
                 <<",\"objects\":"<<lot.objects<<",\"object_layers\":"<<lot.object_layers
+                <<",\"object_offscreen_layers\":"<<lot.object_offscreen_layers
                 <<",\"object_cached_frame_bytes\":"<<lot.object_cached_frame_bytes
                 <<",\"object_tested_samples\":"<<lot.object_tested_samples<<",\"object_shaded_samples\":"<<lot.object_shaded_samples
                 <<",\"object_hidden\":"<<lot.object_hidden<<",\"object_above_level\":"<<lot.object_above_level

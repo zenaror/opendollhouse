@@ -258,7 +258,8 @@ struct SceneRenderer::Impl {
                                      rotate_avatar(vertex.normal, state.avatar_direction)});
             }
             for (const auto& face : mesh.faces)
-                triangles.push_back({{projected[face[0]], projected[face[1]], projected[face[2]]}, index});
+                triangles.push_back({{projected[face[0]], projected[face[1]], projected[face[2]]}, index,
+                    state.owner_id?state.owner_id:static_cast<std::uint16_t>(index)});
         }
         const auto base = odh::rasterize(camera.width, camera.height, triangles, textures, options);
         if (!image) return {base};

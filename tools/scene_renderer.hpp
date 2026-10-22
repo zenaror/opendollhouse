@@ -33,6 +33,7 @@ struct SceneState {
     const odh::AnimationHeader* animation = nullptr;
     double frame = 0;
     odh::AvatarHands hands{};
+    std::uint16_t owner_id = 0; // Optional pixel-ownership token for scene diagnostics.
 };
 
 // Must resolve the exact selected header, not merely an equal animation name.

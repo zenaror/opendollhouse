@@ -21,18 +21,20 @@ struct SavedObjectDrawRecord {
     std::uint32_t direction, zoom;
     std::size_t layers, omitted_dynamic_layers, omitted_empty_layers;
     bool no_graphics = false; // NumGraphics0 and selected DGRP absent: no pixels.
+    std::size_t offscreen_layers = 0; // Fully outside this camera; never sent to compositor.
 };
 struct SavedObjectRenderResult {
     odh::CompositeFrame composite;
     std::vector<SavedObjectDrawRecord> records;
     std::size_t layers = 0, cached_assets = 0, cached_groups = 0, cached_frames = 0;
-    std::uint64_t cached_pixels = 0, cached_frame_bytes = 0;
+    std::uint64_t cached_pixels = 0, cached_frame_bytes = 0, offscreen_layers = 0;
 };
 // Host resource cache: immutable DefinitionIndex must outlive this object.
 // Strict SPR2+pixel+Z profile; SPR# and no-depth sprites fail explicitly.
 // Decoded frames used by one view <=1Mi pixels (RGBA+index+Z <=6MiB); obsolete
 // frames are evicted on pixel pressure and after successful composition.
-// Repeated draw extents <=4Mi pixels, compositor samples <=16Mi, viewport <=1Mi.
+// Repeated visible draw extents <=4Mi pixels, compositor samples <=16Mi,
+// viewport <=1Mi. Fully offscreen layers are culled before those draw budgets.
 // Empty decoded frames used by the view are retained without placement.
 // Whole render failures leave inputs unchanged, but may populate bounded cache.
 // Optional record_picks returns per-pixel object IDs in composite.owner_ids;

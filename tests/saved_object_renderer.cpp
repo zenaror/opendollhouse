@@ -50,7 +50,14 @@ int main(){try{
   set(b,64+76+6,negative?0:65535,2);set(b,b.find("DGRP")+8,negative?65535:0,2,true);write(p,b);
   odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto v=visual;v.graphic=negative?-1:1;
   const auto result=r.render({v},camera,base);check(result.layers==2&&result.records[0].dgrp_id==(negative?65535:0));}
- {const auto p=tmp.p/"repeated.iff";auto b=iff();auto start=b.find("SPR2");b.resize(start);b+=chunk("SPR2",5,large_sprite());b+=chunk("SPR2",6,large_sprite());write(p,b);odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);std::vector<SavedObjectVisual> visuals;for(std::int16_t i=1;i<=32;++i){auto v=visual;v.id=i;v.tile_position={10000,10000,0};visuals.push_back(v);}const auto result=r.render(visuals,camera,base);check(result.layers==64&&result.cached_pixels==131072);check(result.composite.tested_samples==0&&result.composite.image.pixels==base.pixels);auto v=visual;v.id=33;v.tile_position={10000,10000,0};visuals.push_back(v);rejects([&]{r.render(visuals,camera,base);});}
+ {const auto p=tmp.p/"repeated.iff";auto b=iff();auto start=b.find("SPR2");b.resize(start);b+=chunk("SPR2",5,large_sprite());b+=chunk("SPR2",6,large_sprite());write(p,b);odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);
+  std::vector<SavedObjectVisual> offscreen;for(std::int16_t i=1;i<=40;++i){auto v=visual;v.id=i;v.tile_position={10000,10000,0};offscreen.push_back(v);}
+  const auto culled=r.render(offscreen,camera,base);check(culled.layers==0&&culled.offscreen_layers==80&&culled.cached_pixels==131072);
+  check(culled.composite.tested_samples==0&&culled.composite.image.pixels==base.pixels&&culled.records[0].offscreen_layers==2);
+  std::vector<SavedObjectVisual> visible;for(std::int16_t i=1;i<=32;++i){auto v=visual;v.id=i;v.tile_position={0,0,0};visible.push_back(v);}
+  const auto result=r.render(visible,camera,base);check(result.layers==64&&result.offscreen_layers==0&&result.cached_pixels==131072);
+  check(result.composite.tested_samples>0&&result.composite.shaded_samples>0);
+  auto v=visual;v.id=33;v.tile_position={0,0,0};visible.push_back(v);rejects([&]{r.render(visible,camera,base);});}
  {const auto p=tmp.p/"rotation-cache.iff";write(p,rotation_iff());odh::DefinitionIndex defs({candidate(p)});SavedObjectRenderer r(defs);auto v=visual;v.tile_position={10000,10000,0};camera.rotation=0;auto a=r.render({v},camera,base);check(a.cached_frames==1&&a.cached_pixels==1048576);camera.rotation=1;auto b=r.render({v},camera,base);check(b.cached_frames==1&&b.cached_pixels==1048576);camera.rotation=0;auto c=r.render({v},camera,base);check(c.cached_frames==1&&c.cached_pixels==1048576);camera.rotation=0;}
  {const auto p=tmp.p/"changed.iff";auto entry=candidate(p);auto b=iff();set(b,64+76+28,999);write(p,b);odh::DefinitionIndex defs({entry});SavedObjectRenderer r(defs);rejects([&]{r.render({visual},camera,base);});}
  SavedObjectRenderer moved(std::move(renderer));rejects([&]{renderer.render({visual},camera,base);});check(moved.render({visual},camera,base).cached_pixels==2);

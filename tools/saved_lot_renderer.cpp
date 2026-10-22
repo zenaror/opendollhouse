@@ -121,11 +121,19 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
 }
 
 odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
-    auto graphics=graphics_.entity(*saved_.world,id);
+    auto graphics=entity_graphics(id);
     const auto* entity=saved_.world->find(graphics.container?graphics.container:id);
     if(graphics.kind!=odh::EntityKind::avatar||!entity||
        !entity->position||entity->position->level>view_.level)
         throw odh::FormatError("live saved lot avatar outside selected view");
+    return graphics;
+}
+
+odh::GraphicsEntity SavedLotRenderer::entity_graphics(std::int16_t id) {
+    auto graphics=graphics_.entity(*saved_.world,id);
+    const auto* entity=saved_.world->find(graphics.container?graphics.container:id);
+    if(!entity||!entity->position)
+        throw odh::FormatError("live saved lot graphics anchor unavailable");
     std::array<float,2> xy{static_cast<float>(entity->position->x)/16,static_cast<float>(entity->position->y)/16};
     if(entity->kind==odh::EntityKind::object){
         const auto center=group_centers_.find(entity->id);if(center!=group_centers_.end())xy=center->second;
@@ -205,6 +213,7 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     if(record_picks){result.pick_width=camera.width;result.pick_height=camera.height;}
     result.object_pick_ids=std::move(objects.composite.owner_ids);
     result.objects=objects.records.size();result.object_layers=objects.layers;
+    result.object_offscreen_layers=objects.offscreen_layers;
     result.object_cached_frame_bytes=objects.cached_frame_bytes;
     result.object_tested_samples=objects.composite.tested_samples;
     result.object_shaded_samples=objects.composite.shaded_samples;

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import pathlib
 import struct
 import subprocess
@@ -73,7 +74,9 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         command += ["--render-animation-far", str(animation_far),
             "--render-textures", str(game / "GameData/Textures/Textures.far"),
             "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
-            "--render-level", "2",
+            # Show the support floor while capturing the stair animation, so
+            # the upper floor does not cover the actor in the composed lot.
+            "--render-level", "1",
             "--render-tick", str(render_tick), "--render-frame", str(render_output)]
     for resource in architecture_resources(game):
         command += ["--architecture-resource", str(resource)]
@@ -113,10 +116,22 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
             raise AssertionError(f"captured frame has the wrong actor/tick: {render}")
         if render.get("shaded_samples", 0) <= 0:
             raise AssertionError(f"captured frame has no shaded pixels: {render}")
+        if render.get("actor_raster_pixels", 0) <= 0:
+            raise AssertionError(f"the stair animation produced no actor pixels: {render}")
         if "stair" not in render.get("clip", "").lower():
             raise AssertionError(f"captured frame is not a stair animation: {render}")
-        if render.get("lot_composited") or render.get("lot_objects_included"):
-            raise AssertionError(f"actor-only diagnostic was mislabeled as a lot image: {render}")
+        anchor = portal.get("portal_position")
+        camera_center = render.get("camera_center_tile")
+        if (not anchor or not camera_center or
+                not math.isclose(camera_center[0], anchor[0] / 16 - 0.5, abs_tol=0.01) or
+                not math.isclose(camera_center[1], anchor[1] / 16 - 0.5, abs_tol=0.01)):
+            raise AssertionError(f"camera is not centered on the live stair object: "
+                f"camera={camera_center}, object={anchor}")
+        if not render.get("lot_composited") or not render.get("lot_objects_included"):
+            raise AssertionError(f"captured frame does not include the full lot object pass: {render}")
+        lot = render.get("lot") or {}
+        if not lot.get("objects_rendered") or lot.get("object_layers", 0) <= 0:
+            raise AssertionError(f"captured frame did not draw any lot objects: {lot}")
         image = render_output.read_bytes()
         if len(image) <= 320 * 240 * 3:
             raise AssertionError(f"captured PPM is incomplete: {render_output}")
@@ -181,7 +196,7 @@ def main():
                 raise AssertionError(f"distinct stair frames produced identical images: {captures}")
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": results,
-        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures show the live stair pose as an actor-only diagnostic, not a full lot image"}, indent=2))
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures compose the live stair pose with saved lot floors and objects, with walls only when supplied, without claiming equivalence to the original game"}, indent=2))
 
 
 if __name__ == "__main__":
