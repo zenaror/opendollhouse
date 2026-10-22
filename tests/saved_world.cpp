@@ -143,6 +143,50 @@ int main() {
             if(which==5)l.relationships.values=2;
             rejected([&]{odh::make_saved_world(fixture(),index,nullptr,l);},"whole candidate budget rejected without publication");
         }
+        {
+            const auto budget_source=fixture();
+            const odh::SavedWorldLimits defaults{};
+            const auto boundary=[&](std::uint64_t upper,auto set_limit,
+                                    const char* exact_message,const char* below_message) {
+                const auto accepts=[&](std::uint64_t cap) {
+                    auto limits=defaults;set_limit(limits,cap);
+                    try {return static_cast<bool>(odh::make_saved_world(budget_source,index,nullptr,limits));}
+                    catch(const odh::FormatError&) {return false;}
+                };
+                require(upper>0&&accepts(upper),"default resource ceiling accepts the fixture");
+                require(!accepts(0),"zero resource ceiling rejects the fixture");
+                std::uint64_t low=0,high=upper;
+                while(high-low>1) {
+                    const auto middle=low+(high-low)/2;
+                    if(accepts(middle))high=middle;else low=middle;
+                }
+                require(accepts(high),exact_message);
+                require(!accepts(high-1),below_message);
+            };
+            boundary(defaults.retained_words,
+                [](auto& limits,auto cap){limits.retained_words=cap;},
+                "exact retained-word budget accepts the fixture",
+                "one word below retained budget rejects the fixture");
+            boundary(defaults.retained_string_bytes,
+                [](auto& limits,auto cap){limits.retained_string_bytes=cap;},
+                "exact retained-string budget accepts the fixture",
+                "one byte below retained string budget rejects the fixture");
+            boundary(defaults.retained_suffix_bytes,
+                [](auto& limits,auto cap){limits.retained_suffix_bytes=cap;},
+                "exact retained-suffix budget accepts the fixture",
+                "one byte below retained suffix budget rejects the fixture");
+            boundary(defaults.world.words,
+                [](auto& limits,auto cap){limits.world.words=cap;},
+                "exact World word budget accepts the fixture",
+                "one word below World budget rejects the fixture");
+            auto entity_limits=defaults;
+            entity_limits.world.entities=budget_source.size();
+            require(static_cast<bool>(odh::make_saved_world(budget_source,index,nullptr,entity_limits)),
+                    "exact entity-count budget accepts the fixture");
+            --entity_limits.world.entities;
+            rejected([&]{odh::make_saved_world(budget_source,index,nullptr,entity_limits);},
+                    "one entity below entity budget rejects the fixture");
+        }
         auto ambiguous=defs;ambiguous.push_back(defs[0]);odh::DefinitionIndex duplicate(ambiguous);
         rejected([&]{odh::make_saved_world(fixture(),duplicate);},"ambiguous instance definition rejected");
         auto missing_master=defs;missing_master.pop_back();odh::DefinitionIndex partial(missing_master);
