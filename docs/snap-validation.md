@@ -19,11 +19,17 @@ manda o bloqueador se mover.
 não injeta um móvel real salvo na House03. Não afirma como o executável original
 trata esse caso. O teste de integração da House03 segue validando os dois
 sentidos sem bloqueadores. O mesmo roteiro agora cria um segundo avatar
-sintético no patamar de destino. A Main chega ao patamar baixo e o Snap
-interrompe a VM com `unsupported` (“Shoo” ainda não está implementado); o
-primeiro avatar permanece no andar de origem. O roteiro espera essa resposta e
-continua verificando separadamente as quatro passagens normais. Essa política
-do ODH não é uma conclusão sobre o que deveria ocorrer no jogo original.
+sintético no patamar de destino. A verificação agora inclui avatares do mesmo
+cômodo no retrato de obstáculos e decide pela ocupação do quadrado de chegada,
+em vez de parar só porque há outro Sim em algum lugar do cômodo. No caso
+ocupado, o Snap retorna falso, o avatar continua no piso de origem e a trilha
+mostra que BHAV4113 chegou ao PC23. A condição salva no fixture encerra a ação
+ali; os Snaps alternativos dos PCs15/17 não são executados nesse caso. Isso
+confirma a continuação até esse teste de condição, mas não implementa o pedido
+para o outro Sim se afastar, nem confirma a política do executável original.
+Um controle põe outro Sim no mesmo cômodo, um tile ao lado da chegada; nesse
+caso o avatar atravessa normalmente. O teste continua verificando também as
+quatro passagens normais.
 
 Na revisão fixada do Simitone, `VMRoutingFrame.Init` inicia a lista de pessoas
 consideradas com Sims que já têm uma rota parada esperando. `AttemptWalk` usa

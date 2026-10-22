@@ -52,7 +52,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
               age: int, render_tick: int | None = None,
               render_output: pathlib.Path | None = None,
               render_level: int | None = None,
-              occupant_avatar: tuple[int, int, int, int, int] | None = None):
+              occupant_avatar: tuple[int, int, int, int, int] | None = None,
+              expect_occupied_landing: bool = True):
     global_far = game / "GameData/Global/Global.far"
     animation_far = game / "GameData/Animation/Animation.far"
     expansion_far = game / "ExpansionShared/ExpansionShared.far"
@@ -97,16 +98,23 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
                  if entry["opcode"] == 46), None)
     if route["movement_callbacks"] <= 0:
         raise AssertionError(f"portal {portal_id} did not walk: {portal}; route={route}")
-    if occupant_avatar is not None:
-        expected_reason = "stairs destination room has another avatar; Shoo is not implemented"
-        if (portal["status"] != "vm_fault" or expected_reason not in portal["diagnostic"] or
-                portal["actor_level_changed"] or end[:3] != portal["portal_position"][:3]):
-            raise AssertionError(f"second avatar at stair arrival did not stop safely: {portal}")
+    if occupant_avatar is not None and expect_occupied_landing:
+        stair_snaps = [entry for entry in data["trace"]
+                       if entry["routine"] == 4113 and entry["opcode"] == 46]
+        continued_to_pc23 = any(entry["routine"] == 4113 and entry["pc"] == 23 and
+                                entry["step"] > stair_snaps[0]["step"]
+                                for entry in data["trace"]) if stair_snaps else False
+        if (portal["status"] != "returned_false" or portal["actor_level_changed"] or
+                end[:3] != portal["portal_position"][:3] or
+                not any(entry["operands"][4] == 2 for entry in stair_snaps) or not continued_to_pc23):
+            raise AssertionError(f"second avatar at stair arrival did not stop safely: {portal}; snaps={stair_snaps}")
         return {"portal_id": portal_id, "age": age,
             "occupant_avatar": occupant_avatar, "start": portal["actor_start_position"],
             "end": end, "movement_callbacks": route["movement_callbacks"],
-            "portal_status": portal["status"], "diagnostic": portal["diagnostic"],
-            "level_changed": portal["actor_level_changed"]}
+            "portal_status": portal["status"], "level_changed": portal["actor_level_changed"],
+            "snap_attempts": [{"step": entry["step"], "flag": entry["operands"][4]}
+                              for entry in stair_snaps],
+            "continued_to_pc23_after_blocked_landing": continued_to_pc23}
     if end[:3] != list(expected):
         raise AssertionError(f"portal {portal_id} ended at {end}, expected stair landing {expected}")
     if not portal["actor_level_changed"]:
@@ -156,7 +164,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         if len(image) <= 320 * 240 * 3:
             raise AssertionError(f"captured PPM is incomplete: {render_output}")
         render["image_sha256"] = hashlib.sha256(image).hexdigest()
-    return {"portal_id": portal_id, "age": age, "start": portal["actor_start_position"],
+    return {"portal_id": portal_id, "age": age, "occupant_avatar": occupant_avatar,
+            "start": portal["actor_start_position"],
             "end": end, "movement_callbacks": route["movement_callbacks"],
             "portal_status": portal["status"], "animation_events": len(animation_events),
             "snap_instruction": {"routine": snap["routine"], "pc": snap["pc"],
@@ -208,6 +217,11 @@ def main():
             (320, 424, 1), (312, 344, 2), 21,
             occupant_avatar=(30001, 312, 344, 2, 0))
         results.append(occupant_case)
+        nearby_avatar_case = run_probe(args.binary.resolve(), game, avatar, 34,
+            (320, 424, 1), (312, 344, 2), 21,
+            occupant_avatar=(30001, 328, 344, 2, 0), expect_occupied_landing=False)
+        nearby_avatar_case["same_room_avatar_away_from_arrival"] = nearby_avatar_case.pop("occupant_avatar")
+        results.append(nearby_avatar_case)
         captures = []
         for index, tick in enumerate(args.capture_tick or []):
             if len(args.capture_tick) == 1:
@@ -229,7 +243,7 @@ def main():
                 raise AssertionError(f"distinct stair frames produced identical images: {captures}")
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": results,
-        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; an additional synthetic-avatar case stops at Snap with Shoo explicitly unsupported; optional captures compose the live stair pose with saved lot floors, walls, and objects, without claiming equivalence to the original game"}, indent=2))
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; an additional synthetic-avatar case blocks the occupied arrival square and confirms BHAV4113 continues to PC23 before returning false; it does not move the blocker or claim equivalence to the original game; optional captures compose the live stair pose with saved lot floors, walls, and objects"}, indent=2))
 
 
 if __name__ == "__main__":

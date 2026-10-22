@@ -720,6 +720,8 @@ int main(int argc,char** argv) {
            !world.define_type(id,person.binding->guid)||!world.declare_object_word(id,8,256)||
            !world.set_position(id,headless_fixture_occupant_avatar->position))
             throw odh::FormatError("headless occupant avatar initialization failed");
+        if(person.entry_points&&!world.define_entry_points(id,person.entry_points->entries))
+            throw odh::FormatError("headless occupant avatar EntryPoint binding failed");
     }
     if(age&&(!saved_world_main||headless_fixture_avatar)&&
        !world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))
@@ -1944,14 +1946,26 @@ struct PlacementCandidateProbe {
             return unsupported("stairs actor, target, or architecture identity is incomplete");
         const auto room=render_lot->runtime_room_at(destination);
         if(!room)return unsupported("stairs destination room is unresolved");
+        std::vector<std::int16_t> avatars_to_consider;
+        auto avatar_cursor=std::int16_t{0};
+        while(const auto next=world.next_entity(avatar_cursor,odh::EntityKind::avatar)){
+            avatar_cursor=*next;
+            if(avatar_cursor==actor_id)continue;
+            const auto* other=world.find(avatar_cursor);
+            if(!other||!other->position)
+                return unsupported("stairs avatar obstacle has no verified position");
+            const auto other_room=render_lot->runtime_room_at(*other->position);
+            if(!other_room)
+                return unsupported("stairs avatar obstacle room is unresolved");
+            if(*other_room==*room)avatars_to_consider.push_back(avatar_cursor);
+        }
         const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
             render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
-            static_cast<std::uint8_t>(destination.level-1),actor_id,true,{},resolve_read_only_ep5,destination);
+            static_cast<std::uint8_t>(destination.level-1),actor_id,true,avatars_to_consider,
+            resolve_read_only_ep5,destination);
         if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
             return unsupported(std::string("stairs destination obstacle snapshot is incomplete: ")+
                 odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason));
-        if(probe.other_avatars_in_room!=0)
-            return unsupported("stairs destination room has another avatar; Shoo is not implemented");
         auto grid=odh::build_world_room_route_grid(probe.snapshot);
         if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
             return unsupported("stairs destination walkability grid is incomplete");
