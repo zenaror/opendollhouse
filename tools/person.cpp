@@ -771,6 +771,7 @@ int main(int argc,char** argv) {
     odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
     odh::EntityThreadControllers thread_controllers(world,runtime_avatar_id,
         [&]{++rng_requests;random.next(1);});
+    odh::EntityVmScheduler entity_scheduler(64);
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
@@ -983,7 +984,8 @@ int main(int argc,char** argv) {
     const auto look_towards_handler=odh::look_towards_primitive(world);
     const auto distance_to_handler=odh::get_distance_to_primitive(world);
     const auto object_type_handler=odh::object_type_primitive(world);
-    const auto notify_handler=odh::notify_idle_primitive(world);
+    const auto notify_handler=odh::notify_idle_primitive(world,
+        [&](std::int16_t id){return entity_scheduler.interrupt(id);});
     struct SnapRuntime {
         odh::SlotTable slots;
         std::unique_ptr<odh::Snap> controller;
@@ -1197,9 +1199,9 @@ int main(int argc,char** argv) {
     },std::move(owners));
     if(!thread_controllers.bind(vm))throw odh::FormatError("person controllers could not bind");
     if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
-    odh::EntityVmScheduler entity_scheduler(1);
     if(!entity_scheduler.add(runtime_avatar_id,vm,
-        [&](std::uint64_t){return thread_controllers.observe();},[&]{return thread_controllers.observe();}))
+        [&](std::uint64_t){return thread_controllers.observe();},[&]{return thread_controllers.observe();},
+        [&]{return thread_controllers.notify();}))
         throw odh::FormatError("person VM could not join the entity scheduler");
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;

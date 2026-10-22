@@ -20,6 +20,12 @@ validação indicados por versão.
   `tools/person` usa esse pacote no avatar atual; isso organiza os controles por
   personagem, mas ainda não instancia um segundo Sim no host.
 
+- Opcode49 agora encaminha o StackObject para a thread registrada. O scheduler
+  pode executar no mesmo tick uma thread posterior que acordou, se restar
+  orçamento; uma thread cuja vez passou espera o próximo tick. Testes sintéticos
+  cobrem Sleep e IdleForInput, nas duas ordens de ID. O host principal ainda
+  registra apenas um avatar; isso não confirma Notify de um bloqueador comercial.
+
 - A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
   um pixel e o nível do piso escolhido pelo host, calcula a posição contínua
   correspondente no lote, cobrindo as quatro câmeras e três níveis de zoom.

@@ -18,6 +18,7 @@ public:
     bool observe(); // Validates identities and removes completion in the same host tick.
     bool tick(std::uint64_t); // Enforces next-tick resume and wakes idle waits.
     bool interrupt(); // Main idle only; not action cancellation.
+    bool notify(); // Resume this entity's waiting IdleForInput instruction immediately.
     std::size_t size() const {return queue_.size();} // Includes active front.
     bool active() const {return active_.has_value();}
     const std::optional<InteractionCompletion>& completion() const {return completion_;}

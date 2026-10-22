@@ -129,4 +129,16 @@ bool InteractionQueue::interrupt() {
        vm_->status()!=VmStatus::waiting && vm_->status()!=VmStatus::yielded))return false;
     interrupted_=true;return true;
 }
+bool InteractionQueue::notify() {
+    if(executing_)throw std::logic_error("interaction notifications must not reenter controller");
+    if(!validate()||!wait_||vm_->status()!=VmStatus::waiting||!vm_->pending()||
+       vm_->pending()->ticket!=wait_->ticket)return false;
+    Guard guard(executing_);
+    const auto ticket=wait_->ticket;
+    interrupted_=true;
+    if(!vm_->retry_pending(ticket)) {
+        interrupted_=false;diagnostic_="idle notification could not resume its pending ticket";return false;
+    }
+    wait_.reset();diagnostic_.clear();return true;
+}
 }

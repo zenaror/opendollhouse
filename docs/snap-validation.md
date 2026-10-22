@@ -118,9 +118,14 @@ esse orçamento. `tools/person` usa o scheduler para os turnos Main depois
 da execução inicial de preparação; os hooks observam a fila já existente antes
 e depois de cada fatia. A janela e a rota continuam dirigidas pelo loop externo,
 e esse host ainda cria uma única VM/avatar. Portanto o teste com dois Sims segue
-sintético: não demonstra threads comerciais simultâneas, Notify para outra
-entidade, movimento do bloqueador ou animação. Compartilhar as rotinas evita
-copiá-las para cada Sim, importante para os ports portáteis.
+sintético: não demonstra threads comerciais simultâneas, movimento do bloqueador
+ou animação. Opcode49 agora encaminha StackObject ao callback da thread
+registrada. `EntityVmScheduler` permite executar uma thread acordada de ID maior
+no mesmo tick quando ainda há orçamento; se sua vez já passou, ela roda no tick
+seguinte. `entity_vm_scheduler` testa as duas ordens e os dois tipos de espera
+suportados aqui (Sleep e IdleForInput) com VMs sintéticas. O host `tools/person`
+ainda registra apenas um avatar, então isso não prova um bloqueador comercial.
+Compartilhar rotinas evita cópias por Sim, importante para os ports portáteis.
 
 O próximo passo é separar do `tools/person` o pacote de execução de cada avatar:
 VM, fila, sono e dispatch de primitivas. Depois o host poderá registrar vários

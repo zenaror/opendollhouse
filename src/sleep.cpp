@@ -44,7 +44,7 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
     if(!vm_ || dispatch.origin!=vm_) return unsupported("Sleep controller bound to another VM");
     Guard guard(executing_);
     if(actor_ && actor_->run_generation!=vm_->run_generation()) {
-        actor_.reset();job_.reset();interrupted_=false;
+        actor_.reset();job_.reset();interrupted_=false;notify_resume_=false;
     }
     if(job_) return unsupported("Sleep request already active");
     const auto* entity=world_.find(frame.context.caller);
@@ -60,6 +60,10 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
         return unsupported("Sleep deadline exceeds bounded uint32 scheduler clock");
     actor_=Actor{entity->id,entity->generation,vm_->run_generation()};
     diagnostic_.clear();
+    if(notify_resume_) {
+        notify_resume_=false;
+        return {PrimitiveDisposition::goto_true,{},output};
+    }
     if(interrupted_) {
         interrupted_=false;return {PrimitiveDisposition::goto_true,{},output};
     }
@@ -73,18 +77,18 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
 bool Sleep::validate() {
     if(!vm_ || !actor_) return false;
     if(actor_->run_generation!=vm_->run_generation()) {
-        job_.reset();actor_.reset();interrupted_=false;
+        job_.reset();actor_.reset();interrupted_=false;notify_resume_=false;
         diagnostic_="Sleep canceled by VM restart";return false;
     }
     const auto* entity=world_.find(actor_->id);
     if(!entity || entity->generation!=actor_->generation) {
         if(job_) vm_->complete(job_->ticket,false);
-        job_.reset();interrupted_=false;
+        job_.reset();interrupted_=false;notify_resume_=false;
         diagnostic_="Sleep canceled by removed or reused caller";return false;
     }
     if(job_ && (vm_->status()!=VmStatus::waiting || !vm_->pending() ||
                 vm_->pending()->ticket!=job_->ticket)) {
-        job_.reset();interrupted_=false;
+        job_.reset();interrupted_=false;notify_resume_=false;
         diagnostic_="Sleep canceled by changed pending instruction";return false;
     }
     if(job_ && (vm_->stack().empty() || vm_->stack().back().context.caller!=actor_->id)) return false;
@@ -141,5 +145,21 @@ bool Sleep::interrupt() {
        vm_->stack().back().context.caller!=actor_->id) return false;
     interrupted_=true;
     return job_ ? evaluate() : true;
+}
+bool Sleep::notify() {
+    if(executing_) throw std::logic_error("Sleep notifications must not reenter controller");
+    Guard guard(executing_);
+    if(!vm_ || !job_ || !validate()) return false;
+    const auto ticket=job_->ticket;
+    const auto elapsed=job_->idle_start!=0 && job_->idle_start<clock_ ? clock_-job_->idle_start : 1;
+    const auto current=vm_->stack().back().arguments.at(job_->argument);
+    const auto remaining=decrement(current,elapsed);
+    // Sleep::request normally subtracts one before branching. Add it back here
+    // so the resumed instruction publishes exactly the elapsed value.
+    const auto retry_value=signed_word(static_cast<std::uint16_t>(remaining)+1u);
+    const VmFrameWrite output{VmFrameBank::arguments,job_->argument,retry_value};
+    if(!vm_->retry_pending(ticket,output)) return false;
+    job_.reset();interrupted_=false;notify_resume_=true;diagnostic_.clear();
+    return true;
 }
 } // namespace odh

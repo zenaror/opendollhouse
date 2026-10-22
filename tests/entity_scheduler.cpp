@@ -1,6 +1,8 @@
 #include "odh/entity_scheduler.hpp"
 #include "odh/entity_thread_controllers.hpp"
 #include "odh/interaction.hpp"
+#include "odh/notify.hpp"
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -86,6 +88,100 @@ int main() {
         require(sleeping_one.advance(1)&&sleeping_one.sleep().clock()==1&&
                 sleeping_two.sleep().clock()==0,
                 "advancing one thread leaves the other thread clock untouched");
+
+        {
+            odh::World notify_world;
+            require(notify_world.create(1,odh::EntityKind::avatar)&&
+                    notify_world.create(3,odh::EntityKind::avatar),
+                    "higher-ID notification fixture creates two actors");
+            const odh::Instruction notify_instruction{49,254,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({notify_instruction})},
+                {key(4097),routine({sleep_instruction,set(0,7)})}});
+            odh::EntityThreadControllers target_thread(notify_world,3);
+            odh::EntityVmScheduler notify_scheduler(2);
+            const auto notify=odh::notify_idle_primitive(notify_world,
+                [&](std::int16_t id){return notify_scheduler.interrupt(id);});
+            odh::Vm sender(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},notify);
+            odh::Vm target(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                           target_thread.sleep_primitive());
+            require(target_thread.bind(target),"higher-ID target binds its own wait controllers");
+            sender.start(key(4096),{1,1,3,0},{0,0,0,0});
+            target.start(key(4097),{3,3,3,0},{10});
+            require(target.run(1)==odh::VmStatus::waiting,"higher-ID target enters Sleep before the tick");
+            std::uint64_t steps_when_notified=0;
+            require(notify_scheduler.add(1,sender)&&notify_scheduler.add(3,target,
+                        [&](auto tick){return target_thread.advance(tick);},{},
+                        [&]{const auto accepted=target_thread.notify();steps_when_notified=target.steps();return accepted;}),
+                    "higher-ID target registers an interrupt handler");
+            std::vector<std::int16_t> notified_trace;
+            require(notify_scheduler.tick(1,8,4,[&](auto actor,const auto&){notified_trace.push_back(actor);})&&
+                    std::find(notified_trace.begin(),notified_trace.end(),3)!=notified_trace.end()&&
+                    steps_when_notified==1&&target.steps()>1&&target.steps()<=5&&target.status()!=odh::VmStatus::waiting,
+                    "Notify releases a later Sleep wait, then its instruction runs within the same-tick budget");
+        }
+        {
+            odh::World notify_world;
+            require(notify_world.create(1,odh::EntityKind::avatar)&&
+                    notify_world.create(3,odh::EntityKind::avatar),
+                    "lower-ID notification fixture creates two actors");
+            const odh::Instruction notify_instruction{49,254,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({notify_instruction})},
+                {key(4097),routine({sleep_instruction,set(0,7)})}});
+            odh::EntityThreadControllers target_thread(notify_world,1);
+            odh::EntityVmScheduler notify_scheduler(2);
+            const auto notify=odh::notify_idle_primitive(notify_world,
+                [&](std::int16_t id){return notify_scheduler.interrupt(id);});
+            odh::Vm target(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                           target_thread.sleep_primitive());
+            odh::Vm sender(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},notify);
+            require(target_thread.bind(target),"lower-ID target binds its own wait controllers");
+            target.start(key(4097),{1,1,1,0},{10});
+            sender.start(key(4096),{3,3,1,0},{0,0,0,0});
+            require(target.run(1)==odh::VmStatus::waiting,"lower-ID target enters Sleep before the tick");
+            require(notify_scheduler.add(1,target,[&](auto tick){return target_thread.advance(tick);},{},
+                        [&]{return target_thread.notify();})&&notify_scheduler.add(3,sender),
+                    "lower-ID target registers before its sender");
+            std::vector<std::int16_t> first_trace,next_trace;
+            require(notify_scheduler.tick(1,8,4,[&](auto actor,const auto&){first_trace.push_back(actor);})&&
+                    first_trace==std::vector<std::int16_t>{3}&&target.status()!=odh::VmStatus::waiting&&target.steps()==1,
+                    "Notify cannot run an earlier-ID thread after its turn has passed");
+            require(notify_scheduler.tick(2,8,4,[&](auto actor,const auto&){next_trace.push_back(actor);})&&
+                    std::find(next_trace.begin(),next_trace.end(),1)!=next_trace.end()&&target.steps()>1,
+                    "an interrupted earlier-ID thread runs on the next tick");
+        }
+        {
+            odh::World notify_world;
+            require(notify_world.create(1,odh::EntityKind::avatar)&&
+                    notify_world.create(3,odh::EntityKind::avatar),
+                    "queue notification fixture creates two actors");
+            const odh::Instruction notify_instruction{49,254,255,{0,0,0,0,0,0,0,0}};
+            const odh::Instruction queue_idle{17,254,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({notify_instruction})},
+                {key(4097),routine({queue_idle,set(0,7)})}});
+            odh::EntityThreadControllers target_thread(notify_world,3);
+            odh::EntityVmScheduler notify_scheduler(2);
+            const auto notify=odh::notify_idle_primitive(notify_world,
+                [&](std::int16_t id){return notify_scheduler.interrupt(id);});
+            odh::Vm sender(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},notify);
+            odh::Vm target(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                           target_thread.interaction_primitive());
+            require(target_thread.bind(target),"queue target binds its own interaction controller");
+            sender.start(key(4096),{1,1,3,0},{0,0,0,0});
+            target.start(key(4097),{3,3,3,0},{10});
+            require(target.run(1)==odh::VmStatus::waiting,"queue target enters IdleForInput before the tick");
+            require(notify_scheduler.add(1,sender)&&notify_scheduler.add(3,target,
+                        [&](auto tick){return target_thread.advance(tick);},{},
+                        [&]{return target_thread.notify();}),
+                    "queue target registers an interrupt handler");
+            std::vector<std::int16_t> notified_trace;
+            require(notify_scheduler.tick(1,8,4,[&](auto actor,const auto&){notified_trace.push_back(actor);})&&
+                    std::find(notified_trace.begin(),notified_trace.end(),3)!=notified_trace.end()&&
+                    target.status()!=odh::VmStatus::waiting,
+                    "Notify releases a later-ID IdleForInput wait in the same tick");
+        }
 
         odh::World fairness_world;
         auto fairness_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{key(4096),routine({set(2,99),set(2,100)})}});

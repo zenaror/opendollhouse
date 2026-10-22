@@ -19,6 +19,8 @@ public:
     VmPrimitive primitive();
     bool tick(std::uint64_t);
     bool interrupt();
+    // Release an active wait for normal, budgeted VM dispatch after Notify.
+    bool notify();
     bool active() const {return job_.has_value();}
     const std::string& diagnostic() const {return diagnostic_;}
     std::uint64_t clock() const {return clock_;}
@@ -36,7 +38,7 @@ private:
     std::optional<Job> job_;
     std::optional<std::uint64_t> last_tick_;
     std::uint64_t clock_=0;
-    bool interrupted_=false,executing_=false;
+    bool interrupted_=false,notify_resume_=false,executing_=false;
     std::string diagnostic_;
 };
 } // namespace odh

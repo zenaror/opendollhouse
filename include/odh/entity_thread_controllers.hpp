@@ -25,6 +25,7 @@ public:
         return interactions_.tick(tick)&&sleep_.tick(tick);
     }
     bool observe() {return interactions_.observe();}
+    bool notify() {return sleep_.active()?sleep_.notify():interactions_.notify();}
     Sleep& sleep() {return sleep_;}
     InteractionQueue& interactions() {return interactions_;}
 
