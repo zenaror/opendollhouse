@@ -172,9 +172,10 @@ ObjmPersonState person(TailFields& f, std::uint32_t version, const ObjmTailLimit
 }
 } // namespace
 
-ObjmTailState read_objm_tail(const ObjmBlock& block, const ObjmCommonState& common,
-                            std::uint32_t version, const ObjectDefinition& definition,
-                            const ObjtEntry& entry, const ObjmTailLimits& limits) {
+namespace {
+ObjmTailState read_objm_tail_fields(const ObjmBlock& block, const ObjmCommonState& common,
+                            std::uint32_t version, const ObjtEntry& entry,
+                            bool is_multitile, const ObjmTailLimits& limits) {
     if (block.bytes.size() > limits.block_bytes ||
         block.bytes.size() > std::numeric_limits<std::uint64_t>::max() / 8)
         throw FormatError("OBJM tail block exceeds byte limit");
@@ -183,16 +184,13 @@ ObjmTailState read_objm_tail(const ObjmBlock& block, const ObjmCommonState& comm
         common.start_bits > common.consumed_bits || common.consumed_bits > total ||
         common.remaining_bits != total - common.consumed_bits)
         throw FormatError("OBJM tail common cursor does not match block");
-    if (entry.guid == 0 || entry.guid != definition.guid || !entry.metadata)
+    if (entry.guid == 0 || !entry.metadata)
         throw FormatError("OBJM tail resource metadata does not match OBJT");
-    if ((definition.version != 136 && definition.version != 138) ||
-        definition.is_multitile != (definition.master_id != 0))
-        throw FormatError("OBJM tail invalid OBJD metadata profile");
     TailFields fields(block, common.consumed_bits, limits);
     ObjmTailState result{};
     result.block_offset = block.offset; result.odd_offset = common.odd_offset;
     result.start_bits = common.consumed_bits;
-    if (definition.master_id != 0) {
+    if (is_multitile) {
         fields.require_fields(8); // Seven multitile fields plus final UnknownInt.
         result.multitile = ObjmMultitileState{
             fields.integer(), fields.integer(), fields.integer(),
@@ -212,5 +210,27 @@ ObjmTailState read_objm_tail(const ObjmBlock& block, const ObjmCommonState& comm
     result.decoded_words = fields.decoded(); result.string_bytes = fields.string_bytes();
     result.remaining_data = fields.suffix();
     return result;
+}
+} // namespace
+
+ObjmTailState read_objm_tail(const ObjmBlock& block, const ObjmCommonState& common,
+                            std::uint32_t version, const ObjectDefinition& definition,
+                            const ObjtEntry& entry, const ObjmTailLimits& limits) {
+    if (entry.guid == 0 || entry.guid != definition.guid || !entry.metadata)
+        throw FormatError("OBJM tail resource metadata does not match OBJT");
+    if ((definition.version != 136 && definition.version != 138) ||
+        definition.is_multitile != (definition.master_id != 0))
+        throw FormatError("OBJM tail invalid OBJD metadata profile");
+    return read_objm_tail_fields(block, common, version, entry,
+                                 definition.master_id != 0, limits);
+}
+
+ObjmTailState read_objm_person_tail_without_definition(const ObjmBlock& block,
+                            const ObjmCommonState& common, std::uint32_t version,
+                            const ObjtEntry& entry, bool is_multitile,
+                            const ObjmTailLimits& limits) {
+    if (entry.guid == 0 || !entry.metadata || entry.metadata->objd_type != 2)
+        throw FormatError("OBJM tail without OBJD requires Person OBJT metadata");
+    return read_objm_tail_fields(block, common, version, entry, is_multitile, limits);
 }
 } // namespace odh

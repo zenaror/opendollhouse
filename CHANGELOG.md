@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-saved-person-audit` lê os prefixos e dados finais das entidades Person de
+  uma casa sem exigir OBJD ausente para os personagens. A escolha de multitile
+  quando OBJD falta segue o fallback do Simitone baseado em nome vazio de OBJT;
+  é uma leitura diagnóstica, não monta o lote e não executa ações. Em House77,
+  confirmou em C++ os quatro residentes e a fila de Hecuba (UID4051, árvore8236,
+  TTA33). Veja [`saved-world-definition-audit.md`](docs/saved-world-definition-audit.md).
+
 - A leitura de prefixos de casas salvas agora permite um orçamento cumulativo
   de até 131.072 palavras para arquivos grandes. Isso permite representar
   os bancos fixos de um lote nativo inspecionado com 847 entidades; o teste cobre

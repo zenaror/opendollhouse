@@ -91,4 +91,12 @@ ObjmTailState read_objm_tail(const ObjmBlock&, const ObjmCommonState&, std::uint
                             const ObjectDefinition&, const ObjtEntry&,
                             const ObjmTailLimits& = {});
 
+// Read only a Person OBJT tail when no OBJD is available. The caller must
+// supply the independently established multitile branch; this does not create
+// or imply an ObjectDefinition and cannot construct a saved World entity.
+ObjmTailState read_objm_person_tail_without_definition(const ObjmBlock&,
+                            const ObjmCommonState&, std::uint32_t version,
+                            const ObjtEntry&, bool is_multitile,
+                            const ObjmTailLimits& = {});
+
 } // namespace odh

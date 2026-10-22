@@ -154,6 +154,12 @@ void synthetic() {
                 auto p = person_fixture(offset,start,version);
                 auto result = read(p,start,2,false,version);
                 const auto& person = *result.person;
+                const odh::ObjmBlock person_block{p.offset,p.bytes};
+                const auto no_definition = odh::read_objm_person_tail_without_definition(
+                    person_block,common(person_block,start),version,entry(2),false);
+                require(no_definition.person && no_definition.person->interaction_queue.size()==2 &&
+                        no_definition.person->interaction_queue[1].uid==57 && !no_definition.multitile,
+                        "person tail can be read from OBJT without fabricating an OBJD");
                 require(result.consumed_bits == p.position && result.remaining_bits < 8,"complete person exact cursor for parity and version");
                 require(person.person_data.size() == (version > 0x45 ? 256U : 80U) &&
                         person.person_data.front() == -128 && person.person_data.back() == (version > 0x45 ? 127 : -49),"version boundary PersonData 80 versus256");
@@ -194,6 +200,9 @@ void synthetic() {
     const auto pt = read(portal,0,8);
     require(pt.portal_count == 9 && *pt.portal_float_bits == std::vector<std::uint32_t>(patterns.begin(),patterns.end()) &&
             pt.unknown_int == -16 && !pt.person,"portal selected by OBJT even when OBJD type differs");
+    const odh::ObjmBlock portal_block{portal.offset,portal.bytes};
+    fails([&]{ (void)odh::read_objm_person_tail_without_definition(
+        portal_block,common(portal_block,0),0x45,entry(8),false); },"requires Person OBJT");
     Bits portalzero; portalzero.integer(0); portalzero.integer(0);
     require(read(portalzero,0,8).portal_float_bits->empty(),"present portal branch with zero count");
     for (int value : {-1,2147483647}) {
