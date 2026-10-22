@@ -49,6 +49,21 @@ Fontes consultadas: `refs/upstream/Simitone/Client/Simitone/Simitone.Client/UI/S
 Recurso comercial House03 somente leitura: `Objects.far`, `stair.iff`, BHAV4113,
 lido com `odh-bhav` como estrutura estática.
 
+Também foi localizado no jogo instalado `GameData/Objects/Objects.far`, entrada
+`Destination.iff`: o OBJD de rótulo “Destination - For Go Here & Shoo” tem GUID
+`0x000007C4` (subchunk OBJD ID 16807). O TTAB128 associa a interação de posição
+3 à ação4107 e ao teste4108; o BHAV4107 tem o rótulo “Move out of way”. O mesmo
+IFF contém BHAV4112 (“Shooed Out”) e BHAV4114 (“do I need to shoo?”). A leitura
+confirma que o objeto/rotinas citados pelo Simitone existem nos dados TS1
+instalados. Ainda não interpreta completamente esses BHAVs nem comprova a
+execução no jogo original. Consulta estrutural reproduzível:
+
+```sh
+/tmp/odh-stair-build/odh-ttab '../referencias/The Sims/GameData/Objects/Objects.far' Destination.iff 128
+/tmp/odh-stair-build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' Destination.iff 4107
+/tmp/odh-stair-build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4113
+```
+
 `odh_snap` implementa um perfil inicial do snap46 Literal para ocupar um
 recipiente. Ele permite avançar o BHAV real da cadeira até a animação44,
 ainda ausente. Não comprova sentar visualmente ou compatibilidade completa.

@@ -23,10 +23,13 @@ não define o comportamento correto do jogo original. O Simitone TS1 fixado
 mostra que, após uma chegada ocupada, o `Snap` cria `GOTO` (GUID `0x7C4`), agenda
 a interação3 no avatar bloqueador e retorna falso. O BHAV4113 da House03
 continua em PCs23/13 e Snaps sem Shoo nos PCs15/17 após alguns falsos; o teste
-atual para no primeiro pedido e não cobre essa continuação. Próximo: descobrir
-o que esses ramos fazem e conferir os vínculos de GOTO/interaction3 nos dados
-originais, antes de implementar o empurrão. A referência Simitone não prova
-comportamento do executável original.
+atual para no primeiro pedido e não cobre essa continuação. Os dados TS1
+instalados confirmam `Destination.iff`, GUID `0x7C4`, interação3
+ligada a BHAV4107 (“Move out of way”) e as rotinas4112/4114 para “Shooed Out” e
+“do I need to shoo?”. Próximo: mapear as condições dessas rotinas e os ramos do
+BHAV4113; depois conferir no executável original como a fila de interação é
+processada. A referência Simitone e a leitura estrutural dos recursos não
+provam execução fiel no original.
 
 ## Atualização: subida e descida compostas com o lote (2026-10-22)
 
