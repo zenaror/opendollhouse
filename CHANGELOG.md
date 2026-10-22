@@ -5,6 +5,16 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Investigado
+
+- Rastreada sem execução a fila de Hecuba na House77: a árvore 8236 existe em
+  PersonGlobals, mas a TTAB#129 dessa fonte associa a ação 8236 ao índice 52,
+  enquanto a fila salva marca TTA 33 (que aponta para outra ação). Nenhuma
+  fonte instalada explica essa combinação e a tabela correta permanece
+  desconhecida porque falta o OBJD do personagem. Não se altera o índice nem
+  se executa a fila. Veja
+  [`saved-world-definition-audit.md`](docs/saved-world-definition-audit.md).
+
 ### Adicionado
 
 - `odh-saved-person-audit` lê os prefixos e dados finais das entidades Person de

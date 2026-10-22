@@ -69,3 +69,51 @@ OBJD, ambos os tamanhos de PersonData, filas e recusa de tipo OBJT não Person.
 
 Isto é análise estática. O World completo não foi importado, nenhuma fila de
 ação foi ativada, e a busca não prova execução nem fidelidade ao jogo original.
+
+## Rastreio da fila de interação da Hecuba
+
+As cópias de `House77.iff` em `The Sims` e `The Sims Legacy Collection` têm
+SHA-256 `1c95d02c85a5b8d32fbaebe979c69b7edf1a12d4b33f8aa1a2590c3456268c9c`.
+A fila salva de Hecuba continua indicando UID 4051, alvo 11, TTA 33 e árvore
+8236.
+
+A rotina BHAV 8236 existe em `GameData/Global/Global.far!PersonGlobals.iff`
+nas duas instalações. O leitor C++ a decodifica como versão `0x8002`, com 11
+instruções. O ID 8236 também aparece em outros recursos de personagem e em
+`People\Bones.iff`; portanto, o número isolado não identifica o dono da rotina.
+Na instrução 2, o opcode é 42 e os operandos apontam ao GUID 570919237, com
+posição 6. No mapeamento do Simitone, isso é `CreateObjectInstance` para
+`OutOfWorld`; o GUID existe como OBJD do objeto `HDSI_Insult` em
+`ExpansionShared.far!HDSI_Insult.iff#16807`. Essa tradução de opcode é uma
+referência ao Simitone e não confirma o comportamento do executável original.
+
+A `PersonGlobals.iff` de ambas as instalações tem TTAB#129, versão 9, 154
+linhas. O índice 33 aponta para ação 8451/teste 8371; o índice 52 aponta para
+ação 8236/teste 8237. Uma busca estrutural nas tabelas dos recursos instalados
+não encontrou a ação 8236 no índice 33. Logo, `PersonGlobals.iff!TTAB#129` é
+uma candidata útil para estudar, mas não pode ser declarada como a tabela que
+a fila de Hecuba usou. O OBJD de Hecuba não foi localizado, então também não sabemos qual TTAB
+essa entidade deveria escolher.
+
+A busca por OBJD nos perfis aceitos pelo leitor foi repetida nos arquivos IFF
+soltos e embutidos em FAR das duas instalações: 976 IFFs soltos e 1.216 IFFs
+embutidos na instalação original; 1.578 soltos e 1.216 embutidos na Legacy
+Collection. Os contêineres FAR/IFF foram lidos sem erros; OBJD em formatos
+não aceitos não conta como correspondência. Nenhum OBJD com GUID de Hecuba
+(1974311860), Menelaus (1515759482), Gunther (292943514) ou Cornelia
+(104851579) foi localizado nessa cobertura. A leitura de 18 Neighborhood.iff
+também não encontrou os IDs 122–125 nem os quatro nomes. Isso limita, mas não
+prova por si só, a ausência de outras formas de definição ou de dados fora
+dessas instalações.
+
+No código TS1 do Simitone, `ConvertAction` conserva a árvore e o índice TTA; a
+rotina de carregamento usa o GUID do dono para buscar a rotina, e depois usa o
+índice para o texto da ação. Esse caminho ajuda a formular o teste, mas não
+explica a diferença entre TTA 33 e árvore 8236 e não prova a lógica do jogo
+original. Por enquanto, o leitor mantém a fila como dado inerte: não troca o
+índice, não escolhe a linha 52 e não executa a ação.
+
+Próximo passo: examinar no executável original como OBJM guarda e resolve o
+dono do código, a árvore de ação e o índice TTA, e como personagens sem OBJD
+são tratados. Só depois dessa ligação será seguro implementar a restauração da
+fila.
