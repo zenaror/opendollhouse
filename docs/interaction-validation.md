@@ -289,14 +289,25 @@ python3 tests/house07_route45_integration.py \
 
 Também passaram um destino na sala inicial (16 movimentos, sem porta) e o
 destino ocupado pela mesa 106 (zero movimentos, falha de caminhada preservada).
-São testes headless que usam a Main e recursos salvos; ainda falta confirmar
-esse trajeto com clique sintético dirigido à janela X11. Na tentativa X11 de
-2026-10-22, abri House07 com paredes baixas e testei 377 pontos enviados
-diretamente à janela, sem mover o cursor. O aplicativo selecionou objetos ou
-nenhum alvo; não reconheceu um ponto de chão e Space não foi enviado. Portanto
-esse teste não demonstra a travessia pela interface. O teste headless não cobre
-outros andares, nem prova que todas as portas ou os tempos correspondam ao jogo
-original.
+São testes headless que usam a Main e recursos salvos. Uma validação posterior
+no preview X11 confirmou a seleção e o passeio entre cômodos por eventos
+sintéticos enviados diretamente à janela, sem mover o cursor. Para que o clique
+seja associado a um cômodo, carreguei explicitamente os 23 arquivos externos
+`.flr`/`.wll`; a tentativa anterior sem esse catálogo não tinha mapa de cômodos
+e seus 377 cliques não selecionaram chão. Também omiti `--ticks 214`, que havia
+congelado a janela no limite estático. Com o preview interativo, o pixel do tile
+`(20,20)` foi reconhecido como level 1, room 1; Space iniciou Go Here, a janela
+mostrou `Go Here arrived`, e o JSON confirmou `[392,440,1,3]` → `[328,328,1,7]`,
+126 movimentos, uma Portal15 e quatro atualizações do mapa.
+
+Em outra execução, enviei Backspace três segundos após iniciar Go Here para o
+mesmo tile. A janela mostrou `Go Here cancelled by player`; o resultado final
+registrou 42 movimentos, uma Portal15 planejada/retornada/transição, status de
+rota `cancelled` e posição `[408,398,1,0]`. A BHAV4096 retornou `true`, como no
+teste headless de cancelamento; a rota separada indica que o movimento foi
+cancelado. Isso confirma o cancelamento pela interface ODH, não fidelidade de
+tempo ou de animação ao jogo original. Outros andares e outras portas seguem
+sem validação.
 
 Um chão bloqueado no mesmo cômodo, `(24,28)`, foi testado pela BHAV4096 salva.
 O avatar não se moveu, a fila terminou vazia e o marcador sumiu. O jogo chamou

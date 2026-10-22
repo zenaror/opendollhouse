@@ -14,12 +14,24 @@ da compilação completa: 159 aprovados, nenhum falhou, `linux_window_backend`
 ignorado por não haver display nesta sessão.
 
 Comando de reprodução e limites em `docs/interaction-validation.md`. Isso
-valida a Main e as rotinas salvas no host headless, não um clique X11 atravessando
-salas, escadas, outros andares, nem a fidelidade total ao executável original.
-Tentei a janela X11 com eventos sem mover o cursor: nenhum dos 377 cliques
-selecionou chão, então não mandei Space. Próximo: descobrir por que o preview não
-selecionou chão nessa vista; então testar o passeio pela janela. Depois
-investigar escadas e atualizações de andar.
+valida também o clique X11, o passeio entre cômodos e o cancelamento depois de
+começar a andar. Os eventos foram enviados diretamente à janela, sem mover o
+cursor. Escadas, outros andares e fidelidade total ao executável original seguem
+pendentes. Próximo: investigar travessias por escadas e atualizações de andar.
+
+No X11, a seleção do chão só ficou disponível quando o preview recebeu os 23
+arquivos externos `.flr`/`.wll`; sem eles, faltava o mapa que associa os tiles
+aos cômodos. Também é preciso omitir `--ticks 214`: esse limite é adequado para
+uma captura estática, mas impede a janela interativa de avançar depois do tick
+214. Com os recursos e o orçamento interativo padrão, o título mostrou
+`Go Here arrived` no destino `(20,20)`, cômodo 1, e o JSON confirmou o resultado
+da execução: 126 movimentos, uma Portal15, uma troca de cômodo e quatro
+atualizações de mapa. Em uma segunda execução, Backspace enviado à mesma
+janela interrompeu o passeio depois de 42 movimentos, já após a travessia da
+porta: BHAV4096 retornou `true`, a rota foi marcada `cancelled`, e a posição
+final foi `[408,398,1,0]`. Isso confirma os caminhos da interface ODH no
+preview Linux com House07; não demonstra equivalência de tempo ou comportamento
+com o jogo original.
 
 ## Conversão de pixel para posição isométrica do lote (2026-10-21)
 
