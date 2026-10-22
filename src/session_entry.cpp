@@ -62,6 +62,14 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
 
 std::vector<ReconciledHouseholdMember> reconcile_session_household(
     const SessionEntry& entry, const World& world) {
+    std::vector<std::uint32_t> member_guids;
+    member_guids.reserve(entry.members.size());
+    for (const auto& member : entry.members) member_guids.push_back(member.guid);
+    return reconcile_session_household(member_guids, world);
+}
+
+std::vector<ReconciledHouseholdMember> reconcile_session_household(
+    const std::vector<std::uint32_t>& member_guids, const World& world) {
     std::map<std::uint32_t, const Entity*> avatars_by_guid;
     auto cursor = std::int16_t{0};
     while (const auto id = world.next_entity(cursor, EntityKind::avatar)) {
@@ -74,23 +82,23 @@ std::vector<ReconciledHouseholdMember> reconcile_session_household(
     }
 
     std::vector<ReconciledHouseholdMember> result;
-    result.reserve(entry.members.size());
+    result.reserve(member_guids.size());
     std::set<std::uint32_t> seen;
-    for (const auto& member : entry.members) {
-        if (!seen.insert(member.guid).second)
+    for (const auto guid : member_guids) {
+        if (!seen.insert(guid).second)
             throw FormatError("selected household contains a duplicate Sim GUID");
-        const auto found = avatars_by_guid.find(member.guid);
+        const auto found = avatars_by_guid.find(guid);
         if (found == avatars_by_guid.end()) {
-            result.push_back({member.guid, HouseholdMemberPresence::absent,
+            result.push_back({guid, HouseholdMemberPresence::absent,
                               std::nullopt, std::nullopt});
             continue;
         }
         const auto* avatar = found->second;
         if (avatar->position) {
-            result.push_back({member.guid, HouseholdMemberPresence::present_with_position,
+            result.push_back({guid, HouseholdMemberPresence::present_with_position,
                               avatar->id, avatar->position});
         } else {
-            result.push_back({member.guid, HouseholdMemberPresence::present_without_position,
+            result.push_back({guid, HouseholdMemberPresence::present_without_position,
                               avatar->id, std::nullopt});
         }
     }

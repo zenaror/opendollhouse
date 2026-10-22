@@ -22,6 +22,7 @@
 #include "odh/objm_tail.hpp"
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
+#include "odh/session_entry.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
@@ -463,7 +464,7 @@ int main(int argc,char** argv) {
        (headless_interaction&&headless_stand->tick<=headless_interaction->tick)))
         throw odh::FormatError("--headless-stand requires --headless-main, an in-range tick, and must follow the interaction request");
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_id&&!headless_main);
-    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
+    if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&((!initialize&&!saved_world_main)||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||(!headless_portal&&!headless_go_here)||render_saved_id))||
@@ -758,6 +759,10 @@ int main(int argc,char** argv) {
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
+    std::optional<std::vector<odh::ReconciledHouseholdMember>> family_world_reconciliation;
+    if(saved_world_main&&active_family){
+        family_world_reconciliation=odh::reconcile_session_household(active_family->family.member_guids,world);
+    }
     const odh::GeometricRoomMap* vm_room_map=nullptr;
     const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
         std::map<std::uint16_t,odh::StringTable>{};
@@ -2909,8 +2914,28 @@ struct PlacementCandidateProbe {
     if(active_family){const auto& v=*active_family;
         std::cout<<"{\"chunk_id\":"<<v.chunk_id<<",\"house_number\":"<<v.family.house_number<<",\"family_number\":"<<v.family.family_number
             <<",\"version\":"<<v.family.version<<",\"budget\":"<<v.family.budget<<",\"current_global9\":"<<*family_global
-            <<",\"profile\":\"CurrentFamily and global9 selected; no SelectWholeFamily/VerifyFamily or saved resident restoration\",\"members\":[";
+            <<",\"profile\":"<<json_bytes(saved_world_main?
+                "CurrentFamily/global9 selected; restored members compared by exact GUID only; no VerifyFamily or resident creation":
+                "CurrentFamily/global9 selected; no SelectWholeFamily/VerifyFamily or saved resident restoration")<<",\"members\":[";
         for(std::size_t n=0;n<v.family.member_guids.size();++n){if(n)std::cout<<',';std::cout<<v.family.member_guids[n];}std::cout<<"]}";
+    }else std::cout<<"null";
+    std::cout<<",\"family_world_reconciliation\":";
+    if(family_world_reconciliation){
+        std::cout<<"{\"evidence\":\"restored_World_exact_avatar_GUID_match_only\",\"creates_or_moves_Sims\":false,\"members\":[";
+        for(std::size_t n=0;n<family_world_reconciliation->size();++n){
+            if(n)std::cout<<',';
+            const auto& member=family_world_reconciliation->at(n);
+            const char* presence=member.presence==odh::HouseholdMemberPresence::absent?"absent":
+                member.presence==odh::HouseholdMemberPresence::present_without_position?"present_without_position":"present_with_position";
+            std::cout<<"{\"guid\":"<<member.guid<<",\"presence\":"<<json_bytes(presence)<<",\"object_id\":";
+            if(member.object_id)std::cout<<*member.object_id;else std::cout<<"null";
+            std::cout<<",\"position\":";
+            if(member.position)std::cout<<"{\"x\":"<<member.position->x<<",\"y\":"<<member.position->y
+                <<",\"level\":"<<static_cast<unsigned>(member.position->level)<<",\"direction\":"<<static_cast<unsigned>(member.position->direction)<<'}';
+            else std::cout<<"null";
+            std::cout<<'}';
+        }
+        std::cout<<"]}";
     }else std::cout<<"null";
     std::cout<<",\"neighbor_inheritance\":";
     if(inherited){const auto& v=*inherited;

@@ -37,17 +37,27 @@ nenhum asset é copiado para o projeto.
   850010198 e 844195932. Esses GUIDs correspondem aos dois membros resolvidos
   da família. Ambos já têm posição salva no lote. Esta é uma conferência real
   de dados, não uma execução simultânea dos dois Sims.
+- O fluxo `odh-person --headless-main --activate-family` agora liga a FAMI ao
+  World restaurado e emite `family_world_reconciliation` em JSON. O teste de
+  integração de House07 confirma, usando os arquivos comerciais externos, que
+  os GUIDs 850010198/844195932 correspondem aos ObjectIDs 105/137 e às posições
+  `(392,440,1,3)`/`(424,440,1,3)`. Isso acontece antes da interação do teste.
+  A conferência só identifica os avatares existentes; não cria nem move Sims.
 - Build Debug completa e CTest completos: 171 testes passaram; o teste
   `linux_window_backend` foi pulado pelo sandbox.
 
+Na execução integrada acima, o programa escreveu status de processo 3 porque o
+Main ainda estava esperando ao chegar ao teto controlado de 512 ticks. O runner
+aceitou esse estado previsto para a sonda, e confirmou que a interação sentar,
+o levantar e o vínculo dos dois moradores passaram. Isso não significa que o
+Main terminou nem que a casa foi jogada por tempo ilimitado.
+
 O resultado ainda é uma conferência de identidade e restauração estrutural.
-`odh-session-entry` e `reconcile_session_household` não criam Sims, executam
-Main ou filas, desenham/abrem o lote nem salvam progresso. O helper ainda não
-está ligado ao fluxo da aplicação. Para House07, os dois moradores já existem
-no save e devem ser reutilizados, sem duplicação. O próximo passo é conectar a
-reconciliação ao World restaurado e preparar a execução independente do Main de
-cada membro. Casas com moradores ausentes exigem reproduzir com fidelidade a
-verificação de família e o posicionamento junto à caixa de correio, conforme o
-comportamento TS1 de referência; nenhum spawn ou posição é inventado nesta
-etapa. Isso ainda não demonstra uma sessão jogável nem equivalência com Simitone
-ou com o jogo original.
+`reconcile_session_household` não cria Sims nem os move. A sessão executa o Main
+do morador explicitamente escolhido, mas ainda não inicia um Main próprio para
+cada membro da família, nem restaura suas filas salvas. O próximo passo é
+preparar uma execução independente por morador, começando pelos dois de House07.
+Casas com moradores ausentes exigem reproduzir com fidelidade a verificação de
+família e o posicionamento junto à caixa postal, conforme o comportamento TS1 de
+referência; nenhum spawn ou posição é inventado nesta etapa. Isso ainda não
+demonstra uma sessão jogável nem equivalência com Simitone ou com o jogo original.

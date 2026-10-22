@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  malformed_slot100=struct.pack('<II4sI',0,3,b'TOLS',0)
  setup(global_extra=[('SLOT',100,malformed_slot100)]);r=run()
  assert r.returncode==2 and not r.stdout and 'unsupported SLOT version' in r.stderr
- setup();r=run();d=json.loads(r.stdout);assert r.returncode==0 and d['route_runtime']['state']=='not_applicable' and d['presentation_language']==1
+ setup();r=run();d=json.loads(r.stdout);assert r.returncode==0 and d['route_runtime']['state']=='not_applicable' and d['presentation_language']==1 and d['family_world_reconciliation'] is None
  setup();r=run(['--language','14']);d=json.loads(r.stdout);assert r.returncode==0 and d['presentation_language']==14
  setup();r=run(['--language','20']);d=json.loads(r.stdout);assert r.returncode==0 and d['presentation_language']==20
  for value in ['0','21','bad']:

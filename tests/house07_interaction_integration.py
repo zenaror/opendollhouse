@@ -53,6 +53,7 @@ def main():
         "--lot", str(game / "UserData/Houses/House07.iff"), "7",
         "--zoning", str(game / "UserData/LotZoning.iff"),
         "--neighborhood", str(game / "UserData/Neighborhood.iff"),
+        "--activate-family",
         "--object-definitions", str(game / "GameData/Objects/Objects.far"),
         "--object-definition-file", str(game / "UserData/Characters/User00000.iff"),
         "--object-definition-file", str(game / "UserData/Characters/User00001.iff"),
@@ -98,6 +99,11 @@ def main():
     ]
     actor = interaction["actor"]
     route = report["route_runtime"]
+    household = report["family_world_reconciliation"]
+    reconciled = {
+        member["guid"]: (member["object_id"], member["position"])
+        for member in household["members"]
+    }
     prefixes = report["saved_object_prefixes"]["records"]
     common_records = report["saved_common_records"]
     tail_records = report["saved_tail_records"]
@@ -122,6 +128,7 @@ def main():
             "tails": len(tail_records),
             "consistent": restore_records_consistent,
         },
+        "family_world_reconciliation": household,
         "interaction": interaction,
         "stand": stand,
         "completion": report["completion"],
@@ -136,6 +143,12 @@ def main():
     print(json.dumps(evidence, indent=2))
 
     completed_sit = (
+        household["evidence"] == "restored_World_exact_avatar_GUID_match_only" and
+        household["creates_or_moves_Sims"] is False and
+        reconciled == {
+            850010198: (105, {"x": 392, "y": 440, "level": 1, "direction": 3}),
+            844195932: (137, {"x": 424, "y": 440, "level": 1, "direction": 3}),
+        } and
         interaction["trigger"] in ("headless_schedule", "headless_sit_schedule") and interaction["enqueued"] and
         interaction["status"] == "returned_true" and interaction["result"] is True and
         interaction["queue_size"] == 0 and not interaction["queue_active"] and

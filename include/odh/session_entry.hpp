@@ -45,6 +45,8 @@ struct ReconciledHouseholdMember {
 // It does not create entities, move avatars, or start simulation.
 std::vector<ReconciledHouseholdMember> reconcile_session_household(
     const SessionEntry&, const World&);
+std::vector<ReconciledHouseholdMember> reconcile_session_household(
+    const std::vector<std::uint32_t>& member_guids, const World&);
 
 // `character_definitions` must come from the selected UserData/Characters
 // catalog, not from the general object catalog. House-file existence and
