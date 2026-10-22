@@ -26,7 +26,9 @@ private:
     struct Entity {Vm* vm;BeforeRun before;AfterRun after;};
     std::map<std::int16_t,Entity> entities_;
     std::size_t entity_limit_;
-    std::optional<std::int16_t> next_start_entity_;
+    // When a very small global budget cannot give every entity one instruction,
+    // this cursor rotates which IDs receive a slice. Dispatch order stays sorted.
+    std::optional<std::int16_t> budget_cursor_;
     std::optional<std::uint64_t> last_tick_;
     std::uint64_t instructions_last_tick_=0;
     bool ticking_=false,faulted_=false;

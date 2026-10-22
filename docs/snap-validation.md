@@ -96,13 +96,22 @@ No ODH, cada `Vm` possui uma pilha e registradores próprios
 permite compartilhar o banco BHAV imutável entre objetos `Vm`, enquanto os
 owners instalados em tempo de execução continuam locais a cada VM. O teste
 `vm_code_owners` verifica que um owner exclusivo de uma entidade não aparece na
-outra. O novo `EntityVmScheduler` aplica um tick crescente comum, chama os hooks
-de todos os Sims antes da execução, dá a cada VM no máximo um trecho limitado e
-chama os hooks de observação depois. O orçamento total e o limite por Sim são
-explícitos; a ordem inicial alterna entre ticks e a lista tem capacidade máxima.
+outra. O novo `EntityVmScheduler` aplica um tick crescente comum e visita as
+entidades em ordem crescente de ID. Primeiro chama os hooks de preparação de
+todas, que atualizam filas e relógios; depois distribui instruções apenas entre
+VMs prontas para executar, e visita essas VMs em ordem crescente de ID. O hook
+de observação de cada entidade roda após sua fatia, então entidades posteriores
+veem as mudanças anteriores no mesmo tick. O orçamento total e o limite por
+entidade são explícitos. Se o orçamento não cobre todas as VMs ativas, a escolha
+de quem recebe instruções alterna entre ticks, sem alterar a ordem das visitas.
+Essa regra de orçamento é uma política do ODH; não afirma reproduzir a agenda
+interna do Simitone. A lista tem capacidade máxima.
 `entity_vm_scheduler` testa duas VMs, duas filas e um World compartilhado: a
 ação endereçada ao bloqueador altera o objeto compartilhado, sem consumir a fila
-do outro Sim. `tools/person` agora usa esse scheduler para os turnos Main depois
+do outro Sim. Também verifica a ordem de observação, a distribuição de um
+orçamento de uma instrução entre entidades ativas e que VMs paradas não gastam
+esse orçamento. `tools/person` agora usa esse
+scheduler para os turnos Main depois
 da execução inicial de preparação; os hooks observam a fila já existente antes
 e depois de cada fatia. A janela e a rota continuam dirigidas pelo loop externo,
 e esse host ainda cria uma única VM/avatar. Portanto o teste com dois Sims segue

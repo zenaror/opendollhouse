@@ -8,8 +8,9 @@ validação indicados por versão.
 ### Adicionado
 
 - O núcleo agora oferece um scheduler limitado para estados de VM por entidade:
-  ele compartilha o tick, alterna a ordem inicial de execução e limita o trabalho
-  total e por Sim. Um teste sintético com dois Sims confirma filas independentes
+  ele compartilha o tick, visita as entidades em ordem crescente de ID e limita
+  o trabalho total e por Sim. Se o orçamento não der uma instrução para todos,
+  alterna quem recebe a vez, sem mudar a ordem de visita. Um teste sintético com dois Sims confirma filas independentes
   sobre o mesmo World. `tools/person` usa o scheduler nos turnos Main após a
   preparação inicial; o host ainda controla um só avatar e a rota continua fora
   do scheduler.

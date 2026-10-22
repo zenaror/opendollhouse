@@ -19,14 +19,14 @@ bool EntityVmScheduler::remove(std::int16_t entity) {
     if(ticking_||faulted_)return false;
     const auto found=entities_.find(entity);
     if(found==entities_.end())return false;
-    if(next_start_entity_&&*next_start_entity_==entity) {
+    if(budget_cursor_&&*budget_cursor_==entity) {
         auto successor=std::next(found);
         if(successor==entities_.end())successor=entities_.begin();
-        if(successor==found)next_start_entity_.reset();
-        else next_start_entity_=successor->first;
+        if(successor==found)budget_cursor_.reset();
+        else budget_cursor_=successor->first;
     }
     entities_.erase(found);
-    if(entities_.empty())next_start_entity_.reset();
+    if(entities_.empty())budget_cursor_.reset();
     return true;
 }
 
@@ -52,40 +52,53 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
         auto& entity=entities_.at(id);
         if(entity.before&&!entity.before(now))return fail("entity pre-tick controller rejected tick for "+std::to_string(id));
     }
-
-    auto remaining=instruction_budget;
+    std::vector<std::int16_t> runnable;
+    for(const auto id:order) {
+        const auto status=entities_.at(id).vm->status();
+        if(status==VmStatus::running||status==VmStatus::budget_exhausted)
+            runnable.push_back(id);
+    }
     std::size_t start=0;
-    if(next_start_entity_) {
-        const auto next=std::lower_bound(order.begin(),order.end(),*next_start_entity_);
-        if(next!=order.end())start=static_cast<std::size_t>(next-order.begin());
+    if(budget_cursor_&&!runnable.empty()) {
+        const auto next=std::lower_bound(runnable.begin(),runnable.end(),*budget_cursor_);
+        if(next!=runnable.end())start=static_cast<std::size_t>(next-runnable.begin());
     }
-    for(std::size_t offset=0;offset<order.size();++offset) {
-        if(!remaining)break;
-        const auto id=order[(start+offset)%order.size()];
-        auto& entity=entities_.at(id);
-        const auto status=entity.vm->status();
-        if(status!=VmStatus::running&&status!=VmStatus::budget_exhausted)continue;
-        const auto slice=std::min(per_entity_budget,remaining);
-        const auto before_steps=entity.vm->steps();
-        const std::function<void(const VmTrace&)> entity_trace=trace?
-            std::function<void(const VmTrace&)>{[&](const VmTrace& item){trace(id,item);}}:
-            std::function<void(const VmTrace&)>{};
-        const auto result=entity.vm->run(slice,entity_trace);
-        const auto after_steps=entity.vm->steps();
-        if(after_steps<before_steps)return fail("entity VM run generation changed during scheduler tick");
-        const auto consumed=after_steps-before_steps;
-        if(consumed>slice||consumed>remaining)return fail("entity VM exceeded scheduler instruction budget");
-        instructions_last_tick_+=consumed;remaining-=consumed;
-        if(entity.vm->status()==VmStatus::fault)
-            return fail("entity VM fault for "+std::to_string(id)+": "+entity.vm->diagnostic());
-        (void)result;
-    }
-
+    const auto grants=static_cast<std::size_t>(std::min<std::uint64_t>(runnable.size(),instruction_budget));
+    std::vector<std::int16_t> funded;
+    funded.reserve(grants);
+    for(std::size_t offset=0;offset<grants;++offset)
+        funded.push_back(runnable[(start+offset)%runnable.size()]);
+    // Rotate scarce grants among VMs that can execute; preserve ascending
+    // entity order for the actual shared-world updates.
+    if(grants)budget_cursor_=runnable[(start+grants)%runnable.size()];
+    std::sort(funded.begin(),funded.end());
+    auto remaining=instruction_budget;
+    std::size_t funded_remaining=grants;
     for(const auto id:order) {
         auto& entity=entities_.at(id);
+        const bool has_grant=std::binary_search(funded.begin(),funded.end(),id);
+        const auto allocation_slots=funded_remaining;
+        if(has_grant) --funded_remaining;
+        const auto status=entity.vm->status();
+        if(has_grant&&remaining&&(status==VmStatus::running||status==VmStatus::budget_exhausted)) {
+            const auto fair_share=remaining/allocation_slots+(remaining%allocation_slots!=0);
+            const auto slice=std::min(per_entity_budget,fair_share);
+            const auto before_steps=entity.vm->steps();
+            const std::function<void(const VmTrace&)> entity_trace=trace?
+                std::function<void(const VmTrace&)>{[&](const VmTrace& item){trace(id,item);}}:
+                std::function<void(const VmTrace&)>{};
+            const auto result=entity.vm->run(slice,entity_trace);
+            const auto after_steps=entity.vm->steps();
+            if(after_steps<before_steps)return fail("entity VM run generation changed during scheduler tick");
+            const auto consumed=after_steps-before_steps;
+            if(consumed>slice||consumed>remaining)return fail("entity VM exceeded scheduler instruction budget");
+            instructions_last_tick_+=consumed;remaining-=consumed;
+            if(entity.vm->status()==VmStatus::fault)
+                return fail("entity VM fault for "+std::to_string(id)+": "+entity.vm->diagnostic());
+            (void)result;
+        }
         if(entity.after&&!entity.after())return fail("entity post-run controller rejected tick for "+std::to_string(id));
     }
-    next_start_entity_=order[(start+1)%order.size()];
     last_tick_=now;
     diagnostic_.clear();
     return true;

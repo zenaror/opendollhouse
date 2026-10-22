@@ -49,8 +49,9 @@ int main() {
         require(blocker_queue.completion()&&blocker_queue.completion()->result&&
                 blocker_queue.completion()->tick==1&&mover_queue.size()==0,
                 "blocker action completes independently on tick one");
-        require(phases.size()>=6&&phases[0]==101&&phases[1]==301&&phases[phases.size()-2]==201&&phases.back()==203,
-                "all entity controllers advance before VM work and observe after it");
+        require(phases.size()>=6&&phases[0]==101&&phases[1]==301&&
+                phases[2]==1&&phases[3]==201&&phases.back()==203,
+                "all entity clocks advance before VMs run in ascending order with local observe hooks");
         require(scheduler.tick(2,4,2,trace)&&scheduler.instructions_last_tick()<=4,
                 "same scheduler advances both states on the next consecutive tick");
         require(mover.status()==odh::VmStatus::waiting&&blocker.status()==odh::VmStatus::waiting,
@@ -70,13 +71,54 @@ int main() {
         odh::EntityVmScheduler fair_scheduler(3);
         require(fair_scheduler.add(1,first)&&fair_scheduler.add(2,second)&&fair_scheduler.add(3,third),
                 "round-robin fixture registers three entities");
-        std::vector<std::int16_t> first_tick_order,second_tick_order;
+        std::vector<std::int16_t> first_tick_order,second_tick_order,third_tick_order;
         require(fair_scheduler.tick(1,1,1,[&](auto actor,const auto&){first_tick_order.push_back(actor);})&&
                 first_tick_order==std::vector<std::int16_t>{1},"first entity receives the initial single-instruction slice");
         require(fair_scheduler.remove(1),"entity ahead of the round-robin cursor can be removed");
         require(fair_scheduler.tick(2,1,1,[&](auto actor,const auto&){second_tick_order.push_back(actor);})&&
                 second_tick_order==std::vector<std::int16_t>{2},
-                "removing an earlier ID preserves the next entity in the round-robin order");
+                "removing the previous recipient advances the fair grant to the next entity");
+        require(fair_scheduler.tick(3,1,1,[&](auto actor,const auto&){third_tick_order.push_back(actor);})&&
+                third_tick_order==std::vector<std::int16_t>{3},
+                "a one-instruction budget eventually grants every entity a turn");
+
+        odh::World ordered_world;
+        require(ordered_world.create(1,odh::EntityKind::avatar)&&
+                ordered_world.create(2,odh::EntityKind::object)&&
+                ordered_world.create(3,odh::EntityKind::avatar)&&
+                ordered_world.declare_object_word(2,25,0),
+                "ordered-turn fixture creates a shared object");
+        odh::Vm writer(program,odh::ShareVmProgramTag{},ordered_world.vm_memory(),{}, {},
+            {{22,{{key(4097),routine({action_write})}}}});
+        odh::Vm observer(fairness_program,odh::ShareVmProgramTag{},ordered_world.vm_memory());
+        writer.start(key(4097),{1,2,2,22},{3});
+        observer.start(key(4096),{3,3,3,0},{3});
+        odh::EntityVmScheduler ordered_scheduler(2);
+        bool saw_earlier_write=false;
+        require(ordered_scheduler.add(1,writer)&&ordered_scheduler.add(3,observer),
+                "ordered-turn fixture registers writer before observer");
+        require(ordered_scheduler.tick(1,2,1,[&](auto actor,const auto&){
+                    if(actor==3)saw_earlier_write=ordered_world.find(2)->object_words.at(25)==7;
+                })&&saw_earlier_write,
+                "later VM sees the earlier entity's shared-world change in the same tick");
+
+        odh::Vm dormant_one(fairness_program,odh::ShareVmProgramTag{},fairness_world.vm_memory());
+        odh::Vm dormant_two(fairness_program,odh::ShareVmProgramTag{},fairness_world.vm_memory());
+        odh::Vm active_last(fairness_program,odh::ShareVmProgramTag{},fairness_world.vm_memory());
+        dormant_one.start(key(4096),{1,1,1,0},{3});
+        dormant_two.start(key(4096),{2,2,2,0},{3});
+        active_last.start(key(4096),{3,3,3,0},{3});
+        require(dormant_one.run(4)==odh::VmStatus::returned_true&&
+                dormant_two.run(4)==odh::VmStatus::returned_true,
+                "inactive entities finish their synthetic Main routines");
+        odh::EntityVmScheduler work_conserving_scheduler(3);
+        std::vector<std::int16_t> active_trace;
+        require(work_conserving_scheduler.add(1,dormant_one)&&
+                work_conserving_scheduler.add(2,dormant_two)&&
+                work_conserving_scheduler.add(3,active_last)&&
+                work_conserving_scheduler.tick(1,1,1,[&](auto actor,const auto&){active_trace.push_back(actor);})&&
+                active_trace==std::vector<std::int16_t>{3},
+                "inactive entities do not consume the only instruction grant");
 
         odh::Vm exception_vm(program,odh::ShareVmProgramTag{},fairness_world.vm_memory());
         exception_vm.start(key(4096),{4,4,4,0},{3});
