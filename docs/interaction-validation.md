@@ -319,6 +319,19 @@ python3 tests/house07_route45_integration.py \
   --go-here-interrupt-at-tick 2 --go-here-expect-cancelled
 ```
 
+Também foi testado o cancelamento logo após o primeiro passo real da caminhada.
+O avatar andou até `[393,440,1,2]`, o pedido interrompeu a rota ali, a BHAV398
+foi chamada e a fila terminou vazia. Esse gatilho conta passos confirmados, em
+vez de depender do tempo do relógio:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-build-release/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --ticks 256 --go-here 27 26 1 \
+  --go-here-interrupt-after-movements 1 --go-here-expect-cancelled
+```
+
 Na janela House07 completa, eventos de teclado dirigidos à janela selecionaram
 o chão em `(23,26)`, iniciaram Go Here com Space e cancelaram com Backspace.
 O título mostrou `cancelled by player`; o avatar não saiu do início, a rota

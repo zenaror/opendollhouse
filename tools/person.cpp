@@ -215,6 +215,7 @@ int main(int argc,char** argv) {
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     std::optional<std::uint64_t> headless_go_here_interrupt_tick;
+    std::optional<std::uint64_t> headless_go_here_interrupt_after_movements;
     bool headless_go_here_interrupt_applied=false,headless_go_here_interrupt_accepted=false;
     std::optional<HeadlessInteraction> headless_interaction;
     bool headless_interaction_applied=false;
@@ -329,6 +330,13 @@ int main(int argc,char** argv) {
             if(tick==0)throw odh::FormatError("Go Here interrupt tick must be nonzero");
             headless_go_here_interrupt_tick=tick;
         }
+        else if(option=="--headless-go-here-interrupt-after-movements"&&
+                !headless_go_here_interrupt_after_movements&&n+1<argc){
+            const auto count=selector(argv[++n]);
+            if(count==0||count>128)
+                throw odh::FormatError("Go Here movement cancel count must be between 1 and 128");
+            headless_go_here_interrupt_after_movements=count;
+        }
         else if(option=="--headless-portal"&&!headless_portal&&n+2<argc){
             const auto id=selector(argv[++n]),tick=selector(argv[++n]);
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless Portal15 target/tick is outside the supported profile");
@@ -379,6 +387,9 @@ int main(int argc,char** argv) {
     if(headless_go_here_interrupt_tick&&(!headless_main||!headless_go_here||
        *headless_go_here_interrupt_tick>ticks_limit||headless_entity_move))
         throw odh::FormatError("--headless-go-here-interrupt requires Go Here and an in-range tick without a world mutation");
+    if(headless_go_here_interrupt_after_movements&&(!headless_main||!headless_go_here||
+       headless_entity_move||headless_go_here_interrupt_tick))
+        throw odh::FormatError("--headless-go-here-interrupt-after-movements requires Go Here and no tick cancel or world mutation");
     if(headless_portal&&(!headless_main||headless_portal->tick>ticks_limit||headless_interaction||headless_stand||headless_go_here))
         throw odh::FormatError("--headless-portal requires --headless-main, an in-range tick, and an otherwise idle action probe");
     if(headless_stand&&(!headless_main||!headless_interaction||headless_stand->tick>ticks_limit||
@@ -2049,6 +2060,18 @@ struct PlacementCandidateProbe {
                 if(route_runtime_movement_positions.size()<128)
                     route_runtime_movement_positions.push_back(movement.position);
             });
+            if(headless_go_here_interrupt_after_movements&&
+               !headless_go_here_interrupt_applied&&go_here_status=="queued"&&
+               route_runtime_movement_callbacks>=*headless_go_here_interrupt_after_movements){
+                headless_go_here_interrupt_applied=true;
+                go_here_cancel_pending=true;
+            }
+            if(go_here_cancel_pending&&go_here_status=="queued"&&runtime_routing->active()&&
+               runtime_routing->interrupt()){
+                go_here_cancel_pending=false;
+                if(headless_go_here_interrupt_tick||headless_go_here_interrupt_after_movements)
+                    headless_go_here_interrupt_accepted=true;
+            }
             // A local SLOT may cross the geometric room boundary. Rebuild the
             // arrival-room grid before Main can select its next route.
             if(!runtime_routing->active()){
@@ -2805,6 +2828,10 @@ struct PlacementCandidateProbe {
         <<(route_runtime_movement_callbacks>route_runtime_movement_positions.size()?"true":"false")
         <<",\"headless_go_here_interrupt\":";
     if(headless_go_here_interrupt_tick)std::cout<<"{\"tick\":"<<*headless_go_here_interrupt_tick
+        <<",\"applied\":"<<(headless_go_here_interrupt_applied?"true":"false")
+        <<",\"accepted\":"<<(headless_go_here_interrupt_accepted?"true":"false")<<'}';
+    else if(headless_go_here_interrupt_after_movements)
+        std::cout<<"{\"after_movement_callbacks\":"<<*headless_go_here_interrupt_after_movements
         <<",\"applied\":"<<(headless_go_here_interrupt_applied?"true":"false")
         <<",\"accepted\":"<<(headless_go_here_interrupt_accepted?"true":"false")<<'}';
     else std::cout<<"null";
