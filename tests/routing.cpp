@@ -1198,6 +1198,18 @@ int main() {
          require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active()&&f.world.find(1)->position->x==4,
                  "controller fails unsupported on ranked budget exhaustion without movement");}
         {Fixture f([](const auto&,auto,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{};
+         });
+         const auto actor_before=*f.world.find(1);
+         f.start();const auto* actor=f.world.find(1);
+         require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active()&&
+                 actor->generation==actor_before.generation&&actor->position==actor_before.position&&
+                 actor->radian_direction==actor_before.radian_direction&&
+                 actor->person_data[37]==actor_before.person_data[37]&&
+                 actor->static_footprint==actor_before.static_footprint&&
+                 f.vm.diagnostic()=="pre-ranked SLOT goal provider returned no candidates",
+                 "empty ranked provider fails clearly without changing the actor state");}
+        {Fixture f([](const auto&,auto,const auto&,const auto&) {
              return std::vector<odh::PreRankedSlotGoal>{{{44,12},2,7},{{12,12},64,2}};
          });f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.routing.active(),
                  "provider cannot bypass supported SLOT direction mask");}
