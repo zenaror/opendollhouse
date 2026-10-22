@@ -96,6 +96,17 @@ não uma confirmação do significado no executável original. Os comandos
 272,273,49 e370 sem interpretação confirmada; não se deve inferir deles o
 efeito de mover ou colocar o Sim na fila.
 
+O teste `destination_shoo_filter` agora executa em uma VM sintética o fluxo de
+quatro instruções lido do BHAV4114: procura avatares por ID, exige
+`PersonData[66] == 1` e compara o cômodo do avatar com o do chamador. Os casos
+confirmam que um avatar elegível no mesmo cômodo retorna verdadeiro, que um
+avatar em outro cômodo é ignorado e que nenhum avatar elegível retorna falso.
+Os operandos e destinos de PC vêm do dump de `Destination.iff` no conjunto
+comercial instalado; o teste não carrega arquivos comerciais, não executa o
+BHAV4107 e não move nenhum avatar. É evidência de que os opcodes usados por esse
+filtro funcionam juntos na VM sintética, não de que a interpretação dos nomes
+ou a intenção do executável original esteja confirmada.
+
 Também foi feita uma nova importação isolada do executável original no Ghidra
 12.1.3 PUBLIC, usando PE32 x86. A análise automática terminou, mas não
 identificou ainda uma rotina que confirme o despacho de interação3 ou seu
