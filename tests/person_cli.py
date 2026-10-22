@@ -16,8 +16,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  root=Path(folder);avatar=root/'avatar.far';semi=root/'semi.far';glob=root/'global.far';action=root/'action.far'
  def bcons(tables):
   return [('BCON',rid,bytes([len(values),0])+struct.pack('<'+'H'*len(values),*values)) for rid,values in tables]
- def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=(),global_extra=(),glob_id=128):
-  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',glob_id,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+bcons(private_bcons))
+ def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=(),global_extra=(),glob_id=128,private_extra=()):
+  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',glob_id,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+list(private_extra)+bcons(private_bcons))
   archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))]+bcons(semi_bcons))
   archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))]+list(global_extra)+bcons(global_bcons))
   archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
@@ -70,6 +70,19 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  setup(global_extra=[('SLOT',100,malformed_slot100)]);r=run()
  assert r.returncode==2 and not r.stdout and 'unsupported SLOT version' in r.stderr
  setup();r=run();d=json.loads(r.stdout);assert r.returncode==0 and d['route_runtime']['state']=='not_applicable'
+ setup(main=[expr(0,11)]);r=run(['--headless-second-main','3','30','40','1','0','4096']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['status']=='returned_true' and d['vm_steps']==1 and d['steps']==2
+ assert d['second_main']==dict(entity_id=3,routine=4096,status='returned_true',diagnostic='',steps=1,stack_depth=0)
+ assert {row['owner'] for row in d['trace']}=={1,3}
+ setup(main=[call(49)],private_extra=[('BHAV',4097,routine([call(0,1,255,bytes([0,0,0,0,0,0,0,0])),expr(0,17)]))])
+ r=run(['--headless-second-main','3','30','40','1','0','4097','--headless-second-main-arg0','5',
+        '--headless-stack-object','3','--ticks','1']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['status']=='returned_true' and d['second_main']['status']=='waiting'
+ assert d['second_main']['steps']==1 and d['ticks']==1 and {row['owner'] for row in d['trace']}=={1,3}
+ setup();r=run(['--headless-second-main','1','30','40','1','0','4096'])
+ assert r.returncode==2 and not r.stdout and '--headless-second-main' in r.stderr,(r.returncode,r.stdout,r.stderr)
+ setup();r=run(['--headless-second-main-arg0','2'])
+ assert r.returncode==2 and not r.stdout and 'headless-second-main-arg0' in r.stderr
  setup(main=[call(45,254,255,bytes([1,0,2,0,0,0,0,0]))]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['status']=='fault' and 'routing runtime unavailable' in d['diagnostic']
  setup(main=[call(27,254,255,bytes([0,0,254,0,0,0,2,0]))]);r=run();d=json.loads(r.stdout)

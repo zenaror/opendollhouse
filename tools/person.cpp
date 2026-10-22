@@ -213,6 +213,9 @@ int main(int argc,char** argv) {
     struct HeadlessFixtureAvatar {std::uint16_t id;odh::EntityPosition position;};
     std::optional<HeadlessFixtureAvatar> headless_fixture_avatar;
     std::optional<HeadlessFixtureAvatar> headless_fixture_occupant_avatar;
+    struct HeadlessSecondMain {HeadlessFixtureAvatar avatar;std::uint16_t routine;};
+    std::optional<HeadlessSecondMain> headless_second_main;
+    std::optional<std::uint16_t> headless_second_main_arg0;
     std::optional<std::uint16_t> headless_fixture_main_arg0;
     std::optional<std::int16_t> headless_stack_object;
     struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
@@ -306,6 +309,20 @@ int main(int argc,char** argv) {
                 throw odh::FormatError("headless occupant avatar is outside the supported World profile");
             headless_fixture_occupant_avatar=HeadlessFixtureAvatar{static_cast<std::uint16_t>(id),
                 {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}};
+        }
+        else if(option=="--headless-second-main"&&!headless_second_main&&n+6<argc){
+            const auto id=selector(argv[++n]);
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),direction=selector(argv[++n]),main_routine=selector(argv[++n]);
+            if(id==0||id>32767||x<0||x>32767||y<0||y>32767||level<1||level>2||direction>7||main_routine==0)
+                throw odh::FormatError("headless second avatar Main is outside the supported World profile");
+            headless_second_main=HeadlessSecondMain{{static_cast<std::uint16_t>(id),
+                {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}},main_routine};
+        }
+        else if(option=="--headless-second-main-arg0"&&!headless_second_main_arg0&&n+1<argc){
+            const auto value=selector(argv[++n]);
+            if(value>32767)throw odh::FormatError("second avatar Main Arg0 is outside 0..32767");
+            headless_second_main_arg0=value;
         }
         else if(option=="--headless-fixture-main-arg0"&&!headless_fixture_main_arg0&&n+1<argc){
             const auto ticks=selector(argv[++n]);
@@ -433,14 +450,18 @@ int main(int argc,char** argv) {
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
        (headless_fixture_occupant_avatar&&(!headless_fixture_avatar||!saved_world_main||!headless_main||
         !headless_portal||render_saved_id||headless_fixture_occupant_avatar->id==headless_fixture_avatar->id))||
+       (headless_second_main&&(initialize||saved_world_main||headless_main||action||render_saved_id||
+        headless_second_main->avatar.id==1||
+        odh::routine_key(headless_second_main->routine).scope!=odh::RoutineScope::private_object))||
+       (headless_second_main_arg0&&!headless_second_main)||
        (headless_fixture_main_arg0&&!headless_fixture_avatar)||
        (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||(render_requested&&(!render_output||render_window))))||
-       (headless_stack_object&&!headless_main)||
+       (headless_stack_object&&!headless_main&&!headless_second_main)||
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -606,6 +627,13 @@ int main(int argc,char** argv) {
         throw odh::FormatError("avatar root routine absent from explicit private owner");
     auto semi_data=load(*semi,odh::RoutineScope::semiglobal);
     person.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
+    std::optional<odh::RoutineSet> second_main_routines;
+    if(headless_second_main){
+        const auto second_key=odh::routine_key(headless_second_main->routine);
+        if(person.routines.find(second_key)==person.routines.end())
+            throw odh::FormatError("second avatar Main routine absent from the selected avatar resource set");
+        second_main_routines=person.routines;
+    }
     auto shared=load(*globals,odh::RoutineScope::global);
     const auto person_sounds=load_sounds(*avatar);
     const auto semiglobal_sounds=load_sounds(*semi);
@@ -725,13 +753,30 @@ int main(int argc,char** argv) {
         if(person.entry_points&&!world.define_entry_points(id,person.entry_points->entries))
             throw odh::FormatError("headless occupant avatar EntryPoint binding failed");
     }
+    if(headless_second_main){
+        const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
+        if(!world.create(id,odh::EntityKind::avatar,{0,101,3,16})||
+           !world.define_type(id,person.binding->guid)||!world.set_position(id,headless_second_main->avatar.position))
+            throw odh::FormatError("second Main avatar fixture construction failed");
+        for(std::int16_t index=0;index<79;++index){
+            if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
+            if(!world.declare_object_word(id,index,0))throw odh::FormatError("second Main avatar object word initialization failed");
+        }
+        if(!world.declare_object_word(id,8,256)||
+           (person.entry_points&&!world.define_entry_points(id,person.entry_points->entries)))
+            throw odh::FormatError("second Main avatar fixture metadata initialization failed");
+    }
     if(age&&(!saved_world_main||headless_fixture_avatar)&&
        !world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))
         throw odh::FormatError("age fixture construction failed");
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     odh::TuningResources tuning_resources;
     tuning_resources.globals=std::move(shared.tuning);
+    auto second_main_tuning=headless_second_main?std::optional<odh::TuningOwner>{
+        odh::TuningOwner{person.tuning,semi_data.tuning,odh::TuningSemiState::loaded}}:std::nullopt;
     tuning_resources.owners.emplace(runtime_avatar_id,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
+    if(second_main_tuning)tuning_resources.owners.emplace(headless_second_main->avatar.id,
+        std::move(*second_main_tuning));
     if(action)tuning_resources.owners.emplace(2,odh::TuningOwner{std::move(action_data->tuning),{},odh::TuningSemiState::absent});
     const odh::BconTuning tuning(std::move(tuning_resources));
     std::vector<odh::TuningValue> tuning_reads;
@@ -771,6 +816,9 @@ int main(int argc,char** argv) {
     odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
     odh::EntityThreadControllers thread_controllers(world,runtime_avatar_id,
         [&]{++rng_requests;random.next(1);});
+    std::unique_ptr<odh::EntityThreadControllers> second_main_thread;
+    if(headless_second_main)second_main_thread=std::make_unique<odh::EntityThreadControllers>(world,
+        static_cast<std::int16_t>(headless_second_main->avatar.id),[&]{++rng_requests;random.next(1);});
     odh::EntityVmScheduler entity_scheduler(64);
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
@@ -845,6 +893,7 @@ int main(int argc,char** argv) {
     std::vector<odh::PlaybackEvent> animation_events;
     std::uint64_t animation_event_bytes=0;
     std::optional<odh::Playback> playback;
+    std::optional<odh::Playback> second_main_playback;
     std::function<bool(std::int16_t)> bind_world_object_tables;
     if(!animation_sources.empty()){
         animation_catalog.emplace(animation_sources);
@@ -854,7 +903,9 @@ int main(int argc,char** argv) {
             animation_table_ids.emplace(owner,base);
             private_animation_tables.emplace(owner,load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130}));
         };
-        bind_tables(runtime_avatar_id,*avatar,person);if(action)bind_tables(2,*action,*action_data);
+        bind_tables(runtime_avatar_id,*avatar,person);
+        if(headless_second_main)bind_tables(static_cast<std::int16_t>(headless_second_main->avatar.id),*avatar,person);
+        if(action)bind_tables(2,*action,*action_data);
         bind_world_object_tables=[&](std::int16_t owner){
             if(private_animation_tables.count(owner))return true;
             const auto* entity=world.find(owner);
@@ -966,13 +1017,18 @@ int main(int argc,char** argv) {
     if(animation_catalog)playback.emplace(world,
         [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
         [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
+    if(animation_catalog&&headless_second_main)second_main_playback.emplace(world,
+        [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
+        [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
     const auto animation_handler=playback?playback->primitive():odh::VmPrimitive{};
     struct SoundRecord {odh::SoundRequest request;std::string status;};
     std::vector<SoundRecord> sound_records;
     const auto sound_handler=odh::sound_primitive(world,[&](const odh::VmFrame& frame,std::uint16_t id)
         ->std::optional<odh::SoundEvent>{
         const auto private_sound=person_sounds.find(id);
-        if(frame.context.code_owner==runtime_avatar_id&&private_sound!=person_sounds.end())return private_sound->second;
+        if((frame.context.code_owner==runtime_avatar_id||
+            (headless_second_main&&frame.context.code_owner==headless_second_main->avatar.id))&&
+           private_sound!=person_sounds.end())return private_sound->second;
         const auto semi_sound=semiglobal_sounds.find(id);
         if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
         const auto global_sound=global_sounds.find(id);
@@ -1166,7 +1222,7 @@ int main(int argc,char** argv) {
         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
             "routing runtime unavailable: "+route_runtime_reason};
     };
-    odh::Vm vm(std::move(shared.routines),memory,{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
+    const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==7){
             const auto refresh_type=static_cast<std::uint16_t>(i.operands[2])|
@@ -1196,13 +1252,43 @@ int main(int argc,char** argv) {
         if(i.opcode==27||i.opcode==45)return routing_handler(f,i,t,d);
         if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
-    },std::move(owners));
+    };
+    auto shared_program=std::make_shared<const odh::VmProgram>(std::move(shared.routines));
+    odh::Vm vm(shared_program,odh::ShareVmProgramTag{},memory,{},person_primitive,std::move(owners));
+    std::unique_ptr<odh::Vm> second_main_vm;
+    if(headless_second_main){
+        auto second_owners=odh::RoutineOwners{{headless_second_main->avatar.id,std::move(*second_main_routines)}};
+        const auto second_sleep=second_main_thread->sleep_primitive();
+        const auto second_queue=second_main_thread->interaction_primitive();
+        const auto second_animation=second_main_playback?second_main_playback->primitive():odh::VmPrimitive{};
+        const auto second_primitive=[&,second_sleep,second_queue,second_animation](
+            const auto& f,const auto& i,const auto& t,const auto& d)->odh::PrimitiveOutcome{
+            if(i.opcode==0)return second_sleep(f,i,t,d);
+            if(i.opcode==17)return second_queue(f,i,t,d);
+            if(i.opcode==44){
+                if(second_animation)return second_animation(f,i,t,d);
+                return {odh::PrimitiveDisposition::unsupported,"second avatar animation playback is unavailable in this host profile"};
+            }
+            if(i.opcode==27||i.opcode==45||i.opcode==46)
+                return {odh::PrimitiveDisposition::unsupported,"second avatar routing and Snap controllers are outside this host profile"};
+            return person_primitive(f,i,t,d);
+        };
+        second_main_vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},
+            second_primitive,std::move(second_owners));
+    }
     if(!thread_controllers.bind(vm))throw odh::FormatError("person controllers could not bind");
     if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
+    if(second_main_vm&&(!second_main_thread->bind(*second_main_vm)||
+       (second_main_playback&&!second_main_playback->bind(*second_main_vm))))
+        throw odh::FormatError("second person controllers could not bind");
     if(!entity_scheduler.add(runtime_avatar_id,vm,
         [&](std::uint64_t){return thread_controllers.observe();},[&]{return thread_controllers.observe();},
         [&]{return thread_controllers.notify();}))
         throw odh::FormatError("person VM could not join the entity scheduler");
+    if(second_main_vm&&!entity_scheduler.add(static_cast<std::int16_t>(headless_second_main->avatar.id),*second_main_vm,
+        [&](std::uint64_t){return second_main_thread->observe();},[&]{return second_main_thread->observe();},
+        [&]{return second_main_thread->notify();}))
+        throw odh::FormatError("second person VM could not join the entity scheduler");
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
     struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
@@ -1231,6 +1317,13 @@ int main(int argc,char** argv) {
         vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,
             headless_stack_object.value_or(static_cast<std::int16_t>(initialize?0:1)),
             static_cast<odh::CodeOwner>(runtime_avatar_id)},root_arguments);
+        if(second_main_vm){
+            std::vector<std::int16_t> arguments(4);
+            if(headless_second_main_arg0)arguments[0]=static_cast<std::int16_t>(*headless_second_main_arg0);
+            const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
+            second_main_vm->start(odh::routine_key(headless_second_main->routine),
+                {id,id,id,static_cast<odh::CodeOwner>(id)},arguments);
+        }
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
@@ -2053,27 +2146,56 @@ struct PlacementCandidateProbe {
             actor_raster_pixels,actor_composited_pixels,
             render_lot!=nullptr,render_lot!=nullptr};
     };
-    const auto total_steps=[&]{return startup_steps+vm.steps();};
+    const auto total_steps=[&]{return startup_steps+vm.steps()+(second_main_vm?second_main_vm->steps():0);};
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
         const auto budget=total_steps()<10000?10000-total_steps():0;
         if(scheduled_tick) {
             const auto phase_trace=trace_in(initialize?"main":"root_probe");
-            const odh::EntityVmScheduler::Trace scheduled_trace=[&](std::int16_t,const odh::VmTrace& record){phase_trace(record);};
+            const odh::EntityVmScheduler::Trace scheduled_trace=[&](std::int16_t entity,const odh::VmTrace& record){
+                if(headless_second_main&&entity==headless_second_main->avatar.id){
+                    if(trace.size()<10000){trace.push_back(record);trace_phases.push_back("second_main");}
+                }else phase_trace(record);
+            };
             if(!entity_scheduler.tick(ticks,budget,budget,scheduled_trace)) {
                 host_failed=true;
                 host_diagnostic=entity_scheduler.diagnostic();
             }
             return;
         }
-        if(!thread_controllers.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
-        vm.run(budget,trace_in(initialize?"main":"root_probe"));
-        if(!thread_controllers.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
+        const auto run_initial=[&](odh::Vm& target,odh::EntityThreadControllers& controllers,
+                                   const std::string& phase)->bool{
+            if(!controllers.observe()){
+                host_failed=true;host_diagnostic=phase=="second_main"
+                    ?"second avatar queue observation failed":queue.diagnostic();
+                return false;
+            }
+            const auto remaining=total_steps()<10000?10000-total_steps():0;
+            target.run(remaining,trace_in(phase));
+            if(!controllers.observe()){
+                host_failed=true;host_diagnostic=phase=="second_main"
+                    ?"second avatar queue observation failed":queue.diagnostic();
+                return false;
+            }
+            if(target.status()==odh::VmStatus::fault){host_failed=true;host_diagnostic=target.diagnostic();return false;}
+            return true;
+        };
+        // Bootstrap is outside the tick scheduler, but it still follows the
+        // same ascending entity-ID order as scheduled turns.
+        if(second_main_vm&&headless_second_main->avatar.id<static_cast<std::uint16_t>(runtime_avatar_id)){
+            if(!run_initial(*second_main_vm,*second_main_thread,"second_main"))return;
+            if(!run_initial(vm,thread_controllers,initialize?"main":"root_probe"))return;
+        }else{
+            if(!run_initial(vm,thread_controllers,initialize?"main":"root_probe"))return;
+            if(second_main_vm)run_initial(*second_main_vm,*second_main_thread,"second_main");
+        }
     };
     profile_mark("host-runtime-ready");
     execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
     profile_mark("first-main-execution");
     capture_frame();
+    const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
+        state!=odh::VmStatus::returned_false&&state!=odh::VmStatus::fault;};
     bool window_paused=false,window_closed=false;
     auto window_deadline=std::chrono::steady_clock::now();
     while(!host_failed) {
@@ -2144,7 +2266,7 @@ struct PlacementCandidateProbe {
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
             if(input.rotation||input.zoom||input.redraw)capture_frame();
             const bool runtime_finished=ticks>=ticks_limit||total_steps()>=10000||
-                (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded);
+                (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status())));
             if(runtime_finished&&!render_evidence)
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
             if(window_paused||runtime_finished){
@@ -2156,7 +2278,7 @@ struct PlacementCandidateProbe {
         }else
 #endif
         if(ticks>=ticks_limit||total_steps()>=10000||
-           (vm.status()!=odh::VmStatus::waiting&&vm.status()!=odh::VmStatus::yielded))break;
+           (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))))break;
         ++ticks;
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
@@ -2350,7 +2472,17 @@ struct PlacementCandidateProbe {
             }
         }
         if(!thread_controllers.advance(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
+        if(second_main_thread&&!second_main_thread->advance(ticks)){
+            host_failed=true;host_diagnostic="second avatar thread controller rejected tick";break;
+        }
         if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
+            if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
+            std::uint64_t bytes=sizeof(odh::PlaybackEvent);
+            for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
+            if(bytes>256*1024-animation_event_bytes)throw odh::FormatError("animation event log bytes exceed bounded host profile");
+            animation_events.push_back(event);animation_event_bytes+=bytes;
+        });
+        if(second_main_playback)second_main_playback->tick(ticks,[&](const odh::PlaybackEvent& event){
             if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
             std::uint64_t bytes=sizeof(odh::PlaybackEvent);
             for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
@@ -2646,10 +2778,14 @@ struct PlacementCandidateProbe {
             render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
         }
     }
-    const auto status=vm.status();const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
-        (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded);
+    const auto status=vm.status();
+    const auto unfinished=[](odh::VmStatus value){return value==odh::VmStatus::waiting||
+        value==odh::VmStatus::yielded||value==odh::VmStatus::budget_exhausted;};
+    const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
+        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
-    const bool instruction_exhausted=total_steps()>=10000 && (status==odh::VmStatus::waiting||status==odh::VmStatus::yielded||status==odh::VmStatus::budget_exhausted);
+    const bool instruction_exhausted=total_steps()>=10000 &&
+        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
     if(render_requested&&!render_evidence){
         if(render_window&&host_failed)throw odh::FormatError("person window preview host failed before a live Playback sample: "+host_diagnostic);
         const std::string reason=render_window?(window_closed?"person window preview closed before a live Playback sample was available":
@@ -2730,7 +2866,14 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
-        <<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")<<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests
+        <<",\"second_main\":";
+    if(second_main_vm)std::cout<<"{\"entity_id\":"<<headless_second_main->avatar.id<<",\"routine\":"<<headless_second_main->routine
+        <<",\"status\":"<<json_bytes(odh::vm_status_name(second_main_vm->status()))
+        <<",\"diagnostic\":"<<json_bytes(second_main_vm->diagnostic())<<",\"steps\":"<<second_main_vm->steps()
+        <<",\"stack_depth\":"<<second_main_vm->stack().size()<<'}';
+    else std::cout<<"null";
+    std::cout<<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")
+        <<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests
         <<",\"rng_backend\":\"FreeSO xorshift64star reference profile\",\"rng_seed_initial\":"<<seed.value_or(1)<<",\"rng_seed_final\":"<<random.seed()
         <<",\"rng_seed_source\":"<<json_bytes(seed?"explicit host fixture; original saved seed unavailable":"host default fixture1; original saved seed unavailable")
         <<",\"random_reads\":[";

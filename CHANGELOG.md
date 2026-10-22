@@ -11,20 +11,25 @@ validação indicados por versão.
   ele compartilha o tick, visita as entidades em ordem crescente de ID e limita
   o trabalho total e por Sim. Se o orçamento não der uma instrução para todos,
   alterna quem recebe a vez, sem mudar a ordem de visita. Um teste sintético com dois Sims confirma filas independentes
-  sobre o mesmo World. `tools/person` usa o scheduler nos turnos Main após a
-  preparação inicial; o host ainda controla um só avatar e a rota continua fora
-  do scheduler.
+  sobre o mesmo World. `tools/person` agora oferece um segundo Sim opcional de
+  teste: cada um tem VM, rotinas privadas, Sleep, fila e animação separados e
+  compartilham o mesmo banco global de BHAVs, World e RNG. O caminho usa o mesmo
+  recurso de avatar para os dois; ainda não monta a família de personagens de
+  um save nem dá ao segundo Sim os controladores de rota e Snap.
 
 - `EntityThreadControllers` reúne a fila de interação e o controle de Sleep de
   uma entidade, mantendo um relógio e uma fila independentes por instância.
-  `tools/person` usa esse pacote no avatar atual; isso organiza os controles por
-  personagem, mas ainda não instancia um segundo Sim no host.
+  `tools/person` usa esse pacote no avatar principal e, quando solicitado, no
+  segundo Sim de teste.
 
 - Opcode49 agora encaminha o StackObject para a thread registrada. O scheduler
   pode executar no mesmo tick uma thread posterior que acordou, se restar
   orçamento; uma thread cuja vez passou espera o próximo tick. Testes sintéticos
-  cobrem Sleep e IdleForInput, nas duas ordens de ID. O host principal ainda
-  registra apenas um avatar; isso não confirma Notify de um bloqueador comercial.
+  cobrem Sleep e IdleForInput, nas duas ordens de ID. O modo de duas VMs usa
+  ordem crescente de ID já no primeiro despacho; um teste confirma que um
+  Notify antes de o segundo Sim começar Sleep não o acorda retroativamente.
+  Esses testes usam BHAVs sintéticas e não confirmam Notify de um bloqueador
+  comercial.
 
 - A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
   um pixel e o nível do piso escolhido pelo host, calcula a posição contínua
