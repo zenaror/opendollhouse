@@ -39,9 +39,15 @@ revelou um despacho de EP15 ou uma alteração de andar confiavelmente
 identificáveis; não foi feita autoanálise nem execução do executável.
 
 O teste Go Here atual continua recusando destinos em outro andar antes de
-iniciar a caminhada. Ainda não houve subida ou descida de um Sim no ODH. Próximo
-passo: instrumentar a VM do ODH com limites e registrar as mudanças de posição
-causadas pela cadeia EP15, antes de permitir rotas entre andares.
+iniciar a caminhada. Ainda não houve subida ou descida de um Sim no ODH. O
+probe `--headless-portal` agora registra posições antes/depois da chamada. Em
+House07, Door26 moveu o Sim de `[392,440,1,3]` para `[408,408,1,0]`, sem mudar
+de piso; isso confirma o registro para uma porta comum, não para escadas.
+
+House03 não contém avatares salvos, então não há Sim para agendar junto ao
+patamar. Próximo: permitir um avatar de fixture apenas em memória num teste
+headless da House03 e observar a cadeia EP15 limitada. Só depois desses dados
+deve-se mudar a regra de roteamento entre andares.
 
 O probe `odh-wall-appearance ... --entry-point-probe` confirma os vínculos
 estáticos e marca `bhav_executed=false`; o dump `odh-bhav` mostra apenas os

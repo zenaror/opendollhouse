@@ -228,6 +228,8 @@ int main(int argc,char** argv) {
     std::optional<odh::CodeOwner> headless_portal_owner;
     std::optional<std::uint64_t> headless_portal_previous_completion;
     std::optional<bool> headless_portal_result;
+    std::optional<odh::EntityPosition> headless_portal_actor_start_position;
+    std::optional<odh::EntityPosition> headless_portal_start_position;
     std::optional<HeadlessInteraction> headless_stand;
     bool headless_stand_applied=false,headless_stand_precondition_met=false;
     std::string headless_stand_status="not_requested",headless_stand_diagnostic;
@@ -1928,7 +1930,10 @@ struct PlacementCandidateProbe {
             const auto fail_portal=[&](const std::string& reason){
                 headless_portal_status="unsupported";headless_portal_diagnostic=reason;
             };
+            if(const auto* actor=world.find(runtime_avatar_id);actor&&actor->position)
+                headless_portal_actor_start_position=*actor->position;
             const auto* target=world.find(headless_portal->id);
+            if(target&&target->position)headless_portal_start_position=*target->position;
             const auto record=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& item){
                 return item.saved.object_id==static_cast<std::uint16_t>(headless_portal->id);
             });
@@ -2552,9 +2557,23 @@ struct PlacementCandidateProbe {
             <<(headless_portal_owner?std::to_string(*headless_portal_owner):"null")<<",\"status\":"
             <<json_bytes(headless_portal_status)<<",\"diagnostic\":"<<json_bytes(headless_portal_diagnostic)
             <<",\"result\":"<<(headless_portal_result?(*headless_portal_result?"true":"false"):"null")
-            <<",\"actor_position\":";
+            <<",\"actor_start_position\":";
+        if(headless_portal_actor_start_position)std::cout<<'['<<headless_portal_actor_start_position->x<<','
+            <<headless_portal_actor_start_position->y<<','<<headless_portal_actor_start_position->level<<','
+            <<unsigned(headless_portal_actor_start_position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<",\"actor_position\":";
         if(actor&&actor->position)std::cout<<'['<<actor->position->x<<','<<actor->position->y<<','
             <<actor->position->level<<','<<unsigned(actor->position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<",\"actor_level_changed\":";
+        if(headless_portal_actor_start_position&&actor&&actor->position)
+            std::cout<<(headless_portal_actor_start_position->level!=actor->position->level?"true":"false");
+        else std::cout<<"null";
+        std::cout<<",\"portal_start_position\":";
+        if(headless_portal_start_position)std::cout<<'['<<headless_portal_start_position->x<<','
+            <<headless_portal_start_position->y<<','<<headless_portal_start_position->level<<','
+            <<unsigned(headless_portal_start_position->direction)<<']';
         else std::cout<<"null";
         std::cout<<",\"portal_position\":";
         if(target&&target->position)std::cout<<'['<<target->position->x<<','<<target->position->y<<','

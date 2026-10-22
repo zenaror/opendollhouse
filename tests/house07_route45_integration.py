@@ -407,6 +407,17 @@ def main():
             "portal_definition": portal_definition,
             "evidence": "House07 restored World, live saved door, original avatar Main, and host-scheduled diagnostic Portal15",
         }, indent=2))
+        actor_start = portal_runtime.get("actor_start_position")
+        actor_end = portal_runtime.get("actor_position")
+        portal_start = portal_runtime.get("portal_start_position")
+        portal_end = portal_runtime.get("portal_position")
+        if (not isinstance(actor_start, list) or len(actor_start) != 4 or
+                not isinstance(actor_end, list) or len(actor_end) != 4 or
+                not isinstance(portal_start, list) or len(portal_start) != 4 or
+                not isinstance(portal_end, list) or len(portal_end) != 4 or
+                portal_runtime.get("actor_level_changed") is not
+                (actor_start[2] != actor_end[2])):
+            raise SystemExit("Portal15 probe did not report a consistent before/after position")
         if args.expect_route_goal is not None:
             route = baseline.get("route_runtime") or {}
             expected = args.expect_route_goal

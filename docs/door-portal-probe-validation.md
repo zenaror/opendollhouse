@@ -212,7 +212,7 @@ conteúdo comercial é versionado.
 ### Host-scheduled Portal15 diagnostic
 
 `odh-person --headless-portal ID TICK` resolves EntryPoint15 from the exact
-restored World record, loads the explicit GLOB128-linked semiglobal and
+restored World record, loads the explicitly linked semiglobal and
 `Global.iff`, validates their BHAV closures, installs a resource CodeOwner and
 queues that BHAV through the existing Main/interaction host. The JSON
 `portal_runtime` result is labeled diagnostic: the host schedules the action
@@ -223,6 +223,20 @@ A primeira execução de `tests/house07_route45_integration.py --portal-id 25
 sem portal também excedeu esse limite. O probe foi depois alterado para parar
 no resultado da ação, permitindo os traces House07 descritos abaixo. Isso não
 converte a chamada host-scheduled em navegação natural.
+
+### Comparação de posição antes e depois do Portal15 (2026-10-22)
+
+O diagnóstico agora registra a posição do Sim e do portal quando a chamada é
+agendada, além das posições finais. Em House07, a chamada direta de Portal15 no
+objeto26 terminou `returned_true`: o Sim saiu de `[392,440,1,3]` e chegou a
+`[408,408,1,0]`; a peça ficou em `[408,424,1,0]`. `actor_level_changed` foi
+`false`. O Route45 interno fez 32 movimentos no mesmo piso. Isso confirma a
+medição com uma porta comum, mas não testa escadas nem navegação natural.
+
+House03 tem 267 entidades salvas e nenhum avatar. Por isso, o probe atual não
+consegue selecionar um Sim dessa casa para chamar EP15 em um patamar. O próximo
+teste precisa fornecer um avatar de fixture apenas na memória, junto a uma
+escada real da House03, sem alterar os saves comerciais.
 
 
 ### Trace Portal26 até a recusa de Route45 (2026-10-21)
