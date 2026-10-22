@@ -46,11 +46,24 @@ nenhum asset é copiado para o projeto.
 - Build Debug completa e CTest completos: 171 testes passaram; o teste
   `linux_window_backend` foi pulado pelo sandbox.
 
-Na execução integrada acima, o programa escreveu status de processo 3 porque o
-Main ainda estava esperando ao chegar ao teto controlado de 512 ticks. O runner
-aceitou esse estado previsto para a sonda, e confirmou que a interação sentar,
-o levantar e o vínculo dos dois moradores passaram. Isso não significa que o
+Na execução integrada de referência para o morador 105, o programa escreveu
+status de processo 3 porque o Main ainda estava esperando ao chegar ao teto
+controlado de 512 ticks. O runner aceitou esse estado previsto para a sonda e
+confirmou sentar, levantar e o vínculo dos moradores. Uma repetição com o
+morador 137 confirmou a ação de sentar e o movimento até a cadeira, mas não
+passou a verificação de levantar: o teste terminou com o Sim ainda preso à
+cadeira. Isso permanece uma falha aberta da prova de interação para esse
+morador, nas duas instalações testadas. O status 3 também não significa que o
 Main terminou nem que a casa foi jogada por tempo ilimitado.
+
+O teste complementar `tests/house07_resident_main_smoke.py` executa cada um dos
+dois moradores separadamente, usando seu próprio arquivo `User00000.iff` ou
+`User00001.iff`, GUID, ObjectID e Main. Ambos precisam receber `LotZoning.iff`:
+sem esse dado, o Main do Sim 137 para com o diagnóstico “lot zoning resource
+unavailable”. Com as regras do lote presentes, cada execução chega ao limite
+controlado de 32 ticks sem falha, usando o próprio ObjectID como dono do trace.
+Isso verifica o carregamento e a execução inicial de cada recurso de morador;
+não os executa ao mesmo tempo.
 
 O resultado ainda é uma conferência de identidade e restauração estrutural.
 `reconcile_session_household` não cria Sims nem os move. A sessão executa o Main
