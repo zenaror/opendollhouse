@@ -4,6 +4,10 @@ Este documento define o que significa “primeira build jogável” para o
 OpenDollhouse. Um lote de demonstração que abre e permite uma interação é um
 marco de desenvolvimento, mas não satisfaz esse objetivo.
 
+O retrato atual por recurso e a ordem proposta para ligar as peças estão em
+[playable-feature-matrix.md](playable-feature-matrix.md). A matriz é um mapa
+de trabalho, não reduz os critérios de conclusão deste documento.
+
 ## Definição
 
 A build candidata deve oferecer, no Linux, o ciclo principal de The Sims 1 com

@@ -5,6 +5,14 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Planejado e acompanhado
+
+- Criada uma matriz entre o estado atual e os caminhos necessários para a
+  primeira build Linux jogável. Ela separa mapas/leitores parciais de gameplay
+  integrado e organiza o próximo trabalho por fluxos reutilizáveis; não reduz
+  os critérios de conclusão. Veja
+  [`playable-feature-matrix.md`](docs/playable-feature-matrix.md).
+
 ### Investigado
 
 - Rastreada sem execução a fila de Hecuba na House77: a árvore 8236 existe em
