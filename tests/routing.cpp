@@ -540,6 +540,43 @@ int main() {
                  routing.diagnostic()=="route interrupted by player"&&vm.run(1)==odh::VmStatus::returned_false,
                  "interrupted Go Here completes false without teleporting after the game's failure tree");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+         auto code=goto_relative(go_here);
+         code.emplace(odh::routine_key(398),odh::Bhav{0x8002,
+             {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}});
+         odh::RoutineSet child_code{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{46,1,1,{0,0,0,0,0,0,0,0}},
+              {2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         const auto route_primitive=routing.primitive();
+         odh::Vm vm{std::move(code),world.vm_memory(),{},
+             [route_primitive](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch) {
+                 if(instruction.opcode==46)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                 return route_primitive(frame,instruction,temps,dispatch);
+             },{{9,std::move(child_code)}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(1)==odh::VmStatus::waiting&&routing.active(),
+                 "Go Here route is waiting before its child action starts");
+         require(routing.call_external_frame({odh::routine_key(4097),{1,2,2,9},{}}),
+                 "Go Here accepts a route-owned child action");
+         require(vm.run(1)==odh::VmStatus::waiting,
+                 "Go Here can be suspended while one of its route-owned child actions is active");
+         const auto child_ticket=vm.pending()->ticket;
+         require(routing.interrupt()&&routing.active()&&routing.external_frame_active()&&
+                 vm.complete(child_ticket,true)&&vm.run(1)==odh::VmStatus::yielded&&
+                 vm.external_frame_return()&&routing.tick(1)&&routing.active()&&
+                 routing.external_frame_active()&&vm.stack().back().key.id==398&&
+                 vm.stack().back().arguments==std::vector<std::int16_t>{4,0,0,0},
+                 "Backspace waits for the child action to return, then starts Go Here's failure action");
+         require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(2)&&!routing.active()&&
+                 vm.status()==odh::VmStatus::returned_false&&
+                 routing.diagnostic()=="route interrupted by player",
+                 "deferred Go Here cancellation finishes after Global 398 returns");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          odh::Vm vm{goto_relative(),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
          world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,3});

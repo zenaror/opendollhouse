@@ -95,7 +95,7 @@ public:
     Routing& operator=(const Routing&)=delete;
     bool bind(Vm&);
     // Stop an active, local Go Here walk through its saved failure tree.
-    // Only supported when the scheduler is between ticks and no route frame is suspended.
+    // If a route-owned child frame is active, apply the request at its next return.
     bool interrupt();
     // Install before VM execution. Missing/ambiguous tables remain unsupported.
     void set_stack_object_slot_table_provider(StackObjectSlotTableProvider provider) {
@@ -175,6 +175,7 @@ private:
         bool call_failure_trees=false;
         bool failure_tree_invoked=false;
         bool failure_pending=false;
+        bool interrupt_pending=false;
         std::int16_t failure_code=3;
         std::int16_t failure_blocker=0;
         std::string failure_reason{};

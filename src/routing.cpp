@@ -586,11 +586,22 @@ bool Routing::finish(bool result,std::string reason) {
     return vm_->complete(ticket,result);
 }
 bool Routing::interrupt() {
-    if(executing_||!job_||!suspended_jobs_.empty()||!job_->call_failure_trees||
-       job_->external_frame_active||job_->failure_pending||job_->failure_tree_invoked)
-        return false;
+    if(executing_||!job_||job_->failure_pending||job_->failure_tree_invoked)return false;
+    if(!suspended_jobs_.empty()){
+        const auto parent=std::find_if(suspended_jobs_.rbegin(),suspended_jobs_.rend(),
+            [](const Job& candidate){return candidate.call_failure_trees&&!candidate.failure_tree_invoked;});
+        if(parent==suspended_jobs_.rend())return false;
+        parent->interrupt_pending=true;
+        job_->interrupt_pending=true;
+        return true;
+    }
+    if(!job_->call_failure_trees)return false;
     // Simitone names fail code 4 Interrupted. Keep this isolated until the
     // original PC executable's cancellation code is verified independently.
+    if(job_->external_frame_active){
+        job_->interrupt_pending=true;
+        return true;
+    }
     job_->failure_code=4;
     return finish(false,"route interrupted by player");
 }
@@ -619,6 +630,11 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         job_->failure_pending=false;
         return finish(false,job_->failure_reason);
     }
+    if(job_->interrupt_pending&&!job_->external_frame_active){
+        job_->interrupt_pending=false;
+        if(job_->call_failure_trees)job_->failure_code=4;
+        return finish(false,"route interrupted by player");
+    }
     if(job_->external_frame_active) {
         if(vm_->run_generation()!=job_->run_generation) {
             cancel_chain("route canceled by VM restart during external frame");return false;
@@ -633,6 +649,11 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
             job_->external_frame_active=false;
             if(job_->failure_tree_invoked)
                 return finish(false,job_->failure_reason);
+            if(job_->interrupt_pending){
+                job_->interrupt_pending=false;
+                job_->failure_code=4;
+                return finish(false,"route interrupted by player");
+            }
             job_->frame.state=RouteFrameState::room_portal;
             const auto* actor=world_.find(job_->actor);
             const auto* target=world_.find(job_->target);

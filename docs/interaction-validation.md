@@ -299,27 +299,37 @@ python3 tests/house07_route45_integration.py \
   --go-here-expect-interruption
 ```
 
-Também foi testado o cancelamento do jogador. O teste pede a interrupção depois
-do primeiro passo: o avatar para em `[393,440,1,2]`, não teleporta até o alvo,
-entra em Global BHAV398, esvazia a fila e remove o marcador. A referência
-Simitone chama o código de falha `4` de `Interrupted`; ainda falta confirmar
-esse número diretamente no executável original. O teste prova o fluxo atual do
-host ODH com a BHAV398 salva, não a confirmação final da fidelidade do número.
-Reprodução:
+Também foi testado o cancelamento do jogador antes do primeiro passo. O pedido
+entra na BHAV398 salva, o avatar fica em `[392,440,1,3]`, a fila esvazia e o
+marcador some. A referência Simitone chama o código de falha `4` de
+`Interrupted`; ainda falta confirmar esse número diretamente no executável
+original. Esse teste prova o fluxo atual do host ODH, não a fidelidade final do
+número.
+
+O pedido pode chegar enquanto uma ação interna da rota ainda está aberta. Nesse
+caso, o controlador guarda o pedido, espera essa ação devolver o controle e só
+então chama a BHAV398. Um teste de unidade cobre essa espera; a integração
+House07 cobre cancelamento no começo da rota:
 
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-release/odh-person \
   --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
   --ticks 256 --go-here 27 26 1 \
-  --go-here-interrupt-at-tick 5 --go-here-expect-cancelled
+  --go-here-interrupt-at-tick 2 --go-here-expect-cancelled
 ```
 
-O backend X11 também foi exercitado com eventos sintéticos dirigidos à janela
-de teste: Backspace gera um único pedido, não se repete enquanto fica segurado
-e volta a funcionar após a liberação. Isso valida a entrega da tecla pelo
-backend; a janela completa do lote ainda não foi testada visualmente com esse
-cancelamento.
+Na janela House07 completa, eventos de teclado dirigidos à janela selecionaram
+o chão em `(23,26)`, iniciaram Go Here com Space e cancelaram com Backspace.
+O título mostrou `cancelled by player`; o avatar não saiu do início, a rota
+ficou inativa, a fila esvaziou e a VM registrou a BHAV398. Os eventos foram
+enviados à própria janela sem mover o cursor. Isso cobre o cancelamento no
+começo da rota; não conta como teste de cancelamento depois de passos de
+caminhada.
+
+Separadamente, o backend X11 confirmou que Backspace gera um pedido, não se
+repete enquanto fica segurado e volta a funcionar após a liberação. Isso testa
+a entrega da tecla, sem substituir a integração House07 acima.
 
 O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
 (`Doors.iff`), e o personagem conseguiu chegar ali; ele não foi contado como

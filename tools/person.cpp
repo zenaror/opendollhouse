@@ -1191,6 +1191,7 @@ struct PlacementCandidateProbe {
     std::optional<bool> render_interaction_result;
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
+    bool go_here_cancel_pending=false;
     std::optional<std::uint16_t> go_here_action;
     std::optional<odh::CodeOwner> go_here_owner;
     std::optional<std::int16_t> go_here_marker_id;
@@ -1810,7 +1811,8 @@ struct PlacementCandidateProbe {
             const auto input=render_window_host->poll();
             if(input.quit){window_closed=true;break;}
             if(input.pause)window_paused=!window_paused;
-            if(input.interrupt&&go_here_status=="queued"&&runtime_routing&&runtime_routing->interrupt()){
+            if(input.interrupt&&go_here_status=="queued"){
+                go_here_cancel_pending=true;
                 go_here_route_status="cancelling";
                 render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
             }
@@ -2026,10 +2028,14 @@ struct PlacementCandidateProbe {
             headless_entity_move_applied=true;
         }
         if(headless_go_here_interrupt_tick&&!headless_go_here_interrupt_applied&&
-           ticks>=*headless_go_here_interrupt_tick&&runtime_routing&&
-           runtime_routing->active()&&route_runtime_movement_callbacks>0){
+           ticks>=*headless_go_here_interrupt_tick&&go_here_status=="queued"){
             headless_go_here_interrupt_applied=true;
-            headless_go_here_interrupt_accepted=runtime_routing->interrupt();
+            go_here_cancel_pending=true;
+        }
+        if(go_here_cancel_pending&&go_here_status=="queued"&&runtime_routing&&
+           runtime_routing->active()&&runtime_routing->interrupt()){
+            go_here_cancel_pending=false;
+            if(headless_go_here_interrupt_tick)headless_go_here_interrupt_accepted=true;
         }
         if(runtime_routing&&runtime_routing->active()){
             if(!runtime_routing->external_frame_active()&&
@@ -2090,7 +2096,10 @@ struct PlacementCandidateProbe {
                 render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
-            if(go_here_status!="queued")remove_go_here_marker();
+            if(go_here_status!="queued"){
+                go_here_cancel_pending=false;
+                remove_go_here_marker();
+            }
         }
         if(headless_go_here_applied&&go_here_status!="queued")break;
         if(headless_portal_applied&&headless_portal_status=="queued"&&queue.completion()&&

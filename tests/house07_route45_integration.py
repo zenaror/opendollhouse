@@ -318,10 +318,11 @@ def main():
                 (route_cancelled and
                  (baseline_code != 0 or baseline.get("host_failed") or
                   go_here.get("route_status") != "cancelled" or
-                  not movement_positions or go_here.get("end_position") != movement_positions[-1] or
+                  (movement_positions and go_here.get("end_position") != movement_positions[-1]) or
+                  (not movement_positions and go_here.get("end_position") != go_here.get("start_position")) or
                   go_here.get("end_position", [])[:3] == destination or
                   go_here.get("queue_size") != 0 or go_here.get("queue_active") is not False or
-                  route.get("active") or route.get("movement_callbacks", 0) <= 0 or
+                  route.get("active") or
                   route.get("diagnostic") != "route interrupted by player" or
                   route.get("headless_go_here_interrupt") != {
                       "tick": args.go_here_interrupt_at_tick, "applied": True, "accepted": True} or
