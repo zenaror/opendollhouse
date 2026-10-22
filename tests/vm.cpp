@@ -63,6 +63,72 @@ int main() {
         auto vm = machine(parsed); vm.start(key());
         require(vm.run(1) == odh::VmStatus::returned_true && vm.temps()[0] == 1, "parsed expression executes");
 
+        auto restored = machine(routine({expr(2,0,37,9,7)},2));
+        odh::VmFrame saved_frame{key(),0,{12,13,14,0},{37},{44},
+                                 odh::VmCallReturnMode::ordinary,0};
+        std::array<std::int16_t,20> saved_temps{};
+        saved_temps[0]=77;
+        restored.restore_dormant_state({saved_frame},saved_temps);
+        require(restored.status()==odh::VmStatus::dormant && restored.steps()==0 &&
+                restored.stack().size()==1 && restored.stack()[0].pc==0 &&
+                restored.stack()[0].arguments.size()==4 && restored.stack()[0].arguments[0]==37 &&
+                restored.stack()[0].locals.size()==4 && restored.stack()[0].locals[0]==44 &&
+                restored.temps()==saved_temps && restored.stack()[0].context.caller==12 &&
+                restored.stack()[0].context.callee==13 && restored.stack()[0].context.stack_object==14,
+                "saved VM state loads exactly and stays dormant with padded variables");
+        require(restored.run(1)==odh::VmStatus::dormant && restored.steps()==0,
+                "dormant VM does not execute before explicit activation");
+        std::vector<odh::VmTrace> restored_trace;
+        require(restored.activate_dormant_state() &&
+                restored.run(1,[&](const auto& trace){restored_trace.push_back(trace);})==odh::VmStatus::returned_true &&
+                restored_trace.size()==1 && restored_trace[0].key.id==key().id && restored_trace[0].pc==0,
+                "explicit activation begins at the saved routine and address");
+
+        odh::Vm restored_stack({{key(),routine({call(4097,1),expr(2,0,37,9,7)})},
+                                {key(4097),routine({expr(2,0,37,9,7)})}});
+        auto saved_parent=saved_frame; saved_parent.arguments={5}; saved_parent.locals={55};
+        auto saved_child=saved_frame; saved_child.key=key(4097); saved_child.arguments={37}; saved_child.locals={66};
+        restored_stack.restore_dormant_state({saved_parent,saved_child},saved_temps);
+        std::vector<odh::VmTrace> stack_trace;
+        require(restored_stack.activate_dormant_state() &&
+                restored_stack.run(1,[&](const auto& trace){stack_trace.push_back(trace);})==odh::VmStatus::budget_exhausted &&
+                stack_trace.size()==1 && stack_trace[0].key.id==4097 && stack_trace[0].pc==0 &&
+                restored_stack.stack().size()==1 && restored_stack.stack()[0].key.id==4096 &&
+                restored_stack.stack()[0].pc==1,
+                "restored two-frame stack runs its saved top frame then returns to its saved parent");
+
+        odh::RoutineOwners restored_owners{{42,{{key(),routine({expr(2,0,37,9,7)})}}}};
+        odh::Vm restored_owner({{key(0),routine({expr(2,0,0)})}}, {}, {}, {},
+                               std::move(restored_owners));
+        auto owner_frame=saved_frame; owner_frame.context.code_owner=42;
+        restored_owner.restore_dormant_state({owner_frame},saved_temps);
+        require(restored_owner.status()==odh::VmStatus::dormant &&
+                restored_owner.stack()[0].context.code_owner==42,
+                "restore resolves a private routine through its installed code owner");
+
+        auto atomic_restore=machine(routine({expr(2,0,1)}));
+        atomic_restore.start(key());
+        const auto old_status=atomic_restore.status();
+        const auto old_stack=atomic_restore.stack();
+        const auto old_temps=atomic_restore.temps();
+        const auto old_generation=atomic_restore.run_generation();
+        auto bad_frame=saved_frame; bad_frame.pc=99;
+        bool restore_rejected=false;
+        try { atomic_restore.restore_dormant_state({bad_frame},saved_temps); }
+        catch (const std::invalid_argument&) { restore_rejected=true; }
+        require(restore_rejected && atomic_restore.status()==old_status &&
+                atomic_restore.stack().size()==old_stack.size() &&
+                atomic_restore.stack()[0].pc==old_stack[0].pc &&
+                atomic_restore.temps()==old_temps && atomic_restore.run_generation()==old_generation,
+                "invalid restore rejects atomically and preserves active VM state");
+        odh::Vm restore_over_limit({{key(),routine({expr(2,0,1)},4097)}}, {}, {64,4096,64});
+        bool metadata_limit_rejected=false;
+        try { restore_over_limit.restore_dormant_state({saved_frame},saved_temps); }
+        catch (const std::invalid_argument&) { metadata_limit_rejected=true; }
+        require(metadata_limit_rejected && restore_over_limit.status()==odh::VmStatus::ready &&
+                restore_over_limit.stack().empty(),
+                "restore rejects metadata that would exceed the frame variable limit");
+
         for (const auto pair : {std::pair<unsigned,int>{0,0}, {1,1}, {2,0}, {14,0}, {15,1}, {16,1}}) {
             auto m = machine(routine({expr(pair.first, -2, -1, 7, 7)})); m.start(key());
             require(m.run(1) == (pair.second ? odh::VmStatus::returned_true : odh::VmStatus::returned_false),

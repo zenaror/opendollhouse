@@ -37,7 +37,7 @@ private:
 };
 struct ShareVmProgramTag {};
 
-enum class VmStatus { ready, running, budget_exhausted, waiting, returned_true, returned_false, fault, yielded };
+enum class VmStatus { ready, dormant, running, budget_exhausted, waiting, returned_true, returned_false, fault, yielded };
 enum class VmCallReturnMode { ordinary, interaction_next_tick, external_frame_next_tick };
 const char* vm_status_name(VmStatus);
 struct VmContext {
@@ -151,6 +151,11 @@ public:
     Vm(Vm&&) = delete;
     Vm& operator=(Vm&&) = delete;
     VmStatus start(RoutineKey, VmContext = {}, const std::vector<std::int16_t>& args = {});
+    // Load a complete, already-resolved stack without starting Main or running
+    // an instruction. Invalid snapshots throw and leave this VM unchanged.
+    void restore_dormant_state(std::vector<VmFrame>, const std::array<std::int16_t, 20>& temps);
+    // A host must explicitly opt in after restoring the surrounding world state.
+    bool activate_dormant_state();
     VmStatus run(std::uint64_t instruction_budget,
                  const std::function<void(const VmTrace&)>& trace = {});
     // Append one private/semiglobal resource owner at a host safe point. Existing

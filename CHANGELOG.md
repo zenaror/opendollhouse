@@ -33,6 +33,13 @@ validação indicados por versão.
   recurso de avatar para os dois; ainda não monta a família de personagens de
   um save nem dá ao segundo Sim os controladores de rota e Snap.
 
+- A VM agora pode importar uma pilha completa já resolvida e mantê-la parada
+  como `dormant`; `run()` não a executa até a ativação explícita do host.
+  Testes sintéticos carregam dois quadros, iniciam no quadro superior salvo e
+  voltam ao pai; uma pilha inválida é rejeitada sem alterar o estado anterior.
+  Isso ainda não conecta uma partida OBJM à VM nem restaura estados especiais,
+  filas, relógio ou serviços. Veja [`vm-validation.md`](docs/vm-validation.md).
+
 - `EntityThreadControllers` reúne a fila de interação e o controle de Sleep de
   uma entidade, mantendo um relógio e uma fila independentes por instância.
   `tools/person` usa esse pacote no avatar principal e, quando solicitado, no

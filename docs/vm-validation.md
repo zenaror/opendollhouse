@@ -61,6 +61,23 @@ também aguarda, uma segunda filha aninhada, restauração LIFO de tickets e
 conclusão pela aresta original do pai. Chamadas com ticket stale ou rotina
 ausente preservam o wait-pai.
 
+## Importação de uma pilha parada
+
+`Vm::restore_dormant_state` aceita uma pilha completa de `VmFrame` já resolvida
+e vinte registradores. Antes de alterar a VM, confere cada rotina, dono de
+código, posição, destinos de desvio, limites e variáveis. Locais e parâmetros
+curtos são completados conforme os metadados da rotina. A VM fica no estado
+`dormant`; `run()` não executa nada até o host chamar explicitamente
+`activate_dormant_state()`.
+
+O teste sintético carrega dois quadros, confirma que a VM não roda durante a
+importação e, após ativação explícita, observa o quadro superior iniciar na
+posição carregada e voltar ao pai. Uma pilha inválida é recusada sem mudar a
+VM anterior. Isso prova o mecanismo de importar um snapshot já interpretado;
+não liga ainda os dados OBJM salvos a essa API. `primitive_state`, resultados
+especiais de retorno, ação/interação, filas, relógio e serviços ainda precisam
+ser resolvidos antes de ativar uma partida salva.
+
 ## Diferenças e lacunas explícitas
 
 Primitivas fora da 2, scopes externos ausentes, rotinas faltantes, índices

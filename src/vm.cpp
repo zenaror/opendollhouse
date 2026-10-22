@@ -46,6 +46,7 @@ RoutineKey routine_key(std::uint16_t id) {
 const char* vm_status_name(VmStatus status) {
     switch (status) {
     case VmStatus::ready: return "ready";
+    case VmStatus::dormant: return "dormant";
     case VmStatus::running: return "running";
     case VmStatus::budget_exhausted: return "budget_exhausted";
     case VmStatus::waiting: return "waiting";
@@ -143,6 +144,60 @@ VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int
     try { push(key, context, args); }
     catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
     return status_;
+}
+void Vm::restore_dormant_state(std::vector<VmFrame> frames,
+                               const std::array<std::int16_t, 20>& temps) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter state restore");
+    if (frames.empty() || frames.size() > limits_.stack_depth)
+        throw std::invalid_argument("restored VM stack is empty or exceeds stack limit");
+    if (run_generation_ == std::numeric_limits<std::uint64_t>::max())
+        throw std::logic_error("VM run generation overflow");
+
+    for (auto& frame : frames) {
+        if (frame.key.scope != routine_key(frame.key.id).scope)
+            throw std::invalid_argument("restored frame has invalid routine scope");
+        if (frame.context.code_owner != 0 && owners_.find(frame.context.code_owner) == owners_.end())
+            throw std::invalid_argument("restored frame code owner is unavailable");
+        const auto* routine = resolve(frame.key, frame.context.code_owner);
+        if (!routine) throw std::invalid_argument("restored frame routine is unavailable");
+        const auto metadata = execution_metadata(*routine);
+        if (!metadata || routine->instructions.empty())
+            throw std::invalid_argument("restored frame routine has unsupported metadata or no instructions");
+        if (frame.pc >= routine->instructions.size())
+            throw std::invalid_argument("restored frame instruction address is outside its routine");
+        for (const auto& instruction : routine->instructions)
+            for (const auto target : {instruction.on_true, instruction.on_false})
+                if (target < 0xFD && target >= routine->instructions.size())
+                    throw std::invalid_argument("restored routine has a branch outside its instructions");
+
+        if (frame.return_mode != VmCallReturnMode::ordinary || frame.invocation_ticket != 0)
+            throw std::invalid_argument("restored frame contains runtime-only return state");
+        const auto argument_count = std::max<std::size_t>(4, metadata->arguments);
+        const auto local_count = std::max<std::size_t>(metadata->locals, metadata->arguments);
+        if (argument_count > limits_.frame_variables || local_count > limits_.frame_variables)
+            throw std::invalid_argument("restored frame metadata exceeds variable limit");
+        if (frame.arguments.size() > limits_.frame_variables || frame.locals.size() > limits_.frame_variables)
+            throw std::invalid_argument("restored frame variables exceed limit");
+        frame.arguments.resize(std::max(frame.arguments.size(), argument_count), 0);
+        frame.locals.resize(std::max(frame.locals.size(), local_count), 0);
+    }
+
+    ++run_generation_;
+    stack_ = std::move(frames);
+    temps_ = temps;
+    steps_ = 0;
+    diagnostic_.clear();
+    pending_.reset();
+    suspended_pending_.clear();
+    interaction_return_.reset();
+    external_frame_return_.reset();
+    status_ = VmStatus::dormant;
+}
+bool Vm::activate_dormant_state() {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter state activation");
+    if (status_ != VmStatus::dormant || stack_.empty()) return false;
+    status_ = VmStatus::running;
+    return true;
 }
 std::optional<VmMemoryAddress> resolve_person_data_address(std::uint8_t scope,
     std::int16_t index,const std::array<std::int16_t,20>& temps) {
