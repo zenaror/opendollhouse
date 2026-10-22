@@ -14,6 +14,8 @@ std::string chunk(const std::string& type,unsigned id,const std::string& payload
 std::string iff(const std::string& payload){std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');return b+payload;}
 std::string ttab(){std::string b;put(b,1,2);put(b,8,2);put(b,0x1001,2);put(b,0x1002,2);put(b,0,4);put(b,0,4);put(b,0,4);put(b,4,4);put(b,0x3f800000,4);put(b,50,4);put(b,0xffffffff,4);return b;}
 std::string labels(){std::string b;put(b,0,2);put(b,1,2);b+=char(3);b+="Sit";return b;}
+std::string localized_labels(){std::string b;put(b,65533,2);put(b,2,2);
+    b.push_back(1);b+=std::string("Caf\xe9\0\0",6);b.push_back(14);b+=std::string("Sentar\0\0",8);return b;}
 std::string test_bhav(unsigned opcode=2){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,opcode,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     if(opcode==2){b.push_back(0);b.push_back(0);b.push_back(11);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(16);b.push_back(3);}
@@ -34,6 +36,13 @@ int main(){try{
     check(result.state==SavedObjectInteractions::State::found&&result.table&&result.table->interactions.size()==1,"owner TTAB discovered");
     check(result.source==path.string()&&result.table_id==128&&result.asset.empty(),"exact owner provenance retained");
     check(result.labels.state==odh::StringTableState::decoded&&result.row_labels.size()==1&&result.row_labels[0]=="Sit","TTAs label mapped by explicit language/index");
+    data=iff(chunk("TTAB",128,ttab())+chunk("TTAs",128,localized_labels()));write(path,data);
+    const auto portuguese=saved_object_interactions({path.string(),"",7,object},14);
+    const auto missing_language=saved_object_interactions({path.string(),"",7,object},5);
+    check(portuguese.language==14&&portuguese.row_labels[0]=="Sentar","interaction label follows selected Portuguese group");
+    check(missing_language.language==5&&missing_language.row_labels[0]==std::string("Caf\xe9")&&
+          missing_language.row_label_languages[0]==1,
+          "missing localized interaction label retains English fallback code page and source language");
     data=iff(chunk("TTAB",128,ttab()));write(path,data);
     const auto no_labels=saved_object_interactions({path.string(),"",7,object});
     check(no_labels.state==SavedObjectInteractions::State::found&&!no_labels.row_labels[0],"missing TTAs leaves decoded interaction unlabeled");

@@ -17,6 +17,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A prévia Linux desenha o rótulo da interação selecionada sobre o cenário,
+  usando PangoCairo, shaping e fallback para fontes do sistema. O teste sintético
+  confirma amostras em português, japonês, chinês simplificado, hebraico e
+  tailandês; ainda não há seletor ou preferência de idioma persistida.
+
 - `odh-strings` agora consulta `STR#` diretamente em um IFF solto, como
   `UIText.iff`, para facilitar a inspeção de idiomas sem extrair recursos.
   A saída continua preservando bytes originais; não converte nem desenha texto.

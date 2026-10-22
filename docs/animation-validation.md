@@ -17,8 +17,14 @@ O probe publicado anterior continua parando em 44, BHAV 0x1003 PC8.
 `read_strings` lê STR# 0 (Pascal), -1 (NUL), -2 (valor/comentário NUL) e -3
 (idioma seguido de valor/comentário NUL). Preserva bytes, inclusive texto não
 ASCII; JSON usa escapes byte a byte, sem alegar conversão do encoding original.
-Idiomas 0/1 pertencem ao grupo US; a seleção não aplica fallback automático.
-Payload ausente, somente cabeçalho e tabela decodificada são estados distintos.
+Idiomas 0/1 pertencem ao grupo US. `string_in_language` continua sendo uma busca exata, enquanto
+`string_in_language_or_english` oferece fallback para textos visíveis. O fallback foi
+ligado aos rótulos de interação. O preview Linux aceita `--language 1..20`, converte
+o texto usando o idioma real da entrada escolhida (inclusive quando caiu no inglês)
+e o mostra no título da janela. Se PangoCairo estiver disponível, também desenha
+esse rótulo na faixa inferior da cena; esse painel é apenas uma prévia, não um menu
+de idioma, e a escolha ainda não é salva entre execuções. Payload ausente, somente
+cabeçalho e tabela decodificada são estados distintos.
 
 `read_bcf_animations` aceita apenas BCF binário com zero skeletons e appearances.
 Preserva nomes, bits de duração/distância, moving, índices, flags, propriedades e

@@ -51,6 +51,12 @@
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
 #endif
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+#include "linux_text_codec.hpp"
+#endif
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+#include "linux_text_renderer.hpp"
+#endif
 #include <iostream>
 #include <memory>
 #include <charconv>
@@ -248,6 +254,7 @@ int main(int argc,char** argv) {
     std::optional<bool> headless_stand_result;
     std::optional<std::int16_t> headless_stand_posture_before,headless_stand_attachment_before;
     bool render_window=false,saved_world_main=false,headless_main=false;
+    std::uint8_t game_language=1;bool game_language_set=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::string> render_floors,render_walls;
     SavedLotView render_lot_view;
@@ -260,6 +267,9 @@ int main(int argc,char** argv) {
         else if(option=="--global"&&!globals&&n+2<argc){globals=Resource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--action"&&!action&&n+4<argc){action=Resource{argv[n+1],argv[n+2]};action_def=selector(argv[n+3]);action_routine=selector(argv[n+4]);n+=4;}
         else if(option=="--ticks"&&!ticks_set&&n+1<argc){ticks_limit=selector(argv[++n]);ticks_set=true;}
+        else if(option=="--language"&&!game_language_set&&n+1<argc){const auto value=selector(argv[++n]);
+            if(value<1||value>20)throw odh::FormatError("language code outside the available STR range 1..20");
+            game_language=static_cast<std::uint8_t>(value);game_language_set=true;}
         else if(option=="--flags"&&!flags&&n+1<argc)flags=selector(argv[++n]);
         else if(option=="--age"&&!age&&n+1<argc)age=selector(argv[++n]);
         else if(option=="--routine"&&!routine&&n+1<argc)routine=selector(argv[++n]);
@@ -461,7 +471,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -1450,7 +1460,7 @@ struct PlacementCandidateProbe {
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
         if(!candidate)return;
-        render_interactions=saved_object_interactions(*candidate);
+        render_interactions=saved_object_interactions(*candidate,game_language);
         if(!render_interactions->table||render_interactions->table->status!=odh::TtabStatus::decoded)return;
         const auto& rows=render_interactions->table->interactions;
         std::vector<std::uint16_t> tests;
@@ -1544,7 +1554,10 @@ struct PlacementCandidateProbe {
         previous_completion_uid=queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::optional<std::uint64_t>{};
         render_interaction_diagnostic.clear();
     };
+    std::optional<std::string> current_overlay_text;
+    std::uint8_t current_overlay_language=game_language;
     const auto interaction_window_title=[&]{
+        current_overlay_text.reset();
         std::string title="OpenDollhouse Main preview";
         if(render_selection){
             title+=" | object "+std::to_string(render_selection->id)+" GUID "+
@@ -1557,9 +1570,17 @@ struct PlacementCandidateProbe {
                 if(std::find(eligible.begin(),eligible.end(),selected)==eligible.end())selected=eligible.front();
                 const auto position=static_cast<std::size_t>(std::distance(eligible.begin(),
                     std::find(eligible.begin(),eligible.end(),selected)));
-                const auto label=selected<render_interactions->row_labels.size()&&
+                const auto raw_label=selected<render_interactions->row_labels.size()&&
                     render_interactions->row_labels[selected]?*render_interactions->row_labels[selected]:
                     std::string("eligible action");
+                current_overlay_language=selected<render_interactions->row_label_languages.size()?
+                    render_interactions->row_label_languages[selected]:game_language;
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+                const auto label=odh_host::legacy_text_to_utf8(raw_label,current_overlay_language,2048);
+#else
+                const auto& label=raw_label;
+#endif
+                current_overlay_text=label;
                 title+=" | action "+std::to_string(position+1)+"/"+
                     std::to_string(eligible.size())+": "+label;
                 if(eligible.size()>1)title+=" (Tab/Shift+Tab to choose)";
@@ -2124,7 +2145,18 @@ struct PlacementCandidateProbe {
                 actor_composited_pixels=std::count(owner_ids.begin(),owner_ids.end(),scene_state.owner_id);
         }
 #ifdef ODH_HAVE_X11
-        if(render_window_host)render_window_host->present(frame.image);
+        if(render_window_host){
+            (void)interaction_window_title();
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+            if(current_overlay_text){
+                const auto text_result=odh_host::draw_text_overlay(frame.image,*current_overlay_text,current_overlay_language);
+                if(text_result.missing_glyphs)
+                    render_window_host->set_title(interaction_window_title()+" | missing font glyphs: "+
+                                                  std::to_string(text_result.missing_glyphs));
+            }
+#endif
+            render_window_host->present(frame.image);
+        }
 #endif
         if(render_output){
             std::ofstream ppm(*render_output,std::ios::binary|std::ios::out);
@@ -2801,7 +2833,7 @@ struct PlacementCandidateProbe {
         }
         throw odh::FormatError(failure+")");
     }
-    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"initialization\":"<<json_bytes(saved_world_main?
+    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)<<",\"initialization\":"<<json_bytes(saved_world_main?
         "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")

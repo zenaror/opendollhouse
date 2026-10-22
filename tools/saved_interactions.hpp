@@ -18,6 +18,9 @@ struct SavedObjectInteractions {
     odh::StringTable labels{odh::StringTableState::absent,{}, {},0};
     std::uint8_t language=1;
     std::vector<std::optional<std::string>> row_labels;
+    // The selected entry may be English fallback even when the requested
+    // language is different; preserve its source encoding for the host UI.
+    std::vector<std::uint8_t> row_label_languages;
 };
 
 inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCandidate& definition,
@@ -43,9 +46,17 @@ inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCa
     result.state=SavedObjectInteractions::State::found;result.table=std::move(table.value());
     if(labels)result.labels=std::move(labels.value());
     result.row_labels.reserve(result.table->interactions.size());
+    result.row_label_languages.reserve(result.table->interactions.size());
     for(const auto& row:result.table->interactions){
-        const auto* label=odh::string_in_language(result.labels,language,row.label_index);
-        if(label)result.row_labels.emplace_back(label->value);else result.row_labels.emplace_back(std::nullopt);
+        const auto* label=odh::string_in_language_or_english(result.labels,language,row.label_index);
+        if(label){
+            result.row_labels.emplace_back(label->value);
+            // STR language 0 is the legacy alias for US English (1).
+            result.row_label_languages.emplace_back(label->language==0?1:label->language);
+        }else{
+            result.row_labels.emplace_back(std::nullopt);
+            result.row_label_languages.emplace_back(language);
+        }
     }
     return result;
 }

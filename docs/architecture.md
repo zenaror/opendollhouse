@@ -10,6 +10,27 @@ VM, renderização, interação e lote mínimo, não apenas o inspector host atu
 Os constraints do New 3DS continuam considerados na arquitetura; a execução em
 Linux não comprova viabilidade ou desempenho nos portáteis.
 
+Decisão de planejamento de 2026-10-22: a primeira build Linux jogável deve
+permitir escolher o idioma do jogo. Priorizar os grupos de texto presentes nos
+dados instalados, guardar uma escolha simples e usar inglês como fallback para
+uma frase ausente. A validação inicial será uma checagem rápida de textos
+principais da interface; não exige auditoria exaustiva de todas as traduções.
+O arquivo `GameData/UIText.iff` da instalação de referência contém 74 tabelas
+STR# no formato -3 e grupos com códigos 1–20; isso comprova disponibilidade de
+textos nesses grupos, não cobertura completa de cada idioma. O
+[inventário](language-resource-inventory.md) registra o arquivo, a contagem e
+amostras das codificações. Os parsers continuam guardando os bytes originais;
+na borda Linux, o helper converte esses bytes para UTF-8 e PangoCairo desenha
+uma faixa curta sobre a cena, usando fontes instaladas no sistema. A interface
+deve exibir os grupos disponíveis na instalação (códigos 1–20), sem reduzir a
+lista aos idiomas de implementação mais fácil. Os
+consumidores atuais também fixam o inglês em alguns caminhos, então a seleção
+deve chegar aos textos da interface e às interações antes do milestone jogável.
+O preview Linux aceita `--language 1..20` e mostra o rótulo da ação selecionada
+no título e em uma faixa desenhada dentro da cena. Isso é uma escolha temporária
+de execução para teste, não uma preferência persistida nem um seletor dentro do
+jogo; a interface jogável ainda precisa de opção própria.
+
 Decisão de planejamento de 2026-10-20: após a primeira versão funcional Linux e
 os ports prioritários New 3DS/Vita/Android, manter Windows e macOS como alvos
 futuros de build. Incluir Windows desktop e macOS para Apple Silicon (arm64) e

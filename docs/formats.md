@@ -12,7 +12,7 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | SPR2/PALT | SPR2 1000, frame RLE, RGBA/index/Z; PALT RGB e version/raw; limites/seleção explícitos | SPR2 outras versões, palette fallback, FloorCopy/ZAsAlpha e composição |
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
-| STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Encoding Unicode, fallback automático de idioma e formato -4 |
+| STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Parsers preservam bytes; lookup exato não aplica fallback; helper Linux converte texto visível e oferece fallback inglês; formato -4 |
 | BCF | Leitores separados para animações, skeletons ou appearances, exigindo demais seções vazias; campos brutos, propriedades, ranges e extensões | BCF misto e formatos textuais CMX/SKN/ANIM |
 | BMF | Nomes, bones, faces, bindings, UVs, pesos, transforms floatbits e vertex_count2 bruto | SKN textual, materiais/roupas completos e semântica geral de vertex_count2 |
 | BMP | DIB40/BI_RGB8 ou24bpp, paleta/BGR, padding/orientação e RGBA opaco | DIBs/compressões/bpp restantes, alpha e color key |

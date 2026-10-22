@@ -19,6 +19,20 @@ int main(){try{
     window.poll();
     std::unique_ptr<Display,decltype(&XCloseDisplay)> sender(XOpenDisplay(nullptr),&XCloseDisplay);
     if(!sender)throw std::runtime_error("cannot open own-window test sender");
+    const std::string localized_title="OpenDollhouse — Sofás ポーズ 暂停";
+    window.set_title(localized_title);
+    (void)window.readback(); // Round-trip on the same X connection before the second client queries the property.
+    const Atom utf8_name=XInternAtom(sender.get(),"_NET_WM_NAME",False);
+    const Atom utf8_type=XInternAtom(sender.get(),"UTF8_STRING",False);
+    Atom actual_type=None;int actual_format=0;unsigned long item_count=0,bytes_after=0;unsigned char* property=nullptr;
+    if(XGetWindowProperty(sender.get(),window.native_id(),utf8_name,0,4096,False,utf8_type,
+        &actual_type,&actual_format,&item_count,&bytes_after,&property)!=Success||
+        actual_type!=utf8_type||actual_format!=8||bytes_after!=0||item_count!=localized_title.size()||
+        !property||std::string(reinterpret_cast<char*>(property),item_count)!=localized_title){
+        if(property)XFree(property);
+        throw std::runtime_error("UTF-8 window title property differs");
+    }
+    XFree(property);
     auto key=[&](KeySym sym,int type=KeyPress,unsigned state=0){XEvent event{};event.xkey.type=type;event.xkey.display=sender.get();event.xkey.window=window.native_id();event.xkey.root=DefaultRootWindow(sender.get());event.xkey.same_screen=True;event.xkey.state=state;event.xkey.keycode=XKeysymToKeycode(sender.get(),sym);if(!event.xkey.keycode||!XSendEvent(sender.get(),window.native_id(),False,type==KeyPress?KeyPressMask:KeyReleaseMask,&event))throw std::runtime_error("own-window key injection failed");XSync(sender.get(),False);window.readback();};
     key(XK_space);auto input=window.poll();if(!input.action||input.quit||input.pause||input.primary_click)throw std::runtime_error("Space mapping failed");
     key(XK_Tab);input=window.poll();if(input.interaction_selection_delta!=1||input.action)throw std::runtime_error("Tab interaction selection mapping failed");

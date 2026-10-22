@@ -241,7 +241,12 @@ void LinuxWindow::set_title(const std::string& title) {
     impl_->require_alive();
     if (title.size() > 4096 || title.find('\0') != std::string::npos)
         throw odh::FormatError("X11: title must be at most 4096 bytes without embedded NUL");
-    XStoreName(impl_->display, impl_->window, title.c_str());
+    Xutf8SetWMProperties(impl_->display,impl_->window,const_cast<char*>(title.c_str()),
+        const_cast<char*>(title.c_str()),nullptr,0,nullptr,nullptr,nullptr);
+    const Atom name_property=XInternAtom(impl_->display,"_NET_WM_NAME",False);
+    const Atom utf8_type=XInternAtom(impl_->display,"UTF8_STRING",False);
+    XChangeProperty(impl_->display,impl_->window,name_property,utf8_type,8,PropModeReplace,
+        reinterpret_cast<const unsigned char*>(title.data()),static_cast<int>(title.size()));
     XFlush(impl_->display);
 }
 

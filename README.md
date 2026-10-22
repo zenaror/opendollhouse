@@ -60,8 +60,12 @@ checkpoint de organização.
 
 ## Compilar e testar
 
-Requisitos desta etapa: compilador C++17 e CMake 3.16 ou superior. Os scripts
-auxiliares usam Python 3.8 ou superior, somente com a biblioteca padrão.
+Requisitos desta etapa: compilador C++17 e CMake 3.16 ou superior. No Linux,
+Iconv é necessário para converter textos antigos do jogo. PangoCairo e Cairo são
+opcionais: quando encontrados, desenham texto na janela usando fontes do sistema;
+sem eles, as demais ferramentas e a prévia ainda compilam, mas sem a faixa de
+texto. Os scripts auxiliares usam Python 3.8 ou superior, somente com a biblioteca
+padrão.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -70,8 +74,10 @@ ctest --test-dir build --output-on-failure
 ```
 
 Preview opcional usa headers/libX11 de desenvolvimento quando disponíveis;
-`-DODH_X11=OFF` compila sem esse backend. Comandos de janela e seus limites estão
-em [live-view-validation.md](docs/live-view-validation.md).
+`-DODH_X11=OFF` compila sem esse backend. Quando PangoCairo está disponível, o
+texto da faixa é desenhado com fontes do sistema; nenhum conjunto de fontes
+comerciais ou de terceiros é copiado ao projeto. Comandos de janela e seus limites estão em
+[live-view-validation.md](docs/live-view-validation.md).
 
 Os testes geram fixtures sintéticas na memória; não dependem dos dados comerciais.
 

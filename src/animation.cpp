@@ -31,6 +31,11 @@ const StringEntry* string_in_language(const StringTable& table,std::uint8_t lang
         --index;}
     return nullptr;
 }
+const StringEntry* string_in_language_or_english(const StringTable& table,std::uint8_t language,std::size_t index) {
+    if(const auto* selected=string_in_language(table,language,index))return selected;
+    if(language==0||language==1)return nullptr;
+    return string_in_language(table,1,index);
+}
 namespace {
 std::uint32_t bounded(detail::Cursor& c,std::uint32_t& budget,std::uint32_t minimum){const auto n=c.u32();
     if(n>budget || n>c.remaining()/minimum)throw FormatError("animation count exceeds payload or configured budget");

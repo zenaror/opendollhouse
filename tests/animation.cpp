@@ -35,6 +35,9 @@ int main(){try{
     std::string multi;put(multi,65533,2);put(multi,3,2);multi+=std::string("\x02" "UK\0\0\x00" "US\0\0\x01" "US2\0\0",16);
     auto st=strings(multi);require(odh::string_in_language(st,1,0)->value=="US" && odh::string_in_language(st,0,1)->value=="US2" &&
                                 !odh::string_in_language(st,3,0),"language grouping/alias without fallback");
+    require(odh::string_in_language_or_english(st,3,0)->value=="US" &&
+            odh::string_in_language_or_english(st,2,0)->value=="UK" &&
+            !odh::string_in_language_or_english(st,1,2),"user-facing lookup falls back to English only when selected text is absent");
     for(std::size_t n=3;n<multi.size();++n)rejects([&]{strings(multi.substr(0,n));});
     require(strings("").state==odh::StringTableState::absent && strings(std::string(2,'\0')).state==odh::StringTableState::header_only,"missing/header-only distinction");
     require(strings(multi+"xxx").remaining_bytes==3,"string tail retained");

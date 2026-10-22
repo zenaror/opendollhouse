@@ -17,6 +17,9 @@ struct StringTable {
 StringTable read_strings(const View&,AnimationLimits limits={});
 // Explicit language group. Codes0/1 are US; no automatic language fallback.
 const StringEntry* string_in_language(const StringTable&,std::uint8_t,std::size_t);
+// User-facing text lookup: use the requested group, then English US (code 1).
+// This does not change the exact lookup used by engine identifiers.
+const StringEntry* string_in_language_or_english(const StringTable&,std::uint8_t,std::size_t);
 using AnimationProperties=std::vector<std::pair<std::string,std::string>>;
 struct AnimationTimeProperty {std::int32_t id;AnimationProperties pairs;};
 struct BoneMotion {
