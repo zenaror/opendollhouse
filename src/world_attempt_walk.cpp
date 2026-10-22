@@ -46,7 +46,8 @@ AttemptWalkObstacleSnapshot build_world_attempt_walk_obstacles(
     bool avatar_consideration_complete,
     const std::vector<std::int16_t>& avatars_to_consider,
     const AttemptWalkEntryPoint5Resolver& resolve_entry_point5,
-    const AttemptWalkObstacleLimits& limits) {
+    const AttemptWalkObstacleLimits& limits,
+    std::optional<EntityPosition> actor_position_override) {
     if (actor_id <= 0) return unsupported(AttemptWalkObstacleReason::invalid_actor);
     if (!limits.entities || limits.entities > 4096)
         return unsupported(AttemptWalkObstacleReason::entity_inventory_over_budget);
@@ -102,9 +103,10 @@ AttemptWalkObstacleSnapshot build_world_attempt_walk_obstacles(
     }
     const auto actor_generation = actor->generation;
     const auto actor_position = *actor->position;
+    const auto obstacle_actor_position = actor_position_override.value_or(actor_position);
     const auto actor_action = entry_point5_for(*actor);
 
-    auto result = build_attempt_walk_obstacles(rooms, room, level, actor_position,
+    auto result = build_attempt_walk_obstacles(rooms, room, level, obstacle_actor_position,
         actor_id, *actor_flags, actor_action, room_obstacles, wall_obstacles,
         entities, true, avatar_consideration_complete, avatars_to_consider,
         resolve_entry_point5, limits);

@@ -17,7 +17,8 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
     std::uint16_t room, std::uint8_t level, std::int16_t actor_id,
     bool avatar_consideration_complete,
     const std::vector<std::int16_t>& avatars_to_consider,
-    const odh::AttemptWalkEntryPoint5Resolver& resolve_entry_point5) {
+    const odh::AttemptWalkEntryPoint5Resolver& resolve_entry_point5,
+    std::optional<odh::EntityPosition> actor_position_override) {
     RuntimeAttemptWalkProbe result;
     if (!prepared.floor_identity_unambiguous() || level > 1 || room == 0)
         return result;
@@ -142,7 +143,8 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         result.snapshot = odh::build_world_attempt_walk_obstacles(
             world, definitions, room_for, kill_timeout_for, rooms, room, level,
             actor_id, room_obstacles, wall_obstacles,
-            result.avatar_consideration_complete, avatars_to_consider, resolve_entry_point5);
+            result.avatar_consideration_complete, avatars_to_consider, resolve_entry_point5, {},
+            actor_position_override);
         if (result.snapshot.state == odh::AttemptWalkObstacleState::ready) {
             const auto& ids = result.snapshot.entity_obstacle_ids;
             result.entity_obstacle_order_matches_reference =

@@ -923,6 +923,9 @@ int main(int argc,char** argv) {
     };
     std::map<std::int16_t,std::unique_ptr<SnapRuntime>> snap_runtimes;
     std::function<bool(std::int16_t,const odh::EntityPosition&)> snap_placement_validator;
+    std::function<odh::Snap::StairPlacementStatus(std::int16_t,std::int16_t,const odh::EntityPosition&)>
+        snap_stair_placement_validator;
+    std::string snap_stair_placement_diagnostic;
     odh::VmPrimitive snap_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
                                       const auto& tuning,const odh::VmDispatch& dispatch) {
         const auto stack_object=frame.context.stack_object;
@@ -932,7 +935,7 @@ int main(int argc,char** argv) {
         auto runtime=snap_runtimes.find(object_id);
         if(runtime==snap_runtimes.end()) {
             const auto* entity=world.find(object_id);
-            if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!definition_index)
+            if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!entity->position||!definition_index)
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is unavailable"};
             const auto* candidate=definition_index->unique(entity->definition->guid);
             if(!candidate)
@@ -949,8 +952,42 @@ int main(int argc,char** argv) {
                         binding=odh::read_objd_binding(chunk.payload);
                     }
                 },limits);
-                if(!binding||binding->guid!=candidate->definition.guid||binding->master_id!=0)
-                    throw odh::FormatError("Snap OBJD identity or single-tile profile mismatch");
+                bool matched_stair_group=false;
+                if(binding&&binding->guid==candidate->definition.guid&&binding->master_id==4&&
+                   candidate->asset=="stair.iff"&&candidate->definition.master_id==4&&
+                   entity->definition->master_guid==0x307DDFA6U&&restored_world&&
+                   frame.key.id==4113&&(frame.pc==3||frame.pc==10)&&
+                   instruction.operands==std::array<std::uint8_t,8>{0,0,3,0,2,0,0,0}) {
+                    const auto target_guid=candidate->definition.guid;
+                    const bool target_lower=target_guid==0x79E2B825U&&candidate->definition.sub_index==5;
+                    const bool target_upper=target_guid==0x821EB6EEU&&candidate->definition.sub_index==0;
+                    const auto* source=world.find(frame.context.callee);
+                    const auto source_guid=source&&source->definition?source->definition->guid:0U;
+                    const bool opposite_pair=(target_lower&&source_guid==0x821EB6EEU)||
+                                             (target_upper&&source_guid==0x79E2B825U);
+                    const auto group=std::find_if(restored_world->multitile_groups.begin(),
+                        restored_world->multitile_groups.end(),[&](const auto& value){
+                            return value.master_guid==0x307DDFA6U&&
+                                std::find(value.members.begin(),value.members.end(),object_id)!=value.members.end()&&
+                                std::find(value.members.begin(),value.members.end(),frame.context.callee)!=value.members.end();
+                        });
+                    bool has_lower=false,has_upper=false;
+                    if(group!=restored_world->multitile_groups.end())for(const auto member:group->members){
+                        const auto* part=world.find(member);
+                        if(!part||!part->definition||!part->position)continue;
+                        has_lower=has_lower||(part->definition->guid==0x79E2B825U&&part->position->level==1);
+                        has_upper=has_upper||(part->definition->guid==0x821EB6EEU&&part->position->level==2);
+                    }
+                    matched_stair_group=(target_lower||target_upper)&&opposite_pair&&has_lower&&has_upper&&
+                        group!=restored_world->multitile_groups.end()&&source&&source->position&&
+                        std::abs(static_cast<int>(source->position->level)-
+                                 static_cast<int>(world.find(object_id)->position->level))==1;
+                }
+                if(!binding||binding->guid!=candidate->definition.guid||
+                   binding->master_id!=candidate->definition.master_id||
+                   binding->sub_index!=candidate->definition.sub_index||
+                   (binding->master_id!=0&&!matched_stair_group))
+                    throw odh::FormatError("Snap OBJD identity or supported multi-tile profile mismatch");
                 if(binding->slot_table==0)throw odh::FormatError("Snap OBJD has no SLOT binding");
                 with_resource(resource,[&](const auto& second_view){
                     odh::iff_chunks(second_view,[&](const auto& chunk){
@@ -970,6 +1007,9 @@ int main(int argc,char** argv) {
             entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table,
                 [&](std::int16_t actor,const odh::EntityPosition& position){
                     return snap_placement_validator&&snap_placement_validator(actor,position);
+                },[&](std::int16_t actor,std::int16_t target,const odh::EntityPosition& position){
+                    return snap_stair_placement_validator?
+                        snap_stair_placement_validator(actor,target,position):odh::Snap::StairPlacementStatus::unsupported;
                 });
             if(!entry->controller->bind(*dispatch.origin))
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap controller could not bind to VM"};
@@ -1823,6 +1863,44 @@ struct PlacementCandidateProbe {
            static_cast<std::uint8_t>(destination.level-1)!=runtime_route_grid->level)return false;
         return runtime_route_grid->grid->walkable({destination.x,destination.y});
     };
+    snap_stair_placement_validator=[&](std::int16_t actor_id,std::int16_t target_id,
+                                        const odh::EntityPosition& destination){
+        snap_stair_placement_diagnostic.clear();
+        const auto unsupported=[&](const std::string& reason){
+            snap_stair_placement_diagnostic=reason;return odh::Snap::StairPlacementStatus::unsupported;
+        };
+        const auto* actor=world.find(actor_id);const auto* target=world.find(target_id);
+        if(!actor||actor->kind!=odh::EntityKind::avatar||!actor->position||actor->attachment||
+           !target||target->kind!=odh::EntityKind::object||!target->position||target->attachment||
+           destination.level<1||destination.level>2||destination.direction>7||
+           destination.x!=target->position->x||destination.y!=target->position->y||
+           destination.level!=target->position->level||
+           std::abs(static_cast<int>(actor->position->level)-static_cast<int>(destination.level))!=1||
+           !restored_world||!definition_index||!render_lot||!render_lot->prepared_architecture()||
+           !render_lot->runtime_room_map_available())
+            return unsupported("stairs actor, target, or architecture identity is incomplete");
+        const auto room=render_lot->runtime_room_at(destination);
+        if(!room)return unsupported("stairs destination room is unresolved");
+        const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+            render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
+            static_cast<std::uint8_t>(destination.level-1),actor_id,true,{},resolve_read_only_ep5,destination);
+        if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
+            return unsupported(std::string("stairs destination obstacle snapshot is incomplete: ")+
+                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason));
+        if(probe.other_avatars_in_room!=0)
+            return unsupported("stairs destination room has another avatar; Shoo is not implemented");
+        auto grid=odh::build_world_room_route_grid(probe.snapshot);
+        if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
+            return unsupported("stairs destination walkability grid is incomplete");
+        if(!grid.grid->contains({destination.x,destination.y}))
+            return unsupported("stairs destination lies outside the prepared walkability grid");
+        if(!grid.grid->walkable({destination.x,destination.y})){
+            snap_stair_placement_diagnostic="stairs destination tile is blocked";
+            return odh::Snap::StairPlacementStatus::blocked;
+        }
+        snap_stair_placement_diagnostic="stairs destination tile passed the prepared walkability checks";
+        return odh::Snap::StairPlacementStatus::accepted;
+    };
     std::uint64_t ticks=0;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
@@ -2191,6 +2269,8 @@ struct PlacementCandidateProbe {
             headless_portal_diagnostic.clear();
         }else if(headless_portal_applied&&headless_portal_status=="queued"&&vm.status()==odh::VmStatus::fault){
             headless_portal_status="vm_fault";headless_portal_diagnostic=vm.diagnostic();
+            if(!snap_stair_placement_diagnostic.empty())
+                headless_portal_diagnostic+=" ("+snap_stair_placement_diagnostic+")";
         }else if(headless_portal_applied&&headless_portal_status=="queued"&&host_failed){
             headless_portal_status="host_failed";headless_portal_diagnostic=host_diagnostic;
         }

@@ -22,14 +22,24 @@ std::optional<FloorExit> floor_exit(const SlotRecord& route) {
 bool same_attachment(const std::optional<Attachment>& a,const std::optional<Attachment>& b) {
     return bool(a)==bool(b) && (!a || (a->container==b->container && a->slot==b->slot && a->positioned==b->positioned));
 }
+bool stair_exact_point(const SlotRecord& route) {
+    return route.snap_target_slot==-1 && route.flags==2048U &&
+       route.offset_bits==std::array<std::uint32_t,3>{0,0,0} &&
+       route.standing==0 && route.sitting==0 && route.ground==0 && route.height==0 &&
+       route.facing==-2 && route.resolution==16 && route.max_size==0 && route.unknown_i10==0 &&
+       route.gradient_bits==0x3E400000 && route.proximity &&
+       *route.proximity==std::array<std::int32_t,3>{16,16,16};
+}
 }
 Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id,
-           PlacementValidator placement_validator)
+           PlacementValidator placement_validator,StairPlacementValidator stair_placement_validator)
     :world_(world),object_(object),generation_(0),binding_(binding),slots_(slots),
-     placement_validator_(std::move(placement_validator)) {
+     placement_validator_(std::move(placement_validator)),
+     stair_placement_validator_(std::move(stair_placement_validator)) {
     const auto* entity=world_.find(object);
     if(!entity || entity->kind!=EntityKind::object || !slot_id || binding.slot_table!=slot_id)
-        throw std::invalid_argument("snap owner or SLOT binding mismatch");
+        throw std::invalid_argument("snap owner or SLOT binding mismatch (object="+std::to_string(object)+
+            ", slot="+std::to_string(slot_id)+", bound="+std::to_string(binding.slot_table)+")");
     generation_=entity->generation;
 }
 bool Snap::bind(const Vm& vm) {if(vm_ && vm_!=&vm)return false;vm_=&vm;return true;}
@@ -41,7 +51,7 @@ VmPrimitive Snap::primitive() {
         if(!vm_ || dispatch.origin!=vm_) return fail("snap controller bound to another VM");
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
         const auto mode=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
-        if(mode!=3 || (i.operands[4]!=0 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
+        if(mode!=3 || (i.operands[4]!=0 && i.operands[4]!=2 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
             return fail("snap operand profile not implemented");
         const auto* object=world_.find(object_);const auto* actor=world_.find(frame.context.caller);
         if(!object || object->generation!=generation_ || frame.context.stack_object!=object_ ||
@@ -50,6 +60,38 @@ VmPrimitive Snap::primitive() {
         const auto* route=slot_of_type(slots_,3,index);
         if(!route) return {PrimitiveDisposition::goto_false,{}};
         if(route->snap_target_slot==-1) {
+            if(slots_.version==10 && index==0 && binding_.slot_table==128 &&
+               i.operands[4]==2 && stair_exact_point(*route)) {
+                if(binding_.master_id!=4 || !stair_placement_validator_)
+                    return fail("stair exact-point Snap identity or placement profile unsupported");
+                if(actor->attachment || actor->position->level<1 || actor->position->level>2 ||
+                   object->position->level<1 || object->position->level>2 ||
+                   std::abs(static_cast<int>(actor->position->level)-static_cast<int>(object->position->level))!=1)
+                    return fail("stair exact-point Snap requires unattached actor and adjacent floors");
+                const auto actor_id=actor->id;
+                const auto actor_generation=actor->generation;
+                const auto actor_position=*actor->position,object_position=*object->position;
+                const auto classify=[&](EntityPosition candidate)->std::optional<PrimitiveOutcome> {
+                    const auto result=stair_placement_validator_(actor_id,object_,candidate);
+                    if(result==StairPlacementStatus::accepted)return {};
+                    if(result==StairPlacementStatus::blocked)
+                        return PrimitiveOutcome{PrimitiveDisposition::goto_false,{}};
+                    return fail("stair exact-point Snap placement validation unsupported");
+                };
+                auto north=object_position;north.direction=0;
+                struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+                if(auto result=classify(north))return *result;
+                auto destination=object_position;destination.direction=actor_position.direction;
+                if(auto result=classify(destination))return *result;
+                object=world_.find(object_);actor=world_.find(actor_id);
+                if(!object || object->generation!=generation_ || !object->position || object->attachment ||
+                   !(*object->position==object_position) || !actor || actor->generation!=actor_generation ||
+                   !actor->position || !(*actor->position==actor_position) || actor->attachment)
+                    return {PrimitiveDisposition::goto_false,{}};
+                return {world_.place_on_floor(actor_id,destination)?PrimitiveDisposition::goto_true:
+                    PrimitiveDisposition::goto_false,{}};
+            }
+            if(i.operands[4]==2)return fail("Snap Shoo flag outside the exact stair profile");
             const auto exit=floor_exit(*route);
             if(slots_.version!=10 || !exit) return fail("snap floor SLOT profile not implemented");
             if(!placement_validator_) return fail("snap floor placement validator missing");

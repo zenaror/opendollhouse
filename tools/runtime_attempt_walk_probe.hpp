@@ -25,4 +25,5 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
     std::uint16_t room, std::uint8_t level, std::int16_t actor_id,
     bool avatar_consideration_complete,
     const std::vector<std::int16_t>& avatars_to_consider,
-    const odh::AttemptWalkEntryPoint5Resolver&);
+    const odh::AttemptWalkEntryPoint5Resolver&,
+    std::optional<odh::EntityPosition> actor_position_override = {});

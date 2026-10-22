@@ -24,6 +24,16 @@ odh::SlotTable floor_table() {
     }
     return slots;
 }
+odh::SlotTable stair_table() {
+    odh::SlotRecord route{};route.type=3;route.snap_target_slot=-1;route.flags=2048;
+    route.proximity=std::array<std::int32_t,3>{16,16,16};route.max_size=0;route.unknown_i10=0;
+    route.gradient_bits=0x3E400000;route.height=0;route.facing=-2;route.resolution=16;
+    return {0,10,{route},0};
+}
+odh::RoutineSet stair_routine(unsigned flags=2,unsigned index=0) {
+    return {{odh::routine_key(4113),odh::Bhav{0x8002,{{46,254,255,{static_cast<std::uint8_t>(index),
+        static_cast<std::uint8_t>(index>>8),3,0,static_cast<std::uint8_t>(flags),0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+}
 struct Fixture {
     odh::World world;odh::SlotTable slots=table();
     std::optional<odh::Snap> snap;
@@ -164,6 +174,39 @@ int main(){try{
     {FloorFixture f;seat(f);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{9,8,1,6});f.world.attach(1,0,3);
      require(f.world.place_on_floor(1,{40,50,2,4}) && f.world.find(3)->attachment && *f.world.find(3)->position==odh::EntityPosition{9,8,1,6},"floor World move does not physically move unpositioned attachment");
      require(!f.world.place_on_floor(99,{40,50,1,0}),"floor World rejects missing identity");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;std::vector<odh::EntityPosition> checked;
+     odh::Snap snap{world,2,binding,slots,128,{},[&](auto actor,auto target,const auto& point){
+         require(actor==1&&target==2,"stair validator receives actor and StackObject identities");
+         checked.push_back(point);return odh::Snap::StairPlacementStatus::accepted;}};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true,"exact stair Snap moves actor to adjacent-floor StackObject");
+     require(*world.find(1)->position==odh::EntityPosition{312,344,2,6}&&
+             checked==std::vector<odh::EntityPosition>{{312,344,2,0},{312,344,2,6}},
+             "stair Snap validates north placement then preserves actor facing at exact target position");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;
+     odh::Snap snap{world,2,binding,slots,128,{},[](auto,auto,const auto&){return odh::Snap::StairPlacementStatus::blocked;}};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false&&*world.find(1)->position==odh::EntityPosition{312,424,1,6},
+             "occupied stair destination takes false branch without moving actor");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;
+     odh::Snap snap{world,2,binding,slots,128,{},[](auto,auto,const auto&){return odh::Snap::StairPlacementStatus::unsupported;}};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault&&*world.find(1)->position==odh::EntityPosition{312,424,1,6},
+             "incomplete stair placement evidence faults without moving actor");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;
+     odh::Snap snap{world,2,binding,slots,128,{},[](auto,auto,const auto&){return odh::Snap::StairPlacementStatus::accepted;}};
+     auto bad=stair_routine();bad.begin()->second.instructions[0].operands[4]=0;
+     odh::Vm vm(bad,world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault&&*world.find(1)->position==odh::EntityPosition{312,424,1,6},
+             "stair exact-point profile does not absorb a different Shoo operand");}
     for(unsigned mutation=0;mutation<16;++mutation) {FloorFixture f;seat(f);auto& route=f.slots.records[3];
      switch(mutation) {
      case 0:f.slots.version=9;break;case 1:route.offset_bits[1]=0x7FC00000;break;case 2:route.offset_bits[1]=0xC1700001;break;

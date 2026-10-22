@@ -77,23 +77,29 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
     if route["movement_callbacks"] <= 0:
         raise AssertionError(f"portal {portal_id} did not walk: {portal}; route={route}")
     if end[:3] != list(expected):
-        raise AssertionError(f"portal {portal_id} ended at {end}, expected x/y/floor {expected}")
-    if portal["actor_level_changed"]:
-        raise AssertionError(f"approach probe unexpectedly changed floor: {portal}")
-    if "Snap resource/profile unsupported" not in portal["diagnostic"]:
-        raise AssertionError(f"expected the known Snap limit after reaching the landing: {portal}")
-    if not snap or not active_frame or (snap["routine"], snap["pc"]) != (4113, active_frame["pc"]):
-        raise AssertionError(f"could not tie the stopped VM frame to the Snap instruction: {data.get('stack')}")
+        raise AssertionError(f"portal {portal_id} ended at {end}, expected stair landing {expected}")
+    if not portal["actor_level_changed"]:
+        raise AssertionError(f"the Sim reached the stair but did not change floors: {portal}")
+    if "unsupported primitive 44" not in portal["diagnostic"]:
+        raise AssertionError(f"expected the next known limit after the stair transition: {portal}")
+    if not snap or not active_frame or snap["routine"] != 4113 or active_frame["routine"] != 4113:
+        raise AssertionError(f"could not tie the VM trace to the stair Snap instruction: {data.get('stack')}")
     if (active_frame["owner"] != portal["code_owner"] or active_frame["caller"] != 30000 or
             active_frame["callee"] != portal_id or active_frame["stack_object"] != opposite_endpoint):
         raise AssertionError(f"unexpected live stair Snap context for endpoint {portal_id}: {active_frame}")
+    next_primitive = next((entry for entry in data["trace"]
+                           if entry["opcode"] == 44 and entry["step"] > snap["step"]), None)
+    if not next_primitive:
+        raise AssertionError(f"could not confirm that the VM continued after the stair Snap: {data['trace'][-8:]}")
     return {"portal_id": portal_id, "start": portal["actor_start_position"],
             "end": end, "movement_callbacks": route["movement_callbacks"],
             "portal_status": portal["status"], "next_limit": portal["diagnostic"],
             "snap_instruction": {"routine": snap["routine"], "pc": snap["pc"],
                 "operands": snap["operands"]},
             "live_snap_frame": active_frame,
-            "level_changed": portal["actor_level_changed"]}
+            "level_changed": portal["actor_level_changed"],
+            "next_instruction": {"opcode": next_primitive["opcode"],
+                "routine": next_primitive["routine"], "pc": next_primitive["pc"]}}
 
 
 def main():
@@ -113,11 +119,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="odh-house03-stair-") as directory:
         avatar = pathlib.Path(directory) / "User00000-idle-main.iff"
         patch_idle_main(game / "UserData/Characters/User00000.iff", avatar)
-        lower = run_probe(args.binary.resolve(), game, avatar, 34, (320, 424, 1), (312, 424, 1), 38)
-        upper = run_probe(args.binary.resolve(), game, avatar, 38, (320, 344, 2), (312, 344, 2), 34)
+        lower = run_probe(args.binary.resolve(), game, avatar, 34, (320, 424, 1), (312, 344, 2), 38)
+        upper = run_probe(args.binary.resolve(), game, avatar, 38, (320, 344, 2), (312, 424, 1), 34)
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": [lower, upper],
-        "claim": "walked to each stair landing; BHAV 4113 selected the opposite-floor endpoint as the live Snap StackObject, but Snap could not execute and no floor transition was proven"}, indent=2))
+        "claim": "walked to each stair landing, executed the exact stair Snap, and changed floors in both directions; execution then stopped at the next unimplemented primitive 44, so the full stair interaction is not yet complete"}, indent=2))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ AttemptWalkObstacleSnapshot build_world_attempt_walk_obstacles(
     bool avatar_consideration_complete,
     const std::vector<std::int16_t>& avatars_to_consider,
     const AttemptWalkEntryPoint5Resolver& resolve_entry_point5 = {},
-    const AttemptWalkObstacleLimits& limits = {});
+    const AttemptWalkObstacleLimits& limits = {},
+    std::optional<EntityPosition> actor_position_override = {});
 
 } // namespace odh
