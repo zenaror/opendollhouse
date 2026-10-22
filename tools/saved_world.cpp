@@ -3,11 +3,12 @@
 #include "saved_thread_plan_audit.hpp"
 #include "saved_tail_json.hpp"
 #include <iostream>
+#include <utility>
 
 int main(int argc,char** argv){try{
-    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--verify-saved-threads [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
+    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--verify-saved-threads [--import-saved-threads-dormant] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
     const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false;
+    std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
         if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
             if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");
@@ -16,9 +17,12 @@ int main(int argc,char** argv){try{
         else if(option=="--semiglobal"&&!semiglobal&&n+2<argc){semiglobal=SavedThreadCodeResource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--global"&&!global&&n+2<argc){global=SavedThreadCodeResource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--verify-saved-threads"&&!verify_saved_threads)verify_saved_threads=true;
+        else if(option=="--import-saved-threads-dormant"&&!import_saved_threads_dormant)import_saved_threads_dormant=true;
         else throw odh::FormatError("invalid saved World option");
     }
     if(sources.empty())throw odh::FormatError("explicit definition source required");
+    if(import_saved_threads_dormant&&!verify_saved_threads)
+        throw odh::FormatError("dormant saved-thread import requires --verify-saved-threads");
     if((semiglobal&&(semiglobal->archive.size()>4096||semiglobal->entry.size()>4096))||
        (global&&(global->archive.size()>4096||global->entry.size()>4096)))
         throw odh::FormatError("saved-thread resource path exceeds limit");
@@ -27,14 +31,28 @@ int main(int argc,char** argv){try{
     auto loaded=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
     std::vector<std::optional<odh::SimitoneSavedThreadPlan>> thread_plans(records.size());
     std::vector<std::vector<SavedThreadCodeCheck>> thread_checks(records.size());
+    std::vector<std::optional<std::size_t>> thread_vm_imports(records.size());
+    std::size_t dormant_threads_imported=0;
     for(std::size_t n=0;n<records.size();++n){
         if(!records[n].tail.person)continue;
         thread_plans[n]=odh::make_simitone_saved_thread_plan(records[n],object_types);
-        if(verify_saved_threads)
+        if(verify_saved_threads){
             thread_checks[n]=audit_saved_thread_plan(*thread_plans[n],*index,semiglobal,global);
+            if(import_saved_threads_dormant&&!thread_plans[n]->frames.empty()){
+                auto banks=load_saved_thread_routine_banks(*thread_plans[n],thread_checks[n]);
+                odh::Vm vm(std::move(banks.global),{},{},{},std::move(banks.owners));
+                odh::restore_simitone_saved_thread_plan(vm,*thread_plans[n]);
+                if(vm.status()!=odh::VmStatus::dormant)
+                    throw odh::FormatError("saved-thread VM did not remain dormant after import");
+                thread_vm_imports[n]=vm.stack().size();
+                ++dormant_threads_imported;
+            }
+        }
     }
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
         <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"rendered\":false"
+        <<",\"saved_thread_vm_import\":{\"requested\":"<<(import_saved_threads_dormant?"true":"false")
+        <<",\"executed\":false,\"threads_loaded_dormant\":"<<dormant_threads_imported<<'}'
         <<",\"profile\":\"saved identity/banks/positions/containment/object relationships; dormant frames and raw source retained; no original runtime proof\""
         <<",\"definition_guids\":"<<index->guid_count()<<",\"entities\":"<<loaded->records.size()
         <<",\"world_words\":"<<loaded->world->word_count()<<",\"relationship_sources\":"<<loaded->relationships->source_count()
@@ -82,7 +100,10 @@ int main(int argc,char** argv){try{
                 }
                 std::cout<<'}';
             }
-            std::cout<<"]}";
+            std::cout<<']';
+            if(thread_vm_imports[n])
+                std::cout<<",\"vm_state\":\"dormant\",\"vm_imported_frames\":"<<*thread_vm_imports[n];
+            std::cout<<'}';
         }else std::cout<<"null";
         std::cout<<",\"saved_stack_depth\":"<<raw.common.stack.size()<<",\"object_relationships\":[";
         for(std::size_t r=0;r<raw.common.relationships.size();++r){

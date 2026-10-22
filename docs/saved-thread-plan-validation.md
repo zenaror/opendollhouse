@@ -50,6 +50,14 @@ semiglobal corresponde ao GLOB esperado. Quadros que precisam de repetição ou
 interação são recusados até o kernel e o scheduler ODH suportarem esses estados.
 Isso não executa a VM nem substitui a restauração das filas e do relógio.
 
+`odh-saved-world --verify-saved-threads --import-saved-threads-dormant` repete
+a auditoria e carrega, de cada fonte exata aprovada, somente as BHAVs citadas
+pela pilha. Então importa cada Sim numa VM temporária, confirma o estado
+`dormant` e descarta a VM sem ativá-la. O JSON informa
+`saved_thread_vm_import.executed:false`; `saved_threads_restored` continua
+`false`. Esse teste não carrega as chamadas feitas por essas BHAVs e não deixa
+uma partida pronta para execução.
+
 Essa conferência não executa os quadros. Ainda não restaura o estado especial
 de retorno entre frames nem retoma o relógio, a fila de interações ou os
 serviços de rota. Portanto esta etapa prepara e confere dados; não é
@@ -96,6 +104,14 @@ Para também conferir os quadros contra as rotinas reais do jogo:
   --semiglobal '../referencias/The Sims/GameData/Global/Global.far' PersonGlobals.iff \
   --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
 ```
+
+Para também importar as doze frames reais, sem ativar nenhuma delas, acrescente
+`--import-saved-threads-dormant` ao comando acima. No checkpoint local, Bob
+(ID105) e membro47 (ID137) foram importados em duas VMs temporárias; cada VM
+ficou parada com seis frames. Todas as doze rotinas vieram dos recursos
+identificados na auditoria. Isso confirma o caminho de leitura e importação,
+mas não a continuação da partida, a semântica do executável original ou o
+funcionamento de interações.
 
 No House07 local, as doze rotinas dos dois Sims foram encontradas e todos os
 endereços salvos ficaram dentro de suas rotinas. Isso confirma apenas que os

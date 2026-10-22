@@ -45,6 +45,11 @@ validação indicados por versão.
   precisa fornecer os recursos corretos. Retornos de repetição/interação são
   recusados; as filas salvas também não são carregadas por essa conversão.
 
+- `odh-saved-world --import-saved-threads-dormant` lê as BHAVs indicadas por
+  cada pilha salva, usa os mesmos recursos explícitos da auditoria e confirma
+  que cada VM temporária permaneceu parada. O comando não ativa as pilhas nem
+  carrega as chamadas feitas por essas BHAVs; a partida continua não restaurada.
+
 - `EntityThreadControllers` reúne a fila de interação e o controle de Sleep de
   uma entidade, mantendo um relógio e uma fila independentes por instância.
   `tools/person` usa esse pacote no avatar principal e, quando solicitado, no

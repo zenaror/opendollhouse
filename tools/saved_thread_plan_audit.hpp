@@ -6,6 +6,7 @@
 
 #include <map>
 #include <set>
+#include <tuple>
 
 struct SavedThreadCodeResource {
     std::string archive;
@@ -185,4 +186,89 @@ inline std::vector<SavedThreadCodeCheck> audit_saved_thread_plan(
         return opcode->second;
     });
     return result;
+}
+
+struct SavedThreadRoutineBanks {
+    odh::RoutineSet global;
+    odh::RoutineOwners owners;
+};
+
+// Load only the routines named by this saved stack, from the exact resources
+// that passed audit_saved_thread_plan. This is enough to validate a dormant
+// import; it is deliberately not a runnable BHAV dependency closure.
+inline SavedThreadRoutineBanks load_saved_thread_routine_banks(
+    const odh::SimitoneSavedThreadPlan& plan,
+    const std::vector<SavedThreadCodeCheck>& checks) {
+    if (checks.size() != plan.frames.size())
+        throw odh::FormatError("saved-thread code audit does not cover every frame");
+    if (plan.frames.size() > 64)
+        throw odh::FormatError("saved-thread VM import exceeds the VM stack limit");
+
+    using ResourceKey = std::tuple<std::string, std::uint32_t, std::string, std::string>;
+    std::map<ResourceKey, std::set<std::uint16_t>> requested;
+    for (std::size_t i = 0; i < plan.frames.size(); ++i) {
+        const auto& frame = plan.frames[i];
+        const auto& check = checks[i];
+        const auto expected_scope = frame.routine_id < 4096 ? "global" :
+            frame.routine_id < 8192 ? "private" : "semiglobal";
+        if (check.scope != expected_scope || check.archive.empty() ||
+            (check.scope != "private" && check.entry.empty()))
+            throw odh::FormatError("saved-thread audit resource does not match the frame scope");
+        if (frame.code_owner_guid == 0)
+            throw odh::FormatError("saved-thread frame has no resource code-owner GUID");
+        const auto resource_owner = check.scope == "global" ? 0U : frame.code_owner_guid;
+        requested[{check.scope, resource_owner, check.archive, check.entry}]
+            .insert(frame.routine_id);
+    }
+
+    SavedThreadRoutineBanks banks;
+    if (requested.size() > 64)
+        throw odh::FormatError("saved-thread code bank count exceeds the import budget");
+    std::size_t total_instructions = 0;
+    constexpr std::size_t instruction_limit = 65536;
+    const auto load_group = [&](const ResourceKey& key, const std::set<std::uint16_t>& ids,
+                                odh::RoutineSet& destination) {
+        const auto& scope = std::get<0>(key);
+        const auto expected_scope = scope == "global" ? odh::RoutineScope::global :
+            scope == "private" ? odh::RoutineScope::private_object : odh::RoutineScope::semiglobal;
+        std::set<std::uint16_t> found;
+        const auto scan = [&](const odh::View& view) {
+            odh::Limits limits;
+            limits.iff_chunks = 4096;
+            odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+                if (chunk.type != "BHAV" || !ids.count(chunk.id)) return;
+                const auto routine = odh::routine_key(chunk.id);
+                if (routine.scope != expected_scope || !found.insert(chunk.id).second)
+                    throw odh::FormatError("saved-thread routine is duplicated or in the wrong scope");
+                if (destination.size() >= 64)
+                    throw odh::FormatError("saved-thread VM routine count exceeds the import budget");
+                auto bhav = odh::read_bhav(chunk.payload);
+                if (bhav.instructions.size() > instruction_limit - total_instructions)
+                    throw odh::FormatError("saved-thread VM code exceeds the instruction budget");
+                total_instructions += bhav.instructions.size();
+                if (!destination.emplace(routine, std::move(bhav)).second)
+                    throw odh::FormatError("saved-thread routine collides with an installed bank");
+            }, limits);
+        };
+        const auto& archive = std::get<2>(key);
+        const auto& entry = std::get<3>(key);
+        if (scope == "private" && entry.empty()) with_iff_file(archive, scan);
+        else with_far_entry(archive, entry, scan);
+        if (found.size() != ids.size())
+            throw odh::FormatError("audited saved-thread routine disappeared from its resource");
+    };
+
+    for (const auto& group : requested) {
+        const auto& scope = std::get<0>(group.first);
+        const auto owner = std::get<1>(group.first);
+        auto& destination = scope == "global" ? banks.global : banks.owners[owner];
+        load_group(group.first, group.second, destination);
+    }
+    // Global frames retain their OBJT-derived owner in VmContext. The VM
+    // requires that owner to be registered even though globals use bank zero.
+    for (const auto& frame : plan.frames)
+        if (frame.routine_id < 4096) banks.owners.try_emplace(frame.code_owner_guid);
+    if (banks.owners.size() >= 64)
+        throw odh::FormatError("saved-thread code owners exceed the VM owner limit");
+    return banks;
 }
