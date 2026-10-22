@@ -1,25 +1,29 @@
 # Continuidade atual
 
-## Atualização: Sim composto com o lote na escada (2026-10-22)
+## Atualização: subida e descida compostas com o lote (2026-10-22)
 
 O `--capture-tick` ainda acompanha o grande deslocamento já gravado em
 `a2o-stair-climb`, sem alterar a posição do Sim no World. Agora a câmera usa o
 ponto gráfico da escada real. A vista escolhe o piso de apoio para que o piso de
-cima não cubra o Sim. A captura `/tmp/house03-support-floor-verified.ppm` mostra
-o Sim na escada junto do piso e dos móveis visíveis; inclui 22 camadas de
-sprites e preserva as demais entidades do lote, pulando apenas sprites que
-ficam inteiramente fora da tela. O hash é
-`2313a49457a8c341488c672a8d9837c68854954e708cac58d538634de12da864`.
-O contador registra 4103 pixels da pose do Sim antes da composição; a inspeção
-visual confirma que ele também aparece na imagem final. Esta captura não inclui
-paredes e não estabelece equivalência visual com o original.
+cima não cubra o Sim. A captura `/tmp/house03-up-walls-sequence-tick14.ppm`
+mostra o Sim na escada junto do piso, das paredes e dos móveis visíveis; inclui
+22 camadas de sprites e preserva as demais entidades do lote, pulando apenas
+sprites que ficam inteiramente fora da tela. O hash é
+`c869e77bcb81ddbd75421f8eb40e3b7fd5120261ffac7b14cfa6107843de106e`.
+O teste conta pixels do Sim antes e depois da composição; exige pixels também
+no mapa final devolvido pelo lote. Na subida do tick14, 4044 pixels do Sim
+continuaram identificáveis após a composição. A instalação fornece
+`GameData/walls.iff`, então as capturas agora incluem as paredes: a imagem
+mostra paredes, janelas, escada, piso e objetos. Isso ainda não estabelece
+equivalência visual com o original.
 
-O probe de simulação também percorreu a subida e a descida, com avatares de
-idades 0 e21. A imagem exportada acima é só da subida no tick14; a descida ainda
-não tem captura visual equivalente. CTest passou 160/160; `linux_window_backend`
-foi ignorado por não haver display. Próximo: validar outros tempos da pose
-composta e capturar a descida, depois revisar os bloqueios de chegada antes de
-generalizar o perfil de escada.
+O probe capturou a subida e a descida nos ticks14,16 e20. Cada sequência gerou
+imagens diferentes e o Sim permaneceu visível após compor paredes e objetos.
+Para a descida, a vista mostra o piso1 para deixar visível a escada; o Sim
+continua no andar2 do World. Isso é só uma escolha da câmera, não uma mudança
+da simulação. As seis imagens e seus hashes estão em `docs/snap-validation.md`.
+Próximo: validar outros objetos/chegadas na escada e revisar o comportamento de
+paredes e colisões antes de generalizar o perfil de travessia.
 
 ## Escadas da House03: localizar a porta entre andares (2026-10-22)
 

@@ -100,7 +100,7 @@ Isso demonstra que o Sim da simulação chega ao desenho com poses diferentes.
 As imagens acima são do Sim sobre fundo claro; a próxima captura registra a
 composição com o lote.
 
-### Sim animado sobre o piso e os objetos — 2026-10-22
+### Sim animado sobre paredes, piso e objetos — 2026-10-22
 
 O compositor agora ignora uma camada de sprite somente quando ela fica
 inteiramente fora da tela. Isso reduz o trabalho visual da captura sem remover
@@ -108,17 +108,43 @@ objetos do lote ou mudar o estado do World. Os testes sintéticos verificam que
 80 camadas fora da tela não gastam a cota de pixels, enquanto as camadas
 visíveis continuam sujeitas ao limite original.
 
-O teste de House03 centraliza a câmera no ponto gráfico do patamar 34 e mostra
-o piso 1, a pose do Sim no tick14 e os sprites visíveis do lote. A imagem final
-`/tmp/house03-support-floor-verified.ppm` foi inspecionada; o personagem aparece
-na escada. O contador informa 4103 pixels do Sim na imagem-base antes da
-composição do lote; essa contagem não é usada como medição da imagem final. O
-quadro desenhou 22 camadas de sprites e pulou 210 camadas inteiramente fora da
-tela. As paredes não foram incluídas nesta captura. SHA-256:
-`2313a49457a8c341488c672a8d9837c68854954e708cac58d538634de12da864`.
+O teste de House03 centraliza a câmera no ponto gráfico do patamar usado pela
+travessia e agora lê `GameData/walls.iff`. A composição desenha paredes, piso,
+objetos e a pose do Sim. A vista da descida seleciona o piso1 para mostrar a
+escada; a entidade continua no andar2 no World. Em ambos os sentidos, o teste
+exige pixels do Sim no mapa de propriedade que sobrevive à composição de
+paredes e objetos. Na subida do tick14, 4103 pixels foram desenhados para o Sim
+e 4044 continuaram identificáveis depois da composição.
 
-O teste funcional continua cobrindo a subida e descida para as idades fixture
-0 e21, com oito passos de caminhada, troca de piso e retorno da ação. Só a
-subida no tick14 foi capturada visualmente até aqui. Isso não demonstra
-equivalência com o jogo original, composição de paredes, nem compatibilidade
-geral de escadas.
+As seis capturas foram inspecionadas em
+`/tmp/house03-stairs-walls-overview.png`. As imagens PPM são
+`/tmp/house03-{up,down}-walls-sequence-tick{14,16,20}.ppm`; cada direção passou
+na checagem de hashes diferentes entre ticks. SHA-256:
+
+- Subida 14: `c869e77bcb81ddbd75421f8eb40e3b7fd5120261ffac7b14cfa6107843de106e`
+- Subida 16: `334b0c6d4eca0a81d0f9411f220830087ba10aadfc1cdf672f3081e8528be6f3`
+- Subida 20: `b86d68b731fa6e6637b3133086cbdf86d8039c6db0ac0e295ed547bd48a023bd`
+- Descida 14: `9c7230922799d83b67c292f4fe86de034ac3a1df4bd030abbc6db2dd350c5de1`
+- Descida 16: `3767c0e33494aaafc951778a9ddbd6834e1f50958db3dce7294998bd9c49779f`
+- Descida 20: `48b37e9f6cd702f99707d29100f6ccd81b1429dcae78551634f7d643c7e9fb92`
+
+O teste funcional também percorre os dois sentidos para idades fixture 0 e21,
+com oito passos de caminhada, troca de piso e retorno da ação. As novas imagens
+mostram poses da subida e da descida num save real House03, com avatar e Main
+sintéticos. Isso não demonstra fidelidade visual ao original nem generalidade
+para todas as escadas, paredes ou estados de lote.
+
+Repetição das sequências com os dados instalados:
+
+```sh
+python3 tests/house03_stair_approach.py --binary /tmp/odh-stair-build/odh-person \
+  --game-root '../referencias/The Sims' --capture-tick 14 --capture-tick 16 \
+  --capture-tick 20 --capture-portal 34 --capture-output /tmp/house03-up-repeat.ppm
+python3 tests/house03_stair_approach.py --binary /tmp/odh-stair-build/odh-person \
+  --game-root '../referencias/The Sims' --capture-tick 14 --capture-tick 16 \
+  --capture-tick 20 --capture-portal 38 --capture-level 1 \
+  --capture-output /tmp/house03-down-repeat.ppm
+```
+
+Build completa e CTest: 160/160 passaram; `linux_window_backend` foi pulado por
+falta de display. A suíte completa não prova a execução de janela nesta sessão.

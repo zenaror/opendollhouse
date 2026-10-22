@@ -50,7 +50,8 @@ def architecture_resources(game: pathlib.Path):
 def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
               portal_id: int, start: tuple[int, int, int], expected: tuple[int, int, int],
               age: int, render_tick: int | None = None,
-              render_output: pathlib.Path | None = None):
+              render_output: pathlib.Path | None = None,
+              render_level: int | None = None):
     global_far = game / "GameData/Global/Global.far"
     animation_far = game / "GameData/Animation/Animation.far"
     expansion_far = game / "ExpansionShared/ExpansionShared.far"
@@ -73,10 +74,11 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
     if render_tick is not None:
         command += ["--render-animation-far", str(animation_far),
             "--render-textures", str(game / "GameData/Textures/Textures.far"),
+            "--render-walls", str(game / "GameData/walls.iff"),
             "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
-            # Show the support floor while capturing the stair animation, so
-            # the upper floor does not cover the actor in the composed lot.
-            "--render-level", "1",
+            # Show the lower floor so the upper floor does not cover the
+            # animated actor; this changes only the view, not the World.
+            "--render-level", str(render_level or 1),
             "--render-tick", str(render_tick), "--render-frame", str(render_output)]
     for resource in architecture_resources(game):
         command += ["--architecture-resource", str(resource)]
@@ -118,6 +120,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
             raise AssertionError(f"captured frame has no shaded pixels: {render}")
         if render.get("actor_raster_pixels", 0) <= 0:
             raise AssertionError(f"the stair animation produced no actor pixels: {render}")
+        if render.get("actor_composited_pixels", 0) <= 0:
+            raise AssertionError(f"the Sim is fully covered in the composed lot image: {render}")
         if "stair" not in render.get("clip", "").lower():
             raise AssertionError(f"captured frame is not a stair animation: {render}")
         anchor = portal.get("portal_position")
@@ -132,6 +136,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         lot = render.get("lot") or {}
         if not lot.get("objects_rendered") or lot.get("object_layers", 0) <= 0:
             raise AssertionError(f"captured frame did not draw any lot objects: {lot}")
+        if lot.get("wall_layers", 0) <= 0:
+            raise AssertionError(f"captured frame did not draw any lot walls: {lot}")
         image = render_output.read_bytes()
         if len(image) <= 320 * 240 * 3:
             raise AssertionError(f"captured PPM is incomplete: {render_output}")
@@ -155,6 +161,10 @@ def main():
         help="also capture the live stair Sim at this playback tick; repeat to compare frames")
     parser.add_argument("--capture-output", type=pathlib.Path,
         help="new PPM path for --capture-tick")
+    parser.add_argument("--capture-portal", type=int, choices=(34, 38), default=34,
+        help="stair landing used for optional captures (34 up, 38 down)")
+    parser.add_argument("--capture-level", type=int, choices=(1, 2),
+        help="optional floor shown in the capture; defaults to floor 1 to reveal the stair pose")
     args = parser.parse_args()
     if bool(args.capture_tick) != (args.capture_output is not None):
         parser.error("--capture-tick and --capture-output must be used together")
@@ -165,6 +175,8 @@ def main():
         game / "UserData/Characters/User00000.iff", game / "UserData/Characters/User00001.iff",
         game / "UserData/Houses/House03.iff", game / "UserData/LotZoning.iff",
         game / "UserData/Neighborhood.iff"]
+    if args.capture_tick:
+        required.append(game / "GameData/walls.iff")
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise SystemExit("required game/test file missing: " + ", ".join(missing))
@@ -185,8 +197,11 @@ def main():
             else:
                 output = args.capture_output.with_name(
                     f"{args.capture_output.stem}-tick{tick}{args.capture_output.suffix}").resolve()
-            result = run_probe(args.binary.resolve(), game, avatar, 34,
-                (320, 424, 1), (312, 344, 2), 21, tick, output)
+            portal_id, start, end = ((34, (320, 424, 1), (312, 344, 2))
+                if args.capture_portal == 34 else
+                (38, (320, 344, 2), (312, 424, 1)))
+            result = run_probe(args.binary.resolve(), game, avatar, portal_id,
+                start, end, 21, tick, output, args.capture_level)
             results.append(result)
             captures.append(result["render"])
         if len(captures) > 1:
@@ -196,7 +211,7 @@ def main():
                 raise AssertionError(f"distinct stair frames produced identical images: {captures}")
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": results,
-        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures compose the live stair pose with saved lot floors and objects, with walls only when supplied, without claiming equivalence to the original game"}, indent=2))
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures compose the live stair pose with saved lot floors, walls, and objects, without claiming equivalence to the original game"}, indent=2))
 
 
 if __name__ == "__main__":
