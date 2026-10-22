@@ -46,6 +46,32 @@ int main(int argc,char** argv){try {
   std::cout<<checks<<" native-wrapper ODH checks passed; action/Main fixtures synthetic\n";return 0;
  }
  if(argc!=1)throw std::runtime_error("usage: --native-global ARCHIVE ENTRY");
+ {odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
+  world.create(3,odh::EntityKind::avatar);world.declare_object_word(2,25,0);
+  odh::InteractionQueue mover_queue(world,1),blocker_queue(world,3);
+  const auto main=bhav({idle(),set(2,99)});
+  const odh::Instruction write_destination{2,254,255,{25,0,7,0,0,5,4,7}};
+  const auto shoo_action=bhav({write_destination});
+  odh::Vm mover({{key(4096),main}},world.vm_memory(),{},mover_queue.primitive());
+  odh::Vm blocker({{key(4096),main}},world.vm_memory(),{},blocker_queue.primitive(),
+      {{22,{{key(4097),shoo_action}}}});
+  require(mover_queue.bind(mover)&&blocker_queue.bind(blocker),
+          "two avatar queues bind independent VMs over one shared World");
+  mover.start(key(4096),{1,1,1,0},{0});
+  blocker.start(key(4096),{3,3,3,0},{0});
+  require(blocker_queue.enqueue(key(4097),{3,2,2,22}),
+          "blocker avatar receives its own queued action targeting the shared Destination");
+  require(mover.run(10)==odh::VmStatus::returned_true&&blocker.run(10)==odh::VmStatus::yielded,
+          "host runs mover Main and blocker action in separate VMs");
+  require(blocker_queue.observe()&&blocker_queue.completion()->result&&
+          world.read({key(4097),0,{3,2,2,22},{},{},odh::VmCallReturnMode::ordinary,0},4,25)==7,
+          "blocker action changes the shared Destination through its own Caller context");
+  require(mover_queue.tick(1)&&blocker_queue.tick(1)&&
+          mover.run(10)==odh::VmStatus::returned_true&&blocker.run(10)==odh::VmStatus::returned_true,
+          "host advances both independent queues at the same logical tick");
+  require(mover_queue.size()==0&&blocker_queue.size()==0&&world.find(2)->object_words.at(25)==7,
+          "per-avatar completion is isolated while World changes remain shared");
+ }
  {Fixture f;require(f.enqueue()&&f.enqueue(4097)&&!f.enqueue(),"FIFO capacity includes active front");
   require(f.vm.run(10)==odh::VmStatus::yielded&&f.vm.temps()[0]==22,"owner22 action executes over preserved owner0 Main");
   require(f.vm.stack().size()==1&&f.vm.stack()[0].pc==0&&f.vm.stack()[0].arguments[0]==-1,"decrement before push and unchanged Main pc after return");

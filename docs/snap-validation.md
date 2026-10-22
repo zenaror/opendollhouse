@@ -69,6 +69,17 @@ coordenação de duas filas no ODH. É comportamento observado no código do
 Simitone fixado, não confirmação do executável original. O host ODH ainda
 mantém uma só fila de roteamento ativa.
 
+Foi acrescentado também um teste pequeno com dois avatares, duas VMs e duas
+filas ligadas ao mesmo mundo. O teste põe uma ação sintética na fila do avatar
+bloqueador; ela altera um dado compartilhado, enquanto a fila do avatar que
+tentava andar permanece independente. Isso verifica que a base do ODH consegue
+representar “o Sim que bloqueia recebe o pedido”. O teste entrega a ação
+diretamente à fila: ainda não conecta o Snap a esse pedido, não executa o
+BHAV4107 comercial e não move o avatar. No Simitone, o Snap cria um objeto GOTO
+temporário e pede a interação3 na fila do bloqueador; o frame usa o bloqueador
+como Caller e o GOTO como Callee e StackObject. A ligação exata dessa interação
+ao BHAV4107 dentro dos dados comerciais ainda precisa ser conferida.
+
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,
 `MyObject[11]` e scope3, numa codificação diferente da ação Go Here. O adaptador
