@@ -16,7 +16,11 @@ validação indicados por versão.
   que cada rotina existe na fonte privada, semiglobal ou global indicada e que
   o endereço salvo cabe nela; erro interrompe a saída antes do JSON. House07
   confirmou planos distintos para Bob (105) e membro47 (137), com doze rotinas
-  existentes e endereços válidos. Veja
+  existentes e endereços válidos. A conferência também lê a instrução chamadora
+  para classificar a volta como normal, repetição ou interação e marcar os
+  frames de ação, seguindo o adaptador Simitone. Isso continua sendo apenas
+  diagnóstico; o save House07 não contém `ObjectUses`, e execução segue
+  desligada. Veja
   [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
 
 - O núcleo agora oferece um scheduler limitado para estados de VM por entidade:

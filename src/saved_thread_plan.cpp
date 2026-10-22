@@ -1,8 +1,38 @@
 #include "odh/saved_thread_plan.hpp"
 
+#include <algorithm>
 #include <limits>
 
 namespace odh {
+
+void apply_simitone_saved_return_mapping(
+    SimitoneSavedThreadPlan& plan, const SimitoneSavedOpcodeLookup& opcode_for) {
+    if (!opcode_for && std::any_of(plan.object_uses.begin(), plan.object_uses.end(),
+            [](const auto& use) { return use.stack_length > 1; }))
+        throw FormatError("saved thread return mapping needs a caller-opcode lookup");
+
+    for (const auto& use : plan.object_uses) {
+        if (use.stack_length <= 0 ||
+            static_cast<std::size_t>(use.stack_length) > plan.frames.size() || use.target_id <= 0)
+            throw FormatError("saved thread ObjectUses entry does not identify a frame and target");
+        const auto first = static_cast<std::size_t>(use.stack_length - 1);
+        if (use.stack_length == 1) continue;
+        const auto calling_index = first - 1;
+        const auto opcode = opcode_for(plan.frames[calling_index]);
+        if (!opcode)
+            throw FormatError("saved thread calling BHAV instruction is unavailable");
+        auto& returned = plan.frames[first];
+        if (*opcode == 27 || *opcode == 45) {
+            returned.return_state = SimitoneSavedReturnState::retry;
+        } else if (*opcode == 30 || *opcode == 17) {
+            returned.return_state = SimitoneSavedReturnState::interaction;
+            for (std::size_t i = first; i < plan.frames.size(); ++i)
+                plan.frames[i].action_tree = true;
+        } else {
+            returned.return_state = SimitoneSavedReturnState::normal;
+        }
+    }
+}
 
 SimitoneSavedThreadPlan make_simitone_saved_thread_plan(
     const SavedWorldEntity& entity, const Objt& types) {
@@ -42,6 +72,7 @@ SimitoneSavedThreadPlan make_simitone_saved_thread_plan(
     }
 
     if (entity.tail.person) {
+        result.object_uses.reserve(entity.tail.person->object_uses.size());
         for (const auto& use : entity.tail.person->object_uses) {
             if (use.stack_length <= 0 ||
                 static_cast<std::size_t>(use.stack_length) > result.frames.size() ||
@@ -50,6 +81,7 @@ SimitoneSavedThreadPlan make_simitone_saved_thread_plan(
             const auto first = static_cast<std::size_t>(use.stack_length - 1);
             for (std::size_t i = first; i < result.frames.size(); ++i)
                 result.frames[i].callee = use.target_id;
+            result.object_uses.push_back({use.target_id, use.stack_length});
         }
     }
     return result;

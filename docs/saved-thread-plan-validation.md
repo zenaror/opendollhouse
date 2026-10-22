@@ -33,6 +33,15 @@ o endereço salvo aponta para uma instrução existente. Se faltar uma rotina, o
 recurso não corresponder ao link do objeto ou o endereço estiver fora da
 rotina, o comando falha sem imprimir um JSON parcial.
 
+Com a mesma opção, o plano também lê a instrução do quadro chamador apontada
+por cada `ObjectUses` salvo. No mapeamento do Simitone, GotoRelative e GotoSlot
+marcam o quadro seguinte para tentar novamente; Gosub e IdleForInput marcam a
+volta como parte de uma interação e estendem essa marca aos quadros acima.
+Outras instruções deixam a volta normal. O JSON mostra `return_state` e
+`action_tree`; sem a conferência de código, `return_state` fica
+`unresolved`. Isso é uma reconstrução do adaptador Simitone, não uma regra já
+confirmada no executável original.
+
 Essa conferência não executa os quadros. Ainda não restaura o estado especial
 de retorno entre frames nem retoma o relógio, a fila de interações ou os
 serviços de rota. Portanto esta etapa prepara e confere dados; não é
@@ -83,10 +92,13 @@ Para também conferir os quadros contra as rotinas reais do jogo:
 No House07 local, as doze rotinas dos dois Sims foram encontradas e todos os
 endereços salvos ficaram dentro de suas rotinas. Isso confirma apenas que os
 dados apontam para código existente; não confirma que seja seguro ou correto
-executá-lo.
+executá-lo. Esse save não contém `ObjectUses`, então nele não houve volta
+especial a classificar; todos os frames ficam com estado `normal` pelo padrão
+do adaptador.
 
-O teste sintético cobre resolução do dono, padding, `ObjectUses` e recusa de
-índices, IDs ou GUIDs inválidos. A build Linux limpa em `/tmp` concluiu, e
+Os testes sintéticos cobrem resolução do dono, padding, `ObjectUses`, os quatro
+grupos de opcode usados para classificar a volta, extensão de `action_tree` e
+recusa de opcode chamador ausente. A build Linux limpa em `/tmp` concluiu, e
 CTest passou **164/164**; `linux_window_backend` foi pulado por falta de
 display. A conferência do diff (`git diff --check`) também passou. Esses testes
 não executam as pilhas salvas nem provam gameplay.

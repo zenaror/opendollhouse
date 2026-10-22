@@ -46,6 +46,49 @@ int main() {
                 "ObjectUses callee mapping applies from saved stack depth");
         require(plan.frames[0].saved_primitive_state == 777,
                 "uninterpreted primitive state remains visible");
+        require(plan.object_uses.size() == 1 &&
+                plan.object_uses[0].target_id == 13 && plan.object_uses[0].stack_length == 2 &&
+                plan.frames[0].return_state == odh::SimitoneSavedReturnState::unresolved,
+                "object-use depth is retained and return state stays unresolved without code lookup");
+
+        auto missing_opcode = plan;
+        try {
+            odh::apply_simitone_saved_return_mapping(missing_opcode, {});
+            throw std::runtime_error("missing saved caller opcode should fail");
+        } catch (const odh::FormatError&) {}
+
+        auto map_opcode = [](std::uint16_t opcode) {
+            return [opcode](const odh::SimitoneSavedFramePlan&) {
+                return std::optional<std::uint16_t>{opcode};
+            };
+        };
+        for (const auto opcode : {std::uint16_t{27}, std::uint16_t{45}}) {
+            auto retry = plan;
+            odh::apply_simitone_saved_return_mapping(retry, map_opcode(opcode));
+            require(retry.frames[1].return_state == odh::SimitoneSavedReturnState::retry &&
+                    !retry.frames[1].action_tree,
+                    "GotoRelative and GotoSlot restore Retry return state");
+        }
+        for (const auto opcode : {std::uint16_t{30}, std::uint16_t{17}}) {
+            auto interaction = plan;
+            interaction.frames.push_back(plan.frames[1]);
+            odh::apply_simitone_saved_return_mapping(interaction, map_opcode(opcode));
+            require(interaction.frames[1].return_state == odh::SimitoneSavedReturnState::interaction &&
+                    interaction.frames[1].action_tree && interaction.frames[2].action_tree &&
+                    interaction.frames[2].callee == 13,
+                    "Gosub and IdleForInput restore interaction state through the top frame");
+        }
+        auto ordinary = plan;
+        odh::apply_simitone_saved_return_mapping(ordinary, map_opcode(2));
+        require(ordinary.frames[1].return_state == odh::SimitoneSavedReturnState::normal &&
+                !ordinary.frames[1].action_tree,
+                "other caller instructions restore the normal return state");
+        auto absent_opcode = plan;
+        try {
+            odh::apply_simitone_saved_return_mapping(absent_opcode,
+                [](const odh::SimitoneSavedFramePlan&) -> std::optional<std::uint16_t> { return {}; });
+            throw std::runtime_error("missing caller instruction should fail");
+        } catch (const odh::FormatError&) {}
 
         auto rejects = [&](auto mutate, const char* message) {
             auto bad = entity; mutate(bad);

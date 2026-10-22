@@ -70,7 +70,9 @@ int main(int argc,char** argv){try{
                 std::cout<<"{\"routine_id\":"<<frame.routine_id<<",\"instruction_pointer\":"<<frame.instruction_pointer
                     <<",\"stack_object\":"<<frame.stack_object<<",\"primitive_state_preserved_but_ignored\":"<<frame.saved_primitive_state
                     <<",\"code_owner_objt_type\":"<<frame.code_owner_objt_type<<",\"code_owner_guid\":"<<frame.code_owner_guid
-                    <<",\"caller\":"<<frame.caller<<",\"callee\":"<<frame.callee<<",\"arguments\":";
+                    <<",\"caller\":"<<frame.caller<<",\"callee\":"<<frame.callee
+                    <<",\"return_state\":"<<json_bytes(saved_thread_return_name(frame.return_state))
+                    <<",\"action_tree\":"<<(frame.action_tree?"true":"false")<<",\"arguments\":";
                 odh_tools::saved_bank(std::cout,frame.arguments);std::cout<<",\"locals\":";odh_tools::saved_bank(std::cout,frame.locals);
                 if(verify_saved_threads){
                     const auto& check=thread_checks[n].at(f);
