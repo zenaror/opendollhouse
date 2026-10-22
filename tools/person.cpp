@@ -210,6 +210,7 @@ int main(int argc,char** argv) {
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
     struct HeadlessFixtureAvatar {std::uint16_t id;odh::EntityPosition position;};
     std::optional<HeadlessFixtureAvatar> headless_fixture_avatar;
+    std::optional<std::uint16_t> headless_fixture_main_arg0;
     std::optional<std::int16_t> headless_stack_object;
     struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
     std::optional<HeadlessEntityMove> headless_entity_move;
@@ -293,6 +294,11 @@ int main(int argc,char** argv) {
                 throw odh::FormatError("headless fixture avatar is outside the supported World profile");
             headless_fixture_avatar=HeadlessFixtureAvatar{static_cast<std::uint16_t>(id),
                 {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}};
+        }
+        else if(option=="--headless-fixture-main-arg0"&&!headless_fixture_main_arg0&&n+1<argc){
+            const auto ticks=selector(argv[++n]);
+            if(ticks>32767)throw odh::FormatError("fixture Main Arg0 is outside 0..32767");
+            headless_fixture_main_arg0=ticks;
         }
         else if(option=="--attempt-walk-destination"&&!attempt_walk_destination&&n+2<argc){
             attempt_walk_destination=odh::RectRoutePoint{coordinate_selector(argv[++n]),coordinate_selector(argv[++n])};
@@ -413,13 +419,14 @@ int main(int argc,char** argv) {
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
+       (headless_fixture_main_arg0&&!headless_fixture_avatar)||
        (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||render_requested))||
        (headless_stack_object&&!headless_main)||
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -1100,9 +1107,11 @@ int main(int argc,char** argv) {
     if(!host_failed){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
+        std::vector<std::int16_t> root_arguments(4);
+        if(headless_fixture_main_arg0)root_arguments[0]=static_cast<std::int16_t>(*headless_fixture_main_arg0);
         vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,
             headless_stack_object.value_or(static_cast<std::int16_t>(initialize?0:1)),
-            static_cast<odh::CodeOwner>(runtime_avatar_id)});
+            static_cast<odh::CodeOwner>(runtime_avatar_id)},root_arguments);
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}

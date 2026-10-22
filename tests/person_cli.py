@@ -38,6 +38,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'headless fixture avatar' in r.stderr
  setup();r=run(['--headless-fixture-avatar','30000','10','20','1','0'])
  assert r.returncode==2 and not r.stdout and 'headless-fixture-avatar' in r.stderr
+ setup();r=run(['--headless-fixture-main-arg0','8'])
+ assert r.returncode==2 and not r.stdout and 'headless-fixture-main-arg0' in r.stderr
+ setup();r=run(['--headless-fixture-avatar','30000','10','20','1','0','--headless-fixture-main-arg0','32768'])
+ assert r.returncode==2 and not r.stdout and 'fixture Main Arg0' in r.stderr
  setup();r=run(['--headless-interaction','10','1'])
  assert r.returncode==2 and not r.stdout and 'headless-interaction' in r.stderr
  setup();r=run(['--headless-main','--headless-interaction','0','1'])
