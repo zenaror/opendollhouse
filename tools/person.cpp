@@ -557,9 +557,12 @@ int main(int argc,char** argv) {
                 const auto& prefix=(*saved_prefixes)[n];
                 const auto* definition=definition_index->unique(prefix.guid);
                 if(!definition){tails.emplace_back();continue;}
+                const auto* type=objt->entry_for_type(prefix.type_id);
+                if(!type||!type->metadata)throw odh::FormatError("saved World object type unavailable for object "+
+                    std::to_string(prefix.object_id)+" type "+std::to_string(prefix.type_id));
                 odh::ObjmTailLimits limits;limits.decoded_words=tail_words_available;limits.string_bytes=string_bytes_available;
                 auto tail=odh::read_objm_tail(objm->blocks[n],(*saved_common)[n],objm->version,
-                    definition->definition,*objt->entry_for_type(prefix.type_id),limits);
+                    definition->definition,*type,limits);
                 tail_words_available-=tail.decoded_words;string_bytes_available-=tail.string_bytes;
                 tails.emplace_back(std::move(tail));
             }
@@ -673,7 +676,9 @@ int main(int argc,char** argv) {
     std::int16_t runtime_avatar_id=1;
     if(saved_world_main){
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
-        restored_records=saved_world_records(*lot_path,*definition_index);
+        if(!objm||!objt||!saved_prefixes||!saved_common||!saved_tails)
+            throw odh::FormatError("saved World decoded lot state unavailable");
+        restored_records=saved_world_records(*objm,*objt,*saved_prefixes,*saved_common,*saved_tails,*definition_index);
         if(render_saved_id){
             const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
             if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
