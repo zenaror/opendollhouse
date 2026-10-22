@@ -16,16 +16,26 @@ como leitura, mas cria uma cópia temporária do avatar com uma Main mínima que
 fica esperando. No patamar baixo, o Sim andou de `[320,424,1,0]` para
 `[312,424,1,0]`; no alto, de `[320,344,2,0]` para `[312,344,2,4]`. Foram oito
 passos registrados em cada caso, sem mudança de piso. Em seguida, a VM parou na
-próxima ação comercial, `Snap` (BHAV 4113, PC10), porque o recurso é uma peça de
-grupo e a validação atual não conhece ainda esse formato.
+próxima ação comercial, `Snap` da BHAV 4113 (PC10 na chegada pelo objeto 34;
+PC3 na chegada pelo 38), porque o recurso é uma peça de grupo e a validação
+atual ainda não conhece esse formato.
 
-A leitura do Simitone mostra que `Snap` procura primeiro um ponto livre no
-SLOT e depois tenta posicionar o Sim. Portanto, chegar ao patamar não prova que
-o SLOT escolheria aquela posição nem que o posicionamento seria aceito. Não
-tratamos essa ação como sucesso e não alegamos travessia. Próximo: conferir a
-busca de lugares do SLOT e os efeitos do posicionamento no Simitone; então
-capturar o objeto-alvo e o piso no contexto vivo da BHAV 4113. Só depois testar
-uma subida e uma descida de ponta a ponta.
+O contexto vivo da BHAV 4113 agora está conferido no JSON final da VM e é
+verificado pelo roteiro: ao chegar pelo objeto 34, a instrução `Snap` usa o
+objeto 38 como `StackObject`; chegando pelo 38, usa o 34. Os dois são os
+patamares do outro piso no save. Isso confirma que a rotina escolhe a ponta
+oposta em cada sentido; não confirma que o `Snap` conseguiu posicionar o Sim.
+
+No Simitone fixado, SLOT128 tem `IgnoreRooms` (`0x0800`), offset zero e
+`SnapTargetSlot=-1`. Como os bits baixos são zero, o parser verifica somente o
+ponto exato do objeto; a proximidade 16 não vira uma busca por posições ao
+redor. Depois, ele valida colisões e tenta `SetPosition`. Mesmo quando o destino
+já coincide com o Sim, `SetPosition` e seus efeitos ainda são executados. A
+implementação ODH precisa validar o grupo da escada, o piso de destino e a
+ocupação antes de aplicar esse movimento. Próximo: criar esse perfil estreito
+para os dois patamares de House03, mantendo `Snap` genérico e a rota comum
+entre pisos fechados; então observar a execução além do `Snap` e cobrir
+rejeições por destino ocupado.
 
 Comando: `python3 tests/house03_stair_approach.py --binary /tmp/odh-stair-build/odh-person --game-root '../referencias/The Sims'`.
 
