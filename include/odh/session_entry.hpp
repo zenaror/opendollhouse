@@ -4,6 +4,7 @@
 #include "odh/family.hpp"
 #include "odh/lot_locations.hpp"
 #include "odh/neighbor_context.hpp"
+#include "odh/world.hpp"
 
 namespace odh {
 
@@ -25,6 +26,25 @@ struct SessionEntry {
     std::int32_t family_number;
     std::vector<SessionEntryMember> members;
 };
+
+enum class HouseholdMemberPresence {
+    absent,
+    present_without_position,
+    present_with_position
+};
+
+struct ReconciledHouseholdMember {
+    std::uint32_t guid;
+    HouseholdMemberPresence presence;
+    std::optional<std::int16_t> object_id;
+    std::optional<EntityPosition> position;
+};
+
+// Read-only reconciliation against a restored World. Every avatar must have
+// an exact definition GUID so an unknown avatar cannot be mistaken as absent.
+// It does not create entities, move avatars, or start simulation.
+std::vector<ReconciledHouseholdMember> reconcile_session_household(
+    const SessionEntry&, const World&);
 
 // `character_definitions` must come from the selected UserData/Characters
 // catalog, not from the general object catalog. House-file existence and

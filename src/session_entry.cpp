@@ -1,5 +1,7 @@
 #include "odh/session_entry.hpp"
+#include "odh/formats.hpp"
 
+#include <map>
 #include <set>
 
 namespace odh {
@@ -54,6 +56,43 @@ SessionEntry resolve_session_entry(unsigned mode, std::uint16_t house,
             throw FormatError("family Sim GUID has no matching character resource");
         result.members.push_back({guid, *neighbor_id, character->source,
                                   character->asset, character->chunk_id});
+    }
+    return result;
+}
+
+std::vector<ReconciledHouseholdMember> reconcile_session_household(
+    const SessionEntry& entry, const World& world) {
+    std::map<std::uint32_t, const Entity*> avatars_by_guid;
+    auto cursor = std::int16_t{0};
+    while (const auto id = world.next_entity(cursor, EntityKind::avatar)) {
+        cursor = *id;
+        const auto* avatar = world.find(*id);
+        if (!avatar || !avatar->definition)
+            throw FormatError("restored World contains an avatar without an exact GUID");
+        if (!avatars_by_guid.emplace(avatar->definition->guid, avatar).second)
+            throw FormatError("restored World contains duplicate avatar GUIDs");
+    }
+
+    std::vector<ReconciledHouseholdMember> result;
+    result.reserve(entry.members.size());
+    std::set<std::uint32_t> seen;
+    for (const auto& member : entry.members) {
+        if (!seen.insert(member.guid).second)
+            throw FormatError("selected household contains a duplicate Sim GUID");
+        const auto found = avatars_by_guid.find(member.guid);
+        if (found == avatars_by_guid.end()) {
+            result.push_back({member.guid, HouseholdMemberPresence::absent,
+                              std::nullopt, std::nullopt});
+            continue;
+        }
+        const auto* avatar = found->second;
+        if (avatar->position) {
+            result.push_back({member.guid, HouseholdMemberPresence::present_with_position,
+                              avatar->id, avatar->position});
+        } else {
+            result.push_back({member.guid, HouseholdMemberPresence::present_without_position,
+                              avatar->id, std::nullopt});
+        }
     }
     return result;
 }

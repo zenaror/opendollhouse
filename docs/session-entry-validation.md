@@ -20,6 +20,11 @@ nenhum asset é copiado para o projeto.
   arquivo de personagem, incluindo entradas ausentes e ambíguas.
 - `session_entry_cli`: caminho completo sintético pela ferramenta de linha de
   comando.
+- `reconcile_session_household`: compara a família resolvida com avatares de um
+  World restaurado por GUID exato. Preserva a ordem da família e separa avatar
+  com posição, sem posição e ausente. Recusa avatares sem identidade legível e
+  GUIDs duplicados; objetos com GUID coincidente não contam como Sims. A função
+  só lê o World.
 - Instalação `../referencias/The Sims/UserData`: casas 5 e 7 resolvidas com 3 e
   2 membros, respectivamente.
 - Instalação `../referencias/The Sims Legacy Collection/UserData`: casas 5 e
@@ -35,15 +40,14 @@ nenhum asset é copiado para o projeto.
 - Build Debug completa e CTest completos: 171 testes passaram; o teste
   `linux_window_backend` foi pulado pelo sandbox.
 
-O resultado é uma conferência de identidade dos arquivos. `odh-session-entry`
-não cria Sims no World, não executa Main ou filas, não desenha nem abre o lote
-e não salva progresso. O leitor de lote restaura registros `ObjM` existentes,
-mas o host ainda escolhe e agenda um avatar por vez; a ligação entre a família
-resolvida e os avatares restaurados não está automatizada. Para House07, os
-dois moradores já existem no save e devem ser reutilizados, sem duplicação.
-O próximo passo é reconciliar os GUIDs da família com os avatares do World,
-preservar seus ObjectIDs/posições e preparar o Main de cada membro. Casas com
-membros ausentes do `ObjM` exigirão a lógica correta de `VerifyFamily` e de
-posicionamento antes de poderem ser declaradas compatíveis. Nada disso, por si
-só, demonstra uma sessão jogável ou equivalência com Simitone ou com o jogo
-original.
+O resultado ainda é uma conferência de identidade e restauração estrutural.
+`odh-session-entry` e `reconcile_session_household` não criam Sims, executam
+Main ou filas, desenham/abrem o lote nem salvam progresso. O helper ainda não
+está ligado ao fluxo da aplicação. Para House07, os dois moradores já existem
+no save e devem ser reutilizados, sem duplicação. O próximo passo é conectar a
+reconciliação ao World restaurado e preparar a execução independente do Main de
+cada membro. Casas com moradores ausentes exigem reproduzir com fidelidade a
+verificação de família e o posicionamento junto à caixa de correio, conforme o
+comportamento TS1 de referência; nenhum spawn ou posição é inventado nesta
+etapa. Isso ainda não demonstra uma sessão jogável nem equivalência com Simitone
+ou com o jogo original.

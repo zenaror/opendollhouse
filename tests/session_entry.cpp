@@ -1,6 +1,7 @@
 #include "odh/session_entry.hpp"
 
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 namespace {
@@ -23,6 +24,12 @@ odh::DefinitionCandidate character(std::uint32_t guid, std::string path,
                                    std::uint32_t version=138) {
     odh::ObjectDefinition def{version,guid,type,0,0,false,32,0};
     return {"UserData/Characters",std::move(path),id,def};
+}
+void add_entity(odh::World& world, std::int16_t id, odh::EntityKind kind,
+               std::uint32_t guid, std::optional<odh::EntityPosition> position = {}) {
+    require(world.create(id,kind), "synthetic entity created");
+    require(world.define_type(id,guid), "synthetic entity GUID defined");
+    if (position) require(world.set_position(id,*position), "synthetic position set");
 }
 odh::SessionEntry resolve(const odh::LotLocations& lots, const odh::FamilyContext& fam,
                           const odh::NeighborContext& nbr,
@@ -89,8 +96,59 @@ int main() {
         rejects([&]{(void)resolve(locations,odh::FamilyContext({{201,duplicate}}),neighbors,characters);},
                 "duplicate family member rejected");
 
+        constexpr std::uint32_t visitor_guid=0x11112222, object_only_guid=0x33334444;
+        odh::World restored;
+        const odh::EntityPosition saved_position{80,96,1,3};
+        add_entity(restored,21,odh::EntityKind::avatar,a,saved_position);
+        add_entity(restored,22,odh::EntityKind::avatar,b);
+        add_entity(restored,23,odh::EntityKind::object,object_only_guid);
+        add_entity(restored,24,odh::EntityKind::object,visitor_guid);
+        add_entity(restored,25,odh::EntityKind::avatar,visitor_guid,
+                   odh::EntityPosition{40,48,1,0});
+        odh::SessionEntry household{1,7,"House07.iff",201,900,
+            {{a,11,"characters","a.iff",128},
+             {b,12,"characters","b.iff",128},
+             {object_only_guid,13,"characters","c.iff",128}}};
+        const auto reconciled=odh::reconcile_session_household(household,restored);
+        require(reconciled.size()==3&&
+                reconciled[0].presence==odh::HouseholdMemberPresence::present_with_position&&
+                reconciled[0].object_id==21&&reconciled[0].position==saved_position,
+                "saved household avatar reuses its restored ID and position");
+        require(reconciled[1].presence==odh::HouseholdMemberPresence::present_without_position&&
+                reconciled[1].object_id==22&&!reconciled[1].position,
+                "present avatar without position is distinct from absence");
+        require(reconciled[2].presence==odh::HouseholdMemberPresence::absent&&
+                !reconciled[2].object_id&&!reconciled[2].position,
+                "ordinary object GUID does not satisfy household avatar identity");
+        require(restored.find(25)&&reconciled.size()==household.members.size(),
+                "visitor remains in World and outside household result");
+        const auto repeated=odh::reconcile_session_household(household,restored);
+        require(repeated.size()==reconciled.size(),"reconciliation repeat has same member count");
+        for (std::size_t i=0;i<reconciled.size();++i)
+            require(repeated[i].guid==reconciled[i].guid&&
+                    repeated[i].presence==reconciled[i].presence&&
+                    repeated[i].object_id==reconciled[i].object_id&&
+                    repeated[i].position==reconciled[i].position,
+                    "reconciliation result is repeatable and idempotent");
+
+        odh::World duplicate_avatar_world;
+        add_entity(duplicate_avatar_world,31,odh::EntityKind::avatar,a);
+        add_entity(duplicate_avatar_world,32,odh::EntityKind::avatar,a);
+        rejects([&]{(void)odh::reconcile_session_household(household,duplicate_avatar_world);},
+                "duplicate avatar GUID rejected");
+        odh::World unidentified_avatar_world;
+        require(unidentified_avatar_world.create(33,odh::EntityKind::avatar),
+                "unidentified avatar fixture created");
+        rejects([&]{(void)odh::reconcile_session_household(household,unidentified_avatar_world);},
+                "avatar without exact identity cannot be mistaken for missing family member");
+        odh::SessionEntry duplicate_household=household;
+        duplicate_household.members.push_back(duplicate_household.members.front());
+        rejects([&]{(void)odh::reconcile_session_household(duplicate_household,restored);},
+                "duplicate household GUID rejected");
+
         std::cout<<"PASS session entry preserves house, family and ordered Sim resource identities\n";
         std::cout<<"PASS unsupported, missing, empty, mismatched and ambiguous input rejected\n";
+        std::cout<<"PASS restored household reconciliation reuses avatars, distinguishes absence and position, and ignores visitors/objects\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; return 1;
