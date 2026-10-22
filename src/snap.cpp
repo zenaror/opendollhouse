@@ -1,6 +1,7 @@
 #include "odh/snap.hpp"
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <utility>
 namespace odh {
 namespace {

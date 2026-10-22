@@ -186,6 +186,23 @@ int main(){try{
              checked==std::vector<odh::EntityPosition>{{312,344,2,0},{312,344,2,6}},
              "stair Snap validates north placement then preserves actor facing at exact target position");}
     {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,1});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x92F1647E,129,128};binding.master_id=1;bool checked=false;
+     odh::Snap snap{world,2,binding,slots,128,{},[&](auto actor,auto target,const auto& point){
+         checked=checked||(actor==1&&target==2&&point==odh::EntityPosition{312,344,2,0});
+         return odh::Snap::StairPlacementStatus::accepted;}};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true&&checked&&world.find(1)->position->level==2,
+             "validated saved stair Snap accepts its nonzero House02 master ID");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,1});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
+     odh::ObjdBinding binding{138,0x92F1647E,129,128};bool checked=false;
+     odh::Snap snap{world,2,binding,slots,128,{},[&](auto,auto,const auto&){
+         checked=true;return odh::Snap::StairPlacementStatus::accepted;}};
+     odh::Vm vm(stair_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);vm.start(odh::routine_key(4113),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::fault&&!checked&&world.find(1)->position->level==1,
+             "saved stair Snap rejects a missing multi-tile master identity");}
+    {odh::World world;auto slots=stair_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
      world.create(2,odh::EntityKind::object,{0,0,4});world.set_position(1,{312,424,1,6});world.set_position(2,{312,344,2,0});
      odh::ObjdBinding binding{138,0x79E2B825,129,128};binding.master_id=4;
      odh::Snap snap{world,2,binding,slots,128,{},[](auto,auto,const auto&){return odh::Snap::StairPlacementStatus::blocked;}};
