@@ -35,5 +35,15 @@ instalado. Após incluí-lo, o próximo bloqueio é uma definição de personage
 que não apareceu como OBJD nos arquivos inspecionados; o caminho correto para
 reconstruir personagens ainda precisa ser identificado.
 
+OBJT identifica os quatro personagens da casa por nome: Menelaus (ID 12),
+Hecuba (11), Gunther (578) e Cornelia (577). Os dados salvos apontam para
+Neighbor IDs 122–125. Nenhuma das `Neighborhood.iff` encontradas na Legacy
+Collection tem esses IDs. No código TS1 do Simitone
+(`VMTS1ActivatorNew.cs:479–515`), cada GUID tenta obter um OBJD; se ele falta
+para um personagem, o adaptador tenta localizar o vizinho pelo ID e pelo nome,
+troca o GUID se ambos combinarem e, se não encontrar, pula essa entidade. Essa
+é a recuperação do Simitone, não prova o comportamento do jogo original. A
+cópia de bairro inspecionada não fornece essa recuperação para a House77.
+
 Isto é análise estática. O World completo não foi importado, nenhuma fila de
 ação foi ativada, e a busca não prova execução nem fidelidade ao jogo original.
