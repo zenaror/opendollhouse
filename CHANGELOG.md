@@ -17,6 +17,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-session-entry` lê o lote e a família selecionados e confere cada morador
+  contra a vizinhança e seu arquivo em `Characters`. A leitura é limitada e
+  falha quando um vínculo está ausente ou ambíguo. Testado com famílias das
+  instalações externas original e Legacy Collection; a ferramenta ainda não
+  carrega o lote nem inicia uma sessão jogável. Veja
+  [`session-entry-validation.md`](docs/session-entry-validation.md).
+
 - Janela Linux `odh-neighborhood-window` mostra seis mapas do UIGraphics.far e
   permite selecionar uma casa pelas coordenadas de LotLocations. Marcadores
   distinguem FAMI, casa sem FAMI e arquivo ausente; modo 6 é explicitamente
