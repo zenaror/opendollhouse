@@ -208,6 +208,8 @@ int main(int argc,char** argv) {
     std::optional<std::uint16_t> render_saved_id;
     std::optional<odh::EntityPosition> placement_candidate;
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
+    struct HeadlessFixtureAvatar {std::uint16_t id;odh::EntityPosition position;};
+    std::optional<HeadlessFixtureAvatar> headless_fixture_avatar;
     std::optional<std::int16_t> headless_stack_object;
     struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
     std::optional<HeadlessEntityMove> headless_entity_move;
@@ -283,6 +285,15 @@ int main(int argc,char** argv) {
         else if(option=="--render-skeleton"&&!render_skeleton_entry&&n+2<argc){render_skeleton_entry=argv[n+1];render_skeleton_name=argv[n+2];n+=2;}
         else if(option=="--render-tick"&&!render_tick&&n+1<argc){render_tick=selector(argv[++n]);}
         else if(option=="--render-saved-avatar"&&!render_saved_id&&n+1<argc){render_saved_id=selector(argv[++n]);}
+        else if(option=="--headless-fixture-avatar"&&!headless_fixture_avatar&&n+5<argc){
+            const auto id=selector(argv[++n]);
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),direction=selector(argv[++n]);
+            if(id==0||id>32767||x<0||x>32767||y<0||y>32767||level<1||level>2||direction>7)
+                throw odh::FormatError("headless fixture avatar is outside the supported World profile");
+            headless_fixture_avatar=HeadlessFixtureAvatar{static_cast<std::uint16_t>(id),
+                {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}};
+        }
         else if(option=="--attempt-walk-destination"&&!attempt_walk_destination&&n+2<argc){
             attempt_walk_destination=odh::RectRoutePoint{coordinate_selector(argv[++n]),coordinate_selector(argv[++n])};
         }
@@ -401,13 +412,14 @@ int main(int argc,char** argv) {
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
-       (saved_world_main&&(!lot_path||!render_saved_id||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
+       (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
+       (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||render_requested))||
        (headless_stack_object&&!headless_main)||
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main --render-saved-avatar OBJECT_ID --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--initialize | --routine ID] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -613,9 +625,11 @@ int main(int argc,char** argv) {
     if(saved_world_main){
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
         restored_records=saved_world_records(*lot_path,*definition_index);
-        const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
-        if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
-            throw odh::FormatError("selected saved World entity is not the matching person resource");
+        if(render_saved_id){
+            const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
+            if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
+                throw odh::FormatError("selected saved World entity is not the matching person resource");
+        }
         restored_world=odh::make_saved_world(restored_records,*definition_index,neighbors?&*neighbors:nullptr);
         // Bind the exact immutable OBJD/OBJf tables to every restored entity.
         // This is static metadata only; action function IDs are not BHAV results.
@@ -648,10 +662,12 @@ int main(int argc,char** argv) {
             if(!restored_world->world->define_entry_points(id,cached->second))
                 throw odh::FormatError("saved World EntryPoint binding exceeds World limits");
         }
-        runtime_avatar_id=static_cast<std::int16_t>(*render_saved_id);
-        const auto* restored_avatar=restored_world->world->find(runtime_avatar_id);
-        if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
-            throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
+        if(render_saved_id){
+            runtime_avatar_id=static_cast<std::int16_t>(*render_saved_id);
+            const auto* restored_avatar=restored_world->world->find(runtime_avatar_id);
+            if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
+                throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
+        }else runtime_avatar_id=static_cast<std::int16_t>(headless_fixture_avatar->id);
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
@@ -668,6 +684,17 @@ int main(int argc,char** argv) {
         }
         if(!world.declare_object_word(runtime_avatar_id,8,signed_word(flags.value_or(256))))throw odh::FormatError("flags fixture construction failed");
         if(age&&!world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))throw odh::FormatError("age fixture construction failed");
+    }
+    if(headless_fixture_avatar){
+        if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||
+           !world.define_type(runtime_avatar_id,person.binding->guid))
+            throw odh::FormatError("headless fixture avatar ID collides or World budget is exhausted");
+        for(std::int16_t index=0;index<79;++index){
+            if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
+            if(!world.declare_object_word(runtime_avatar_id,index,0))throw odh::FormatError("fixture avatar object word failed");
+        }
+        if(!world.declare_object_word(runtime_avatar_id,8,256)||!world.set_position(runtime_avatar_id,headless_fixture_avatar->position))
+            throw odh::FormatError("fixture avatar initialization failed");
     }
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     odh::TuningResources tuning_resources;

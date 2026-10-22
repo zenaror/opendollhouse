@@ -233,10 +233,14 @@ objeto26 terminou `returned_true`: o Sim saiu de `[392,440,1,3]` e chegou a
 `false`. O Route45 interno fez 32 movimentos no mesmo piso. Isso confirma a
 medição com uma porta comum, mas não testa escadas nem navegação natural.
 
-House03 tem 267 entidades salvas e nenhum avatar. Por isso, o probe atual não
-consegue selecionar um Sim dessa casa para chamar EP15 em um patamar. O próximo
-teste precisa fornecer um avatar de fixture apenas na memória, junto a uma
-escada real da House03, sem alterar os saves comerciais.
+House03 tem 267 entidades salvas e nenhum avatar. O host headless agora aceita
+`--headless-fixture-avatar ID X Y LEVEL DIRECTION` para criar um Sim somente na
+memória do World restaurado; IDs já ocupados são recusados. Isso não altera a
+casa salva. O fixture foi criado no patamar baixo (ID 34, `[312,424,1,0]`), mas
+o teste ainda não provou a travessia: o Main mínimo termina antes do tick da
+chamada, e o Main original de User00000 encontra a primitiva não suportada 31.
+A posição do Sim não muda nesse segundo caso. É preciso um Main temporário que
+permaneça ativo sem essa primitiva antes de medir a cadeia EP15 da escada.
 
 
 ### Trace Portal26 até a recusa de Route45 (2026-10-21)

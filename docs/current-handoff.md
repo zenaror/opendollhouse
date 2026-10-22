@@ -44,10 +44,21 @@ probe `--headless-portal` agora registra posições antes/depois da chamada. Em
 House07, Door26 moveu o Sim de `[392,440,1,3]` para `[408,408,1,0]`, sem mudar
 de piso; isso confirma o registro para uma porta comum, não para escadas.
 
-House03 não contém avatares salvos, então não há Sim para agendar junto ao
-patamar. Próximo: permitir um avatar de fixture apenas em memória num teste
-headless da House03 e observar a cadeia EP15 limitada. Só depois desses dados
-deve-se mudar a regra de roteamento entre andares.
+House03 não contém avatares salvos. `odh-person` agora aceita
+`--headless-fixture-avatar ID X Y LEVEL DIRECTION` junto de
+`--headless-main --headless-portal`, criando um Sim descartável no World já
+restaurado. O ID precisa estar livre; por isso 105 foi recusado e 30000 foi
+usado no teste. O save e os dados comerciais permanecem somente leitura.
+
+Ainda não há resultado de travessia da escada. Com uma cópia temporária de
+User00000 cujo Main retorna logo, a simulação termina antes do tick agendado e
+EP15 fica `not_requested`. Com o Main original de User00000, EP15 é agendada
+para o patamar 34, mas a VM para em `unsupported primitive 31`; o Sim continua
+em `[312,424,1,0]`. Isso identifica a rotina Main de teste como o próximo
+obstáculo, não prova falha nem sucesso da escada. O próximo passo é fornecer um
+Main de teste que permaneça ativo sem executar essa primitiva e então repetir a
+chamada em ambos os patamares. Só depois desses dados deve-se mudar a regra de
+roteamento entre andares.
 
 O probe `odh-wall-appearance ... --entry-point-probe` confirma os vínculos
 estáticos e marca `bhav_executed=false`; o dump `odh-bhav` mostra apenas os
