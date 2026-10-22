@@ -215,7 +215,8 @@ int main(int argc,char** argv) {
         std::cerr<<"[odh-profile] phase="<<phase<<" elapsed_ms="<<phase_ms<<" total_ms="<<total_ms<<'\n';
         profile_previous=now;
     };
-    std::optional<Resource> avatar,semi,globals,action;
+    std::optional<Resource> avatar,semi,globals,action,second_avatar;
+    std::optional<std::uint16_t> second_avatar_def;
     std::vector<PersonDefinitionSource> definition_sources;
     std::vector<std::string> animation_sources;
     std::vector<odh::ArchitectureResourceSource> architecture_sources;
@@ -339,6 +340,9 @@ int main(int argc,char** argv) {
                 throw odh::FormatError("headless second avatar Main is outside the supported World profile");
             headless_second_main=HeadlessSecondMain{{static_cast<std::uint16_t>(id),
                 {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}},main_routine};
+        }
+        else if(option=="--headless-second-avatar-file"&&!second_avatar&&n+2<argc){
+            second_avatar=Resource{argv[++n],{},true};second_avatar_def=selector(argv[++n]);
         }
         else if(option=="--headless-second-main-arg0"&&!headless_second_main_arg0&&n+1<argc){
             const auto value=selector(argv[++n]);
@@ -474,6 +478,7 @@ int main(int argc,char** argv) {
         headless_second_main->avatar.id==1||
         odh::routine_key(headless_second_main->routine).scope!=odh::RoutineScope::private_object))||
        (headless_second_main_arg0&&!headless_second_main)||
+       (second_avatar&&!headless_second_main)||
        (headless_fixture_main_arg0&&!headless_fixture_avatar)||
        (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||(render_requested&&(!render_output||render_window))))||
@@ -481,7 +486,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -656,12 +661,29 @@ int main(int argc,char** argv) {
         throw odh::FormatError("avatar root routine absent from explicit private owner");
     auto semi_data=load(*semi,odh::RoutineScope::semiglobal);
     person.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
+    std::optional<Loaded> second_person;
+    if(second_avatar){
+        second_person=load(*second_avatar,odh::RoutineScope::private_object,*second_avatar_def);
+        if(second_person->binding->version!=138||second_person->object_type!=2)
+            throw odh::FormatError("second person constructor profile requires OBJD138 ObjectType2");
+        if(!second_person->glob||second_person->glob->name.empty()||
+           second_person->glob->name.find_first_of("/\\:")!=std::string::npos||
+           second_person->glob->name.find('\0')!=std::string::npos||
+           fold(second_person->glob->name+".iff")!=fold(semi->entry))
+            throw odh::FormatError("second semiglobal does not match flat Pascal GLOB link");
+        const auto main=second_person->entry_points?(second_person->entry_points->entries.size()>1?
+            second_person->entry_points->entries[1].action:std::uint16_t{0}):second_person->functions->main;
+        if(main==0||main!=headless_second_main->routine)
+            throw odh::FormatError("second avatar Main does not match selected OBJD entry point");
+        second_person->routines.insert(semi_data.routines.begin(),semi_data.routines.end());
+    }
+    const auto& second_data=second_person?*second_person:person;
     std::optional<odh::RoutineSet> second_main_routines;
     if(headless_second_main){
         const auto second_key=odh::routine_key(headless_second_main->routine);
-        if(person.routines.find(second_key)==person.routines.end())
+        if(second_data.routines.find(second_key)==second_data.routines.end())
             throw odh::FormatError("second avatar Main routine absent from the selected avatar resource set");
-        second_main_routines=person.routines;
+        second_main_routines=second_data.routines;
     }
     auto shared=load(*globals,odh::RoutineScope::global);
     const auto person_sounds=load_sounds(*avatar);
@@ -799,14 +821,14 @@ int main(int argc,char** argv) {
     if(headless_second_main){
         const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
         if(!world.create(id,odh::EntityKind::avatar,{0,101,3,16})||
-           !world.define_type(id,person.binding->guid)||!world.set_position(id,headless_second_main->avatar.position))
+           !world.define_type(id,second_data.binding->guid)||!world.set_position(id,headless_second_main->avatar.position))
             throw odh::FormatError("second Main avatar fixture construction failed");
         for(std::int16_t index=0;index<79;++index){
             if(index==1||index==2||index==3||index==11||index==25||index==26||index==29||index==41||index==62||index==67)continue;
             if(!world.declare_object_word(id,index,0))throw odh::FormatError("second Main avatar object word initialization failed");
         }
         if(!world.declare_object_word(id,8,256)||
-           (person.entry_points&&!world.define_entry_points(id,person.entry_points->entries)))
+           (second_data.entry_points&&!world.define_entry_points(id,second_data.entry_points->entries)))
             throw odh::FormatError("second Main avatar fixture metadata initialization failed");
     }
     if(age&&(!saved_world_main||headless_fixture_avatar)&&
@@ -816,7 +838,7 @@ int main(int argc,char** argv) {
     odh::TuningResources tuning_resources;
     tuning_resources.globals=std::move(shared.tuning);
     auto second_main_tuning=headless_second_main?std::optional<odh::TuningOwner>{
-        odh::TuningOwner{person.tuning,semi_data.tuning,odh::TuningSemiState::loaded}}:std::nullopt;
+        odh::TuningOwner{second_data.tuning,semi_data.tuning,odh::TuningSemiState::loaded}}:std::nullopt;
     tuning_resources.owners.emplace(runtime_avatar_id,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
     if(second_main_tuning)tuning_resources.owners.emplace(headless_second_main->avatar.id,
         std::move(*second_main_tuning));
@@ -946,7 +968,8 @@ int main(int argc,char** argv) {
             private_animation_tables.emplace(owner,load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130}));
         };
         bind_tables(runtime_avatar_id,*avatar,person);
-        if(headless_second_main)bind_tables(static_cast<std::int16_t>(headless_second_main->avatar.id),*avatar,person);
+        if(headless_second_main)bind_tables(static_cast<std::int16_t>(headless_second_main->avatar.id),
+            second_avatar?*second_avatar:*avatar,second_data);
         if(action)bind_tables(2,*action,*action_data);
         bind_world_object_tables=[&](std::int16_t owner){
             if(private_animation_tables.count(owner))return true;
@@ -2966,10 +2989,16 @@ struct PlacementCandidateProbe {
     std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"second_main\":";
-    if(second_main_vm)std::cout<<"{\"entity_id\":"<<headless_second_main->avatar.id<<",\"routine\":"<<headless_second_main->routine
+    if(second_main_vm){
+        const auto* second_entity=world.find(static_cast<std::int16_t>(headless_second_main->avatar.id));
+        std::cout<<"{\"entity_id\":"<<headless_second_main->avatar.id<<",\"guid\":";
+        if(second_entity&&second_entity->definition)std::cout<<second_entity->definition->guid;
+        else std::cout<<"null";
+        std::cout<<",\"routine\":"<<headless_second_main->routine
         <<",\"status\":"<<json_bytes(odh::vm_status_name(second_main_vm->status()))
         <<",\"diagnostic\":"<<json_bytes(second_main_vm->diagnostic())<<",\"steps\":"<<second_main_vm->steps()
         <<",\"stack_depth\":"<<second_main_vm->stack().size()<<'}';
+    }
     else std::cout<<"null";
     std::cout<<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")
         <<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests

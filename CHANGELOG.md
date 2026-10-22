@@ -17,6 +17,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A bancada `odh-person` aceita um IFF próprio para o segundo avatar de teste,
+  com rotinas e ajustes privados separados. Verificado com dois arquivos
+  sintéticos e rotinas de mesmo número; isso ainda não executa dois moradores
+  restaurados de um lote real. Veja [`person-host-validation.md`](docs/person-host-validation.md).
+
 - `odh-session-entry` lê o lote e a família selecionados e confere cada morador
   contra a vizinhança e seu arquivo em `Characters`. A leitura é limitada e
   falha quando um vínculo está ausente ou ambíguo. Testado com famílias das

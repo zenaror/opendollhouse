@@ -220,16 +220,28 @@ com PC/contexto conservados. Dados comerciais não são fixtures versionadas.
 
 `--headless-second-main ID X Y LEVEL DIRECTION ROUTINE` cria um segundo avatar
 de fixture e roda uma segunda VM no mesmo World. A VM usa o mesmo banco global
-imutável, mas recebe cópia explícita das rotinas privadas/semi e do tuning do
-avatar selecionado, mais fila e Sleep próprios; se a fonte de animação estiver
+imutável, mais fila e Sleep próprios; se a fonte de animação estiver
 carregada, também recebe seu próprio Playback. O RNG permanece um fluxo global
 compartilhado. O `person_cli` prova dois owners em execução e a ordem crescente
 de ID no despacho inicial. Notify guarda o sinal para o próximo Sleep ou
 IdleForInput, conforme o perfil Simitone fixado (`VMNotifyOutOfIdle.cs:10–14`,
-`VMSleep.cs:14–20`, `VMIdleForInput.cs:30–33`). É uma bancada sintética com um
-único recurso de avatar;
-não carrega dois personagens de um save nem prova que os serviços bloqueados
-de Route45/Snap funcionem para a segunda VM.
+`VMSleep.cs:14–20`, `VMIdleForInput.cs:30–33`).
+
+Por padrão, a segunda VM ainda recebe cópias das rotinas privadas/semi e do
+tuning do primeiro avatar. A opção `--headless-second-avatar-file IFF OBJD`
+seleciona um IFF separado para o segundo avatar da fixture. No código, seu
+GUID, entry point, BHAVs/BCONs privados e tabelas de animação vêm desse recurso;
+o host exige OBJD138 ObjectType2, GLOB apontando para o mesmo semiglobal
+explícito e Main coincidente com o entry point do segundo OBJD. Os BHAVs e
+BCONs do semiglobal continuam compartilhados. `person_cli` verifica o GUID do
+segundo avatar e prova dois recursos sintéticos com os mesmos IDs privados de
+Main/helper/BCON, mas valores e resultados distintos, cada trace atribuído ao
+seu próprio owner; também rejeita tipo, semiglobal ou Main incompatíveis. O
+teste ainda não verifica separadamente a tabela de entry points ou a busca de
+animação do segundo IFF. A opção só vale junto de `--headless-second-main` e
+continua proibida em `--saved-world-main`. É uma bancada sintética: não carrega
+dois personagens de um save, não executa Init completo para eles nem prova que
+os serviços bloqueados de Route45/Snap funcionem para a segunda VM.
 
 CTest Debug e ASan/UBSan:41 testes passam, um X11 é skipped neste sandbox. LSan
 desligado (`detect_leaks=0`), sem prova de ausência de vazamentos. O preview,

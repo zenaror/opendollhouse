@@ -8,6 +8,10 @@ def expr(temp,value,t=254):return (2,t,255,[temp,0,value,0,0,5,8,7])
 def call(op,t=254,f=255,args=bytes(8)):return (op,t,f,args)
 def objd(guid):
  b=bytearray(68);struct.pack_into('<I',b,0,138);struct.pack_into('<H',b,10,4096);struct.pack_into('<H',b,18,2);struct.pack_into('<I',b,28,guid);return b
+def plain_iff(path,chunks):
+ data=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
+ for kind,rid,payload in chunks:data+=kind.encode()+struct.pack('>IHH',76+len(payload),rid,0)+bytes(64)+payload
+ path.write_bytes(data)
 def archive(path,name,chunks):
  asset=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
  for kind,rid,data in chunks:asset+=kind.encode('ascii')+struct.pack('>IHH',76+len(data),rid,0)+bytes(64)+data
@@ -82,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  setup();r=run(['--language','14','--language','15']);assert r.returncode==2 and not r.stdout
  setup(main=[expr(0,11)]);r=run(['--headless-second-main','3','30','40','1','0','4096']);d=json.loads(r.stdout)
  assert r.returncode==0 and d['status']=='returned_true' and d['vm_steps']==1 and d['steps']==2
- assert d['second_main']==dict(entity_id=3,routine=4096,status='returned_true',diagnostic='',steps=1,stack_depth=0)
+ assert d['second_main']==dict(entity_id=3,guid=0x11111111,routine=4096,status='returned_true',diagnostic='',steps=1,stack_depth=0)
  assert {row['owner'] for row in d['trace']}=={1,3}
  setup(main=[call(49)],private_extra=[('BHAV',4097,routine([call(0,1,255,bytes([0,0,0,0,0,0,0,0])),expr(0,17)]))])
  r=run(['--headless-second-main','3','30','40','1','0','4097','--headless-second-main-arg0','5',
@@ -175,6 +179,33 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['avatar']['guid']==0x11111111 and d['action']['guid']==0x22222222 and d['actor_state']['flags']==256
  assert 'full Init' in d['initialization'] and 'FreeSO' in d['constructor_profile'] and d['stack']==[]
  def tuned(temp,query,t=254):return (2,t,255,[temp,0,query&255,query>>8,0,5,8,26])
+ # Identical private IDs resolve through each actor's exact IFF and BCON owner.
+ second_avatar=root/'second-person.iff'
+ second_args=['--headless-second-main','3','30','40','1','0','4096',
+              '--headless-second-avatar-file',str(second_avatar),'128']
+ def second_fixture(definition=None,link=b'\x0dFixturePerson',main=4096):
+  plain_iff(second_avatar,[('OBJD',128,objd(0x33333333) if definition is None else definition),
+   ('GLOB',128,link),('BHAV',main,routine([call(4097)])),
+   ('BHAV',4097,routine([expr(1,99,1),tuned(0,0,2),(2,255,254,[0,0,22,0,0,2,8,7])]))]+bcons([(4096,[22])]))
+ setup(main=[call(4097)],private_extra=[('BHAV',4097,routine([tuned(0,0,1),
+       (2,254,255,[0,0,11,0,0,2,8,7])]))],private_bcons=[(4096,[11])])
+ second_fixture();r=run(second_args);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['status']=='returned_true' and d['second_main']['status']=='returned_false' and d['second_main']['guid']==0x33333333,(r.returncode,r.stdout,r.stderr)
+ assert d['vm_steps']==3 and d['second_main']['steps']==4
+ assert {(row['owner'],row['routine']) for row in d['trace']}=={(1,4096),(1,4097),(3,4096),(3,4097)}
+ assert [(row['owner'],row['value']) for row in d['tuning_reads']]==[(1,11),(3,22)]
+ # Exact resources reject mismatching semiglobals, Main metadata and person type.
+ wrong_main=objd(0x33333333);struct.pack_into('<H',wrong_main,10,4097)
+ wrong_type=objd(0x33333333);struct.pack_into('<H',wrong_type,18,0)
+ for options,error in [({'link':b'\x05Other'},'second semiglobal'),
+                       ({'definition':wrong_main},'second avatar Main does not match'),
+                       ({'definition':wrong_type},'second person constructor profile'),
+                       ({'main':4098},'second avatar Main routine absent'),
+                       ({'definition':bytes(68)},'unsupported OBJD')]:
+  second_fixture(**options);r=run(second_args)
+  assert r.returncode==2 and not r.stdout and error in r.stderr,(options,r.returncode,r.stdout,r.stderr)
+ second_fixture();r=run(['--headless-second-avatar-file',str(second_avatar),'128'])
+ assert r.returncode==2 and not r.stdout and 'headless-second-avatar-file' in r.stderr
  setup(global_rows=[tuned(3,0,1),tuned(4,0x2000,2),tuned(5,0x4000,3),(17,4,253,[0,0,1,0,0,0,0,0]),expr(6,1)],
        action_rows=[tuned(0,0,1),tuned(1,0x2000,255)],private_bcons=[(4096,[65534])],semi_bcons=[(8192,[11])],
        global_bcons=[(256,[0])],action_bcons=[(4096,[25]),(8192,[126])])
@@ -240,10 +271,6 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and 'action semiglobal' in r.stderr
  # Explicit house selection and native-style zoning input, separate from FARs.
  house=root/'House.iff';zone=root/'LotZoning.iff'
- def plain_iff(path,chunks):
-  data=b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0')+bytes(4)
-  for kind,rid,payload in chunks:data+=kind.encode()+struct.pack('>IHH',76+len(payload),rid,0)+bytes(64)+payload
-  path.write_bytes(data)
  saved=[0]*32;saved[10]=99;saved[23]=56
  simi=struct.pack('<II4s',0,0x3e,b'IMIS')+struct.pack('<32h',*saved)+bytes(34+24)
  zoning=struct.pack('<hH',-3,3)+b'\x011, residential\0road\0\x0158, community\0road\0\x021, malformed translation\0road\0'
