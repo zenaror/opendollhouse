@@ -106,12 +106,15 @@ entidade são explícitos. Se o orçamento não cobre todas as VMs ativas, a esc
 de quem recebe instruções alterna entre ticks, sem alterar a ordem das visitas.
 Essa regra de orçamento é uma política do ODH; não afirma reproduzir a agenda
 interna do Simitone. A lista tem capacidade máxima.
-`entity_vm_scheduler` testa duas VMs, duas filas e um World compartilhado: a
-ação endereçada ao bloqueador altera o objeto compartilhado, sem consumir a fila
+`EntityThreadControllers` agrupa Sleep e InteractionQueue de uma entidade; cada
+instância liga seus controladores a uma VM própria e compartilha apenas o World.
+`tools/person` usa esse pacote para o avatar atual, sem ainda construir vários.
+`entity_vm_scheduler` testa dois desses pacotes, duas VMs e um World compartilhado:
+a fila de cada um fica separada, e avançar o relógio de Sleep de um não altera o
+do outro. A ação endereçada ao bloqueador altera o objeto compartilhado, sem consumir a fila
 do outro Sim. Também verifica a ordem de observação, a distribuição de um
 orçamento de uma instrução entre entidades ativas e que VMs paradas não gastam
-esse orçamento. `tools/person` agora usa esse
-scheduler para os turnos Main depois
+esse orçamento. `tools/person` usa o scheduler para os turnos Main depois
 da execução inicial de preparação; os hooks observam a fila já existente antes
 e depois de cada fatia. A janela e a rota continuam dirigidas pelo loop externo,
 e esse host ainda cria uma única VM/avatar. Portanto o teste com dois Sims segue

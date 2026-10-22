@@ -1,5 +1,6 @@
 #include "odh/interaction.hpp"
 #include "odh/entity_scheduler.hpp"
+#include "odh/entity_thread_controllers.hpp"
 #include "odh/sleep.hpp"
 #include "odh/snap.hpp"
 #include "odh/object_type.hpp"
@@ -768,11 +769,15 @@ int main(int argc,char** argv) {
         if(action_data->entry_points&&!world.define_entry_points(2,action_data->entry_points->entries))throw odh::FormatError("action entry point binding failed");}
     std::uint64_t rng_requests=0;
     odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
-    odh::Sleep sleep(world,[&]{++rng_requests;random.next(1);});odh::InteractionQueue queue(world,runtime_avatar_id);
+    odh::EntityThreadControllers thread_controllers(world,runtime_avatar_id,
+        [&]{++rng_requests;random.next(1);});
+    auto& sleep=thread_controllers.sleep();
+    auto& queue=thread_controllers.interactions();
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
         if(random_reads.size()>=10000)throw odh::FormatError("random log exceeds bounded host profile");random_reads.push_back(value);
     });
-    const auto sleep_handler=sleep.primitive(),queue_handler=queue.primitive();
+    const auto sleep_handler=thread_controllers.sleep_primitive();
+    const auto queue_handler=thread_controllers.interaction_primitive();
     const auto lot_handler=lot?lot->primitive([&](const auto& value){
         if(zoning_reads.size()>=10000)throw odh::FormatError("zoning read log exceeds bounded host profile");zoning_reads.push_back(value);
     }):odh::VmPrimitive{};
@@ -1190,11 +1195,11 @@ int main(int argc,char** argv) {
         if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
     },std::move(owners));
-    if(!sleep.bind(vm)||!queue.bind(vm))throw odh::FormatError("person controllers could not bind");
+    if(!thread_controllers.bind(vm))throw odh::FormatError("person controllers could not bind");
     if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
     odh::EntityVmScheduler entity_scheduler(1);
     if(!entity_scheduler.add(runtime_avatar_id,vm,
-        [&](std::uint64_t){return queue.observe();},[&]{return queue.observe();}))
+        [&](std::uint64_t){return thread_controllers.observe();},[&]{return thread_controllers.observe();}))
         throw odh::FormatError("person VM could not join the entity scheduler");
     std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
@@ -2059,9 +2064,9 @@ struct PlacementCandidateProbe {
             }
             return;
         }
-        if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
+        if(!thread_controllers.observe()){host_failed=true;host_diagnostic=queue.diagnostic();return;}
         vm.run(budget,trace_in(initialize?"main":"root_probe"));
-        if(!queue.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
+        if(!thread_controllers.observe()){host_failed=true;host_diagnostic=queue.diagnostic();}
     };
     profile_mark("host-runtime-ready");
     execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
@@ -2342,7 +2347,7 @@ struct PlacementCandidateProbe {
                 break;
             }
         }
-        if(!queue.tick(ticks)||!sleep.tick(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
+        if(!thread_controllers.advance(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
         if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
             if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
             std::uint64_t bytes=sizeof(odh::PlaybackEvent);

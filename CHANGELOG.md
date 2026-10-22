@@ -15,6 +15,11 @@ validação indicados por versão.
   preparação inicial; o host ainda controla um só avatar e a rota continua fora
   do scheduler.
 
+- `EntityThreadControllers` reúne a fila de interação e o controle de Sleep de
+  uma entidade, mantendo um relógio e uma fila independentes por instância.
+  `tools/person` usa esse pacote no avatar atual; isso organiza os controles por
+  personagem, mas ainda não instancia um segundo Sim no host.
+
 - A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
   um pixel e o nível do piso escolhido pelo host, calcula a posição contínua
   correspondente no lote, cobrindo as quatro câmeras e três níveis de zoom.
