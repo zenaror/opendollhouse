@@ -1101,12 +1101,13 @@ int main(int argc,char** argv) {
                     std::string("Snap resource/profile unsupported: ")+error.what()};
             }
             if(!slots) return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap SLOT resource is absent"};
+            const bool validated_stair_endpoint=saved_stair_portal_endpoint_ids.count(object_id)!=0;
             auto entry=std::make_unique<SnapRuntime>();entry->slots=std::move(*slots);
             entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table,
                 [&](std::int16_t actor,const odh::EntityPosition& position){
                     return snap_placement_validator&&snap_placement_validator(actor,position);
                 },[&](std::int16_t actor,std::int16_t target,const odh::EntityPosition& position){
-                    return snap_stair_placement_validator?
+                    return validated_stair_endpoint&&snap_stair_placement_validator?
                         snap_stair_placement_validator(actor,target,position):odh::Snap::StairPlacementStatus::unsupported;
                 });
             if(!entry->controller->bind(*dispatch.origin))

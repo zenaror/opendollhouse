@@ -450,9 +450,10 @@ sondagem corrige essa interpretação anterior.
 ### Go Here subindo a escada — 2026-10-22
 
 O Go Here salvo agora aceita um destino em outro andar quando a rota encontra
-uma passagem válida no inventário da House03. O grupo salvo tem nove membros;
-o teste confirmou os dois patamares (IDs34 e38) e as outras sete peças do mesmo
-grupo. Só os patamares com as definições esperadas podem chamar a passagem. A
+uma passagem válida num grupo salvo de escada validado. Na House03, o grupo tem
+nove membros; o teste confirmou os dois patamares (IDs34 e38) e as outras sete
+peças do mesmo grupo. Só patamares validados pelo grupo, posições dos andares e
+ação EP15 podem chamar a passagem. A
 distância entre pisos segue a regra TS1 presente na revisão local do Simitone:
 `max(20 × diferença_de_andar, distância_no_plano + 5 × diferença_de_andar)`,
 limitada à codificação exata do Go Here salvo.
@@ -480,7 +481,23 @@ python3 tests/house03_stair_approach.py --binary /tmp/odh-linux-fresh/odh-person
   --game-root '../referencias/The Sims'
 python3 tests/house03_cross_floor_go_here.py --binary /tmp/odh-linux-fresh/odh-person \
   --game-root '../referencias/The Sims'
+python3 tests/house02_cross_floor_go_here.py --binary /tmp/odh-linux-fresh/odh-person \
+  --game-root '../referencias/The Sims'
 ```
+
+### House02 — escada salva entre dois andares — 2026-10-22
+
+O teste `tests/house02_cross_floor_go_here.py` inicia o avatar sintético em
+`[376,456,1]`, ao lado da escada, e termina em `[408,392,2]`. O rastro contém
+BHAV4113 com opcode46 (Snap da escada); houve 144 passos, duas chamadas e dois
+retornos de passagens entre cômodos, com duas transições confirmadas. O começo
+original `[392,456]` foi descartado porque fica dentro da peça 99 da escada:
+seu retângulo salvo cobre `[384,448]–[400,464]`, então o mapa corretamente o
+considera bloqueado. O registro de posições fica limitado e foi truncado; a
+prova do andar final vem da posição final e do Snap, não de uma lista completa
+de cada passo. O teste usa arquivos comerciais só para leitura, avatar
+sintético e Main parada; não demonstra equivalência ao executável original,
+animação visual nem interação por clique.
 
 ## Integração Sit/Stand em House07
 

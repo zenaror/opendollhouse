@@ -46,7 +46,7 @@ bool Snap::bind(const Vm& vm) {if(vm_ && vm_!=&vm)return false;vm_=&vm;return tr
 VmPrimitive Snap::primitive() {
     return [this](const VmFrame& frame,const Instruction& i,const auto&,const VmDispatch& dispatch) -> PrimitiveOutcome {
         if(i.opcode!=46) return {};
-        const auto fail=[](const char* why){return PrimitiveOutcome{PrimitiveDisposition::unsupported,why};};
+        const auto fail=[](std::string why){return PrimitiveOutcome{PrimitiveDisposition::unsupported,std::move(why)};};
         if(executing_) return fail("snap placement callback cannot reenter controller");
         if(!vm_ || dispatch.origin!=vm_) return fail("snap controller bound to another VM");
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
@@ -62,8 +62,10 @@ VmPrimitive Snap::primitive() {
         if(route->snap_target_slot==-1) {
             if(slots_.version==10 && index==0 && binding_.slot_table==128 &&
                i.operands[4]==2 && stair_exact_point(*route)) {
-                if(binding_.master_id!=4 || !stair_placement_validator_)
-                    return fail("stair exact-point Snap identity or placement profile unsupported");
+                if(binding_.master_id==0)
+                    return fail("stair exact-point Snap requires a nonzero saved multi-tile master ID");
+                if(!stair_placement_validator_)
+                    return fail("stair exact-point Snap has no saved stair placement validator");
                 if(actor->attachment || actor->position->level<1 || actor->position->level>2 ||
                    object->position->level<1 || object->position->level>2 ||
                    std::abs(static_cast<int>(actor->position->level)-static_cast<int>(object->position->level))!=1)

@@ -1,13 +1,13 @@
 # Continuidade atual
 
-## Atualização: Go Here atravessa a escada House03 (2026-10-22)
+## Atualização: Go Here atravessa escadas salvas House02 e House03 (2026-10-22)
 
 O teste `tests/house03_cross_floor_go_here.py` agora acompanha um Sim sintético
 que começa no piso de baixo, sobe pela escada salva da House03 e continua
 andando até o piso de cima. Ele cruzou uma passagem da escada e terminou em
 `[328,344,2]`, depois de 24 movimentos. Essa liberação vale apenas para esse
-pedido Go Here e para os dois patamares conhecidos da House03; os outros tipos
-de caminho continuam sem poder trocar de andar. Os arquivos comerciais foram
+pedido Go Here e para escadas cujos dois patamares foram verificados; os outros
+tipos de caminho continuam sem poder trocar de andar. Os arquivos comerciais foram
 lidos, não alterados. O teste usa uma Main sintética e não comprova o
 comportamento do jogo original.
 
@@ -21,17 +21,22 @@ master `0xbdcf6469`. As peças 102 (`0x92f1647e`, subíndice 5, piso 1) e 106
 (`0x8c2c13c8`, subíndice 0, piso 2) têm EP15 apontando para BHAV 4105; a peça
 107 (`0xb1074912`) tem EP15 zero. A leitura confirma os dados da tabela, sem
 executar o BHAV. O programa agora encontra os dois patamares da House02 pelos
-dados do grupo salvo, mas a caminhada real entre eles ainda não passou no teste.
+dados do grupo salvo. O teste da House02 também passou: o avatar sintético
+começou em `[376,456,1]`, executou o Snap da escada e chegou a `[408,392,2]`.
+Foram registradas duas passagens entre cômodos e 144 movimentos; a lista de
+posições foi truncada pelo limite do registro. O ponto inicial anterior,
+`[392,456]`, estava dentro do retângulo da peça 99 da escada, então foi
+corretamente recusado como bloqueado.
 
 O host agora reserva até 131.072 palavras para carregar a House02: o World usa
-56.315 palavras e as tabelas EP somam 25.100, total de 81.415. O teste passa a
-carregar a casa, mas ainda falha ao calcular a primeira caminhada até a escada,
-com “routing start or pre-ranked goal input invalid”. A subida na House02 não
-foi validada; é preciso descobrir se o ponto inicial ou os pontos de chegada
-perto da escada não cabem no mapa de caminhada preparado para esse cômodo.
+56.315 palavras e as tabelas EP somam 25.100, total de 81.415. O limite é
+explícito e mantém a memória controlada. A validação não prova fidelidade ao
+jogo original nem uso da interface gráfica.
 
-O diff deste marco continua sem commit. Preservar `Testing/` e os auxiliares
-locais não rastreados; não reutilizar os diretórios de build antigos copiados.
+O marco House03 foi publicado no commit `80c0fb3` em `main`. Este avanço House02
+está em desenvolvimento e precisa de novo commit após revisão. Preservar
+`Testing/` e os auxiliares locais não rastreados; não reutilizar diretórios de
+build antigos copiados.
 
 ## Atualização: teste de móvel no ponto de chegada da escada (2026-10-22)
 

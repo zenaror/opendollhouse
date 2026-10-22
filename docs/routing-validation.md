@@ -423,3 +423,14 @@ retoma a rota para o destino. A travessia e a continuação foram confirmadas po
 [`interaction-validation.md`](interaction-validation.md) para o comando e os
 limites completos. Isso é uma integração ODH com House03 e Main parada, não
 validação visual da interface no segundo andar nem equivalência ao jogo original.
+
+### Go Here entre andares — House02 — 2026-10-22
+
+O mesmo caminho passou com a escada salva da House02. O avatar sintético parte
+de `[376,456,1]`, chega a `[408,392,2]` e executa o Snap da escada (BHAV4113,
+opcode46). O teste registra 144 movimentos e duas passagens entre cômodos; a
+lista detalhada de movimentos foi truncada pelo limite de registro. O início
+`[392,456]` fica dentro do retângulo ocupado pela peça 99 da escada e foi
+descartado como bloqueado. O teste integrado repetível é
+`tests/house02_cross_floor_go_here.py`. Essa evidência é do host ODH com avatar
+sintético e Main parada; não comprova o jogo original nem uma sessão visual.

@@ -381,6 +381,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
+    std::string invalid_route_input_diagnostic;
+    std::size_t route_goal_count=0;
     if(goto_relative) {
         if(!goal_validator_)
             return unsupported("GotoRelativePosition exact-point goal requires a host bounds/room/clearance validator");
@@ -389,6 +391,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return fail_route(7,"GotoRelativePosition target lies outside the active route grid");
         if(!allow_goal(goal))
             return fail_route(7,"GotoRelativePosition target rejected by host room/clearance validator");
+        route_goal_count=1;
         if(start==goal) {
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
@@ -420,6 +423,17 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         std::vector<PreRankedSlotGoal> accepted;
         accepted.reserve(candidates.size());
         for(const auto& candidate:candidates)if(allow_goal(candidate.position))accepted.push_back(candidate);
+        route_goal_count=accepted.size();
+        if(!grid_.walkable(start))
+            invalid_route_input_diagnostic="pre-ranked SLOT route start is outside the walkable grid";
+        else if(candidates.empty())
+            invalid_route_input_diagnostic="pre-ranked SLOT goal provider returned no candidates";
+        else if(accepted.empty())
+            invalid_route_input_diagnostic="host rejected every pre-ranked SLOT goal as outside the walkable grid";
+        else for(const auto& goal:accepted)if(!grid_.contains(goal.position)||goal.entry_flags==0||goal.facing>=8) {
+            invalid_route_input_diagnostic="pre-ranked SLOT goal is outside the grid or has invalid facing flags";
+            break;
+        }
         auto result=find_pre_ranked_slot_route(grid_,start,accepted,limits_);
         if(result.selected) selected=accepted[*result.selected];
         path=std::move(result.path);
@@ -432,6 +446,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             direction_compatible_candidate=true;
             if(allow_goal(candidate.position))goals.push_back(candidate.position);
         }
+        route_goal_count=goals.size();
         if(goals.empty()) {
             if(direction_compatible_candidate) {
                 diagnostic_="host goal validator rejected every direction-compatible SLOT candidate";
@@ -453,7 +468,13 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         }else path=find_route(grid_,start,goals,limits_);
     }
     if(path.status==RouteStatus::budget_exhausted) return unsupported("routing search budget exhausted");
-    if(path.status==RouteStatus::invalid_input) return unsupported("routing start or pre-ranked goal input invalid");
+    if(path.status==RouteStatus::invalid_input) {
+        if(invalid_route_input_diagnostic.empty())invalid_route_input_diagnostic=
+            "routing inputs invalid: start "+std::to_string(start.x)+","+std::to_string(start.y)+
+            " walkable="+std::string(grid_.walkable(start)?"yes":"no")+
+            ", accepted goals="+std::to_string(route_goal_count);
+        return unsupported(invalid_route_input_diagnostic);
+    }
     if(path.status==RouteStatus::no_path) return fail_route(3,"no path in supplied clearance grid");
     const auto goal=path.points.back();
     const std::int16_t entry_flags=goto_relative?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
