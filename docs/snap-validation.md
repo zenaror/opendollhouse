@@ -77,8 +77,9 @@ representar “o Sim que bloqueia recebe o pedido”. O teste entrega a ação
 diretamente à fila: ainda não conecta o Snap a esse pedido, não executa o
 BHAV4107 comercial e não move o avatar. No Simitone, o Snap cria um objeto GOTO
 temporário e pede a interação3 na fila do bloqueador; o frame usa o bloqueador
-como Caller e o GOTO como Callee e StackObject. A ligação exata dessa interação
-ao BHAV4107 dentro dos dados comerciais ainda precisa ser conferida.
+como Caller e o GOTO como Callee e StackObject. A TTAB comercial do GOTO já foi
+conferida: a interação3 seleciona a ação4107 e o teste4108. Essa leitura confirma
+a ligação entre os dados, mas não executa a ação em uma fila real do bloqueador.
 
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,
