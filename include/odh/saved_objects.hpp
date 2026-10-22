@@ -10,7 +10,9 @@ struct SavedObjectPrefix {
 };
 struct SavedPrefixLimits {
     std::uint32_t objects=4096;
-    std::uint64_t words=65536; // attrs +8 temps +68 ObjectData +5 extras.
+    // Covers fixed banks for the largest inspected TS1 lot (847 objects);
+    // attributes share this cumulative budget and retain a per-object cap.
+    std::uint64_t words=131072; // attrs +8 temps +68 ObjectData +5 extras.
     std::uint32_t attributes_per_object=4096;
 };
 // Decode and validate a complete owned prefix snapshot before returning it.

@@ -67,6 +67,35 @@ de retorno entre frames nem retoma o relógio, a fila de interações ou os
 serviços de rota. Portanto esta etapa prepara e confere dados; não é
 continuação da partida nem teste de gameplay.
 
+## Busca estática de ações em casas Legacy
+
+Uma leitura estática de 648 arquivos `House*.iff` nas pastas `UserData` até
+`UserData8` da Legacy foi validada primeiro contra a House07 original: o leitor
+encontrou exatamente os Sims 105 e 137, ambos com seis quadros salvos. A busca
+não encontrou erros de leitura nos 648 arquivos. Quatro casas continham ação
+ativa ou fila não vazia; as cópias de cada casa nas oito pastas de usuário têm
+o mesmo SHA-256, portanto contam como um único exemplo independente por casa:
+
+| Casa | SHA-256 do `House*.iff` | Estado salvo relevante |
+|---|---|---|
+| House56 | `8bb39d8e613bf6e3902e4a405bc26420d5d1f00b01e3f0301e471ec51497e800` | Sim 292: UID ativo 4237, alvo 333, dois `ObjectUses` |
+| House63 | `c42f3b71799d509e0854b3285c4ff440a7237cdca72db56ca43df9b143d65d3f` | Sim 323: UID ativo 59, alvo 121, dois `ObjectUses`; último UID 58 |
+| House76 | `5df499faea1864eb3fb046221f743fca1ad54b11fb6b0884627e6bac6070d865` | Sim 35: UID ativo 2339, alvo 266, dois `ObjectUses`; último UID 2332 |
+| House77 | `1c95d02c85a5b8d32fbaebe979c69b7edf1a12d4b33f8aa1a2590c3456268c9c` | Hecuba (ID 11): fila com UID 4051, chamador/alvo 11, TTA 33, prioridade 50 e árvore 8236; 1 quadro de rota e 4 quadros de VM |
+
+Essa busca decodificou a tabela OBJT e os blocos OBJM para localizar o ramo de
+Person e ler os campos já suportados por `objm_tail`. Ela só informa o conteúdo
+salvo; não prova quando ou como o jogo executaria uma ação. A importação
+completa da House77 ainda falha ao procurar a definição do objeto 649, então
+seus vínculos com o restante do World não foram validados pelo importador ODH.
+Os campos de fila continuam apenas dados dormentes: nenhuma ação foi ativada.
+
+A busca também mostrou que o limite padrão de 65.536 palavras dos prefixos não
+comportava os bancos fixos dos 847 objetos da House77. O limite cumulativo subiu
+para 131.072 e o teste de prefixos agora inclui um lote sintético de 847
+entidades. Isso permite avançar na leitura dos prefixos, mas não resolve a
+definição ausente nem representa a importação completa da casa.
+
 ## House05 da instalação local
 
 O mesmo caminho de importação foi exercitado em House05 com `Objects.far`,

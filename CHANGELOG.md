@@ -7,6 +7,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A leitura de prefixos de casas salvas agora permite um orçamento cumulativo
+  de até 131.072 palavras para arquivos grandes. Isso permite representar
+  os bancos fixos de um lote nativo inspecionado com 847 entidades; o teste cobre
+  esse tamanho. Na busca estática dos saves Legacy, House77 contém uma
+  interação pendente na fila de Hecuba (ID 11). Esse arquivo ainda não passa
+  pela importação completa de World porque falta resolver a definição do
+  objeto 649. Os detalhes e limites da descoberta estão em
+  [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
+
 - `odh-saved-world` agora inclui um plano somente de leitura para as pilhas
   salvas dos personagens, seguindo a conversão de frames do Simitone fixado:
   resolve o dono de cada rotina via OBJT, preserva instrução, argumentos e

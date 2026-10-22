@@ -43,6 +43,11 @@ void run(){
     limits.words=161;rejected([&]{odh::read_saved_object_prefixes(objects,types,limits);},"fixed banks exceed cumulative budget before decode");
     limits={};limits.objects=1;rejected([&]{odh::read_saved_object_prefixes(objects,types,limits);},"object count bound");
     limits={};limits.attributes_per_object=0;rejected([&]{odh::read_saved_object_prefixes(objects,types,limits);},"per-object attribute bound");
+    odh::Objm large{};odh::Objt large_types{};large_types.entries.push_back(one);
+    constexpr std::uint16_t large_count=847;
+    for(std::uint16_t id=1;id<=large_count;++id){large.id_to_objt.emplace(id,1);large.blocks.push_back(block(static_cast<std::int16_t>(id)));}
+    require(odh::read_saved_object_prefixes(large,large_types).size()==large_count,
+        "default word budget accommodates the largest inspected native lot");
     auto bad=objects;bad.blocks.pop_back();rejected([&]{odh::read_saved_object_prefixes(bad,types);},"block/map count mismatch");
     bad=objects;bad.blocks[0]=block(2);rejected([&]{odh::read_saved_object_prefixes(bad,types);},"instance ID absent from table");
     bad=objects;bad.blocks[0]=block(1);rejected([&]{odh::read_saved_object_prefixes(bad,types);},"duplicate instance ID");
