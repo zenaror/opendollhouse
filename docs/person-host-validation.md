@@ -1,5 +1,76 @@
 # Host de execução do avatar e gates de inicialização
 
+## Sessão de janela contínua (2026-10-22)
+
+`odh-person --render-window` sem `--ticks` renova o orçamento de 10.000
+instruções por entidade em cada tick; o agregado permanece limitado a 64
+entidades. Os tetos históricos de 4.096 ticks e 10.000 instruções acumuladas
+deixam de congelar a janela. O relógio continua limitado a `uint32` pelo contrato
+dos controladores. `--ticks N` explícito conserva o intervalo aceito 0..4096 e
+interrompe o avanço no tick escolhido. Probes sem janela conservam 256 ticks
+por padrão e orçamento total de 10.000 instruções, incluindo o bootstrap.
+
+Os logs de trace (incluindo a segunda VM), RNG, globals, tuning, vizinhos,
+enumeração de entidades, relacionamento e inventário guardam coleções
+limitadas; a animação guarda eventos limitados também por bytes, podendo
+descartar um evento grande e reter um posterior menor. Saturação descarta
+somente evidência, sem lançar erro ou encerrar a VM. Sound, EntryPoint5 e
+posições de movimento também contabilizam descartes.
+Mantêm-se os limites anteriores de cada coleção: 20.000 leituras de
+neighbor/global/tuning, 10.000 nos demais logs de execução, 4.096 em sound e
+EntryPoint5, 128 posições de movimento e 256 KiB lógicos de eventos de animação.
+O JSON expõe `diagnostics_truncated`, `diagnostics_dropped` por categoria,
+`runtime_policy` e `runtime_tick_limit`; a última instrução observada permanece
+disponível para contexto de falha mesmo depois que o trace enche.
+
+A tecla P pausa e retoma; Escape fecha a janela pelo mesmo polling durante pausa ou
+limite explícito. Os logs locais existentes recebem início da execução,
+pausa/retomada, fechamento e falhas, sujeitos ao teto de arquivo do logger.
+Exceder um slice de instruções pode ser retomado no próximo tick na janela;
+faults reais de VM e falhas dos controladores continuam falhas. Não se
+afrouxaram parsing, pilha, filas, recursos, orçamento por entidade/tick ou
+limites semânticos do Playback. Caches de recursos continuam vinculados aos
+IDs/owners limitados do World; contextos de portal mantêm prune/erase e teto16.
+
+O gate `person_session` usa duas VMs sintéticas durante 6.200 ticks acelerados,
+ultrapassando 10.000 instruções em cada VM e saturando o trace; cobre também
+grants independentes de CPU por entidade/tick, limite explícito, horizonte do
+relógio, descarte por contagem/bytes e fault real após truncamento. `person_cli`
+continua verificando os resultados dos probes finitos. Esses gates dispensam
+display; input e apresentação X11 são um gate separado.
+
+Validação Debug em build nova `/tmp/odh-session-build` (GCC13.3,
+`ODH_X11=ON`, `BUILD_TESTING=ON`): build completa sem warnings, quatro gates
+focados (`person_session`, `linux_session_log`, `person_animation_cli`,
+`person_cli`) passam e a suíte CTest registra 168 testes aprovados e um
+`linux_window_backend` skipped (`X11 DISPLAY inaccessible`). O teste integrado
+de animação entrega 1.000 eventos sintéticos válidos, excede a retenção de bytes
+e ainda completa Main, com contagem exata do descarte no JSON. PangoCairo não
+está disponível nesta configuração; overlay textual e input/pause/fechamento
+reais de X11 não foram validados. Não houve execução de jogo original nem
+teste desta unidade em hardware ou com ASan/UBSan.
+
+```sh
+cmake -S /home/rafael/_PROJETOS/TheSims1/opendollhouse -B /tmp/odh-session-build \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DODH_X11=ON
+cmake --build /tmp/odh-session-build -j 4
+ctest --test-dir /tmp/odh-session-build --output-on-failure \
+  -R '^(person_session|linux_session_log|person_animation_cli|person_cli)$'
+ctest --test-dir /tmp/odh-session-build --output-on-failure -j 4
+ctest --test-dir /tmp/odh-session-build -V -R '^linux_window_backend$'
+```
+
+Esta unidade habilita continuidade do host/preview; não declara gameplay
+completo ou equivalência ao original. A primeira build jogável continua exigindo
+o ciclo de bairro/overworld, criar/excluir/mudar famílias, salvar/continuar,
+lotes e expansões
+(Magic Town, Studio Town, Vacation, Downtown, House Party, Livin' Large e
+Unleashed), idioma selecionável e diagnóstico de crashes/bugs no nível esperado
+da referência Simitone para The Sims Complete Collection. Esta unidade não
+implementa esse conjunto nem restaura stacks/filas salvas dormentes.
+
+## Checkpoint histórico inicial
+
 Checkpoint de 2026-10-13. `odh-person` liga um avatar e seu semiglobal a uma VM
 permanente, com Sleep e InteractionQueue no mesmo relógio. Executa o Main real
 ou uma rotina privada selecionada explicitamente e preserva o primeiro fault.

@@ -149,6 +149,16 @@ with tempfile.TemporaryDirectory(prefix='odh-person-animation-') as folder:
     assert data['animation_events'] == [dict(tick=1, actor=1, time_id=0,
                                             properties=[['xevt', '7'], ['footstep', 'left']])]
     assert [row['pc'] for row in data['trace']] == [0, 1, 0]
+
+    # The host's retained event bytes fill before the valid animation finishes.
+    # Dropping evidence must not alter Playback delivery or Main's true return.
+    catalog([clip('clip', [(0, [('footstep', 'v' * 255)])] * 1000)])
+    setup(private=fallback)
+    data = decoded(run())
+    assert data['status'] == 'returned_true' and data['ticks'] == 4 and not data['host_failed']
+    assert data['diagnostics_truncated'] and 0 < len(data['animation_events']) < 1000
+    assert data['diagnostics_dropped']['animation'] == 1000 - len(data['animation_events'])
+    assert data['diagnostics_dropped']['trace'] == 0
     catalog()
 
     # Timed gestures are visual state, separate from PersonData22/23.

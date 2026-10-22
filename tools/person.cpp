@@ -40,6 +40,7 @@
 #include "odh/world_room_route_grid.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
+#include "person_session.hpp"
 #include "json.hpp"
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
@@ -438,7 +439,6 @@ int main(int argc,char** argv) {
         }
         else throw odh::FormatError("invalid or repeated person host option");
     }
-    if(render_window&&!ticks_set)ticks_limit=4096;
     if(!architecture_sources.empty()&&!render_floors)
         throw odh::FormatError("--architecture-resource requires --render-floors");
     if((render_floors&&(!saved_world_main||render_floors->empty()||render_floors->size()>4096))||
@@ -484,6 +484,9 @@ int main(int argc,char** argv) {
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
+    const odh_host::PersonSessionPolicy session_policy{render_window,ticks_set,ticks_limit};
+    odh_host::PersonDiagnosticRetention diagnostics;
+    using Diagnostic=odh_host::PersonDiagnostic;
     profile_mark("arguments-parsed");
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     session_log.event("selected language code="+std::to_string(game_language));
@@ -819,19 +822,20 @@ int main(int argc,char** argv) {
     memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
         if(scope==32){const auto value=neighbors?neighbors->person_data(frame.context.stack_object,index):std::nullopt;
             if(!value)return {};
-            if(neighbor_reads.size()>=20000)throw odh::FormatError("neighbor read log exceeds bounded host profile");
-            neighbor_reads.push_back(*value);return value->value;}
+            if(diagnostics.retain(Diagnostic::neighbor_reads,neighbor_reads.size(),20000))neighbor_reads.push_back(*value);
+            return value->value;}
         if(scope==6){
             const auto runtime=bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
             const auto family_value=index==9?family_global:std::nullopt;
             const auto value=family_value?family_value:runtime?runtime:(lot?lot->read(index):std::nullopt);
-            if(value){if(global_reads.size()>=20000)throw odh::FormatError("global read log exceeds bounded host profile");global_reads.push_back({index,*value,family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});}
+            if(value&&diagnostics.retain(Diagnostic::global_reads,global_reads.size(),20000))
+                global_reads.push_back({index,*value,family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});
             return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
         const auto value=tuning.read(frame.context.code_owner,index);
         if(!value)return {};
-        if(tuning_reads.size()>=20000)throw odh::FormatError("tuning read log exceeds bounded host profile");
-        tuning_reads.push_back(*value);return value->value;
+        if(diagnostics.retain(Diagnostic::tuning_reads,tuning_reads.size(),20000))tuning_reads.push_back(*value);
+        return value->value;
     };
     memory.room_by_temp0=[&](const odh::VmFrame&,std::int16_t temp0,std::int16_t index)->std::optional<std::int16_t> {
         return vm_room_map?odh::room_by_temp0_data(*vm_room_map,temp0,index):std::nullopt;
@@ -858,15 +862,15 @@ int main(int argc,char** argv) {
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
-        if(random_reads.size()>=10000)throw odh::FormatError("random log exceeds bounded host profile");random_reads.push_back(value);
+        if(diagnostics.retain(Diagnostic::random_reads,random_reads.size(),10000))random_reads.push_back(value);
     });
     const auto sleep_handler=thread_controllers.sleep_primitive();
     const auto queue_handler=thread_controllers.interaction_primitive();
     const auto lot_handler=lot?lot->primitive([&](const auto& value){
-        if(zoning_reads.size()>=10000)throw odh::FormatError("zoning read log exceeds bounded host profile");zoning_reads.push_back(value);
+        if(diagnostics.retain(Diagnostic::zoning_reads,zoning_reads.size(),10000))zoning_reads.push_back(value);
     }):odh::VmPrimitive{};
     const auto neighbor_handler=neighbors?neighbors->primitive(memory,[&](const auto& value){
-        if(neighbor_next.size()>=10000)throw odh::FormatError("neighbor enumeration log exceeds bounded host profile");neighbor_next.push_back(value);
+        if(diagnostics.retain(Diagnostic::neighbor_next,neighbor_next.size(),10000))neighbor_next.push_back(value);
     }):odh::VmPrimitive{};
     std::vector<odh::EntityNext> entity_next;
     std::vector<std::vector<std::int16_t>> multitile_groups;
@@ -875,8 +879,7 @@ int main(int argc,char** argv) {
         for(const auto& group:restored_world->multitile_groups)multitile_groups.push_back(group.members);
     }
     const auto entity_handler=odh::entity_next_primitive(world,memory,[&](const auto& value){
-        if(entity_next.size()>=10000)throw odh::FormatError("entity enumeration log exceeds bounded host profile");
-        entity_next.push_back(value);
+        if(diagnostics.retain(Diagnostic::entity_next,entity_next.size(),10000))entity_next.push_back(value);
     },std::move(multitile_groups));
     const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
         const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
@@ -911,13 +914,11 @@ int main(int argc,char** argv) {
     if(neighbors)relationships.emplace(*neighbors);
     std::vector<odh::RelationshipRecord> relationship_records;
     const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
-        if(relationship_records.size()>=10000)throw odh::FormatError("relationship log exceeds bounded host profile");
-        relationship_records.push_back(value);
+        if(diagnostics.retain(Diagnostic::relationship,relationship_records.size(),10000))relationship_records.push_back(value);
     }):odh::VmPrimitive{};
     std::vector<odh::InventoryFind> inventory_records;
     const auto inventory_handler=ngbh?odh::inventory_find_primitive(*ngbh,world,[&](const auto& value){
-        if(inventory_records.size()>=10000)throw odh::FormatError("inventory log exceeds bounded host profile");
-        inventory_records.push_back(value);
+        if(diagnostics.retain(Diagnostic::inventory,inventory_records.size(),10000))inventory_records.push_back(value);
     }):odh::VmPrimitive{};
     std::optional<odh::AvatarBodyDescriptor> body_state;
     std::optional<odh::host::AnimationCatalog> animation_catalog;
@@ -1054,7 +1055,7 @@ int main(int argc,char** argv) {
         if(global_sound!=global_sounds.end())return global_sound->second;
         return {};
     },{},[&](const odh::SoundRequest& request,const std::string& status){
-        if(sound_records.size()<4096)sound_records.push_back({request,status});
+        if(diagnostics.retain(Diagnostic::sound,sound_records.size(),4096))sound_records.push_back({request,status});
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
     const auto distance_to_handler=odh::get_distance_to_primitive(world);
@@ -1290,14 +1291,20 @@ int main(int argc,char** argv) {
         [&](std::uint64_t){return second_main_thread->observe();},[&]{return second_main_thread->observe();},
         [&]{return second_main_thread->notify();}))
         throw odh::FormatError("second person VM could not join the entity scheduler");
-    std::vector<odh::VmTrace> trace;bool host_failed=false;std::string host_diagnostic;
+    std::vector<odh::VmTrace> trace;std::optional<odh::VmTrace> latest_trace;
+    bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
     struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
     std::vector<StartupStage> stages;
     std::uint64_t startup_steps=0;
     std::optional<odh::NeighborInheritance> inherited;
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
-    const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){trace.push_back(record);trace_phases.push_back(phase);};};
+    const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){
+        latest_trace=record;
+        if(diagnostics.retain(Diagnostic::trace,trace.size(),10000)){
+            trace.push_back(record);trace_phases.push_back(phase);
+        }
+    };};
     if(initialize){
         for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.entry_points->entries[0].action},{"dynamic_multitile",person.entry_points->entries[8].action}}){
             if(entry.second<=255){stages.push_back({entry.first,entry.second,odh::VmStatus::ready,0,"entry ID<=255 skipped by reference"});continue;}
@@ -1391,14 +1398,14 @@ struct PlacementCandidateProbe {
         const auto* stack_object=world.find(stack_object_id);
         if(!caller||!caller->definition||!caller->entry_points||caller->entry_points->size()<=5){
             evidence.reason="caller_entry_point5_or_definition_unavailable";
-            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
         evidence.action=(*caller->entry_points)[5].action;
         const auto* definition=definition_index?definition_index->unique(caller->definition->guid):nullptr;
         if(!definition){
             evidence.reason="caller_definition_missing_or_ambiguous";
-            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
         evidence.source=definition->source;evidence.asset=definition->asset;
@@ -1412,12 +1419,12 @@ struct PlacementCandidateProbe {
         }
         if(entry_point5_bhav_errors.find(key)!=entry_point5_bhav_errors.end()){
             evidence.reason="selected_asset_bhav_unavailable";
-            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
         if(routine==entry_point5_bhav_cache.end()||!stack_object||!stack_object->definition){
             evidence.reason="stack_object_identity_unavailable";
-            if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+            if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
         const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
@@ -1428,7 +1435,7 @@ struct PlacementCandidateProbe {
         evidence.reason=execution.reason;evidence.steps=execution.steps;
         if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)evidence.result=true;
         else if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)evidence.result=false;
-        if(entry_point5_bhav_evidence.size()<4096)entry_point5_bhav_evidence.push_back(evidence);
+        if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
         return evidence.result;
     };
     std::optional<RenderEvidence> render_evidence;
@@ -2188,15 +2195,15 @@ struct PlacementCandidateProbe {
     const auto total_steps=[&]{return startup_steps+vm.steps()+(second_main_vm?second_main_vm->steps():0);};
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
-        const auto budget=total_steps()<10000?10000-total_steps():0;
+        const auto budget=session_policy.entity_budget(total_steps());
         if(scheduled_tick) {
             const auto phase_trace=trace_in(initialize?"main":"root_probe");
             const odh::EntityVmScheduler::Trace scheduled_trace=[&](std::int16_t entity,const odh::VmTrace& record){
                 if(headless_second_main&&entity==headless_second_main->avatar.id){
-                    if(trace.size()<10000){trace.push_back(record);trace_phases.push_back("second_main");}
+                    trace_in("second_main")(record);
                 }else phase_trace(record);
             };
-            if(!entity_scheduler.tick(ticks,budget,budget,scheduled_trace)) {
+            if(!entity_scheduler.tick(ticks,session_policy.tick_budget(total_steps(),entity_scheduler.size()),budget,scheduled_trace)) {
                 host_failed=true;
                 host_diagnostic=entity_scheduler.diagnostic();
             }
@@ -2209,7 +2216,7 @@ struct PlacementCandidateProbe {
                     ?"second avatar queue observation failed":queue.diagnostic();
                 return false;
             }
-            const auto remaining=total_steps()<10000?10000-total_steps():0;
+            const auto remaining=session_policy.entity_budget(total_steps());
             target.run(remaining,trace_in(phase));
             if(!controllers.observe()){
                 host_failed=true;host_diagnostic=phase=="second_main"
@@ -2230,6 +2237,10 @@ struct PlacementCandidateProbe {
         }
     };
     profile_mark("host-runtime-ready");
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    session_log.event(std::string("runtime session started mode=")+(render_window?"window":"finite_probe")+
+        " tick_limit="+std::to_string(session_policy.tick_limit()));
+#endif
     execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
     profile_mark("first-main-execution");
     capture_frame();
@@ -2241,8 +2252,20 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_X11
         if(render_window_host){
             const auto input=render_window_host->poll();
-            if(input.quit){window_closed=true;break;}
-            if(input.pause)window_paused=!window_paused;
+            if(input.quit){
+                window_closed=true;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                session_log.event("runtime window closed tick="+std::to_string(ticks));
+#endif
+                break;
+            }
+            if(input.pause){
+                window_paused=!window_paused;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                session_log.event(std::string("runtime session ")+(window_paused?"paused":"resumed")+
+                    " tick="+std::to_string(ticks));
+#endif
+            }
             if(input.interrupt&&go_here_status=="queued"){
                 go_here_cancel_pending=true;
                 go_here_route_status="cancelling";
@@ -2304,7 +2327,7 @@ struct PlacementCandidateProbe {
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
             if(input.rotation||input.zoom||input.redraw)capture_frame();
-            const bool runtime_finished=ticks>=ticks_limit||total_steps()>=10000||
+            const bool runtime_finished=session_policy.limit_reached(ticks,total_steps())||
                 (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status())));
             if(runtime_finished&&!render_evidence)
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
@@ -2316,7 +2339,7 @@ struct PlacementCandidateProbe {
             std::this_thread::sleep_until(window_deadline);
         }else
 #endif
-        if(ticks>=ticks_limit||total_steps()>=10000||
+        if(session_policy.limit_reached(ticks,total_steps())||
            (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))))break;
         ++ticks;
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
@@ -2481,7 +2504,7 @@ struct PlacementCandidateProbe {
             }
             const bool route_ok=runtime_routing->tick(ticks,[&](const odh::RouteMovement& movement){
                 ++route_runtime_movement_callbacks;
-                if(route_runtime_movement_positions.size()<128)
+                if(diagnostics.retain(Diagnostic::route_movement,route_runtime_movement_positions.size(),128))
                     route_runtime_movement_positions.push_back(movement.position);
             });
             if(headless_go_here_interrupt_after_movements&&
@@ -2514,20 +2537,16 @@ struct PlacementCandidateProbe {
         if(second_main_thread&&!second_main_thread->advance(ticks)){
             host_failed=true;host_diagnostic="second avatar thread controller rejected tick";break;
         }
-        if(playback)playback->tick(ticks,[&](const odh::PlaybackEvent& event){
-            if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
+        const auto record_animation_event=[&](const odh::PlaybackEvent& event){
             std::uint64_t bytes=sizeof(odh::PlaybackEvent);
             for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
-            if(bytes>256*1024-animation_event_bytes)throw odh::FormatError("animation event log bytes exceed bounded host profile");
-            animation_events.push_back(event);animation_event_bytes+=bytes;
-        });
-        if(second_main_playback)second_main_playback->tick(ticks,[&](const odh::PlaybackEvent& event){
-            if(animation_events.size()>=10000)throw odh::FormatError("animation event log exceeds bounded host profile");
-            std::uint64_t bytes=sizeof(odh::PlaybackEvent);
-            for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
-            if(bytes>256*1024-animation_event_bytes)throw odh::FormatError("animation event log bytes exceed bounded host profile");
-            animation_events.push_back(event);animation_event_bytes+=bytes;
-        });
+            if(diagnostics.retain(Diagnostic::animation,animation_events.size(),10000,
+                                  bytes,animation_event_bytes,256*1024)){
+                animation_events.push_back(event);animation_event_bytes+=bytes;
+            }
+        };
+        if(playback)playback->tick(ticks,record_animation_event);
+        if(second_main_playback)second_main_playback->tick(ticks,record_animation_event);
         execute(true);
         if(go_here_status=="queued"){
             if(queue.completion()&&(!go_here_previous_completion_uid||
@@ -2622,7 +2641,7 @@ struct PlacementCandidateProbe {
             go_here_status="vm_fault";
             go_here_route_status="host_failed";
             go_here_diagnostic=vm.diagnostic();
-        }else if(ticks>=ticks_limit){
+        }else if(ticks>=session_policy.tick_limit()){
             go_here_status="tick_limit";
             go_here_route_status="incomplete";
             go_here_diagnostic="Go Here remained queued when the tick budget ended";
@@ -2820,10 +2839,10 @@ struct PlacementCandidateProbe {
     const auto status=vm.status();
     const auto unfinished=[](odh::VmStatus value){return value==odh::VmStatus::waiting||
         value==odh::VmStatus::yielded||value==odh::VmStatus::budget_exhausted;};
-    const bool tick_exhausted=!host_failed&&ticks==ticks_limit&&
+    const bool tick_exhausted=!host_failed&&ticks==session_policy.tick_limit()&&
         (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
-    const bool instruction_exhausted=total_steps()>=10000 &&
+    const bool instruction_exhausted=session_policy.instruction_limit_reached(total_steps()) &&
         (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
     if(render_requested&&!render_evidence){
         if(render_window&&host_failed)throw odh::FormatError("person window preview host failed before a live Playback sample: "+host_diagnostic);
@@ -2833,8 +2852,8 @@ struct PlacementCandidateProbe {
                         "person frame export observed no live Playback sample; no frame written";
         std::string failure=reason+" (VM status "+std::string(odh::vm_status_name(vm.status()))+
             (vm.diagnostic().empty()?std::string{}:"; "+vm.diagnostic());
-        if(!trace.empty()){
-            const auto& last=trace.back();
+        if(latest_trace){
+            const auto& last=*latest_trace;
             failure+="; last instruction BHAV"+std::to_string(last.key.id)+" pc"+std::to_string(last.pc)+
                 " opcode"+std::to_string(last.instruction.opcode)+" operands[";
             for(std::size_t n=0;n<last.instruction.operands.size();++n){
@@ -2851,6 +2870,16 @@ struct PlacementCandidateProbe {
 #else
         <<",\"session_log\":null"
 #endif
+        <<",\"runtime_policy\":"<<json_bytes(render_window?"window_per_tick_per_entity":"finite_probe_total_budget")
+        <<",\"runtime_tick_limit\":"<<session_policy.tick_limit()
+        <<",\"window_closed\":"<<(window_closed?"true":"false")
+        <<",\"diagnostics_truncated\":"<<(diagnostics.truncated()?"true":"false")
+        <<",\"diagnostics_dropped\":{";
+    for(std::size_t n=0;n<diagnostics.dropped().size();++n){
+        if(n)std::cout<<',';
+        std::cout<<json_bytes(odh_host::PersonDiagnosticRetention::names[n])<<':'<<diagnostics.dropped()[n];
+    }
+    std::cout<<'}'
         <<",\"initialization\":"<<json_bytes(saved_world_main?
         "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
@@ -3596,8 +3625,13 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<"}\n";
-    const int exit_code=host_failed||status==odh::VmStatus::fault||status==odh::VmStatus::budget_exhausted||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
+    const int exit_code=host_failed||status==odh::VmStatus::fault||
+        (!render_window&&status==odh::VmStatus::budget_exhausted)||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
+    if(host_failed||status==odh::VmStatus::fault)
+        session_log.event("runtime session failed tick="+std::to_string(ticks)+" diagnostic="+
+            (host_failed?host_diagnostic:vm.diagnostic()));
+    if(diagnostics.truncated())session_log.event("runtime diagnostic retention truncated; see diagnostics_dropped in result JSON");
     session_log.finish(exit_code);
 #endif
     return exit_code;

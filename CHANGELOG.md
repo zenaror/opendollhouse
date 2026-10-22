@@ -17,6 +17,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A janela `odh-person --render-window` pode avançar além de 4.096 ticks e
+  10.000 instruções acumuladas, com orçamento renovado por entidade/tick.
+  `--ticks` explícito e probes sem janela conservam seus limites. Diagnósticos
+  saturados passam a descartar evidência com contadores no JSON; a VM continua
+  limitada por slice e preserva faults reais. Logs incluem início,
+  pausa/retomada e fechamento. É continuidade do host/preview, sem declarar
+  gameplay completo. Veja [`person-host-validation.md`](docs/person-host-validation.md).
+
 - A prévia Linux grava logs locais com versão/commit, etapas de inicialização,
   idioma, erros e sinal fatal. Mantém até três arquivos anteriores e limita cada
   sessão a 1 MiB; na próxima execução, registra a última etapa conhecida se a

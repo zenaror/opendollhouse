@@ -217,6 +217,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['stack'][-1]['owner']==1 and d['stack'][-1]['routine']==256 and d['stack'][-1]['caller']==1
  setup(main=[expr(0,1,0)]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and len(d['trace'])==10000
+ assert d['runtime_policy']=='finite_probe_total_budget' and d['runtime_tick_limit']==256
+ assert not d['diagnostics_truncated'] and all(value==0 for value in d['diagnostics_dropped'].values())
  for index in [1,25,26,29,41,62]:
   setup(main=[(2,254,255,[index,0,0,0,0,2,3,7])]);r=run();d=json.loads(r.stdout)
   assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
