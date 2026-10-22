@@ -12,8 +12,11 @@ validação indicados por versão.
   resolve o dono de cada rotina via OBJT, preserva instrução, argumentos e
   locais, completa os registradores até 20 e aplica `ObjectUses` aos chamados.
   O plano não executa as pilhas; o programa continua informando
-  `saved_threads_restored:false`. House07 confirmou planos distintos para Bob
-  (105) e membro47 (137). Veja
+  `saved_threads_restored:false`. A opção `--verify-saved-threads` confere
+  que cada rotina existe na fonte privada, semiglobal ou global indicada e que
+  o endereço salvo cabe nela; erro interrompe a saída antes do JSON. House07
+  confirmou planos distintos para Bob (105) e membro47 (137), com doze rotinas
+  existentes e endereços válidos. Veja
   [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
 
 - O núcleo agora oferece um scheduler limitado para estados de VM por entidade:

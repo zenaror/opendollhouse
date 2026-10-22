@@ -25,11 +25,18 @@ com `ObjectUses`. As notas dessa implementação marcam essas regras como
 adaptações próprias do FreeSO/Simitone. Elas orientam o plano, mas não provam
 que o executável original usa os mesmos detalhes.
 
-O plano ainda não verifica se a rotina e o endereço existem nos arquivos BHAV
-carregados, não restaura o estado especial de retorno entre frames e não
-retoma o relógio, a fila de interações ou os serviços de rota. O Simitone tem
-regras adicionais para esses casos. Portanto esta etapa prepara e exibe dados;
-não é continuação da partida nem teste de gameplay.
+Por padrão, o plano não verifica se a rotina e o endereço existem nos arquivos
+BHAV. A opção `--verify-saved-threads`, junto das fontes explícitas
+`--semiglobal FAR ENTRY` e `--global FAR ENTRY`, faz essa conferência antes de
+imprimir o resultado: confirma que cada rotina está no recurso esperado e que
+o endereço salvo aponta para uma instrução existente. Se faltar uma rotina, o
+recurso não corresponder ao link do objeto ou o endereço estiver fora da
+rotina, o comando falha sem imprimir um JSON parcial.
+
+Essa conferência não executa os quadros. Ainda não restaura o estado especial
+de retorno entre frames nem retoma o relógio, a fila de interações ou os
+serviços de rota. Portanto esta etapa prepara e confere dados; não é
+continuação da partida nem teste de gameplay.
 
 ## House07 da instalação local
 
@@ -59,6 +66,24 @@ ctest --test-dir /tmp/odh-saved-thread-plan-build -R saved_thread_restore_plan -
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff'
 ```
+
+Para também conferir os quadros contra as rotinas reais do jogo:
+
+```sh
+/tmp/odh-saved-thread-plan-build/odh-saved-world \
+  '../referencias/The Sims/UserData/Houses/House07.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
+  --verify-saved-threads \
+  --semiglobal '../referencias/The Sims/GameData/Global/Global.far' PersonGlobals.iff \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
+```
+
+No House07 local, as doze rotinas dos dois Sims foram encontradas e todos os
+endereços salvos ficaram dentro de suas rotinas. Isso confirma apenas que os
+dados apontam para código existente; não confirma que seja seguro ou correto
+executá-lo.
 
 O teste sintético cobre resolução do dono, padding, `ObjectUses` e recusa de
 índices, IDs ou GUIDs inválidos. A build Linux limpa em `/tmp` concluiu, e
