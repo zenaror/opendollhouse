@@ -81,6 +81,26 @@ como Caller e o GOTO como Callee e StackObject. A TTAB comercial do GOTO já foi
 conferida: a interação3 seleciona a ação4107 e o teste4108. Essa leitura confirma
 a ligação entre os dados, mas não executa a ação em uma fila real do bloqueador.
 
+### Modelo de execução por Sim — limite da próxima integração
+
+Na revisão Simitone fixada `4906db3156616bfaffc10ce0963cf08062975fef` (FreeSO
+`f86bbd34b2112296ed786741f640a0535886d180`), `VM.InternalTick` avança o relógio
+e chama um único `VMScheduler`; esse scheduler percorre as entidades previstas
+para o passo e chama `ent.Tick()`. Cada `VMEntity` possui seu próprio
+`VMThread`. Assim, o shoo da fila do bloqueador é uma segunda thread de entidade
+dentro da mesma VM do lote, não uma segunda VM completa. Fontes: `VM.cs:380-429`,
+`Engine/VMScheduler.cs:79-97`, `Entities/VMEntity.cs:61,490`.
+
+No ODH atual, cada `Vm` possui uma pilha e registradores próprios
+(`include/odh/vm.hpp`), mas não existe ainda um scheduler de entidades que
+avance várias pilhas com um mesmo tick e orçamento compartilhado. O teste de
+duas filas usa dois objetos `Vm` e chama seus métodos diretamente; portanto,
+não representa o scheduler do Simitone. Próximo passo de arquitetura: separar
+programa/código compartilhado do estado de execução de cada entidade e adicionar
+um scheduler limitado por tick; só depois ligar `IdleForInput`, a notificação e
+a fila do GOTO ao Sim bloqueador. Essa separação também evita copiar o banco
+inteiro de BHAVs para cada Sim, importante para os ports portáteis.
+
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,
 `MyObject[11]` e scope3, numa codificação diferente da ação Go Here. O adaptador
