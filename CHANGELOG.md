@@ -17,6 +17,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-strings` agora consulta `STR#` diretamente em um IFF solto, como
+  `UIText.iff`, para facilitar a inspeção de idiomas sem extrair recursos.
+  A saída continua preservando bytes originais; não converte nem desenha texto.
+  O teste usa apenas IFF sintético.
+
 - Go Here agora pode sair do piso térreo, usar escadas salvas da House02 e
   House03 e continuar andando no andar de cima. A validação usou avatar
   sintético e Main parada; distância entre pisos segue o perfil TS1 do Simitone

@@ -270,6 +270,7 @@ Para identificar e decodificar os recursos da animação adulta da cadeira:
 
 ```sh
 ./build/odh-strings '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 129 1 3
+./build/odh-strings --iff '../referencias/The Sims/GameData/UIText.iff' 148 14 0
 ./build/odh-animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf A2O-sit-left --cfp xskill-A2O-sit-left.cfp > reports/chair-animation-cfp.json
 python3 tools/compare_cfp.py '../referencias/The Sims/GameData/Animation/Animation.far' xskill-A2O-sit-left.cfp reports/chair-animation-cfp.json
 ```
@@ -279,9 +280,12 @@ executam eventos. A seleção de adulto é explícita: a idade ainda não foi
 inicializada no probe anterior. `odh-strings` suporta formatos 0..-3; `odh-animation`
 suporta BCF binário com seções skeleton/appearance vazias. Ambos retornam 2 em erro.
 
-`odh-pose` lê o skeleton binário, aplica os canais de um clipe/CFP e compõe as
-transformações dos ossos. A seleção dos recursos é explícita. Pode exportar um
-SVG de diagnóstico; isso ainda não desenha as meshes, roupas ou o cenário do jogo.
+`odh-strings --iff` lê um `STR#` de um arquivo IFF solto sem extrair ou copiar
+o recurso; como o modo FAR, ele mostra os bytes originais e não converte o
+idioma para Unicode. `odh-pose` lê o skeleton binário, aplica os canais de um
+clipe/CFP e compõe as transformações dos ossos. A seleção dos recursos é
+explícita. Pode exportar um SVG de diagnóstico; isso ainda não desenha as meshes,
+roupas ou o cenário do jogo.
 
 ```sh
 ./build/odh-pose '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult --animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 80.5 --svg reports/pose-adult-80_5.svg > reports/pose-adult-80_5.json

@@ -28,6 +28,11 @@ bcf = u(0) + u(0) + u(1) + clip()
 cfp = (b'\xff' + u(0x3f800000)) * 7
 with tempfile.TemporaryDirectory(prefix='odh-animation-') as folder:
     path = Path(folder)/'fixture.far'
+    standalone_iff = Path(folder)/'UIText.iff'
+    duplicate_iff = Path(folder)/'duplicate.iff'
+    missing_iff = Path(folder)/'missing.iff'
+    standalone_iff.write_bytes(iff)
+    duplicate_iff.write_bytes(iff + chunk)
     def run(binary, *args, entries=None):
         path.write_bytes(far(entries or [(b'test.iff', iff), (b'test.bcf', bcf), (b'xskill.cfp', cfp)]))
         return subprocess.run([binary, str(path), *args], capture_output=True, text=True)
@@ -37,6 +42,23 @@ with tempfile.TemporaryDirectory(prefix='odh-animation-') as folder:
     d = decoded(run(strings, 'test.iff', '129', '1', '0'))
     assert d['format'] == -3 and d['entries'][0]['value'] == 'a"\xff'
     assert d['entries'][0]['comment'] == 'comment'
+    direct = subprocess.run([strings, '--iff', str(standalone_iff), '129', '1', '0'],
+                            capture_output=True, text=True)
+    direct_data = decoded(direct)
+    assert direct_data == d
+    direct = subprocess.run([strings, '--iff', str(standalone_iff), '129'],
+                            capture_output=True, text=True)
+    direct_data = decoded(direct)
+    assert [entry['language'] for entry in direct_data['entries']] == [1, 2]
+    direct = subprocess.run([strings, '--iff', str(duplicate_iff), '129'],
+                            capture_output=True, text=True)
+    assert direct.returncode == 2 and 'ambiguous STR# chunk' in direct.stderr and not direct.stdout
+    direct = subprocess.run([strings, '--iff', str(missing_iff), '129'],
+                            capture_output=True, text=True)
+    assert direct.returncode == 2 and 'cannot open IFF file' in direct.stderr and not direct.stdout
+    direct = subprocess.run([strings, '--iff', str(standalone_iff)],
+                            capture_output=True, text=True)
+    assert direct.returncode == 2 and 'Usage:' in direct.stderr and not direct.stdout
     d = decoded(run(animation, 'test.bcf', 'CLIP', '--cfp', 'xskill.cfp'))
     assert d['evidence'] == 'animation_metadata_only'
     assert d['cfp']['raw_float_planes'] == [[0x3f800000]]*7
@@ -54,6 +76,7 @@ with tempfile.TemporaryDirectory(prefix='odh-animation-') as folder:
     assert r.returncode == 2 and 'exact archive entry not found' in r.stderr and not r.stdout
     for binary, args in [(strings, ('test.iff','129','3','0')),
                          (strings, ('test.iff','129junk')),
+                         (strings, ('--iff',str(standalone_iff),'999')),
                          (animation, ('test.bcf','missing')),
                          (animation, ('test.bcf','clip','--cfp','wrong.cfp'))]:
         r = run(binary, *args); assert r.returncode == 2 and not r.stdout
