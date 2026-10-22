@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     r=linked(); d=json.loads(r.stdout)
     assert r.returncode==0 and d['evidence']=='static_structure_only'
     assert d['semiglobal_binding']['name']=='tEsT' and d['semiglobal_binding']['remaining_bytes']==7
+    r=linked(owner_rows,((1,binding),)); d=json.loads(r.stdout)
+    assert r.returncode==0 and d['semiglobal_binding']['glob_id']==1 and d['semiglobal_binding']['name']=='tEsT'
     r=linked(owner_rows,((128,binding),),None,'--run'); d=json.loads(r.stdout)
     assert r.returncode==0 and d['status']=='returned_true' and d['steps']==3
     assert [t['routine'] for t in d['trace']]==[4096,8192,256]
@@ -77,7 +79,8 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
         (owner_rows,(),None,'nonempty code-owner'),
         (owner_rows,((128,b'\0'),),None,'nonempty code-owner'),
         (owner_rows,((128,binding),(128,binding)),None,'ambiguous'),
-        (owner_rows,((129,binding),),None,'nonempty code-owner'),
+        (owner_rows,((129,b'\0'),),None,'nonempty code-owner'),
+        (owner_rows,((1,binding),(128,binding)),None,'ambiguous code-owner'),
         (owner_rows,((128,b'\x05test'),),None,'truncated GLOB'),
         (owner_rows,((128,b'\x05other'),),None,'does not match'),
         (owner_rows,((128,b'\x05a/bcd'),),None,'flat semiglobal'),

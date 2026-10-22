@@ -16,8 +16,8 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  root=Path(folder);avatar=root/'avatar.far';semi=root/'semi.far';glob=root/'global.far';action=root/'action.far'
  def bcons(tables):
   return [('BCON',rid,bytes([len(values),0])+struct.pack('<'+'H'*len(values),*values)) for rid,values in tables]
- def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=(),global_extra=()):
-  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+bcons(private_bcons))
+ def setup(main=None,global_rows=None,action_rows=None,private_bcons=(),semi_bcons=(),global_bcons=(),action_bcons=(),global_extra=(),glob_id=128):
+  archive(avatar,'Person.iff',[('OBJD',128,objd(0x11111111)),('GLOB',glob_id,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine(main or [call(8192)]))]+bcons(private_bcons))
   archive(semi,'FixturePerson.iff',[('BHAV',8192,routine([call(256,1,1),expr(2,99)]))]+bcons(semi_bcons))
   archive(glob,'Global.iff',[('BHAV',256,routine(global_rows or [(17,1,253,[0,0,1,0,0,0,0,0]),expr(3,1)]))]+list(global_extra)+bcons(global_bcons))
   archive(action,'Chair.iff',[('OBJD',128,objd(0x22222222)),('BHAV',4096,routine(action_rows or [expr(0,22,255)]))]+bcons(action_bcons))
@@ -187,13 +187,16 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-1 and d['actor_state']['age']==27
  for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256']]:
   setup();r=run(extra);assert r.returncode==2 and not r.stdout and r.stderr
+ setup(glob_id=1);r=run();assert r.returncode==0 and json.loads(r.stdout)['status']=='returned_true'
+ setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',1,b'\x0dFixturePerson\xa3'),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine([call(8192)]))]);r=run()
+ assert r.returncode==2 and not r.stdout and 'ambiguous GLOB link' in r.stderr
  setup();invalid_type=objd(1);struct.pack_into('<H',invalid_type,18,0)
  archive(avatar,'Person.iff',[('OBJD',128,invalid_type),('GLOB',128,b'\x0dFixturePerson'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
  assert r.returncode==2 and not r.stdout and 'ObjectType2' in r.stderr
  setup();archive(semi,'FixturePerson.iff' ,[('BHAV',4096,routine([expr(0,1)]))]);r=run()
  assert r.returncode==2 and not r.stdout and 'resource role' in r.stderr
- setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',128,b'\x05other'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
- assert r.returncode==2 and not r.stdout and 'GLOB128' in r.stderr
+ setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',1,b'\x05other'),('BHAV',4096,routine([expr(0,1)]))]);r=run()
+ assert r.returncode==2 and not r.stdout and 'GLOB link' in r.stderr
  setup();archive(action,'Chair.iff',[('OBJD',128,objd(2)),('GLOB',128,b'\x04Semi'),('BHAV',4096,routine([expr(0,1)]))]);r=run(action_args)
  assert r.returncode==2 and not r.stdout and 'action semiglobal' in r.stderr
  # Explicit house selection and native-style zoning input, separate from FARs.

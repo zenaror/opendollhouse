@@ -14,8 +14,10 @@ ausente e de um índice fora do banco; escrita scope35 continua unsupported.
 `saved_portal_function` seleciona o índice15 da tabela de EntryPoints do
 recurso exato e conserva `source`, `asset` e `chunk_id` da definição para uso
 posterior em um catálogo de `CodeOwner`; esses campos são proveniência do
-asset, não IDs de entidade do `World`. Também preserva o nome do `GLOB128`
-semiglobal quando presente. `saved_portal_action` aceita apenas ações privadas
+asset, não IDs de entidade do `World`. Também preserva o nome do chunk `GLOB`
+semiglobal quando presente. O leitor aceita o vínculo único no recurso,
+seguindo a escolha do primeiro chunk `GLOB` feita pelo Simitone; por segurança,
+recusa mais de um. `saved_portal_action` aceita apenas ações privadas
 no intervalo 4096–8191 e lê/parsa a BHAV do mesmo asset. Ação zero e BHAV
 ausente falham fechados.
 
@@ -32,7 +34,7 @@ com Caller=avatar e Callee/StackObject=portal. O caller fornece um `CodeOwner`
 não zero; a função não o deriva do ID da entidade. Chamadas globais são
 listadas em `global_dependencies` para validação pelo banco compartilhado do
 host. `load_saved_semiglobal_code_bank` abre somente o `.iff` explícito e
-limitado; o plano confere seu nome contra o GLOB128 e incorpora ao mesmo
+limitado; o plano confere seu nome contra o GLOB e incorpora ao mesmo
 CodeOwner apenas a closure semiglobal alcançável. ConditionFunction não zero,
 bank ausente/ambíguo e rotina dependente ausente continuam falhando fechados.
 `load_saved_global_code_bank` lê o banco global explicitamente fornecido. O
@@ -50,6 +52,7 @@ não há chamada de `Routing::call_external_frame`, descoberta automática de po
 replanejamento entre salas ou navegação jogável. `odh-saved-entry-point-resource`
 valida o contrato com IFF/FAR sintéticos. O comando `odh-bhav` também confirmou
 `Objects.far:Doors.iff` → GLOB128 `DoorGlobals` → `Global.far:DoorGlobals.iff`;
+na escada `Objects.far:stair.iff`, o mesmo nome aparece no GLOB1;
 essa inspeção de vínculo não executa a EntryPoint15.
 
 ## Referência e readers

@@ -37,6 +37,7 @@ struct SavedEntryPointResource {
     odh::EntryPointTable table;
     std::set<std::uint16_t> bhavs;
     std::optional<odh::Glob> semiglobal_binding;
+    std::optional<std::uint16_t> semiglobal_binding_id;
 };
 
 // Resolve the exact OBJD/OBJf function table and private BHAV inventory from
@@ -47,6 +48,7 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
     std::optional<odh::ObjdFunctions> functions;
     std::optional<odh::EntryPointTable> table;
     std::optional<odh::Glob> semiglobal_binding;
+    std::optional<std::uint16_t> semiglobal_binding_id;
     std::set<std::uint16_t> bhavs;
     auto load=[&](const auto& view) {
         std::optional<odh::View> objd,objf;
@@ -55,9 +57,10 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
         odh::iff_chunks(view,[&](const odh::Chunk& chunk) {
             if(chunk.type=="OBJD"&&chunk.id==candidate.chunk_id) { ++objd_count; objd=chunk.payload; }
             else if(chunk.type=="OBJf"&&chunk.id==candidate.chunk_id) { ++objf_count; objf=chunk.payload; }
-            else if(read_semiglobal_binding&&chunk.type=="GLOB"&&chunk.id==128) {
-                if(semiglobal_binding)throw odh::FormatError("ambiguous GLOB128 in selected object resource");
+            else if(read_semiglobal_binding&&chunk.type=="GLOB") {
+                if(semiglobal_binding)throw odh::FormatError("ambiguous GLOB link in selected object resource");
                 semiglobal_binding=odh::read_glob(chunk.payload);
+                semiglobal_binding_id=chunk.id;
             }
             else if(chunk.type=="BHAV") bhavs.insert(chunk.id);
         },limits);
@@ -79,7 +82,7 @@ inline SavedEntryPointResource saved_entry_point_resource(const odh::DefinitionC
     }
     if(!functions||!table) throw odh::FormatError("entry-point probe function table unavailable");
     return {candidate.source,candidate.asset,candidate.chunk_id,*functions,*table,
-            std::move(bhavs),std::move(semiglobal_binding)};
+            std::move(bhavs),std::move(semiglobal_binding),semiglobal_binding_id};
 }
 
 // Read one private BHAV only from the exact asset selected for the entity's

@@ -63,7 +63,8 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
           bool globals,std::optional<odh::SlotTable>* slots=nullptr,DefinitionSelection* definition=nullptr,
           std::map<std::uint16_t,odh::SoundEvent>* sounds=nullptr,
           std::map<std::uint16_t,odh::Bcon>* tuning=nullptr,
-          std::optional<odh::Glob>* binding=nullptr,std::optional<odh::RoutineScope> required_scope={}) {
+          std::optional<odh::Glob>* binding=nullptr,std::optional<odh::RoutineScope> required_scope={},
+          std::optional<std::uint16_t>* binding_id=nullptr) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw odh::FormatError("cannot open archive");
     const odh::View archive(stream, std::filesystem::file_size(path));
@@ -75,9 +76,10 @@ void load(const std::string& path, const std::string& name, odh::RoutineSet& rou
     }
     if (!selected) throw odh::FormatError("exact archive entry not found");
     odh::iff_chunks(archive.subview(selected->offset, selected->length), [&](const odh::Chunk& c) {
-        if(binding && c.type=="GLOB" && c.id==128) {
-            if(*binding)throw odh::FormatError("ambiguous code-owner GLOB128 binding");
+        if(binding && c.type=="GLOB") {
+            if(*binding)throw odh::FormatError("ambiguous code-owner GLOB link");
             *binding=odh::read_glob(c.payload);
+            if(binding_id)*binding_id=c.id;
         }
         if(definition && c.type=="OBJD" && c.id==definition->id) {
             if(definition->binding) throw odh::FormatError("ambiguous selected OBJD");
@@ -160,7 +162,7 @@ void instruction(const odh::Instruction& i, std::uint16_t pc) {
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::cerr << "Usage: odh-bhav ARCHIVE.far ENTRY.iff ROUTINE_ID [--run] [--global ARCHIVE.far ENTRY.iff]\n"
-                     "  [--semiglobal ARCHIVE.far ENTRY.iff] validates code-owner Pascal GLOB128 binding.\n"
+                     "  [--semiglobal ARCHIVE.far ENTRY.iff] validates the code-owner Pascal GLOB link.\n"
                      "  [--world-probe [--occupant 0|1|3] [--posture 0..32767] [--autonomous]]\n"
                      "  [--route-probe] requires --world-probe and --global; constructed clearance grid.\n"
                      "  [--snap-probe --object-def ID] also requires --route-probe; explicit OBJD binding.\n"
@@ -333,22 +335,24 @@ int main(int argc, char** argv) {
         std::map<std::uint16_t,odh::SoundEvent> private_sounds,global_sounds;
         std::map<std::uint16_t,odh::Bcon> private_tuning;
         std::optional<odh::Glob> semiglobal_binding;
+        std::optional<std::uint16_t> semiglobal_binding_id;
         load(argv[1], argv[2], routines, false,nullptr,(snap_probe||route_slot_probe)?&definition:nullptr,sound_probe?&private_sounds:nullptr,main_probe?&private_tuning:nullptr,
-             semiglobal?&semiglobal_binding:nullptr,semiglobal?std::optional<odh::RoutineScope>(odh::RoutineScope::private_object):std::nullopt);
+             semiglobal?&semiglobal_binding:nullptr,semiglobal?std::optional<odh::RoutineScope>(odh::RoutineScope::private_object):std::nullopt,
+             semiglobal?&semiglobal_binding_id:nullptr);
         if(semiglobal) {
             if(!semiglobal_binding || semiglobal_binding->name.empty())
-                throw odh::FormatError("explicit semiglobal requires nonempty code-owner GLOB128");
+                throw odh::FormatError("explicit semiglobal requires a nonempty code-owner GLOB link");
             const auto& name=semiglobal_binding->name;
             if(name.find_first_of("/\\:\0",0,4)!=std::string::npos || name=="." || name=="..")
-                throw odh::FormatError("GLOB128 name outside flat semiglobal archive profile");
+                throw odh::FormatError("GLOB name outside flat semiglobal archive profile");
             if(fold(name+".iff")!=fold(semiglobal->second))
-                throw odh::FormatError("explicit semiglobal entry does not match code-owner GLOB128");
+                throw odh::FormatError("explicit semiglobal entry does not match code-owner GLOB link");
             load(semiglobal->first,semiglobal->second,routines,false,nullptr,nullptr,nullptr,nullptr,nullptr,odh::RoutineScope::semiglobal);
         }
         const auto emit_semiglobal=[&] {
             if(!semiglobal)return;
             std::cout<<",\"semiglobal_binding\":{\"code_owner_archive\":"<<quote(argv[1])
-                     <<",\"code_owner_entry\":"<<quote(argv[2])<<",\"glob_id\":128,\"encoding\":\"pascal_u8\",\"name\":"
+                     <<",\"code_owner_entry\":"<<quote(argv[2])<<",\"glob_id\":"<<semiglobal_binding_id.value_or(0)<<",\"encoding\":\"pascal_u8\",\"name\":"
                      <<quote(semiglobal_binding->name)<<",\"remaining_bytes\":"<<semiglobal_binding->remaining_bytes
                      <<",\"archive\":"<<quote(semiglobal->first)<<",\"entry\":"<<quote(semiglobal->second)<<'}';
         };

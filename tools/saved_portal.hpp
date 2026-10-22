@@ -145,7 +145,7 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
         const auto id=pending_semiglobal[cursor];
         if(!loaded_semiglobal.insert(id).second)continue;
         if(!function.semiglobal_name)
-            throw odh::FormatError("portal action has semiglobal calls but GLOB128 is absent");
+            throw odh::FormatError("portal action has semiglobal calls but its GLOB link is absent");
         if(!semiglobal)
             throw odh::FormatError("portal action requires its explicitly linked semiglobal bank");
         auto expected=*function.semiglobal_name+".iff";
@@ -153,7 +153,7 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
         auto fold_ascii=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;};
         if(fold_ascii(expected)!=fold_ascii(actual)||semiglobal->name.empty()||
            fold_ascii(semiglobal->name)!=fold_ascii(*function.semiglobal_name))
-            throw odh::FormatError("explicit semiglobal resource does not match portal GLOB128");
+            throw odh::FormatError("explicit semiglobal resource does not match the portal GLOB link");
         const auto key=odh::routine_key(id);
         const auto found=semiglobal->routines.find(key);
         if(found==semiglobal->routines.end())

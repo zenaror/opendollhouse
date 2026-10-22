@@ -75,11 +75,11 @@ int main(){try{
     write(path,iff(chunk("OBJD",7,objd(0))+chunk("GLOB",128,std::string(1,'\5'))));
     const auto without_binding=saved_entry_point_resource(candidate,false);
     check(!without_binding.semiglobal_binding,
-        "ordinary saved-world EntryPoint binding does not parse an unused GLOB128");
+        "ordinary saved-world EntryPoint binding does not parse an unused GLOB link");
     bool malformed_binding_rejected=false;
     try{(void)saved_entry_point_resource(candidate);}
     catch(const odh::FormatError&){malformed_binding_rejected=true;}
-    check(malformed_binding_rejected,"Portal-capable resource lookup still validates its requested GLOB128");
+    check(malformed_binding_rejected,"Portal-capable resource lookup still validates its requested GLOB link");
 
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
                     chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(2))));
@@ -152,14 +152,24 @@ int main(){try{
     catch(const odh::FormatError&){portal_condition_unsupported=true;}
     check(portal_condition_unsupported,"portal condition is not silently skipped without an evaluator");
     const std::string door_glob=std::string(1,static_cast<char>(11))+"DoorGlobals";
-    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("GLOB",128,door_glob)+
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("GLOB",1,door_glob)+
                     chunk("BHAV",5005,std::string{})+chunk("BHAV",5015,portal_bhav(8192))));
     const auto linked_resource=saved_entry_point_resource(candidate);
-    check(linked_resource.semiglobal_binding&&linked_resource.semiglobal_binding->name=="DoorGlobals",
-        "GLOB128 semiglobal identity is read from the exact portal definition resource");
+    check(linked_resource.semiglobal_binding&&linked_resource.semiglobal_binding->name=="DoorGlobals"&&
+        linked_resource.semiglobal_binding_id==1,
+        "GLOB chunk ID 1 semiglobal identity is read from the exact portal definition resource");
     const auto linked_function=saved_portal_function(candidate);
     check(linked_function.semiglobal_name&&*linked_function.semiglobal_name=="DoorGlobals",
         "Portal plan retains the linked semiglobal name");
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+
+        chunk("GLOB",1,door_glob)+chunk("GLOB",128,door_glob)+
+        chunk("BHAV",5005,std::string{})+chunk("BHAV",5015,portal_bhav(8192))));
+    bool ambiguous_glob=false;
+    try{(void)saved_entry_point_resource(candidate);}
+    catch(const odh::FormatError&){ambiguous_glob=true;}
+    check(ambiguous_glob,"multiple GLOB links fail closed instead of choosing an arbitrary semiglobal");
+    write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("GLOB",1,door_glob)+
+        chunk("BHAV",5005,std::string{})+chunk("BHAV",5015,portal_bhav(8192))));
     bool portal_semiglobal_unsupported=false;
     try{(void)saved_portal_vm_call_plan(portal_record,portal_world,portal_definitions,12,37,0x80000039U);}
     catch(const odh::FormatError&){portal_semiglobal_unsupported=true;}

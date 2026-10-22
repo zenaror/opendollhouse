@@ -122,8 +122,8 @@ Loaded load(const Resource& resource,odh::RoutineScope role,std::optional<std::u
                 if(startup)result.startup=odh::read_objd_startup(chunk.payload);
                 if(result.binding->version==138)result.object_type=chunk.payload.le16(18);
             }
-            if(role==odh::RoutineScope::private_object&&chunk.type=="GLOB"&&chunk.id==128){
-                if(result.glob)throw odh::FormatError("ambiguous GLOB128");result.glob=odh::read_glob(chunk.payload);
+            if(role==odh::RoutineScope::private_object&&chunk.type=="GLOB"){
+                if(result.glob)throw odh::FormatError("ambiguous GLOB link");result.glob=odh::read_glob(chunk.payload);
             }
         });
         if(result.functions){
@@ -564,7 +564,7 @@ int main(int argc,char** argv) {
         throw odh::FormatError("avatar GUID is not a bound member of selected FAMI");
     if(!person.glob||person.glob->name.empty()||person.glob->name.find_first_of("/\\:")!=std::string::npos||
        person.glob->name.find('\0')!=std::string::npos||fold(person.glob->name+".iff")!=fold(semi->entry))
-        throw odh::FormatError("semiglobal does not match flat Pascal GLOB128 binding");
+        throw odh::FormatError("semiglobal does not match flat Pascal GLOB link");
     const auto avatar_main=person.entry_points?(person.entry_points->entries.size()>1?person.entry_points->entries[1].action:std::uint16_t{0}):person.functions->main;
     const auto root=routine.value_or(avatar_main);
     if(root==0||odh::routine_key(root).scope!=odh::RoutineScope::private_object||person.routines.find(odh::routine_key(root))==person.routines.end())
@@ -630,7 +630,7 @@ int main(int argc,char** argv) {
                 const auto* candidate=definition_index->unique(entity->definition->guid);
                 if(!candidate)throw odh::FormatError("saved World EntryPoint definition unavailable or ambiguous");
                 // Every restored entity needs its exact EntryPoint table, but
-                // only a Portal15 plan needs to decode that asset's GLOB128.
+                // only a Portal15 plan needs to decode that asset's GLOB link.
                 auto resource=saved_entry_point_resource(*candidate,false);
                 if(resource.chunk_id!=candidate->chunk_id||resource.table.entries.size()>256)
                     throw odh::FormatError("saved World EntryPoint resource identity or size invalid");

@@ -416,16 +416,32 @@ build/linux-checkpoint/odh-wall-appearance \
 build/linux-checkpoint/odh-bhav \
   '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4098
 build/linux-checkpoint/odh-bhav \
-  '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4105
+  '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4105 \
+  --semiglobal '../referencias/The Sims/GameData/Global/Global.far' DoorGlobals.iff \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
 ```
 
 O relatório mostra as entradas 1 e 15; os dumps BHAV mostram o conteúdo das
-ações sem executar código. BHAV 4098 chama rotinas 280 e 4118; BHAV 4105 chama 278,
-4109, 8197, 279 e 4110. As chamadas indicam código global, privado e
-semiglobal, respectivamente, conforme as faixas de IDs do motor de referência.
-As rotinas chamadas e a troca real de piso ainda precisam ser compreendidas.
-O ODH continua bloqueando Go Here entre andares, e nenhum destes resultados
-prova que um Sim tenha subido ou descido.
+ações sem executar código. BHAV 4098 chama rotinas 280 e 4118. BHAV 4105
+chama as globais 278 e 279, as privadas 4109 e 4110 e a semiglobal 8197. Os
+rótulos dos recursos são “standard multi-tile entry”, “standard multi-tile
+exit”, “portal core”, “portal wait” e “fail portal call”. O vínculo da escada
+é um chunk GLOB de ID 1 chamado `DoorGlobals`; `Doors.iff`, a porta comum, usa
+GLOB de ID 128 com o mesmo nome. O Simitone escolhe o primeiro chunk GLOB do
+recurso. O ODH aceita esse vínculo único sem exigir o ID 128 e recusa recursos
+com vários GLOBs, para não escolher um vínculo no escuro. A saída estática de
+`odh-bhav` registra `glob_id=1`; nenhuma dessas rotinas é executada neste
+probe.
+
+Esses nomes e chamadas descrevem a preparação e o uso do portal, mas ainda não
+provam qual passo move o Sim para outro piso.
+
+No código de referência do Simitone, uma comparação do campo `MyObject.Room`
+com o literal `1024` consulta o andar do Sim e o `LevelOffset` do objeto. O
+comentário do código diz que essa exceção atende às escadas. A verificação
+estática de `Sims.exe.bak` no Ghidra não revelou um endereço ou rotina confiável
+para a troca de piso. O ODH continua bloqueando Go Here entre andares; nenhum
+destes resultados prova que um Sim tenha subido ou descido.
 
 `tree_table_id=65535` nas peças só indica que não há tabela de interações; não
 deve ser usado para concluir que a definição do objeto está ausente. Esta

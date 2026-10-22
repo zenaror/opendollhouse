@@ -14,18 +14,41 @@ FreeSO incluído na árvore do Simitone, a entrada 15 é a passagem usada pelo
 planejador para trocar de cômodo e de andar. Os patamares, portanto, são os
 primeiros candidatos reais para essa passagem.
 
-As rotinas 4098, 4105 e 4118 foram lidas sem executá-las. A ação 4098 chama
-rotinas global 280 e privada 4118; a ação 4105 também chama rotinas globais,
-privadas e semiglobais. Isso mostra que a mudança de andar depende de mais
-rotinas do jogo, ainda não reproduzidas aqui. O teste Go Here atual continua
-recusando destinos em outro andar antes de iniciar a caminhada. Ainda não
-houve subida ou descida de um Sim no ODH.
+As rotinas foram lidas sem executá-las. A ação 4098 chama a rotina global 280
+(“idle”) e a privada 4118 (“walls changed”). A ação 4105 (“stair portal
+function”) chama as globais 278 e 279, as privadas 4109 e 4110 e a semiglobal
+8197. Os rótulos nos recursos chamam essas rotinas, respectivamente,
+“standard multi-tile entry”, “standard multi-tile exit”, “portal core”,
+“portal wait” e “fail portal call”. A 4109 também chama 4112, 4113 e 4114,
+cujos rótulos descrevem a aproximação e a passagem pela escada. A rotina 8197
+só prepara o retorno falso da chamada. Isso esclarece quem participa da
+passagem, mas ainda não revela qual passo muda a posição do Sim.
+
+Uma diferença importante: o recurso da escada usa um chunk GLOB de ID 1,
+chamado `DoorGlobals`; a porta comum `Doors.iff` usa o chunk GLOB de ID 128
+com o mesmo nome. O Simitone escolhe o primeiro GLOB do recurso. O ODH aceita o
+vínculo quando há um único GLOB e recusa recursos com vários, para não escolher
+no escuro.
+
+O código de referência do Simitone contém uma regra especial para comparar o
+campo `MyObject.Room` com o literal `1024`: ela usa o andar do Sim, o andar da
+escada e o `LevelOffset` da escada para decidir de que lado o Sim está. Essa
+pista combina com a cadeia acima, mas não prova que o ODH já mova alguém entre
+andares. A leitura estática no executável original com Ghidra também não
+revelou um despacho de EP15 ou uma alteração de andar confiavelmente
+identificáveis; não foi feita autoanálise nem execução do executável.
+
+O teste Go Here atual continua recusando destinos em outro andar antes de
+iniciar a caminhada. Ainda não houve subida ou descida de um Sim no ODH. Próximo
+passo: instrumentar a VM do ODH com limites e registrar as mudanças de posição
+causadas pela cadeia EP15, antes de permitir rotas entre andares.
 
 O probe `odh-wall-appearance ... --entry-point-probe` confirma os vínculos
 estáticos e marca `bhav_executed=false`; o dump `odh-bhav` mostra apenas os
-opcodes e operandos das rotinas. Próximo passo: seguir essas chamadas e
-entender como a rotina 4105 muda a posição e o andar antes de adaptar o
-planejador. Não executar as rotinas comerciais só para descobrir sua função.
+opcodes e operandos das rotinas. O vínculo GLOB1 e os rótulos foram conferidos
+nas entradas exatas de Objects.far e Global.far. O próximo passo é observar,
+dentro da VM limitada do ODH, qual mudança de posição a cadeia EP15 realmente
+produz antes de adaptar o planejador.
 
 ## Go Here do cômodo vizinho (2026-10-22)
 
