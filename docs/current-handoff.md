@@ -19,9 +19,14 @@ segundo avatar sintético no patamar de cima: a Main chega à escada, a VM retor
 e o primeiro Sim permanece no patamar baixo, sem trocar de andar. As quatro
 travessias sem bloqueador continuam passando. O teste usa a House03 como base,
 mas os dois Sims e a Main são fixtures sintéticas. Isso verifica a recusa local,
-não define o comportamento correto do jogo original. Próximo: avaliar chegada
-bloqueada por parede ou objeto do lote e investigar a semântica original de
-“Shoo” antes de implementar o empurrão de outro Sim.
+não define o comportamento correto do jogo original. O Simitone TS1 fixado
+mostra que, após uma chegada ocupada, o `Snap` cria `GOTO` (GUID `0x7C4`), agenda
+a interação3 no avatar bloqueador e retorna falso. O BHAV4113 da House03
+continua em PCs23/13 e Snaps sem Shoo nos PCs15/17 após alguns falsos; o teste
+atual para no primeiro pedido e não cobre essa continuação. Próximo: descobrir
+o que esses ramos fazem e conferir os vínculos de GOTO/interaction3 nos dados
+originais, antes de implementar o empurrão. A referência Simitone não prova
+comportamento do executável original.
 
 ## Atualização: subida e descida compostas com o lote (2026-10-22)
 

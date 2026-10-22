@@ -19,6 +19,36 @@ primeiro avatar permanece no andar de origem. O roteiro espera essa resposta e
 continua verificando separadamente as quatro passagens normais. Essa política
 do ODH não é uma conclusão sobre o que deveria ocorrer no jogo original.
 
+### Pista de “Shoo” no Simitone e no BHAV da escada — 2026-10-22
+
+Na revisão Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, submódulo
+FreeSO `f86bbd34b2112296ed786741f640a0535886d180`, o frontend
+`TS1GameScreen.InitializeLot` cria o VM com `VMContext`; esse contexto registra
+`VMSnap` para o opcode46. Portanto, esse código de referência também é usado
+pela tela TS1 daquele fork, não apenas pelo modo TSO.
+
+Em `VMSnap.cs`, quando `SetPosition` falha por colisão com um avatar e a flag
+Shoo está ligada, o handler verifica se já existe a interação3 do objeto GOTO
+(GUID `0x000007C4`). Se não existir, cria esse objeto e põe a interação3 na fila
+do avatar que bloqueou a chegada. Em seguida, o `Snap` retorna falso. O código
+do slot parser também reduz muito a prioridade de uma chegada ocupada por outro
+avatar. Isso explica como o Simitone tenta pedir que o outro Sim saia do
+caminho; não prova que o executável original faça o mesmo.
+
+Na House03, a leitura estática do BHAV4113 mostra dois Snaps com Shoo ligado
+(PC3 e PC10). Se eles retornam falso, o fluxo segue pelo PC23 e pode chegar a
+outros Snaps sem Shoo (PC15 e PC17). Isso indica que o teste atual de dois Sims
+para no primeiro pedido de Shoo e ainda não cobre a continuação que o recurso
+comercial descreve. O que esses ramos fazem depois do primeiro falso, e se o
+Simitone reproduz a intenção do original, permanece sem confirmação.
+
+Fontes consultadas: `refs/upstream/Simitone/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs`;
+`refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/VMContext.cs`;
+`refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/Primitives/VMSnap.cs`;
+`refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/Engine/VMSlotParser.cs`.
+Recurso comercial House03 somente leitura: `Objects.far`, `stair.iff`, BHAV4113,
+lido com `odh-bhav` como estrutura estática.
+
 `odh_snap` implementa um perfil inicial do snap46 Literal para ocupar um
 recipiente. Ele permite avançar o BHAV real da cadeira até a animação44,
 ainda ausente. Não comprova sentar visualmente ou compatibilidade completa.
