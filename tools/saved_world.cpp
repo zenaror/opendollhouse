@@ -1,4 +1,5 @@
 #include "saved_resources.hpp"
+#include "odh/saved_thread_plan.hpp"
 #include "saved_tail_json.hpp"
 #include <iostream>
 
@@ -13,7 +14,7 @@ int main(int argc,char** argv){try{
         else throw odh::FormatError("invalid saved World option");
     }
     if(sources.empty())throw odh::FormatError("explicit definition source required");
-    auto index=saved_definition_index(sources);auto records=saved_world_records(house,*index);
+    auto index=saved_definition_index(sources);odh::Objt object_types;auto records=saved_world_records(house,*index,&object_types);
     std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
     auto loaded=odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr);
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
@@ -43,6 +44,21 @@ int main(int argc,char** argv){try{
         std::cout<<"],\"raw_object_data\":";odh_tools::saved_bank(std::cout,entity->saved_object_banks->object_data);
         std::cout<<",\"raw_extras\":";odh_tools::saved_bank(std::cout,entity->saved_object_banks->extras);
         std::cout<<",\"raw_tail\":";odh_tools::saved_tail(std::cout,raw.tail);
+        std::cout<<",\"simitone_thread_plan\":";
+        if(raw.tail.person){
+            const auto plan=odh::make_simitone_saved_thread_plan(raw,object_types);
+            std::cout<<"{\"profile\":\"pinned_simitone_frame_mapping\",\"executable\":false,\"entity_id\":"<<plan.entity_id
+                <<",\"temp_registers\":";odh_tools::saved_bank(std::cout,plan.temp_registers);
+            std::cout<<",\"frames\":[";
+            for(std::size_t f=0;f<plan.frames.size();++f){if(f)std::cout<<',';const auto& frame=plan.frames[f];
+                std::cout<<"{\"routine_id\":"<<frame.routine_id<<",\"instruction_pointer\":"<<frame.instruction_pointer
+                    <<",\"stack_object\":"<<frame.stack_object<<",\"primitive_state_preserved_but_ignored\":"<<frame.saved_primitive_state
+                    <<",\"code_owner_objt_type\":"<<frame.code_owner_objt_type<<",\"code_owner_guid\":"<<frame.code_owner_guid
+                    <<",\"caller\":"<<frame.caller<<",\"callee\":"<<frame.callee<<",\"arguments\":";
+                odh_tools::saved_bank(std::cout,frame.arguments);std::cout<<",\"locals\":";odh_tools::saved_bank(std::cout,frame.locals);std::cout<<'}';
+            }
+            std::cout<<"]}";
+        }else std::cout<<"null";
         std::cout<<",\"saved_stack_depth\":"<<raw.common.stack.size()<<",\"object_relationships\":[";
         for(std::size_t r=0;r<raw.common.relationships.size();++r){
             if(r)std::cout<<',';

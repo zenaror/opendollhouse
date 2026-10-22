@@ -7,6 +7,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-saved-world` agora inclui um plano somente de leitura para as pilhas
+  salvas dos personagens, seguindo a conversão de frames do Simitone fixado:
+  resolve o dono de cada rotina via OBJT, preserva instrução, argumentos e
+  locais, completa os registradores até 20 e aplica `ObjectUses` aos chamados.
+  O plano não executa as pilhas; o programa continua informando
+  `saved_threads_restored:false`. House07 confirmou planos distintos para Bob
+  (105) e membro47 (137). Veja
+  [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
+
 - O núcleo agora oferece um scheduler limitado para estados de VM por entidade:
   ele compartilha o tick, visita as entidades em ordem crescente de ID e limita
   o trabalho total e por Sim. Se o orçamento não der uma instrução para todos,

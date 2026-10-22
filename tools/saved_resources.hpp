@@ -37,7 +37,8 @@ inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::v
     }
     return std::make_unique<odh::DefinitionIndex>(candidates);
 }
-inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string& path,const odh::DefinitionIndex& index){
+inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string& path,const odh::DefinitionIndex& index,
+    odh::Objt* output_types=nullptr){
     std::optional<odh::Objm> objects;std::optional<odh::Objt> types;
     with_iff_file(path,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
         if(chunk.type=="ObjM"&&chunk.id==1){if(objects)throw odh::FormatError("duplicate ObjM1");objects=odh::read_objm(chunk.payload);}
@@ -58,6 +59,7 @@ inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string&
         tail_available-=tail.decoded_words;strings_available-=tail.string_bytes;
         records.push_back({std::move(prefix),std::move(common),std::move(tail),candidate->definition,type->metadata->objd_type});
     }
+    if(output_types)*output_types=std::move(*types);
     return records;
 }
 inline odh::Nbrs saved_neighbors(const std::string& path){
