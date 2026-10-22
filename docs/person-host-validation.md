@@ -238,10 +238,44 @@ segundo avatar e prova dois recursos sintéticos com os mesmos IDs privados de
 Main/helper/BCON, mas valores e resultados distintos, cada trace atribuído ao
 seu próprio owner; também rejeita tipo, semiglobal ou Main incompatíveis. O
 teste ainda não verifica separadamente a tabela de entry points ou a busca de
-animação do segundo IFF. A opção só vale junto de `--headless-second-main` e
-continua proibida em `--saved-world-main`. É uma bancada sintética: não carrega
+animação do segundo IFF. Com `--headless-second-main`, é uma bancada sintética: não carrega
 dois personagens de um save, não executa Init completo para eles nem prova que
 os serviços bloqueados de Route45/Snap funcionem para a segunda VM.
+
+`--headless-second-saved-main OBJECT_ID ROUTINE`, junto de
+`--headless-second-avatar-file IFF OBJD` e `--headless-main`, inicia uma segunda
+Main no mesmo World já restaurado e no mesmo relógio. Exige um avatar salvo
+distinto do primeiro, com GUID correspondente ao IFF, posição presente e,
+quando uma família está ativa, pertencente àquela família. Reutiliza a entidade
+salva; não chama o construtor sintético nem reposiciona os moradores. Os
+controladores de fila, Sleep e animação são separados; sons privados também
+são procurados no recurso de cada dono. Route45/Snap do segundo morador
+continuam retornando erro explícito por falta de controlador próprio.
+
+Os dois Main reiniciados começam com StackObject vazio (ID0), como na referência
+Simitone/FreeSO quando `MainStackOBJ` não foi definido. Isso reproduz somente
+essa regra de início: não restaura o StackObject, as pilhas ou as filas antigas
+que estavam salvas para cada morador.
+
+`tests/house07_paired_main_smoke.py` é uma prova real limitada a 32 passos do
+relógio: House07, moradores 105/137, User00000/01, LotZoning e recursos de cada
+instalação. Exige trace de ambos, GUIDs exatos, estados waiting/yielded, nenhum
+erro do host, quantidade de entidades e posições preservadas. Também verifica
+a rejeição de um IFF que corresponde ao morador errado. O processo retorna 3
+quando alcança o limite de tempo; o runner aceita esse resultado apenas junto
+das condições anteriores. Reinicia Main sobre os bancos salvos; não retoma
+pilhas/filas antigas, não valida autonomia ou interação simultânea, aparência
+completa do segundo morador, viagem, salvamento ou jogabilidade plena.
+
+Matriz executada neste checkpoint após alinhar esse início à referência:
+instalação original e Legacy Collection, com 105 como principal e novamente
+com `--reverse` (137 como principal).
+As quatro combinações terminam waiting após 32 ticks: 235 instruções para 105
+e 232 para 137, com 182 entidades antes/depois e posições originais preservadas
+em ambos os moradores. O recurso trocado é rejeitado em cada combinação.
+Build Debug e CTest focado (`person_cli`, `session_entry_resolution`,
+`session_entry_cli`) passam, 3/3. Essa é evidência de partida conjunta limitada,
+não de continuidade de uma sessão salva completa.
 
 CTest Debug e ASan/UBSan:41 testes passam, um X11 é skipped neste sandbox. LSan
 desligado (`detect_leaks=0`), sem prova de ausência de vazamentos. O preview,

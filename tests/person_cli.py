@@ -102,6 +102,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==2 and not r.stdout and '--headless-second-main' in r.stderr,(r.returncode,r.stdout,r.stderr)
  setup();r=run(['--headless-second-main-arg0','2'])
  assert r.returncode==2 and not r.stdout and 'headless-second-main-arg0' in r.stderr
+ for options in [['--headless-second-saved-main','137','4096'],
+                 ['--headless-second-saved-main','0','4096'],
+                 ['--headless-second-saved-main','137','0'],
+                 ['--headless-second-main','3','30','40','1','0','4096',
+                  '--headless-second-saved-main','137','4096']]:
+  setup();r=run(options)
+  assert r.returncode==2 and not r.stdout,(options,r.returncode,r.stdout,r.stderr)
  setup(main=[call(45,254,255,bytes([1,0,2,0,0,0,0,0]))]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['status']=='fault' and 'routing runtime unavailable' in d['diagnostic']
  setup(main=[call(27,254,255,bytes([0,0,254,0,0,0,2,0]))]);r=run();d=json.loads(r.stdout)

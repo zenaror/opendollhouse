@@ -233,6 +233,7 @@ int main(int argc,char** argv) {
     std::optional<HeadlessFixtureAvatar> headless_fixture_occupant_avatar;
     struct HeadlessSecondMain {HeadlessFixtureAvatar avatar;std::uint16_t routine;};
     std::optional<HeadlessSecondMain> headless_second_main;
+    bool second_saved_main=false;
     std::optional<std::uint16_t> headless_second_main_arg0;
     std::optional<std::uint16_t> headless_fixture_main_arg0;
     std::optional<std::int16_t> headless_stack_object;
@@ -340,6 +341,11 @@ int main(int argc,char** argv) {
                 throw odh::FormatError("headless second avatar Main is outside the supported World profile");
             headless_second_main=HeadlessSecondMain{{static_cast<std::uint16_t>(id),
                 {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}},main_routine};
+        }
+        else if(option=="--headless-second-saved-main"&&!headless_second_main&&n+2<argc){
+            const auto id=selector(argv[++n]),main=selector(argv[++n]);
+            if(id==0||id>32767||main==0)throw odh::FormatError("second saved Main ID or routine invalid");
+            headless_second_main=HeadlessSecondMain{{id,{}},main};second_saved_main=true;
         }
         else if(option=="--headless-second-avatar-file"&&!second_avatar&&n+2<argc){
             second_avatar=Resource{argv[++n],{},true};second_avatar_def=selector(argv[++n]);
@@ -474,9 +480,11 @@ int main(int argc,char** argv) {
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||(!headless_portal&&!headless_go_here)||render_saved_id))||
        (headless_fixture_occupant_avatar&&(!headless_fixture_avatar||!saved_world_main||!headless_main||
         !headless_portal||render_saved_id||headless_fixture_occupant_avatar->id==headless_fixture_avatar->id))||
-       (headless_second_main&&(initialize||saved_world_main||headless_main||action||render_saved_id||
-        headless_second_main->avatar.id==1||
+       (headless_second_main&&(initialize||action||
+        (!second_saved_main&&(saved_world_main||headless_main||render_saved_id||headless_second_main->avatar.id==1))||
         odh::routine_key(headless_second_main->routine).scope!=odh::RoutineScope::private_object))||
+       (second_saved_main&&(!saved_world_main||!headless_main||!render_saved_id||!second_avatar||
+        headless_second_main->avatar.id==*render_saved_id||headless_second_main_arg0))||
        (headless_second_main_arg0&&!headless_second_main)||
        (second_avatar&&!headless_second_main)||
        (headless_fixture_main_arg0&&!headless_fixture_avatar)||
@@ -486,7 +494,7 @@ int main(int argc,char** argv) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID] | --render-window --render-saved-avatar OBJECT_ID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
 #endif
@@ -687,6 +695,7 @@ int main(int argc,char** argv) {
     }
     auto shared=load(*globals,odh::RoutineScope::global);
     const auto person_sounds=load_sounds(*avatar);
+    const auto second_person_sounds=second_avatar?load_sounds(*second_avatar):person_sounds;
     const auto semiglobal_sounds=load_sounds(*semi);
     const auto global_sounds=load_sounds(*globals);
     profile_mark("person-and-global-resources");
@@ -781,6 +790,24 @@ int main(int argc,char** argv) {
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
+    std::optional<odh::EntityPosition> paired_primary_start;
+    const auto entity_count=[&]{std::size_t count=0;std::int16_t cursor=0;
+        while(const auto next=world.next_entity(cursor)){++count;cursor=*next;}return count;};
+    const auto paired_entity_count=second_saved_main?entity_count():0;
+    if(second_saved_main){
+        const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
+        const auto* resident=world.find(id);
+        const auto record=std::find_if(restored_world->records.begin(),restored_world->records.end(),
+            [&](const auto& item){return item.saved.object_id==headless_second_main->avatar.id;});
+        if(record==restored_world->records.end()||!record->tail.person||record->serialized_object_type!=2||
+           record->saved.guid!=second_data.binding->guid||!resident||resident->kind!=odh::EntityKind::avatar||
+           !resident->definition||resident->definition->guid!=second_data.binding->guid||!resident->position)
+            throw odh::FormatError("second saved World avatar does not match exact positioned person resource");
+        if(active_family&&!odh::FamilyContext::contains(*active_family,second_data.binding->guid))
+            throw odh::FormatError("second saved avatar is not a member of selected FAMI");
+        headless_second_main->avatar.position=*resident->position;
+        paired_primary_start=world.find(runtime_avatar_id)->position;
+    }
     std::optional<std::vector<odh::ReconciledHouseholdMember>> family_world_reconciliation;
     if(saved_world_main&&active_family){
         family_world_reconciliation=odh::reconcile_session_household(active_family->family.member_guids,world);
@@ -818,7 +845,7 @@ int main(int argc,char** argv) {
         if(person.entry_points&&!world.define_entry_points(id,person.entry_points->entries))
             throw odh::FormatError("headless occupant avatar EntryPoint binding failed");
     }
-    if(headless_second_main){
+    if(headless_second_main&&!second_saved_main){
         const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
         if(!world.create(id,odh::EntityKind::avatar,{0,101,3,16})||
            !world.define_type(id,second_data.binding->guid)||!world.set_position(id,headless_second_main->avatar.position))
@@ -1073,10 +1100,11 @@ int main(int argc,char** argv) {
     std::vector<SoundRecord> sound_records;
     const auto sound_handler=odh::sound_primitive(world,[&](const odh::VmFrame& frame,std::uint16_t id)
         ->std::optional<odh::SoundEvent>{
-        const auto private_sound=person_sounds.find(id);
-        if((frame.context.code_owner==runtime_avatar_id||
-            (headless_second_main&&frame.context.code_owner==headless_second_main->avatar.id))&&
-           private_sound!=person_sounds.end())return private_sound->second;
+        const bool second_owner=headless_second_main&&frame.context.code_owner==headless_second_main->avatar.id;
+        const auto& private_sounds=second_owner?second_person_sounds:person_sounds;
+        const auto private_sound=private_sounds.find(id);
+        if((frame.context.code_owner==runtime_avatar_id||second_owner)&&
+           private_sound!=private_sounds.end())return private_sound->second;
         const auto semi_sound=semiglobal_sounds.find(id);
         if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
         const auto global_sound=global_sounds.find(id);
@@ -1351,14 +1379,14 @@ int main(int argc,char** argv) {
         std::vector<std::int16_t> root_arguments(4);
         if(headless_fixture_main_arg0)root_arguments[0]=static_cast<std::int16_t>(*headless_fixture_main_arg0);
         vm.start(odh::routine_key(root),{runtime_avatar_id,runtime_avatar_id,
-            headless_stack_object.value_or(static_cast<std::int16_t>(initialize?0:1)),
+            headless_stack_object.value_or(static_cast<std::int16_t>(initialize||saved_world_main?0:1)),
             static_cast<odh::CodeOwner>(runtime_avatar_id)},root_arguments);
         if(second_main_vm){
             std::vector<std::int16_t> arguments(4);
             if(headless_second_main_arg0)arguments[0]=static_cast<std::int16_t>(*headless_second_main_arg0);
             const auto id=static_cast<std::int16_t>(headless_second_main->avatar.id);
             second_main_vm->start(odh::routine_key(headless_second_main->routine),
-                {id,id,id,static_cast<odh::CodeOwner>(id)},arguments);
+                {id,id,0,static_cast<odh::CodeOwner>(id)},arguments);
         }
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
@@ -3000,6 +3028,21 @@ struct PlacementCandidateProbe {
         <<",\"stack_depth\":"<<second_main_vm->stack().size()<<'}';
     }
     else std::cout<<"null";
+    if(second_saved_main){
+        const auto position_json=[&](const std::optional<odh::EntityPosition>& p){
+            if(p)std::cout<<'['<<p->x<<','<<p->y<<','<<p->level<<','<<unsigned(p->direction)<<']';
+            else std::cout<<"null";
+        };
+        const auto current_position=[&](std::int16_t id)->std::optional<odh::EntityPosition>{
+            const auto* entity=world.find(id);return entity?entity->position:std::nullopt;};
+        std::cout<<",\"paired_saved_main\":{\"second_file\":"<<json_bytes(second_avatar->archive)
+            <<",\"entities_before\":"<<paired_entity_count<<",\"entities_after\":"<<entity_count()
+            <<",\"primary_start_position\":";position_json(paired_primary_start);
+        std::cout<<",\"primary_position\":";position_json(current_position(runtime_avatar_id));
+        std::cout<<",\"second_start_position\":";position_json(headless_second_main->avatar.position);
+        std::cout<<",\"second_position\":";position_json(current_position(static_cast<std::int16_t>(headless_second_main->avatar.id)));
+        std::cout<<'}';
+    }
     std::cout<<",\"tick_budget_exhausted\":"<<(tick_exhausted?"true":"false")
         <<",\"instruction_budget_exhausted\":"<<(instruction_exhausted?"true":"false")<<",\"stack_depth\":"<<vm.stack().size()<<",\"rng_cycle_requests\":"<<rng_requests
         <<",\"rng_backend\":\"FreeSO xorshift64star reference profile\",\"rng_seed_initial\":"<<seed.value_or(1)<<",\"rng_seed_final\":"<<random.seed()
