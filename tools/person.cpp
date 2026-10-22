@@ -210,6 +210,7 @@ int main(int argc,char** argv) {
     std::optional<odh::RectRoutePoint> attempt_walk_destination;
     struct HeadlessFixtureAvatar {std::uint16_t id;odh::EntityPosition position;};
     std::optional<HeadlessFixtureAvatar> headless_fixture_avatar;
+    std::optional<HeadlessFixtureAvatar> headless_fixture_occupant_avatar;
     std::optional<std::uint16_t> headless_fixture_main_arg0;
     std::optional<std::int16_t> headless_stack_object;
     struct HeadlessEntityMove {std::int16_t id;odh::EntityPosition position;std::uint64_t tick;};
@@ -293,6 +294,15 @@ int main(int argc,char** argv) {
             if(id==0||id>32767||x<0||x>32767||y<0||y>32767||level<1||level>2||direction>7)
                 throw odh::FormatError("headless fixture avatar is outside the supported World profile");
             headless_fixture_avatar=HeadlessFixtureAvatar{static_cast<std::uint16_t>(id),
+                {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}};
+        }
+        else if(option=="--headless-fixture-occupant-avatar"&&!headless_fixture_occupant_avatar&&n+5<argc){
+            const auto id=selector(argv[++n]);
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),direction=selector(argv[++n]);
+            if(id==0||id>32767||x<0||x>32767||y<0||y>32767||level<1||level>2||direction>7)
+                throw odh::FormatError("headless occupant avatar is outside the supported World profile");
+            headless_fixture_occupant_avatar=HeadlessFixtureAvatar{static_cast<std::uint16_t>(id),
                 {x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)}};
         }
         else if(option=="--headless-fixture-main-arg0"&&!headless_fixture_main_arg0&&n+1<argc){
@@ -419,6 +429,8 @@ int main(int argc,char** argv) {
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
+       (headless_fixture_occupant_avatar&&(!headless_fixture_avatar||!saved_world_main||!headless_main||
+        !headless_portal||render_saved_id||headless_fixture_occupant_avatar->id==headless_fixture_avatar->id))||
        (headless_fixture_main_arg0&&!headless_fixture_avatar)||
        (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
        (headless_main&&(!render_floors||(render_requested&&(!render_output||render_window))))||
@@ -701,6 +713,13 @@ int main(int argc,char** argv) {
         }
         if(!world.declare_object_word(runtime_avatar_id,8,256)||!world.set_position(runtime_avatar_id,headless_fixture_avatar->position))
             throw odh::FormatError("fixture avatar initialization failed");
+    }
+    if(headless_fixture_occupant_avatar){
+        const auto id=static_cast<std::int16_t>(headless_fixture_occupant_avatar->id);
+        if(!world.create(id,odh::EntityKind::avatar,{0,101,3,16})||
+           !world.define_type(id,person.binding->guid)||!world.declare_object_word(id,8,256)||
+           !world.set_position(id,headless_fixture_occupant_avatar->position))
+            throw odh::FormatError("headless occupant avatar initialization failed");
     }
     if(age&&(!saved_world_main||headless_fixture_avatar)&&
        !world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))

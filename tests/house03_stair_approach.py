@@ -51,7 +51,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
               portal_id: int, start: tuple[int, int, int], expected: tuple[int, int, int],
               age: int, render_tick: int | None = None,
               render_output: pathlib.Path | None = None,
-              render_level: int | None = None):
+              render_level: int | None = None,
+              occupant_avatar: tuple[int, int, int, int, int] | None = None):
     global_far = game / "GameData/Global/Global.far"
     animation_far = game / "GameData/Animation/Animation.far"
     expansion_far = game / "ExpansionShared/ExpansionShared.far"
@@ -69,6 +70,9 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         "--headless-fixture-main-arg0", "64", "--headless-portal", str(portal_id), "1",
         "--age", str(age), "--animation-source", str(animation_far),
         "--animation-source", str(expansion_far), "--ticks", "300"]
+    if occupant_avatar is not None:
+        command += ["--headless-fixture-occupant-avatar",
+            *(str(value) for value in occupant_avatar)]
     if (render_tick is None) != (render_output is None):
         raise ValueError("render tick and output path must be provided together")
     if render_tick is not None:
@@ -93,6 +97,16 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
                  if entry["opcode"] == 46), None)
     if route["movement_callbacks"] <= 0:
         raise AssertionError(f"portal {portal_id} did not walk: {portal}; route={route}")
+    if occupant_avatar is not None:
+        expected_reason = "stairs destination room has another avatar; Shoo is not implemented"
+        if (portal["status"] != "vm_fault" or expected_reason not in portal["diagnostic"] or
+                portal["actor_level_changed"] or end[:3] != portal["portal_position"][:3]):
+            raise AssertionError(f"second avatar at stair arrival did not stop safely: {portal}")
+        return {"portal_id": portal_id, "age": age,
+            "occupant_avatar": occupant_avatar, "start": portal["actor_start_position"],
+            "end": end, "movement_callbacks": route["movement_callbacks"],
+            "portal_status": portal["status"], "diagnostic": portal["diagnostic"],
+            "level_changed": portal["actor_level_changed"]}
     if end[:3] != list(expected):
         raise AssertionError(f"portal {portal_id} ended at {end}, expected stair landing {expected}")
     if not portal["actor_level_changed"]:
@@ -190,6 +204,10 @@ def main():
                 (34, (320, 424, 1), (312, 344, 2)),
                 (38, (320, 344, 2), (312, 424, 1)))
         ]
+        occupant_case = run_probe(args.binary.resolve(), game, avatar, 34,
+            (320, 424, 1), (312, 344, 2), 21,
+            occupant_avatar=(30001, 312, 344, 2, 0))
+        results.append(occupant_case)
         captures = []
         for index, tick in enumerate(args.capture_tick or []):
             if len(args.capture_tick) == 1:
@@ -211,7 +229,7 @@ def main():
                 raise AssertionError(f"distinct stair frames produced identical images: {captures}")
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": results,
-        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures compose the live stair pose with saved lot floors, walls, and objects, without claiming equivalence to the original game"}, indent=2))
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; an additional synthetic-avatar case stops at Snap with Shoo explicitly unsupported; optional captures compose the live stair pose with saved lot floors, walls, and objects, without claiming equivalence to the original game"}, indent=2))
 
 
 if __name__ == "__main__":

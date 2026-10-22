@@ -13,10 +13,15 @@ fixture 0/21). `cmake --build /tmp/odh-stair-build -j2` terminou e 160 testes
 do CTest passaram; `linux_window_backend` foi pulado por não haver display.
 
 O teste confirma a regra local para um móvel; ainda falta uma prova integrada
-com móvel salvo no cômodo de chegada. Outro avatar continua levando resultado
-`unsupported`, pois a ação “Shoo” não foi implementada. Próximo: testar essa
-recusa com dois avatares sintéticos e avaliar chegada bloqueada por parede ou
-objeto do lote, sem generalizar o Snap antes disso.
+com móvel salvo no cômodo de chegada. O roteiro House03 agora também põe um
+segundo avatar sintético no patamar de cima: a Main chega à escada, a VM retorna
+`vm_fault` com o diagnóstico explícito de que “Shoo” ainda não foi implementado,
+e o primeiro Sim permanece no patamar baixo, sem trocar de andar. As quatro
+travessias sem bloqueador continuam passando. O teste usa a House03 como base,
+mas os dois Sims e a Main são fixtures sintéticas. Isso verifica a recusa local,
+não define o comportamento correto do jogo original. Próximo: avaliar chegada
+bloqueada por parede ou objeto do lote e investigar a semântica original de
+“Shoo” antes de implementar o empurrão de outro Sim.
 
 ## Atualização: subida e descida compostas com o lote (2026-10-22)
 

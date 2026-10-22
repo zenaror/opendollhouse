@@ -12,8 +12,12 @@ piso. CTest: `snap_arrival_blockers` passou.
 É uma fixture sintética que testa a ligação entre os componentes locais; ainda
 não injeta um móvel real salvo na House03. Não afirma como o executável original
 trata esse caso. O teste de integração da House03 segue validando os dois
-sentidos sem bloqueadores. Para outro avatar no cômodo, o comportamento host
-atual é `unsupported`: “Shoo” ainda não está implementado.
+sentidos sem bloqueadores. O mesmo roteiro agora cria um segundo avatar
+sintético no patamar de destino. A Main chega ao patamar baixo e o Snap
+interrompe a VM com `unsupported` (“Shoo” ainda não está implementado); o
+primeiro avatar permanece no andar de origem. O roteiro espera essa resposta e
+continua verificando separadamente as quatro passagens normais. Essa política
+do ODH não é uma conclusão sobre o que deveria ocorrer no jogo original.
 
 `odh_snap` implementa um perfil inicial do snap46 Literal para ocupar um
 recipiente. Ele permite avançar o BHAV real da cadeira até a animação44,
