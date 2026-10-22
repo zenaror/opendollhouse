@@ -153,8 +153,10 @@ imutável, mas recebe cópia explícita das rotinas privadas/semi e do tuning do
 avatar selecionado, mais fila e Sleep próprios; se a fonte de animação estiver
 carregada, também recebe seu próprio Playback. O RNG permanece um fluxo global
 compartilhado. O `person_cli` prova dois owners em execução e a ordem crescente
-de ID no despacho inicial; também confirma que Notify antes do Sleep da segunda
-VM não a acorda retroativamente. É uma bancada sintética com um único recurso de avatar;
+de ID no despacho inicial. Notify guarda o sinal para o próximo Sleep ou
+IdleForInput, conforme o perfil Simitone fixado (`VMNotifyOutOfIdle.cs:10–14`,
+`VMSleep.cs:14–20`, `VMIdleForInput.cs:30–33`). É uma bancada sintética com um
+único recurso de avatar;
 não carrega dois personagens de um save nem prova que os serviços bloqueados
 de Route45/Snap funcionem para a segunda VM.
 

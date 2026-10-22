@@ -12,7 +12,10 @@ class EntityThreadControllers {
 public:
     EntityThreadControllers(World& world,std::int16_t actor,
                             std::function<void()> rng_cycle={})
-        :sleep_(world,std::move(rng_cycle)),interactions_(world,actor) {}
+        :sleep_(world,std::move(rng_cycle)),interactions_(world,actor) {
+        sleep_.set_thread_interrupt_source([this]{return consume_thread_interrupt();});
+        interactions_.set_thread_interrupt_source([this]{return consume_thread_interrupt();});
+    }
     EntityThreadControllers(const EntityThreadControllers&)=delete;
     EntityThreadControllers& operator=(const EntityThreadControllers&)=delete;
     EntityThreadControllers(EntityThreadControllers&&)=delete;
@@ -25,13 +28,23 @@ public:
         return interactions_.tick(tick)&&sleep_.tick(tick);
     }
     bool observe() {return interactions_.observe();}
-    bool notify() {return sleep_.active()?sleep_.notify():interactions_.notify();}
+    bool notify() {
+        thread_interrupt_=true;
+        if(sleep_.active())return sleep_.notify();
+        if(interactions_.waiting())return interactions_.notify();
+        return true;
+    }
     Sleep& sleep() {return sleep_;}
     InteractionQueue& interactions() {return interactions_;}
+    bool thread_interrupted() const {return thread_interrupt_;}
 
 private:
+    bool consume_thread_interrupt() {
+        const bool value=thread_interrupt_;thread_interrupt_=false;return value;
+    }
     Sleep sleep_;
     InteractionQueue interactions_;
+    bool thread_interrupt_=false;
 };
 
 } // namespace odh

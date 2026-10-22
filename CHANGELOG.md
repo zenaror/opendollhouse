@@ -26,10 +26,10 @@ validação indicados por versão.
   pode executar no mesmo tick uma thread posterior que acordou, se restar
   orçamento; uma thread cuja vez passou espera o próximo tick. Testes sintéticos
   cobrem Sleep e IdleForInput, nas duas ordens de ID. O modo de duas VMs usa
-  ordem crescente de ID já no primeiro despacho; um teste confirma que um
-  Notify antes de o segundo Sim começar Sleep não o acorda retroativamente.
-  Esses testes usam BHAVs sintéticas e não confirmam Notify de um bloqueador
-  comercial.
+  ordem crescente de ID já no primeiro despacho. Notify antes de Sleep guarda
+  o sinal de interrupção para o próximo Sleep/IdleForInput, como no perfil
+  Simitone consultado. Esses testes usam BHAVs sintéticas e não confirmam
+  Notify de um bloqueador comercial.
 
 - A projeção isométrica agora tem a operação inversa `unproject_tile`: dado
   um pixel e o nível do piso escolhido pelo host, calcula a posição contínua

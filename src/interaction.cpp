@@ -80,7 +80,8 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
             return unsupported("IdleForInput notification failed");
         idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
     }
-    if(interrupted_ || remaining<0) {
+    const bool thread_interrupted=thread_interrupt_&&thread_interrupt_();
+    if(interrupted_||thread_interrupted||remaining<0) {
         interrupted_=false;idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
     }
     const auto delay=allow==1?1:static_cast<std::uint64_t>(remaining)+1;
@@ -135,7 +136,10 @@ bool InteractionQueue::notify() {
        vm_->pending()->ticket!=wait_->ticket)return false;
     Guard guard(executing_);
     const auto ticket=wait_->ticket;
-    interrupted_=true;
+    // EntityThreadControllers owns the shared SimAntics Thread.Interrupt bit
+    // when this controller is bound through that host. Standalone tests retain
+    // the local equivalent.
+    if(!thread_interrupt_)interrupted_=true;
     if(!vm_->retry_pending(ticket)) {
         interrupted_=false;diagnostic_="idle notification could not resume its pending ticket";return false;
     }

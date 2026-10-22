@@ -13,6 +13,7 @@ public:
     InteractionQueue(World& world,std::int16_t actor,std::size_t capacity=32)
         :world_(world),actor_id_(actor),capacity_(capacity) {}
     bool bind(Vm&);
+    void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
     bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={});
     VmPrimitive primitive();
     bool observe(); // Validates identities and removes completion in the same host tick.
@@ -21,6 +22,7 @@ public:
     bool notify(); // Resume this entity's waiting IdleForInput instruction immediately.
     std::size_t size() const {return queue_.size();} // Includes active front.
     bool active() const {return active_.has_value();}
+    bool waiting() const {return wait_.has_value();}
     const std::optional<InteractionCompletion>& completion() const {return completion_;}
     const std::string& diagnostic() const {return diagnostic_;}
 private:
@@ -30,6 +32,7 @@ private:
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool validate();
     World& world_;std::int16_t actor_id_;std::size_t capacity_;
+    std::function<bool()> thread_interrupt_;
     Vm* vm_=nullptr;std::uint64_t actor_generation_=0,run_generation_=0,sequence_=0;
     std::uint64_t clock_=0,idle_start_=0;std::optional<std::uint64_t> last_tick_,resume_tick_;
     std::deque<Action> queue_;std::optional<Active> active_;std::optional<Wait> wait_;

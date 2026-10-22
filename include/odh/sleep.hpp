@@ -17,6 +17,7 @@ public:
     Sleep& operator=(Sleep&&)=delete;
     bool bind(Vm&);
     VmPrimitive primitive();
+    void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
     bool tick(std::uint64_t);
     bool interrupt();
     // Release an active wait for normal, budgeted VM dispatch after Notify.
@@ -33,6 +34,7 @@ private:
     void random_cycle();
     World& world_;
     std::function<void()> rng_cycle_;
+    std::function<bool()> thread_interrupt_;
     Vm* vm_=nullptr;
     std::optional<Actor> actor_;
     std::optional<Job> job_;

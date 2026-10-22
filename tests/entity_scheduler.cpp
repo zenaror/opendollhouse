@@ -182,6 +182,62 @@ int main() {
                     target.status()!=odh::VmStatus::waiting,
                     "Notify releases a later-ID IdleForInput wait in the same tick");
         }
+        {
+            odh::World notify_world;
+            require(notify_world.create(1,odh::EntityKind::avatar)&&
+                    notify_world.create(2,odh::EntityKind::object)&&
+                    notify_world.create(3,odh::EntityKind::avatar)&&
+                    notify_world.declare_object_word(3,8,0),
+                    "queued-idle Notify fixture creates the actor and target");
+            const odh::Instruction queued_idle{17,1,255,{0,0,0,0,0,0,0,0}};
+            const odh::Instruction sleep_next{0,2,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({queued_idle,sleep_next,set(0,7)})}});
+            odh::EntityThreadControllers target_thread(notify_world,3);
+            odh::Vm target(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                [&](const auto& frame,const auto& instruction,const auto& trace,const auto& dispatch) {
+                    if(instruction.opcode==17)return target_thread.interaction_primitive()(frame,instruction,trace,dispatch);
+                    if(instruction.opcode==0)return target_thread.sleep_primitive()(frame,instruction,trace,dispatch);
+                    return odh::PrimitiveOutcome{};
+                },{{2,{{key(4097),routine({set(0,4)})}}}});
+            require(target_thread.bind(target),"queued-idle target binds its shared thread interrupt");
+            target.start(key(4096),{3,3,3,0},{10});
+            require(target_thread.interactions().enqueue(key(4097),{3,2,2,2}),
+                    "queued-idle actor gets pending work before it starts");
+            require(target_thread.notify()&&target_thread.thread_interrupted(),
+                    "Notify before the first wait records one thread-level interrupt");
+            require(target.run(8)==odh::VmStatus::returned_true&&target.steps()==3&&
+                    !target_thread.thread_interrupted(),
+                    "queued IdleForInput leaves the signal for the following Sleep to consume");
+        }
+        {
+            odh::World notify_world;
+            require(notify_world.create(1,odh::EntityKind::avatar)&&
+                    notify_world.create(3,odh::EntityKind::avatar),
+                    "repeated-notify fixture creates two actors");
+            const odh::Instruction notify_twice{49,254,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({notify_twice,notify_twice})},
+                {key(4097),routine({sleep_instruction,sleep_instruction,set(0,7)})}});
+            odh::EntityThreadControllers target_thread(notify_world,1);
+            odh::EntityVmScheduler notify_scheduler(2);
+            const auto notify=odh::notify_idle_primitive(notify_world,
+                [&](std::int16_t id){return notify_scheduler.interrupt(id);});
+            odh::Vm target(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                           target_thread.sleep_primitive());
+            odh::Vm sender(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},notify);
+            require(target_thread.bind(target),"repeated-notify target binds controllers");
+            target.start(key(4097),{1,1,1,0},{10});
+            sender.start(key(4096),{3,3,1,0},{0,0,0,0});
+            require(target.run(1)==odh::VmStatus::waiting&&
+                    notify_scheduler.add(1,target,[&](auto tick){return target_thread.advance(tick);},{},
+                        [&]{return target_thread.notify();})&&notify_scheduler.add(3,sender),
+                    "repeated-notify target waits before sender joins scheduler");
+            require(notify_scheduler.tick(1,8,4)&&notify_scheduler.tick(2,8,4)&&
+                    target.steps()==3&&target.status()==odh::VmStatus::waiting&&
+                    !target_thread.thread_interrupted(),
+                    "two Notify calls coalesce to one Sleep wake; the next Sleep still waits");
+        }
 
         odh::World fairness_world;
         auto fairness_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{{key(4096),routine({set(2,99),set(2,100)})}});

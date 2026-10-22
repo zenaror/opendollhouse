@@ -56,7 +56,9 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
         return unsupported("Sleep signed argument index outside frame");
     const auto remaining=decrement(frame.arguments[static_cast<std::size_t>(index)],1);
     const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
-    if(!interrupted_ && remaining>=0 && static_cast<std::uint64_t>(remaining)+1>max_clock-clock_)
+    const bool thread_interrupted=thread_interrupt_&&thread_interrupt_();
+    if(!interrupted_&&!thread_interrupted&&remaining>=0&&
+       static_cast<std::uint64_t>(remaining)+1>max_clock-clock_)
         return unsupported("Sleep deadline exceeds bounded uint32 scheduler clock");
     actor_=Actor{entity->id,entity->generation,vm_->run_generation()};
     diagnostic_.clear();
@@ -64,7 +66,7 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
         notify_resume_=false;
         return {PrimitiveDisposition::goto_true,{},output};
     }
-    if(interrupted_) {
+    if(interrupted_||thread_interrupted) {
         interrupted_=false;return {PrimitiveDisposition::goto_true,{},output};
     }
     if(remaining<0) {

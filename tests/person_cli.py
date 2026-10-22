@@ -77,8 +77,13 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  setup(main=[call(49)],private_extra=[('BHAV',4097,routine([call(0,1,255,bytes([0,0,0,0,0,0,0,0])),expr(0,17)]))])
  r=run(['--headless-second-main','3','30','40','1','0','4097','--headless-second-main-arg0','5',
         '--headless-stack-object','3','--ticks','1']);d=json.loads(r.stdout)
- assert r.returncode==3 and d['status']=='returned_true' and d['second_main']['status']=='waiting'
- assert d['second_main']['steps']==1 and d['ticks']==1 and {row['owner'] for row in d['trace']}=={1,3}
+ assert r.returncode==0 and d['status']=='returned_true' and d['second_main']['status']=='returned_true'
+ assert d['second_main']['steps']==2 and d['ticks']==0 and {row['owner'] for row in d['trace']}=={1,3}
+ setup(main=[call(49)],private_extra=[('BHAV',4097,routine([call(17,1,255,bytes([0,0,0,0,0,0,0,0])),expr(0,17)]))])
+ r=run(['--headless-second-main','3','30','40','1','0','4097','--headless-second-main-arg0','5',
+        '--headless-stack-object','3','--ticks','1']);d=json.loads(r.stdout)
+ assert r.returncode==0 and d['second_main']['status']=='returned_true' and d['second_main']['steps']==2
+ assert d['ticks']==0 and {row['owner'] for row in d['trace']}=={1,3}
  setup();r=run(['--headless-second-main','1','30','40','1','0','4096'])
  assert r.returncode==2 and not r.stdout and '--headless-second-main' in r.stderr,(r.returncode,r.stdout,r.stderr)
  setup();r=run(['--headless-second-main-arg0','2'])
