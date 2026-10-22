@@ -17,6 +17,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-neighborhood` lista/seleciona lotes via LotLocations STR#, FAMI e caminhos
+  HouseNN, com coordenadas e IDs de família distintos. Parser CSV limitado e
+  testes sintéticos; modo 6 explicitamente unsupported. Resolve casa → família
+  → lote somente em leitura, sem abrir runtime nem desenhar overworld. Veja
+  [`neighborhood-catalog-validation.md`](docs/neighborhood-catalog-validation.md).
+
 - A janela `odh-person --render-window` pode avançar além de 4.096 ticks e
   10.000 instruções acumuladas, com orçamento renovado por entidade/tick.
   `--ticks` explícito e probes sem janela conservam seus limites. Diagnósticos
