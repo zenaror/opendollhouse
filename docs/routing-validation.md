@@ -382,9 +382,11 @@ ao executável original.
 O opcode11 agora implementa o perfil observado em `Doors.iff:4114`: saída
 Temp0, destino Caller default, Caller e StackObject posicionados no mesmo nível
 e operandos restantes zerados. A distância é `floor(sqrt(dx²+dy²)/16)` sobre
-coordenadas em 1/16 de tile. Outros operandos, posições ausentes e níveis
-diferentes falham fechados. O serviço está ligado ao probe BHAV e ao runtime
-`odh-person`; quatro testes cobrem distância, truncamento, nível e formato.
+coordenadas em 1/16 de tile. Outros operandos e posições ausentes falham
+fechados; níveis diferentes continuam recusados para as portas. A chamada
+exata do Go Here salvo agora usa o custo vertical do perfil TS1 do Simitone.
+O serviço está ligado ao probe BHAV e ao runtime `odh-person`; oito testes
+cobrem distância, truncamento, nível e formato.
 
 Route45 agora reconhece scope 0 StackVariable: lê o índice de SLOT a partir do
 argumento BHAV selecionado pelo campo Data e obtém a tabela pelo StackObject,
@@ -407,3 +409,17 @@ Portal15, gameplay jogável ou equivalência ao executável original. Verificaç
 passou nesta sessão. Nenhum dado comercial foi alterado. Os caminhos TS1 do
 Simitone fixado `4906db3156616bfaffc10ce0963cf08062975fef` orientam a malha, sem
 provar equivalência ao original.
+
+### Go Here entre andares — House03 — 2026-10-22
+
+O perfil exato do Go Here salvo pode atravessar níveis diferentes quando o
+inventário encontra os dois patamares válidos de uma escada do grupo House03.
+Esse caminho chama a passagem salva, espera seu retorno, atualiza a sala e
+retoma a rota para o destino. A travessia e a continuação foram confirmadas por
+`tests/house03_cross_floor_go_here.py`: o avatar sintético saiu de
+`[320,424,1]`, andou no piso 1, usou uma Portal15, terminou no piso 2 em
+`[328,344,2]` após 24 movimentos e quatro atualizações. `routing` e
+`distance_to` passaram em 2/2 CTests. Ver
+[`interaction-validation.md`](interaction-validation.md) para o comando e os
+limites completos. Isso é uma integração ODH com House03 e Main parada, não
+validação visual da interface no segundo andar nem equivalência ao jogo original.

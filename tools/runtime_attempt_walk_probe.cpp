@@ -9,6 +9,10 @@
 #include <map>
 #include <set>
 
+namespace {
+constexpr std::uint16_t stair_portal_action = 4105;
+}
+
 RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
     const odh::SavedWorld& saved, const odh::World& world,
     const odh::DefinitionIndex& definitions,
@@ -62,8 +66,11 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         for (const auto& record : saved.records)
             records.emplace(static_cast<std::int16_t>(record.saved.object_id), &record);
         std::map<std::int16_t, const odh::SavedMultitileGroup*> groups_by_member;
+        std::set<std::int16_t> ambiguous_group_members;
         for (const auto& group : saved.multitile_groups)
-            for (const auto member : group.members) groups_by_member.emplace(member, &group);
+            for (const auto member : group.members)
+                if (!groups_by_member.emplace(member, &group).second)
+                    ambiguous_group_members.insert(member);
         std::map<std::uint32_t, SavedPortalFunction> portal_cache;
         const auto portal_for = [&](const odh::SavedWorldEntity& record) -> SavedPortalFunction {
             const auto cached = portal_cache.find(record.definition.guid);
@@ -76,6 +83,62 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         };
 
         std::vector<odh::RoomPortalMemberSnapshot> portal_members;
+        std::set<std::int16_t> validated_stair_lower_ids, validated_stair_upper_ids;
+        // Stair groups are identified from the saved multi-tile membership and
+        // the resolved asset metadata. Other multi-tile objects are left alone.
+        for (const auto& group : saved.multitile_groups) {
+            if (group.members.empty() || !group.master_guid ||
+                std::count(group.members.begin(), group.members.end(), group.leader) != 1) return result;
+            bool stair_group = false;
+            for (const auto part_id : group.members) {
+                const auto part_record = records.find(part_id);
+                if (part_record == records.end()) return result;
+                const auto* candidate = definitions.unique(part_record->second->definition.guid);
+                if (!candidate) return result;
+                stair_group = stair_group || candidate->asset == "stair.iff";
+            }
+            if (!stair_group) continue;
+
+            unsigned lower_count = 0, upper_count = 0;
+            std::optional<std::int16_t> lower_id, upper_id;
+            std::optional<std::uint16_t> master_id;
+            std::set<std::int16_t> unique_members;
+            for (const auto part_id : group.members) {
+                if (!unique_members.insert(part_id).second || ambiguous_group_members.count(part_id)) return result;
+                const auto part_record = records.find(part_id);
+                const auto* entity = world.find(part_id);
+                if (part_record == records.end() || !entity || !entity->definition || !entity->position ||
+                    !entity->definition->master_guid || *entity->definition->master_guid != *group.master_guid)
+                    return result;
+                const auto& definition = part_record->second->definition;
+                const auto* candidate = definitions.unique(definition.guid);
+                if (!candidate || candidate->asset != "stair.iff" ||
+                    candidate->definition.master_id == 0 ||
+                    candidate->definition.master_id != definition.master_id ||
+                    candidate->definition.sub_index != definition.sub_index ||
+                    candidate->definition.guid != definition.guid) return result;
+                if (!master_id) master_id = definition.master_id;
+                else if (*master_id != definition.master_id) return result;
+
+                if (definition.sub_index == 5) {
+                    if (entity->position->level != 1 || portal_for(*part_record->second).action != stair_portal_action)
+                        return result;
+                    ++lower_count;
+                    lower_id = part_id;
+                } else if (definition.sub_index == 0) {
+                    if (entity->position->level != 2 || portal_for(*part_record->second).action != stair_portal_action)
+                        return result;
+                    ++upper_count;
+                    upper_id = part_id;
+                }
+            }
+            if (lower_count != 1 || upper_count != 1 || !unique_members.count(group.leader) ||
+                !lower_id || !upper_id ||
+                !validated_stair_lower_ids.insert(*lower_id).second ||
+                !validated_stair_upper_ids.insert(*upper_id).second) return result;
+            door_leaders.insert(group.leader);
+        }
+
         for (const auto leader : door_leaders) {
             const auto group = groups_by_member.find(leader);
             const auto* group_record = group == groups_by_member.end() ? nullptr : group->second;
@@ -112,6 +175,10 @@ RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(
         result.wall_obstacle_rectangles = wall_obstacles.rectangles.size();
         result.architecture_complete = room_obstacles.complete && wall_obstacles.complete;
         if (!result.architecture_complete || !result.portal_inventory_complete) return result;
+        // Publish only after every stair group and the complete portal inventory
+        // have passed; duplicate IDs across groups reject the snapshot above.
+        result.stair_lower_portal_ids = std::move(validated_stair_lower_ids);
+        result.stair_upper_portal_ids = std::move(validated_stair_upper_ids);
 
         const odh::RuntimeRoomResolver room_for = [&rooms](const odh::EntityPosition& position) {
             return odh::geometric_room_at_runtime(rooms, position.x, position.y, position.level);

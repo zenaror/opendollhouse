@@ -1,5 +1,7 @@
 #include "odh/distance_to.hpp"
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 
 namespace odh {
 namespace {
@@ -35,12 +37,19 @@ VmPrimitive get_distance_to_primitive(const World& world) {
         const auto* caller=world.find(frame.context.caller);
         if(!stack_object||!caller||!stack_object->position||!caller->position)
             return {PrimitiveDisposition::unsupported,"GetDistanceTo requires positioned Caller and StackObject"};
-        if(stack_object->position->level!=caller->position->level)
-            return {PrimitiveDisposition::unsupported,"GetDistanceTo cross-level formula is outside the supported profile"};
+        const auto level_difference=static_cast<std::uint16_t>(
+            std::abs(static_cast<int>(stack_object->position->level)-static_cast<int>(caller->position->level)));
+        if(level_difference!=0&&!saved_go_here)
+            return {PrimitiveDisposition::unsupported,"cross-level GetDistanceTo is supported only for saved Go Here"};
         const auto dx=static_cast<std::int64_t>(stack_object->position->x)-caller->position->x;
         const auto dy=static_cast<std::int64_t>(stack_object->position->y)-caller->position->y;
         const auto squared=static_cast<std::uint64_t>(dx*dx+dy*dy);
-        const auto distance=static_cast<std::int16_t>(integer_sqrt(squared)/16U);
+        const auto planar_distance=integer_sqrt(squared)/16U;
+        // TS1's Simitone profile adds five tiles per floor and enforces a
+        // twenty-tile minimum for cross-floor distance. Keep it to the exact
+        // saved Go Here encoding; other callers retain the same-floor gate.
+        const auto distance=static_cast<std::int16_t>(level_difference==0?planar_distance:
+            std::max<std::uint32_t>(20U*level_difference,planar_distance+5U*level_difference));
         PrimitiveOutcome result{PrimitiveDisposition::goto_true,{}};
         result.temp_write=VmTempWrite{0,distance};
         return result;

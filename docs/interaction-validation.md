@@ -306,8 +306,8 @@ registrou 42 movimentos, uma Portal15 planejada/retornada/transição, status de
 rota `cancelled` e posição `[408,398,1,0]`. A BHAV4096 retornou `true`, como no
 teste headless de cancelamento; a rota separada indica que o movimento foi
 cancelado. Isso confirma o cancelamento pela interface ODH, não fidelidade de
-tempo ou de animação ao jogo original. Outros andares e outras portas seguem
-sem validação.
+tempo ou de animação ao jogo original. A interface no segundo andar e outras
+escadas seguem sem validação.
 
 Um chão bloqueado no mesmo cômodo, `(24,28)`, foi testado pela BHAV4096 salva.
 O avatar não se moveu, a fila terminou vazia e o marcador sumiu. O jogo chamou
@@ -393,12 +393,12 @@ a entrega da tecla, sem substituir a integração House07 acima.
 
 O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
 (`Doors.iff`), e o personagem conseguiu chegar ali; ele não foi contado como
-prova de mobília bloqueando o destino. Escadas e passagem entre cômodos
-continuam pendentes.
+prova de mobília bloqueando o destino. Naquela execução, escadas ainda não
+tinham sido testadas; a validação posterior da House03 está registrada abaixo.
 
-## Escadas da House03: sondagem estática
+## Escadas da House03: análise e teste
 
-A leitura salva da House03 contém oito peças de escada nos níveis 1 e 2. As
+A leitura salva da House03 contém um grupo de nove instâncias de escada nos níveis 1 e 2. As
 definições estão em `GameData/Objects/Objects.far`, no recurso `stair.iff`.
 Todas apontam para BHAV 4098 na entrada 1. Os patamares baixo e alto
 (`0x79E2B825` e `0x821EB6EE`) também apontam para BHAV 4105 na entrada 15; as
@@ -440,12 +440,47 @@ No código de referência do Simitone, uma comparação do campo `MyObject.Room`
 com o literal `1024` consulta o andar do Sim e o `LevelOffset` do objeto. O
 comentário do código diz que essa exceção atende às escadas. A verificação
 estática de `Sims.exe.bak` no Ghidra não revelou um endereço ou rotina confiável
-para a troca de piso. O ODH continua bloqueando Go Here entre andares; nenhum
-destes resultados prova que um Sim tenha subido ou descido.
+para a troca de piso. A sondagem direta abaixo confirma a mudança de posição
+no World ODH para a House03; não prova equivalência ao executável original.
 
 `tree_table_id=65535` nas peças só indica que não há tabela de interações; não
 deve ser usado para concluir que a definição do objeto está ausente. Esta
 sondagem corrige essa interpretação anterior.
+
+### Go Here subindo a escada — 2026-10-22
+
+O Go Here salvo agora aceita um destino em outro andar quando a rota encontra
+uma passagem válida no inventário da House03. O grupo salvo tem nove membros;
+o teste confirmou os dois patamares (IDs34 e38) e as outras sete peças do mesmo
+grupo. Só os patamares com as definições esperadas podem chamar a passagem. A
+distância entre pisos segue a regra TS1 presente na revisão local do Simitone:
+`max(20 × diferença_de_andar, distância_no_plano + 5 × diferença_de_andar)`,
+limitada à codificação exata do Go Here salvo.
+
+`tests/house03_cross_floor_go_here.py` parte de `[320,424,1]`, usa o patamar
+baixo, sobe e continua andando no piso 2 até o tile `(20,21)`, terminando em
+`[328,344,2]`. O teste registrou 24 movimentos (nos dois pisos), uma chamada e
+um retorno de Portal15, uma troca de cômodo/andar e quatro atualizações do
+mapa. Ele usa um avatar sintético e a Main parada numa cópia temporária; os
+dados comerciais permanecem somente leitura. Os testes focais `routing` e
+`distance_to` passaram (2/2); a integração House03 repetiu subida, descida e
+chegada ocupada sem mudança de andar. A build Debug integral passou e o CTest
+completo teve 165 testes aprovados, um pulado (`linux_window_backend`) e zero
+falhas; o teste pulado depende de uma janela gráfica. Isso valida o caminho
+headless deste cenário, não o clique da interface no andar 2, outros lotes,
+bloqueadores que se movem, comportamento do jogo original ou uma build jogável
+completa.
+
+Reprodução:
+
+```sh
+cmake --build /tmp/odh-linux-fresh --target odh-person odh-distance-to-tests -j2
+ctest --test-dir /tmp/odh-linux-fresh -R '^(distance_to|routing)$' --output-on-failure
+python3 tests/house03_stair_approach.py --binary /tmp/odh-linux-fresh/odh-person \
+  --game-root '../referencias/The Sims'
+python3 tests/house03_cross_floor_go_here.py --binary /tmp/odh-linux-fresh/odh-person \
+  --game-root '../referencias/The Sims'
+```
 
 ## Integração Sit/Stand em House07
 

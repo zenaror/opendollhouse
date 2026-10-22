@@ -3,6 +3,7 @@
 #include "odh/world_attempt_walk.hpp"
 #include "saved_architecture_resources.hpp"
 #include "saved_wall_appearance.hpp"
+#include <set>
 #include <vector>
 
 struct RuntimeAttemptWalkProbe {
@@ -17,6 +18,8 @@ struct RuntimeAttemptWalkProbe {
     std::vector<odh::RoomPortalEdge> portal_edges;
     std::size_t room_obstacle_rectangles = 0;
     std::size_t wall_obstacle_rectangles = 0;
+    std::set<std::int16_t> stair_lower_portal_ids;
+    std::set<std::int16_t> stair_upper_portal_ids;
 };
 
 RuntimeAttemptWalkProbe build_runtime_attempt_walk_probe(

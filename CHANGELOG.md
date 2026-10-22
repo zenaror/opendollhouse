@@ -17,6 +17,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Go Here agora pode sair do piso térreo, usar a escada salva da House03 e
+  continuar andando no andar de cima. A validação usou um avatar sintético e
+  uma Main parada; distância entre pisos segue o perfil TS1 do Simitone só na
+  chamada exata do Go Here salvo. Ainda não prova equivalência ao jogo original,
+  clique no andar de cima nem comportamento de outras escadas. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
+
 - `odh-saved-person-audit` lê os prefixos e dados finais das entidades Person de
   uma casa sem exigir OBJD ausente para os personagens. A escolha de multitile
   quando OBJD falta segue o fallback do Simitone baseado em nome vazio de OBJT;

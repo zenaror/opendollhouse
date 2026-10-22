@@ -447,7 +447,7 @@ int main(int argc,char** argv) {
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&(!initialize||!lot_path||!neighborhood_path))||
        (render_requested&&((!render_output&&!render_window)||(render_output&&render_window)||!render_animation_far||!render_textures_far||!render_skeleton_entry||!render_skeleton_name||(!initialize&&!saved_world_main)||animation_sources.empty()||(render_tick&&*render_tick>ticks_limit)||(render_window&&(render_tick||!render_saved_id))))||
        (render_saved_id&&((!render_output&&!render_window&&!headless_main)||!lot_path||*render_saved_id==0||*render_saved_id>32767))||
-       (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
+       (headless_fixture_avatar&&(!saved_world_main||!headless_main||(!headless_portal&&!headless_go_here)||render_saved_id))||
        (headless_fixture_occupant_avatar&&(!headless_fixture_avatar||!saved_world_main||!headless_main||
         !headless_portal||render_saved_id||headless_fixture_occupant_avatar->id==headless_fixture_avatar->id))||
        (headless_second_main&&(initialize||saved_world_main||headless_main||action||render_saved_id||
@@ -679,7 +679,14 @@ int main(int argc,char** argv) {
             if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
                 throw odh::FormatError("selected saved World entity is not the matching person resource");
         }
-        restored_world=odh::make_saved_world(restored_records,*definition_index,neighbors?&*neighbors:nullptr);
+        // EntryPoint tables are retained alongside saved World banks. A real
+        // House02 save needs 81,415 logical words after those tables are bound,
+        // so give this saved-lot host a bounded 131,072-word budget while
+        // keeping the smaller default for ordinary synthetic Worlds.
+        odh::SavedWorldLimits saved_world_limits;
+        saved_world_limits.world.words=131072;
+        restored_world=odh::make_saved_world(restored_records,*definition_index,
+            neighbors?&*neighbors:nullptr,saved_world_limits);
         // Bind the exact immutable OBJD/OBJf tables to every restored entity.
         // This is static metadata only; action function IDs are not BHAV results.
         std::map<std::uint32_t,std::vector<odh::EntryPoint>> entry_point_cache;
@@ -895,6 +902,7 @@ int main(int argc,char** argv) {
     std::optional<odh::Playback> playback;
     std::optional<odh::Playback> second_main_playback;
     std::function<bool(std::int16_t)> bind_world_object_tables;
+    std::set<std::int16_t> saved_stair_portal_endpoint_ids;
     if(!animation_sources.empty()){
         animation_catalog.emplace(animation_sources);
         global_animation_tables=load_strings(*globals,{128,130,150,151,156,157});
@@ -923,26 +931,9 @@ int main(int argc,char** argv) {
                     }
                 },limits);
             });
-            const bool lower_stair=candidate->definition.guid==0x79E2B825U&&candidate->definition.sub_index==5;
-            const bool upper_stair=candidate->definition.guid==0x821EB6EEU&&candidate->definition.sub_index==0;
-            bool valid_stair_group=false;
-            if(binding&&binding->master_id==4&&candidate->asset=="stair.iff"&&
-               entity->definition->master_guid==0x307DDFA6U&&(lower_stair||upper_stair)&&
-               entity->position&&restored_world){
-                const auto group=std::find_if(restored_world->multitile_groups.begin(),
-                    restored_world->multitile_groups.end(),[&](const auto& value){
-                        return value.master_guid==0x307DDFA6U&&
-                            std::find(value.members.begin(),value.members.end(),owner)!=value.members.end();
-                    });
-                bool has_lower=false,has_upper=false;
-                if(group!=restored_world->multitile_groups.end())for(const auto member:group->members){
-                    const auto* part=world.find(member);
-                    if(!part||!part->definition||!part->position)continue;
-                    has_lower=has_lower||(part->definition->guid==0x79E2B825U&&part->position->level==1);
-                    has_upper=has_upper||(part->definition->guid==0x821EB6EEU&&part->position->level==2);
-                }
-                valid_stair_group=has_lower&&has_upper;
-            }
+            const bool validated_stair_endpoint=saved_stair_portal_endpoint_ids.count(owner)!=0;
+            const bool valid_stair_group=binding&&candidate->asset=="stair.iff"&&
+                entity->definition->master_guid&&entity->position&&restored_world&&validated_stair_endpoint;
             if(!binding||binding->guid!=candidate->definition.guid||
                binding->master_id!=candidate->definition.master_id||
                binding->sub_index!=candidate->definition.sub_index||
@@ -1079,35 +1070,16 @@ int main(int argc,char** argv) {
                     }
                 },limits);
                 bool matched_stair_group=false;
-                if(binding&&binding->guid==candidate->definition.guid&&binding->master_id==4&&
-                   candidate->asset=="stair.iff"&&candidate->definition.master_id==4&&
-                   entity->definition->master_guid==0x307DDFA6U&&restored_world&&
+                if(binding&&candidate->asset=="stair.iff"&&restored_world&&
                    frame.key.id==4113&&(frame.pc==3||frame.pc==10)&&
                    instruction.operands==std::array<std::uint8_t,8>{0,0,3,0,2,0,0,0}) {
-                    const auto target_guid=candidate->definition.guid;
-                    const bool target_lower=target_guid==0x79E2B825U&&candidate->definition.sub_index==5;
-                    const bool target_upper=target_guid==0x821EB6EEU&&candidate->definition.sub_index==0;
                     const auto* source=world.find(frame.context.callee);
-                    const auto source_guid=source&&source->definition?source->definition->guid:0U;
-                    const bool opposite_pair=(target_lower&&source_guid==0x821EB6EEU)||
-                                             (target_upper&&source_guid==0x79E2B825U);
-                    const auto group=std::find_if(restored_world->multitile_groups.begin(),
-                        restored_world->multitile_groups.end(),[&](const auto& value){
-                            return value.master_guid==0x307DDFA6U&&
-                                std::find(value.members.begin(),value.members.end(),object_id)!=value.members.end()&&
-                                std::find(value.members.begin(),value.members.end(),frame.context.callee)!=value.members.end();
-                        });
-                    bool has_lower=false,has_upper=false;
-                    if(group!=restored_world->multitile_groups.end())for(const auto member:group->members){
-                        const auto* part=world.find(member);
-                        if(!part||!part->definition||!part->position)continue;
-                        has_lower=has_lower||(part->definition->guid==0x79E2B825U&&part->position->level==1);
-                        has_upper=has_upper||(part->definition->guid==0x821EB6EEU&&part->position->level==2);
-                    }
-                    matched_stair_group=(target_lower||target_upper)&&opposite_pair&&has_lower&&has_upper&&
-                        group!=restored_world->multitile_groups.end()&&source&&source->position&&
+                    const auto* target=world.find(object_id);
+                    matched_stair_group=saved_stair_portal_endpoint_ids.count(object_id)!=0&&
+                        source&&target&&saved_stair_portal_endpoint_ids.count(source->id)!=0&&
+                        source->position&&target->position&&
                         std::abs(static_cast<int>(source->position->level)-
-                                 static_cast<int>(world.find(object_id)->position->level))==1;
+                                 static_cast<int>(target->position->level))==1;
                 }
                 if(!binding||binding->guid!=candidate->definition.guid||
                    binding->master_id!=candidate->definition.master_id||
@@ -1463,6 +1435,7 @@ struct PlacementCandidateProbe {
     std::optional<bool> go_here_result;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
+    std::set<odh::CodeOwner> saved_stair_portal_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
@@ -1675,6 +1648,9 @@ struct PlacementCandidateProbe {
                 if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
                     route_runtime_reason=std::string("attempt_walk_snapshot_")+odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
                 else {
+                    saved_stair_portal_endpoint_ids=probe.stair_lower_portal_ids;
+                    saved_stair_portal_endpoint_ids.insert(probe.stair_upper_portal_ids.begin(),
+                        probe.stair_upper_portal_ids.end());
                     auto grid=odh::build_world_room_route_grid(probe.snapshot);
                     if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
                         route_runtime_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);
@@ -1691,16 +1667,17 @@ struct PlacementCandidateProbe {
                         runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
                             const odh::Instruction& instruction) {
                             (void)instruction;
-                            if(!headless_portal||!headless_portal_applied||headless_portal_status!="queued"||
-                               !headless_portal_owner||frame.key.id!=4112||
+                            const bool direct_portal=headless_portal&&headless_portal_applied&&
+                                headless_portal_status=="queued"&&headless_portal_owner&&
+                                frame.context.code_owner==*headless_portal_owner;
+                            const bool go_here_portal=go_here_status=="queued"&&
+                                saved_stair_portal_code_owners.count(frame.context.code_owner)!=0;
+                            if((!direct_portal&&!go_here_portal)||frame.key.id!=4112||
                                frame.context.caller!=runtime_avatar_id||
-                               frame.context.code_owner!=*headless_portal_owner||
-                               frame.context.stack_object!=headless_portal->id)return false;
+                               (direct_portal&&frame.context.stack_object!=headless_portal->id))return false;
                             const auto* endpoint=world.find(frame.context.stack_object);
                             if(!endpoint||!endpoint->definition)return false;
-                            const auto guid=endpoint->definition->guid;
-                            return (endpoint->id==34&&guid==0x79E2B825U)||
-                                   (endpoint->id==38&&guid==0x821EB6EEU);
+                            return saved_stair_portal_endpoint_ids.count(endpoint->id)!=0;
                         });
                         runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
                             const auto* route_actor=world.find(frame.context.caller);
@@ -1924,6 +1901,8 @@ struct PlacementCandidateProbe {
                 if(owner==saved_portal_code_owners.end()&&saved_owner_ids_exhausted)
                     return fail("room portal code-owner identity space exhausted");
                 const auto code_owner=owner==saved_portal_code_owners.end()?next_saved_code_owner:owner->second;
+                if(candidate->asset=="stair.iff"&&saved_stair_portal_endpoint_ids.count(edge.portal_id)!=0)
+                    saved_stair_portal_code_owners.insert(code_owner);
                 std::optional<SavedSemiglobalCodeBank> semiglobal_bank;
                 if(function.semiglobal_name)
                     semiglobal_bank=load_saved_semiglobal_code_bank(globals->archive,*function.semiglobal_name+".iff");
@@ -1958,8 +1937,8 @@ struct PlacementCandidateProbe {
         if(queue.size()!=0){reject("Go Here requires an idle interaction queue");return;}
         const auto* actor=world.find(runtime_avatar_id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||!actor->position||
-           destination.level!=actor->position->level){
-            reject("Go Here currently supports only the avatar's current floor");return;
+           actor->position->level<1||actor->position->level>2||destination.level<1||destination.level>2){
+            reject("Go Here requires a supported floor for the avatar and destination");return;
         }
         const auto actor_room=render_lot->runtime_room_at(*actor->position);
         const auto destination_room=render_lot->runtime_room_at(destination);

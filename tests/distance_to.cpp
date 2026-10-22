@@ -44,6 +44,13 @@ int main() {
         vm.start(odh::routine_key(4096),{1,2,2});
         require(vm.run(1)==odh::VmStatus::fault&&vm.temps()[0]==0,
                 "cross-level GetDistanceTo is rejected without publishing a temp result");
+        saved_action_vm.start(odh::routine_key(4096),{1,2,2});
+        require(saved_action_vm.run(1)==odh::VmStatus::returned_true&&saved_action_vm.temps()[0]==20,
+                "saved Go Here applies the TS1 minimum distance when the destination is one floor away");
+        world.set_position(2,{400,320,2,0});
+        saved_action_vm.start(odh::routine_key(4096),{1,2,2});
+        require(saved_action_vm.run(1)==odh::VmStatus::returned_true&&saved_action_vm.temps()[0]==37,
+                "saved Go Here adds five tiles to a long cross-floor planar distance");
         auto unsupported=routine({0,0,1,0,0,0,0,0});
         odh::Vm unsupported_vm{std::move(unsupported),world.vm_memory(),{},odh::get_distance_to_primitive(world)};
         world.set_position(2,{48,64,1,0});unsupported_vm.start(odh::routine_key(4096),{1,2,2});
