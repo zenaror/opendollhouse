@@ -1696,12 +1696,11 @@ struct PlacementCandidateProbe {
         }
         const auto actor_room=render_lot->runtime_room_at(*actor->position);
         const auto destination_room=render_lot->runtime_room_at(destination);
-        if(!actor_room||!destination_room||*actor_room!=*destination_room||
-           *destination_room!=runtime_route_grid->room_id){
-            reject("Go Here currently supports only the avatar's current room");return;
+        if(!actor_room||!destination_room||*actor_room!=runtime_route_grid->room_id){
+            reject("Go Here requires a known current room and destination room");return;
         }
         const odh::RoutePoint goal{destination.x,destination.y};
-        if(!runtime_route_grid->grid->contains(goal)){
+        if(*destination_room==*actor_room&&!runtime_route_grid->grid->contains(goal)){
             reject("the selected ground cell is outside the prepared route grid");return;
         }
         const auto* candidate=definition_index->unique(0x7c4);

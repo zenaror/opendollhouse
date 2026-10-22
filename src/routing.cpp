@@ -311,7 +311,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return unsupported("routing requires positioned free avatar and target on one level");
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
-    if(!goto_relative&&room_pair_) {
+    if((!goto_relative||saved_go_here_relative)&&room_pair_) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
@@ -326,7 +326,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
            !(*target->position==target_position)||actor->radian_direction!=actor_direction||actor->attachment)
             return unsupported("entity changed during Route45 room resolver");
         if(!rooms)return unsupported("Route45 room resolver could not classify actor and target");
-        const bool ignore_rooms=(slot->flags&0x0800U)!=0;
+        const bool ignore_rooms=!goto_relative&&(slot->flags&0x0800U)!=0;
         if(rooms->first!=rooms->second&&!ignore_rooms) {
             if(!room_portal_step_)
                 return unsupported("cross-room Route45 requires a bounded Portal15 step provider");

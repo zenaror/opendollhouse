@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Go Here do cômodo vizinho (2026-10-22)
+
+`tools/person.cpp` agora aceita um destino Go Here no mesmo piso em outro
+cômodo e permite que a forma exata da BHAV4096 salva passe pelo planejador
+Portal15 do `Routing`. A grade é atualizada após a porta, e a rota continua até
+o destino. Na House07, o Sim saiu de `[392,440,1,3]`, atravessou a Door26 e
+chegou ao tile `(20,20)` em `[328,328,1,7]`: 126 movimentos, 1 porta executada,
+1 mudança de cômodo e 4 atualizações de mapa. O alvo na própria sala continua
+passando (16 movimentos); a mesa 106 continua bloqueando o destino sem mover o
+Sim. Teste unitário: `odh-routing-tests` passou 349 verificações. CTest depois
+da compilação completa: 159 aprovados, nenhum falhou, `linux_window_backend`
+ignorado por não haver display nesta sessão.
+
+Comando de reprodução e limites em `docs/interaction-validation.md`. Isso
+valida a Main e as rotinas salvas no host headless, não um clique X11 atravessando
+salas, escadas, outros andares, nem a fidelidade total ao executável original.
+Tentei a janela X11 com eventos sem mover o cursor: nenhum dos 377 cliques
+selecionou chão, então não mandei Space. Próximo: descobrir por que o preview não
+selecionou chão nessa vista; então testar o passeio pela janela. Depois
+investigar escadas e atualizações de andar.
+
 ## Conversão de pixel para posição isométrica do lote (2026-10-21)
 
 `unproject_tile` inverte a projeção compartilhada da câmera para um pixel e um

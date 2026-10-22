@@ -41,6 +41,8 @@ def parse_args():
                         help="assert that a live world change stops saved Go Here during movement")
     parser.add_argument("--go-here-expect-cancelled", action="store_true",
                         help="assert that a scheduled player cancel stops saved Go Here through Global BHAV398")
+    parser.add_argument("--go-here-expect-cross-room", action="store_true",
+                        help="assert that saved Go Here uses a real saved Portal15 edge and reaches another room")
     parser.add_argument("--go-here-interrupt-at-tick", type=int,
                         help="send a player-cancel request at this headless simulation tick")
     parser.add_argument("--go-here-interrupt-after-movements", type=int,
@@ -160,6 +162,9 @@ def main():
         raise SystemExit("choose one Go Here cancel trigger")
     if args.go_here_expect_cancelled and not any(cancel_modes):
         raise SystemExit("--go-here-expect-cancelled requires a Go Here cancel trigger")
+    if args.go_here_expect_cross_room and (args.go_here is None or
+            args.go_here_expect_status != "returned_true" or args.go_here_expect_route_failure):
+        raise SystemExit("--go-here-expect-cross-room requires a successful --go-here probe")
     if args.go_here_interrupt_at_tick is not None and (args.go_here is None or
             args.go_here_mutation is not None or args.go_here_interrupt_at_tick <= 1):
         raise SystemExit("Go Here player cancel needs --go-here, a tick after request, and no world mutation")
@@ -288,6 +293,8 @@ def main():
             "route_runtime": {key: route.get(key) for key in (
                 "state", "start_position", "end_position", "active",
                 "movement_callbacks", "movement_positions", "diagnostic", "headless_go_here_interrupt",
+                "snapshot_refreshes", "cross_room_portal_execution", "portal_planned_calls",
+                "portal_returns", "portal_room_transitions", "room_id", "portal_planner_diagnostic",
                 "scheduled_world_mutation_applied", "scheduled_world_mutation")},
             "goal_validation_diagnostic": route.get("goal_validation_diagnostic"),
             "global_398_trace": failure_tree_trace,
@@ -299,6 +306,7 @@ def main():
         route_failure = args.go_here_expect_route_failure
         route_interruption = args.go_here_expect_interruption
         route_cancelled = args.go_here_expect_cancelled
+        cross_room = args.go_here_expect_cross_room
         movement_positions = route.get("movement_positions") or []
         expected_interrupt = ({"tick": args.go_here_interrupt_at_tick,
                                "applied": True, "accepted": True}
@@ -317,6 +325,11 @@ def main():
                                  go_here.get("end_position", [])[:3] != destination or
                                  route.get("active") or route.get("movement_callbacks", 0) <= 0 or
                                  len(end) < 3 or end[:3] != destination or
+                                 (cross_room and (route.get("cross_room_portal_execution") is not True or
+                                  route.get("portal_planned_calls", 0) < 1 or
+                                  route.get("portal_returns", 0) < 1 or
+                                  route.get("portal_room_transitions", 0) < 1 or
+                                  route.get("snapshot_refreshes", 0) < 1)) or
                                  route.get("diagnostic") is not None)) or
                 (route_failure and
                  (baseline.get("host_failed") or go_here.get("result") is not True or

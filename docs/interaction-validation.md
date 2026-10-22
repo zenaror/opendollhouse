@@ -262,6 +262,42 @@ Esse teste da janela revelou que o mapa de seleção do chão era perdido quando
 a imagem era transferida para a tela. O mapa agora fica guardado à parte e os
 testes de seleção confirmam que sobrevive à transferência.
 
+### Go Here atravessando cômodos
+
+O Go Here salvo agora pode aceitar um destino no mesmo piso em outro cômodo. A
+rota espera o planejador de portas, executa a BHAV Portal15 da porta salva,
+atualiza o mapa de obstáculos do cômodo novo e só então continua até o ponto
+escolhido. Antes deste ajuste, o destino distante era recusado porque ficava
+fora do mapa do cômodo inicial. O suporte continua limitado a cômodos
+conectados por uma sequência de portas que o inventário consegue validar; não
+cobre mudança de piso nem garante que todo estado de porta seja fiel ao jogo
+original.
+
+Em House07, o avatar começou em `[392,440,1,3]`, no cômodo 3. A ação real
+`Destination.iff:4096` levou-o ao tile `(20,20)` do cômodo 1, chegando em
+`[328,328,1,7]` após 126 movimentos. O host planejou e executou uma Portal15,
+confirmou uma mudança de cômodo e atualizou o mapa quatro vezes. Um teste de
+unidade limita esse caminho ao formato exato do Go Here salvo; os outros perfis
+de GotoRelativePosition continuam na rota local. Reprodução com dados externos:
+
+```sh
+python3 tests/house07_route45_integration.py \
+  --binary /tmp/odh-race-check/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --go-here 20 20 1 --go-here-expect-cross-room --ticks 4096
+```
+
+Também passaram um destino na sala inicial (16 movimentos, sem porta) e o
+destino ocupado pela mesa 106 (zero movimentos, falha de caminhada preservada).
+São testes headless que usam a Main e recursos salvos; ainda falta confirmar
+esse trajeto com clique sintético dirigido à janela X11. Na tentativa X11 de
+2026-10-22, abri House07 com paredes baixas e testei 377 pontos enviados
+diretamente à janela, sem mover o cursor. O aplicativo selecionou objetos ou
+nenhum alvo; não reconheceu um ponto de chão e Space não foi enviado. Portanto
+esse teste não demonstra a travessia pela interface. O teste headless não cobre
+outros andares, nem prova que todas as portas ou os tempos correspondam ao jogo
+original.
+
 Um chão bloqueado no mesmo cômodo, `(24,28)`, foi testado pela BHAV4096 salva.
 O avatar não se moveu, a fila terminou vazia e o marcador sumiu. O jogo chamou
 Global BHAV398, embora BHAV4096 tenha retornado `true`; por isso o host informa

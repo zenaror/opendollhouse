@@ -462,6 +462,53 @@ void deferred_room_route_tests() {
                 "VM restart cancels deferred routing and releases per-ticket host state exactly once");
     }
 }
+void saved_go_here_cross_room_test() {
+    odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();odh::Routing routing{world,grid,slots};
+    std::size_t portal_plans=0,portal_returns=0,refreshes=0,context_ends=0;
+    routing.set_room_pair_provider([](const auto& actor,const auto& target)
+        ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
+        const auto room=[](const auto& position){return static_cast<std::uint16_t>(position.x<16?3:1);};
+        return std::pair{room(actor),room(target)};
+    });
+    routing.set_route_grid_refresh([&](const auto& actor){++refreshes;return actor.x==16;});
+    routing.set_room_portal_context_end_provider([&](auto){++context_ends;});
+    routing.set_room_portal_step_provider([&](auto,const auto& actor,const auto& target,
+        const std::optional<odh::VmCall>& previous,const std::optional<bool>& result,auto step) {
+        if(!previous&&!result&&step==0&&actor.x==4&&target.x==28){
+            ++portal_plans;
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,
+                odh::VmCall{odh::routine_key(4097),{1,2,2,9},{}},{}};
+        }
+        require(previous.has_value()&&result.has_value()&&*result&&step==1&&actor.x==16&&target.x==28,
+                "saved Go Here portal return confirms the actor reached the target room");
+        ++portal_returns;
+        return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::destination_reached,{}, {}};
+    });
+    const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
+    auto code=goto_relative(go_here);
+    odh::RoutineSet portal{{odh::routine_key(4097),odh::Bhav{0x8002,
+        {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+    odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive(),{{9,std::move(portal)}}};
+    world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+    world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});
+    routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point) {
+        return point==odh::RoutePoint{28,12}&&grid.contains(point)&&grid.walkable(point);
+    });
+    routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+    require(vm.run(1)==odh::VmStatus::waiting&&routing.active()&&portal_plans==0,
+            "saved Go Here starts as a deferred cross-room route without walking toward a remote grid point");
+    require(routing.tick(1)&&routing.external_frame_active()&&portal_plans==1,
+            "saved Go Here schedules Portal15 before its within-room route");
+    world.set_position(1,{16,12,1,0});
+    require(vm.run(1)==odh::VmStatus::yielded&&routing.tick(2)&&refreshes==1&&portal_returns==1&&
+            routing.active()&&!routing.external_frame_active()&&vm.status()==odh::VmStatus::waiting,
+            "saved Go Here refreshes the room grid and resumes after Portal15 returns true");
+    for(std::uint64_t tick=3;tick<32&&routing.active();++tick)routing.tick(tick);
+    require(!routing.active()&&vm.status()==odh::VmStatus::returned_true&&
+            world.find(1)->position->x==28&&world.find(1)->position->y==12&&
+            context_ends==1,
+            "saved Go Here completes its exact destination after one bounded room transition");
+}
 void ignore_rooms_cross_room_test() {
     odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
     slots.records[1].flags=0x0801;
@@ -504,6 +551,7 @@ int main() {
         door_range_route_tests();
         route_frame_context_tests();
         deferred_room_route_tests();
+        saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();odh::Routing routing{world,grid,globals};
