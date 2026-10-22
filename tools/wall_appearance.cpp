@@ -666,7 +666,8 @@ int main(int argc,char** argv){try{
     <<",\"uses_function_table\":"<<decoded.functions.uses_function_table<<",\"entry_source\":"
     <<json_bytes(decoded.table.source==odh::EntryPointSource::objf?"OBJf":"OBJD")
     <<",\"entry_version\":"<<decoded.table.version<<",\"entry_count\":"<<decoded.table.entries.size()<<',';
-   emit_entry(1);std::cout<<',';emit_entry(5);std::cout<<',';emit_entry(26);std::cout<<'}';
+   emit_entry(1);std::cout<<',';emit_entry(5);std::cout<<',';emit_entry(11);std::cout<<',';
+   emit_entry(15);std::cout<<',';emit_entry(26);std::cout<<'}';
   }
   std::cout<<"]}";
  }

@@ -1,5 +1,32 @@
 # Continuidade atual
 
+## Escadas da House03: localizar a porta entre andares (2026-10-22)
+
+Corrigindo a leitura anterior: `tree_table_id=65535` quer dizer que a peça
+não tem uma tabela de interações; não quer dizer que a descrição do objeto
+esteja faltando. As oito peças da escada foram ligadas a `stair.iff` dentro de
+`GameData/Objects/Objects.far`.
+
+Na House03, todas as oito peças apontam para a ação 4098 da entrada de objeto.
+Só os dois patamares — GUIDs `0x821EB6EE` (objeto 38) e `0x79E2B825`
+(objeto 34) — apontam para a ação 4105 da entrada 15. No código do motor
+FreeSO incluído na árvore do Simitone, a entrada 15 é a passagem usada pelo
+planejador para trocar de cômodo e de andar. Os patamares, portanto, são os
+primeiros candidatos reais para essa passagem.
+
+As rotinas 4098, 4105 e 4118 foram lidas sem executá-las. A ação 4098 chama
+rotinas global 280 e privada 4118; a ação 4105 também chama rotinas globais,
+privadas e semiglobais. Isso mostra que a mudança de andar depende de mais
+rotinas do jogo, ainda não reproduzidas aqui. O teste Go Here atual continua
+recusando destinos em outro andar antes de iniciar a caminhada. Ainda não
+houve subida ou descida de um Sim no ODH.
+
+O probe `odh-wall-appearance ... --entry-point-probe` confirma os vínculos
+estáticos e marca `bhav_executed=false`; o dump `odh-bhav` mostra apenas os
+opcodes e operandos das rotinas. Próximo passo: seguir essas chamadas e
+entender como a rotina 4105 muda a posição e o andar antes de adaptar o
+planejador. Não executar as rotinas comerciais só para descobrir sua função.
+
 ## Go Here do cômodo vizinho (2026-10-22)
 
 `tools/person.cpp` agora aceita um destino Go Here no mesmo piso em outro

@@ -396,6 +396,41 @@ O ponto `(25,26)` usado numa tentativa anterior era a porta salva 26
 prova de mobília bloqueando o destino. Escadas e passagem entre cômodos
 continuam pendentes.
 
+## Escadas da House03: sondagem estática
+
+A leitura salva da House03 contém oito peças de escada nos níveis 1 e 2. As
+definições estão em `GameData/Objects/Objects.far`, no recurso `stair.iff`.
+Todas apontam para BHAV 4098 na entrada 1. Os patamares baixo e alto
+(`0x79E2B825` e `0x821EB6EE`) também apontam para BHAV 4105 na entrada 15; as
+outras seis peças não têm ação nessa entrada. No código FreeSO que acompanha o
+Simitone, a entrada 15 é a porta especial que o planejador chama para mudar de
+cômodo ou andar.
+
+Leitura estrutural repetível:
+
+```sh
+build/linux-checkpoint/odh-wall-appearance \
+  '../referencias/The Sims/UserData/Houses/House03.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --entry-point-probe
+build/linux-checkpoint/odh-bhav \
+  '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4098
+build/linux-checkpoint/odh-bhav \
+  '../referencias/The Sims/GameData/Objects/Objects.far' stair.iff 4105
+```
+
+O relatório mostra as entradas 1 e 15; os dumps BHAV mostram o conteúdo das
+ações sem executar código. BHAV 4098 chama rotinas 280 e 4118; BHAV 4105 chama 278,
+4109, 8197, 279 e 4110. As chamadas indicam código global, privado e
+semiglobal, respectivamente, conforme as faixas de IDs do motor de referência.
+As rotinas chamadas e a troca real de piso ainda precisam ser compreendidas.
+O ODH continua bloqueando Go Here entre andares, e nenhum destes resultados
+prova que um Sim tenha subido ou descido.
+
+`tree_table_id=65535` nas peças só indica que não há tabela de interações; não
+deve ser usado para concluir que a definição do objeto está ausente. Esta
+sondagem corrige essa interpretação anterior.
+
 ## Integração Sit/Stand em House07
 
 `odh-person --headless-main --headless-interaction ID TICK` agenda a seleção
