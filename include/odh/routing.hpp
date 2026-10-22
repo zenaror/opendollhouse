@@ -59,6 +59,8 @@ using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
 using StackObjectSlotTableProvider=std::function<const SlotTable*(const VmFrame&)>;
 // Read-only host filter for candidates constrained to the active route room.
 using RouteGoalValidator=std::function<bool(const VmFrame&,RoutePoint)>;
+// Narrow host opt-in for the saved House03 stair BHAV 4112 failure-tree profile.
+using StairGotoRelativeValidator=std::function<bool(const VmFrame&,const Instruction&)>;
 // Rebuilds the active room grid after an external portal frame moved the avatar.
 using RouteGridRefresh=std::function<bool(const EntityPosition&)>;
 // Recomputes the next Portal15 call after an external portal frame returns
@@ -105,6 +107,10 @@ public:
     void set_route_goal_validator(RouteGoalValidator validator) {
         if(executing_||job_)throw std::logic_error("cannot replace Route45 goal validator while active");
         goal_validator_=std::move(validator);
+    }
+    void set_stair_goto_relative_validator(StairGotoRelativeValidator validator) {
+        if(executing_||job_)throw std::logic_error("cannot replace stair Route27 validator while active");
+        stair_goto_relative_=std::move(validator);
     }
     void set_route_grid_refresh(RouteGridRefresh refresh) {
         if(executing_||job_)throw std::logic_error("cannot replace Route45 grid refresher while active");
@@ -192,6 +198,7 @@ private:
     PreRankedSlotGoalProvider ranged_slot_goals_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
+    StairGotoRelativeValidator stair_goto_relative_;
     RouteGridRefresh route_grid_refresh_;
     RoutePortalRetryProvider portal_retry_;
     RouteRoomPairProvider room_pair_;

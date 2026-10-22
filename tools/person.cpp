@@ -940,6 +940,7 @@ int main(int argc,char** argv) {
             const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
             std::optional<odh::ObjdBinding> binding;
             std::optional<odh::SlotTable> slots;
+            try {
             with_resource(resource,[&](const auto& view){
                 odh::Limits limits;limits.iff_chunks=4096;
                 odh::iff_chunks(view,[&](const auto& chunk){
@@ -960,6 +961,10 @@ int main(int argc,char** argv) {
                     },limits);
                 });
             });
+            } catch(const std::exception& error) {
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    std::string("Snap resource/profile unsupported: ")+error.what()};
+            }
             if(!slots) return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap SLOT resource is absent"};
             auto entry=std::make_unique<SnapRuntime>();entry->slots=std::move(*slots);
             entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table,
@@ -1473,6 +1478,20 @@ struct PlacementCandidateProbe {
                             *shared.routing_slots);
                         runtime_routing->set_ranged_slot_goal_provider(std::move(range_slot_goals));
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
+                        runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
+                            const odh::Instruction& instruction) {
+                            (void)instruction;
+                            if(!headless_portal||!headless_portal_applied||headless_portal_status!="queued"||
+                               !headless_portal_owner||frame.key.id!=4112||
+                               frame.context.caller!=runtime_avatar_id||
+                               frame.context.code_owner!=*headless_portal_owner||
+                               frame.context.stack_object!=headless_portal->id)return false;
+                            const auto* endpoint=world.find(frame.context.stack_object);
+                            if(!endpoint||!endpoint->definition)return false;
+                            const auto guid=endpoint->definition->guid;
+                            return (endpoint->id==34&&guid==0x79E2B825U)||
+                                   (endpoint->id==38&&guid==0x821EB6EEU);
+                        });
                         runtime_routing->set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point) {
                             const auto* route_actor=world.find(frame.context.caller);
                             if(!route_actor||!route_actor->position||!render_lot||!runtime_route_grid) {

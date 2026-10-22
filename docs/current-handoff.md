@@ -2,6 +2,33 @@
 
 ## Escadas da House03: localizar a porta entre andares (2026-10-22)
 
+### Atualização: caminhada até os dois patamares (2026-10-22)
+
+O teste agora deixa a Main sintética esperando e pede a passagem pelo EP15 nos
+dois patamares conhecidos. A forma exata de `GotoRelativePosition` da BHAV 4112
+só é aceita quando o host confirma a chamada, o Sim, o dono da rotina e o
+patamar House03 esperado. A regra geral continua proibindo rotas entre pisos.
+Quando a caminhada não encontra caminho, o ODH informa que esse caso ainda não
+é suportado; não inventa uma resposta de sucesso ou falha do jogo.
+
+O roteiro `tests/house03_stair_approach.py` usa a House03 e os dados instalados
+como leitura, mas cria uma cópia temporária do avatar com uma Main mínima que
+fica esperando. No patamar baixo, o Sim andou de `[320,424,1,0]` para
+`[312,424,1,0]`; no alto, de `[320,344,2,0]` para `[312,344,2,4]`. Foram oito
+passos registrados em cada caso, sem mudança de piso. Em seguida, a VM parou na
+próxima ação comercial, `Snap` (BHAV 4113, PC10), porque o recurso é uma peça de
+grupo e a validação atual não conhece ainda esse formato.
+
+A leitura do Simitone mostra que `Snap` procura primeiro um ponto livre no
+SLOT e depois tenta posicionar o Sim. Portanto, chegar ao patamar não prova que
+o SLOT escolheria aquela posição nem que o posicionamento seria aceito. Não
+tratamos essa ação como sucesso e não alegamos travessia. Próximo: conferir a
+busca de lugares do SLOT e os efeitos do posicionamento no Simitone; então
+capturar o objeto-alvo e o piso no contexto vivo da BHAV 4113. Só depois testar
+uma subida e uma descida de ponta a ponta.
+
+Comando: `python3 tests/house03_stair_approach.py --binary /tmp/odh-stair-build/odh-person --game-root '../referencias/The Sims'`.
+
 Corrigindo a leitura anterior: `tree_table_id=65535` quer dizer que a peça
 não tem uma tabela de interações; não quer dizer que a descrição do objeto
 esteja faltando. As oito peças da escada foram ligadas a `stair.iff` dentro de

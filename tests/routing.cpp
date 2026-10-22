@@ -763,6 +763,64 @@ int main() {
          vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(4)==odh::VmStatus::fault&&!routing.active()&&world.find(1)->position->x==4,
                  "GotoRelativePosition with failure-tree policy outside the supported profile is rejected");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const auto operands=std::array<std::uint8_t,8>{0,0,254,4,0,0,0,0};
+         odh::RoutineSet code{{odh::routine_key(4112),odh::Bhav{0x8002,{{27,254,255,operands}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});
+         routing.set_stair_goto_relative_validator([](const odh::VmFrame& frame,const odh::Instruction&) {
+             return frame.key.id==4112&&frame.context.stack_object==2;
+         });
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4112),{1,2,2});
+         require(vm.run(4)==odh::VmStatus::waiting&&routing.active(),
+                 "the exact stair BHAV profile is accepted only after host identity validation");
+         for(std::uint64_t tick=1;tick<=16&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
+                 world.find(1)->position->x==12&&world.find(1)->position->y==12,
+                 "stair exact-point profile reaches the endpoint without changing floors");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const auto operands=std::array<std::uint8_t,8>{0,0,254,0,0,0,0,0};
+         odh::RoutineSet code{{odh::routine_key(4112),odh::Bhav{0x8002,{{27,254,255,operands}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});
+         routing.set_stair_goto_relative_validator([](const odh::VmFrame& frame,const odh::Instruction&) {
+             return frame.key.id==4112&&frame.context.code_owner==99&&frame.context.stack_object==99;
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4112),{1,2,2});
+         require(vm.run(2)==odh::VmStatus::fault&&
+                 vm.diagnostic().find("outside the synthetic route profiles")!=std::string::npos,
+                 "stair profile rejects a different code owner or endpoint");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const auto operands=std::array<std::uint8_t,8>{0,0,254,0,0,0,0,0};
+         odh::RoutineSet code{{odh::routine_key(4112),odh::Bhav{0x8002,{{27,254,255,operands}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,1,0});grid.block({12,12});
+         routing.set_stair_goto_relative_validator([](const odh::VmFrame&,const odh::Instruction&){return true;});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4112),{1,2,2});
+         require(vm.run(2)==odh::VmStatus::fault&&
+                 vm.diagnostic().find("stair GotoRelativePosition failure tree is not implemented")!=std::string::npos,
+                 "stair no-path remains explicitly unsupported instead of pretending failure-tree behavior");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const auto operands=std::array<std::uint8_t,8>{0,0,254,0,0,0,0,0};
+         odh::RoutineSet code{{odh::routine_key(4112),odh::Bhav{0x8002,{{27,254,255,operands}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{std::move(code),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{12,12,2,0});
+         routing.set_stair_goto_relative_validator([](const odh::VmFrame&,const odh::Instruction&){return true;});
+         routing.set_route_goal_validator([](const odh::VmFrame&,odh::RoutePoint){return true;});
+         routing.bind(vm);vm.start(odh::routine_key(4112),{1,2,2});
+         require(vm.run(2)==odh::VmStatus::fault&&
+                 vm.diagnostic().find("target on one level")!=std::string::npos,
+                 "stair route profile preserves the general same-floor guard");}
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();bool provider_seen=false;
          odh::PreRankedSlotGoalProvider goals=[&](const auto& table,std::size_t index,const auto&,const auto&) {

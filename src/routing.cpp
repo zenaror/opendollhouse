@@ -264,7 +264,15 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const bool bounded_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==2&&i.operands[7]==0;
-    if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative)
+    const bool stair_goto_relative_shape=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
+        i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
+        i.operands[5]==0&&i.operands[6]==0&&i.operands[7]==0;
+    bool stair_goto_relative=false;
+    if(stair_goto_relative_shape&&stair_goto_relative_) {
+        struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+        stair_goto_relative=stair_goto_relative_(frame,i);
+    }
+    if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative&&!stair_goto_relative)
         return unsupported("GotoRelativePosition outside the synthetic route profiles or the exact saved Go Here profile");
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
@@ -351,6 +359,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     };
     const auto fail_route=[&](std::int16_t code,const std::string& reason) -> PrimitiveOutcome {
         diagnostic_=reason;
+        if(stair_goto_relative)
+            return unsupported("stair GotoRelativePosition failure tree is not implemented: "+reason);
         if(!saved_go_here_relative||nested_request)
             return {PrimitiveDisposition::goto_false,reason};
         Job failed{};
