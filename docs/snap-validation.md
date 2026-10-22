@@ -42,6 +42,32 @@ para no primeiro pedido de Shoo e ainda não cobre a continuação que o recurso
 comercial descreve. O que esses ramos fazem depois do primeiro falso, e se o
 Simitone reproduz a intenção do original, permanece sem confirmação.
 
+### BHAV4114: filtro de Sims no mesmo cômodo — 2026-10-22
+
+A leitura das instruções e dos operandos do BHAV4114 permite reconstruir este
+caminho sem executar o recurso: a rotina começa procurando Sims; para cada um,
+compara o valor `Room` do StackObject com o `Room` do Caller; se forem
+diferentes, procura o próximo; se forem iguais, compara `StackObject
+PersonData[66]` com `1`. Um resultado igual termina com verdadeiro; um diferente
+retoma a procura. Se não houver outro Sim, termina com falso. O nome “do I need
+to shoo?” combina com esse filtro, mas o rótulo não prova a intenção completa.
+
+Essa leitura usa os significados de escopo/variável já implementados no ODH
+(scopes3/4 para Caller/StackObject, índice29 para Room, scope19 para PersonData)
+e compara o opcode31 com a definição `Person` do SetToNext no Simitone fixado.
+O enum do Simitone chama PersonData[66] de `Private`; isso é uma pista de nome,
+não uma confirmação do significado no executável original. Os comandos
+`odh-bhav` continuam sendo dumps estáticos. O BHAV4112 ainda contém opcodes
+272,273,49 e370 sem interpretação confirmada; não se deve inferir deles o
+efeito de mover ou colocar o Sim na fila.
+
+Também foi feita uma nova importação isolada do executável original no Ghidra
+12.1.3 PUBLIC, usando PE32 x86. A análise automática terminou, mas não
+identificou ainda uma rotina que confirme o despacho de interação3 ou seu
+efeito no mundo. Isso confirma a preparação da ferramenta, não o comportamento
+do jogo. O hash da entrada lida é
+`32857c25e00594a9bc5d700f7b373b6df59ab76ec51b36aa1d30f3dd973eff58`.
+
 Fontes consultadas: `refs/upstream/Simitone/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs`;
 `refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/VMContext.cs`;
 `refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics/Primitives/VMSnap.cs`;
