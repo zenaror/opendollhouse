@@ -24,12 +24,26 @@ nenhum asset é copiado para o projeto.
   2 membros, respectivamente.
 - Instalação `../referencias/The Sims Legacy Collection/UserData`: casas 5 e
   7 resolvidas com 3 e 2 membros, respectivamente.
+- No House07 da instalação `../referencias/The Sims`, `odh-session-entry`
+  resolveu os dois moradores (Neighbor IDs 48 e 47; arquivos
+  `User00000.iff` e `User00001.iff`). `odh-saved-world`, usando `Objects.far`
+  e esses arquivos de personagem como fontes de definições, restaurou 182
+  entidades e encontrou dois avatares no lote: ObjectIDs 105 e 137, com GUIDs
+  850010198 e 844195932. Esses GUIDs correspondem aos dois membros resolvidos
+  da família. Ambos já têm posição salva no lote. Esta é uma conferência real
+  de dados, não uma execução simultânea dos dois Sims.
 - Build Debug completa e CTest completos: 171 testes passaram; o teste
   `linux_window_backend` foi pulado pelo sandbox.
 
-O resultado é uma conferência de identidade dos arquivos. A ferramenta não cria
-Sims no World, não executa Main ou filas, não desenha nem abre o lote e não
-salva progresso. Portanto, ainda não demonstra uma sessão jogável nem a
-equivalência com Simitone ou com o jogo original. O próximo passo é entregar
-essa família ao carregamento normal do World e verificar a criação simultânea
-de seus membros.
+O resultado é uma conferência de identidade dos arquivos. `odh-session-entry`
+não cria Sims no World, não executa Main ou filas, não desenha nem abre o lote
+e não salva progresso. O leitor de lote restaura registros `ObjM` existentes,
+mas o host ainda escolhe e agenda um avatar por vez; a ligação entre a família
+resolvida e os avatares restaurados não está automatizada. Para House07, os
+dois moradores já existem no save e devem ser reutilizados, sem duplicação.
+O próximo passo é reconciliar os GUIDs da família com os avatares do World,
+preservar seus ObjectIDs/posições e preparar o Main de cada membro. Casas com
+membros ausentes do `ObjM` exigirão a lógica correta de `VerifyFamily` e de
+posicionamento antes de poderem ser declaradas compatíveis. Nada disso, por si
+só, demonstra uma sessão jogável ou equivalência com Simitone ou com o jogo
+original.
