@@ -73,13 +73,13 @@ inline std::vector<odh::SavedWorldEntity> saved_world_records(const std::string&
     return records;
 }
 inline std::vector<odh::SavedWorldEntity> saved_world_records(const odh::Objm& objects,const odh::Objt& types,
-    const std::vector<odh::SavedObjectPrefix>& prefixes,const std::vector<odh::ObjmCommonState>& common_states,
-    const std::vector<std::optional<odh::ObjmTailState>>& tail_states,const odh::DefinitionIndex& index){
+    std::vector<odh::SavedObjectPrefix> prefixes,std::vector<odh::ObjmCommonState> common_states,
+    std::vector<std::optional<odh::ObjmTailState>> tail_states,const odh::DefinitionIndex& index){
     if(prefixes.size()!=objects.blocks.size()||common_states.size()!=prefixes.size()||tail_states.size()!=prefixes.size())
         throw odh::FormatError("saved World decoded state count mismatch");
     std::vector<odh::SavedWorldEntity> records;records.reserve(prefixes.size());
     for(std::size_t n=0;n<prefixes.size();++n){
-        const auto& prefix=prefixes[n];const auto* candidate=index.unique(prefix.guid);
+        auto& prefix=prefixes[n];const auto* candidate=index.unique(prefix.guid);
         if(!candidate){
             const auto* matches=index.candidates(prefix.guid);
             if(!matches)throw odh::FormatError("saved World definition missing for object "+
@@ -96,7 +96,8 @@ inline std::vector<odh::SavedWorldEntity> saved_world_records(const odh::Objm& o
         const auto* type=types.entry_for_type(prefix.type_id);
         if(!type||!type->metadata)throw odh::FormatError("saved World object type unavailable for object "+
             std::to_string(prefix.object_id)+" type "+std::to_string(prefix.type_id));
-        records.push_back({prefix,common_states[n],*tail_states[n],candidate->definition,type->metadata->objd_type});
+        records.push_back({std::move(prefix),std::move(common_states[n]),std::move(*tail_states[n]),
+            candidate->definition,type->metadata->objd_type});
     }
     return records;
 }

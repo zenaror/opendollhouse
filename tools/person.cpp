@@ -678,7 +678,8 @@ int main(int argc,char** argv) {
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
         if(!objm||!objt||!saved_prefixes||!saved_common||!saved_tails)
             throw odh::FormatError("saved World decoded lot state unavailable");
-        restored_records=saved_world_records(*objm,*objt,*saved_prefixes,*saved_common,*saved_tails,*definition_index);
+        restored_records=saved_world_records(*objm,*objt,std::move(*saved_prefixes),std::move(*saved_common),
+            std::move(*saved_tails),*definition_index);
         if(render_saved_id){
             const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
             if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
@@ -1578,12 +1579,21 @@ struct PlacementCandidateProbe {
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
     std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
     if(render_saved_id){
-        const auto found=std::find_if(saved_prefixes->begin(),saved_prefixes->end(),[&](const auto& saved){return saved.object_id==*render_saved_id;});
-        if(found==saved_prefixes->end())throw odh::FormatError("render saved avatar ID absent from selected house");
-        const auto* type=objt->entry_for_type(found->type_id);
-        if(found->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
+        const odh::SavedObjectPrefix* saved=nullptr;
+        if(saved_world_main){
+            const auto found=std::find_if(restored_world->records.begin(),restored_world->records.end(),
+                [&](const auto& record){return record.saved.object_id==*render_saved_id;});
+            if(found!=restored_world->records.end())saved=&found->saved;
+        }else{
+            const auto found=std::find_if(saved_prefixes->begin(),saved_prefixes->end(),
+                [&](const auto& value){return value.object_id==*render_saved_id;});
+            if(found!=saved_prefixes->end())saved=&*found;
+        }
+        if(!saved)throw odh::FormatError("render saved avatar ID absent from selected house");
+        const auto* type=objt->entry_for_type(saved->type_id);
+        if(saved->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
             throw odh::FormatError("render saved avatar identity does not match the selected person resource");
-        const auto& p=found->prefix;
+        const auto& p=saved->prefix;
         if(saved_world_main){
             const auto* entity=world.find(runtime_avatar_id);
             if(!entity||!entity->position)throw odh::FormatError("render saved avatar has no live restored World position");
@@ -1594,7 +1604,7 @@ struct PlacementCandidateProbe {
             render_direction=static_cast<std::uint8_t>(p.object_data[1]);
         }
         render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
-        presented_saved_id=*render_saved_id;presented_saved_guid=found->guid;
+        presented_saved_id=*render_saved_id;presented_saved_guid=saved->guid;
     }
     if(render_requested){
         if(!body_state||!body_state->body||!playback||!animation_catalog)
@@ -2993,6 +3003,22 @@ struct PlacementCandidateProbe {
         std::cout<<"{\"owner\":"<<v.owner<<",\"scope\":"<<json_bytes(scope)<<",\"table\":"<<v.address.table<<",\"index\":"<<static_cast<unsigned>(v.address.index)
             <<",\"value\":"<<v.value<<",\"semiglobal_fallback\":"<<(v.semiglobal_fallback?"true":"false")<<'}';
     }
+    const auto saved_prefix_count=saved_world_main?restored_world->records.size():
+        saved_prefixes?saved_prefixes->size():0;
+    const auto saved_common_count=saved_world_main?restored_world->records.size():
+        saved_common?saved_common->size():0;
+    const auto saved_tail_count=saved_world_main?restored_world->records.size():
+        saved_tails?saved_tails->size():0;
+    const auto saved_prefix_at=[&](std::size_t n)->const odh::SavedObjectPrefix&{
+        return saved_world_main?restored_world->records.at(n).saved:saved_prefixes->at(n);
+    };
+    const auto saved_common_at=[&](std::size_t n)->const odh::ObjmCommonState&{
+        return saved_world_main?restored_world->records.at(n).common:saved_common->at(n);
+    };
+    const auto saved_tail_at=[&](std::size_t n)->const odh::ObjmTailState*{
+        if(saved_world_main)return &restored_world->records.at(n).tail;
+        const auto& tail=saved_tails->at(n);return tail?&*tail:nullptr;
+    };
     std::cout<<"],\"lot\":";
     if(lot)std::cout<<"{\"house\":"<<json_bytes(*lot_path)<<",\"selected_id\":"<<*lot_id<<",\"serialized_id\":"<<simi->global_data[10]
         <<",\"simi_version\":"<<simi->version<<",\"serialized_globals\":"<<simi->global_data.size()<<",\"remaining_bytes\":"<<simi->remaining_bytes
@@ -3003,14 +3029,14 @@ struct PlacementCandidateProbe {
         std::cout<<"{\"version\":"<<objm->version<<",\"compression\":"<<static_cast<unsigned>(objm->compression)
             <<",\"mapped_ids\":"<<objm->map_records.size()<<",\"blocks\":"<<objm->blocks.size()<<",\"owned_block_bytes\":"<<bytes
             <<",\"remaining_bytes\":"<<objm->remaining_bytes
-            <<",\"known_reference_schema_decoded\":"<<(saved_tails&&std::all_of(saved_tails->begin(),saved_tails->end(),[](const auto& tail){return tail.has_value();})?"true":"false")
+            <<",\"known_reference_schema_decoded\":"<<(saved_world_main||(saved_tails&&std::all_of(saved_tails->begin(),saved_tails->end(),[](const auto& tail){return tail.has_value();}))?"true":"false")
             <<",\"instance_state_decoded\":false,\"world_entities_restored\":"<<(saved_world_main?"true":"false")<<"}";
     }else std::cout<<"null";
     std::cout<<",\"saved_object_prefixes\":";
-    if(saved_prefixes){
+    if(saved_prefixes||saved_world_main){
         std::cout<<"{\"profile\":\"owned prefix snapshot; raw objt GUID mapping; OBJD and complete instance state unresolved\",\"objt_version\":"<<objt->version
             <<",\"objt_entries\":"<<objt->entries.size()<<",\"world_entities_restored\":"<<(saved_world_main?"true":"false")<<",\"records\":[";
-        for(std::size_t n=0;n<saved_prefixes->size();++n){if(n)std::cout<<',';const auto& v=(*saved_prefixes)[n];const auto& p=v.prefix;
+        for(std::size_t n=0;n<saved_prefix_count;++n){if(n)std::cout<<',';const auto& v=saved_prefix_at(n);const auto& p=v.prefix;
             std::cout<<"{\"object_id\":"<<v.object_id<<",\"type_id\":"<<v.type_id<<",\"guid\":"<<v.guid
                 <<",\"block_offset\":"<<p.block_offset<<",\"odd_offset\":"<<(p.odd_offset?"true":"false")
                 <<",\"consumed_bits\":"<<p.consumed_bits<<",\"remaining_bits\":"<<p.remaining_bits
@@ -3031,8 +3057,8 @@ struct PlacementCandidateProbe {
         <<definition_index->guid_count()<<",\"candidates\":"<<definition_index->candidate_count()<<'}';
     else std::cout<<"null";
     std::cout<<",\"saved_definition_records\":[";
-    if(saved_prefixes&&definition_index)for(std::size_t n=0;n<saved_prefixes->size();++n){
-        if(n)std::cout<<',';const auto& p=(*saved_prefixes)[n];const auto* matches=definition_index->candidates(p.guid);
+    if((saved_prefixes||saved_world_main)&&definition_index)for(std::size_t n=0;n<saved_prefix_count;++n){
+        if(n)std::cout<<',';const auto& p=saved_prefix_at(n);const auto* matches=definition_index->candidates(p.guid);
         const auto* unique=definition_index->unique(p.guid);
         std::cout<<"{\"object_id\":"<<p.object_id<<",\"guid\":"<<p.guid<<",\"status\":"
             <<json_bytes(unique?"unique":matches?"ambiguous":"missing")<<",\"candidates\":[";
@@ -3045,10 +3071,10 @@ struct PlacementCandidateProbe {
         std::cout<<"]}";
     }
     std::cout<<"],\"saved_common_records\":";
-    if(saved_common){
+    if(saved_common||saved_world_main){
         std::cout<<'[';const auto bank=[&](const auto& values){std::cout<<'[';for(std::size_t i=0;i<values.size();++i){if(i)std::cout<<',';std::cout<<values[i];}std::cout<<']';};
-        for(std::size_t n=0;n<saved_common->size();++n){if(n)std::cout<<',';const auto& s=(*saved_common)[n];
-            std::cout<<"{\"object_id\":"<<(*saved_prefixes)[n].object_id<<",\"block_offset\":"<<s.block_offset
+        for(std::size_t n=0;n<saved_common_count;++n){if(n)std::cout<<',';const auto& s=saved_common_at(n);
+            std::cout<<"{\"object_id\":"<<saved_prefix_at(n).object_id<<",\"block_offset\":"<<s.block_offset
                 <<",\"start_bits\":"<<s.start_bits<<",\"consumed_bits\":"<<s.consumed_bits<<",\"remaining_bits\":"<<s.remaining_bits
                 <<",\"decoded_words\":"<<s.decoded_words<<",\"stack_count\":"<<s.stack_count<<",\"stack_flags\":"<<s.stack_flags<<",\"stack\":[";
             for(std::size_t i=0;i<s.stack.size();++i){if(i)std::cout<<',';const auto& f=s.stack[i];
@@ -3071,10 +3097,10 @@ struct PlacementCandidateProbe {
         std::cout<<']';
     }else std::cout<<"null";
     std::cout<<",\"saved_tail_records\":";
-    if(saved_tails){
+    if(saved_tails||saved_world_main){
         std::cout<<'[';
-        for(std::size_t n=0;n<saved_tails->size();++n){if(n)std::cout<<',';const auto& tail=(*saved_tails)[n];
-            std::cout<<"{\"object_id\":"<<(*saved_prefixes)[n].object_id<<",\"status\":"
+        for(std::size_t n=0;n<saved_tail_count;++n){if(n)std::cout<<',';const auto* tail=saved_tail_at(n);
+            std::cout<<"{\"object_id\":"<<saved_prefix_at(n).object_id<<",\"status\":"
                 <<json_bytes(tail?"decoded_known_reference_schema":"definition_unavailable")
                 <<",\"world_entities_restored\":false,\"saved_threads_restored\":false,\"state\":";
             if(tail)odh_tools::saved_tail(std::cout,*tail);else std::cout<<"null";

@@ -98,6 +98,15 @@ def main():
     ]
     actor = interaction["actor"]
     route = report["route_runtime"]
+    prefixes = report["saved_object_prefixes"]["records"]
+    common_records = report["saved_common_records"]
+    tail_records = report["saved_tail_records"]
+    restore_records_consistent = (
+        len(prefixes) == len(common_records) == len(tail_records) and
+        all(tail["status"] == "decoded_known_reference_schema" for tail in tail_records) and
+        report["saved_objm_container"]["known_reference_schema_decoded"] and
+        report["saved_objm_container"]["world_entities_restored"]
+    )
     evidence = {
         "process_exit": result.returncode,
         "main_status": report["status"],
@@ -107,6 +116,12 @@ def main():
         "route_movement_callbacks": route["movement_callbacks"],
         "route_start_position": route["start_position"],
         "route_end_position": route["end_position"],
+        "saved_restore_records": {
+            "prefixes": len(prefixes),
+            "common": len(common_records),
+            "tails": len(tail_records),
+            "consistent": restore_records_consistent,
+        },
         "interaction": interaction,
         "stand": stand,
         "completion": report["completion"],
@@ -128,6 +143,7 @@ def main():
         stand["precondition_posture"] == 1 and
         stand["precondition_attachment"] == args.object_id and
         report["completion"] is not None and report["completion"]["result"] is True and
+        restore_records_consistent and
         {4097, 4100, 4099}.issubset(action_routines) and {44, 45, 46, 49}.issubset(action_opcodes) and
         bool(main_entity_next) and report["ticks"] == args.ticks and
         stand["precondition_met"] and stand["entry_point"] == 27 and
