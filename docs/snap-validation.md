@@ -9,6 +9,12 @@ mapa marca a coordenada do patamar como ocupada e o validador do Snap devolve
 de controle sem móvel mantém a chegada livre e troca o avatar para o outro
 piso. CTest: `snap_arrival_blockers` passou.
 
+O mesmo teste agora inclui um avatar sintético parado no patamar e confirma que
+o retrato de obstáculos conserva o ID `30` e marca o quadrado como ocupado.
+Isso só valida a identificação geométrica quando o chamador fornece a lista
+completa de avatares a considerar; não executa uma segunda fila de Sim nem
+manda o bloqueador se mover.
+
 É uma fixture sintética que testa a ligação entre os componentes locais; ainda
 não injeta um móvel real salvo na House03. Não afirma como o executável original
 trata esse caso. O teste de integração da House03 segue validando os dois
@@ -18,6 +24,35 @@ interrompe a VM com `unsupported` (“Shoo” ainda não está implementado); o
 primeiro avatar permanece no andar de origem. O roteiro espera essa resposta e
 continua verificando separadamente as quatro passagens normais. Essa política
 do ODH não é uma conclusão sobre o que deveria ocorrer no jogo original.
+
+Na revisão fixada do Simitone, `VMRoutingFrame.Init` inicia a lista de pessoas
+consideradas com Sims que já têm uma rota parada esperando. `AttemptWalk` usa
+essa lista ao montar os obstáculos. Se a caminhada encontra outro avatar e
+recalcular a rota também falha, `CanShooAvatar` evita repetir um pedido que já
+está ativo; quando pode, o Simitone executa o BHAV4107 no Sim que já está
+roteando ou põe a interação3 do objeto GOTO na fila dele, e espera 60 passos
+antes de tentar de novo. Isso dá uma referência concreta para a futura
+coordenação de duas filas no ODH. É comportamento observado no código do
+Simitone fixado, não confirmação do executável original. O host ODH ainda
+mantém uma só fila de roteamento ativa.
+
+Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
+primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,
+`MyObject[11]` e scope3, numa codificação diferente da ação Go Here. O adaptador
+agora aceita essa sequência exata do recurso e o teste `distance_to` confirma
+que retorna a mesma distância no cenário sintético de mesmo andar. No probe com
+rota e Snap, a VM passa por esse passo e pela notificação49, mas para ao tentar
+escrever StackObject Attribute[0], que o objeto artificial desse probe não
+declarou. Portanto BHAV4107 ainda não foi executada até o fim nem moveu um Sim.
+Comando usado:
+
+```sh
+build/linux-checkpoint/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' Destination.iff 4107 --run --world-probe --route-probe --snap-probe --object-def 16807 --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff
+```
+
+O comportamento de GetDistanceTo foi conferido no leitor de operandos do
+Simitone fixado; a nova forma é registrada também pelo teste, mas não comprova
+o significado no executável original nem completa a interação de desobstrução.
 
 ### Pista de “Shoo” no Simitone e no BHAV da escada — 2026-10-22
 

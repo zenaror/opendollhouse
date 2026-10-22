@@ -104,9 +104,34 @@ Result run(bool furniture_at_arrival) {
     const auto status = vm.run(1);
     return {status, *world.find(1)->position, checks};
 }
+
+void test_avatar_blocker_identity() {
+    const auto map = room_map();
+    // Synthetic avatar 30 stands on the exact square where the stair would
+    // place the arriving Sim. This tests the obstacle snapshot only; it does
+    // not claim that the live host has a second active Sim scheduler.
+    const std::vector<odh::AttemptWalkObstacleEntity> entities{{
+        30, true, 1, odh::AttemptWalkFootprintState::present,
+        odh::CollisionBox{46, 46, 50, 50}, 0, 0}};
+    const auto snapshot = odh::build_attempt_walk_obstacles(
+        map, 1, 1, {32, 32, 2, 0}, 1, 0, 0,
+        {1, 1, true, {}}, {1, true, {}}, entities, true, true, {30});
+    if (snapshot.state != odh::AttemptWalkObstacleState::ready)
+        std::cerr << "avatar snapshot unsupported: "
+                  << odh::attempt_walk_obstacle_reason_name(snapshot.reason) << '\n';
+    require(snapshot.state == odh::AttemptWalkObstacleState::ready,
+            "complete avatar blocker snapshot should be usable");
+    require(snapshot.entity_obstacle_ids == std::vector<std::int16_t>{30},
+            "the blocked arrival should retain the avatar ID that supplied its footprint");
+    const auto grid = odh::build_world_room_route_grid(snapshot);
+    require(grid.state == odh::WorldRoomRouteGridState::ready && grid.grid &&
+            !grid.grid->walkable({48, 48}),
+            "the avatar footprint should block the stair arrival square");
+}
 }
 
 int main() {
+    test_avatar_blocker_identity();
     const auto blocked = run(true);
     require(blocked.status == odh::VmStatus::returned_false &&
             blocked.actor_position == odh::EntityPosition{32, 32, 1, 6} &&
@@ -118,5 +143,5 @@ int main() {
             clear.actor_position == odh::EntityPosition{48, 48, 2, 6} &&
             clear.placement_checks == 2,
             "clear stair arrival should pass and place the Sim on the other floor");
-    std::cout << "stair arrival furniture blocker and clear-control checks passed\n";
+    std::cout << "synthetic avatar blocker identity, furniture blocker, and clear-control checks passed\n";
 }

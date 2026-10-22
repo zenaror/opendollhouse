@@ -24,7 +24,12 @@ VmPrimitive get_distance_to_primitive(const World& world) {
         // two bytes are unused by this Simitone operand reader, but retaining
         // the exact observed encoding keeps this profile deliberately narrow.
         const bool saved_go_here=op==std::array<std::uint8_t,8>{0,0,255,3,11,0,255,255};
-        if(!caller_default&&!saved_go_here)
+        // Destination.iff BHAV4107 (Move out of way) uses the same parsed
+        // fields with its own serialized trailing bytes. Simitone's operand
+        // reader ignores those bytes, so this exact resource encoding has the
+        // same same-level distance meaning as Go Here's form above.
+        const bool saved_shoo=op==std::array<std::uint8_t,8>{0,0,1,3,11,0,0,0};
+        if(!caller_default&&!saved_go_here&&!saved_shoo)
             return {PrimitiveDisposition::unsupported,"GetDistanceTo outside Temp0/Caller or Destination Go Here/same-level profile"};
         const auto* stack_object=world.find(frame.context.stack_object);
         const auto* caller=world.find(frame.context.caller);
