@@ -86,15 +86,18 @@ o mesmo SHA-256, portanto contam como um único exemplo independente por casa:
 Essa busca decodificou a tabela OBJT e os blocos OBJM para localizar o ramo de
 Person e ler os campos já suportados por `objm_tail`. Ela só informa o conteúdo
 salvo; não prova quando ou como o jogo executaria uma ação. A importação
-completa da House77 ainda falha ao procurar a definição do objeto 649, então
-seus vínculos com o restante do World não foram validados pelo importador ODH.
-Os campos de fila continuam apenas dados dormentes: nenhuma ação foi ativada.
+completa da House77 ainda não termina. Com `Objects.far` sozinho, a primeira
+definição indisponível é a do objeto 649. Ao acrescentar `ExpansionShared.far`,
+`ExpansionPack5.far`, `ExpansionPack7.far` e `Global.far`, a leitura avança até
+parar no objeto 211. Isso mostra que as fontes ainda não bastam para importar
+todo o World; os vínculos da fila com o restante da casa não foram validados
+pelo importador ODH. Os campos continuam dormentes: nenhuma ação foi ativada.
 
 A busca também mostrou que o limite padrão de 65.536 palavras dos prefixos não
 comportava os bancos fixos dos 847 objetos da House77. O limite cumulativo subiu
 para 131.072 e o teste de prefixos agora inclui um lote sintético de 847
-entidades. Isso permite avançar na leitura dos prefixos, mas não resolve a
-definição ausente nem representa a importação completa da casa.
+entidades. Isso permite avançar na leitura dos prefixos, mas não completa a
+importação da casa, que ainda depende de resolver as demais definições.
 
 ## House05 da instalação local
 

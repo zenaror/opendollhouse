@@ -11,9 +11,10 @@ validação indicados por versão.
   de até 131.072 palavras para arquivos grandes. Isso permite representar
   os bancos fixos de um lote nativo inspecionado com 847 entidades; o teste cobre
   esse tamanho. Na busca estática dos saves Legacy, House77 contém uma
-  interação pendente na fila de Hecuba (ID 11). Esse arquivo ainda não passa
-  pela importação completa de World porque falta resolver a definição do
-  objeto 649. Os detalhes e limites da descoberta estão em
+  interação pendente na fila de Hecuba (ID 11). A importação completa do World
+  continua sem sucesso: com `Objects.far` sozinho, falta a definição do
+  objeto 649; ao acrescentar algumas fontes de expansão, a leitura avança e
+  para no objeto 211. Os detalhes e limites da descoberta estão em
   [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
 
 - `odh-saved-world` agora inclui um plano somente de leitura para as pilhas
