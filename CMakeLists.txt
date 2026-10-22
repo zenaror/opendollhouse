@@ -1155,6 +1155,8 @@ if(BUILD_TESTING)
   if(Python3_Interpreter_FOUND)
     add_test(NAME session_entry_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/session_entry_cli.py $<TARGET_FILE:odh-session-entry>)
+    add_test(NAME play_linux_cli COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/play_linux_cli.py)
     if(TARGET odh-neighborhood-window)
       add_test(NAME neighborhood_window_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/neighborhood_window_cli.py $<TARGET_FILE:odh-neighborhood-window>)

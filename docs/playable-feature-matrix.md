@@ -1,6 +1,7 @@
 # Matriz de recursos para a primeira build jogável
 
-Esta matriz é um retrato do checkout em `7b0cea3`, não uma alegação de
+Esta matriz é um retrato do checkpoint `96ce40f` mais a prévia de integração
+Linux registrada em [linux-launcher-preview-validation.md](linux-launcher-preview-validation.md), não uma alegação de
 equivalência. O alvo é o fluxo funcional do Simitone para The Sims Coleção
 Completa no Linux, incluindo as sete expansões. “Parcial” significa que há uma
 peça demonstrável, mas falta ligá-la ao caminho de jogo descrito.
@@ -8,9 +9,9 @@ peça demonstrável, mas falta ligá-la ao caminho de jogo descrito.
 | Área | Evidência atual no OpenDollhouse | Estado | Próxima demonstração necessária |
 | --- | --- | --- | --- |
 | Abrir o jogo e escolher dados/idioma | Há ferramentas de linha de comando; não existe ainda um aplicativo de jogo unificado. O codec de texto Linux é uma peça isolada ([README](../README.md), [inventário de idiomas](language-resource-inventory.md)). | Não ligado | Iniciar o aplicativo, localizar/selecionar dados, escolher idioma e guardar a preferência para a próxima abertura. |
-| Vizinhança e lotes | `odh-neighborhood-window` mostra mapas e devolve a casa clicada; não abre lote nem mostra gestão de famílias ([validação](neighborhood-map-validation.md)). | Parcial | Escolher família e lote na interface e chegar ao lote sem fechar o aplicativo. |
+| Vizinhança e lotes | `odh-play-linux` encadeia mapa, família e prévia de lote; resolve o morador pelo GUID e pelo objeto real salvo. Mapa e lote ainda são janelas separadas; sem retorno, salvamento ou gestão de famílias ([mapas](neighborhood-map-validation.md), [prévia](linux-launcher-preview-validation.md)). | Parcial | Escolher família e lote e entrar na simulação na mesma sessão, com retorno à vizinhança. |
 | Criar, escolher e excluir família | FAMI é lido e a família certa pode ser ativada em probes; ainda não há fluxo de edição/criação/exclusão na interface ([validação](family-restore-validation.md)). | Leitura parcial | Criar, renomear, mudar e excluir uma família com confirmação, preservando as demais após reiniciar. |
-| Restaurar e jogar lote residencial | World de saves reais é importado; Main de House07 roda para um ou dois moradores por 32 ticks ([World](saved-world-validation.md), [host](person-host-validation.md)). Os scripts salvos antigos continuam dormentes. | Parcial | Abrir um lote a partir da vizinhança, desenhá-lo na janela, controlar tempo e moradores, e sair de volta à vizinhança. |
+| Restaurar e jogar lote residencial | World real pode ser preparado pelo launcher e desenhado numa captura; Main de House07 roda em provas curtas para um ou dois moradores ([World](saved-world-validation.md), [host](person-host-validation.md), [prévia](linux-launcher-preview-validation.md)). A prévia ainda não é uma sessão contínua, os scripts salvos antigos continuam dormentes e o primeiro Main pode terminar incompleto. | Parcial | Jogar um ciclo residencial completo, com moradores ativos, controles, ações, estado salvo e retorno à vizinhança. |
 | Interações, necessidades e autonomia | Há execução de BHAVs e algumas interações isoladas; o Main ainda encontra serviços sem implementação em caminhos reais ([interações](interaction-validation.md), [Main do avatar](person-host-validation.md)). | Parcial | Escolher uma ação na interface, vê-la completar, alterar o estado/necessidade e permitir que o Sim retome sua rotina. |
 | Construir e comprar | Catálogos e recursos podem ser inspecionados; falta o ciclo de edição, compra, posicionamento, confirmação e persistência no jogo ([catálogo de objetos](hit-object-catalog-validation.md)). | Não ligado | Comprar/colocar/remover um item num lote e confirmar o resultado ao salvar e reabrir. |
 | Salvar, sair e continuar | Leitores preservam muitos dados de World; não gravam uma sessão retomável com threads, filas e estado atualizado ([World salvo](saved-world-validation.md)). | Parcial | Salvar alterações de uma sessão ODH, fechar o lote/aplicativo e continuar do estado gravado. |

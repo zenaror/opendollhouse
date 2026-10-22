@@ -25,6 +25,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Prévia de launcher Linux encadeia seleção de lote, família e preparação do
+  lote salvo. A identidade do morador é ligada pelo GUID ao objeto real do
+  World (House07: vizinhança 48/47 → objetos salvos 105/137); entradas ausentes
+  ou ambíguas falham. CLI e testes passaram, mas a janela ainda não foi
+  exercitada como sessão contínua e não há salvamento/retorno ou equivalência
+  jogável. Veja [`linux-launcher-preview-validation.md`](docs/linux-launcher-preview-validation.md).
+
 - A bancada `odh-person` aceita um IFF próprio para o segundo avatar de teste,
   com rotinas e ajustes privados separados. Verificado com dois arquivos
   sintéticos e rotinas de mesmo número; isso ainda não executa dois moradores

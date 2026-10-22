@@ -71,8 +71,8 @@ with tempfile.TemporaryDirectory(prefix="odh-session-entry-") as folder:
     check(result["family_chunk_id"]==201 and result["family_number"]==900 and
           result["member_count"]==2 and result["house_number"]==7)
     check(result["members"]==[
-        {"neighbor_id":11,"character_asset":"User00002.iff","object_definition_id":128},
-        {"neighbor_id":12,"character_asset":"User00009.iff","object_definition_id":128}])
+        {"guid":guid_a,"neighbor_id":11,"character_asset":"User00002.iff","object_definition_id":128},
+        {"guid":guid_b,"neighbor_id":12,"character_asset":"User00009.iff","object_definition_id":128}])
     bad=subprocess.run([binary,"--user-data",str(root),"--mode","6","--house","7"],
                        capture_output=True,text=True)
     check(bad.returncode==2 and not bad.stdout)

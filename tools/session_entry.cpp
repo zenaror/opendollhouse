@@ -76,7 +76,7 @@ std::string run(const std::filesystem::path& root,unsigned mode,std::uint16_t ho
     bool first=true;
     for(const auto& member:entry.members){
         if(!first)out<<',';first=false;
-        out<<"{\"neighbor_id\":"<<member.neighbor_id<<",\"character_asset\":"
+        out<<"{\"guid\":"<<member.guid<<",\"neighbor_id\":"<<member.neighbor_id<<",\"character_asset\":"
            <<json_bytes(member.character_asset)<<",\"object_definition_id\":"
            <<member.object_definition_id<<'}';
     }
