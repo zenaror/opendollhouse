@@ -40,6 +40,17 @@ int main() {
             require(vm.temps()[0]==expected&&vm.temps()[1]==expected+100,"global resolves semiglobal/private from preserved owner");
             require(traced==std::vector<odh::CodeOwner>(5,owner),"all nested trace instructions retain code owner");
         }
+        auto shared_program=std::make_shared<const odh::VmProgram>(base());
+        odh::Vm entity_a(shared_program,odh::ShareVmProgramTag{}),entity_b(shared_program,odh::ShareVmProgramTag{});
+        require(entity_a.install_owner(44,bank(44)),"entity-specific code installs beside a shared program");
+        entity_a.start(key(4096),{1,2,2,44});entity_b.start(key(4096),{3,4,4,44});
+        require(entity_a.run(10)==odh::VmStatus::returned_true&&entity_a.temps()[0]==44,
+                "one entity resolves its own appended code over the shared BHAV program");
+        require(entity_b.run(10)==odh::VmStatus::fault&&entity_b.diagnostic().find("code owner not supplied: 44")!=std::string::npos,
+                "an entity-specific code owner does not leak to another execution state");
+        entity_b.start(key(4096),{3,4,4,0});
+        require(entity_b.run(10)==odh::VmStatus::returned_true&&entity_b.temps()[0]==7,
+                "second entity can independently execute the shared default BHAV bank");
         // Callee/StackObject are independent entity identities, not code banks.
         auto changed=bank(11);changed[key(4096)]=routine({assign(0,22,10,1),call(256)});
         owners[11]=changed;

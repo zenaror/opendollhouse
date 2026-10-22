@@ -91,15 +91,17 @@ para o passo e chama `ent.Tick()`. Cada `VMEntity` possui seu próprio
 dentro da mesma VM do lote, não uma segunda VM completa. Fontes: `VM.cs:380-429`,
 `Engine/VMScheduler.cs:79-97`, `Entities/VMEntity.cs:61,490`.
 
-No ODH atual, cada `Vm` possui uma pilha e registradores próprios
-(`include/odh/vm.hpp`), mas não existe ainda um scheduler de entidades que
-avance várias pilhas com um mesmo tick e orçamento compartilhado. O teste de
-duas filas usa dois objetos `Vm` e chama seus métodos diretamente; portanto,
-não representa o scheduler do Simitone. Próximo passo de arquitetura: separar
-programa/código compartilhado do estado de execução de cada entidade e adicionar
-um scheduler limitado por tick; só depois ligar `IdleForInput`, a notificação e
-a fila do GOTO ao Sim bloqueador. Essa separação também evita copiar o banco
-inteiro de BHAVs para cada Sim, importante para os ports portáteis.
+No ODH, cada `Vm` possui uma pilha e registradores próprios
+(`include/odh/vm.hpp`), e ainda não existe um scheduler de entidades que avance
+várias pilhas com um mesmo tick e orçamento compartilhado. O teste de duas filas
+usa dois objetos `Vm` e chama seus métodos diretamente; portanto, não representa
+o scheduler do Simitone. O primeiro subpasso já está implementado: `VmProgram`
+permite compartilhar o banco BHAV imutável entre objetos `Vm`, enquanto os
+owners instalados em tempo de execução continuam locais a cada VM. O teste
+`vm_code_owners` verifica que um owner exclusivo de uma entidade não aparece na
+outra. Ainda falta adicionar o scheduler limitado por tick e só depois ligar
+`IdleForInput`, a notificação e a fila do GOTO ao Sim bloqueador. Compartilhar
+as rotinas evita copiá-las para cada Sim, importante para os ports portáteis.
 
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,

@@ -2,6 +2,8 @@
 
 #include "odh/formats.hpp"
 #include <map>
+#include <memory>
+#include <utility>
 
 namespace odh {
 
@@ -21,6 +23,19 @@ using RoutineSet = std::map<RoutineKey, Bhav>;
 // Owner zero is reserved for the default set; global routines are shared there.
 using RoutineOwners = std::map<CodeOwner, RoutineSet>;
 RoutineKey routine_key(std::uint16_t id);
+
+// Immutable BHAV bank that multiple entity execution states may share.
+// Runtime owners remain local to each Vm so a resource installed for one
+// entity cannot accidentally become visible to another entity.
+class VmProgram {
+public:
+    explicit VmProgram(RoutineSet routines):routines_(std::move(routines)){}
+    const RoutineSet& routines() const {return routines_;}
+private:
+    friend class Vm;
+    const RoutineSet routines_;
+};
+struct ShareVmProgramTag {};
 
 enum class VmStatus { ready, running, budget_exhausted, waiting, returned_true, returned_false, fault, yielded };
 enum class VmCallReturnMode { ordinary, interaction_next_tick, external_frame_next_tick };
@@ -129,6 +144,8 @@ class Vm {
 public:
     explicit Vm(RoutineSet routines, VmMemory memory = {}, VmLimits limits = {}, VmPrimitive primitive = {},
                 RoutineOwners owners = {});
+    explicit Vm(std::shared_ptr<const VmProgram> program, ShareVmProgramTag, VmMemory memory = {}, VmLimits limits = {},
+                VmPrimitive primitive = {}, RoutineOwners owners = {});
     Vm(const Vm&) = delete;
     Vm& operator=(const Vm&) = delete;
     Vm(Vm&&) = delete;
@@ -177,7 +194,7 @@ private:
     bool expression(const Instruction&);
     std::int16_t read(std::uint8_t, std::int16_t);
     void write(std::uint8_t, std::int16_t, std::int32_t);
-    RoutineSet routines_;
+    std::shared_ptr<const VmProgram> program_;
     RoutineOwners owners_;
     VmMemory memory_;
     VmLimits limits_;

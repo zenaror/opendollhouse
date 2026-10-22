@@ -57,7 +57,13 @@ const char* vm_status_name(VmStatus status) {
     return "invalid_status";
 }
 Vm::Vm(RoutineSet routines, VmMemory memory, VmLimits limits, VmPrimitive primitive, RoutineOwners owners)
-    : routines_(std::move(routines)), owners_(std::move(owners)), memory_(std::move(memory)), limits_(limits), primitive_(std::move(primitive)) {
+    : Vm(std::make_shared<const VmProgram>(std::move(routines)),ShareVmProgramTag{},std::move(memory),limits,
+         std::move(primitive),std::move(owners)) {}
+Vm::Vm(std::shared_ptr<const VmProgram> program, ShareVmProgramTag, VmMemory memory, VmLimits limits,
+       VmPrimitive primitive, RoutineOwners owners)
+    : program_(std::move(program)), owners_(std::move(owners)), memory_(std::move(memory)),
+      limits_(limits), primitive_(std::move(primitive)) {
+    if(!program_)throw std::invalid_argument("VM program is null");
     if(!limits_.code_owners || owners_.size()>=limits_.code_owners)
         throw std::invalid_argument("VM code owner limit");
     for(const auto& owner:owners_) {
@@ -82,7 +88,7 @@ bool Vm::install_owner(CodeOwner owner, RoutineSet routines) {
 }
 const Bhav* Vm::resolve(RoutineKey key, CodeOwner owner) const {
     if(owner!=0 && owners_.find(owner)==owners_.end())return nullptr;
-    const auto& bank=(key.scope==RoutineScope::global || owner==0)?routines_:owners_.at(owner);
+    const auto& bank=(key.scope==RoutineScope::global || owner==0)?program_->routines_:owners_.at(owner);
     const auto found=bank.find(key);
     return found==bank.end()?nullptr:&found->second;
 }
