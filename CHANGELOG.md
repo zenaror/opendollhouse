@@ -17,6 +17,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Janela Linux `odh-neighborhood-window` mostra seis mapas do UIGraphics.far e
+  permite selecionar uma casa pelas coordenadas de LotLocations. Marcadores
+  distinguem FAMI, casa sem FAMI e arquivo ausente; modo 6 é explicitamente
+  indisponível. Retorna a seleção sem iniciar gameplay. Veja
+  [`neighborhood-map-validation.md`](docs/neighborhood-map-validation.md).
+
 - `read_bmp` decodifica BMP indexado com compressão RLE8, incluindo runs,
   linhas, saltos e preenchimento; a imagem é limitada a 1 milhão de pixels e o
   fluxo comprimido a 8 MiB. A imagem da vizinhança original agora abre sem

@@ -35,6 +35,11 @@ Os CLIs atuais leem arquivos/pastas; leitura direta de ISO e importação dos
 CABs ainda não estão implementadas. A preparação desses assets será uma etapa
 separada, preservando a fonte e diagnosticando dados ausentes ou incompatíveis.
 
+A [janela Linux de seleção do mapa](docs/neighborhood-map-validation.md),
+`odh-neighborhood-window --user-data DIR --ui-graphics UIGraphics.far --mode 1`,
+mostra o fundo original e marcadores clicáveis. Retorna o número da casa em
+JSON e fecha; ainda não abre uma sessão de lote. Requer build com X11.
+
 ## Organização e continuidade
 
 | Conteúdo | Local canônico |
