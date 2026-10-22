@@ -17,6 +17,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `read_bmp` decodifica BMP indexado com compressão RLE8, incluindo runs,
+  linhas, saltos e preenchimento; a imagem é limitada a 1 milhão de pixels e o
+  fluxo comprimido a 8 MiB. A imagem da vizinhança original agora abre sem
+  extrair ou alterar arquivos do jogo. Veja
+  [`bitmap-rle8-validation.md`](docs/bitmap-rle8-validation.md).
+
 - `odh-neighborhood` lista/seleciona lotes via LotLocations STR#, FAMI e caminhos
   HouseNN, com coordenadas e IDs de família distintos. Parser CSV limitado e
   testes sintéticos; modo 6 explicitamente unsupported. Resolve casa → família

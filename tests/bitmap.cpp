@@ -42,6 +42,18 @@ std::string fixture(unsigned bits,bool top_down=false,unsigned palette_count=3,u
     }
     return bytes;
 }
+std::string rle_fixture(const std::vector<std::uint8_t>& encoded) {
+    const unsigned width=3,height=2,palette=256,offset=54+palette*4;
+    std::string bytes(offset+encoded.size(),'\0');
+    set(bytes,0,0x4D42,2);set(bytes,2,bytes.size());set(bytes,10,offset);set(bytes,14,40);
+    set(bytes,18,width);set(bytes,22,height);set(bytes,26,1,2);set(bytes,28,8,2);
+    set(bytes,30,1);set(bytes,34,encoded.size());
+    for(unsigned i=0;i<palette;++i) {
+        const auto at=54+i*4;bytes[at+(2-i%3)]=static_cast<char>(255);
+    }
+    for(std::size_t i=0;i<encoded.size();++i)bytes[offset+i]=static_cast<char>(encoded[i]);
+    return bytes;
+}
 }
 int main() {try {
     const std::vector<std::array<std::uint8_t,4>> expected={
@@ -108,6 +120,36 @@ int main() {try {
     auto rgb=fixture(24);set(rgb,46,1);rejects([&]{decode(rgb);});
     auto with_tail=fixture(24)+"abcd";set(with_tail,2,with_tail.size());
     require(decode(with_tail).remaining_bytes==4,"declared file tail remains visible");
+    const auto rle=rle_fixture({0,3,0,1,2,0,0,0,0,3,2,1,0,0,0,0,0,1});
+    const std::vector<std::array<std::uint8_t,4>> rle_expected={
+        {0,0,255,255},{0,255,0,255},{255,0,0,255},
+        {255,0,0,255},{0,255,0,255},{0,0,255,255}};
+    require(decode(rle).pixels==rle_expected,"RLE8 absolute runs, word padding and bottom-up rows decode");
+    require(decode(rle).remaining_bytes==0,"RLE8 consumed extent has no tail");
+    const auto encoded_runs=decode(rle_fixture({3,1,0,0,3,2,0,1}));
+    require(encoded_runs.pixels==std::vector<std::array<std::uint8_t,4>>{
+        {0,0,255,255},{0,0,255,255},{0,0,255,255},
+        {0,255,0,255},{0,255,0,255},{0,255,0,255}},"RLE8 encoded runs and EOL decode");
+    const auto delta=decode(rle_fixture({1,1,0,2,1,0,1,2,0,0,3,0,0,1}));
+    require(delta.pixels==std::vector<std::array<std::uint8_t,4>>{
+        {255,0,0,255},{255,0,0,255},{255,0,0,255},
+        {0,255,0,255},{255,0,0,255},{0,0,255,255}},"RLE8 delta preserves skipped palette-zero pixels");
+    for(const auto& bad:std::vector<std::vector<std::uint8_t>>{
+            {0},{0,2,1},{0,3,0,1},{4,1,0,1},{3,1},
+            {0,2,4,0,0,1}})
+        rejects([&]{decode(rle_fixture(bad));});
+    auto bad_index=rle_fixture({1,255,0,1});set(bad_index,46,1);
+    rejects([&]{decode(bad_index);});
+    auto small_rle=rle_fixture({3,1,0,0,3,2,0,1});
+    for(std::size_t cut=0;cut<small_rle.size();++cut)rejects([&]{decode(small_rle.substr(0,cut));});
+    auto rle_limits=odh::BitmapLimits{};rle_limits.rle_bytes=7;
+    rejects([&]{decode(rle_fixture({3,1,0,0,3,2,0,1}),rle_limits);});
+    auto rle_bad=rle_fixture({3,1,0,0,3,2,0,1});set(rle_bad,34,0);rejects([&]{decode(rle_bad);});
+    rle_bad=rle_fixture({3,1,0,0,3,2,0,1});set(rle_bad,22,0xFFFFFFFEU);rejects([&]{decode(rle_bad);});
+    auto oversized_rle_size=rle_fixture({3,1,0,0,3,2,0,1});
+    set(oversized_rle_size,34,static_cast<std::uint32_t>(oversized_rle_size.size()));
+    require(decode(oversized_rle_size).pixels==encoded_runs.pixels,
+            "RLE8 size-image hint cannot extend beyond the bounded BMP file");
     std::cout<<checks<<" BMP checks passed (synthetic fixtures only)\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<"BMP test failed: "<<e.what()<<'\n';return 1;}}

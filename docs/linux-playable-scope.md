@@ -27,6 +27,11 @@ e um caso de tradução ausente, é suficiente para o primeiro gate de idioma.
 - **Vizinhança e famílias:** mostrar o overworld/vizinhança com seus lotes;
   criar, escolher, renomear e excluir famílias; mudar uma família para outro
   lote; entrar em um lote e voltar à vizinhança sem perder o estado salvo.
+  Excluir uma família inteira significa remover a família escolhida e seus
+  vínculos com confirmação, mantendo as demais famílias. Apagar um Sim durante
+  a edição ou desocupar uma casa não conta como excluir a família. Esse fluxo
+  continua obrigatório para o OpenDollhouse mesmo que o caminho de exclusão
+  esteja incompleto na referência Simitone consultada.
 - **Lotes residenciais e comunidade:** abrir, jogar e salvar lotes da edição
   base e das expansões. “O Bicho Vai Pegar” (House Party) entra nesta cobertura
   de lotes e objetos.
