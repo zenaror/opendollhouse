@@ -31,6 +31,15 @@ no título e em uma faixa desenhada dentro da cena. Isso é uma escolha temporá
 de execução para teste, não uma preferência persistida nem um seletor dentro do
 jogo; a interface jogável ainda precisa de opção própria.
 
+Esclarecimento de escopo de 2026-10-22: “primeira build jogável” significa um
+candidato Linux que cubra o ciclo principal e os destinos/sistemas das sete
+expansões, com vizinhança visível, gestão de famílias, mudança entre lotes e
+comparação de recursos com o Simitone da Coleção Completa. Um lote controlado
+com poucas interações é somente um teste intermediário. A build também deve
+gravar logs locais limitados e úteis para reproduzir bugs e identificar falhas.
+Os recursos obrigatórios, caminhos de aceitação e requisito de diagnóstico estão
+detalhados em [linux-playable-scope.md](linux-playable-scope.md).
+
 Decisão de planejamento de 2026-10-20: após a primeira versão funcional Linux e
 os ports prioritários New 3DS/Vita/Android, manter Windows e macOS como alvos
 futuros de build. Incluir Windows desktop e macOS para Apple Silicon (arm64) e
@@ -269,11 +278,15 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    uma interface que permita experimentar software, híbrido CPU/GPU e geometria
    derivada no futuro backend New 3DS. PICA200 não oferece fragment shader
    programável equivalente ao das APIs modernas; não fazer o núcleo depender dele.
-5. **Lote mínimo:** tempo, interação completa, necessidades, compra/construção
-   delimitada e persistência ODH. Separar importação de saves, persistência ODH e
-   exportação consumível pelo original.
-6. **Cobertura:** sistemas clássicos, expansões e conteúdo personalizado por
-   cenários/versionamento; depois extensões e ferramentas.
+5. **Jogo Linux jogável:** tempo, interação completa, necessidades,
+   compra/construção, vizinhança, gestão de famílias, mudança entre lotes,
+   destinos das expansões, seleção persistente de idioma e gravação local de
+   logs. A aceitação exige a matriz de cobertura em
+   [linux-playable-scope.md](linux-playable-scope.md), comparada com Simitone;
+   House07 e outros lotes isolados são testes intermediários. Separar importação
+   de saves, persistência ODH e exportação consumível pelo original.
+6. **Cobertura:** validar os sistemas de cada expansão e conteúdo personalizado
+   através dos fluxos completos da matriz Linux; depois extensões e ferramentas.
 7. **Ports prioritários:** transportar o núcleo validado para New 3DS, Vita e
    Android, implementar backends e controles próprios; medir memória, CPU,
    renderização e carregamento em hardware real.
@@ -284,12 +297,12 @@ estabilizadas. Apartamentos não fazem parte do primeiro escopo.
    de toolchain, distribuição e validação em hardware ainda não foi confirmado.
    O usuário não tem equipamento para testes manuais de Windows ou macOS.
 
-Primeira versão Linux candidata a teste: abrir um cenário controlado com recursos
-originais externos, exibir a cena, executar uma interação completa (sentar/levantar),
-avançar tempo/necessidades no escopo definido e salvar/restaurar estado ODH.
-Os resultados e lacunas devem acompanhar a versão; não chamar isso de suporte
-completo a TS1 ou às sete expansões. Testes diferenciais contra o original têm
-identidade de executável/recursos/save inicial e ações registradas.
+Os cenários controlados com dados originais externos, uma interação completa
+(sentar/levantar), avanço do tempo/necessidades e gravação/restauração ODH são
+gates intermediários. Eles não satisfazem a primeira build jogável definida na
+matriz e não permitem alegar equivalência ao Simitone ou suporte às sete
+expansões. Testes diferenciais contra o original têm identidade de
+executável/recursos/save inicial e ações registradas.
 
 Metas sugeridas para o primeiro cenário New 3DS: 30 FPS, p95 de frame até 33,3 ms,
 simulação sem descartar ticks e memória até o menor valor entre 96 MiB e 80% do
