@@ -78,3 +78,26 @@ confirma a cadeia de simulação até o retorno da ação nos dois sentidos para
 essas idades; não confirma pixels animados, som, colisão geral ou equivalência
 com o executável original. Os dados comerciais continuam somente leitura e
 fora do Git.
+
+### Pose animada em imagem — 2026-10-22
+
+O mesmo probe agora pode exportar quadros do Playback em `--capture-tick`.
+Para o diagnóstico da animação `a2o-stair-climb`, a câmera da imagem de teste
+é deslocada até a posição em que a pose aparece; isso não altera a posição do
+Sim no World. O teste gera apenas a imagem do Sim, sobre fundo claro, sem
+compor escada, móveis ou o restante do lote.
+
+Foram capturados os ticks14,16 e20. Os três passaram pelas verificações de
+ator, clipe e desenho, e resultaram em imagens diferentes. A inspeção lado a
+lado mostra a pose mudando durante a subida. Os arquivos PPM de diagnóstico
+foram mantidos em `/tmp/house03-stair-sequence-tick{14,16,20}.ppm`; o mosaico
+para inspeção é `/tmp/house03-stair-sequence.png`. SHA-256, na mesma ordem:
+`92406d40ff9724b40d36a97a82302fa149c1c045a649b21fc97f8cbd9e2c253f`,
+`0bc23a3299d72b259027338946c165a3274c814bba44053f199ad78f5d5f6a4c` e
+`db419312e6e75895e1f521a2040ffcfdc594070c07e02f00191006dca440b6ad`.
+
+Isso demonstra que o Sim da simulação chega ao desenho com poses diferentes.
+Ainda não demonstra o Sim sobre a escada no lote, nem composição visual ou
+equivalência com o jogo original. O enquadramento especial é só uma lente para
+examinar a pose; a próxima etapa é combinar o Sim com o lote e a escada sem
+esconder objetos nem exceder os limites do compositor.

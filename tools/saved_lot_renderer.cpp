@@ -135,7 +135,8 @@ odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
 }
 
 SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
-                                      const odh::RasterFrame& avatar_frame,bool record_picks) {
+                                      const odh::RasterFrame& avatar_frame,bool record_picks,
+                                      bool include_objects) {
     auto image=odh::rasterize(camera.width,camera.height,{},{});
     SavedLotFrame result;
     if(view_.terrain_theme){
@@ -161,6 +162,11 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         result.wall_tested_samples=wall.composite.tested_samples;
         result.wall_shaded_samples=wall.composite.shaded_samples;
         image=std::move(wall.composite.image);
+    }
+    if(!include_objects){
+        result.ground_pick_ids=std::move(image.owner_ids);
+        result.image=std::move(image);
+        return result;
     }
     std::vector<SavedObjectVisual> visuals;
     for(const auto& raw:saved_.records){

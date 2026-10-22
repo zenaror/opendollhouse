@@ -1,5 +1,22 @@
 # Continuidade atual
 
+## Atualização: imagem da pose durante a escada (2026-10-22)
+
+O `--capture-tick` de `tests/house03_stair_approach.py` exporta uma imagem do
+Playback vivo. Para `a2o-stair-climb`, a câmera da captura diagnóstica acompanha
+o deslocamento grande que já vem gravado na animação; a posição do Sim no World
+permanece a mesma. Ticks14,16 e20 geram quadros diferentes, com o Sim inteiro
+visível. Essa imagem contém só o Sim sobre fundo claro: escada, objetos e lote
+não foram compostos. É prova de poses animadas chegando ao desenho, não prova
+de travessia visual na escada. CTest passou 160/160; `linux_window_backend` foi
+ignorado por não haver display.
+
+Próximo: enquadrar a pose usando o ponto de apoio da própria escada e então
+compor o Sim com o lote. Antes disso, resolver o limite do compositor que
+recusa uma camada de objeto com extensão repetida muito grande; não omitir os
+objetos e chamar a imagem de “lote completo”. Preservar as imagens de pose como
+diagnóstico separado até haver composição que inclua a escada.
+
 ## Escadas da House03: localizar a porta entre andares (2026-10-22)
 
 ### Atualização: caminhada até os dois patamares (2026-10-22)

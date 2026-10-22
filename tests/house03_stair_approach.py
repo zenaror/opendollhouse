@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Probe the real House03 stair landings with a synthetic waiting Main/avatar."""
 import argparse
+import hashlib
 import json
 import pathlib
 import struct
@@ -47,7 +48,8 @@ def architecture_resources(game: pathlib.Path):
 
 def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
               portal_id: int, start: tuple[int, int, int], expected: tuple[int, int, int],
-              age: int):
+              age: int, render_tick: int | None = None,
+              render_output: pathlib.Path | None = None):
     global_far = game / "GameData/Global/Global.far"
     animation_far = game / "GameData/Animation/Animation.far"
     expansion_far = game / "ExpansionShared/ExpansionShared.far"
@@ -65,6 +67,14 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         "--headless-fixture-main-arg0", "64", "--headless-portal", str(portal_id), "1",
         "--age", str(age), "--animation-source", str(animation_far),
         "--animation-source", str(expansion_far), "--ticks", "300"]
+    if (render_tick is None) != (render_output is None):
+        raise ValueError("render tick and output path must be provided together")
+    if render_tick is not None:
+        command += ["--render-animation-far", str(animation_far),
+            "--render-textures", str(game / "GameData/Textures/Textures.far"),
+            "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
+            "--render-level", "2",
+            "--render-tick", str(render_tick), "--render-frame", str(render_output)]
     for resource in architecture_resources(game):
         command += ["--architecture-resource", str(resource)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=180)
@@ -95,6 +105,22 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         raise AssertionError(f"the stair animation did not resolve and produce events: {data.get('animation_resolution_diagnostic')}")
     if data["actor_state"]["age"] != age:
         raise AssertionError(f"fixture age mismatch: expected {age}, got {data['actor_state']['age']}")
+    render = data.get("render")
+    if render_tick is not None:
+        if not render or render.get("output") != str(render_output):
+            raise AssertionError(f"no frame was captured at tick {render_tick}: {render}")
+        if render.get("actor") != 30000 or render.get("tick") != render_tick:
+            raise AssertionError(f"captured frame has the wrong actor/tick: {render}")
+        if render.get("shaded_samples", 0) <= 0:
+            raise AssertionError(f"captured frame has no shaded pixels: {render}")
+        if "stair" not in render.get("clip", "").lower():
+            raise AssertionError(f"captured frame is not a stair animation: {render}")
+        if render.get("lot_composited") or render.get("lot_objects_included"):
+            raise AssertionError(f"actor-only diagnostic was mislabeled as a lot image: {render}")
+        image = render_output.read_bytes()
+        if len(image) <= 320 * 240 * 3:
+            raise AssertionError(f"captured PPM is incomplete: {render_output}")
+        render["image_sha256"] = hashlib.sha256(image).hexdigest()
     return {"portal_id": portal_id, "age": age, "start": portal["actor_start_position"],
             "end": end, "movement_callbacks": route["movement_callbacks"],
             "portal_status": portal["status"], "animation_events": len(animation_events),
@@ -102,14 +128,21 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
                 "operands": snap["operands"]},
             "level_changed": portal["actor_level_changed"],
             "next_instruction": {"opcode": next_primitive["opcode"],
-                "routine": next_primitive["routine"], "pc": next_primitive["pc"]}}
+                "routine": next_primitive["routine"], "pc": next_primitive["pc"]},
+            "render": render}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=pathlib.Path)
     parser.add_argument("--game-root", required=True, type=pathlib.Path)
+    parser.add_argument("--capture-tick", type=int, action="append",
+        help="also capture the live stair Sim at this playback tick; repeat to compare frames")
+    parser.add_argument("--capture-output", type=pathlib.Path,
+        help="new PPM path for --capture-tick")
     args = parser.parse_args()
+    if bool(args.capture_tick) != (args.capture_output is not None):
+        parser.error("--capture-tick and --capture-output must be used together")
     game = args.game_root.resolve()
     required = [args.binary, game / "GameData/Global/Global.far",
         game / "GameData/Objects/Objects.far", game / "GameData/floors.iff",
@@ -130,9 +163,25 @@ def main():
                 (34, (320, 424, 1), (312, 344, 2)),
                 (38, (320, 344, 2), (312, 424, 1)))
         ]
+        captures = []
+        for index, tick in enumerate(args.capture_tick or []):
+            if len(args.capture_tick) == 1:
+                output = args.capture_output.resolve()
+            else:
+                output = args.capture_output.with_name(
+                    f"{args.capture_output.stem}-tick{tick}{args.capture_output.suffix}").resolve()
+            result = run_probe(args.binary.resolve(), game, avatar, 34,
+                (320, 424, 1), (312, 344, 2), 21, tick, output)
+            results.append(result)
+            captures.append(result["render"])
+        if len(captures) > 1:
+            if len({capture["frame"] for capture in captures}) != len(captures):
+                raise AssertionError(f"requested ticks did not sample distinct stair frames: {captures}")
+            if len({capture["image_sha256"] for capture in captures}) != len(captures):
+                raise AssertionError(f"distinct stair frames produced identical images: {captures}")
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
         "results": results,
-        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; this does not validate rendered character motion"}, indent=2))
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; optional captures show the live stair pose as an actor-only diagnostic, not a full lot image"}, indent=2))
 
 
 if __name__ == "__main__":

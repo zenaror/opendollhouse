@@ -421,7 +421,7 @@ int main(int argc,char** argv) {
        (headless_fixture_avatar&&(!saved_world_main||!headless_main||!headless_portal||render_saved_id))||
        (headless_fixture_main_arg0&&!headless_fixture_avatar)||
        (saved_world_main&&(!lot_path||(!render_saved_id&&!headless_fixture_avatar)||initialize||action||(!render_requested&&!headless_main)||definition_sources.empty()))||
-       (headless_main&&(!render_floors||render_requested))||
+       (headless_main&&(!render_floors||(render_requested&&(!render_output||render_window))))||
        (headless_stack_object&&!headless_main)||
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_id||!render_floors))||
@@ -1217,7 +1217,8 @@ int main(int argc,char** argv) {
     struct RenderEvidence {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
         std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
-        std::uint64_t vertices=0,triangles=0,texture_bytes=0,shaded_samples=0;
+        std::uint64_t vertices=0,triangles=0,texture_bytes=0,tested_samples=0,shaded_samples=0;
+        bool lot_composited=true,lot_objects_included=true;
     };
     struct RoomInfoProbe {
         std::uint16_t room;
@@ -1523,7 +1524,7 @@ struct PlacementCandidateProbe {
                        "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
 #endif
     }
-    if(headless_main){
+    if(headless_main&&!render_lot){
         render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
             *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
     }
@@ -1954,13 +1955,27 @@ struct PlacementCandidateProbe {
             const auto graphics=render_lot?render_lot->avatar(sample->actor):render_graphics->entity(world,sample->actor);
             render_position=graphics.tile_position;render_direction=graphics.direction;
             render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
+            // Diagnostic-only framing: the A2O stair clip carries about five
+            // tiles of root offset from the landing. Keep the actor's world
+            // position unchanged, but look toward the authored pose so the
+            // headless image can show whether the mesh itself rasterizes.
+            if(headless_main&&render_output&&sample->clip&&sample->clip->name=="a2o-stair-climb"){
+                render_camera.center_tile[1]+=5.0f;
+                render_camera.center_tile[2]-=2.5f;
+            }
         }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         auto frame=render_renderer->render(scene_state,render_camera);
+        const bool capture_actor_only=headless_main&&render_output;
         if(render_lot){
-            auto lot=render_lot->render(render_camera,frame.image,render_window);
-            frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
+            // The headless diagnostic writes the actor frame alone. Still
+            // prepare floor evidence, but do not claim that its pixels were
+            // merged into the exported actor image.
+            const bool include_objects=!capture_actor_only;
+            auto lot=render_lot->render(render_camera,frame.image,render_window,include_objects);
+            if(!capture_actor_only)frame.image=std::move(lot.image);
+            render_lot_evidence=std::move(lot);
         }
 #ifdef ODH_HAVE_X11
         if(render_window_host)render_window_host->present(frame.image);
@@ -1976,7 +1991,8 @@ struct PlacementCandidateProbe {
         const auto usage=animation_catalog->usage();
         render_evidence=RenderEvidence{sample->clip->name,sample->frame,sample->actor,ticks,
             sample->actor_generation,sample->vm_generation,usage.cfp_samples,render_renderer->vertices(),
-            render_renderer->triangles(),render_renderer->texture_bytes(),frame.image.shaded_samples};
+            render_renderer->triangles(),render_renderer->texture_bytes(),frame.image.tested_samples,frame.image.shaded_samples,
+            render_lot&&!capture_actor_only,render_lot&&!capture_actor_only};
     };
     const auto total_steps=[&]{return startup_steps+vm.steps();};
     const auto execute=[&] {
@@ -3229,8 +3245,10 @@ struct PlacementCandidateProbe {
             <<",\"camera_center_tile\":["<<render_camera.center_tile[0]<<','<<render_camera.center_tile[1]<<','<<render_camera.center_tile[2]<<"],\"tick\":"<<v.tick<<",\"actor\":"<<v.actor<<",\"actor_generation\":"<<v.actor_generation
             <<",\"vm_generation\":"<<v.vm_generation<<",\"clip\":"<<json_bytes(v.clip)<<",\"frame\":"<<v.frame
             <<",\"width\":320,\"height\":240,\"vertices\":"<<v.vertices<<",\"triangles\":"<<v.triangles
-            <<",\"texture_bytes\":"<<v.texture_bytes<<",\"catalog_cfp_samples\":"<<v.cfp_samples
+            <<",\"texture_bytes\":"<<v.texture_bytes<<",\"raster_tested_samples\":"<<v.tested_samples<<",\"catalog_cfp_samples\":"<<v.cfp_samples
             <<",\"renderer_cfp_cache_samples\":0,\"shaded_samples\":"<<v.shaded_samples
+            <<",\"lot_composited\":"<<(v.lot_composited?"true":"false")
+            <<",\"lot_objects_included\":"<<(v.lot_objects_included?"true":"false")
             <<",\"object_selection\":{\"clicks\":"<<render_selection_clicks<<",\"tick\":"<<render_selection_tick
             <<",\"id\":"<<(render_selection?std::to_string(render_selection->id):"null")
             <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
@@ -3297,7 +3315,7 @@ struct PlacementCandidateProbe {
                 <<",\"object_hidden\":"<<lot.object_hidden<<",\"object_above_level\":"<<lot.object_above_level
                 <<",\"object_outside\":"<<lot.object_outside<<",\"object_removed\":"<<lot.object_removed
                 <<",\"object_pick_buffer_bytes\":"<<lot.object_pick_ids.size()*sizeof(std::uint16_t)
-                <<",\"other_avatars_rendered\":false,\"objects_rendered\":true,\"original_visual_equivalence\":false}";
+                <<",\"other_avatars_rendered\":false,\"objects_rendered\":"<<(v.lot_objects_included?"true":"false")<<",\"original_visual_equivalence\":false}";
         }else std::cout<<"null";
         std::cout<<'}';
     }else std::cout<<"null";
