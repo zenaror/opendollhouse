@@ -59,3 +59,22 @@ JSON Debug e sanitizadores idênticos, stderr vazio. Reports ignorados:
 Próximo: resolver tabela de animações129 e os recursos do personagem usados
 pela primitiva44; executar animação/retomada e depois composição Linux.
 Fidelidade de tempos/rotas, sistemas e persistência continuam pendentes.
+
+## Escada House03 com animação — 2026-10-22
+
+O probe `tests/house03_stair_approach.py` agora fornece as coleções comerciais
+`GameData/Animation/Animation.far` e `ExpansionShared/ExpansionShared.far` ao
+Playback existente. Para o escopo Object da primitiva44, o host primeiro usa o
+CodeOwner da VM; em chamadas externas de objeto, quando esse identificador é
+apenas a identidade do banco de código, usa o objeto que está executando a
+rotina. O perfil multi-tile de animação só aceita as duas definições conhecidas
+de `stair.iff` dentro de um grupo com patamar nos níveis1 e2.
+
+Quatro execuções com save real House03 e avatar/Main sintéticos terminaram a
+ação do portal (`returned_true`): subida e descida, cada uma com idade fixture
+0 e21. Em todos os casos a caminhada fez oito callbacks, o Snap trocou para o
+patamar oposto, a animação foi resolvida e registrou14 eventos de passos. Isso
+confirma a cadeia de simulação até o retorno da ação nos dois sentidos para
+essas idades; não confirma pixels animados, som, colisão geral ou equivalência
+com o executável original. Os dados comerciais continuam somente leitura e
+fora do Git.

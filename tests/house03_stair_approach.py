@@ -47,8 +47,10 @@ def architecture_resources(game: pathlib.Path):
 
 def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
               portal_id: int, start: tuple[int, int, int], expected: tuple[int, int, int],
-              opposite_endpoint: int):
+              age: int):
     global_far = game / "GameData/Global/Global.far"
+    animation_far = game / "GameData/Animation/Animation.far"
+    expansion_far = game / "ExpansionShared/ExpansionShared.far"
     command = [str(binary), "--avatar-file", str(avatar), "128",
         "--semiglobal", str(global_far), "PersonGlobals.iff",
         "--global", str(global_far), "Global.iff",
@@ -61,7 +63,8 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
         "--headless-main", "--render-floors", str(game / "GameData/floors.iff"),
         "--headless-fixture-avatar", "30000", str(start[0]), str(start[1]), str(start[2]), "0",
         "--headless-fixture-main-arg0", "64", "--headless-portal", str(portal_id), "1",
-        "--ticks", "80"]
+        "--age", str(age), "--animation-source", str(animation_far),
+        "--animation-source", str(expansion_far), "--ticks", "300"]
     for resource in architecture_resources(game):
         command += ["--architecture-resource", str(resource)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=180)
@@ -73,30 +76,30 @@ def run_probe(binary: pathlib.Path, game: pathlib.Path, avatar: pathlib.Path,
     end = portal["actor_position"]
     snap = next((entry for entry in reversed(data["trace"])
                  if entry["opcode"] == 46), None)
-    active_frame = data["stack"][-1] if data["stack"] else None
     if route["movement_callbacks"] <= 0:
         raise AssertionError(f"portal {portal_id} did not walk: {portal}; route={route}")
     if end[:3] != list(expected):
         raise AssertionError(f"portal {portal_id} ended at {end}, expected stair landing {expected}")
     if not portal["actor_level_changed"]:
         raise AssertionError(f"the Sim reached the stair but did not change floors: {portal}")
-    if "unsupported primitive 44" not in portal["diagnostic"]:
-        raise AssertionError(f"expected the next known limit after the stair transition: {portal}")
-    if not snap or not active_frame or snap["routine"] != 4113 or active_frame["routine"] != 4113:
-        raise AssertionError(f"could not tie the VM trace to the stair Snap instruction: {data.get('stack')}")
-    if (active_frame["owner"] != portal["code_owner"] or active_frame["caller"] != 30000 or
-            active_frame["callee"] != portal_id or active_frame["stack_object"] != opposite_endpoint):
-        raise AssertionError(f"unexpected live stair Snap context for endpoint {portal_id}: {active_frame}")
+    if portal["status"] != "returned_true" or portal["diagnostic"]:
+        raise AssertionError(f"the stair action did not finish cleanly: {portal}")
+    if not snap or snap["routine"] != 4113 or snap["operands"] != [0, 0, 3, 0, 2, 0, 0, 0]:
+        raise AssertionError(f"could not confirm the expected stair Snap instruction: {snap}")
     next_primitive = next((entry for entry in data["trace"]
                            if entry["opcode"] == 44 and entry["step"] > snap["step"]), None)
     if not next_primitive:
         raise AssertionError(f"could not confirm that the VM continued after the stair Snap: {data['trace'][-8:]}")
-    return {"portal_id": portal_id, "start": portal["actor_start_position"],
+    animation_events = data.get("animation_events", [])
+    if data.get("animation_resolution_diagnostic") or not animation_events:
+        raise AssertionError(f"the stair animation did not resolve and produce events: {data.get('animation_resolution_diagnostic')}")
+    if data["actor_state"]["age"] != age:
+        raise AssertionError(f"fixture age mismatch: expected {age}, got {data['actor_state']['age']}")
+    return {"portal_id": portal_id, "age": age, "start": portal["actor_start_position"],
             "end": end, "movement_callbacks": route["movement_callbacks"],
-            "portal_status": portal["status"], "next_limit": portal["diagnostic"],
+            "portal_status": portal["status"], "animation_events": len(animation_events),
             "snap_instruction": {"routine": snap["routine"], "pc": snap["pc"],
                 "operands": snap["operands"]},
-            "live_snap_frame": active_frame,
             "level_changed": portal["actor_level_changed"],
             "next_instruction": {"opcode": next_primitive["opcode"],
                 "routine": next_primitive["routine"], "pc": next_primitive["pc"]}}
@@ -110,6 +113,7 @@ def main():
     game = args.game_root.resolve()
     required = [args.binary, game / "GameData/Global/Global.far",
         game / "GameData/Objects/Objects.far", game / "GameData/floors.iff",
+        game / "GameData/Animation/Animation.far", game / "ExpansionShared/ExpansionShared.far",
         game / "UserData/Characters/User00000.iff", game / "UserData/Characters/User00001.iff",
         game / "UserData/Houses/House03.iff", game / "UserData/LotZoning.iff",
         game / "UserData/Neighborhood.iff"]
@@ -119,11 +123,16 @@ def main():
     with tempfile.TemporaryDirectory(prefix="odh-house03-stair-") as directory:
         avatar = pathlib.Path(directory) / "User00000-idle-main.iff"
         patch_idle_main(game / "UserData/Characters/User00000.iff", avatar)
-        lower = run_probe(args.binary.resolve(), game, avatar, 34, (320, 424, 1), (312, 344, 2), 38)
-        upper = run_probe(args.binary.resolve(), game, avatar, 38, (320, 344, 2), (312, 424, 1), 34)
+        results = [
+            run_probe(args.binary.resolve(), game, avatar, portal_id, start, end, age)
+            for age in (0, 21)
+            for portal_id, start, end in (
+                (34, (320, 424, 1), (312, 344, 2)),
+                (38, (320, 344, 2), (312, 424, 1)))
+        ]
     print(json.dumps({"evidence": "real House03 save; synthetic avatar and waiting Main",
-        "results": [lower, upper],
-        "claim": "walked to each stair landing, executed the exact stair Snap, and changed floors in both directions; execution then stopped at the next unimplemented primitive 44, so the full stair interaction is not yet complete"}, indent=2))
+        "results": results,
+        "claim": "walked to each stair landing, executed its stair animation, changed floors in both directions, and completed the portal action for adult and child fixture ages; this does not validate rendered character motion"}, indent=2))
 
 
 if __name__ == "__main__":

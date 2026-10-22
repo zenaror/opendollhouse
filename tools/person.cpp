@@ -690,7 +690,6 @@ int main(int argc,char** argv) {
             if(!world.declare_object_word(runtime_avatar_id,index,0))throw odh::FormatError("reference constructor object word failed");
         }
         if(!world.declare_object_word(runtime_avatar_id,8,signed_word(flags.value_or(256))))throw odh::FormatError("flags fixture construction failed");
-        if(age&&!world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))throw odh::FormatError("age fixture construction failed");
     }
     if(headless_fixture_avatar){
         if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||
@@ -703,6 +702,9 @@ int main(int argc,char** argv) {
         if(!world.declare_object_word(runtime_avatar_id,8,256)||!world.set_position(runtime_avatar_id,headless_fixture_avatar->position))
             throw odh::FormatError("fixture avatar initialization failed");
     }
+    if(age&&(!saved_world_main||headless_fixture_avatar)&&
+       !world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))
+        throw odh::FormatError("age fixture construction failed");
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     odh::TuningResources tuning_resources;
     tuning_resources.globals=std::move(shared.tuning);
@@ -842,7 +844,30 @@ int main(int argc,char** argv) {
                     }
                 },limits);
             });
-            if(!binding||binding->guid!=candidate->definition.guid||binding->master_id!=0)return false;
+            const bool lower_stair=candidate->definition.guid==0x79E2B825U&&candidate->definition.sub_index==5;
+            const bool upper_stair=candidate->definition.guid==0x821EB6EEU&&candidate->definition.sub_index==0;
+            bool valid_stair_group=false;
+            if(binding&&binding->master_id==4&&candidate->asset=="stair.iff"&&
+               entity->definition->master_guid==0x307DDFA6U&&(lower_stair||upper_stair)&&
+               entity->position&&restored_world){
+                const auto group=std::find_if(restored_world->multitile_groups.begin(),
+                    restored_world->multitile_groups.end(),[&](const auto& value){
+                        return value.master_guid==0x307DDFA6U&&
+                            std::find(value.members.begin(),value.members.end(),owner)!=value.members.end();
+                    });
+                bool has_lower=false,has_upper=false;
+                if(group!=restored_world->multitile_groups.end())for(const auto member:group->members){
+                    const auto* part=world.find(member);
+                    if(!part||!part->definition||!part->position)continue;
+                    has_lower=has_lower||(part->definition->guid==0x79E2B825U&&part->position->level==1);
+                    has_upper=has_upper||(part->definition->guid==0x821EB6EEU&&part->position->level==2);
+                }
+                valid_stair_group=has_lower&&has_upper;
+            }
+            if(!binding||binding->guid!=candidate->definition.guid||
+               binding->master_id!=candidate->definition.master_id||
+               binding->sub_index!=candidate->definition.sub_index||
+               (binding->master_id!=0&&!valid_stair_group))return false;
             const auto base=binding->animation_table;
             auto tables=load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130});
             animation_table_ids.emplace(owner,base);
@@ -870,12 +895,28 @@ int main(int argc,char** argv) {
             else if(source==0||source==65536){
                 auto owner=source==0?frame.context.code_owner:frame.context.stack_object;
                 auto tables=private_animation_tables.find(owner);
-                if(tables==private_animation_tables.end()&&source==0&&frame.context.stack_object>0&&
+                if(tables==private_animation_tables.end()&&source==0){
+                    // A saved external frame uses a resource CodeOwner ID, while
+                    // FreeSO's Object animation scope reads the executing
+                    // GameObject's resource. The callee is that object for an
+                    // object-owned callback such as a portal's stair BHAV.
+                    const auto bind_entity=[&](std::int32_t entity_id){
+                        if(entity_id<=0||entity_id>32767)return false;
+                        const auto object_id=static_cast<std::int16_t>(entity_id);
+                        if(!bind_world_object_tables||!bind_world_object_tables(object_id))return false;
+                        owner=static_cast<std::uint32_t>(object_id);
+                        tables=private_animation_tables.find(object_id);
+                        return tables!=private_animation_tables.end();
+                    };
+                    if(!bind_entity(frame.context.callee))
+                        bind_entity(static_cast<std::int32_t>(frame.context.stack_object));
+                }
+                if(tables==private_animation_tables.end()&&source==65536&&frame.context.stack_object>0&&
                    frame.context.stack_object<=32767){
                     const auto stack_owner=static_cast<std::int16_t>(frame.context.stack_object);
                     if(bind_world_object_tables&&bind_world_object_tables(stack_owner)){
                         owner=static_cast<std::uint32_t>(stack_owner);
-                        tables=private_animation_tables.find(owner);
+                        tables=private_animation_tables.find(stack_owner);
                     }
                 }
                 const auto base=animation_table_ids.find(owner);
