@@ -44,7 +44,7 @@ struct SavedWorld {
 // coordinates are already sixteenth-tile units. LinkedSlot is not runtime slot0.
 // Kind follows the OBJT-selected person branch, as in the pinned activator;
 // both OBJT type and OBJD object_type are retained even if they differ.
-std::unique_ptr<SavedWorld> make_saved_world(const std::vector<SavedWorldEntity>&,
+std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity>,
     const DefinitionIndex&, const NeighborContext* neighbors = nullptr,
     const SavedWorldLimits& = {});
 // Integer-only IEEE binary32 to signed16 adaptation: finite values rounded to

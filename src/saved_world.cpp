@@ -73,7 +73,7 @@ std::int16_t saved_motive_word(std::uint32_t bits) {
     return static_cast<std::int16_t>(signed_value);
 }
 
-std::unique_ptr<SavedWorld> make_saved_world(const std::vector<SavedWorldEntity>& source,
+std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> source,
     const DefinitionIndex& definitions,const NeighborContext* neighbors,const SavedWorldLimits& limits) {
     check(source.size()<=limits.world.entities && source.size()<=32767,"saved world entity budget exceeded");
     Budget budget{limits.retained_words,limits.retained_string_bytes,limits.retained_suffix_bytes};
@@ -207,7 +207,6 @@ std::unique_ptr<SavedWorld> make_saved_world(const std::vector<SavedWorldEntity>
     result->world=std::make_unique<World>(limits.world,AttributePolicy::ts1_bounded);
     result->relationships=neighbors?std::make_unique<RelationshipState>(*neighbors,limits.relationships):
         std::make_unique<RelationshipState>(limits.relationships);
-    result->records=source;
     for(auto& item:groups) {
         auto& g=item.second;
         const auto leader=std::find(g.members.begin(),g.members.end(),g.leader);
@@ -233,6 +232,7 @@ std::unique_ptr<SavedWorld> make_saved_world(const std::vector<SavedWorldEntity>
     for(const auto& item:inbound)
         check(result->world->attach(item.second.first,item.second.second,item.first),"saved world runtime containment rejected");
     check(result->relationships->import_object_relationships(*result->world,relationships),"saved world relationship import rejected");
+    result->records=std::move(source);
     return result;
 }
 } // namespace odh

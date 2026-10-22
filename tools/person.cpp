@@ -690,12 +690,12 @@ int main(int argc,char** argv) {
         // keeping the smaller default for ordinary synthetic Worlds.
         odh::SavedWorldLimits saved_world_limits;
         saved_world_limits.world.words=131072;
-        restored_world=odh::make_saved_world(restored_records,*definition_index,
+        restored_world=odh::make_saved_world(std::move(restored_records),*definition_index,
             neighbors?&*neighbors:nullptr,saved_world_limits);
         // Bind the exact immutable OBJD/OBJf tables to every restored entity.
         // This is static metadata only; action function IDs are not BHAV results.
         std::map<std::uint32_t,std::vector<odh::EntryPoint>> entry_point_cache;
-        for(const auto& record:restored_records){
+        for(const auto& record:restored_world->records){
             const auto id=static_cast<std::int16_t>(record.saved.object_id);
             const auto* entity=restored_world->world->find(id);
             if(!entity||!entity->definition||entity->definition->guid!=record.saved.guid)
@@ -1891,12 +1891,12 @@ struct PlacementCandidateProbe {
                     return fail(std::string("room portal graph route ")+room_portal_route_status_name(route.status));
                 const auto edge=route.portals.front();
                 const auto* portal=world.find(edge.portal_id);
-                const auto record=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& item){
+                const auto record=std::find_if(restored_world->records.begin(),restored_world->records.end(),[&](const auto& item){
                     return item.saved.object_id==static_cast<std::uint16_t>(edge.portal_id);
                 });
                 const auto* candidate=portal&&portal->definition?
                     definition_index->unique(portal->definition->guid):nullptr;
-                if(!portal||!candidate||record==restored_records.end()||!portal->position||
+                if(!portal||!candidate||record==restored_world->records.end()||!portal->position||
                    !(*portal->position==edge.position)||edge.source_room!=*source_room)
                     return fail("planned room portal has no matching live saved resource identity");
                 if(!globals||globals->standalone)
@@ -2300,13 +2300,13 @@ struct PlacementCandidateProbe {
                 headless_portal_actor_start_position=*actor->position;
             const auto* target=world.find(headless_portal->id);
             if(target&&target->position)headless_portal_start_position=*target->position;
-            const auto record=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& item){
+            const auto record=std::find_if(restored_world->records.begin(),restored_world->records.end(),[&](const auto& item){
                 return item.saved.object_id==static_cast<std::uint16_t>(headless_portal->id);
             });
             const auto* candidate=target&&target->definition&&definition_index?
                 definition_index->unique(target->definition->guid):nullptr;
             if(!target||target->kind!=odh::EntityKind::object||!target->definition||!candidate||
-               record==restored_records.end())fail_portal("scheduled portal identity or saved resource is missing/ambiguous");
+               record==restored_world->records.end())fail_portal("scheduled portal identity or saved resource is missing/ambiguous");
             else if(queue.size()!=0)fail_portal("Portal15 probe requires an empty interaction queue");
             else if(!globals||globals->standalone)fail_portal("explicit Global.iff FAR resource is unavailable");
             else if(saved_owner_ids_exhausted)fail_portal("saved object code-owner identity space exhausted");
