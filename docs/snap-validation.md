@@ -1,5 +1,32 @@
 # Snap, binding e ocupação — 2026-10-13
 
+### BHAV4107: primeiro caminho completo no teste de diagnóstico — 2026-10-22
+
+O cenário `--snap-probe` agora prepara para o objeto Destination as palavras
+ObjectData que o perfil sintético do `tools/person` prepara, incluindo Flags
+(ObjectData[8]) com valor inicial 256. Isso deixou a ação passar também pela
+rotina Global273. No conjunto comercial consultado, o caminho observado foi
+BHAV4107 PCs 0, 12, 4, 2, 3 e Global273 PCs 0 e 1; a VM terminou
+`returned_true` depois de sete instruções.
+
+A leitura dos operandos, comparada ao código Simitone fixado em
+`4906db3156616bfaffc10ce0963cf08062975fef`, mostra que Global273 limpa o bit
+de valor 32 de StackObject Flags (ObjectData[8]) e copia o primeiro argumento
+para ObjectData[25]. O código do Simitone nomeia essa flag `Occupied` e chama
+ObjectData[25] `LockoutCount`; são rótulos da referência, não confirmação dos
+nomes ou intenções no executável original. O perfil `--snap-probe` prepara o
+banco de palavras do Destination sintético igual ao perfil temporário do
+`tools/person`, usando Flags 256, para o diagnóstico percorrer esse caminho.
+
+Esse resultado não prova que o Sim se moveu nem que a notificação acordou uma
+fila real: o relatório da prova registra `no_thread`, não houve movimentos e
+o cenário usa uma VM e entidades sintéticas. Também não confirma o significado
+final da ação no executável original. O próximo passo é entender o restante da
+BHAV4107 e reproduzir o contexto real em que ela é colocada na fila de um Sim.
+O teste sintético `bhav_cli` e a bateria completa de testes devem ser usados
+para validar mudanças futuras; os dados comerciais continuam fora dos testes
+versionados.
+
 ### Bloqueio de móvel no ponto de chegada da escada — 2026-10-22
 
 `tests/snap_arrival_blockers.cpp` compõe as três etapas usadas pelo teste de

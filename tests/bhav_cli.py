@@ -11,6 +11,11 @@ binary = sys.argv[1]
 def routine(opcode=2, operands=bytes([0,0,7,0,0,5,8,7]), yes=254, no=255):
     return struct.pack('<HHBBHHH',0x8002,1,0,4,0,0,0) + struct.pack('<HBB',opcode,yes,no) + operands
 
+def routine_steps(steps, arguments=4):
+    header=struct.pack('<HHBBHHH',0x8002,len(steps),0,arguments,0,0,0)
+    return header+b''.join(struct.pack('<HBB',opcode,yes,no)+operands
+                          for opcode,yes,no,operands in steps)
+
 def archive(rows,slots=None,slot_id=100,objd=None,strings=(),sounds=(),bcons=(),globs=()):
     asset = b'IFF FILE 2.5:TYPE FOLLOWED BY SIZE\0 JAMIE DOORNBOS & MAXIS 1'.ljust(60,b'\0') + bytes(4)
     for identifier,payload in rows:
@@ -159,6 +164,20 @@ with tempfile.TemporaryDirectory(prefix='odh-bhav-') as folder:
     assert r.returncode==0 and d['status']=='returned_true' and d['steps']==2
     assert d['container']==2 and d['final_position']==[64,64,1,0]
     assert d['idle_notifications']==[{'entity':2,'status':'no_thread'}]
+    # Global273 clears ObjectData[8]'s sixth flag and copies parameter 0 to
+    # ObjectData[25]. The probe must provide a real synthetic ObjectData bank.
+    clear_occupied=bytes([8,0,6,0,255,10,4,7])
+    copy_lockout=bytes([25,0,0,0,255,5,4,9])
+    global_path.write_bytes(archive([(273,routine_steps([
+        (2,1,255,clear_occupied),(2,254,255,copy_lockout)],arguments=1))],
+        struct.pack('<II4sI',0,10,b'TOLS',2)+storage+oriented))
+    path.write_bytes(archive([(4096,routine(273,bytes(8)))],
+        struct.pack('<II4sI',0,10,b'TOLS',2)+storage+oriented,128,prefix))
+    r=subprocess.run(args,capture_output=True,text=True);d=json.loads(r.stdout)
+    assert r.returncode==0 and d['status']=='returned_true'
+    assert [(t['routine'],t['instruction']['pc']) for t in d['trace']]==[
+        (4096,0),(273,0),(273,1)]
+    assert d['movements']==[]
     def typed(guid,owner=10,entity=0):
         operand=struct.pack('<IhBB',guid,entity,owner,0)
         path.write_bytes(archive([(4096,routine(32,operand))],

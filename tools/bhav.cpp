@@ -477,6 +477,17 @@ int main(int argc, char** argv) {
                 if(!world.write(object_frame,1,1,static_cast<std::int16_t>(route_attribute1.value_or(0))))
                     throw odh::FormatError("cannot initialize constructed StackObject attribute 1");
             }
+            if(snap_probe) {
+                // Match the explicit synthetic Destination profile used by
+                // the Linux person probe: raw ObjectData words are present,
+                // with the saved marker's known initial Flags value.
+                for(std::int16_t word=0;word<=78;++word) {
+                    if(word==1||word==2||word==3||word==11||word==67) continue;
+                    const auto value=word==8?std::int16_t{256}:std::int16_t{0};
+                    if(!world.declare_object_word(2,word,value))
+                        throw odh::FormatError("cannot initialize constructed StackObject ObjectData bank");
+                }
+            }
             if(stack_object_word&&!world.declare_object_word(2,static_cast<std::int16_t>(stack_object_word->first),
                     static_cast<std::int16_t>(stack_object_word->second)))
                 throw odh::FormatError("cannot initialize constructed StackObject word");
