@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/saved_world.hpp"
+#include "odh/vm.hpp"
 
 #include <functional>
 #include <optional>
@@ -48,6 +49,11 @@ using SimitoneSavedOpcodeLookup =
 // establish that the original game uses the same mapping.
 void apply_simitone_saved_return_mapping(SimitoneSavedThreadPlan&,
                                          const SimitoneSavedOpcodeLookup&);
+
+// Load plans whose routines are already installed in the VM and whose return
+// state is supported. The VM validates every routine and address; it remains
+// dormant and does not execute Main. The caller supplies the intended resources.
+void restore_simitone_saved_thread_plan(Vm&, const SimitoneSavedThreadPlan&);
 
 // Resolve frame code-owner type indices through the serialized OBJT table,
 // preserve the saved stack, and apply Simitone's ObjectUses callee mapping.

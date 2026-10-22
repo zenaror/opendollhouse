@@ -42,6 +42,14 @@ Outras instruções deixam a volta normal. O JSON mostra `return_state` e
 `unresolved`. Isso é uma reconstrução do adaptador Simitone, não uma regra já
 confirmada no executável original.
 
+Depois dessa conferência, o plano pode ser convertido em `VmFrame` e carregado
+na VM parada se todos os retornos forem normais. A própria VM verifica se as
+rotinas e posições existem nos bancos de código que recebeu. Quem chama essa
+ponte ainda precisa carregar os recursos certos; ela não confere se o banco
+semiglobal corresponde ao GLOB esperado. Quadros que precisam de repetição ou
+interação são recusados até o kernel e o scheduler ODH suportarem esses estados.
+Isso não executa a VM nem substitui a restauração das filas e do relógio.
+
 Essa conferência não executa os quadros. Ainda não restaura o estado especial
 de retorno entre frames nem retoma o relógio, a fila de interações ou os
 serviços de rota. Portanto esta etapa prepara e confere dados; não é

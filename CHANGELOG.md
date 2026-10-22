@@ -37,8 +37,13 @@ validação indicados por versão.
   como `dormant`; `run()` não a executa até a ativação explícita do host.
   Testes sintéticos carregam dois quadros, iniciam no quadro superior salvo e
   voltam ao pai; uma pilha inválida é rejeitada sem alterar o estado anterior.
-  Isso ainda não conecta uma partida OBJM à VM nem restaura estados especiais,
+  Isso ainda não restaura uma partida OBJM completa nem estados especiais,
   filas, relógio ou serviços. Veja [`vm-validation.md`](docs/vm-validation.md).
+
+- Planos de pilha com retornos normais agora podem ser convertidos para frames
+  da VM parada, que confere as rotinas nos bancos recebidos. O chamador ainda
+  precisa fornecer os recursos corretos. Retornos de repetição/interação são
+  recusados; as filas salvas também não são carregadas por essa conversão.
 
 - `EntityThreadControllers` reúne a fila de interação e o controle de Sleep de
   uma entidade, mantendo um relógio e uma fila independentes por instância.

@@ -51,6 +51,41 @@ int main() {
                 plan.frames[0].return_state == odh::SimitoneSavedReturnState::unresolved,
                 "object-use depth is retained and return state stays unresolved without code lookup");
 
+        odh::RoutineSet private_code{{odh::routine_key(4096),
+            odh::Bhav{0x8002,std::vector<odh::Instruction>(10,odh::Instruction{2,0xFE,0xFF,{}}),{},
+                odh::Bhav::Metadata{0,4,2,0}}}};
+        odh::RoutineSet semiglobal_code{{odh::routine_key(8192),
+            odh::Bhav{0x8002,std::vector<odh::Instruction>(10,odh::Instruction{2,0xFE,0xFF,{}}),{},
+                odh::Bhav::Metadata{0,4,2,0}}}};
+        odh::RoutineOwners owner_code{{0x12345678,std::move(private_code)},
+                                       {0x87654321,std::move(semiglobal_code)}};
+        odh::Vm restored_vm({}, {}, {}, {}, std::move(owner_code));
+        auto normal_plan=plan;
+        for (auto& frame : normal_plan.frames)
+            frame.return_state=odh::SimitoneSavedReturnState::normal;
+        odh::Vm no_code_vm(odh::RoutineSet{}, {}, {}, {}, {});
+        bool unavailable_code_rejected=false;
+        try { odh::restore_simitone_saved_thread_plan(no_code_vm,normal_plan); }
+        catch (const std::invalid_argument&) { unavailable_code_rejected=true; }
+        require(unavailable_code_rejected && no_code_vm.status()==odh::VmStatus::ready,
+                "VM rejects saved frames whose routines are not installed");
+        odh::restore_simitone_saved_thread_plan(restored_vm,normal_plan);
+        require(restored_vm.status()==odh::VmStatus::dormant && restored_vm.stack().size()==2 &&
+                restored_vm.stack()[0].key.id==4096 && restored_vm.stack()[0].pc==9 &&
+                restored_vm.stack()[0].context.code_owner==0x12345678 &&
+                restored_vm.stack()[1].key.id==8192 && restored_vm.stack()[1].pc==2 &&
+                restored_vm.stack()[1].context.callee==13 &&
+                restored_vm.temps()==normal_plan.temp_registers,
+                "normal-return saved plan imports owner-resolved frames and temps into dormant VM");
+        auto special_plan=normal_plan;
+        special_plan.frames[1].return_state=odh::SimitoneSavedReturnState::retry;
+        bool special_state_rejected=false;
+        try { odh::restore_simitone_saved_thread_plan(restored_vm,special_plan); }
+        catch (const odh::FormatError&) { special_state_rejected=true; }
+        require(special_state_rejected && restored_vm.status()==odh::VmStatus::dormant &&
+                restored_vm.stack()[1].pc==2,
+                "unsupported return state is rejected without changing restored VM");
+
         auto missing_opcode = plan;
         try {
             odh::apply_simitone_saved_return_mapping(missing_opcode, {});

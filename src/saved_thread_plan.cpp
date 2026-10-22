@@ -2,8 +2,22 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace odh {
+
+void restore_simitone_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& plan) {
+    std::vector<VmFrame> frames;
+    frames.reserve(plan.frames.size());
+    for (const auto& saved : plan.frames) {
+        if (saved.return_state != SimitoneSavedReturnState::normal || saved.action_tree)
+            throw FormatError("saved thread return/action state is not supported by VM import");
+        frames.push_back({routine_key(saved.routine_id), saved.instruction_pointer,
+            {saved.caller, saved.callee, saved.stack_object, saved.code_owner_guid},
+            saved.arguments, saved.locals, VmCallReturnMode::ordinary, 0});
+    }
+    vm.restore_dormant_state(std::move(frames), plan.temp_registers);
+}
 
 void apply_simitone_saved_return_mapping(
     SimitoneSavedThreadPlan& plan, const SimitoneSavedOpcodeLookup& opcode_for) {

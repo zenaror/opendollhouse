@@ -73,10 +73,15 @@ curtos são completados conforme os metadados da rotina. A VM fica no estado
 O teste sintético carrega dois quadros, confirma que a VM não roda durante a
 importação e, após ativação explícita, observa o quadro superior iniciar na
 posição carregada e voltar ao pai. Uma pilha inválida é recusada sem mudar a
-VM anterior. Isso prova o mecanismo de importar um snapshot já interpretado;
-não liga ainda os dados OBJM salvos a essa API. `primitive_state`, resultados
-especiais de retorno, ação/interação, filas, relógio e serviços ainda precisam
-ser resolvidos antes de ativar uma partida salva.
+VM anterior. Isso prova o mecanismo de importar um snapshot já interpretado.
+`restore_simitone_saved_thread_plan` liga um plano a essa API; a VM verifica as
+rotinas e posições nos bancos recebidos. Quem chama a ponte ainda precisa
+fornecer os recursos corretos: ela não carrega os bancos completos nem confirma
+o vínculo entre o GLOB e o semiglobal. A CLI ainda não restaura os serviços do
+mundo. A ponte recusa retornos ou estados de ação não normais.
+`primitive_state`, resultados especiais de retorno, ação/interação, filas,
+relógio e serviços ainda precisam ser resolvidos antes de ativar uma partida
+salva.
 
 ## Diferenças e lacunas explícitas
 
