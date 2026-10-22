@@ -49,12 +49,13 @@ nenhum asset é copiado para o projeto.
 Na execução integrada de referência para o morador 105, o programa escreveu
 status de processo 3 porque o Main ainda estava esperando ao chegar ao teto
 controlado de 512 ticks. O runner aceitou esse estado previsto para a sonda e
-confirmou sentar, levantar e o vínculo dos moradores. Uma repetição com o
-morador 137 confirmou a ação de sentar e o movimento até a cadeira, mas não
-passou a verificação de levantar: o teste terminou com o Sim ainda preso à
-cadeira. Isso permanece uma falha aberta da prova de interação para esse
-morador, nas duas instalações testadas. O status 3 também não significa que o
-Main terminou nem que a casa foi jogada por tempo ilimitado.
+confirmou sentar, levantar e o vínculo dos moradores. A primeira repetição com
+o morador 137 agendou o levantar no tick 241, antes de a ação de sentar terminar
+no tick 255. Por isso, aquela prova não chegou a tentar o levantar. O runner
+agora agenda essa etapa no tick 270; com esse intervalo, os dois moradores
+passam Sit/Stand nas instalações The Sims e Legacy Collection. O status 3
+continua significando apenas que o Main ainda esperava ao alcançar o teto de
+512 ticks; não significa que a casa foi jogada por tempo ilimitado.
 
 O teste complementar `tests/house07_resident_main_smoke.py` executa cada um dos
 dois moradores separadamente, usando seu próprio arquivo `User00000.iff` ou

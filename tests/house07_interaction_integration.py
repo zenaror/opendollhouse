@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--avatar-id", type=int, default=105)
     parser.add_argument("--avatar-file", default="UserData/Characters/User00000.iff")
     parser.add_argument("--object-id", type=int, default=128)
-    parser.add_argument("--stand-tick", type=int, default=241)
+    parser.add_argument("--stand-tick", type=int, default=270)
     parser.add_argument("--ticks", type=int, default=512)
     parser.add_argument("--move-avatar-to", nargs=4, type=int,
                         metavar=("X", "Y", "LEVEL", "DIRECTION"),
