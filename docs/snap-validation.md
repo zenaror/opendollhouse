@@ -99,9 +99,19 @@ o scheduler do Simitone. O primeiro subpasso já está implementado: `VmProgram`
 permite compartilhar o banco BHAV imutável entre objetos `Vm`, enquanto os
 owners instalados em tempo de execução continuam locais a cada VM. O teste
 `vm_code_owners` verifica que um owner exclusivo de uma entidade não aparece na
-outra. Ainda falta adicionar o scheduler limitado por tick e só depois ligar
-`IdleForInput`, a notificação e a fila do GOTO ao Sim bloqueador. Compartilhar
-as rotinas evita copiá-las para cada Sim, importante para os ports portáteis.
+outra. O novo `EntityVmScheduler` aplica um tick crescente comum, chama os hooks
+de todos os Sims antes da execução, dá a cada VM no máximo um trecho limitado e
+chama os hooks de observação depois. O orçamento total e o limite por Sim são
+explícitos; a ordem inicial alterna entre ticks e a lista tem capacidade máxima.
+`entity_vm_scheduler` testa duas VMs, duas filas e um World compartilhado: a
+ação endereçada ao bloqueador altera o objeto compartilhado, sem consumir a fila
+do outro Sim. Isso ainda é uma prova sintética do scheduler, não integração com
+`tools/person`, rota, animação ou dados comerciais. Compartilhar as rotinas
+evita copiá-las para cada Sim, importante para os ports portáteis.
+
+O caminho restante é conectar ao `tools/person` os hooks de fila/espera e as
+rotinas de cada avatar carregado; então o host pode executar BHAV4107 no
+bloqueador e medir sua posição, em vez de apenas escrever um campo de fixture.
 
 Comecei também a executar a ação real BHAV4107 no probe de VM do ODH. Seu
 primeiro passo é GetDistanceTo (opcode11) usando os campos `Temp0`,
