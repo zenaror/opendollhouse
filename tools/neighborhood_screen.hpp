@@ -51,7 +51,9 @@ OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
 // Select a currently unhoused family that can afford the selected vacant lot.
 std::optional<MoveInFamilySelection> show_move_in_family_picker(
     LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
-    std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language);
+    std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language,
+    const std::string& localized_action = "Move In Family",
+    const std::string& localized_title = "SELECT A FAMILY");
 
 // Final confirmation shown before a player-state write; closing cancels it.
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,

@@ -231,7 +231,8 @@ OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
 
 std::optional<MoveInFamilySelection> show_move_in_family_picker(
         LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
-        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language) {
+        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language,
+        const std::string& localized_action, const std::string& localized_title) {
     if (!house_number || house_number > 98 || purchase_price < 0 || language < 1 || language > 20)
         throw odh::FormatError("family picker received an invalid move-in request");
     std::vector<const odh::FamilyEntry*> choices;
@@ -244,8 +245,8 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     }
     if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
     std::size_t selected = 0;
-    constexpr std::size_t row_height = 36, row_start = 92;
-    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 184) / row_height);
+    constexpr std::size_t row_height = 36, row_start = 160;
+    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 224) / row_height);
     const auto render = [&]() {
         odh::RasterFrame frame{};
         frame.width = window.width(); frame.height = window.height();
@@ -268,9 +269,12 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         style.height = 32; style.font_size_px = 17; style.padding = 7;
         style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
         style.y = 24;
-        draw_text_overlay(frame, "Move a family in - choose a family, Enter or click to continue, Esc to cancel",
-                          language, style);
+        draw_text_overlay(frame, localized_title, language, style);
         style.y = 56;
+        draw_text_overlay(frame, localized_action, language, style);
+        style.y = 88;
+        draw_text_overlay(frame, "Enter or click to continue, Esc to cancel", language, style);
+        style.y = 120;
         draw_text_overlay(frame, "House " + std::to_string(house_number) + " costs " +
             std::to_string(purchase_price) + " simoleons", language, style);
         for (std::size_t row = 0; row < page_size; ++row) {
@@ -285,12 +289,14 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             draw_text_overlay(frame, label, language, style);
         }
         if (choices.empty()) {
-            style.y = 128;
+            style.y = static_cast<std::int32_t>(row_start);
             draw_text_overlay(frame, "No unhoused family with enough money is available",
                               language, style);
         }
 #else
         (void)language;
+        (void)localized_action;
+        (void)localized_title;
 #endif
         const std::string title = choices.empty() ?
             "OpenDollhouse | no family can afford House " + std::to_string(house_number) + " | Esc: cancel" :

@@ -642,6 +642,8 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string move_out_title = "Evict Family?";
         std::string confirm_yes = "Yes";
         std::string confirm_no = "No";
+        std::string family_picker_action = "Move In Family";
+        std::string family_picker_title = "SELECT A FAMILY";
         if (!options.plan_only && !options.headless_ticks) {
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
                 options.load_session ? 240 : 600, "OpenDollhouse");
@@ -665,6 +667,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                 static_cast<std::uint8_t>(options.language), "Yes");
             confirm_no = game_ui_string(game, 142, 3,
                 static_cast<std::uint8_t>(options.language), "No");
+            family_picker_action = game_ui_string(game, 128, 3,
+                static_cast<std::uint8_t>(options.language), "Move In Family");
+            family_picker_title = game_ui_string(game, 128, 8,
+                static_cast<std::uint8_t>(options.language), "SELECT A FAMILY");
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
                 family_overlay ? &*family_overlay : nullptr);
         }
@@ -766,7 +772,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                     static_cast<std::uint16_t>(house));
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
                     map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
-                    static_cast<std::uint8_t>(options.language));
+                    static_cast<std::uint8_t>(options.language), family_picker_action,
+                    family_picker_title);
                 if (!family_choice) {
                     std::cout << "{\"status\":\"cancelled\",\"stage\":\"family\"}\n";
                     return 0;

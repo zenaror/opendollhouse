@@ -144,7 +144,9 @@ o título de despejo em `STR# 131`, índice 2, e os rótulos Sim/Não em `STR# 1
 índices 2 e 3. A busca usa o idioma escolhido e recorre ao inglês quando faltar
 a frase; se `UIText.iff` não estiver disponível, usa os textos em inglês
 embutidos. Os valores em português e francês foram conferidos na cópia
-comercial. Essa ligação ainda não traduz o restante dessas telas: nomes,
+comercial. O seletor de famílias também usa `STR# 128`, índices 8 (título) e 3
+(ação de selecionar a família); os valores em português e francês foram
+conferidos. Essa ligação ainda não traduz o restante dessas telas: nomes,
 preços, instruções de teclado e outros rótulos continuam em inglês. O texto de
 despejo com patrimônio líquido não foi usado porque exige o nome real da família
 e o total correto. Também não é uma validação visual da janela; essa checagem
