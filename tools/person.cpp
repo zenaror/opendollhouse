@@ -2083,7 +2083,7 @@ struct PlacementCandidateProbe {
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
         if(!candidate)return;
-        render_interactions=saved_object_interactions(*candidate,game_language);
+        render_interactions=saved_object_interactions(*candidate,*definition_index,game_language);
         if(!render_interactions->table||render_interactions->table->status!=odh::TtabStatus::decoded)return;
         const auto& rows=render_interactions->table->interactions;
         std::vector<std::uint16_t> tests;

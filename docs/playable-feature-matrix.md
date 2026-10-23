@@ -12,6 +12,13 @@ validação, não uma redução do escopo completo em
 não identifica uma atividade específica, a lacuna aparece explicitamente e a
 atividade precisa ser investigada antes de se afirmar cobertura.
 
+Atualização do banco comercial: House05 contém o grupo real de duas peças
+(IDs 173/174; GUIDs 3586796916/618816390), liderado por 173. O TTAB 131 do
+mestre `Sofas.iff#16847` agora é encontrado por herança limitada ao mesmo
+recurso; a primeira opção é ação 8213/teste 8214. O avaliador atual não suporta
+esse TestFunction e a ação não é enfileirada, portanto a EntryPoint26 8215
+ainda não foi alcançada. House07 ID173 continua sendo outro objeto.
+
 | Área | Evidência atual no OpenDollhouse | Estado | Fluxo/gate observável e referência Simitone |
 | --- | --- | --- | --- |
 | Abrir o jogo e escolher dados/idioma | `--game-root` e `--language` são lembrados depois de iniciar uma sessão; a configuração fica na conta local e não altera os dados do jogo ([entrada integrada](linux-session-entry-validation.md)). Na primeira execução gráfica, o launcher agora oferece escolher entre os 20 códigos de idioma conhecidos e salva a opção junto com a pasta de dados. O seletor visual e a mudança posterior ainda não foram testados. | Parcial | Validar o seletor em X11, oferecer uma opção acessível para mudar depois e confirmar textos reais/fallback. |

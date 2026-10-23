@@ -24,10 +24,12 @@ struct SavedObjectInteractions {
 };
 
 inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCandidate& definition,
-                                                          std::uint8_t language=1) {
+                                                          std::uint8_t language=1,
+                                                          const odh::DefinitionCandidate* table_owner=nullptr) {
     SavedObjectInteractions result;
     result.source=definition.source;result.asset=definition.asset;
-    result.table_id=definition.definition.tree_table_id;result.language=language;
+    const auto& owner=table_owner?*table_owner:definition;
+    result.table_id=owner.definition.tree_table_id;result.language=language;
     if(!result.table_id){result.state=SavedObjectInteractions::State::no_tree_table_id;return result;}
     std::optional<odh::Ttab> table;std::optional<odh::StringTable> labels;
     const auto scan=[&](const odh::View& view){odh::iff_chunks(view,[&](const odh::Chunk& chunk){
@@ -40,8 +42,8 @@ inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCa
             labels=odh::read_strings(chunk.payload);
         }
     });};
-    if(definition.asset.empty())with_iff_file(definition.source,scan);
-    else with_far_entry(definition.source,definition.asset,scan);
+    if(owner.asset.empty())with_iff_file(owner.source,scan);
+    else with_far_entry(owner.source,owner.asset,scan);
     if(!table)return result;
     result.state=SavedObjectInteractions::State::found;result.table=std::move(table.value());
     if(labels)result.labels=std::move(labels.value());
@@ -59,6 +61,21 @@ inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCa
         }
     }
     return result;
+}
+
+// Some multitile parts carry the 0xffff "no local TTAB" marker even though
+// their exact master in the same FAR entry owns the shared interaction table.
+// Resolve only that explicit same-resource relationship; never search other
+// archives for a table with a matching number.
+inline SavedObjectInteractions saved_object_interactions(const odh::DefinitionCandidate& definition,
+                                                          const odh::DefinitionIndex& index,
+                                                          std::uint8_t language=1) {
+    if(definition.definition.tree_table_id==0xffff&&definition.definition.master_id!=0){
+        const auto* master=index.unique_master(definition);
+        if(master&&master->definition.tree_table_id!=0)
+            return saved_object_interactions(definition,language,master);
+    }
+    return saved_object_interactions(definition,language);
 }
 
 // Load executable code only from the exact resource that supplied the selected

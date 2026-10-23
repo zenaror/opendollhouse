@@ -36,6 +36,24 @@ int main(){try{
     check(result.state==SavedObjectInteractions::State::found&&result.table&&result.table->interactions.size()==1,"owner TTAB discovered");
     check(result.source==path.string()&&result.table_id==128&&result.asset.empty(),"exact owner provenance retained");
     check(result.labels.state==odh::StringTableState::decoded&&result.row_labels.size()==1&&result.row_labels[0]=="Sit","TTAs label mapped by explicit language/index");
+    data=iff(chunk("TTAB",131,ttab()));write(path,data);
+    odh::ObjectDefinition part{};part.guid=3586796916U;part.master_id=11;part.sub_index=0;part.tree_table_id=0xffff;
+    odh::ObjectDefinition master{};master.guid=2091978777U;master.master_id=11;master.sub_index=-1;master.tree_table_id=131;
+    const odh::DefinitionCandidate part_candidate{path.string(),"",16848,part};
+    const odh::DefinitionCandidate master_candidate{path.string(),"",16847,master};
+    const odh::DefinitionIndex group_index({part_candidate,master_candidate});
+    const auto inherited=saved_object_interactions(part_candidate,group_index);
+    check(inherited.state==SavedObjectInteractions::State::found&&inherited.table_id==131&&
+          inherited.table&&inherited.table->interactions[0].action==0x1001,
+          "multitile part inherits its exact same-resource master TTAB");
+    check(inherited.source==part_candidate.source&&inherited.asset==part_candidate.asset,
+          "inherited TTAB retains selected-part provenance");
+    const odh::DefinitionCandidate other_resource_master{path.string(),"Sofas.iff",16847,master};
+    const odh::DefinitionIndex split_index({part_candidate,other_resource_master});
+    const auto no_cross_resource=saved_object_interactions(part_candidate,split_index);
+    check(no_cross_resource.state==SavedObjectInteractions::State::missing_ttab&&
+          no_cross_resource.table_id==0xffff,
+          "multitile part never inherits a master TTAB from another resource");
     data=iff(chunk("TTAB",128,ttab())+chunk("TTAs",128,localized_labels()));write(path,data);
     const auto portuguese=saved_object_interactions({path.string(),"",7,object},14);
     const auto missing_language=saved_object_interactions({path.string(),"",7,object},5);

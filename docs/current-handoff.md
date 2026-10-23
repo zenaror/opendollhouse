@@ -12,6 +12,30 @@ incluindo vizinhança e lotes das expansões, famílias e seus fluxos, seleção
 idioma e registro de falhas. Paridade ainda precisa ser verificada em uso; uma
 build compilada ou testes unitários aprovados não bastam.
 
+## Atualização: tabela de ações herdada do banco no House05 (2026-10-23)
+
+O mapeamento por GUID corrigiu a escolha do lote: no House05 original, o objeto
+salvo 173 é a peça esquerda do banco de jardim (GUID 3586796916,
+`Sofas.iff#16848`) e o objeto 174 é a peça direita. As duas apontam para o
+mesmo mestre GUID 2091978777; o grupo salvo é `[173,174]`, liderado por 173.
+Esse mestre existe como metadado OBJD `Sofas.iff#16847`, mas não como uma
+terceira peça salva. O TTAB compartilhado é o ID 131 do mestre; a primeira
+linha é ação 8213/teste 8214. O ID 173 do House07 continua sendo outro objeto.
+
+O OpenDollhouse agora procura o TTAB do mestre apenas quando a peça usa o
+marcador `TreeTableID=65535`, e só através do mestre único no mesmo arquivo e
+asset. O teste sintético confirmou que essa herança encontra a tabela 131 e
+recusa usar um mestre de outro recurso; `odh-saved-interactions-tests` passou
+46 verificações.
+
+Uma execução headless de 512 ticks no House05 original com residente de
+neighbor ID 34 e alvo 173 agora encontra a TTAB, mas não enfileira a ação: o
+teste 8214 não pode ser avaliado pelo perfil atual do TestFunction. Portanto a
+ação 8213 e a EntryPoint26 8215 ainda não foram executadas, e o banco não está
+validado como interação funcional. Próximo passo: ampliar com segurança o
+avaliador/serviços de TestFunction necessários a 8214, repetir esse mesmo
+fluxo real e só então seguir para rota, animação e Snap.
+
 ## Atualização: condições simples da EntryPoint26 (2026-10-23)
 
 O avaliador isolado de condições da EntryPoint26 agora aceita apenas BHAVs
