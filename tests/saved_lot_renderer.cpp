@@ -90,6 +90,13 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  check(near.objects==1&&near.object_layers==1&&near.object_shaded_samples==1&&near.object_cached_frame_bytes==6);
  check(near.image.depth[wall_pixel]<wall.image.depth[wall_pixel]);
  check(near.object_pick_ids.size()==empty.pixels.size()&&near.object_pick_ids[wall_pixel]==2);
+ auto under_object=empty;under_object.owner_ids.assign(empty.pixels.size(),0);
+ under_object.pixels[wall_pixel]={30,30,30,255};under_object.depth[wall_pixel]=near.image.depth[wall_pixel]+1;
+ under_object.owner_ids[wall_pixel]=1;
+ const auto object_preempts_avatar=renderer.render(camera,
+     std::vector<SavedLotAvatarLayer>{{under_object,41}},true);
+ check(object_preempts_avatar.object_pick_ids[wall_pixel]==2&&
+       object_preempts_avatar.avatar_pick_ids[wall_pixel]==0);
  const auto picked=renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width));
  check(picked&&picked->id==2&&picked->guid==123&&picked->generation==world.find(2)->generation&&picked->tree_table_id==128);
  saved.records[0].saved.guid=124;check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));saved.records[0].saved.guid=123;
@@ -187,6 +194,23 @@ int main(){try{
                                                 static_cast<std::int32_t>(painted/camera.width));
  check(floor_pick&&floor_pick->x==1&&floor_pick->y==1&&floor_pick->level==1);
  check(floor_pick->room==*pick_renderer.runtime_room_at({24,24,1,0}));
+ auto make_avatar_layer=[&](std::uint16_t owner,std::array<std::uint8_t,4> color,float depth){
+  auto layer=empty;layer.owner_ids.assign(layer.pixels.size(),0);layer.pixels[painted]=color;
+  layer.depth[painted]=depth;layer.owner_ids[painted]=owner;return layer;
+ };
+ auto first_resident=make_avatar_layer(1,{200,20,20,255},pick_frame.image.depth[painted]-2);
+ auto second_resident=make_avatar_layer(1,{20,20,200,255},pick_frame.image.depth[painted]-1);
+ const std::vector<SavedLotAvatarLayer> residents{{second_resident,23},{first_resident,17}};
+ const auto resident_frame=pick_renderer.render(camera,residents,true,false);
+ check(resident_frame.image.pixels[painted]==first_resident.pixels[painted]&&
+       resident_frame.image.depth[painted]==first_resident.depth[painted]);
+ check(resident_frame.avatar_pick_ids.size()==empty.pixels.size()&&resident_frame.avatar_pick_ids[painted]==17);
+ check(resident_frame.ground_pick_ids[painted]==0&&resident_frame.image.owner_ids.empty());
+ const auto legacy_avatar=make_avatar_layer(9,{20,200,20,255},pick_frame.image.depth[painted]-1);
+ const auto legacy_avatar_frame=pick_renderer.render(camera,legacy_avatar,true,false);
+ check(legacy_avatar_frame.ground_pick_ids[painted]==9&&legacy_avatar_frame.avatar_pick_ids[painted]==0);
+ auto too_many_residents=std::vector<SavedLotAvatarLayer>(65);
+ rejects([&]{pick_renderer.render(camera,too_many_residents,true,false);});
  std::size_t terrain_pixel=pick_frame.ground_pick_ids.size();
  for(std::size_t i=0;i<pick_frame.ground_pick_ids.size();++i)
   if(pick_frame.ground_pick_ids[i]==odh::ground_owner_id(2,1,1)){terrain_pixel=i;break;}
@@ -220,6 +244,14 @@ int main(){try{
  std::size_t wall_pixel=wall_frame.image.depth.size();for(std::size_t i=0;i<wall_frame.image.depth.size();++i)
   if(wall_frame.image.pixels[i]==std::array<std::uint8_t,4>{90,100,110,255}){wall_pixel=i;break;}
  check(wall_pixel<wall_frame.image.depth.size());
+ auto behind_wall=empty;behind_wall.owner_ids.assign(empty.pixels.size(),0);
+ behind_wall.pixels[wall_pixel]={20,200,20,255};
+ behind_wall.depth[wall_pixel]=wall_frame.image.depth[wall_pixel]+1;
+ behind_wall.owner_ids[wall_pixel]=1;
+ const auto wall_preempts_avatar=walled.render(camera,
+     std::vector<SavedLotAvatarLayer>{{behind_wall,37}},true,false);
+ check(wall_preempts_avatar.image.pixels[wall_pixel]==wall_frame.image.pixels[wall_pixel]&&
+       wall_preempts_avatar.avatar_pick_ids[wall_pixel]==0);
  auto live=empty;live.pixels[wall_pixel]={255,0,0,255};live.depth[wall_pixel]=wall_frame.image.depth[wall_pixel]-1;live.tested_samples=live.shaded_samples=1;
  check(walled.render(camera,live).image.pixels[wall_pixel]==live.pixels[wall_pixel]);
  live.depth[wall_pixel]=wall_frame.image.depth[wall_pixel]+1;

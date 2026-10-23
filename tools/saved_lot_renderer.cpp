@@ -3,6 +3,7 @@
 #include "odh/compositor.hpp"
 #include "odh/ground_owner.hpp"
 #include <algorithm>
+#include <limits>
 
 namespace {
 const odh::ArchitectureResourceCatalog& material_catalog(const std::optional<SavedLotMaterialOptions>& options) {
@@ -145,6 +146,14 @@ odh::GraphicsEntity SavedLotRenderer::entity_graphics(std::int16_t id) {
 SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
                                       const odh::RasterFrame& avatar_frame,bool record_picks,
                                       bool include_objects) {
+    return render(camera,std::vector<SavedLotAvatarLayer>{{avatar_frame,0}},record_picks,include_objects);
+}
+
+SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
+                                      const std::vector<SavedLotAvatarLayer>& avatar_layers,
+                                      bool record_picks,bool include_objects) {
+    if(avatar_layers.size()>64)
+        throw odh::FormatError("live saved lot avatar layer count exceeds budget");
     auto image=odh::rasterize(camera.width,camera.height,{},{});
     SavedLotFrame result;
     if(view_.terrain_theme){
@@ -159,7 +168,40 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     result.floor_draws=floor.draws.size();result.floor_triangles=floor.triangles;
     result.floor_texture_bytes=floor.texture_bytes;
     image=odh::merge_raster(image,floor.image);
-    image=odh::merge_raster(image,avatar_frame);
+    std::vector<float> avatar_pick_depth;
+    if(record_picks){
+        const auto pixels=std::uint64_t{camera.width}*camera.height;
+        if(!camera.width||!camera.height||pixels>1048576)
+            throw odh::FormatError("live saved lot avatar pick viewport outside profile");
+        result.avatar_pick_ids.assign(static_cast<std::size_t>(pixels),0);
+        avatar_pick_depth.assign(static_cast<std::size_t>(pixels),std::numeric_limits<float>::infinity());
+    }
+    for(const auto& avatar_layer:avatar_layers){
+        const auto& layer=avatar_layer.image;
+        if(layer.width!=camera.width||layer.height!=camera.height||
+           layer.pixels.size()!=image.pixels.size()||layer.depth.size()!=image.depth.size())
+            throw odh::FormatError("live saved lot avatar layer dimensions invalid");
+        if(!layer.owner_ids.empty()&&layer.owner_ids.size()!=layer.pixels.size())
+            throw odh::FormatError("live saved lot avatar owner buffer invalid");
+        if(record_picks){
+            for(std::size_t i=0;i<layer.depth.size();++i){
+                if(layer.depth[i]<image.depth[i]){
+                    result.avatar_pick_ids[i]=!layer.owner_ids.empty()&&layer.owner_ids[i]
+                        ?avatar_layer.pick_id:0;
+                    avatar_pick_depth[i]=layer.depth[i];
+                }
+            }
+        }
+        // The legacy single-avatar API retains its historical owner merge.
+        // Multi-resident layers use a dedicated avatar buffer and must not
+        // leak resident tokens into the ground buffer.
+        const bool legacy_owner_merge=avatar_layers.size()==1&&avatar_layer.pick_id==0;
+        if(legacy_owner_merge)image=odh::merge_raster(image,layer);
+        else {
+            auto visual_layer=layer;visual_layer.owner_ids.clear();
+            image=odh::merge_raster(image,visual_layer);
+        }
+    }
     if(walls_){
         // Derive from current World banks and positions on every capture.
         const auto appearance=saved_wall_appearance(saved_,definitions_,render_architecture(),true);
@@ -170,6 +212,10 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         result.wall_tested_samples=wall.composite.tested_samples;
         result.wall_shaded_samples=wall.composite.shaded_samples;
         image=std::move(wall.composite.image);
+    }
+    if(record_picks){
+        for(std::size_t i=0;i<result.avatar_pick_ids.size();++i)
+            if(image.depth[i]<avatar_pick_depth[i])result.avatar_pick_ids[i]=0;
     }
     if(!include_objects){
         result.ground_pick_ids=std::move(image.owner_ids);
@@ -218,6 +264,10 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
     result.object_tested_samples=objects.composite.tested_samples;
     result.object_shaded_samples=objects.composite.shaded_samples;
     image=std::move(objects.composite.image);
+    if(record_picks){
+        for(std::size_t i=0;i<result.avatar_pick_ids.size();++i)
+            if(image.depth[i]<avatar_pick_depth[i])result.avatar_pick_ids[i]=0;
+    }
     result.ground_pick_ids=std::move(image.owner_ids);
     result.image=std::move(image);return result;
 }

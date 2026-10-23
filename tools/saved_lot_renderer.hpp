@@ -43,6 +43,7 @@ struct SavedLotView {
 struct SavedLotFrame {
     odh::RasterFrame image;
     std::uint32_t pick_width=0,pick_height=0;
+    std::vector<std::uint16_t> avatar_pick_ids; // Separate per-pixel avatar token buffer when requested.
     std::vector<std::uint16_t> object_pick_ids; // <=1Mi pixels, zero is scenery.
     std::vector<std::uint16_t> ground_pick_ids; // Separate so the display image can be moved.
     std::uint64_t floor_draws=0,floor_triangles=0,floor_texture_bytes=0;
@@ -52,6 +53,12 @@ struct SavedLotFrame {
     std::uint64_t objects=0,object_layers=0,object_offscreen_layers=0,object_cached_frame_bytes=0;
     std::uint64_t object_tested_samples=0,object_shaded_samples=0;
     std::uint64_t object_hidden=0,object_above_level=0,object_outside=0,object_removed=0;
+};
+// A pre-rendered, screen-positioned resident layer. owner_ids marks pixels
+// belonging to the resident; pick_id is the stable caller-selected token.
+struct SavedLotAvatarLayer {
+    odh::RasterFrame image;
+    std::uint16_t pick_id=0;
 };
 struct SavedObjectSelection {
     std::int16_t id;
@@ -93,6 +100,13 @@ public:
     bool runtime_room_map_available() const noexcept { return runtime_rooms_.has_value(); }
     const std::optional<odh::GeometricRoomMap>& runtime_room_map() const noexcept { return runtime_rooms_; }
     SavedLotFrame render(const odh::WorldProjection&,const odh::RasterFrame& avatar,
+                         bool record_picks=false,bool include_objects=true);
+    // Bounded to 64 residents and the normal raster viewport/pixel/sample
+    // limits. Layers are merged in vector order; nearer depth wins and ties
+    // retain the earlier layer. Avatar pick tokens are independent of object
+    // and ground tokens.
+    SavedLotFrame render(const odh::WorldProjection&,
+                         const std::vector<SavedLotAvatarLayer>& avatar_layers,
                          bool record_picks=false,bool include_objects=true);
     // Last presented pixel ownership, revalidated against live generation,
     // definition GUID and visibility; out-of-bounds/scenery/stale IDs select none.

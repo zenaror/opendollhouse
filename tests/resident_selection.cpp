@@ -21,6 +21,17 @@ int main() {
     require(odh::resident_selection_row(10, 1, 4, 12) == 11, "last resident on partial page is selectable");
     require(!odh::resident_selection_row(10, 2, 4, 12), "rows beyond resident count are rejected");
     require(!odh::resident_selection_row(4, 0, 0, 12), "empty page is rejected");
+    const std::vector<std::int16_t> other_residents{105, 137};
+    require(odh::resolve_resident_pick(48, 48, other_residents) == 48,
+            "primary resident pick resolves");
+    require(odh::resolve_resident_pick(105, 48, other_residents) == 105,
+            "other household resident pick resolves");
+    require(!odh::resolve_resident_pick(0, 48, other_residents),
+            "zero pick remains non-resident scenery");
+    require(!odh::resolve_resident_pick(106, 48, other_residents),
+            "non-household entity cannot be selected as a resident");
+    require(!odh::resolve_resident_pick(32768, 48, other_residents),
+            "pick token outside signed World identity is rejected");
     bool rejected = false;
     try { (void)odh::advance_resident_selection(0, 1, 0); }
     catch (const odh::FormatError&) { rejected = true; }

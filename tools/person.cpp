@@ -26,6 +26,7 @@
 #include "odh/session_bundle.hpp"
 #include "odh/single_resident_session_restore.hpp"
 #include "odh/household_session_restore.hpp"
+#include "odh/resident_selection.hpp"
 #include "odh/sha256.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include "odh/objm.hpp"
@@ -1051,12 +1052,15 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         std::unique_ptr<odh::EntityThreadControllers> controllers;
         std::optional<odh::Playback> playback;
         std::optional<odh::AvatarBodyDescriptor> body_state;
+        std::unique_ptr<SceneRenderer> scene_renderer;
         std::unique_ptr<odh::Vm> vm;
         std::optional<odh::WorldRoomRouteGrid> route_grid;
         std::unique_ptr<odh::Routing> routing;
         std::unique_ptr<odh_host::HouseholdGoHereSession> go_here;
         std::optional<std::uint64_t> route_spatial_revision;
         std::size_t route_movement_callbacks=0,route_snapshot_refreshes=0;
+        bool go_here_cancel_pending=false;
+        std::string ui_go_here_status="not_requested",ui_go_here_diagnostic;
         std::string route_reason="runtime_route_context_not_prepared";
     };
     std::vector<std::unique_ptr<HouseholdRuntime>> household_runtime;
@@ -1962,6 +1966,12 @@ struct PlacementCandidateProbe {
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
     std::optional<SavedGroundSelection> render_ground_selection;
+    std::int16_t active_household_actor=runtime_avatar_id;
+    const auto selected_household_member=[&]() -> HouseholdRuntime* {
+        const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return member->id==active_household_actor;});
+        return found==household_runtime.end()?nullptr:found->get();
+    };
     std::optional<SavedObjectInteractions> render_interactions;
     std::optional<std::size_t> render_selected_interaction_row;
     std::vector<SavedTestFunctionResult> render_test_results;
@@ -2195,7 +2205,9 @@ struct PlacementCandidateProbe {
     std::uint8_t current_overlay_language=game_language;
     const auto interaction_window_title=[&]{
         current_overlay_text.reset();
-        std::string title="OpenDollhouse Main preview";
+        std::string title="OpenDollhouse Main preview | resident "+std::to_string(active_household_actor)+" selected";
+        if(active_household_actor!=runtime_avatar_id)
+            title+="; object actions still use the first resident";
         if(render_selection){
             title+=" | object "+std::to_string(render_selection->id)+" GUID "+
                 std::to_string(render_selection->guid)+" TTAB "+std::to_string(render_selection->tree_table_id);
@@ -2289,6 +2301,11 @@ struct PlacementCandidateProbe {
             return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
         };
         render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+        for(auto& member:household_runtime){
+            if(!member->body_state||!member->body_state->body||!member->playback)continue;
+            const auto member_scene_config=render_appearances->resolve_body(*member->body_state->body);
+            member->scene_renderer=std::make_unique<SceneRenderer>(member_scene_config,provider);
+        }
         if(render_floors){
             render_lot=std::make_unique<SavedLotRenderer>(saved_architecture_resource(*lot_path),
                 *restored_world,*definition_index,*render_floors,render_walls,render_lot_view,render_materials);
@@ -2746,6 +2763,60 @@ struct PlacementCandidateProbe {
                 ", target="+std::to_string(goal.x)+","+std::to_string(goal.y)+")");
     }
     const auto request_go_here=[&](const odh::EntityPosition& destination){
+        if(auto* member=selected_household_member()){
+            const auto reject=[&](const std::string& reason){
+                member->ui_go_here_status="unsupported";
+                member->ui_go_here_diagnostic=reason;
+                if(member->go_here&&member->go_here->status()!="queued")member->go_here->fail(reason);
+            };
+            if(member->go_here&&member->go_here->status()=="queued")return;
+            if(!saved_world_main||!render_lot||!member->routing||!member->route_grid||
+               !member->route_grid->grid||!definition_index||!member->controllers||!member->vm){
+                reject("Go Here requires this resident's prepared route grid and controller");return;
+            }
+            if(member->controllers->interactions().size()!=0){
+                reject("Go Here requires an idle interaction queue for the selected resident");return;
+            }
+            const auto* actor=world.find(member->id);
+            if(!actor||actor->kind!=odh::EntityKind::avatar||!actor->position||
+               actor->position->level<1||actor->position->level>2||
+               destination.level<1||destination.level>2){
+                reject("Go Here requires a supported floor for the selected resident and destination");return;
+            }
+            const auto actor_room=render_lot->runtime_room_at(*actor->position);
+            const auto destination_room=render_lot->runtime_room_at(destination);
+            if(!actor_room||!destination_room||*actor_room!=member->route_grid->room_id){
+                reject("Go Here requires a known current room and destination room for the selected resident");return;
+            }
+            const odh::RoutePoint goal{destination.x,destination.y};
+            if(*destination_room==*actor_room&&!member->route_grid->grid->contains(goal)){
+                reject("the selected ground cell is outside this resident's prepared route grid");return;
+            }
+            const auto* candidate=definition_index->unique(0x7c4);
+            if(!candidate){reject("the unique saved Destination object definition 0x7C4 is unavailable");return;}
+            if(saved_owner_ids_exhausted){reject("saved object code-owner identity space exhausted");return;}
+            odh::RoutineSet routines;
+            try{routines=load_saved_action_routines(*candidate,4096);}
+            catch(const std::exception& error){reject(error.what());return;}
+            const auto key=odh::routine_key(4096);
+            if(key.scope!=odh::RoutineScope::private_object||!routines.count(key)){
+                reject("Go Here BHAV4096 is absent from the exact Destination resource");return;
+            }
+            if(!member->go_here||member->go_here->status()!="not_requested")
+                member->go_here=std::make_unique<odh_host::HouseholdGoHereSession>(world,member->id,
+                    *member->vm,*member->controllers,*member->routing);
+            member->ui_go_here_status="not_requested";member->ui_go_here_diagnostic.clear();
+            const auto owner=next_saved_code_owner;
+            if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+            else ++next_saved_code_owner;
+            if(member->go_here->request(destination,owner,std::move(routines),4096))
+                member->ui_go_here_status="queued";
+            else {
+                member->ui_go_here_status=member->go_here->status();
+                member->ui_go_here_diagnostic=member->go_here->diagnostic();
+            }
+            return;
+        }
         const auto reject=[&](const std::string& reason){
             go_here_status="unsupported";go_here_diagnostic=reason;
         };
@@ -2894,6 +2965,11 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until the Sim finishes walking before saving");
         if(go_here_status=="queued")
             throw odh::FormatError("wait until Go Here finishes before saving");
+        if(std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
+            return (member->routing&&member->routing->active())||
+                (member->go_here&&member->go_here->status()=="queued");
+        }))
+            throw odh::FormatError("wait until every household Sim finishes walking before saving");
         if(!saved_portal_code_owners.empty())
             throw odh::FormatError("this session has portal actions that experimental saves cannot yet resume safely");
         const auto* save_actor=world.find(runtime_avatar_id);
@@ -3102,13 +3178,41 @@ struct PlacementCandidateProbe {
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
         const bool track_actor_pixels=headless_main&&render_output;
         if(track_actor_pixels)scene_state.owner_id=std::numeric_limits<std::uint16_t>::max();
-        odh::RasterOptions scene_options;scene_options.record_owner_ids=track_actor_pixels;
+        else if(render_window||headless_window_interaction)
+            scene_state.owner_id=static_cast<std::uint16_t>(runtime_avatar_id);
+        odh::RasterOptions scene_options;
+        scene_options.record_owner_ids=track_actor_pixels||render_window||headless_window_interaction.has_value();
         auto frame=render_renderer->render(scene_state,render_camera,scene_options);
         std::uint64_t actor_raster_pixels=0;
         if(track_actor_pixels&&frame.image.owner_ids.size()==frame.image.pixels.size())
             actor_raster_pixels=std::count(frame.image.owner_ids.begin(),frame.image.owner_ids.end(),scene_state.owner_id);
+        std::vector<SavedLotAvatarLayer> avatar_layers;
         if(render_lot){
-            auto lot=render_lot->render(render_camera,frame.image,
+            avatar_layers.push_back({std::move(frame.image),
+                static_cast<std::uint16_t>(render_window||headless_window_interaction?
+                    runtime_avatar_id:0)});
+        }
+        if((render_window||headless_window_interaction)&&render_lot){
+            for(auto& member:household_runtime){
+                if(!member->scene_renderer||!member->playback)continue;
+                const auto member_sample=member->playback->sample();
+                if(!member_sample||!member_sample->clip)continue;
+                const auto* live_member=world.find(member->id);
+                if(!live_member||live_member->generation!=member_sample->actor_generation||
+                   member_sample->actor!=member->id||!live_member->position)continue;
+                const auto graphics=render_lot->entity_graphics(member->id);
+                SceneState member_state;member_state.animation=member_sample->clip.get();
+                member_state.frame=member_sample->frame;member_state.hands=member_sample->hands;
+                member_state.avatar_direction=graphics.direction;member_state.avatar_tile=graphics.tile_position;
+                member_state.owner_id=static_cast<std::uint16_t>(member->id);
+                auto member_options=scene_options;
+                member_options.record_owner_ids=render_window||headless_window_interaction.has_value();
+                auto member_frame=member->scene_renderer->render(member_state,render_camera,member_options);
+                avatar_layers.push_back({std::move(member_frame.image),static_cast<std::uint16_t>(member->id)});
+            }
+        }
+        if(render_lot){
+            auto lot=render_lot->render(render_camera,avatar_layers,
                 render_window||headless_window_interaction.has_value());
             frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
@@ -3326,21 +3430,56 @@ struct PlacementCandidateProbe {
                     " tick="+std::to_string(ticks));
 #endif
             }
-            if(input.interrupt&&go_here_status=="queued"){
-                go_here_cancel_pending=true;
-                go_here_route_status="cancelling";
-                if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
+            if(input.interrupt){
+                if(auto* member=selected_household_member();member&&member->go_here&&
+                   member->go_here->status()=="queued"){
+                    member->go_here_cancel_pending=true;
+                    if(render_window_host)render_window_host->set_title("OpenDollhouse: cancellation requested for resident "+
+                        std::to_string(member->id));
+                }else if(go_here_status=="queued"){
+                    go_here_cancel_pending=true;
+                    go_here_route_status="cancelling";
+                    if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
+                }
             }
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
-                auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
-                render_ground_selection.reset();
-                if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
-                prepare_selected_object(std::move(object));
-                if(!render_interaction_enqueued||queue.size()==0){
-                    render_interaction_requested=false;render_interaction_enqueued=false;
-                    render_interaction_status="not_requested";render_interaction_diagnostic.clear();
-                    render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                std::optional<std::int16_t> picked_resident;
+                const auto& avatar_picks=render_lot_evidence->avatar_pick_ids;
+                if(click_x>=0&&click_y>=0&&
+                   static_cast<std::uint32_t>(click_x)<render_lot_evidence->pick_width&&
+                   static_cast<std::uint32_t>(click_y)<render_lot_evidence->pick_height){
+                    const auto index=static_cast<std::size_t>(click_y)*render_lot_evidence->pick_width+
+                        static_cast<std::size_t>(click_x);
+                    if(index<avatar_picks.size()){
+                        std::vector<std::int16_t> resident_ids;
+                        resident_ids.reserve(household_runtime.size());
+                        for(const auto& member:household_runtime)resident_ids.push_back(member->id);
+                        picked_resident=odh::resolve_resident_pick(avatar_picks[index],runtime_avatar_id,resident_ids);
+                    }
+                }
+                if(picked_resident){
+                    active_household_actor=*picked_resident;
+                    render_ground_selection.reset();
+                    prepare_selected_object(std::nullopt);
+                    const bool any_interaction_active=queue.size()!=0||std::any_of(household_runtime.begin(),
+                        household_runtime.end(),[](const auto& member){return member->controllers&&
+                            member->controllers->interactions().size()!=0;});
+                    if(!render_interaction_enqueued||!any_interaction_active){
+                        render_interaction_requested=false;render_interaction_enqueued=false;
+                        render_interaction_status="not_requested";render_interaction_diagnostic.clear();
+                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                    }
+                }else{
+                    auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
+                    render_ground_selection.reset();
+                    if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
+                    prepare_selected_object(std::move(object));
+                    if(!render_interaction_enqueued||queue.size()==0){
+                        render_interaction_requested=false;render_interaction_enqueued=false;
+                        render_interaction_status="not_requested";render_interaction_diagnostic.clear();
+                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                    }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
@@ -3377,8 +3516,15 @@ struct PlacementCandidateProbe {
                         static_cast<std::int32_t>(ground.x*16+8),
                         static_cast<std::int32_t>(ground.y*16+8),ground.level,0};
                     request_go_here(destination);
-                    title+="Go Here "+go_here_status;
-                    if(!go_here_diagnostic.empty())title+=" | "+go_here_diagnostic;
+                    if(auto* member=selected_household_member();member){
+                        const auto& status=member->go_here?member->go_here->status():member->ui_go_here_status;
+                        const auto& diagnostic=member->go_here?member->go_here->diagnostic():member->ui_go_here_diagnostic;
+                        title+="Go Here "+status;
+                        if(!diagnostic.empty())title+=" | "+diagnostic;
+                    }else{
+                        title+="Go Here "+go_here_status;
+                        if(!go_here_diagnostic.empty())title+=" | "+go_here_diagnostic;
+                    }
                 }else{
                     render_interaction_requested=true;
                     request_selected_interaction();
@@ -3608,6 +3754,8 @@ struct PlacementCandidateProbe {
         for(auto& member:household_runtime){
             auto& runtime=*member;
             if(!runtime.routing||!runtime.routing->active())continue;
+            if(runtime.go_here_cancel_pending&&runtime.go_here->status()=="queued"&&
+               runtime.routing->interrupt())runtime.go_here_cancel_pending=false;
             if(!refresh_household_route(runtime)){
                 host_failed=true;host_diagnostic=runtime.route_reason;break;
             }
