@@ -201,3 +201,33 @@ depois IDToOBJT deve resolver objt/OBJD antes do restante variável da instânci
 As coordenadas são conservadas pela rota VMTS1ActivatorNew; ainda não estão
 decodificadas aqui. Aparência, arquitetura, Main/fila/render e lote Linux
 jogável seguem necessários. Sem comparação com execução do original ou hardware.
+
+## Mudança de família para lote vago
+
+O planejador desta etapa aceita somente famílias sem lote atual. Uma família que já ocupa uma casa precisa passar pelo fluxo de despejo primeiro, com o crédito do valor da arquitetura aplicado ao saldo; esse fluxo ainda não foi implementado.
+
+O fluxo ainda não está implementado. O leitor atual escolhe uma família pelo
+`HouseNumber` em `Neighborhood.iff`; o lote vazio não tem família associada.
+Mesmo que a associação fosse salva fora dos arquivos comerciais, o runtime
+do lote só reconstrói avatares encontrados nos objetos salvos da casa e ainda
+rejeita membros da família ausentes ou sem posição. Portanto, trocar apenas a
+associação família→lote não permite jogar com a família no novo lote.
+
+Na referência local Simitone, `SetFamilyForHouse` associa a família e, quando
+é uma mudança para uma casa comprada, desconta `SIMI.PurchaseValue`. A rotina
+`VerifyFamily` compara o lote com a lista de moradores da família, cria cada
+morador ausente a partir de seu recurso de personagem, tenta colocá-lo junto à
+caixa de correio e define a família do personagem. Isso é comportamento do
+Simitone, não prova do executável original. As famílias sem lote observadas no
+`UserData` principal não passam pelo filtro de elegibilidade CAS do Simitone;
+um gate de integração precisará preparar uma família sintética elegível cujos
+GUIDs apontem para recursos de personagem reais.
+
+Para aceitar a mudança no ODH, um único estado persistente do jogador deve
+alimentar tanto o mapa da vizinhança quanto a resolução da sessão, identificar
+com segurança a família e os dados de origem, e nunca alterar `Neighborhood.iff`
+comercial. O gate deve selecionar uma casa residencial vazia, aplicar o custo
+uma única vez, criar e posicionar cada membro ausente, executar o lote, salvar
+e reabrir a sessão, conferir a associação e o orçamento após reabrir e comparar
+os hashes comerciais antes/depois. Conflito, dados de origem alterados,
+cancelamento e falha de gravação devem deixar o estado anterior intacto.

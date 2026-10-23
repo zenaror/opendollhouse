@@ -25,6 +25,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Adicionado o codec versionado do estado local de mudança de família para lote.
+  Ele identifica FAMI e Neighborhood por hashes, valida lotes livres e exige
+  que o saldo final corresponda exatamente ao preço informado. Testes sintéticos
+  cobrem dados antigos, conflitos e limites. Ainda não há gravação no perfil,
+  ligação com o mapa/entrada do lote ou criação de moradores ausentes; esta
+  etapa não habilita move-in jogável. Veja
+  [`family-restore-validation.md`](docs/family-restore-validation.md).
+
 - O host Linux agora avança um relógio do jogo nos passos não pausados, atualiza
   sete necessidades com as regras padrão documentadas no Simitone, mostra esses
   valores no título e guarda relógio/frações por morador no save. O gate real
