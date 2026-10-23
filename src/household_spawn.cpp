@@ -55,4 +55,13 @@ std::vector<EntityPosition> household_spawn_candidates(
     return result;
 }
 
+std::optional<EntityPosition> first_household_spawn_candidate(
+    EntityPosition mailbox, std::uint16_t lot_width, std::uint16_t lot_height,
+    const std::function<bool(const EntityPosition&)>& accepts) {
+    if (!accepts) throw FormatError("household spawn placement validator is required");
+    for (const auto& candidate : household_spawn_candidates(mailbox, lot_width, lot_height))
+        if (accepts(candidate)) return candidate;
+    return std::nullopt;
+}
+
 } // namespace odh

@@ -45,12 +45,29 @@ int main() {
         const auto edge = odh::household_spawn_candidates({8, 8, 1, 0}, 2, 2);
         require(edge.size() < candidates.size(), "lot bounds filter outside positions");
         require(edge.size() >= 4, "valid mailbox keeps its four facing attempts");
+
+        std::size_t attempts = 0;
+        const auto accepted_position = candidates[40];
+        const auto first_accepted = odh::first_household_spawn_candidate(
+            {168, 168, 1, 0}, 24, 24, [&](const auto& candidate) {
+                ++attempts;
+                return candidate == accepted_position;
+            });
+        require(first_accepted == accepted_position && attempts == 41,
+                "search stops at the first position accepted by the placement validator");
+        attempts = 0;
+        require(!odh::first_household_spawn_candidate({168, 168, 1, 0}, 24, 24,
+                    [&](const auto&) { ++attempts; return false; }) &&
+                attempts == candidates.size(),
+                "search reports failure after exhausting all bounded candidates");
         rejects([] { (void)odh::household_spawn_candidates({-1, 8, 1, 0}, 2, 2); },
                 "negative mailbox coordinate rejected");
         rejects([] { (void)odh::household_spawn_candidates({8, 8, 3, 0}, 2, 2); },
                 "unsupported mailbox floor rejected");
         rejects([] { (void)odh::household_spawn_candidates({8, 8, 1, 0}, 0, 2); },
                 "empty lot dimensions rejected");
+        rejects([] { (void)odh::first_household_spawn_candidate({8, 8, 1, 0}, 2, 2, {}); },
+                "missing placement validator rejected");
         std::cout << "PASS TS1 mailbox arrival candidates and lot bounds\n";
         return 0;
     } catch (const std::exception& error) {
