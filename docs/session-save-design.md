@@ -61,3 +61,12 @@ There is still no resource identity check or host reconstruction. The codecs
 are not yet assembled as `META`/`WRLD`/`RELA`/`VM`/`SCHD`/`CTRL` sections or
 connected to the live session. Those are the remaining steps before the
 House07 process-restart gate can run.
+
+The first `META` building block now has a version-1 fixed-size codec for the
+game language, seven expansion flags, and a 32-byte resource fingerprint. It
+rejects unknown language/expansion values and a missing fingerprint. The
+expansion bits are fixed in this order: Livin' Large, House Party, Hot Date,
+Vacation, Unleashed, Superstar, and Makin' Magic. The
+fingerprint is defined as SHA-256 over a canonical manifest of the exact game
+resources used by the session, but this checkpoint does not yet generate or
+compare that manifest, append `META` to an archive, or load a saved session.
