@@ -8,12 +8,13 @@ objetos antes de conferir EntryPoint26. O preflight do ODH agora também pula
 entidades sem posição, em vez de declarar incompleta a lista de assentos. O
 teste sintético de SLOT cobre esse caso.
 
-Depois de recompilar, a execução headless da família House05 por 1 tick com
+Depois de recompilar, a execução headless da família House05 por 512 ticks com
 neighbor 34 e idioma 1 terminou com código 0, `host_failed=false` e sem
-diagnóstico. Os dados do jogo foram lidos em modo somente leitura e as pastas
-XDG ficaram temporárias. Isso confirma que o objeto 218 deixou de bloquear esse
-primeiro passo; não valida a família completa nem outras interações. CTest
-passou 208/208, com `linux_window_backend` pulado porque não havia display.
+diagnóstico. O comando não pediu para gravar sessão; as pastas XDG ficaram
+temporárias. Isso confirma que o objeto 218 deixou de bloquear esse percurso
+headless de 512 ticks, mas não valida interações naturais ou a família em uso
+visual. CTest passou 208/208, com `linux_window_backend` pulado porque não havia
+display.
 
 ## Atualização: save/reload sentado no House05 (2026-10-23)
 
