@@ -4937,7 +4937,8 @@ struct PlacementCandidateProbe {
                         else {
                             const auto* definition=definition_index?definition_index->unique(actor->definition->guid):nullptr;
                             const odh::VmFrame frame{odh::routine_key(4096),0,{runtime_avatar_id,runtime_avatar_id,runtime_avatar_id,0},{},{}};
-                            const auto live_flags=world.read(frame,3,8);
+                            // Simitone's PlacementFlags is ObjectData[42], distinct from Flags at [8].
+                            const auto live_flags=world.read(frame,3,42);
                             if(!definition)probe.floor_reason="avatar_definition_missing_or_ambiguous";
                             else if(!definition->definition.level_offset)probe.floor_reason="avatar_level_offset_unavailable";
                             else if(!live_flags)probe.floor_reason="live_placement_flags_unavailable";

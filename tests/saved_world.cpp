@@ -37,6 +37,7 @@ std::vector<odh::SavedWorldEntity> fixture() {
     b.saved.prefix.object_data[2]=1;b.saved.prefix.object_data[3]=1;
     b.serialized_object_type=2;b.tail.person.emplace();b.tail.person->person_data.resize(80,-22);
     b.definition.object_type=2;
+    b.saved.prefix.object_data[8]=8;b.saved.prefix.object_data[42]=2307;
     b.tail.person->motive_data_bits.fill(0x42c90000U); // 100.5 -> even100.
     b.tail.person->motive_data_bits[1]=0x43018000U; //129.5 ->130, no setter clamp.
     b.tail.person->motive_data_bits[2]=0xc6800000U; //-16384.
@@ -128,6 +129,8 @@ int main() {
             restored->records[1].serialized_object_type==2,"unattached slot and declared OBJT kind adaptation preserved");
         require(w.read(frame(2),21,9)==2 && w.read(frame(1),21,9)==4,
             "saved World exposes the resolved OBJD Type through StackObjectDefinition word 9");
+        require(w.read(frame(2),3,8)==8 && w.read(frame(2),3,42)==2307,
+            "general object flags and PlacementFlags remain distinct live World fields");
         require(restored->multitile_groups.size()==1 && restored->multitile_groups[0].leader==3 &&
             restored->multitile_groups[0].members==std::vector<std::int16_t>({3,4}),"multitile leader first independent of decoded order");
         require(odh::saved_world_has_multitile_member(*restored,3,105)&&

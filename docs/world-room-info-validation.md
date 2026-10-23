@@ -92,7 +92,7 @@ obstacles, filtro AttemptWalk, EntryPoint5 ou movimentação do avatar.
 `--placement-candidate X Y LEVEL DIRECTION` adds an independent query for a
 candidate position against the prepared lot and the post-tick live World. It
 reports the candidate room and radius-3 avatar box, `FloorChangeValid` inputs
-from the unique avatar definition and live `ObjectData[8]`, plus the current
+from the unique avatar definition and live `ObjectData[42]` (`PlacementFlags`), plus the current
 RoomInfo intersections. A later `entity_overlap_policy_audit` field composes
 that list with the live World flags and restored EntryPoint IDs. The probe does
 not move the avatar, execute a BHAV, remove the avatar from its current static
@@ -100,20 +100,21 @@ footprint, evaluate final placement policy, or claim route clearance. An
 unavailable floor, room, definition, or live flags remains unknown/unsupported
 rather than being inferred from the save snapshot.
 
-House07 was queried at tick 214 for candidate `(392,440,1,3)`. It resolved room
-3, precise floor 6, live placement flags 8 and avatar `LevelOffset` 0;
-`FloorChangeValid` returned `allowed`. RoomInfo reported the current static
-footprint of avatar 105 at `[389,437,395,443]`. This confirms the candidate
-query plumbing on House07; because the probe deliberately keeps the avatar in
-that static collection and does not evaluate EntryPoint 5/26, overlap policy,
-ghost/allow flags, architecture obstacles, portals or route clearance, it is
-not a placement approval.
+An earlier version accidentally read general `ObjectData[8]` flags for
+`FloorChangeValid`; Simitone reads the distinct `ObjectData[42]` placement
+flags. The reader and the saved-World regression test now use/check word 42.
+After the fix, House07 was rerun at tick 214. Candidates `(392,440,1,3)` and
+`(400,440,1,3)` both resolved to room 3, floor 6, `ObjectData[42]=2307`,
+`LevelOffset=0`, and `FloorChangeValid=allowed`; RoomInfo was complete. The
+first query included only avatar 105's current static footprint, which the
+overlap audit skipped as self. The second had no intersections. Both overlap
+audits returned `allowed` with zero blocker pairs.
 
-Candidate `(400,440,1,3)` on the same run resolved room 3 and floor 6 with the
-same live flags/LevelOffset; it returned no RoomInfo intersections. The empty
-list describes only this avatar box against the current World snapshot. It does
-not account for removing the avatar's old static footprint, architecture
-obstacles, portals or movement between candidate and commit.
+These results cover the floor rule and the entity-overlap part of
+`GetAvatarPlace` for those positions. They do not move the avatar or prove a
+route to the position. The top-level `placement_decision` remains
+`not_evaluated` until the remaining position-validity inputs and integration
+are explicit.
 
 After binding EntryPoint tables to the restored entities, both candidate probes
 also report `entity_overlap_policy_audit`. For `(392,440,1,3)`, RoomInfo returned
