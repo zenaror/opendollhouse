@@ -506,12 +506,17 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
     if(headless_interaction&&(!headless_main||headless_interaction->tick>ticks_limit))
         throw odh::FormatError("--headless-interaction requires --headless-main and a tick within --ticks");
-    if(headless_go_here&&(!headless_main||headless_go_here->tick>ticks_limit||headless_interaction||
-       headless_portal||headless_stand))
-        throw odh::FormatError("--headless-go-here requires --headless-main, an in-range tick, and an otherwise idle action probe");
+    const bool go_here_after_stand=headless_go_here&&headless_interaction&&headless_stand&&
+        !headless_portal&&headless_interaction->tick<headless_stand->tick&&
+        headless_stand->tick<headless_go_here->tick;
+    const bool standalone_go_here=headless_go_here&&!headless_interaction&&!headless_portal&&!headless_stand;
+    if(headless_go_here&&(!headless_main||headless_go_here->tick>ticks_limit||
+       (!go_here_after_stand&&!standalone_go_here)))
+        throw odh::FormatError("--headless-go-here requires an idle action probe or a later tick after Sit/Stand");
     if(headless_go_here_interrupt_tick&&(!headless_main||!headless_go_here||
-       *headless_go_here_interrupt_tick>ticks_limit||headless_entity_move))
-        throw odh::FormatError("--headless-go-here-interrupt requires Go Here and an in-range tick without a world mutation");
+       *headless_go_here_interrupt_tick>ticks_limit||
+       *headless_go_here_interrupt_tick<headless_go_here->tick||headless_entity_move))
+        throw odh::FormatError("--headless-go-here-interrupt requires an in-range tick at or after Go Here, without a world mutation");
     if(headless_go_here_interrupt_after_movements&&(!headless_main||!headless_go_here||
        headless_entity_move||headless_go_here_interrupt_tick))
         throw odh::FormatError("--headless-go-here-interrupt-after-movements requires Go Here and no tick cancel or world mutation");
@@ -2696,7 +2701,10 @@ struct PlacementCandidateProbe {
                 static_cast<std::int32_t>(headless_go_here->x*16+8),
                 static_cast<std::int32_t>(headless_go_here->y*16+8),
                 headless_go_here->level,0};
-            request_go_here(destination);
+            if(go_here_after_stand&&(!headless_stand_result||!*headless_stand_result)){
+                go_here_status="unsupported";
+                go_here_diagnostic="chained Go Here requires the preceding Sit and Stand actions to return true";
+            }else request_go_here(destination);
         }
         if(headless_portal&&!headless_portal_applied&&ticks==headless_portal->tick){
             headless_portal_applied=true;

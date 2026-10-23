@@ -601,5 +601,26 @@ retenção e soltura da tecla, mas continua pulado em sessões sem DISPLAY.
 Nenhum desses resultados estabelece equivalência de todos os objetos ou uma
 sessão completa jogável.
 
+### Sit, Stand e Go Here na mesma sessão — 2026-10-23
+
+O harness também pode enfileirar um pedido Go Here depois que Sit e Stand
+retornarem sucesso na mesma VM Main. Com a instalação Legacy e House07, o
+comando abaixo concluiu as três ações, chegou ao tile `(20,20)` e fechou a fila
+sem falha do host:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_interaction_integration.py \
+  --binary /tmp/odh-linux-fresh/odh-person \
+  --game-root '../referencias/The Sims' --ticks 2048 \
+  --go-here-after-stand 20 20 1 600
+```
+
+Sit4097 e Stand4102 retornaram true; Go Here chegou com 126 movimentos, de
+`[392,440,1,0]` até `[328,328,1,7]`, e a fila terminou vazia. A execução
+encerrou a prova ao concluir a caminhada no tick772 (`main_status=yielded`);
+isto demonstra as três ações no mesmo processo com recursos reais, mas não
+uma sessão que continue por todo o limite de 2048 ticks, nem salvamento ou
+retomada.
+
 
 O fluxo integrado agora também pode voltar à vizinhança com **M** e retomar o lote carregado sem avançar o relógio nem recarregar o World. A prova headless Sit→mapa→mesmo lote→Stand está em [neighborhood-return-validation.md](neighborhood-return-validation.md); trocar para outro lote continua indisponível.

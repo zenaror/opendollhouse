@@ -17,6 +17,9 @@ def main():
     parser.add_argument("--object-id", type=int, default=128)
     parser.add_argument("--stand-tick", type=int, default=270)
     parser.add_argument("--ticks", type=int, default=512)
+    parser.add_argument("--go-here-after-stand", nargs=4, type=int,
+                        metavar=("TILE_X", "TILE_Y", "LEVEL", "TICK"),
+                        help="after Sit and Stand, request Go Here in the same Main session")
     parser.add_argument("--include-installed-resources", action="store_true",
                         help="also load installed ExpansionPack and Downloads FAR/IFF files")
     parser.add_argument("--window-input", action="store_true",
@@ -43,6 +46,13 @@ def main():
         parser.error("--window-stand requires --window-input")
     if args.window_neighborhood and not (args.window_input and args.window_stand):
         parser.error("--window-neighborhood requires --window-input and --window-stand")
+    if args.go_here_after_stand:
+        tile_x, tile_y, level, tick = args.go_here_after_stand
+        if args.window_input:
+            parser.error("--go-here-after-stand currently requires the headless Sit/Stand action path")
+        if not (0 <= tile_x <= 2046 and 0 <= tile_y <= 2046 and 1 <= level <= 2 and
+                args.stand_tick < tick <= args.ticks):
+            parser.error("--go-here-after-stand must target a supported tile after Stand and within --ticks")
     if args.neighborhood_house is not None and not args.window_neighborhood:
         parser.error("--neighborhood-house requires --window-neighborhood")
     if args.neighborhood_expect_rejected and not args.window_neighborhood:
@@ -122,6 +132,8 @@ def main():
     else:
         command += ["--headless-interaction", str(args.object_id), "1",
                     "--headless-stand", str(args.object_id), str(args.stand_tick)]
+        if args.go_here_after_stand:
+            command += ["--headless-go-here", *(str(value) for value in args.go_here_after_stand)]
     if args.window_stand:
         command += ["--headless-window-stand-tick", str(args.stand_tick)]
     if args.window_neighborhood:
@@ -143,6 +155,7 @@ def main():
     report = json.loads(result.stdout)
     interaction = report["interaction_runtime"]
     stand = report["stand_runtime"]
+    go_here = report["go_here_runtime"]
     trace = report["trace"]
     action_trace = [entry for entry in trace if entry["owner"] >= 0x80000000]
     main_trace = [entry for entry in trace if entry["owner"] < 0x80000000]
@@ -196,6 +209,8 @@ def main():
         "family_world_reconciliation": household,
         "interaction": interaction,
         "stand": stand,
+        "go_here": go_here,
+        "host_failed": report["host_failed"],
         "neighborhood_resume": report["neighborhood_resume_runtime"],
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
@@ -265,13 +280,24 @@ def main():
         report["completion"] is not None and report["completion"]["result"] is True and
         restore_records_consistent and
         {4097, 4100, 4099}.issubset(action_routines) and {44, 45, 46, 49}.issubset(action_opcodes) and
-        bool(main_entity_next) and report["ticks"] == args.ticks and
+        bool(main_entity_next) and (args.go_here_after_stand or report["ticks"] == args.ticks) and
         stand["precondition_met"] and stand["entry_point"] == 27 and
         stand["action"] == 4102 and stand["status"] == "returned_true" and
         stand["result"] is True and stand["actor_posture"] == 0 and
         not stand["actor_attached"] and 4102 in action_routines and
         report["status"] in ("waiting", "yielded") and
-        (args.ticks < 512 or report["status"] == "waiting") and
+        (args.go_here_after_stand or args.ticks < 512 or report["status"] == "waiting") and
+        (not args.go_here_after_stand or (
+            go_here is not None and go_here["status"] == "returned_true" and
+            go_here["route_status"] == "arrived" and go_here["result"] is True and
+            args.go_here_after_stand[3] <= report["ticks"] <= args.ticks and
+            go_here["start_position"] != go_here["end_position"] and
+            go_here["end_position"][:3] == [args.go_here_after_stand[0] * 16 + 8,
+                                             args.go_here_after_stand[1] * 16 + 8,
+                                             args.go_here_after_stand[2]] and
+            go_here["queue_size"] == 0 and not go_here["queue_active"] and
+            report["route_runtime"]["movement_callbacks"] > 0
+        )) and
         (not args.move_avatar_to or route["movement_callbacks"] > 0) and
         not report["host_failed"]
         )
