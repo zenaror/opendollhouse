@@ -48,7 +48,8 @@ std::optional<std::string> child_shy_sitting_fallback_preflight(
 ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable&, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>&,
-    RandomState&, bool no_sitting_target_proven = false);
+    RandomState&, bool no_sitting_target_proven = false,
+    bool sitting_candidates_resolved = false);
 // Generates, filters by range/direction and room before scoring, then consumes
 // score RNG before applying position-validity checks, matching the observed
 // Simitone phase order. Routing revalidates selected goals.
@@ -56,5 +57,6 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable&,std::size_t type3_index,const EntityPosition& caller,
     const EntityPosition& target,RandomState&,bool no_sitting_target_proven = false,
     const std::function<bool(RoutePoint)>& candidate_in_room = {},
-    const std::function<bool(RoutePoint)>& candidate_position_valid = {});
+    const std::function<bool(RoutePoint)>& candidate_position_valid = {},
+    const std::function<std::optional<std::int16_t>(RoutePoint)>& candidate_sitting_object = {});
 } // namespace odh

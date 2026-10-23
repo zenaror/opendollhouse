@@ -80,9 +80,9 @@ std::optional<std::string> child_shy_sitting_fallback_preflight(
 ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable& table, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>& inputs,
-    RandomState& random,bool no_sitting_target_proven) {
+    RandomState& random,bool no_sitting_target_proven,bool sitting_candidates_resolved) {
     const auto* slot = slot_of_type(table, 3, type3_index);
-    const bool shy_child_fallback=no_sitting_target_proven&&
+    const bool shy_child_fallback=(no_sitting_target_proven||sitting_candidates_resolved)&&
         is_child_shy_sitting_fallback_slot(table,type3_index);
     const bool relative_front=in_front_relative_slot_record(slot);
     const bool common=table.version == 10 && slot &&
@@ -133,6 +133,8 @@ ReferenceSlotScores score_reference_slot_candidates(
         if (!in_range || input.goal.entry_flags == 0 ||
             (input.goal.entry_flags & ~static_cast<std::uint8_t>(slot->flags)) != 0 ||
             input.goal.facing > 7 ||
+            (input.goal.sitting_object &&
+             (!sitting_candidates_resolved || !shy_child_fallback || *input.goal.sitting_object <= 0)) ||
             (input.verification != ReferenceSlotVerification::eligible &&
              input.verification != ReferenceSlotVerification::eligible_with_penalty &&
              input.verification != ReferenceSlotVerification::rejected_after_score))
@@ -158,7 +160,7 @@ ReferenceSlotScores score_reference_slot_candidates(
         if (input.verification != ReferenceSlotVerification::rejected_after_score) {
             score = base;
             if ((slot->flags & random_scoring) == 0) *score -= caller_distances[i] / 3.0;
-            *score *= slot->standing;
+            *score *= input.goal.sitting_object ? slot->sitting : slot->standing;
             if (input.verification == ReferenceSlotVerification::eligible_with_penalty) *score /= 100000;
             result.ranked_input_indices.push_back(i);
         }
@@ -175,10 +177,12 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
     const EntityPosition& target,RandomState& random,bool no_sitting_target_proven,
     const std::function<bool(RoutePoint)>& candidate_in_room,
-    const std::function<bool(RoutePoint)>& candidate_position_valid) {
+    const std::function<bool(RoutePoint)>& candidate_position_valid,
+    const std::function<std::optional<std::int16_t>(RoutePoint)>& candidate_sitting_object) {
     const auto* slot=slot_of_type(table,3,type3_index);
     const bool relative_front=in_front_relative_slot_record(slot);
-    const bool shy_child_fallback=no_sitting_target_proven&&
+    const bool sitting_candidates_resolved=static_cast<bool>(candidate_sitting_object);
+    const bool shy_child_fallback=(no_sitting_target_proven||sitting_candidates_resolved)&&
         is_child_shy_sitting_fallback_slot(table,type3_index);
     const bool door_range=table.version==10&&slot&&
        (slot->flags==0x54||slot->flags==0x45)&&slot->facing==-2&&
@@ -222,12 +226,18 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
         }
         const auto ox=static_cast<double>(offset.x),oy=static_cast<double>(offset.y);
         const auto proximity=std::sqrt(ox*ox+oy*oy);
-        const auto verification=candidate_position_valid&&!candidate_position_valid(position)
-            ?ReferenceSlotVerification::rejected_after_score
-            :ReferenceSlotVerification::eligible;
-        inputs.push_back({{position,entry_flags,facing},proximity,verification});
+        std::optional<std::int16_t> sitting_object;
+        bool position_valid=!candidate_position_valid||candidate_position_valid(position);
+        if(!position_valid&&sitting_candidates_resolved&&shy_child_fallback) {
+            sitting_object=candidate_sitting_object(position);
+            position_valid=sitting_object&&*sitting_object>0;
+        }
+        const auto verification=position_valid
+            ?ReferenceSlotVerification::eligible
+            :ReferenceSlotVerification::rejected_after_score;
+        inputs.push_back({{position,entry_flags,facing,sitting_object},proximity,verification});
     }
     return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random,
-        no_sitting_target_proven).ranked_goals;
+        no_sitting_target_proven,sitting_candidates_resolved).ranked_goals;
 }
 } // namespace odh

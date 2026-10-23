@@ -1,4 +1,5 @@
 #include "odh/slot_scoring.hpp"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -259,6 +260,33 @@ void child_shy_sitting_fallback() {
         require(d2>=993&&d2<=6480&&goal.entry_flags!=0,
             "standing fallback goals remain inside the authored 32-to-80 proximity band");
     }
+    const auto blocked_position=goals.front().position;
+    odh::RandomState sitting_random(7);
+    const auto sitting_goals=odh::rank_reference_range_slot(slots,10,caller,target,sitting_random,false,{},
+        [blocked_position](odh::RoutePoint point){return !(point==blocked_position);},
+        [blocked_position](odh::RoutePoint point)->std::optional<std::int16_t>{
+            return point==blocked_position?std::optional<std::int16_t>{42}:std::nullopt;
+        });
+    const auto selected_seat=std::find_if(sitting_goals.begin(),sitting_goals.end(),
+        [](const auto& goal){return goal.sitting_object==42;});
+    require(selected_seat!=sitting_goals.end(),
+        "candidate resolver can retain one validated chair destination among standing fallback goals");
+    const auto dx=selected_seat->position.x-target.x,dy=selected_seat->position.y-target.y;
+    const double seat_distance=std::sqrt(static_cast<double>(dx*dx+dy*dy));
+    const odh::PreRankedSlotGoal standing_goal{
+        selected_seat->position,selected_seat->entry_flags,selected_seat->facing};
+    const odh::PreRankedSlotGoal sitting_goal{
+        selected_seat->position,selected_seat->entry_flags,selected_seat->facing,42};
+    const std::vector<odh::ReferenceSlotScoreInput> seat_weight_inputs{
+        {standing_goal,seat_distance,odh::ReferenceSlotVerification::eligible},
+        {sitting_goal,seat_distance,odh::ReferenceSlotVerification::eligible}
+    };
+    odh::RandomState seat_weight_random(0);
+    const auto seat_weight_scores=odh::score_reference_slot_candidates(
+        slots,10,{target.x,target.y},{caller.x,caller.y},seat_weight_inputs,seat_weight_random,false,true);
+    require(seat_weight_scores.records[0].final_score&&seat_weight_scores.records[1].final_score&&
+            *seat_weight_scores.records[1].final_score==10*(*seat_weight_scores.records[0].final_score),
+        "Sitting=10 multiplies only a destination carrying a validated chair ID");
     for(const auto mutate:{0,1,2,3}){
         auto altered=child_shy_sitting_table();auto& slot=altered.records[10];
         if(mutate==0)slot.flags^=1;
