@@ -589,8 +589,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
-    if(headless_window_neighborhood_tick&&(!headless_window_interaction||!lot_id||*headless_window_neighborhood_tick>=ticks_limit))
-        throw odh::FormatError("--headless-window-neighborhood-tick requires --headless-window-interaction, a selected lot, and a tick below the limit");
+    if(headless_window_neighborhood_tick&&(!headless_main||!lot_id||*headless_window_neighborhood_tick>=ticks_limit))
+        throw odh::FormatError("--headless-window-neighborhood-tick requires a headless Main lot and a tick below the limit");
     if(headless_window_neighborhood_house&&!headless_window_neighborhood_tick)
         throw odh::FormatError("--headless-window-neighborhood-house requires --headless-window-neighborhood-tick");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
@@ -1646,7 +1646,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
-        if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8))return entity_handler(f,i,t,d);
+        if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8||
+                           (i.operands[4]&127)==12))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if(i.opcode==32)return object_type_handler(f,i,t,d);
         if(i.opcode==49)return notify_handler(f,i,t,d);
@@ -3418,7 +3419,7 @@ struct PlacementCandidateProbe {
     auto window_deadline=std::chrono::steady_clock::now();
     while(!host_failed) {
 #ifdef ODH_HAVE_X11
-        if(render_window_host||headless_window_interaction){
+        if(render_window_host||headless_window_interaction||headless_window_neighborhood_tick){
             odh_host::WindowInput input;
             if(render_window_host)input=render_window_host->poll();
             else if(headless_window_input_index<headless_window_inputs.size())
@@ -3428,7 +3429,7 @@ struct PlacementCandidateProbe {
                ticks>=*headless_window_stand_tick){
                 input.stand=true;headless_window_stand_input_sent=true;
             }
-            if(headless_window_neighborhood_tick&&!headless_window_neighborhood_input_sent&&render_selection&&
+            if(headless_window_neighborhood_tick&&!headless_window_neighborhood_input_sent&&
                !input.primary_click&&ticks>=*headless_window_neighborhood_tick){
                 input.neighborhood=true;headless_window_neighborhood_input_sent=true;
             }

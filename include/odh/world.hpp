@@ -106,6 +106,9 @@ public:
     const Entity* find(std::int16_t id) const;
     // Live positive-ID enumeration, including entities with unknown definitions.
     std::optional<std::int16_t> next_entity(std::int16_t current,std::optional<EntityKind> kind={}) const;
+    // TS1 SetToNext FamilyMember (mode 12): enumerate avatars sharing PersonData[61],
+    // ascending after the cursor and wrapping to the first matching avatar.
+    std::optional<std::int16_t> next_family_member(std::int16_t current) const;
     // Live exact definition GUID query, including avatars; no master alias or
     // wraparound. The signed cursor need not identify an existing entity.
     std::optional<std::int16_t> next_entity_of_guid(std::int16_t current,std::uint32_t guid) const;

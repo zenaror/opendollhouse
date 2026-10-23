@@ -40,6 +40,12 @@ int main() {
         shoo_action_vm.start(odh::routine_key(4096),{1,2,2});
         require(shoo_action_vm.run(1)==odh::VmStatus::returned_true&&shoo_action_vm.temps()[0]==4,
                 "Destination BHAV4107 GetDistanceTo reads the Caller ID through MyObject[11]");
+        auto shoo_temp1=routine({1,0,1,3,11,0,0,0});
+        odh::Vm shoo_temp1_vm{std::move(shoo_temp1),world.vm_memory(),{},odh::get_distance_to_primitive(world)};
+        shoo_temp1_vm.start(odh::routine_key(4096),{1,2,2});
+        require(shoo_temp1_vm.run(1)==odh::VmStatus::returned_true&&shoo_temp1_vm.temps()[1]==4&&
+                shoo_temp1_vm.temps()[0]==0,
+                "GetDistanceTo publishes into the selected temp register for the household shoo BHAV");
         world.set_position(2,{16,16,2,0});
         vm.start(odh::routine_key(4096),{1,2,2});
         require(vm.run(1)==odh::VmStatus::fault&&vm.temps()[0]==0,

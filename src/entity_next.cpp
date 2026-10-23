@@ -23,14 +23,18 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
         multitile_groups=std::move(multitile_groups)](const VmFrame& frame,
         const Instruction& i,const auto& temps,const VmDispatch&)->PrimitiveOutcome {
         const auto mode=static_cast<std::uint8_t>(i.operands[4]&127);
-        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=8))return {};
+        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=8&&mode!=12))return {};
         const auto guid=std::uint32_t{i.operands[0]}|(std::uint32_t{i.operands[1]}<<8)|
             (std::uint32_t{i.operands[2]}<<16)|(std::uint32_t{i.operands[3]}<<24);
         const auto scope=static_cast<std::uint8_t>((i.operands[4]&128)?i.operands[5]:10);
         const auto index=static_cast<std::int16_t>((i.operands[4]&128)?i.operands[7]:0);
         const auto current=read_target(frame,temps,memory,scope,index);
         if(!current)return {PrimitiveDisposition::unsupported,"entity enumeration target unavailable"};
-        if(mode==8){
+        if(mode==12){
+            const auto* cursor=world.find(*current);
+            if(!cursor||cursor->kind!=EntityKind::avatar)
+                return {PrimitiveDisposition::unsupported,"family-member cursor is not a live avatar"};
+        } else if(mode==8){
             const auto* anchor=world.find(*current);
             if(!anchor||!anchor->position||anchor->position->x<0||anchor->position->y<0||
                anchor->position->level<1||anchor->position->level>2)
@@ -47,6 +51,7 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
                 if(!result&&!group->empty())result=*std::min_element(group->begin(),group->end());
             }
         } else if(mode==8)result=world.next_entity_on_same_tile(*current);
+        else if(mode==12)result=world.next_family_member(*current);
         else if(mode==4)result=world.next_entity_of_guid(*current,guid);
         else result=
             world.next_entity(*current,mode==1?std::optional<EntityKind>{EntityKind::avatar}:

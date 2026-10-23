@@ -30,9 +30,12 @@ VmPrimitive get_distance_to_primitive(const World& world) {
         // fields with its own serialized trailing bytes. Simitone's operand
         // reader ignores those bytes, so this exact resource encoding has the
         // same same-level distance meaning as Go Here's form above.
-        const bool saved_shoo=op==std::array<std::uint8_t,8>{0,0,1,3,11,0,0,0};
+        const bool saved_shoo=op[2]==1&&op[3]==3&&op[4]==11&&op[5]==0&&op[6]==0&&op[7]==0;
         if(!caller_default&&!saved_go_here&&!saved_shoo)
             return {PrimitiveDisposition::unsupported,"GetDistanceTo outside Temp0/Caller or Destination Go Here/same-level profile"};
+        const auto temp_index=static_cast<std::size_t>(op[0]|(static_cast<std::uint16_t>(op[1])<<8));
+        if(temp_index>=20)
+            return {PrimitiveDisposition::unsupported,"GetDistanceTo temp register is outside the VM's twenty-register bank"};
         const auto* stack_object=world.find(frame.context.stack_object);
         const auto* caller=world.find(frame.context.caller);
         if(!stack_object||!caller||!stack_object->position||!caller->position)
@@ -51,7 +54,7 @@ VmPrimitive get_distance_to_primitive(const World& world) {
         const auto distance=static_cast<std::int16_t>(level_difference==0?planar_distance:
             std::max<std::uint32_t>(20U*level_difference,planar_distance+5U*level_difference));
         PrimitiveOutcome result{PrimitiveDisposition::goto_true,{}};
-        result.temp_write=VmTempWrite{0,distance};
+        result.temp_write=VmTempWrite{temp_index,distance};
         return result;
     };
 }

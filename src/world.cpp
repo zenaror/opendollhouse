@@ -212,6 +212,22 @@ std::optional<std::int16_t> World::next_entity(std::int16_t current,std::optiona
         if(!it->second.ui_ghost&&(!kind || it->second.kind==*kind))return it->first;
     return {};
 }
+std::optional<std::int16_t> World::next_family_member(std::int16_t current) const {
+    constexpr std::size_t family_word=61; // VMPersonDataVariable.TS1FamilyNumber
+    const auto cursor=entities_.find(current);
+    if(cursor==entities_.end()||cursor->second.ui_ghost||cursor->second.kind!=EntityKind::avatar||
+       cursor->second.person_data.size()<=family_word)return {};
+    const auto family=cursor->second.person_data[family_word];
+    const auto matches=[&](const Entity& entity){
+        return !entity.ui_ghost&&entity.kind==EntityKind::avatar&&
+               entity.person_data.size()>family_word&&entity.person_data[family_word]==family;
+    };
+    for(auto it=entities_.upper_bound(current);it!=entities_.end();++it)
+        if(matches(it->second))return it->first;
+    for(const auto& [id,entity]:entities_)
+        if(matches(entity))return id;
+    return {};
+}
 std::optional<std::int16_t> World::next_entity_on_same_tile(std::int16_t current) const {
     const auto* anchor=find(current);
     if(!anchor||anchor->ui_ghost||!anchor->position||anchor->position->x<0||anchor->position->y<0||

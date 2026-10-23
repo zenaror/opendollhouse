@@ -93,6 +93,36 @@ void multitile_query(){
     require(r.disposition==odh::PrimitiveDisposition::goto_false&&no_output(r),
         "opcode31 multitile mode returns false for an object outside saved groups");
 }
+void family_member_query(){
+    odh::World w;
+    const auto avatar=[&](std::int16_t id,std::int16_t family){
+        require(w.create(id,odh::EntityKind::avatar,{0,80,0,0})&&w.define_type(id,guid)&&
+            w.set_person_data(id,61,family),"create avatar with TS1 family chunk ID");
+    };
+    avatar(10,5);avatar(12,6);avatar(15,5);avatar(20,5);
+    add(w,25);
+    const auto p=odh::entity_next_primitive(w);
+    const auto run=[&](std::int16_t cursor){return dispatch(p,frame(cursor),next(10,0,140));};
+    for(const auto [cursor,expected]:{std::pair<std::int16_t,std::int16_t>{10,15},{15,20},{20,10},{12,12}}){
+        const auto result=run(cursor);
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&result.stack_object_write&&
+            result.stack_object_write->value==expected,
+            "mode12 finds the next avatar in the same family and wraps within that family");
+    }
+    const auto key=odh::routine_key(4096);
+    auto bhav=odh::Bhav{0x8002,{next(10,0,140),{0,254,255,{}}},{},odh::Bhav::Metadata{0,0,0,0}};
+    odh::Vm vm({{key,bhav}}, {}, {}, p);
+    require(vm.start(key,{101,202,10,0})==odh::VmStatus::running&&
+        vm.run(1)==odh::VmStatus::budget_exhausted&&vm.stack()[0].context.stack_object==15,
+        "actual VM publishes mode12 StackObjectID output before suspending");
+    const auto wrong_kind=run(25);
+    require(wrong_kind.disposition==odh::PrimitiveDisposition::unsupported&&no_output(wrong_kind),
+        "mode12 rejects an object as its family cursor");
+    require(!w.next_family_member(99),"family enumeration rejects a missing cursor");
+    odh::World incomplete;
+    require(incomplete.create(10,odh::EntityKind::avatar,{0,61,0,0}),"create short family bank");
+    require(!incomplete.next_family_member(10),"family enumeration rejects a missing family word");
+}
 void selectors(){
     odh::World w;add(w,11);add(w,15);add(w,19);
     const auto f=frame();std::array<std::int16_t,20> temps{};temps[1]=11;
@@ -257,5 +287,5 @@ void kinds(){
         "ID reused as untyped avatar immediately participates");
 }
 }
-int main(){try{live_query();same_tile_query();multitile_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+int main(){try{live_query();same_tile_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}

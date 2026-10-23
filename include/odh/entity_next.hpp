@@ -13,9 +13,10 @@ struct EntityNext {
 };
 // Bounded ODH SetToNext (opcode31) profile: mode0 any entity, mode1 avatar,
 // mode2 object, mode3 next member of an explicit saved multitile group, mode4
-// exact definition GUID. Modes0/1/2 include unknown definitions and ignore
-// GUID/Local operand bytes. Mode3 wraps to the group's lowest ID. Other modes
-// stop without wrap.
+// exact definition GUID, mode8 next avatar/object on the cursor's tile, and
+// mode12 next avatar sharing PersonData[61] (FAMI chunk ID), with wrap. Modes
+// 0/1/2 include unknown definitions and ignore GUID/Local operand bytes. Mode3
+// wraps within its group. Other modes stop without wrap.
 // World must
 // outlive the primitive/VM. Callbacks are owned copies; objects they capture
 // must also outlive it. Memory callbacks and observer must not throw or reenter

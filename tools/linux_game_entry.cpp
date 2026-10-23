@@ -43,6 +43,7 @@ struct Options {
     bool plan_only = false, choose_language = false;
     std::optional<std::filesystem::path> load_session;
     std::optional<unsigned> headless_ticks;
+    std::vector<unsigned> headless_travel_houses;
     bool save_on_exit = false;
     bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
@@ -115,6 +116,15 @@ Options parse_options(int argc, char** argv) {
             result.headless_resident_interaction=Options::ResidentInteraction{actor_id,object_id};
             continue;
         }
+        if (key == "--headless-travel-house") {
+            if (i + 1 >= argc) throw odh::FormatError("missing headless travel destination");
+            if (result.headless_travel_houses.size() >= 16)
+                throw odh::FormatError("headless travel route exceeds sixteen destinations");
+            const auto house = parse_number(argv[++i], 98, "headless travel house");
+            if (!house) throw odh::FormatError("headless travel house is outside the supported lot range");
+            result.headless_travel_houses.push_back(house);
+            continue;
+        }
         if (i + 1 >= argc) throw odh::FormatError("missing integrated game option value");
         const std::string value = argv[++i];
         if (key == "--game-root" && !have_root) {
@@ -184,6 +194,10 @@ Options parse_options(int argc, char** argv) {
     if(result.headless_resident_go_here&&(!result.headless_ticks||result.plan_only||result.load_session||
        result.single_resident_session||result.headless_resident_go_here->tick>*result.headless_ticks))
         throw odh::FormatError("--headless-resident-go-here requires an in-range tick in a new whole-household headless run");
+    if (!result.headless_travel_houses.empty() &&
+        (!result.headless_ticks || *result.headless_ticks < 2 || result.plan_only || result.load_session ||
+         result.single_resident_session || !result.house))
+        throw odh::FormatError("--headless-travel-house requires a new whole-household run with --headless-ticks at least 2");
     if ((result.save_on_exit && (!result.headless_ticks || result.plan_only)) ||
         (result.headless_ticks && (result.plan_only || !result.house)))
         throw odh::FormatError("headless execution needs --house (or --load-session); saving on exit needs --headless-ticks, without --plan-only");
@@ -574,6 +588,10 @@ int odh_linux_game_entry(int argc, char** argv) {
         travel_options.single_resident_session = options.single_resident_session;
         std::map<unsigned, std::filesystem::path> saved_lots;
         std::optional<Options> rollback_options;
+        std::size_t headless_travel_index = 0;
+        travel_options.headless_ticks = options.headless_ticks;
+        travel_options.headless_travel_houses = options.headless_travel_houses;
+        travel_options.save_on_exit = options.save_on_exit;
         for (;;) {
             try {
                 if (!house || house > 98)
@@ -607,6 +625,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                 else resident = &session.members.front();
                 auto plan = build_runtime_arguments(options, game, house, session, *resident,
                                                          graphics_resource);
+                if (headless_travel_index < options.headless_travel_houses.size())
+                    append(plan.arguments, {"--headless-window-neighborhood-tick", "1",
+                        "--headless-window-neighborhood-house",
+                        std::to_string(options.headless_travel_houses[headless_travel_index])});
                 if(options.headless_resident_go_here){
                     const auto& action=*options.headless_resident_go_here;
                     append(plan.arguments,{"--headless-resident-go-here",std::to_string(action.entity_id),
@@ -705,8 +727,21 @@ int odh_linux_game_entry(int argc, char** argv) {
                     if (!rollback_options) return result.exit_code;
                     throw odh::FormatError("destination runtime failed with exit code " + std::to_string(result.exit_code));
                 }
+                const bool scripted_transition_expected =
+                    headless_travel_index < options.headless_travel_houses.size();
+                if (!result.transition) {
+                    if (scripted_transition_expected)
+                        throw odh::FormatError("headless travel was not accepted by the active lot");
+                    rollback_options.reset();
+                    return result.exit_code;
+                }
+                if (scripted_transition_expected) {
+                    const auto expected_house = options.headless_travel_houses[headless_travel_index];
+                    if (result.transition->destination_house != expected_house)
+                        throw odh::FormatError("headless travel selected an unexpected destination");
+                    ++headless_travel_index;
+                }
                 rollback_options.reset();
-                if (!result.transition) return result.exit_code;
 
                 // The runtime has saved and unwound before reaching this point. Retain
                 // that archive even when destination preparation or execution fails.
