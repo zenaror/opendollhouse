@@ -10,8 +10,9 @@ sem remover seus limites de caminho, nomes e índices.
 
 ## Verificações feitas
 
-- CTest completo: 195 testes passaram e `linux_window_backend` foi pulado por
-  falta de servidor gráfico (196 cadastrados).
+- Em 2026-10-23, a build Debug completa em `/tmp/odh-linux-fresh` terminou;
+  CTest completo teve 195 aprovados, zero falhas e `linux_window_backend` pulado
+  por falta de servidor gráfico (196 cadastrados).
 - `linux_game_entry_cli` cobre arquivos FAR e IFF sintéticos em `Downloads/`,
   fingerprint dos arquivos, argumentos dos dois leitores, expansão opcional
   ausente e instalação sem a pasta `Downloads/`.
@@ -33,6 +34,18 @@ sem remover seus limites de caminho, nomes e índices.
   16.232 KiB. `architecture_loaded=false` indica que isso é um retrato, não uma
   arquitetura carregada para simulação; ainda não é visita jogável nem medida de
   outro aparelho. PPM: `/tmp/odh-house81-full-97aee44.ppm`.
+- O campo final `UnknownInt` do tail OBJM agora pode faltar somente no registro
+  exato `*Placeholder` (GUID `0x3C08965F`, OBJT type 4), se o bloco delimitado
+  termina imediatamente após os campos anteriores. A leitura registra essa
+  ausência em `unknown_int_present=false`; quando presente, o valor original
+  continua preservado. A suíte sintética passou 1.549 verificações e cobre
+  valores presentes, restos incompletos de 1–31 bits, nome/GUID diferentes e a
+  validação posterior do `SavedWorld`. Com 79 fontes FAR da Legacy, House21 e
+  House40 avançam até `saved world retained word budget exceeded`; House90
+  avança até `saved scene has no positioned avatars`. Isso confirma que as três
+  passam pelo registro Placeholder; ainda faltam estado retido suficiente para
+  House21/40 e um avatar posicionado para a prévia House90. A observação do
+  leitor Simitone é uma pista, não uma prova do comportamento original.
 - O runtime leu esses recursos e escreveu um quadro PPM de 320×240 de House07,
   com o Sim, arquitetura e objetos visíveis. A medição deste computador foi
   30.752 KiB de RSS máxima para essa execução; ela não representa memória em
@@ -71,8 +84,9 @@ objetos quando o catálogo inclui os FARs de arquitetura das expansões e
 Downloads. Com só os 23 arquivos `.flr`/`.wll` soltos, o resolver ainda apontava
 7 aliases de piso e 8 de parede sem provedor; o erro agora lista quantidades e
 IDs para facilitar diagnósticos futuros. Isso ainda não abre o lote público como
-visita. House21, House40 e House90 param no leitor em `truncated OBJM tail
-fields`. Também faltam sessão interativa contínua, confirmação visual da janela e
+visita. A exceção estreita de `*Placeholder` removeu o erro de tail OBJM em
+House21/40/90; as duas primeiras agora param no limite de estado retido e a
+terceira não tem avatar posicionado para a prévia. Também faltam sessão interativa contínua, confirmação visual da janela e
 dos controles, troca real de lote, gravação e recarga de uma partida ODH e
 validação das outras cidades/expansões. Nenhum comportamento foi verificado em
 hardware portátil.

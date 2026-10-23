@@ -38,8 +38,9 @@ void account(const SavedWorldEntity& r,Budget& b) {
     if(t.multitile) b.word(7);
     if(t.portal_count) b.word(1);
     if(t.portal_float_bits) b.word(t.portal_float_bits->size());
-    b.word(1); // UnknownInt.
+    if(t.unknown_int_present) b.word(1); // Missing only on the validated Placeholder edge case.
     b.word(7); // Tail cursors and accounting metadata.
+    b.word(2); // UnknownInt presence and verified Placeholder omission flags.
     consume(b.suffix,t.remaining_data.size(),"saved world retained opaque suffix budget exceeded");
     if(!t.person) return;
     const auto& p=*t.person;
@@ -107,6 +108,14 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
         const auto* master=r.definition.master_id?definitions.unique_master(*candidate):nullptr;
         masters.emplace(static_cast<std::int16_t>(id),master?std::optional<std::uint32_t>{master->definition.guid}:std::nullopt);
         const auto& p=r.saved.prefix; const auto& c=r.common; const auto& t=r.tail;
+        // The decoder validated the original OBJT name as well as this GUID and
+        // type before setting the omission marker; retain that proof here.
+        const bool missing_placeholder_unknown_int = !t.unknown_int_present &&
+            t.placeholder_unknown_int_omission_verified &&
+            r.saved.guid==0x3C08965FU && r.definition.guid==0x3C08965FU &&
+            r.serialized_object_type==4 && t.remaining_bits==0 && t.remaining_data.empty();
+        check(t.unknown_int_present || missing_placeholder_unknown_int,
+              "saved world missing OBJM UnknownInt outside Placeholder profile");
         check(p.level==1 || p.level==2,"saved world invalid saved level");
         check(p.object_data[1]>=0 && p.object_data[1]<=7,"saved world invalid direction");
         const bool outside=p.x==-16 && p.y==-16;
@@ -114,7 +123,8 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
         check(c.block_offset==p.block_offset && t.block_offset==p.block_offset &&
             c.odd_offset==p.odd_offset && t.odd_offset==p.odd_offset &&
             c.start_bits==p.consumed_bits && t.start_bits==c.consumed_bits &&
-            c.consumed_bits>c.start_bits && t.consumed_bits>t.start_bits &&
+            c.consumed_bits>c.start_bits &&
+            (t.consumed_bits>t.start_bits || missing_placeholder_unknown_int) &&
             c.consumed_bits-c.start_bits<=p.remaining_bits &&
             c.remaining_bits==p.remaining_bits-(c.consumed_bits-c.start_bits) &&
             t.consumed_bits-t.start_bits<=c.remaining_bits &&

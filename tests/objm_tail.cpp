@@ -121,6 +121,51 @@ void synthetic() {
     auto t = read(b);
     require(t.consumed_bits == 1 && t.remaining_bits == 7 && t.remaining_data == std::vector<std::uint8_t>{0},"minimal zero field and exact packed suffix");
     require(!t.person && !t.multitile && !t.portal_float_bits && t.decoded_words == 1,"ordinary object has no inferred resource branches");
+
+    auto placeholder_definition = definition();
+    placeholder_definition.guid = 0x3C08965FU;
+    auto placeholder_entry = entry(4);
+    placeholder_entry.guid = 0x3C08965FU;
+    placeholder_entry.name = "*Placeholder";
+    const odh::ObjmBlock empty_block{0,{}};
+    auto empty_common = common(empty_block,0);
+    const auto absent_placeholder = odh::read_objm_tail(
+        empty_block,empty_common,0x45,placeholder_definition,placeholder_entry);
+    require(!absent_placeholder.unknown_int_present && absent_placeholder.unknown_int == 0 &&
+            absent_placeholder.placeholder_unknown_int_omission_verified &&
+            absent_placeholder.remaining_bits == 0,
+            "exact Placeholder may omit final field only at bounded block end");
+    Bits placeholder_value; placeholder_value.integer(-73);
+    const odh::ObjmBlock placeholder_value_block{0,placeholder_value.bytes};
+    const auto present_placeholder = odh::read_objm_tail(
+        placeholder_value_block,common(placeholder_value_block,0),0x45,
+        placeholder_definition,placeholder_entry);
+    require(present_placeholder.unknown_int_present && present_placeholder.unknown_int == -73,
+            "exact Placeholder retains final field when serialized");
+    for (std::uint64_t remaining = 1; remaining <= 31; ++remaining) {
+        const auto byte_count = static_cast<std::size_t>((remaining + 7) / 8);
+        std::vector<std::uint8_t> partial_bytes(byte_count,0);
+        const auto start_bit = byte_count * 8 - remaining;
+        // Select the 32-bit representation so every 1..31-bit suffix is
+        // genuinely incomplete, rather than a valid compact zero field.
+        for (std::uint64_t i = 0; i < std::min<std::uint64_t>(3,remaining); ++i)
+            partial_bytes[static_cast<std::size_t>((start_bit+i)/8)] |=
+                static_cast<std::uint8_t>(1U << (7-(start_bit+i)%8));
+        const odh::ObjmBlock partial_block{0,std::move(partial_bytes)};
+        auto partial_common = common(partial_block,start_bit);
+        fails([&]{ (void)odh::read_objm_tail(partial_block,partial_common,0x45,
+            placeholder_definition,placeholder_entry); },"truncated");
+    }
+    auto other_entry = placeholder_entry;
+    other_entry.name = "Other";
+    fails([&]{ (void)odh::read_objm_tail(empty_block,empty_common,0x45,
+        placeholder_definition,other_entry); },"truncated");
+    other_entry = placeholder_entry;
+    other_entry.guid = 0x12345678U;
+    placeholder_definition.guid = 0x12345678U;
+    fails([&]{ (void)odh::read_objm_tail(empty_block,empty_common,0x45,
+        placeholder_definition,other_entry); },"truncated");
+    placeholder_definition.guid = 0x3C08965FU;
     Bits last_zero;
     for (unsigned i = 0; i < 8; ++i) last_zero.bit(0);
     require(read(last_zero,7).consumed_bits == 8 && read(last_zero,7).remaining_data.empty(),
@@ -295,6 +340,8 @@ void print_native(std::uint16_t id, const odh::ObjmTailState& t) {
     std::vector<const odh::ObjmSavedString*> strings;
     std::cout << "native_tail " << id << ' ' << t.block_offset << ' ' << t.start_bits << ' '
               << t.consumed_bits << ' ' << t.remaining_bits << ' ' << t.decoded_words << ' ' << t.string_bytes;
+    std::cout << ' ' << (t.unknown_int_present ? 1 : 0);
+    std::cout << ' ' << (t.placeholder_unknown_int_omission_verified ? 1 : 0);
     if (t.multitile) {
         const auto& m = *t.multitile;
         std::cout << ' ' << m.offset_x << ' ' << m.offset_y << ' ' << m.offset_level << ' '

@@ -22,7 +22,10 @@ inline void saved_tail(std::ostream& out,const odh::ObjmTailState& s){
     out<<"{\"block_offset\":"<<s.block_offset<<",\"odd_offset\":"<<(s.odd_offset?"true":"false")
         <<",\"start_bits\":"<<s.start_bits<<",\"consumed_bits\":"<<s.consumed_bits
         <<",\"remaining_bits\":"<<s.remaining_bits<<",\"decoded_words\":"<<s.decoded_words
-        <<",\"string_bytes\":"<<s.string_bytes<<",\"unknown_int\":"<<s.unknown_int<<",\"remaining_data\":";
+        <<",\"string_bytes\":"<<s.string_bytes<<",\"unknown_int\":"<<s.unknown_int
+        <<",\"unknown_int_present\":"<<(s.unknown_int_present?"true":"false")
+        <<",\"placeholder_unknown_int_omission_verified\":"
+        <<(s.placeholder_unknown_int_omission_verified?"true":"false")<<",\"remaining_data\":";
     saved_bank(out,s.remaining_data);out<<",\"multitile\":";
     if(s.multitile){const auto& m=*s.multitile;
         out<<"{\"offset_x\":"<<m.offset_x<<",\"offset_y\":"<<m.offset_y<<",\"offset_level\":"<<m.offset_level

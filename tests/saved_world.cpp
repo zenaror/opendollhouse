@@ -26,7 +26,7 @@ odh::SavedWorldEntity record(std::uint16_t id,std::uint32_t guid) {
     auto& c=r.common;c.block_offset=p.block_offset;c.start_bits=20;c.consumed_bits=30;
     c.remaining_bits=14;c.relationship_flag=-1;
     auto& t=r.tail;t.block_offset=p.block_offset;t.start_bits=30;t.consumed_bits=40;
-    t.remaining_bits=4;t.remaining_data={0xa0};t.unknown_int=-33;
+    t.remaining_bits=4;t.remaining_data={0xa0};t.unknown_int=-33;t.unknown_int_present=true;
     r.definition=definition(guid);r.serialized_object_type=4;
     return r;
 }
@@ -80,6 +80,39 @@ int main() {
         auto restored=odh::make_saved_world(source,index);
         require(restored && restored->world->next_entity(0)==1 && restored->world->next_entity(3)==4,
                 "all original IDs restored including source order mismatch");
+        {
+            auto placeholder_source=fixture();
+            auto& placeholder=placeholder_source[2];
+            placeholder.saved.guid=0x3C08965FU;
+            placeholder.definition=definition(0x3C08965FU);
+            placeholder.serialized_object_type=4;
+            placeholder.tail.unknown_int=0;
+            placeholder.tail.unknown_int_present=false;
+            placeholder.tail.placeholder_unknown_int_omission_verified=true;
+            placeholder.common.consumed_bits=placeholder.saved.prefix.consumed_bits+
+                placeholder.saved.prefix.remaining_bits;
+            placeholder.common.remaining_bits=0;
+            placeholder.tail.start_bits=placeholder.common.consumed_bits;
+            placeholder.tail.consumed_bits=placeholder.common.consumed_bits;
+            placeholder.tail.remaining_bits=0;
+            placeholder.tail.remaining_data.clear();
+            odh::DefinitionIndex placeholder_index(candidates(placeholder_source));
+            const auto restored_placeholder=odh::make_saved_world(placeholder_source,placeholder_index);
+            require(restored_placeholder && restored_placeholder->records.size()==4 &&
+                    !restored_placeholder->records[2].tail.unknown_int_present,
+                    "bounded empty Placeholder tail survives complete SavedWorld validation");
+            auto unverified=placeholder_source;
+            unverified[2].tail.placeholder_unknown_int_omission_verified=false;
+            odh::DefinitionIndex unverified_index(candidates(unverified));
+            rejected([&]{(void)odh::make_saved_world(unverified,unverified_index);},
+                     "absent UnknownInt requires parser-verified Placeholder identity");
+            auto malformed=placeholder_source;
+            malformed[2].saved.guid=777777;
+            malformed[2].definition=definition(777777);
+            odh::DefinitionIndex malformed_index(candidates(malformed));
+            rejected([&]{(void)odh::make_saved_world(malformed,malformed_index);},
+                     "missing UnknownInt rejected outside exact Placeholder identity");
+        }
         const auto& w=*restored->world;const auto* avatar=w.find(2);
         require(avatar && avatar->kind==odh::EntityKind::avatar && avatar->person_data==std::vector<std::int16_t>(80,-22),"saved avatar bank restored exactly");
         require(avatar->motives[0]==100 && avatar->motives[1]==130 && avatar->motives[2]==-16384,"motives imported without setter clamp");

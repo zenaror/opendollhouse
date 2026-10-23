@@ -205,7 +205,22 @@ ObjmTailState read_objm_tail_fields(const ObjmBlock& block, const ObjmCommonStat
             result.portal_float_bits->push_back(fields.float_bits());
     }
     if (entry.metadata->objd_type == 2) result.person = person(fields, version, limits);
-    result.unknown_int = fields.integer();
+    // The installed House21/40/90 saves contain an exact Placeholder OBJT
+    // record whose common reader ends precisely at the end of its bounded
+    // block. Keep this exception narrow: other missing fields, or even one
+    // trailing bit, remain malformed. The reference reader also notes this
+    // Placeholder edge case, but this is save-format evidence, not proof of
+    // the original executable's intended behavior.
+    const bool placeholder_without_unknown_int =
+        entry.guid == 0x3C08965FU && entry.name == "*Placeholder" &&
+        entry.metadata->objd_type == 4 && fields.remaining() == 0;
+    if (placeholder_without_unknown_int) {
+        result.unknown_int_present = false;
+        result.placeholder_unknown_int_omission_verified = true;
+    } else {
+        result.unknown_int = fields.integer();
+        result.unknown_int_present = true;
+    }
     result.consumed_bits = fields.position(); result.remaining_bits = fields.remaining();
     result.decoded_words = fields.decoded(); result.string_bytes = fields.string_bytes();
     result.remaining_data = fields.suffix();

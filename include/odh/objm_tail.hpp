@@ -71,11 +71,14 @@ struct ObjmTailState {
     std::optional<std::int32_t> portal_count;
     std::optional<std::vector<std::uint32_t>> portal_float_bits;
     std::optional<ObjmPersonState> person;
-    std::int32_t unknown_int;
+    std::int32_t unknown_int = 0;
+    bool unknown_int_present = false;
+    // Carries the reader's exact OBJT name/GUID/type validation into SavedWorld.
+    bool placeholder_unknown_int_omission_verified = false;
     std::uint32_t block_offset;
     bool odd_offset;
     std::uint64_t start_bits, consumed_bits, remaining_bits, decoded_words, string_bytes;
-    // Opaque suffix after UnknownInt, packed MSB-first starting at bit zero.
+    // Opaque suffix after the final known tail field, packed MSB-first from bit zero.
     // Size is ceil(remaining_bits/8); unused low bits of its last byte are zero.
     std::vector<std::uint8_t> remaining_data;
 };
