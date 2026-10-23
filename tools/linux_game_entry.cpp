@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -215,6 +216,28 @@ Options parse_options(int argc, char** argv) {
     if (!have_root)
         throw odh::FormatError("game data path is not set; pass --game-root DIR on first launch");
     return result;
+}
+
+// Travel uses the same archive/profile checks as an explicit CLI restore, but
+// keeps the selected installation, neighborhood and language fixed.
+void load_travel_session(Options& options) {
+#ifdef __linux__
+    options.restore_archive = odh::encode_session_archive(
+        odh_host::read_session_archive(*options.load_session));
+    options.restore_bundle = odh::decode_session_bundle(options.restore_archive);
+    const auto& bundle = *options.restore_bundle;
+    if (bundle.host.neighborhood_mode != options.mode ||
+        bundle.resources.language_code != options.language ||
+        !options.house || bundle.host.house_number != *options.house)
+        throw odh::FormatError("travel session does not match the selected neighborhood, language or lot");
+    if (bundle.household_roster.empty() != options.single_resident_session ||
+        bundle.runtime_entities.size() != (bundle.household_roster.empty() ? 1u : bundle.household_roster.size()))
+        throw odh::FormatError("travel session does not match the household runtime profile");
+    options.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
+#else
+    (void)options;
+    throw odh::FormatError("session loading is currently available only on Linux");
+#endif
 }
 
 bool path_is_within(const std::filesystem::path& root, const std::filesystem::path& candidate) {
@@ -509,8 +532,9 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
         std::unique_ptr<odh_host::LinuxWindow> window;
-        if (!options.plan_only && !options.headless_ticks && !options.load_session) {
-            window = std::make_unique<odh_host::LinuxWindow>(800, 600, "OpenDollhouse");
+        if (!options.plan_only && !options.headless_ticks) {
+            window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
+                options.load_session ? 240 : 600, "OpenDollhouse");
             if (options.choose_language) {
                 const auto selected = odh_host::show_language_picker(*window,
                     static_cast<std::uint8_t>(options.language));
@@ -541,121 +565,170 @@ int odh_linux_game_entry(int argc, char** argv) {
         }
 #endif
 
-        const auto session = odh::load_session_entry(userdata, options.mode,
-            static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language));
-        if (!options.single_resident_session && session.members.size() > 8)
-            throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
-        const odh::SessionEntryMember* resident = nullptr;
-        if (options.resident_id) {
-            const auto found = std::find_if(session.members.begin(), session.members.end(),
-                [&](const auto& member) { return member.neighbor_id == *options.resident_id; });
-            if (found == session.members.end()) throw odh::FormatError("resident is not in the selected family");
-            resident = &*found;
-        }
-#ifdef ODH_HAVE_X11
-        else if (!options.plan_only && !options.headless_ticks) {
-            const auto selected = odh_host::show_resident_picker(*window, session.members,
-                static_cast<std::uint8_t>(options.language));
-            if (!selected) {
-                std::cout << "{\"status\":\"cancelled\",\"stage\":\"resident\"}\n";
-                return 0;
-            }
-            resident = &session.members[*selected];
-        }
-#endif
-        else resident = &session.members.front();
-        auto plan = build_runtime_arguments(options, game, house, session, *resident,
-                                                 graphics_resource);
-        if(options.headless_resident_go_here){
-            const auto& action=*options.headless_resident_go_here;
-            append(plan.arguments,{"--headless-resident-go-here",std::to_string(action.entity_id),
-                std::to_string(action.x),std::to_string(action.y),std::to_string(action.level),
-                std::to_string(action.tick)});
-        }
-        std::optional<odh::SessionResourceIdentity> verified_identity;
-        if (options.restore_bundle) {
-            verified_identity = odh_host::identify_session_resources(game, plan.resources,
-                static_cast<std::uint8_t>(options.language), plan.expansion_mask);
-            const auto& bundle = *options.restore_bundle;
-            if (odh::encode_session_resource_identity(bundle.resources) !=
-                odh::encode_session_resource_identity(*verified_identity))
-                throw odh::FormatError("saved session game resources do not match the selected installation");
-            if (bundle.host.family_chunk_id != session.family_chunk_id ||
-                bundle.host.family_number != session.family_number || bundle.host.resident_guid != resident->guid)
-                throw odh::FormatError("saved session family or resident no longer matches the selected lot");
-            if (!bundle.household_roster.empty()) {
-                if (bundle.household_roster.size() != session.members.size())
-                    throw odh::FormatError("saved household roster differs from the current FAMI family");
-                for (const auto& saved_member : bundle.household_roster) {
+        // Only small launch options and archive paths survive each runtime. Every
+        // destination rebuilds its session, resource plan and runtime from scratch.
+        Options travel_options;
+        travel_options.game_root = game;
+        travel_options.mode = options.mode;
+        travel_options.language = options.language;
+        travel_options.single_resident_session = options.single_resident_session;
+        std::map<unsigned, std::filesystem::path> saved_lots;
+        std::optional<Options> rollback_options;
+        for (;;) {
+            try {
+                if (!house || house > 98)
+                    throw odh::FormatError("travel destination is outside the supported lot range");
+                if (options.load_session && !options.restore_bundle)
+                    load_travel_session(options);
+                const auto session = odh::load_session_entry(userdata, options.mode,
+                    static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language));
+                if (!options.single_resident_session && session.members.size() > 8)
+                    throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
+                const odh::SessionEntryMember* resident = nullptr;
+                if (options.resident_id) {
                     const auto found = std::find_if(session.members.begin(), session.members.end(),
-                        [&](const auto& member) { return member.neighbor_id == saved_member.neighbor_id; });
-                    if (found == session.members.end() || found->guid != saved_member.guid ||
-                        found->object_definition_id != saved_member.object_definition_id ||
-                        std::filesystem::canonical(userdata / "Characters" / found->character_asset).lexically_relative(game) !=
-                            std::filesystem::path(saved_member.character_asset))
-                        throw odh::FormatError("saved household member identity differs from the current FAMI family");
+                        [&](const auto& member) { return member.neighbor_id == *options.resident_id; });
+                    if (found == session.members.end()) throw odh::FormatError("resident is not in the selected family");
+                    resident = &*found;
                 }
+#ifdef ODH_HAVE_X11
+                else if (!options.plan_only && !options.headless_ticks) {
+                    const auto selected = odh_host::show_resident_picker(*window, session.members,
+                        static_cast<std::uint8_t>(options.language));
+                    if (!selected) {
+                        if (rollback_options)
+                            throw odh::FormatError("destination resident selection was cancelled");
+                        std::cout << "{\"status\":\"cancelled\",\"stage\":\"resident\"}\n";
+                        return 0;
+                    }
+                    resident = &session.members[*selected];
+                }
+#endif
+                else resident = &session.members.front();
+                auto plan = build_runtime_arguments(options, game, house, session, *resident,
+                                                         graphics_resource);
+                if(options.headless_resident_go_here){
+                    const auto& action=*options.headless_resident_go_here;
+                    append(plan.arguments,{"--headless-resident-go-here",std::to_string(action.entity_id),
+                        std::to_string(action.x),std::to_string(action.y),std::to_string(action.level),
+                        std::to_string(action.tick)});
+                }
+                std::optional<odh::SessionResourceIdentity> verified_identity;
+                if (options.restore_bundle) {
+                    verified_identity = odh_host::identify_session_resources(game, plan.resources,
+                        static_cast<std::uint8_t>(options.language), plan.expansion_mask);
+                    const auto& bundle = *options.restore_bundle;
+                    if (odh::encode_session_resource_identity(bundle.resources) !=
+                        odh::encode_session_resource_identity(*verified_identity))
+                        throw odh::FormatError("saved session game resources do not match the selected installation");
+                    if (bundle.host.family_chunk_id != session.family_chunk_id ||
+                        bundle.host.family_number != session.family_number || bundle.host.resident_guid != resident->guid)
+                        throw odh::FormatError("saved session family or resident no longer matches the selected lot");
+                    if (!bundle.household_roster.empty()) {
+                        if (bundle.household_roster.size() != session.members.size())
+                            throw odh::FormatError("saved household roster differs from the current FAMI family");
+                        for (const auto& saved_member : bundle.household_roster) {
+                            const auto found = std::find_if(session.members.begin(), session.members.end(),
+                                [&](const auto& member) { return member.neighbor_id == saved_member.neighbor_id; });
+                            if (found == session.members.end() || found->guid != saved_member.guid ||
+                                found->object_definition_id != saved_member.object_definition_id ||
+                                std::filesystem::canonical(userdata / "Characters" / found->character_asset).lexically_relative(game) !=
+                                    std::filesystem::path(saved_member.character_asset))
+                                throw odh::FormatError("saved household member identity differs from the current FAMI family");
+                        }
+                    }
+                }
+                if (options.plan_only) {
+                    const auto identity = odh_host::identify_session_resources(game, plan.resources,
+                        static_cast<std::uint8_t>(options.language), plan.expansion_mask);
+                    print_plan(options, house, session, *resident, plan, identity, game);
+                    return 0;
+                }
+#ifdef ODH_HAVE_LINUX_USER_CONFIG
+                odh_host::LinuxUserConfig saved;
+                saved.language_code = static_cast<int>(options.language);
+                saved.data_root = game;
+                std::string config_error;
+                if (!options.load_session && !options.headless_ticks && !odh_host::save_linux_user_config(saved, &config_error))
+                    throw odh::FormatError("cannot save user settings: " + config_error);
+#endif
+                std::vector<char*> pointers;
+                pointers.reserve(plan.arguments.size());
+                for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
+                odh_host::IntegratedSessionContext session_context;
+                options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
+                session_context.resources = verified_identity;
+                session_context.restore_archive = std::move(options.restore_archive);
+                session_context.save_on_exit = options.save_on_exit;
+                session_context.single_resident_session = options.single_resident_session;
+                if (!options.single_resident_session) {
+                    const auto characters = require_directory(game, userdata / "Characters");
+                    for (const auto& member : session.members)
+                        session_context.household_members.push_back({require_file(game, characters / member.character_asset),
+                            member.guid, static_cast<std::int16_t>(member.neighbor_id), member.object_definition_id});
+                }
+                session_context.bounded_headless = options.headless_ticks.has_value();
+                session_context.game_root = game;
+                session_context.resource_paths = plan.resources;
+                session_context.language_code = static_cast<std::uint8_t>(options.language);
+                session_context.expansion_mask = plan.expansion_mask;
+                session_context.neighborhood_mode = static_cast<std::uint8_t>(options.mode);
+                session_context.house_number = static_cast<std::uint16_t>(house);
+                session_context.family_chunk_id = session.family_chunk_id;
+                session_context.family_number = session.family_number;
+                session_context.resident_guid = resident->guid;
+                session_context.resident_neighbor_id = resident->neighbor_id;
+#ifdef ODH_HAVE_X11
+                if (window) window->resize(320, 240);
+                odh_host::NeighborhoodResumeCallback neighborhood_resume;
+                if (map) {
+                    const auto active_house = static_cast<std::uint16_t>(house);
+                    neighborhood_resume = [&window, &map, active_house]() {
+                        window->resize(800, 600);
+                        try {
+                            const auto selected = odh_host::show_neighborhood_resume_picker(*window, *map, active_house);
+                            window->resize(320, 240);
+                            return selected;
+                        } catch (...) {
+                            window->resize(320, 240);
+                            throw;
+                        }
+                    };
+                }
+                const auto result = odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get(),
+                                      std::move(neighborhood_resume),std::move(session_context));
+#else
+                const auto result = odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr,{},
+                                      std::move(session_context));
+#endif
+                if (result.exit_code != 0) {
+                    if (!rollback_options) return result.exit_code;
+                    throw odh::FormatError("destination runtime failed with exit code " + std::to_string(result.exit_code));
+                }
+                rollback_options.reset();
+                if (!result.transition) return result.exit_code;
+
+                // The runtime has saved and unwound before reaching this point. Retain
+                // that archive even when destination preparation or execution fails.
+                saved_lots[house] = result.transition->saved_session_path;
+                rollback_options = travel_options;
+                rollback_options->house = house;
+                rollback_options->load_session = result.transition->saved_session_path;
+                const auto destination = result.transition->destination_house;
+                options = travel_options;
+                options.house = destination;
+                const auto cached = saved_lots.find(destination);
+                if (cached != saved_lots.end()) options.load_session = cached->second;
+                house = destination;
+            } catch (const std::exception& transition_error) {
+                if (!rollback_options) throw;
+                std::cerr << "odh-person: lot transition failed: " << transition_error.what()
+                          << "; restoring previous lot from " << rollback_options->load_session->string() << '\n';
+                options = std::move(*rollback_options);
+                rollback_options.reset(); // A failed rollback terminates; never retry recursively.
+                house = *options.house;
             }
         }
-        if (options.plan_only) {
-            const auto identity = odh_host::identify_session_resources(game, plan.resources,
-                static_cast<std::uint8_t>(options.language), plan.expansion_mask);
-            print_plan(options, house, session, *resident, plan, identity, game);
-            return 0;
-        }
-#ifdef ODH_HAVE_LINUX_USER_CONFIG
-        odh_host::LinuxUserConfig saved;
-        saved.language_code = static_cast<int>(options.language);
-        saved.data_root = game;
-        std::string config_error;
-        if (!options.load_session && !options.headless_ticks && !odh_host::save_linux_user_config(saved, &config_error))
-            throw odh::FormatError("cannot save user settings: " + config_error);
-#endif
-        std::vector<char*> pointers;
-        pointers.reserve(plan.arguments.size());
-        for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
-        odh_host::IntegratedSessionContext session_context;
-        options.restore_bundle.reset(); // Release preflight values before the runtime decodes its candidate.
-        session_context.resources = verified_identity;
-        session_context.restore_archive = std::move(options.restore_archive);
-        session_context.save_on_exit = options.save_on_exit;
-        session_context.single_resident_session = options.single_resident_session;
-        if (!options.single_resident_session) {
-            const auto characters = require_directory(game, userdata / "Characters");
-            for (const auto& member : session.members)
-                session_context.household_members.push_back({require_file(game, characters / member.character_asset),
-                    member.guid, static_cast<std::int16_t>(member.neighbor_id), member.object_definition_id});
-        }
-        session_context.bounded_headless = options.headless_ticks.has_value();
-        session_context.game_root = game;
-        session_context.resource_paths = plan.resources;
-        session_context.language_code = static_cast<std::uint8_t>(options.language);
-        session_context.expansion_mask = plan.expansion_mask;
-        session_context.neighborhood_mode = static_cast<std::uint8_t>(options.mode);
-        session_context.house_number = static_cast<std::uint16_t>(house);
-        session_context.family_chunk_id = session.family_chunk_id;
-        session_context.family_number = session.family_number;
-        session_context.resident_guid = resident->guid;
-        session_context.resident_neighbor_id = resident->neighbor_id;
-#ifdef ODH_HAVE_X11
-        if (options.load_session && !options.headless_ticks) {
-            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
-            window = std::make_unique<odh_host::LinuxWindow>(320, 240, "OpenDollhouse");
-        }
-        if (window) window->resize(320, 240);
-        odh_host::NeighborhoodResumeCallback neighborhood_resume;
-        if (map) {
-            const auto active_house = static_cast<std::uint16_t>(house);
-            neighborhood_resume = [&window, &map, active_house]() {
-                return odh_host::show_neighborhood_resume_picker(*window, *map, active_house);
-            };
-        }
-        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get(),
-                              std::move(neighborhood_resume),std::move(session_context));
-#else
-        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr,{},
-                              std::move(session_context));
-#endif
     } catch (const std::exception& error) {
         std::cerr << "odh-person: " << error.what() << '\n';
         return 2;

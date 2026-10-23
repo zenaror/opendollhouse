@@ -12,6 +12,15 @@ namespace odh_host {
 class LinuxWindow;
 using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>;
 
+struct NeighborhoodTransitionRequest {
+    std::uint16_t destination_house = 0;
+    std::filesystem::path saved_session_path;
+};
+struct PersonRunResult {
+    int exit_code = 0;
+    std::optional<NeighborhoodTransitionRequest> transition;
+};
+
 // Stable launch identity retained by the Linux runtime for save metadata.
 // Direct diagnostic invocations may omit it; integrated game launches supply it.
 struct IntegratedHouseholdMember {
@@ -43,7 +52,7 @@ struct IntegratedSessionContext {
 
 // Run the person/lot runtime using the existing command-line options. When
 // render-window is requested, an optional shared host window is reused.
-int odh_person_run(int argc, char** argv, odh_host::LinuxWindow* shared_window,
+odh_host::PersonRunResult odh_person_run(int argc, char** argv, odh_host::LinuxWindow* shared_window,
                     odh_host::NeighborhoodResumeCallback neighborhood_resume = {},
                     std::optional<odh_host::IntegratedSessionContext> session_context = std::nullopt);
 

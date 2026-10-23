@@ -221,7 +221,7 @@ std::string bytes_hex(const std::vector<std::uint8_t>& bytes){
     return result;
 }
 }
-int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
+odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
                    odh_host::NeighborhoodResumeCallback neighborhood_resume,
                    std::optional<odh_host::IntegratedSessionContext> session_context) {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -3414,6 +3414,7 @@ struct PlacementCandidateProbe {
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
         state!=odh::VmStatus::returned_false&&state!=odh::VmStatus::fault;};
     bool window_paused=false,window_closed=false;
+    std::optional<odh_host::NeighborhoodTransitionRequest> neighborhood_transition;
     auto window_deadline=std::chrono::steady_clock::now();
     while(!host_failed) {
 #ifdef ODH_HAVE_X11
@@ -3487,8 +3488,20 @@ struct PlacementCandidateProbe {
                     const auto active_house=lot_id.value_or(0);
                     neighborhood_resume_same_lot=selected&&active_house&&*selected==active_house;
                     if(!neighborhood_resume_same_lot){
-                        if(render_window_host)render_window_host->set_title(
-                            "OpenDollhouse | switching to another lot is not supported yet");
+                        try {
+                            const auto save_path=save_live_session();
+                            neighborhood_transition=odh_host::NeighborhoodTransitionRequest{
+                                *selected,std::filesystem::path(save_path)};
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                            session_log.event("neighborhood transition requested from house="+
+                                std::to_string(active_house)+" to house="+std::to_string(*selected)+
+                                " saved_session="+save_path);
+#endif
+                            break;
+                        } catch(const std::exception& error) {
+                            if(render_window_host)render_window_host->set_title(
+                                std::string("OpenDollhouse | cannot switch lots: ")+error.what());
+                        }
                         capture_frame();
                         window_deadline=std::chrono::steady_clock::now();
                         continue;
@@ -4243,7 +4256,7 @@ struct PlacementCandidateProbe {
         }
     }
     std::optional<std::string> saved_session_path;
-    if(session_context&&session_context->save_on_exit){
+    if(!neighborhood_transition&&session_context&&session_context->save_on_exit){
         if(host_failed||vm.status()==odh::VmStatus::fault||vm.status()==odh::VmStatus::budget_exhausted||
            session_policy.instruction_limit_reached(total_steps()))
             throw odh::FormatError("failed or instruction-limited session will not replace the previous save");
@@ -5203,14 +5216,14 @@ struct PlacementCandidateProbe {
     if(diagnostics.truncated())session_log.event("runtime diagnostic retention truncated; see diagnostics_dropped in result JSON");
     session_log.finish(exit_code);
 #endif
-    return exit_code;
+    return {exit_code,std::move(neighborhood_transition)};
  }catch(const std::exception& e){
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     const bool log_available=session_log.enabled();const auto log_path=session_log.path();
     session_log.event(std::string("fatal exception: ")+e.what());session_log.finish(2);
     if(log_available)std::cerr<<"odh-person: log saved to "<<log_path<<'\n';
 #endif
-    std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;
+    std::cerr<<"odh-person: "<<e.what()<<'\n';return {2,std::nullopt};
  }
 }
 
@@ -5218,5 +5231,5 @@ int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)
         if(argv[i]&&(std::string(argv[i])=="--game-root"||std::string(argv[i])=="--mode"||std::string(argv[i])=="--load-session"))
             return odh_linux_game_entry(argc,argv);
-    return odh_person_run(argc,argv,nullptr);
+    return odh_person_run(argc,argv,nullptr).exit_code;
 }
