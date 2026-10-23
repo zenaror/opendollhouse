@@ -151,10 +151,11 @@ do lote completo ainda está pendente.
 O [host de avatares salvos](docs/saved-avatar-render-validation.md),
 `odh-saved-scene`, renderiza corpo/cabeça/mãos e o frame salvo dos dois avatares
 reais de House07 nas posições do World, em uma imagem CPU estática. A execução
-das threads do lote continua pendente. O [plano Linux inclui os arquivos
+integral do lote continua pendente. O [plano Linux inclui os arquivos
 Downloads](docs/linux-download-resources-validation.md), e House07 da Legacy
-já foi composta em quadro estático; o ciclo de jogo contínuo e as interações
-seguem pendentes. Com `--objects`, o
+já carregou com a família e passou por Sentar/Levantar agendados no runtime;
+janela interativa, ciclo contínuo e demais interações seguem pendentes. Com
+`--objects`, o
 [host compõe os objetos salvos](docs/saved-object-architecture-validation.md),
 incluindo contenção por SLOT e gráficos dinâmicos. `odh-architecture` decodifica
 as grades de piso/parede e mapas de recursos. Com `--floors FLOORS_IFF`, o

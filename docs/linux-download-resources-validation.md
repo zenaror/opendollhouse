@@ -24,15 +24,31 @@ sem remover seus limites de caminho, nomes e índices.
   com o Sim, arquitetura e objetos visíveis. A medição deste computador foi
   30.752 KiB de RSS máxima para essa execução; ela não representa memória em
   outro aparelho.
-- A execução terminou com código 3 porque atingiu o limite de 256 ticks do
-  modo de quadro único. O JSON mostrou `status=waiting`, `host_failed=false`,
-  sem diagnóstico de falha de VM. Portanto, o quadro é evidência de composição
-  com os dados reais, mas não valida uma sessão jogável ou interação completa.
+- `tests/house07_interaction_integration.py --include-installed-resources`
+  executou com os dados Legacy: carregar família e lote, agendar Sentar no
+  objeto 128, retornar sucesso, depois Levantar no tick 270 e retornar sucesso.
+  O ator terminou sem postura sentada nem vínculo ao objeto; 182 registros de
+  restauração do lote ficaram consistentes. O script validou a interação apesar
+  de o processo relatar código 3 ao atingir o limite deliberado de 512 ticks
+  com Main ainda esperando. O código 3 marca a sessão limitada incompleta; não
+  foi uma falha da interação.
+- Para repetir usando uma build local e a instalação do jogo:
+
+  ```sh
+  python3 tests/house07_interaction_integration.py \
+    --binary build/odh-person --game-root "$GAME_ROOT" --ticks 512 \
+    --include-installed-resources
+  ```
+- O teste anterior de quadro único chegou ao teto de 256 ticks. O JSON indicou
+  `status=waiting`, `host_failed=false` e diagnóstico vazio. O código de saída
+  informa que esse quadro não prova uma sessão contínua.
 - `git diff --check` passou.
 
 ## Limites
 
-O plano e a composição agora aceitam Downloads da instalação Legacy. Ainda
-faltam um ciclo de jogo contínuo sem esgotar o orçamento, controles de jogador,
-interações completas, gravação e restauração de partida e validação visual da
-janela interativa. Nenhum comportamento foi verificado em hardware portátil.
+O plano e o Main do lote agora aceitam os dados Downloads da instalação Legacy,
+e a sequência Sentar/Levantar foi validada por agendamento de teste dentro do
+runtime real. Ainda faltam uma sessão interativa contínua, controles de jogador
+visuais, interação iniciada por clique na janela, gravação e recarga de uma
+partida ODH e validação das outras cidades/expansões. Nenhum comportamento foi
+verificado em hardware portátil.

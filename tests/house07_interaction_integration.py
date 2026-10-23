@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--object-id", type=int, default=128)
     parser.add_argument("--stand-tick", type=int, default=270)
     parser.add_argument("--ticks", type=int, default=512)
+    parser.add_argument("--include-installed-resources", action="store_true",
+                        help="also load installed ExpansionPack and Downloads FAR/IFF files")
     parser.add_argument("--window-input", action="store_true",
                         help="exercise the production click/pick/Space path with queued inputs and no display")
     parser.add_argument("--window-stand", action="store_true",
@@ -88,6 +90,24 @@ def main():
         "--ticks", str(args.ticks), "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
     ]
+    if args.include_installed_resources:
+        for pack in range(1, 8):
+            folder = "ExpansionPack" if pack == 1 else f"ExpansionPack{pack}"
+            archive = game / folder / f"{folder}.far"
+            if archive.is_file():
+                command += ["--object-definitions", str(archive),
+                            "--animation-source", str(archive)]
+        downloads = game / "Downloads"
+        if downloads.is_dir():
+            for path in sorted(downloads.rglob("*")):
+                if not path.is_file():
+                    continue
+                suffix = path.suffix.lower()
+                if suffix == ".far":
+                    command += ["--object-definitions", str(path),
+                                "--animation-source", str(path)]
+                elif suffix == ".iff":
+                    command += ["--object-definition-file", str(path)]
     frame_path = None
     if args.window_input:
         frame_fd, frame_name = tempfile.mkstemp(prefix="odh-house07-click-", suffix=".ppm")
