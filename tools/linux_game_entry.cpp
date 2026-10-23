@@ -44,6 +44,8 @@ struct Options {
     std::optional<std::filesystem::path> load_session;
     std::optional<unsigned> headless_ticks;
     std::optional<unsigned> instruction_budget;
+    std::optional<std::filesystem::path> status_frame;
+    std::optional<unsigned> status_tick;
     std::vector<unsigned> headless_travel_houses;
     bool save_on_exit = false;
     bool single_resident_session = false;
@@ -144,6 +146,10 @@ Options parse_options(int argc, char** argv) {
             result.load_session = value;
         } else if (key == "--headless-ticks" && !result.headless_ticks) {
             result.headless_ticks = parse_number(value, 4096, "headless tick count");
+        } else if (key == "--headless-status-frame" && !result.status_frame) {
+            result.status_frame = value;
+        } else if (key == "--headless-status-tick" && !result.status_tick) {
+            result.status_tick = parse_number(value, 4096, "status capture tick");
         } else if (key == "--instruction-budget" && !result.instruction_budget) {
             result.instruction_budget = parse_number(value, 1000000, "instruction budget");
         } else if (key == "--resident-id" && !result.resident_id) {
@@ -181,6 +187,11 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError("session loading is currently available only on Linux");
 #endif
     }
+    if ((result.status_frame || result.status_tick) &&
+        (!result.status_frame || result.status_frame->empty() || !result.status_tick || !*result.status_tick ||
+         !result.headless_ticks || *result.status_tick > *result.headless_ticks || result.plan_only ||
+         !result.headless_travel_houses.empty()))
+        throw odh::FormatError("status capture requires --headless-status-frame PATH and --headless-status-tick 1..headless-ticks, without plan/travel");
     if (result.load_session && result.plan_only)
         throw odh::FormatError("--load-session requires execution; use --headless-ticks for a display-free restore");
     if (result.headless_sit_object && (!*result.headless_sit_object || !result.headless_ticks ||
@@ -222,7 +233,7 @@ Options parse_options(int argc, char** argv) {
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
             "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
             "[--headless-sit-object ID --headless-stand-tick N] "
-            "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--save-session-on-exit]]");
+            "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
@@ -476,6 +487,10 @@ RuntimePlan build_runtime_arguments(const Options& options,
     else
         append(args, {"--render-window", "--render-animation-far", animation_far.string(),
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
+    if (options.status_frame)
+        append(args, {"--render-frame", options.status_frame->string(), "--render-tick", std::to_string(*options.status_tick),
+            "--render-animation-far", animation_far.string(), "--render-textures", textures_far.string(),
+            "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
     if (options.instruction_budget)
         append(args, {"--instruction-budget", std::to_string(*options.instruction_budget)});
     if (options.headless_sit_object)

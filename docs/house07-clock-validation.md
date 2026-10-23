@@ -16,7 +16,8 @@ validada com House07; ainda não representa uma sessão jogável completa.
 - A hora avança junto com os passos não pausados. As variáveis globais 0, 1, 4,
   5, 6, 7 e 8 recebem hora, dia, o valor de hora-do-dia de referência, minuto,
   segundos, mês e ano. O título da janela mostra a hora e os sete valores de
-  necessidade do morador ativo.
+  necessidade do morador ativo. O checkpoint de HUD abaixo também os desenha
+  nos pixels da cena após a composição do lote.
 - A janela Linux atualmente agenda passos a cada 40 ms (25 por segundo). Com
   essa meta, um minuto do jogo dura cerca de 1,2 segundos reais, se o computador
   acompanhar o ritmo; isso fica aproximadamente 17% mais lento que o ritmo
@@ -60,3 +61,68 @@ Os testes C++ focados passaram 11/11 após incluir uma regressão para as
 variáveis de relógio no save/resume. O gate real acima é headless; ele não
 valida a aparência do título da janela, o uso físico de pausa, autonomia dos
 Sims, construção/compra, outras casas ou destinos de expansão.
+
+
+## HUD numérico em cena — 2026-10-23
+
+`tools/status_hud.hpp` desenha um painel numérico portátil no canto superior
+esquerdo, depois da composição do lote e antes dos sinks de janela/PPM. O painel
+mostra relógio HH:MM, ID do morador ativo e sete linhas com índice, valor assinado
+e barra. As linhas 1–7 correspondem a fome, conforto, higiene, bexiga, energia,
+diversão e social, nessa ordem (`Ts1Need`, índices de motivo 7, 6, 8, 9, 5, 15,
+14). A barra limita visualmente -100..100; o número preserva o valor bruto.
+Valores indisponíveis aparecem como traços, inclusive o relógio de uma sessão
+antiga sem `SIMS`; não se inventa estado para preencher o painel.
+
+Este é um HUD de diagnóstico sem rótulos linguísticos, sem proposta de tradução
+final ou de correspondência visual com o jogo original. Os algarismos usam
+máscaras próprias e não dependem de Pango/Cairo, fontes de sistema ou assets
+comerciais. O build validado tinha X11 compilado e PangoCairo indisponível:
+o HUD funciona nesse perfil. A faixa de ação existente continua no caminho de
+janela quando o renderer de texto opcional está disponível; fica na região
+inferior e não sobrepõe o painel de status. Neste build, a faixa de texto está
+desabilitada pela dependência ausente; o título continua disponível. Não houve
+validação gráfica da faixa ou da janela neste checkpoint.
+
+A pintura só escreve os pixels RGBA. Não escreve World, necessidades, relógio,
+profundidade, contadores de rasterização, owner IDs nem mapas de picking. Não
+cria uma nova região interativa: cliques seguem usando os mapas já compostos.
+O morador é lido de `active_household_actor` em cada captura, inclusive quando
+for diferente do morador que ancora a câmera/playback.
+
+O gate real reproduzível usa a instalação externa, sem abrir GUI:
+
+```sh
+python3 tests/house07_status_hud_cli.py build/linux-checkpoint/odh-person "../referencias/The Sims"
+```
+
+A opção integrada `--headless-status-frame PATH --headless-status-tick N` é
+explícita e restrita a `--headless-ticks`, com N em 1..limite; plano, viagem,
+par incompleto, zero e tick acima do limite são rejeitados. O destino deve ser
+novo, seguindo a proteção existente do exportador PPM. N é relativo ao início
+da execução atual: após retomar tick 31, N=30 captura tick absoluto 61. O mesmo
+significado relativo passa a valer para `--render-tick` no runtime de baixo
+nível; em uma execução nova o tick inicial é zero. Sem amostra de Playback no
+tick pedido, a execução falha explicitamente e não alega captura concluída.
+
+Resultado observado: House07, vizinho 48 / ator 105, capturado no tick 31 às
+07:02, com valores `[99,98,99,71,100,20,99]`. O save live foi retomado e capturado
+no tick 61 às 07:03, com os mesmos sete valores naquele intervalo. O gate
+verificou os pixels de todos os algarismos do relógio, ID e sete linhas contra
+o estado reportado. A simulação após retomar com captura coincidiu com 61 ticks
+contínuos sem captura. Configuração e save ficaram temporários; DISPLAY e
+WAYLAND_DISPLAY foram removidos. Hashes antes/depois de House07, Neighborhood,
+dois personagens e FARs Global/Animation/Objects permaneceram iguais, inclusive
+no bloco de finalização do teste. Nenhum recurso comercial foi versionado.
+Os SHA-256 do RGB completo foram
+`40aa0cd9b090b26f9d530de1362c0e23d4c1a76a4cb6ebf8aecb6ab85d1d2619` (tick 31) e
+`8410de68113c3d234ec0e10f3de99c3e8d1c2f4296be9d146bbdb23a6febd1ea` (tick 61).
+
+CTest focado passou 6/6 (`status_hud`, `ts1_simulation`, `session_bundle`,
+`linux_game_entry_cli`, `linux_household_session_resume_cli`,
+`linux_session_resume_cli`). O teste de HUD contém nove checks sintéticos de
+limites, preservação de owner/depth/contadores, barras e área da faixa de ação.
+O gate real prova pixels PPM e estado headless nesse perfil House07; a janela
+recebe o mesmo frame pelo ponto comum de composição, mas não foi aberta ou
+medida. Seleção física de outro morador, pausa, outras casas, paridade visual e
+runtime em consoles continuam sem validação neste checkpoint.

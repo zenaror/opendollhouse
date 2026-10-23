@@ -52,6 +52,7 @@
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "person_session.hpp"
+#include "status_hud.hpp"
 #include "json.hpp"
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
@@ -3701,9 +3702,10 @@ struct PlacementCandidateProbe {
         throw odh::FormatError("session saves are currently available only on Linux");
 #endif
     };
+    std::optional<odh_host::StatusHud> captured_status_hud;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
-        if(!render_window&&render_tick&&ticks!=*render_tick)return;
+        if(!render_window&&render_tick&&ticks-resumed_tick!=*render_tick)return;
         const auto sample=playback->sample();if(!sample)return;
         const auto* sample_actor=world.find(sample->actor);
         if(!sample_actor||sample_actor->generation!=sample->actor_generation||sample->actor!=runtime_avatar_id)
@@ -3773,6 +3775,16 @@ struct PlacementCandidateProbe {
             const auto& owner_ids=render_lot_evidence?render_lot_evidence->ground_pick_ids:frame.image.owner_ids;
             if(owner_ids.size()==frame.image.pixels.size())
                 actor_composited_pixels=std::count(owner_ids.begin(),owner_ids.end(),scene_state.owner_id);
+        }
+        if(saved_world_main&&render_lot){
+            odh_host::StatusHud hud;hud.actor=active_household_actor;
+            if(simulation_clock)hud.clock=simulation_clock->snapshot();
+            if(const auto* active=world.find(active_household_actor);active&&active->motives.size()>=16){
+                hud.needs.emplace();
+                for(std::size_t i=0;i<odh::ts1_need_count;++i)
+                    (*hud.needs)[i]=active->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))];
+            }
+            odh_host::draw_status_hud(frame.image,hud);captured_status_hud=hud;
         }
 #ifdef ODH_HAVE_X11
         if(render_window_host){
@@ -5747,6 +5759,16 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else if(placement_candidate)std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"unavailable\",\"reason\":"
         <<json_bytes(placement_candidate_probe_unavailable)<<'}';
+    std::cout<<",\"status_hud\":";
+    if(captured_status_hud){const auto& hud=*captured_status_hud;
+        std::cout<<"{\"profile\":\"numeric_portable_v1\",\"actor\":"<<hud.actor<<",\"clock\":";
+        if(hud.clock)std::cout<<"{\"hour\":"<<unsigned(hud.clock->hour)<<",\"minute\":"<<unsigned(hud.clock->minute)<<'}';
+        else std::cout<<"null";
+        std::cout<<",\"needs\":";
+        if(hud.needs){std::cout<<'[';for(std::size_t i=0;i<odh::ts1_need_count;++i){if(i)std::cout<<',';std::cout<<(*hud.needs)[i];}std::cout<<']';}
+        else std::cout<<"null";
+        std::cout<<'}';
+    }else std::cout<<"null";
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")
