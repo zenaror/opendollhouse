@@ -324,6 +324,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     std::optional<std::int16_t> headless_window_interaction;
     std::optional<std::uint64_t> headless_window_stand_tick;
+    struct HeadlessWindowGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
+    std::optional<HeadlessWindowGoHere> headless_window_go_here;
+    bool headless_window_go_here_input_sent=false;
+    std::optional<std::array<std::int32_t,2>> headless_window_go_here_click;
+    std::optional<SavedGroundSelection> headless_window_go_here_ground;
     std::optional<std::uint64_t> headless_window_neighborhood_tick;
     bool headless_window_stand_input_sent=false,headless_window_neighborhood_input_sent=false;
     std::optional<std::uint16_t> headless_window_neighborhood_house;
@@ -527,6 +532,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!tick)throw odh::FormatError("headless window Stand tick must be positive");
             headless_window_stand_tick=tick;
         }
+        else if(option=="--headless-window-go-here"&&!headless_window_go_here&&n+4<argc){
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),tick=selector(argv[++n]);
+            if(x<0||y<0||x>2046||y>2046||level<1||level>2||tick==0)
+                throw odh::FormatError("headless window Go Here tile/level/tick is outside the supported profile");
+            headless_window_go_here=HeadlessWindowGoHere{static_cast<std::uint32_t>(x),
+                static_cast<std::uint32_t>(y),static_cast<std::uint8_t>(level),tick};
+        }
         else if(option=="--headless-window-neighborhood-tick"&&!headless_window_neighborhood_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
             if(!tick)throw odh::FormatError("headless window neighborhood tick must be positive");
@@ -651,6 +664,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
+    if(headless_window_go_here&&(!headless_window_interaction||!headless_window_stand_tick||
+       headless_window_go_here->tick<=*headless_window_stand_tick||
+       headless_window_go_here->tick>=ticks_limit||headless_go_here||headless_interaction||headless_stand||headless_portal))
+        throw odh::FormatError("--headless-window-go-here requires a later tick after window Sit/Stand and an in-range target");
     if(headless_window_neighborhood_tick&&(!headless_main||!lot_id||*headless_window_neighborhood_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-neighborhood-tick requires a headless Main lot and a tick below the limit");
     if(headless_window_neighborhood_house&&!headless_window_neighborhood_tick)
@@ -680,7 +697,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_selector||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
 #ifndef ODH_HAVE_X11
@@ -3848,6 +3865,61 @@ struct PlacementCandidateProbe {
                ticks>=*headless_window_stand_tick){
                 input.stand=true;headless_window_stand_input_sent=true;
             }
+            if(headless_window_go_here&&!headless_window_go_here_input_sent&&!input.primary_click&&
+               ticks>=headless_window_go_here->tick&&headless_stand_status=="returned_true"){
+                if(!headless_window_go_here_click){
+                    std::optional<std::array<std::int32_t,2>> pixel;
+                    std::optional<SavedGroundSelection> selected_ground;
+                    std::uint64_t best_distance=std::numeric_limits<std::uint64_t>::max();
+                    if(render_lot&&render_lot_evidence){
+                        const auto* actor=world.find(active_household_actor);
+                        const auto actor_room=actor&&actor->position?render_lot->runtime_room_at(*actor->position):std::nullopt;
+                        const odh::WorldRoomRouteGrid* route_grid=nullptr;
+                        if(auto* member=selected_household_member();member&&member->route_grid)
+                            route_grid=&*member->route_grid;
+                        else if(runtime_route_grid)route_grid=&*runtime_route_grid;
+                        const auto width=render_lot_evidence->pick_width;
+                        const auto height=render_lot_evidence->pick_height;
+                        if(actor_room&&route_grid&&route_grid->grid&&width&&height&&
+                           std::uint64_t{width}*height==render_lot_evidence->ground_pick_ids.size()&&
+                           render_lot_evidence->avatar_pick_ids.size()==render_lot_evidence->ground_pick_ids.size()&&
+                           render_lot_evidence->object_pick_ids.size()==render_lot_evidence->ground_pick_ids.size()){
+                            for(std::uint32_t y=0;y<height;++y)for(std::uint32_t x=0;x<width;++x){
+                                const auto pixel_index=std::size_t{y}*width+x;
+                                if(render_lot_evidence->avatar_pick_ids[pixel_index]||
+                                   render_lot_evidence->object_pick_ids[pixel_index])continue;
+                                const auto ground=render_lot->pick_ground(*render_lot_evidence,
+                                    static_cast<std::int32_t>(x),static_cast<std::int32_t>(y));
+                                if(!ground||ground->level!=headless_window_go_here->level||
+                                   ground->room!=*actor_room||ground->level!=actor->position->level)continue;
+                                const odh::RoutePoint point{static_cast<std::int32_t>(ground->x*16+8),
+                                    static_cast<std::int32_t>(ground->y*16+8)};
+                                if(!route_grid->grid->contains(point)||!route_grid->grid->walkable(point)||
+                                   (actor->position->x==point.x&&actor->position->y==point.y))continue;
+                                const auto dx=ground->x>headless_window_go_here->x?
+                                    ground->x-headless_window_go_here->x:headless_window_go_here->x-ground->x;
+                                const auto dy=ground->y>headless_window_go_here->y?
+                                    ground->y-headless_window_go_here->y:headless_window_go_here->y-ground->y;
+                                const auto distance=std::uint64_t{dx}+dy;
+                                if(distance<best_distance){
+                                    best_distance=distance;selected_ground=ground;
+                                    pixel=std::array<std::int32_t,2>{static_cast<std::int32_t>(x),
+                                        static_cast<std::int32_t>(y)};
+                                }
+                            }
+                        }
+                    }
+                    if(!pixel){
+                        host_failed=true;host_diagnostic="headless window Go Here target is not visible in the lot pick buffer";
+                        break;
+                    }
+                    input.primary_click=*pixel;
+                    headless_window_go_here_click=*pixel;
+                    headless_window_go_here_ground=selected_ground;
+                }else{
+                    input.action=true;headless_window_go_here_input_sent=true;
+                }
+            }
             if(headless_window_neighborhood_tick&&!headless_window_neighborhood_input_sent&&
                !input.primary_click&&ticks>=*headless_window_neighborhood_tick){
                 input.neighborhood=true;headless_window_neighborhood_input_sent=true;
@@ -3983,7 +4055,7 @@ struct PlacementCandidateProbe {
                             (member->controllers->interactions().size()!=0||
                              member->controllers->interactions().active());});
                     const bool any_actor_action_active=any_interaction_active||queue.active();
-                    if(!render_interaction_enqueued||!any_actor_action_active){
+                    if(!headless_window_go_here&&(!render_interaction_enqueued||!any_actor_action_active)){
                         render_interaction_requested=false;render_interaction_enqueued=false;
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
                         render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
@@ -3998,7 +4070,7 @@ struct PlacementCandidateProbe {
                         std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
                             return member->controllers&&(member->controllers->interactions().size()!=0||
                                 member->controllers->interactions().active());});
-                    if(!render_interaction_enqueued||!any_interaction_active){
+                    if(!headless_window_go_here&&(!render_interaction_enqueued||!any_interaction_active)){
                         render_interaction_requested=false;render_interaction_enqueued=false;
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
                         render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
@@ -5021,8 +5093,20 @@ struct PlacementCandidateProbe {
         const auto* live_marker=go_here_marker_id?world.find(*go_here_marker_id):nullptr;
         const bool marker_alive=live_marker&&go_here_marker_generation&&
             live_marker->generation==*go_here_marker_generation;
-        std::cout<<"{\"trigger\":"<<json_bytes(headless_go_here?"headless_schedule":"window_input")
-            <<",\"scheduled_tick\":"<<(headless_go_here?std::to_string(headless_go_here->tick):"null")
+        std::cout<<"{\"trigger\":"<<json_bytes(headless_window_go_here?"headless_window_input":
+            headless_go_here?"headless_schedule":"window_input")
+            <<",\"scheduled_tick\":"<<(headless_window_go_here?std::to_string(headless_window_go_here->tick):
+                headless_go_here?std::to_string(headless_go_here->tick):"null")
+            <<",\"ground_click_sent\":"<<(headless_window_go_here_click?"true":"false")
+            <<",\"action_input_sent\":"<<(headless_window_go_here_input_sent?"true":"false")
+            <<",\"requested_tile\":["<<(headless_window_go_here?std::to_string(headless_window_go_here->x):"null")
+            <<','<<(headless_window_go_here?std::to_string(headless_window_go_here->y):"null")
+            <<','<<(headless_window_go_here?std::to_string(headless_window_go_here->level):"null")<<']'
+            <<",\"selected_ground_tile\":";
+        if(headless_window_go_here_ground)std::cout<<'['<<headless_window_go_here_ground->x<<','
+            <<headless_window_go_here_ground->y<<','<<unsigned(headless_window_go_here_ground->level)<<']';
+        else std::cout<<"null";
+        std::cout
             <<",\"tile\":";
         if(go_here_position)std::cout<<'['<<go_here_position->x/16<<','<<go_here_position->y/16<<']';
         else std::cout<<"null";

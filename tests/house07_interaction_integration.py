@@ -48,11 +48,11 @@ def main():
         parser.error("--window-neighborhood requires --window-input and --window-stand")
     if args.go_here_after_stand:
         tile_x, tile_y, level, tick = args.go_here_after_stand
-        if args.window_input:
-            parser.error("--go-here-after-stand currently requires the headless Sit/Stand action path")
+        if args.window_input and not args.window_stand:
+            parser.error("--window-input Go Here requires --window-stand")
         if not (0 <= tile_x <= 2046 and 0 <= tile_y <= 2046 and 1 <= level <= 2 and
-                args.stand_tick < tick <= args.ticks):
-            parser.error("--go-here-after-stand must target a supported tile after Stand and within --ticks")
+                args.stand_tick < tick < args.ticks):
+            parser.error("--go-here-after-stand must target a supported tile after Stand and before --ticks")
     if args.neighborhood_house is not None and not args.window_neighborhood:
         parser.error("--neighborhood-house requires --window-neighborhood")
     if args.neighborhood_expect_rejected and not args.window_neighborhood:
@@ -129,6 +129,9 @@ def main():
                     "--render-textures", str(game / "GameData/Textures/Textures.far"),
                     "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
                     "--render-frame", str(frame_path)]
+        if args.go_here_after_stand:
+            command += ["--headless-window-go-here",
+                        *(str(value) for value in args.go_here_after_stand)]
     else:
         command += ["--headless-interaction", str(args.object_id), "1",
                     "--headless-stand", str(args.object_id), str(args.stand_tick)]
@@ -211,6 +214,7 @@ def main():
         "stand": stand,
         "go_here": go_here,
         "host_failed": report["host_failed"],
+        "host_diagnostic": report.get("host_diagnostic", ""),
         "neighborhood_resume": report["neighborhood_resume_runtime"],
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
@@ -226,7 +230,9 @@ def main():
     if args.window_input:
         selection = report["render"]["object_selection"]
         completed_sit = (
-            selection["clicks"] == 1 and selection["id"] == args.object_id and
+            selection["clicks"] == (2 if args.go_here_after_stand else 1) and
+            (selection["interaction_target"] == args.object_id if args.go_here_after_stand
+             else selection["id"] == args.object_id) and
             selection["interaction_requested"] and selection["interaction_action"] == 4097 and
             interaction["trigger"] == "headless_window_input" and interaction["enqueued"] and
             interaction["status"] == "returned_true" and interaction["result"] is True and
@@ -263,6 +269,23 @@ def main():
                 resumed["posture_before"] == resumed["posture_after"] == 1 and \
                 resumed["attachment_before"] == resumed["attachment_after"] == args.object_id and \
                 args.neighborhood_tick < args.stand_tick
+        if args.go_here_after_stand:
+            tile_x, tile_y, level, tick = args.go_here_after_stand
+            selected_ground = go_here["selected_ground_tile"] if go_here is not None else None
+            completed_sit = completed_sit and (
+                go_here is not None and go_here["trigger"] == "headless_window_input" and
+                go_here["scheduled_tick"] == tick and go_here["ground_click_sent"] and
+                go_here["action_input_sent"] and go_here["status"] == "returned_true" and
+                go_here["route_status"] == "arrived" and go_here["result"] is True and
+                go_here["requested_tile"] == [tile_x, tile_y, level] and
+                selected_ground is not None and go_here["tile"] == selected_ground[:2] and
+                go_here["start_position"] != go_here["end_position"] and
+                go_here["end_position"][:3] == [selected_ground[0] * 16 + 8,
+                                                 selected_ground[1] * 16 + 8,
+                                                 selected_ground[2]] and
+                go_here["queue_size"] == 0 and not go_here["queue_active"] and
+                report["route_runtime"]["movement_callbacks"] > 0 and not report["host_failed"]
+            )
     else:
         completed_sit = (
         household["evidence"] == "restored_World_exact_avatar_GUID_match_only" and

@@ -645,5 +645,25 @@ isto demonstra as três ações no mesmo processo com recursos reais, mas não
 uma sessão que continue por todo o limite de 2048 ticks, nem salvamento ou
 retomada.
 
+### Go Here pelo caminho de clique e tecla — 2026-10-23
+
+O harness agora injeta, pelo mesmo caminho de entrada usado pela janela, um
+clique numa célula de chão visível e a tecla de ação no passo seguinte, depois
+de Sit e Stand. O alvo `(20,20,1)` é uma preferência; quando está coberto na
+imagem, o teste escolhe a célula visível, livre e alcançável mais próxima. Na
+instalação Legacy, o destino escolhido foi `(22,26,1)`. A sequência chegou ao
+destino com 32 callbacks de movimento, fila vazia e `host_failed=false`.
+
+```sh
+python3 tests/house07_interaction_integration.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '../referencias/The Sims' --window-input --window-stand \
+  --go-here-after-stand 20 20 1 600 --ticks 900
+```
+
+Os eventos foram simulados sem DISPLAY. Isso valida picking e despacho de
+entrada, mas não uma janela X11 visível, clique físico, salvamento ou uma
+sessão completa.
+
 
 O fluxo integrado agora também pode voltar à vizinhança com **M** e retomar o lote carregado sem avançar o relógio nem recarregar o World. A prova headless Sit→mapa→mesmo lote→Stand está em [neighborhood-return-validation.md](neighborhood-return-validation.md); trocar para outro lote continua indisponível.

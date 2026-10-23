@@ -25,6 +25,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O gate House07 executa Sit, Stand e Go Here pelo caminho de clique e tecla
+  usado pela janela. Sem DISPLAY, o Sim chegou a um quadrado de chão visível
+  em 32 callbacks, com fila vazia e sem falha do host. Isso ainda não valida
+  clique físico nem uma janela X11. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
+
 - O probe headless `odh-person` mantém o limite padrão de 10.000 instruções e
   aceita um teto explícito de até 1.000.000 em sessões novas e limitadas por
   ticks. O gate opcional da família House05 completou 4.096 ticks com 50.000
