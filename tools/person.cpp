@@ -201,9 +201,16 @@ const char* floor_result_name(odh::FloorPlacementResult result){
     }
     return "invalid_result";
 }
+std::string bytes_hex(const std::vector<std::uint8_t>& bytes){
+    constexpr char digits[]="0123456789abcdef";
+    std::string result;result.reserve(bytes.size()*2);
+    for(const auto byte:bytes){result.push_back(digits[byte>>4]);result.push_back(digits[byte&15]);}
+    return result;
+}
 }
 int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
-                   odh_host::NeighborhoodResumeCallback neighborhood_resume) {
+                   odh_host::NeighborhoodResumeCallback neighborhood_resume,
+                   std::optional<odh_host::IntegratedSessionContext> session_context) {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
  odh_host::LinuxSessionLog session_log;
 #endif
@@ -2478,6 +2485,17 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     session_log.event(std::string("runtime session started mode=")+(render_window?"window":"finite_probe")+
         " tick_limit="+std::to_string(session_policy.tick_limit()));
+    if(session_context){
+        session_log.event("integrated session context mode="+std::to_string(session_context->neighborhood_mode)+
+            " house="+std::to_string(session_context->house_number)+
+            " family_chunk="+std::to_string(session_context->family_chunk_id)+
+            " family_number="+std::to_string(session_context->family_number)+
+            " resident_guid="+std::to_string(session_context->resident_guid)+
+            " resident_neighbor_id="+std::to_string(session_context->resident_neighbor_id)+
+            " language="+std::to_string(session_context->language_code)+
+            " expansion_mask="+std::to_string(session_context->expansion_mask)+
+            " resource_files="+std::to_string(session_context->resource_paths.size()));
+    }
 #endif
     execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
     profile_mark("first-main-execution");
@@ -3165,10 +3183,27 @@ struct PlacementCandidateProbe {
         throw odh::FormatError(failure+")");
     }
     std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
+        <<",\"integrated_session_context\":";
+    if(session_context){
+        std::cout<<"{\"neighborhood_mode\":"<<static_cast<unsigned>(session_context->neighborhood_mode)
+            <<",\"house_number\":"<<session_context->house_number
+            <<",\"family_chunk_id\":"<<session_context->family_chunk_id
+            <<",\"family_number\":"<<session_context->family_number
+            <<",\"resident_guid\":"<<session_context->resident_guid
+            <<",\"resident_neighbor_id\":"<<session_context->resident_neighbor_id
+            <<",\"language_code\":"<<static_cast<unsigned>(session_context->language_code)
+            <<",\"expansion_mask\":"<<static_cast<unsigned>(session_context->expansion_mask)
+            <<",\"resource_identity_meta_hex\":";
+        if(session_context->resources){
+            const auto meta=odh::encode_session_resource_identity(*session_context->resources);
+            std::cout<<json_bytes(bytes_hex(meta));
+        }else std::cout<<"null";
+        std::cout<<"}";
+    }else std::cout<<"null";
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
-        <<",\"session_log\":"<<(session_log.enabled()?json_bytes(session_log.path().string()):"null")
+    std::cout<<",\"session_log\":"<<(session_log.enabled()?json_bytes(session_log.path().string()):"null")
 #else
-        <<",\"session_log\":null"
+    std::cout<<",\"session_log\":null"
 #endif
         <<",\"runtime_policy\":"<<json_bytes(render_window?"window_per_tick_per_entity":"finite_probe_total_budget")
         <<",\"runtime_tick_limit\":"<<session_policy.tick_limit()

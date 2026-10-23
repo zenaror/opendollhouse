@@ -446,6 +446,17 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::vector<char*> pointers;
         pointers.reserve(plan.arguments.size());
         for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
+        odh_host::IntegratedSessionContext session_context;
+        session_context.game_root = game;
+        session_context.resource_paths = plan.resources;
+        session_context.language_code = static_cast<std::uint8_t>(options.language);
+        session_context.expansion_mask = plan.expansion_mask;
+        session_context.neighborhood_mode = static_cast<std::uint8_t>(options.mode);
+        session_context.house_number = static_cast<std::uint16_t>(house);
+        session_context.family_chunk_id = session.family_chunk_id;
+        session_context.family_number = session.family_number;
+        session_context.resident_guid = resident->guid;
+        session_context.resident_neighbor_id = resident->neighbor_id;
 #ifdef ODH_HAVE_X11
         window->resize(320, 240);
         odh_host::NeighborhoodResumeCallback neighborhood_resume;
@@ -456,9 +467,10 @@ int odh_linux_game_entry(int argc, char** argv) {
             };
         }
         return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get(),
-                              std::move(neighborhood_resume));
+                              std::move(neighborhood_resume),std::move(session_context));
 #else
-        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr);
+        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr,{},
+                              std::move(session_context));
 #endif
     } catch (const std::exception& error) {
         std::cerr << "odh-person: " << error.what() << '\n';

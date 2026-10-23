@@ -57,20 +57,26 @@ encode/decode before restore, and a dedicated codec test checks truncation,
 limits, malformed values, and noncanonical booleans. These bytes still depend
 on the host rebuilding the matching World, VMs, code resources, and callbacks.
 
-There is still no resource identity check or host reconstruction. The codecs
-are not yet assembled as `META`/`WRLD`/`RELA`/`VM`/`SCHD`/`CTRL` sections or
-connected to the live session. Those are the remaining steps before the
-House07 process-restart gate can run.
+The value-only `SessionBundle` now assembles required `META`, `HOST`, `WRLD`,
+`RELA`, `VM  `, `SCHD`, and `CTRL` sections. It stores launch identity, selected
+family/lot/resident, tick and RNG state, bounded mutable globals, World and
+relationship snapshots, and keyed VM/controller rosters. Decoding checks the
+resource identity when the caller supplies the expected value, validates
+cross-links between world actors, generations, VM states, waits and queued
+actions, and rejects malformed or unsupported states. Real Sleep and
+IdleForInput waits round-trip through the bundle tests. This is still a value
+codec: no live host captures or restores it yet.
 
-The first `META` building block now has a version-1 fixed-size codec for the
-game language, seven expansion flags, and a 32-byte resource fingerprint. It
-rejects unknown language/expansion values and a missing fingerprint. The
-expansion bits are fixed in this order: Livin' Large, House Party, Hot Date,
-Vacation, Unleashed, Superstar, and Makin' Magic. The
-fingerprint is SHA-256 over a canonical manifest of the game resources in the
-resolved launch plan. The launcher prints this identity in `--plan-only`, but
-the running game does not yet retain it, compare it while loading, append
-`META` to an archive, or restore a saved session. The plan also does not yet
-prove it captured every resource opened dynamically by the runtime. Synthetic
-coverage and one real installation plan are recorded in
-[session-resource-manifest-validation.md](session-resource-manifest-validation.md).
+The Linux runtime now receives the canonical game root and resolved resource
+paths without hashing them at launch. The version-1 `META` codec contains the
+game language, seven expansion flags, and SHA-256 fingerprint of the canonical
+manifest. Hashing remains in `--plan-only` for diagnostics; the running session
+will need to compute and compare it when save/load is wired. The current plan
+still needs auditing for resources opened dynamically on other lots and
+expansion sidecars. Synthetic coverage and one real installation plan are
+recorded in [session-resource-manifest-validation.md](session-resource-manifest-validation.md).
+
+Remaining for the House07 restart gate: capture only at a safe tick boundary,
+write the bundle through the atomic Linux store, rebuild matching code owners
+and callbacks in a fresh host, restore in dependency order, and explicitly
+reject active routing/playback states that the bundle does not represent.
