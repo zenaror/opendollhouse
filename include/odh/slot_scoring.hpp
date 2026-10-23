@@ -1,6 +1,7 @@
 #pragma once
 #include "odh/random.hpp"
 #include "odh/routing.hpp"
+#include <functional>
 
 namespace odh {
 // Caller-supplied result of post-score verification. Unknown is deliberately
@@ -48,10 +49,12 @@ ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable&, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>&,
     RandomState&, bool no_sitting_target_proven = false);
-// Generates, filters by ranged proximity/direction, scores and stably ranks the
-// verified ranged SLOT profiles. Room and clearance eligibility remain
-// the Routing host's responsibility; the supplied RNG is explicit and mutable.
+// Generates, filters by range/direction and room before scoring, then consumes
+// score RNG before applying position-validity checks, matching the observed
+// Simitone phase order. Routing revalidates selected goals.
 std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable&,std::size_t type3_index,const EntityPosition& caller,
-    const EntityPosition& target,RandomState&,bool no_sitting_target_proven = false);
+    const EntityPosition& target,RandomState&,bool no_sitting_target_proven = false,
+    const std::function<bool(RoutePoint)>& candidate_in_room = {},
+    const std::function<bool(RoutePoint)>& candidate_position_valid = {});
 } // namespace odh

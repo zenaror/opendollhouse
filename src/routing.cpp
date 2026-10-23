@@ -40,7 +40,13 @@ bool supported_ranged_slot_profile(const SlotRecord& slot) {
         slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
         slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0&&
         slot.height==0&&slot.resolution==8;
-    return door_range||house07_global_range;
+    const bool in_front_relative=slot.type==3&&slot.flags==0x01&&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&slot.proximity&&
+        *slot.proximity==std::array<std::int32_t,3>{16,24,16}&&
+        slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.max_size==100&&slot.unknown_i10==0&&slot.gradient_bits==0&&
+        slot.height==0&&slot.facing==-2&&slot.resolution==16;
+    return door_range||house07_global_range||in_front_relative;
 }
 bool supported_child_shy_sitting_fallback_profile(const SlotTable& table,std::size_t type3_index,
     const SlotRecord& slot) {
@@ -273,6 +279,10 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const bool bounded_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==2&&i.operands[7]==0;
+    // The real sit function (BHAV 8215) uses Location=InFrontOf (0),
+    // Direction=Facing (-2), no route count, and default flags.
+    const bool in_front_goto_relative=goto_relative&&
+        i.operands==std::array<std::uint8_t,8>{0,0,0,254,0,0,0,0};
     const bool stair_goto_relative_shape=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==0&&i.operands[7]==0;
@@ -281,7 +291,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
         stair_goto_relative=stair_goto_relative_(frame,i);
     }
-    if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative&&!stair_goto_relative)
+    if(goto_relative&&!saved_go_here_relative&&!bounded_goto_relative&&
+       !in_front_goto_relative&&!stair_goto_relative)
         return unsupported("GotoRelativePosition outside the synthetic route profiles or the exact saved Go Here profile");
     const auto data=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
     const auto scope=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
@@ -289,7 +300,18 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return unsupported("routing operand scope requires StackObject StackVariable/Literal or Global");
     if(!goto_relative && ((i.operands[4]&0xFEU)!=0 || i.operands[5] || i.operands[6] || i.operands[7]))
         return unsupported("routing operand flags/tail outside NoFailureTrees profile");
+    SlotTable relative_slots{};
     const SlotTable* selected_slots=&globals_;
+    if(in_front_goto_relative) {
+        SlotRecord relative{};
+        relative.type=3;relative.offset_bits={0,0,0};relative.standing=1;relative.sitting=0;
+        relative.ground=0;relative.flags=0x01;relative.snap_target_slot=-1;
+        relative.proximity=std::array<std::int32_t,3>{16,24,16};
+        relative.max_size=100;relative.unknown_i10=0;relative.gradient_bits=0;
+        relative.height=0;relative.facing=-2;relative.resolution=16;
+        relative_slots={0,10,{relative},0};
+        selected_slots=&relative_slots;
+    }
     if(!goto_relative && (scope==0||scope==1)) {
         if(!stack_object_slots_)
             return unsupported("StackObject StackVariable/Literal SLOT table provider unavailable");
@@ -305,12 +327,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(frame.arguments[data]<0)return {PrimitiveDisposition::goto_false,{}};
         slot_index=static_cast<std::size_t>(frame.arguments[data]);
     }
-    const auto* slot=goto_relative?nullptr:slot_of_type(*selected_slots,3,slot_index);
+    const auto* slot=(goto_relative&&!in_front_goto_relative)?nullptr:slot_of_type(*selected_slots,3,slot_index);
     const bool child_shy_sitting_fallback=!goto_relative&&scope==2&&selected_slots==&globals_&&slot&&
         supported_child_shy_sitting_fallback_profile(*selected_slots,slot_index,*slot);
-    const bool ranged_slot=!goto_relative&&slot&&selected_slots->version==10&&
+    const bool ranged_slot=slot&&selected_slots->version==10&&
         (supported_ranged_slot_profile(*slot)||child_shy_sitting_fallback);
-    if(!goto_relative) {
+    if(!goto_relative||in_front_goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
         if(selected_slots->version!=10 ||
@@ -417,7 +439,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     std::optional<PreRankedSlotGoal> selected;
     std::string invalid_route_input_diagnostic;
     std::size_t route_goal_count=0;
-    if(goto_relative) {
+    if(goto_relative&&!in_front_goto_relative) {
         if(!goal_validator_)
             return unsupported("GotoRelativePosition exact-point goal requires a host bounds/room/clearance validator");
         const RoutePoint goal{target->position->x,target->position->y};
@@ -511,15 +533,15 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     }
     if(path.status==RouteStatus::no_path) return fail_route(3,"no path in supplied clearance grid");
     const auto goal=path.points.back();
-    const std::int16_t entry_flags=goto_relative?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
+    const std::int16_t entry_flags=(goto_relative&&!in_front_goto_relative)?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
         {target->position->x,target->position->y},target->position->direction,goal,
         static_cast<std::uint8_t>(slot->flags)));
-    if(!goto_relative && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
+    if((!goto_relative||in_front_goto_relative) && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
     // The TS1 direction operand is a relative facing offset from the target:
     // 0 keeps its direction and 4 faces the opposite way. Other values remain
     // unsupported until their authored placement behavior is modeled.
-    const auto arrival_facing=goto_relative?
+    const auto arrival_facing=(goto_relative&&!in_front_goto_relative)?
         (i.operands[3]==255?actor->position->direction:
          static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U)):
         (selected?selected->facing:heading(goal,{target->position->x,target->position->y}));

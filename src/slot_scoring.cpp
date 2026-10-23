@@ -17,6 +17,18 @@ bool child_shy_slot_record(const SlotRecord* slot) {
         slot->gradient_bits==0x3E400000 && slot->height==0 && slot->facing==-2 &&
         slot->resolution==16;
 }
+bool in_front_relative_slot_record(const SlotRecord* slot) {
+    // VMGotoRelativePosition builds this transient SLOT for InFrontOf/Facing.
+    // SLOTItem defaults MaxSize=100, Gradient=0, Standing=1, Sitting=0,
+    // FaceTowardsObject and Resolution=16.
+    return slot && slot->type==3 && slot->flags==0x01 &&
+        slot->offset_bits==std::array<std::uint32_t,3>{0,0,0} &&
+        slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,24,16}} &&
+        slot->standing==1 && slot->sitting==0 && slot->ground==0 &&
+        slot->snap_target_slot==-1 && slot->max_size==100 && slot->unknown_i10==0 &&
+        slot->gradient_bits==0 && slot->height==0 && slot->facing==-2 &&
+        slot->resolution==16;
+}
 void validate_position(RoutePoint p) {
     if (p.x < -32768 || p.x > 32767 || p.y < -32768 || p.y > 32767)
         throw std::invalid_argument("reference SLOT score position exceeds LotTilePos short coordinates");
@@ -72,10 +84,12 @@ ReferenceSlotScores score_reference_slot_candidates(
     const auto* slot = slot_of_type(table, 3, type3_index);
     const bool shy_child_fallback=no_sitting_target_proven&&
         is_child_shy_sitting_fallback_slot(table,type3_index);
+    const bool relative_front=in_front_relative_slot_record(slot);
     const bool common=table.version == 10 && slot &&
         slot->offset_bits == std::array<std::uint32_t,3>{0,0,0} && slot->standing == 1 &&
         (slot->sitting == 0 || shy_child_fallback) && slot->ground == 0 && slot->snap_target_slot == -1 &&
-        slot->max_size == 0 && slot->unknown_i10 == 0 && slot->gradient_bits == 0x3E400000 &&
+        (slot->max_size == 0 || relative_front) && slot->unknown_i10 == 0 &&
+        (slot->gradient_bits == 0x3E400000 || relative_front) &&
         slot->height == 0 && slot->proximity &&
         (*slot->proximity)[0] > 0 && (*slot->proximity)[1] >= (*slot->proximity)[0] &&
         (*slot->proximity)[2] >= (*slot->proximity)[0] && (*slot->proximity)[0] <= 4096 &&
@@ -96,7 +110,7 @@ ReferenceSlotScores score_reference_slot_candidates(
         slot->max_size==0 && slot->unknown_i10==0 && slot->gradient_bits==0 &&
         slot->height==0 && slot->facing==-3 && slot->resolution==8 &&
         slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,64,16}};
-    if (!circle && !door_range && !house07_global_range && !shy_child_fallback)
+    if (!circle && !door_range && !house07_global_range && !shy_child_fallback && !relative_front)
         throw std::invalid_argument("reference SLOT scoring requires a verified House07 circle or ranged profile");
     if (inputs.size() > 4096) throw std::length_error("reference SLOT scoring exceeds 4096 candidates");
     validate_position(object_position);
@@ -159,8 +173,11 @@ ReferenceSlotScores score_reference_slot_candidates(
 }
 std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
-    const EntityPosition& target,RandomState& random,bool no_sitting_target_proven) {
+    const EntityPosition& target,RandomState& random,bool no_sitting_target_proven,
+    const std::function<bool(RoutePoint)>& candidate_in_room,
+    const std::function<bool(RoutePoint)>& candidate_position_valid) {
     const auto* slot=slot_of_type(table,3,type3_index);
+    const bool relative_front=in_front_relative_slot_record(slot);
     const bool shy_child_fallback=no_sitting_target_proven&&
         is_child_shy_sitting_fallback_slot(table,type3_index);
     const bool door_range=table.version==10&&slot&&
@@ -176,7 +193,7 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
        slot->resolution==8&&slot->standing==1&&slot->sitting==0&&slot->ground==0&&
        slot->snap_target_slot==-1&&slot->max_size==0&&slot->unknown_i10==0&&
        slot->gradient_bits==0&&slot->height==0;
-    if(!door_range&&!house07_global_range&&!shy_child_fallback)
+    if(!door_range&&!house07_global_range&&!shy_child_fallback&&!relative_front)
         throw std::invalid_argument("ranged SLOT generation requires a source-verified profile");
     const RoutePoint center{target.x,target.y};
     const auto offsets=enumerate_reference_slot_range_lattice(table,type3_index,4096);
@@ -193,6 +210,9 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
         const auto entry_flags=reference_slot_entry_flags(center,target.direction,position,
             static_cast<std::uint8_t>(slot->flags));
         if(entry_flags==0)continue;
+        // The reference checks room before scoring, but applies the later
+        // PositionValid/obstacle checks only after consuming its random score.
+        if(candidate_in_room&&!candidate_in_room(position))continue;
         const auto dx=(target.x>position.x)-(target.x<position.x);
         const auto dy=(target.y>position.y)-(target.y<position.y);
         std::uint8_t facing=0;
@@ -202,7 +222,10 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
         }
         const auto ox=static_cast<double>(offset.x),oy=static_cast<double>(offset.y);
         const auto proximity=std::sqrt(ox*ox+oy*oy);
-        inputs.push_back({{position,entry_flags,facing},proximity,ReferenceSlotVerification::eligible});
+        const auto verification=candidate_position_valid&&!candidate_position_valid(position)
+            ?ReferenceSlotVerification::rejected_after_score
+            :ReferenceSlotVerification::eligible;
+        inputs.push_back({{position,entry_flags,facing},proximity,verification});
     }
     return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random,
         no_sitting_target_proven).ranked_goals;

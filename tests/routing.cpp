@@ -918,6 +918,31 @@ int main() {
          require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->direction==7,
                  "OpposingDirection turns the avatar four eighth-turns from the target facing");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> in_front_facing{0,0,0,254,0,0,0,0};
+         odh::Vm vm{goto_relative(in_front_facing),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,24,1,0});world.set_position(2,{20,24,1,0});
+         odh::RandomState random(7);
+         routing.set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+             const auto& caller,const auto& target) {
+             return odh::rank_reference_range_slot(table,index,caller,target,random);
+         });
+         routing.set_route_goal_validator([&](const auto&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         auto initial_status=vm.run(8);
+         for(std::size_t run=0;run<4&&initial_status==odh::VmStatus::yielded;++run)
+             initial_status=vm.run(8);
+         require(initial_status==odh::VmStatus::waiting&&routing.active(),
+                 "BHAV8215 InFrontOf/Facing builds ranked relative approach goals");
+         for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
+         const auto* avatar=world.find(1);
+         const auto dx=avatar->position->x-20,dy=avatar->position->y-24;
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
+                 dx==0&&dy==-16&&avatar->position->direction==4,
+                 "InFrontOf/Facing walks to a north-front lattice goal and turns toward the object");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
          odh::Vm vm{goto_relative(go_here),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});

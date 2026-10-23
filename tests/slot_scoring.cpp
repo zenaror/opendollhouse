@@ -166,6 +166,43 @@ void door_range_generation() {
     catch(const std::invalid_argument&){rejected=true;}
     require(rejected&&random.seed()==before,"unsupported facing profile is rejected without consuming route RNG");
 }
+void in_front_relative_generation() {
+    odh::SlotRecord relative{};
+    relative.type=3;relative.flags=0x01;relative.offset_bits={0,0,0};
+    relative.standing=1;relative.sitting=0;relative.ground=0;relative.snap_target_slot=-1;
+    relative.proximity=std::array<std::int32_t,3>{16,24,16};relative.max_size=100;
+    relative.unknown_i10=0;relative.gradient_bits=0;relative.height=0;
+    relative.facing=-2;relative.resolution=16;
+    const odh::SlotTable table{0,10,{relative},0};
+    odh::RandomState random(7);
+    const odh::EntityPosition caller{48,80,1,0},target{80,80,1,0};
+    const auto goals=odh::rank_reference_range_slot(table,0,caller,target,random);
+    require(goals.size()==1&&goals.front().position==odh::RoutePoint{80,64},
+        "InFrontOf/Facing relative routing selects the exact north-facing lattice point");
+    for(const auto& goal:goals) {
+        const auto dx=goal.position.x-target.x,dy=goal.position.y-target.y;
+        const auto distance=std::sqrt(static_cast<double>(dx*dx+dy*dy));
+        require(dy<0&&distance>=15.5&&distance<=24.5&&goal.entry_flags==0x01&&goal.facing<8,
+            "relative sit approach stays in the front 16-to-24 band with target-facing direction");
+    }
+    auto malformed=table;malformed.records[0].max_size=0;
+    const auto before=random.seed();bool rejected=false;
+    try{(void)odh::rank_reference_range_slot(malformed,0,caller,target,random);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected&&random.seed()==before,
+        "relative range recognizer requires the VM's transient SLOT defaults");
+    const auto before_room_reject=random.seed();
+    const auto outside_room=odh::rank_reference_range_slot(table,0,caller,target,random,false,
+        [](odh::RoutePoint){return false;});
+    require(outside_room.empty()&&random.seed()==before_room_reject,
+        "room rejection happens before relative SLOT scoring consumes RNG");
+    odh::RandomState expected_after_obstacle(before_room_reject);
+    expected_after_obstacle.next(1024);
+    const auto blocked=odh::rank_reference_range_slot(table,0,caller,target,random,false,
+        [](odh::RoutePoint){return true;},[](odh::RoutePoint){return false;});
+    require(blocked.empty()&&random.seed()==expected_after_obstacle.seed(),
+        "position rejection happens after relative SLOT scoring consumes RNG");
+}
 void house07_global_range() {
     const auto table=house07_global_range_table();
     odh::RandomState random(7),expected(7);
@@ -316,6 +353,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); door_range_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); door_range_generation(); in_front_relative_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

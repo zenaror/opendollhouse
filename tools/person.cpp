@@ -2459,7 +2459,24 @@ struct PlacementCandidateProbe {
                         odh::PreRankedSlotGoalProvider range_slot_goals=[&](const auto& table,std::size_t index,
                             const auto& caller,const auto& target) {
                             const bool no_sitting_target=odh::is_child_shy_sitting_fallback_slot(table,index);
-                            return odh::rank_reference_range_slot(table,index,caller,target,random,no_sitting_target);
+                            const auto* slot=odh::slot_of_type(table,3,index);
+                            if(!slot||!runtime_route_grid||!runtime_route_grid->grid)return std::vector<odh::PreRankedSlotGoal>{};
+                            const auto target_room=render_lot->runtime_room_at(target);
+                            // This route grid describes one room only. IgnoreRooms cannot
+                            // make coordinates in another room safe to route on it.
+                            if(!target_room||*target_room!=runtime_route_grid->room_id)
+                                return std::vector<odh::PreRankedSlotGoal>{};
+                            const auto candidate_in_room=[&](odh::RoutePoint point) {
+                                auto candidate=target;candidate.x=point.x;candidate.y=point.y;
+                                const auto candidate_room=render_lot->runtime_room_at(candidate);
+                                return candidate_room&&*candidate_room==runtime_route_grid->room_id;
+                            };
+                            const auto candidate_position_valid=[&](odh::RoutePoint point) {
+                                return runtime_route_grid->grid->contains(point)&&
+                                       runtime_route_grid->grid->walkable(point);
+                            };
+                            return odh::rank_reference_range_slot(table,index,caller,target,random,
+                                no_sitting_target,candidate_in_room,candidate_position_valid);
                         };
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                             *shared.routing_slots);
@@ -2827,7 +2844,25 @@ struct PlacementCandidateProbe {
         runtime.routing->set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
             const auto& caller,const auto& target){
                 const bool no_sitting_target=odh::is_child_shy_sitting_fallback_slot(table,index);
-                return odh::rank_reference_range_slot(table,index,caller,target,random,no_sitting_target);
+                const auto* slot=odh::slot_of_type(table,3,index);
+                if(!slot||!runtime.route_grid||!runtime.route_grid->grid)
+                    return std::vector<odh::PreRankedSlotGoal>{};
+                const auto target_room=render_lot->runtime_room_at(target);
+                // A one-room route grid must never accept a goal from another room,
+                // even when the SLOT itself carries IgnoreRooms.
+                if(!target_room||*target_room!=runtime.route_grid->room_id)
+                    return std::vector<odh::PreRankedSlotGoal>{};
+                const auto candidate_in_room=[&](odh::RoutePoint point) {
+                    auto candidate=target;candidate.x=point.x;candidate.y=point.y;
+                    const auto candidate_room=render_lot->runtime_room_at(candidate);
+                    return candidate_room&&*candidate_room==runtime.route_grid->room_id;
+                };
+                const auto candidate_position_valid=[&](odh::RoutePoint point) {
+                    return runtime.route_grid->grid->contains(point)&&
+                           runtime.route_grid->grid->walkable(point);
+                };
+                return odh::rank_reference_range_slot(table,index,caller,target,random,
+                    no_sitting_target,candidate_in_room,candidate_position_valid);
             });
         runtime.routing->set_sitting_slot_fallback_preflight([&](const auto& table,std::size_t index,
             const auto&,const auto& target) {

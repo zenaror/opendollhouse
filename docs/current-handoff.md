@@ -12,6 +12,29 @@ incluindo vizinhança e lotes das expansões, famílias e seus fluxos, seleção
 idioma e registro de falhas. Paridade ainda precisa ser verificada em uso; uma
 build compilada ou testes unitários aprovados não bastam.
 
+## Atualização: aproximação frontal do assento (2026-10-23)
+
+O `GotoRelativePosition` exato usado por BHAV8215 (operandos
+`00 00 00 FE 00 00 00 00`) agora cria o SLOT temporário que o Simitone cria
+para `InFrontOf/Facing`: standing 1, faixa 16–24, máscara norte relativa ao
+objeto, resolução 16 e os valores padrão `MaxSize=100`/`Gradient=0`. O roteador
+filtra por sala antes da pontuação e verifica o bloqueio da grade depois dela,
+na mesma ordem observada no Simitone. Em seguida busca o caminho até o ponto
+frontal e vira o Sim para o banco. O teste cobre um VM e um banco sintéticos.
+O Simitone confirma os defaults em
+`Primitives/VMGotoRelativePosition.cs` e `Formats/IFF/Chunks/SLOT.cs`; a
+enumeração e as verificações por destino estão em `Engine/VMSlotParser.cs`.
+
+Build Debug e CTest completos passaram em 208/208 após a alteração; o teste
+`linux_window_backend` foi pulado por falta de display. Essa prova valida só o
+SLOT transitório de aproximação. O host exige que o objeto e cada destino estejam
+na sala coberta pela grade única; `IgnoreRooms` não abre uma sala que a grade não
+representa. A verificação da grade ocorre depois do consumo de RNG, como o estágio
+`PositionValid` observado no Simitone. Ainda falta o raycast candidato→objeto, a
+seleção do assento no SLOT100 e a execução da ação EP26 pelo dono correto.
+House05→House07 real segue sem chegada. Não tratar o teste sintético como sentar
+funcional.
+
 ## Atualização: assento da interação “do shy child” (2026-10-23)
 
 O teste real de viagem House05→House07 ainda para no BHAV8534, quando o
