@@ -619,8 +619,10 @@ python3 tests/house07_household_runtime_cli.py \
 
 Essa prova usa a entrada integrada e uma ordem headless determinística; ainda
 não demonstra a seleção visual do segundo Sim por clique numa janela real.
-Enquanto o runtime não consegue salvar com segurança um morador sentado ou
-com código privado de ação instalado, o salvamento continua recusado.
+O mesmo gate tenta salvar enquanto o segundo Sim está sentado e confirma que
+a operação é recusada sem substituir o salvamento anterior. Enquanto o runtime
+não consegue salvar com segurança um morador sentado ou com código privado de
+ação instalado, o salvamento continua recusado.
 
 ### Sit, Stand e Go Here na mesma sessão — 2026-10-23
 

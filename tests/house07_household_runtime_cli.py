@@ -117,6 +117,17 @@ def main():
                     'object_id': 128, 'sit_action': interaction['action'], 'sit_result': interaction['result'],
                     'stand_action': stand['action'], 'stand_result': stand['result'],
                     'final_posture': stand['actor_posture'], 'final_attached': stand['actor_attached']})
+                saved_before_blocked_attempt = path.read_bytes()
+                blocked_save = subprocess.run([str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
+                    '--resident-id', str(resident_id), '--language', '1', '--headless-ticks', str(stand_tick),
+                    '--headless-resident-interaction', str(extra_actor_id), '128', '--save-session-on-exit'],
+                    text=True, capture_output=True, env=env, timeout=args.timeout)
+                assert (blocked_save.returncode == 2 and
+                    'household session cannot yet restore a seated or attached additional resident' in blocked_save.stderr), (
+                        blocked_save.returncode, blocked_save.stdout, blocked_save.stderr)
+                assert path.read_bytes() == saved_before_blocked_attempt, 'blocked seated-resident save replaced the existing checkpoint'
+                resident_actions[-1]['save_while_seated_rejected'] = True
+                resident_actions[-1]['previous_save_preserved'] = True
             previous = path.read_bytes()
             for name, malformed in negative_archives(saved):
                 bad = Path(directory)/(str(resident_id)+'-'+name+'.odhs');bad.write_bytes(malformed)

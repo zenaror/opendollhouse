@@ -33,6 +33,7 @@ namespace {
 struct Options {
     struct ResidentGoHere {unsigned entity_id,x,y,level,tick;};
     struct ResidentSit {unsigned actor_id,object_id,stand_tick;};
+    struct ResidentInteraction {unsigned actor_id,object_id;};
     std::filesystem::path game_root;
     unsigned mode = 0;
     unsigned language = 1;
@@ -45,6 +46,7 @@ struct Options {
     bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
     std::optional<ResidentSit> headless_resident_sit;
+    std::optional<ResidentInteraction> headless_resident_interaction;
     std::optional<ResidentGoHere> headless_resident_go_here;
     bool headless_stand = false;
     std::vector<std::uint8_t> restore_archive;
@@ -101,6 +103,15 @@ Options parse_options(int argc, char** argv) {
             if(!actor_id||!object_id||stand_tick<2)
                 throw odh::FormatError("resident Sit actor, object, or Stand tick is outside the supported profile");
             result.headless_resident_sit=Options::ResidentSit{actor_id,object_id,stand_tick};
+            continue;
+        }
+        if (key == "--headless-resident-interaction" && !result.headless_resident_interaction) {
+            if (i + 2 >= argc) throw odh::FormatError("missing resident interaction values");
+            const auto actor_id=parse_number(argv[++i],32767,"resident interaction actor ID");
+            const auto object_id=parse_number(argv[++i],32767,"resident interaction object ID");
+            if(!actor_id||!object_id)
+                throw odh::FormatError("resident interaction actor or object is outside the supported profile");
+            result.headless_resident_interaction=Options::ResidentInteraction{actor_id,object_id};
             continue;
         }
         if (i + 1 >= argc) throw odh::FormatError("missing integrated game option value");
@@ -160,8 +171,12 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError("--headless-sit-object requires a new bounded lot session");
     if (result.headless_resident_sit && (!result.headless_ticks || result.plan_only || result.load_session ||
         result.single_resident_session || result.headless_stand || result.headless_sit_object ||
+        result.headless_resident_interaction ||
         result.headless_resident_sit->stand_tick > *result.headless_ticks))
         throw odh::FormatError("--headless-resident-sit requires a new whole-household bounded lot session and an in-range Stand tick");
+    if (result.headless_resident_interaction && (!result.headless_ticks || result.plan_only || result.load_session ||
+        result.single_resident_session || result.headless_stand || result.headless_sit_object || result.headless_resident_sit))
+        throw odh::FormatError("--headless-resident-interaction requires a new whole-household bounded lot session");
     if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
         result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
         throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
@@ -418,6 +433,9 @@ RuntimePlan build_runtime_arguments(const Options& options,
         append(args, {"--headless-stand", std::to_string(options.headless_resident_sit->object_id),
             std::to_string(options.headless_resident_sit->stand_tick)});
     }
+    if (options.headless_resident_interaction)
+        append(args, {"--headless-resident-interaction", std::to_string(options.headless_resident_interaction->actor_id),
+            std::to_string(options.headless_resident_interaction->object_id), "1"});
     if (options.headless_stand) {
         if (!options.restore_bundle || !options.restore_bundle->seated_continuation)
             throw odh::FormatError("Stand request has no verified saved seat");
