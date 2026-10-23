@@ -78,6 +78,26 @@ Leitura de três saves externos, Debug e ASan/UBSan:
 
 ## Gates Linux de residentes
 
+### Dois moradores carregados no mesmo lote (2026-10-23)
+
+O teste opcional `tests/house07_paired_main_smoke.py`, executado com
+`/tmp/odh-host-integration/odh-person` e os dados instalados em
+`/home/rafael/_PROJETOS/TheSims1/referencias/The Sims`, confirmou que os dois
+moradores já presentes no save House07 podem ter seus recursos de personagem
+verificados e executar seus próprios Main no mesmo World e relógio. Os IDs
+105/GUID `850010198` e 137/GUID `844195932` ficaram `waiting` após 32 ticks,
+com 235 e 232 instruções registradas, respectivamente. As duas posições e a
+contagem de 182 entidades permaneceram iguais. A tentativa de associar o
+segundo morador ao arquivo de personagem errado foi recusada.
+
+Este gate é uma base real para ativar a família inteira: os dois avatares já
+estavam salvos no lote e cada Main foi iniciado pela opção de teste
+`--headless-second-saved-main`. Ele não prova autonomia contínua, controles
+individuais, save/retomada dos dois VMs, criação de moradores ausentes,
+posicionamento em lote vazio ou o caminho normal do launcher; ainda não há
+`VerifyFamily`/spawn coletivo nesse fluxo. Resultado observado: processo
+terminou com código 3 pelo limite deliberado de 32 ticks, sem falha do host.
+
 ```sh
 ./build/odh-person \
   --avatar-file '../referencias/The Sims/UserData/Characters/User00000.iff' 128 \
