@@ -77,7 +77,7 @@
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;};
 struct PersonDefinitionSource {std::string path,entry;bool standalone=false;};
-constexpr std::size_t person_definition_source_limit=16;
+constexpr std::size_t person_definition_source_limit=24;
 template<class F>void with_resource(const Resource& resource,F read){
     if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
 }

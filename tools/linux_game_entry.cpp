@@ -201,6 +201,20 @@ RuntimePlan build_runtime_arguments(const Options& options,
     const auto lot_locations = require_file(game, userdata / "LotLocations.iff");
     const auto shared = std::vector<std::filesystem::path>{
         require_file(game, game / "ExpansionShared/ExpansionShared.far")};
+    std::vector<std::filesystem::path> expansions;
+    for (unsigned pack = 1; pack <= 7; ++pack) {
+        const auto directory = pack == 1 ? std::string("ExpansionPack")
+            : std::string("ExpansionPack") + std::to_string(pack);
+        const auto archive = game / directory / (directory + ".far");
+        std::error_code error;
+        const auto status = std::filesystem::status(archive, error);
+        if (error == std::errc::no_such_file_or_directory) continue;
+        if (error) throw odh::FormatError("cannot inspect optional expansion archive: " + archive.string());
+        if (status.type() == std::filesystem::file_type::not_found) continue;
+        if (!std::filesystem::is_regular_file(status))
+            throw odh::FormatError("optional expansion archive is not a regular file: " + archive.string());
+        expansions.push_back(require_file(game, archive));
+    }
 
     const auto characters = require_directory(game, userdata / "Characters");
     std::vector<std::filesystem::path> character_files;
@@ -230,6 +244,7 @@ RuntimePlan build_runtime_arguments(const Options& options,
     record_resource(lot_locations);
     record_resource(house_file);
     for (const auto& archive : shared) record_resource(archive);
+    for (const auto& archive : expansions) record_resource(archive);
     for (const auto& character : find_files(characters, "", {".iff"}, 4096))
         record_resource(character);
     for (const auto& resource : architecture) record_resource(resource);
@@ -256,10 +271,15 @@ RuntimePlan build_runtime_arguments(const Options& options,
         "--lot", house_file.string(), std::to_string(house), "--zoning", zoning.string(),
         "--neighborhood", neighborhood.string(), "--activate-family", "--language",
         std::to_string(options.language), "--object-definitions", objects_far.string()};
+    for (const auto& archive : shared)
+        append(args, {"--object-definitions", archive.string()});
+    for (const auto& archive : expansions)
+        append(args, {"--object-definitions", archive.string()});
     for (const auto& character : character_files)
         append(args, {"--object-definition-file", character.string()});
     append(args, {"--animation-source", animation_far.string()});
     for (const auto& archive : shared) append(args, {"--animation-source", archive.string()});
+    for (const auto& archive : expansions) append(args, {"--animation-source", archive.string()});
     append(args, {"--saved-world-main", "--render-window", "--render-saved-guid",
         std::to_string(resident.guid), "--render-animation-far", animation_far.string(),
         "--render-textures", textures_far.string(), "--render-skeleton",

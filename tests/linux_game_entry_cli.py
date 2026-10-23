@@ -69,6 +69,11 @@ def make_game(root):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"synthetic resource")
+    for pack in range(1, 8):
+        directory = "ExpansionPack" if pack == 1 else f"ExpansionPack{pack}"
+        path = root / directory / f"{directory}.far"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic expansion resource")
 
 
 with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
@@ -86,14 +91,27 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     check(result["status"] == "ready" and result["resident_count"] == 1,
           "synthetic family and lot resolve")
     identity = result["resource_identity"]
-    check(identity["language"] == 15 and identity["expansion_mask"] == 0 and
+    check(identity["language"] == 15 and identity["expansion_mask"] == 0x7f and
           len(identity["sha256"]) == 64 and identity["resource_count"] == len(identity["files"]) and
-          identity["resource_count"] >= 11 and
+          identity["resource_count"] >= 18 and
           "UserData/LotLocations.iff" in identity["files"] and
-          not any(path.startswith("ExpansionPack") for path in identity["files"]),
-          "plan fingerprints the exact files it resolves and keeps unsupported expansions clear")
+          all(any(path.startswith(("ExpansionPack" if pack == 1 else f"ExpansionPack{pack}") + "/")
+                  for path in identity["files"]) for pack in range(1, 8)),
+          "plan fingerprints every installed expansion archive and sets the matching flags")
     check("--language" in result["command"] and "15" in result["command"],
           "selected language reaches runtime arguments")
+    check(result["command"].count("--object-definitions") == 9 and
+          result["command"].count("--animation-source") == 9,
+          "base, shared, and seven expansion archives reach definition and animation loaders")
+    (root / "ExpansionPack4" / "ExpansionPack4.far").unlink()
+    partial = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(partial.returncode == 0, partial.stderr)
+    partial_result = json.loads(partial.stdout)
+    check(partial_result["resource_identity"]["expansion_mask"] == 0x77 and
+          "ExpansionPack4/ExpansionPack4.far" not in partial_result["resource_identity"]["files"] and
+          partial_result["command"].count("--object-definitions") == 8 and
+          partial_result["command"].count("--animation-source") == 8,
+          "missing optional pack is omitted from both runtime loaders and identity")
     for argument in result["command"]:
         if argument.startswith("/"):
             check(Path(argument).resolve().is_relative_to(root.resolve()),
