@@ -20,6 +20,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -256,7 +257,7 @@ int odh_linux_game_entry(int argc, char** argv) {
 
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
-        if (!options.house) map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
+        if (!options.plan_only) map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
         std::unique_ptr<odh_host::LinuxWindow> window;
         if (!options.plan_only)
             window = std::make_unique<odh_host::LinuxWindow>(800, 600, "OpenDollhouse");
@@ -269,7 +270,7 @@ int odh_linux_game_entry(int argc, char** argv) {
 
         unsigned house = options.house.value_or(0);
 #ifdef ODH_HAVE_X11
-        if (map) {
+        if (map && !options.house) {
             const auto selected = odh_host::show_neighborhood_picker(*window, *map);
             if (!selected) {
                 std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\"}\n";
@@ -318,7 +319,15 @@ int odh_linux_game_entry(int argc, char** argv) {
         for (const auto& argument : arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
 #ifdef ODH_HAVE_X11
         window->resize(320, 240);
-        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get());
+        odh_host::NeighborhoodResumeCallback neighborhood_resume;
+        if (map) {
+            const auto active_house = static_cast<std::uint16_t>(house);
+            neighborhood_resume = [&window, &map, active_house]() {
+                return odh_host::show_neighborhood_resume_picker(*window, *map, active_house);
+            };
+        }
+        return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get(),
+                              std::move(neighborhood_resume));
 #else
         return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr);
 #endif

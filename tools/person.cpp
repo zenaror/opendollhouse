@@ -202,7 +202,8 @@ const char* floor_result_name(odh::FloorPlacementResult result){
     return "invalid_result";
 }
 }
-int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
+int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
+                   odh_host::NeighborhoodResumeCallback neighborhood_resume) {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
  odh_host::LinuxSessionLog session_log;
 #endif
@@ -250,7 +251,15 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     std::optional<std::int16_t> headless_window_interaction;
     std::optional<std::uint64_t> headless_window_stand_tick;
-    bool headless_window_stand_input_sent=false;
+    std::optional<std::uint64_t> headless_window_neighborhood_tick;
+    bool headless_window_stand_input_sent=false,headless_window_neighborhood_input_sent=false;
+    std::optional<std::uint16_t> headless_window_neighborhood_house;
+    bool neighborhood_resume_requested=false,neighborhood_resume_same_lot=false;
+    std::uint64_t neighborhood_resume_tick_before=0,neighborhood_resume_tick_after=0;
+    std::uint64_t neighborhood_resume_vm_steps_before=0,neighborhood_resume_vm_steps_after=0;
+    bool neighborhood_resume_world_unchanged=false,neighborhood_resume_relationships_unchanged=false;
+    std::optional<std::int16_t> neighborhood_resume_posture_before,neighborhood_resume_posture_after;
+    std::optional<std::int16_t> neighborhood_resume_attachment_before,neighborhood_resume_attachment_after;
     // Synthetic WindowInput events enter the same dispatch as the X11 window;
     // they do not emulate Xlib's native key/button translation.
     std::vector<odh_host::WindowInput> headless_window_inputs;
@@ -424,6 +433,16 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
             if(!tick)throw odh::FormatError("headless window Stand tick must be positive");
             headless_window_stand_tick=tick;
         }
+        else if(option=="--headless-window-neighborhood-tick"&&!headless_window_neighborhood_tick&&n+1<argc){
+            const auto tick=selector(argv[++n]);
+            if(!tick)throw odh::FormatError("headless window neighborhood tick must be positive");
+            headless_window_neighborhood_tick=tick;
+        }
+        else if(option=="--headless-window-neighborhood-house"&&!headless_window_neighborhood_house&&n+1<argc){
+            const auto house=selector(argv[++n]);
+            if(!house||house>32767)throw odh::FormatError("headless window neighborhood house is outside the supported profile");
+            headless_window_neighborhood_house=static_cast<std::uint16_t>(house);
+        }
         else if(option=="--headless-go-here"&&!headless_go_here&&n+4<argc){
             const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
             const auto level=selector(argv[++n]),tick=selector(argv[++n]);
@@ -506,6 +525,10 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
+    if(headless_window_neighborhood_tick&&(!headless_window_interaction||!lot_id||*headless_window_neighborhood_tick>=ticks_limit))
+        throw odh::FormatError("--headless-window-neighborhood-tick requires --headless-window-interaction, a selected lot, and a tick below the limit");
+    if(headless_window_neighborhood_house&&!headless_window_neighborhood_tick)
+        throw odh::FormatError("--headless-window-neighborhood-house requires --headless-window-neighborhood-tick");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_selector&&!headless_main);
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&((!initialize&&!saved_world_main)||!lot_path||!neighborhood_path))||
@@ -1800,6 +1823,7 @@ struct PlacementCandidateProbe {
             title+=" | U to stand";
             current_overlay_text="U: Stand";
         }
+        if(neighborhood_resume)title+=" | M: neighborhood";
         return title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
@@ -1868,9 +1892,10 @@ struct PlacementCandidateProbe {
         }
 #ifdef ODH_HAVE_X11
         if(render_window){
-            const std::string title=render_lot?
+            std::string title=render_lot?
                 "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
                 "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+            if(neighborhood_resume)title+=" | M: neighborhood";
             if(shared_window){
                 shared_window->resize(render_camera.width,render_camera.height);
                 shared_window->set_title(title);
@@ -2482,12 +2507,76 @@ struct PlacementCandidateProbe {
                ticks>=*headless_window_stand_tick){
                 input.stand=true;headless_window_stand_input_sent=true;
             }
+            if(headless_window_neighborhood_tick&&!headless_window_neighborhood_input_sent&&render_selection&&
+               !input.primary_click&&ticks>=*headless_window_neighborhood_tick){
+                input.neighborhood=true;headless_window_neighborhood_input_sent=true;
+            }
             if(input.quit){
                 window_closed=true;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
                 session_log.event("runtime window closed tick="+std::to_string(ticks));
 #endif
                 break;
+            }
+            if(input.neighborhood){
+                if(neighborhood_resume || headless_window_neighborhood_tick){
+                    const auto* actor_before=world.find(runtime_avatar_id);
+                    const auto actor_generation_before=actor_before?actor_before->generation:0;
+                    const auto actor_position_before=actor_before?actor_before->position:std::nullopt;
+                    const auto actor_person_data_before=actor_before?actor_before->person_data:std::vector<std::int16_t>{};
+                    const auto actor_attachment_before=actor_before?actor_before->attachment:std::nullopt;
+                    if(actor_before&&!actor_before->person_data.empty())
+                        neighborhood_resume_posture_before=actor_before->person_data[0];
+                    if(actor_attachment_before)neighborhood_resume_attachment_before=actor_attachment_before->container;
+                    const auto relationship_sources_before=relationships?relationships->source_count():0;
+                    const auto relationship_pairs_before=relationships?relationships->pair_count():0;
+                    const auto relationship_values_before=relationships?relationships->value_count():0;
+                    neighborhood_resume_tick_before=ticks;
+                    neighborhood_resume_vm_steps_before=vm.steps();
+                    neighborhood_resume_requested=true;
+                    if(render_window_host)render_window_host->resize(800,600);
+                    if(!neighborhood_resume&&headless_window_neighborhood_tick&&lot_id){
+                        const auto selected=headless_window_neighborhood_house.value_or(*lot_id);
+                        neighborhood_resume=[selected](){return std::optional<std::uint16_t>{selected};};
+                    }
+                    const auto selected=neighborhood_resume?neighborhood_resume():std::nullopt;
+                    if(!selected){
+                        window_closed=true;
+                        break;
+                    }
+                    if(render_window_host)render_window_host->resize(render_camera.width,render_camera.height);
+                    neighborhood_resume_tick_after=ticks;
+                    neighborhood_resume_vm_steps_after=vm.steps();
+                    const auto* actor_after=world.find(runtime_avatar_id);
+                    if(actor_after&&!actor_after->person_data.empty())
+                        neighborhood_resume_posture_after=actor_after->person_data[0];
+                    if(actor_after&&actor_after->attachment)
+                        neighborhood_resume_attachment_after=actor_after->attachment->container;
+                    neighborhood_resume_world_unchanged=actor_before&&actor_after&&
+                        actor_after->generation==actor_generation_before&&actor_after->position==actor_position_before&&
+                        actor_after->person_data==actor_person_data_before&&
+                        ((!actor_attachment_before&&!actor_after->attachment)||
+                         (actor_attachment_before&&actor_after->attachment&&
+                          actor_attachment_before->container==actor_after->attachment->container&&
+                          actor_attachment_before->slot==actor_after->attachment->slot&&
+                          actor_attachment_before->positioned==actor_after->attachment->positioned));
+                    neighborhood_resume_relationships_unchanged=relationship_sources_before==(relationships?relationships->source_count():0)&&
+                        relationship_pairs_before==(relationships?relationships->pair_count():0)&&
+                        relationship_values_before==(relationships?relationships->value_count():0);
+                    const auto active_house=lot_id.value_or(0);
+                    neighborhood_resume_same_lot=selected&&active_house&&*selected==active_house;
+                    if(!neighborhood_resume_same_lot){
+                        if(render_window_host)render_window_host->set_title(
+                            "OpenDollhouse | switching to another lot is not supported yet");
+                        capture_frame();
+                        window_deadline=std::chrono::steady_clock::now();
+                        continue;
+                    }
+                    capture_frame();
+                    if(render_window_host)render_window_host->set_title(interaction_window_title());
+                    window_deadline=std::chrono::steady_clock::now();
+                    continue;
+                }
             }
             if(input.pause){
                 window_paused=!window_paused;
@@ -3074,7 +3163,20 @@ struct PlacementCandidateProbe {
         <<",\"runtime_policy\":"<<json_bytes(render_window?"window_per_tick_per_entity":"finite_probe_total_budget")
         <<",\"runtime_tick_limit\":"<<session_policy.tick_limit()
         <<",\"window_closed\":"<<(window_closed?"true":"false")
-        <<",\"diagnostics_truncated\":"<<(diagnostics.truncated()?"true":"false")
+        <<",\"neighborhood_resume_runtime\":";
+    if(!neighborhood_resume_requested)std::cout<<"null";
+    else std::cout<<"{\"selected_same_lot\":"<<(neighborhood_resume_same_lot?"true":"false")
+        <<",\"tick_before\":"<<neighborhood_resume_tick_before<<",\"tick_after\":"<<neighborhood_resume_tick_after
+        <<",\"tick_held\":"<<(neighborhood_resume_tick_before==neighborhood_resume_tick_after?"true":"false")
+        <<",\"vm_steps_before\":"<<neighborhood_resume_vm_steps_before<<",\"vm_steps_after\":"<<neighborhood_resume_vm_steps_after
+        <<",\"vm_held\":"<<(neighborhood_resume_vm_steps_before==neighborhood_resume_vm_steps_after?"true":"false")
+        <<",\"world_held\":"<<(neighborhood_resume_world_unchanged?"true":"false")
+        <<",\"relationship_counts_held\":"<<(neighborhood_resume_relationships_unchanged?"true":"false")
+        <<",\"posture_before\":"<<(neighborhood_resume_posture_before?std::to_string(*neighborhood_resume_posture_before):"null")
+        <<",\"posture_after\":"<<(neighborhood_resume_posture_after?std::to_string(*neighborhood_resume_posture_after):"null")
+        <<",\"attachment_before\":"<<(neighborhood_resume_attachment_before?std::to_string(*neighborhood_resume_attachment_before):"null")
+        <<",\"attachment_after\":"<<(neighborhood_resume_attachment_after?std::to_string(*neighborhood_resume_attachment_after):"null")<<"}";
+    std::cout<<",\"diagnostics_truncated\":"<<(diagnostics.truncated()?"true":"false")
         <<",\"diagnostics_dropped\":{";
     for(std::size_t n=0;n<diagnostics.dropped().size();++n){
         if(n)std::cout<<',';

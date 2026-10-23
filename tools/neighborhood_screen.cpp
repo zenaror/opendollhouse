@@ -81,6 +81,27 @@ std::optional<std::uint16_t> show_neighborhood_picker(
     }
 }
 
+std::optional<std::uint16_t> show_neighborhood_resume_picker(
+        LinuxWindow& window, const PreparedNeighborhoodMap& map, std::uint16_t active_house) {
+    if (window.width() != 800 || window.height() != 600)
+        throw odh::FormatError("neighborhood picker requires an 800x600 window");
+    window.set_title("OpenDollhouse | select the current lot to resume | Esc: close");
+    window.present(map.frame);
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return std::nullopt;
+        if (input.primary_click) {
+            const auto selected = odh::pick_neighborhood_lot(map.markers, map.marker_scale,
+                (*input.primary_click)[0], (*input.primary_click)[1]);
+            if (selected && *selected == active_house) return selected;
+            if (selected) window.set_title(
+                "OpenDollhouse | switching lots is not available yet; select the current lot | Esc: close");
+        }
+        if (input.redraw) window.present(map.frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
 std::optional<std::size_t> show_resident_picker(
         LinuxWindow& window, const std::vector<odh::SessionEntryMember>& residents,
         std::uint8_t language) {

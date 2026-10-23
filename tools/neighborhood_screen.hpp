@@ -25,6 +25,11 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
 std::optional<std::uint16_t> show_neighborhood_picker(
     LinuxWindow& window, const PreparedNeighborhoodMap& map);
 
+// Resume the already-loaded lot from its neighborhood marker. Other lots remain
+// unavailable while this session owns one live World.
+std::optional<std::uint16_t> show_neighborhood_resume_picker(
+    LinuxWindow& window, const PreparedNeighborhoodMap& map, std::uint16_t active_house);
+
 // Select a family member in the existing window. Rows identify Sims by their
 // neighborhood ID and character resource filename; this is not a name editor.
 std::optional<std::size_t> show_resident_picker(

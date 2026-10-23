@@ -600,3 +600,6 @@ fixture `headless_stand_request`. A entrada nativa usa
 retenção e soltura da tecla, mas continua pulado em sessões sem DISPLAY.
 Nenhum desses resultados estabelece equivalência de todos os objetos ou uma
 sessão completa jogável.
+
+
+O fluxo integrado agora também pode voltar à vizinhança com **M** e retomar o lote carregado sem avançar o relógio nem recarregar o World. A prova headless Sit→mapa→mesmo lote→Stand está em [neighborhood-return-validation.md](neighborhood-return-validation.md); trocar para outro lote continua indisponível.

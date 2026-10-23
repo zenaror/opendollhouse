@@ -23,6 +23,13 @@ def main():
                         help="after window Sit, inject the player's U/Stand input at --stand-tick")
     parser.add_argument("--window-stand-expect-rejected", action="store_true",
                         help="expect the injected U request to be rejected while the avatar is not seated")
+    parser.add_argument("--window-neighborhood", action="store_true",
+                        help="inject M after Sit, run the neighborhood resume callback, then verify Stand")
+    parser.add_argument("--neighborhood-expect-rejected", action="store_true",
+                        help="require a different-lot choice to be rejected while preserving the current session")
+    parser.add_argument("--neighborhood-tick", type=int, default=260)
+    parser.add_argument("--neighborhood-house", type=int,
+                        help="scripted neighborhood selection; defaults to the currently loaded lot")
     parser.add_argument("--move-avatar-to", nargs=4, type=int,
                         metavar=("X", "Y", "LEVEL", "DIRECTION"),
                         help="schedule the saved avatar at this World position on tick 1")
@@ -32,6 +39,12 @@ def main():
         parser.error("--window-stand-expect-rejected requires --window-stand")
     if args.window_stand and not args.window_input:
         parser.error("--window-stand requires --window-input")
+    if args.window_neighborhood and not (args.window_input and args.window_stand):
+        parser.error("--window-neighborhood requires --window-input and --window-stand")
+    if args.neighborhood_house is not None and not args.window_neighborhood:
+        parser.error("--neighborhood-house requires --window-neighborhood")
+    if args.neighborhood_expect_rejected and not args.window_neighborhood:
+        parser.error("--neighborhood-expect-rejected requires --window-neighborhood")
     if args.move_avatar_to:
         x, y, level, direction = args.move_avatar_to
         if not (0 <= x <= 32767 and 0 <= y <= 32767 and
@@ -91,6 +104,10 @@ def main():
                     "--headless-stand", str(args.object_id), str(args.stand_tick)]
     if args.window_stand:
         command += ["--headless-window-stand-tick", str(args.stand_tick)]
+    if args.window_neighborhood:
+        command += ["--headless-window-neighborhood-tick", str(args.neighborhood_tick)]
+        if args.neighborhood_house is not None:
+            command += ["--headless-window-neighborhood-house", str(args.neighborhood_house)]
     if args.move_avatar_to:
         command += ["--headless-move-entity", str(args.avatar_id),
                     *(str(value) for value in args.move_avatar_to), "1"]
@@ -159,6 +176,7 @@ def main():
         "family_world_reconciliation": household,
         "interaction": interaction,
         "stand": stand,
+        "neighborhood_resume": report["neighborhood_resume_runtime"],
         "completion": report["completion"],
         "action_routines": sorted(action_routines),
         "action_opcodes": sorted(action_opcodes),
@@ -201,6 +219,15 @@ def main():
                 stand["action"] == 4102 and stand["status"] == "returned_true" and stand["result"] is True and
                 stand["actor_posture"] == 0 and not stand["actor_attached"] and
                 actor["attachment"] is None and 4102 in action_routines)
+        if args.window_neighborhood:
+            resumed = report["neighborhood_resume_runtime"]
+            selected_as_expected = resumed is not None and (
+                not resumed["selected_same_lot"] if args.neighborhood_expect_rejected else resumed["selected_same_lot"])
+            completed_sit = completed_sit and selected_as_expected and resumed["tick_held"] and \
+                resumed["vm_held"] and resumed["world_held"] and resumed["relationship_counts_held"] and \
+                resumed["posture_before"] == resumed["posture_after"] == 1 and \
+                resumed["attachment_before"] == resumed["attachment_after"] == args.object_id and \
+                args.neighborhood_tick < args.stand_tick
     else:
         completed_sit = (
         household["evidence"] == "restored_World_exact_avatar_GUID_match_only" and
