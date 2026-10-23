@@ -595,13 +595,15 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     std::optional<odh::DefinitionIndex> definition_index;
     if(!definition_sources.empty()){
         std::vector<odh::DefinitionCandidate> candidates;
-        std::uint64_t provenance_available=256*1024;
+        std::uint64_t provenance_available=1024*1024;
         const auto add_iff=[&](const auto& view,const std::string& source,const std::string& asset){
             odh::Limits limits;limits.iff_chunks=4096;
             odh::iff_chunks(view,[&](const auto& chunk){
                 if(chunk.type!="OBJD")return;
-                if(candidates.size()>=8192||source.size()>provenance_available||asset.size()>provenance_available-source.size())
-                    throw odh::FormatError("definition candidate/provenance budget exceeded");
+                if(candidates.size()>=8192)
+                    throw odh::FormatError("definition candidate budget exceeded");
+                if(source.size()>provenance_available||asset.size()>provenance_available-source.size())
+                    throw odh::FormatError("definition provenance byte budget exceeded");
                 auto definition=odh::read_object_definition(chunk.payload);
                 provenance_available-=source.size()+asset.size();
                 candidates.push_back({source,asset,chunk.id,definition});

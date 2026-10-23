@@ -10,7 +10,10 @@ struct DefinitionCandidate {
 };
 struct DefinitionIndexLimits {
     std::uint32_t candidates=8192;
-    std::uint64_t provenance_bytes=256*1024;
+    // Objects + ExpansionShared + ExpansionPack1..7 in the Legacy install use
+    // 583,522 bytes of source/asset text. Keep a bounded margin for installed
+    // data paths without excluding the expansion definitions.
+    std::uint64_t provenance_bytes=1024*1024;
 };
 // Explicit resource-set snapshot. Duplicate GUIDs remain ambiguous: no guessed
 // archive precedence. Candidates and provenance are owned and budgeted before

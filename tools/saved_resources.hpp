@@ -6,13 +6,14 @@ struct SavedDefinitionSource {std::string path;bool standalone;};
 inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::vector<SavedDefinitionSource>& sources){
     if(sources.size()>16)throw odh::FormatError("definition source count exceeds limit");
     std::vector<odh::DefinitionCandidate> candidates;
-    std::uint64_t available=256*1024;
+    std::uint64_t available=1024*1024;
     const auto add=[&](const odh::View& view,const std::string& path,const std::string& asset){
         odh::Limits limits;limits.iff_chunks=4096;
         odh::iff_chunks(view,[&](const odh::Chunk& chunk){
             if(chunk.type!="OBJD")return;
-            if(candidates.size()>=8192||path.size()>available||asset.size()>available-path.size())
-                throw odh::FormatError("definition candidate/provenance budget exceeded");
+            if(candidates.size()>=8192)throw odh::FormatError("definition candidate budget exceeded");
+            if(path.size()>available||asset.size()>available-path.size())
+                throw odh::FormatError("definition provenance byte budget exceeded");
             auto definition=odh::read_object_definition(chunk.payload);
             available-=path.size()+asset.size();candidates.push_back({path,asset,chunk.id,definition});
         },limits);

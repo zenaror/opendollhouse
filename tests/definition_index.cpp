@@ -28,6 +28,17 @@ int main(){try{
     limits.candidates=2;limits.provenance_bytes=23;rejected([&]{odh::DefinitionIndex failed(source,limits);});
     limits.candidates=0;limits.provenance_bytes=0;
     require(odh::DefinitionIndex({},limits).guid_count()==0,"empty explicit resource set valid zero budget");
+    std::vector<odh::DefinitionCandidate> legacy_scale;
+    legacy_scale.reserve(4926);
+    for(std::uint32_t i=0;i<4926;++i){
+        auto item=definition;item.guid=i+1;
+        legacy_scale.push_back({std::string(104,'s'),std::string(16,'a'),0,item});
+    }
+    odh::DefinitionIndex expansion_scale(legacy_scale);
+    require(expansion_scale.candidate_count()==4926&&expansion_scale.guid_count()==4926,
+        "bounded default provenance budget accommodates measured all-expansion source scale");
+    odh::DefinitionIndexLimits legacy_limits;legacy_limits.provenance_bytes=256*1024;
+    rejected([&]{odh::DefinitionIndex too_small(legacy_scale,legacy_limits);});
     definition.guid=0;odh::DefinitionIndex zero({{"","",0,definition}});
     require(zero.unique(0)&&zero.unique(0)->definition.guid==0,"explicit metadata zero GUID retained independently of objt sentinel rules");
     auto part=definition;part.guid=12;part.master_id=7;part.sub_index=0;
