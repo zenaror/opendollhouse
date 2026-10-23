@@ -638,7 +638,10 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::optional<odh_host::PreparedNeighborhoodMap> map;
         std::unique_ptr<odh_host::LinuxWindow> window;
         std::string move_in_title = "Purchase House?";
+        std::string move_in_question = "Are you sure you want to buy this house?";
         std::string move_out_title = "Evict Family?";
+        std::string confirm_yes = "Yes";
+        std::string confirm_no = "No";
         if (!options.plan_only && !options.headless_ticks) {
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
                 options.load_session ? 240 : 600, "OpenDollhouse");
@@ -653,8 +656,15 @@ int odh_linux_game_entry(int argc, char** argv) {
             }
             move_in_title = game_ui_string(game, 132, 0,
                 static_cast<std::uint8_t>(options.language), "Purchase House?");
+            move_in_question = game_ui_string(game, 132, 1,
+                static_cast<std::uint8_t>(options.language),
+                "Are you sure you want to buy this house?");
             move_out_title = game_ui_string(game, 131, 2,
                 static_cast<std::uint8_t>(options.language), "Evict Family?");
+            confirm_yes = game_ui_string(game, 142, 2,
+                static_cast<std::uint8_t>(options.language), "Yes");
+            confirm_no = game_ui_string(game, 142, 3,
+                static_cast<std::uint8_t>(options.language), "No");
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
                 family_overlay ? &*family_overlay : nullptr);
         }
@@ -706,7 +716,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 if (choice == odh_host::OccupiedLotChoice::move_out) {
                     if (!odh_host::show_move_out_confirmation(*window, *current_family,
                             static_cast<std::uint16_t>(house),
-                            static_cast<std::uint8_t>(options.language), move_out_title)) {
+                            static_cast<std::uint8_t>(options.language), move_out_title,
+                            confirm_yes, confirm_no)) {
                         std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-out-confirmation\"}\n";
                         return 0;
                     }
@@ -769,7 +780,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                     throw odh::FormatError("selected family changed before move-in confirmation");
                 if (!odh_host::show_move_in_confirmation(*window, *chosen_family,
                         static_cast<std::uint16_t>(house), purchase_price,
-                        static_cast<std::uint8_t>(options.language), move_in_title)) {
+                        static_cast<std::uint8_t>(options.language), move_in_title,
+                        move_in_question, confirm_yes, confirm_no)) {
                     std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-in-confirmation\"}\n";
                     return 0;
                 }
