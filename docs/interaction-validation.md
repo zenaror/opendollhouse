@@ -1,10 +1,10 @@
 # AllowPush, fila limitada e retorno ao Main
 
-Checkpoint de 2026-10-13. A biblioteca agora executa o limite de interação entre
-Main preservado e ação de outro proprietário, com retomada na mesma instrução
-no tick seguinte. A fila suporta ações explicitamente fornecidas como
-executáveis. A integração do Main completo do avatar e das ações de cadeira
-com o host Linux continua pendente; o preview existente não usa esta fila.
+Este documento reúne checkpoints em ordem histórica. A descrição de 2026-10-13
+abaixo é apenas o estado inicial da fila; ela foi superada por integração
+posterior do Main com ações de objetos no host Linux e pelo teste House07
+Sit/Stand no fim deste documento. Essa integração ainda não prova a escolha da
+ação por clique real na janela, nem uma sessão completa jogável.
 
 ## Regra de referência
 
