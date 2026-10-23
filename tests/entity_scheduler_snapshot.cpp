@@ -1,4 +1,5 @@
 #include "odh/entity_scheduler.hpp"
+#include "odh/entity_scheduler_snapshot_codec.hpp"
 #include "odh/entity_thread_controllers.hpp"
 #include <cstdlib>
 #include <iostream>
@@ -40,6 +41,9 @@ std::string values(const odh::EntityVmSchedulerSnapshot& state){
     for(const auto& e:state.entities)out<<e.id<<','<<e.run_generation<<','<<e.steps<<','<<int(e.status)<<','
         <<e.before<<','<<e.after<<','<<e.interrupt<<';';
     return out.str();
+}
+odh::EntityVmSchedulerSnapshot roundtrip(const odh::EntityVmSchedulerSnapshot& state){
+    return odh::decode_entity_vm_scheduler_snapshot(odh::encode_entity_vm_scheduler_snapshot(state));
 }
 struct Fixture {
     odh::World world;
@@ -94,7 +98,7 @@ void continuation(){
     Fixture source;
     source.tick(1);source.tick(2);
     require(source.scheduler.snapshot().budget_cursor==3,"checkpoint keeps noninitial scarce-budget cursor");
-    auto target=destination(source);const auto checkpoint=source.scheduler.snapshot();
+    auto target=destination(source);const auto checkpoint=roundtrip(source.scheduler.snapshot());
     require(target->scheduler.restore_snapshot(checkpoint),"restore tick-boundary scheduler");
     require(!target->scheduler.restore_snapshot(checkpoint),"successful restore consumes freshness");
     source.events.clear();target->events.clear();same(source,*target);
@@ -104,14 +108,14 @@ void continuation(){
     source.tick(12);target->tick(12);same(source,*target);
     Fixture sleeping(true,true);sleeping.tick(1,6);
     auto awakened=destination(sleeping);
-    require(awakened->scheduler.restore_snapshot(sleeping.scheduler.snapshot()),"restore waiting VMs with matching controllers");
+    require(awakened->scheduler.restore_snapshot(roundtrip(sleeping.scheduler.snapshot())),"restore waiting VMs with matching controllers");
     require(sleeping.scheduler.interrupt(3)&&awakened->scheduler.interrupt(3),"restored interrupt dispatches rebuilt handler");
     for(unsigned tick=2;tick<8;++tick){sleeping.tick(tick,6);awakened->tick(tick,6);same(sleeping,*awakened);}
     odh::EntityVmScheduler empty(0),copy(1);
-    require(empty.tick(1,1,1)&&copy.restore_snapshot(empty.snapshot())&&copy.tick(2,1,1),"empty scheduler preserves next tick and zero capacity");
+    require(empty.tick(1,1,1)&&copy.restore_snapshot(roundtrip(empty.snapshot()))&&copy.tick(2,1,1),"empty scheduler preserves next tick and zero capacity");
 }
 void rejections(){
-    Fixture source;source.tick(1);const auto good=source.scheduler.snapshot();
+    Fixture source;source.tick(1);const auto good=roundtrip(source.scheduler.snapshot());
     const auto reject=[&](const auto& bad){
         auto target=destination(source);const auto before=values(target->scheduler.snapshot());
         require(!target->scheduler.restore_snapshot(bad)&&values(target->scheduler.snapshot())==before,"invalid snapshot rejects atomically");
@@ -149,7 +153,7 @@ void fault_and_atomicity(){
     require(failed.add(1,*source.vms[0],[&](auto){++callback_effects;throw std::runtime_error(std::string(128,'f'));return false;})&&
         restored.add(1,*source.vms[0],[](auto){return true;}),"fault fixture registers equivalent hook shapes");
     require(!failed.tick(1,1,1)&&callback_effects==1,"partially applied first tick faults");
-    const auto payload=failed.snapshot();require(payload.faulted&&!payload.last_tick,"fault snapshot retains attempted first-tick state");
+    const auto payload=roundtrip(failed.snapshot());require(payload.faulted&&!payload.last_tick,"fault snapshot retains attempted first-tick state");
     const auto before=values(restored.snapshot());
     bool published=false;unsigned failures=0;
     for(int fail=0;fail<8&&!published;++fail){

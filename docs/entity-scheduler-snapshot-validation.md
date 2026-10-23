@@ -7,6 +7,12 @@ completed tick; the scarce-budget fairness cursor; the last instruction count;
 and the terminal fault flag and diagnostic. Sorted dispatch and rotating grants
 therefore continue from the same point after rebuilding the surrounding state.
 
+The version-1 `EntityVmSchedulerSnapshot` codec stores those counters and
+roster stamps using bounded little-endian fields. It rejects unsorted or
+oversized rosters, unknown VM statuses, invalid cursor references, clocks
+outside the scheduler range, malformed flags, truncation and trailing bytes.
+The codec does not store VM programs or scheduler hooks.
+
 Reconstruct the equivalent World, immutable programs/owners, VM snapshots and
 controller snapshots first. Register those VMs with equivalent before/after and
 interrupt hooks, then restore the scheduler before any scheduler runtime use.
@@ -34,14 +40,19 @@ restoring one never retries a partially applied tick or rolls back external
 effects. Restore the corresponding external state as well if retaining a fault
 for diagnosis. Invalid tick attempts can retain a diagnostic without faulting.
 
-This is not a save-file format or end-to-end session persistence. It does not
+This is not end-to-end session persistence. It does not
 establish original-game scheduling fidelity, expansion compatibility, graphical
 playability or execution on handheld hardware.
 
 ## Evidence
 
-`entity_vm_scheduler_snapshot` uses synthetic programs and World entities. It
-compares uninterrupted execution with fresh reconstructed World/VM/controllers
+`entity_vm_scheduler_snapshot` and `entity_vm_scheduler_snapshot_codec` use
+synthetic programs and World entities. The scheduler test sends every valid
+continuation through encode/decode before restoring and compares uninterrupted
+execution with resumed execution. The codec test checks every truncated prefix,
+invalid versions/statuses/flags, trailing bytes, size limits and malformed
+rosters. The scheduler test additionally compares uninterrupted execution with
+fresh reconstructed World/VM/controllers
 and a restored scheduler, including scarce-budget rotations, instruction and
 hook ordering, VM step/PC/status values and World writes. A waiting-thread case
 continues via the rebuilt interrupt handlers. Rejections cover malformed roster,
@@ -55,9 +66,10 @@ Reproduce focused checks:
 cmake -S . -B /tmp/odh-scheduler-snapshot-debug \
   -DCMAKE_BUILD_TYPE=Debug -DODH_X11=OFF -DBUILD_TESTING=ON
 cmake --build /tmp/odh-scheduler-snapshot-debug --target \
-  odh-entity-scheduler-snapshot-tests odh-entity-scheduler-tests -j4
+  odh-entity-scheduler-snapshot-tests odh-entity-scheduler-snapshot-codec-tests \
+  odh-entity-scheduler-tests -j4
 ctest --test-dir /tmp/odh-scheduler-snapshot-debug \
-  -R '^entity_vm_scheduler(_snapshot)?$' --output-on-failure
+  -R '^entity_vm_scheduler(_snapshot|_snapshot_codec)?$' --output-on-failure
 ```
 
 Repeat in a separate build directory with `-DODH_SANITIZERS=ON` for host
@@ -66,6 +78,6 @@ commercial data and write no session files.
 
 Verified in fresh Debug and ASan/UBSan Debug build directories on 2026-10-22:
 `entity_vm_scheduler` and `entity_vm_scheduler_snapshot` passed (2/2 in each).
-The new snapshot executable passed 534 assertions. Leak detection was enabled;
+The snapshot executable passed 534 assertions. Leak detection was enabled;
 the sanitizer run required execution outside the sandbox because LeakSanitizer
 cannot operate under its ptrace. These are host-only synthetic checks.
