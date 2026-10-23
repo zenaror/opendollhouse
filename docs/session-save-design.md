@@ -38,4 +38,6 @@ Passing this gate proves only restart persistence for that tested session and bu
 
 ## Current implementation boundary
 
-`WorldSnapshot`, `RelationshipSnapshot`, `VmSnapshot`, scheduler snapshots, and thread-controller snapshots currently restore values in memory only. No durable session container or complete host rebinding path exists. The first implementation step is a bounded portable container and serializers for the existing value snapshots, followed by host reconstruction and the process-restart House07 gate above.
+The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte header contains the eight-byte signature `ODHSES\r\n`, version, zeroed header flags, section count, payload length, and CRC-32. Each section has a four-byte uppercase/digit ID, a required bit, a 64-bit payload length, a CRC-32, and its payload. Defaults cap a file at 128 MiB, a section at 64 MiB, and the archive at 128 sections. The codec rejects duplicate IDs, unknown flag bits, unsupported versions, truncation, unclaimed bytes, checksum errors, and limit violations.
+
+This is not yet filesystem persistence: there is no atomic file writer, no serializer for `WorldSnapshot`, `RelationshipSnapshot`, `VmSnapshot`, scheduler or thread-controller snapshots, no resource identity check, and no host reconstruction. Those are the remaining steps before the House07 process-restart gate can run.
