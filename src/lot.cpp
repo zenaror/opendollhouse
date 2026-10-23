@@ -1,4 +1,5 @@
 #include "odh/lot.hpp"
+#include <limits>
 
 namespace odh {
 namespace {
@@ -10,6 +11,15 @@ std::int32_t signed_word(std::uint32_t value) {
     return static_cast<std::int32_t>(value < 0x80000000U ? static_cast<std::int64_t>(value)
                                                      : static_cast<std::int64_t>(value) - 0x100000000LL);
 }
+}
+std::int32_t Simi::purchase_value() const {
+    const auto value = static_cast<std::int64_t>(lot_value) +
+        static_cast<std::int64_t>(objects_value) +
+        (static_cast<std::int64_t>(architecture_value) * 7) / 10;
+    if (value < std::numeric_limits<std::int32_t>::min() ||
+        value > std::numeric_limits<std::int32_t>::max())
+        throw FormatError("SIMI purchase value exceeds signed 32-bit range");
+    return static_cast<std::int32_t>(value);
 }
 Simi read_simi(const View& payload) {
     const auto header = payload.subview(0, 12);

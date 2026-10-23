@@ -23,11 +23,15 @@ struct Simi {
     std::int32_t lot_value, objects_value, architecture_value;
     std::array<LotBudgetDay, 6> budget_days;
     std::uint64_t remaining_bytes;
+
+    // Simitone's TS1 PurchaseValue: lot + objects + 70% of architecture.
+    // Uses wide intermediates and rejects values outside the serialized int32 range.
+    std::int32_t purchase_value() const;
 };
 // IMIS signature; explicit native-observed versions 33,38,3e,3f,45,48,49 (hex).
-// Structural decoding only. At most 64 globals and six budget records allocate;
-// unknown trailing bytes (notably version 33) retain their extent. No purchase
-// valuation arithmetic, simulated clock, or other runtime globals are inferred.
+// Reads bounded resource structure; purchase_value() applies the separately
+// evidenced Simitone TS1 valuation formula. At most 64 globals and six budget
+// records allocate; unknown trailing bytes (notably version 33) retain extent.
 Simi read_simi(const View&);
 
 } // namespace odh

@@ -1,5 +1,6 @@
 #include "odh/lot.hpp"
 #include <iostream>
+#include <limits>
 #include <sstream>
 
 namespace {
@@ -58,6 +59,8 @@ int main() {
                         lot.guid1 == -14 && lot.guid2 == -13 && lot.unknown4 == -12 &&
                         lot.lot_value == -11 && lot.objects_value == -10 && lot.architecture_value == -9,
                         "all valuation/unknown fields retain raw signed values");
+                require(lot.purchase_value() == -27,
+                        "purchase value applies lot + objects + integer 70 percent of architecture");
                 for (unsigned day = 0; day < 6; ++day) {
                     const bool valid = (mask & (1U << day)) != 0;
                     const auto& budget = lot.budget_days[day];
@@ -86,6 +89,23 @@ int main() {
             bytes = fixture(0x3e, 0); put(bytes, 4, version); rejects(bytes);
         }
         bytes = fixture(0x3e, 0); bytes[8] = 'X'; rejects(bytes);
+        {
+            auto lot = parse(fixture(0x3e, 0));
+            lot.lot_value = 100;
+            lot.objects_value = 200;
+            lot.architecture_value = 19;
+            require(lot.purchase_value() == 313,
+                    "purchase price truncates seven tenths of a non-divisible architecture value");
+            lot.architecture_value = -19;
+            require(lot.purchase_value() == 287,
+                    "negative architecture uses truncation toward zero like the reference formula");
+            lot.lot_value = std::numeric_limits<std::int32_t>::max();
+            lot.objects_value = 1;
+            lot.architecture_value = 0;
+            bool overflow = false;
+            try { (void)lot.purchase_value(); } catch (const odh::FormatError&) { overflow = true; }
+            require(overflow, "purchase value rejects signed 32-bit overflow");
+        }
         std::cout << checks << " SIMI checks passed (synthetic fixtures only)\n";
         return 0;
     } catch (const std::exception& error) {

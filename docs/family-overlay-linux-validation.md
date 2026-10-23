@@ -15,6 +15,15 @@ family assignment during normal play.
 
 ## Verified
 
+- The SIMI purchase price is now calculated as
+  `LotValue + ObjectsValue + (ArchitectureValue * 7) / 10`, using integer
+  division. This matches the Simitone TS1 SIMI property and its household
+  move-in budget deduction (`refs/upstream/Simitone/FreeSO/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs`
+  and `refs/upstream/Simitone/FreeSO/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs`).
+  OpenDollhouse computes with a wide intermediate and rejects results outside
+  the saved signed 32-bit range. Synthetic checks cover truncation, negative
+  integer division, and overflow; no real lot has yet been compared against a
+  runtime Simitone build.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to
   follow file/directory symlinks, unchanged parent permissions, lookup by the
   source neighborhood hash, and rejection of stale or mismatched identities.
