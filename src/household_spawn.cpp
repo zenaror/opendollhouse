@@ -65,3 +65,96 @@ std::optional<EntityPosition> first_household_spawn_candidate(
 }
 
 } // namespace odh
+
+#include "odh/household_spawn.hpp"
+#include "odh/formats.hpp"
+#include <set>
+
+namespace odh {
+namespace {
+std::int16_t family_word(std::uint16_t id) {
+    const auto value = static_cast<std::int32_t>(id);
+    return static_cast<std::int16_t>(value < 32768 ? value : value - 65536);
+}
+std::int16_t next_free_id(const World& world) {
+    for (std::int32_t candidate = 1; candidate <= 32767; ++candidate) {
+        const auto id = static_cast<std::int16_t>(candidate);
+        if (!world.find(id)) return id;
+    }
+    throw FormatError("household runtime ID space exhausted");
+}
+void initialize_constructor_words(World& world, std::int16_t id) {
+    for (std::int16_t index = 0; index < 79; ++index) {
+        if (index == 1 || index == 2 || index == 3 || index == 11 ||
+            index == 25 || index == 26 || index == 29 || index == 41 ||
+            index == 62 || index == 67) continue;
+        const auto value = index == 8 ? std::int16_t{256} : std::int16_t{0};
+        if (!world.declare_object_word(id, index, value))
+            throw FormatError("household avatar constructor object words exceed World budget");
+    }
+}
+}
+
+HouseholdSpawnResult materialize_household_members(
+    const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar,
+    const HouseholdArrivalResolver& resolve_arrival, WorldLimits limits) {
+    if (household.empty()) throw FormatError("selected household has no members");
+    if (!prepare_avatar || !resolve_arrival)
+        throw FormatError("household materialization callbacks are required");
+
+    auto candidate = std::make_unique<World>(limits, source.attribute_policy);
+    if (!candidate->restore_snapshot(source))
+        throw FormatError("source WorldSnapshot cannot be restored into candidate World");
+
+    std::map<std::uint32_t, std::int16_t> existing;
+    auto cursor = std::int16_t{0};
+    while (const auto id = candidate->next_entity(cursor, EntityKind::avatar)) {
+        cursor = *id;
+        const auto* avatar = candidate->find(*id);
+        if (!avatar || !avatar->definition || avatar->definition->guid == 0)
+            throw FormatError("candidate World contains avatar with invalid GUID");
+        if (!existing.emplace(avatar->definition->guid, *id).second)
+            throw FormatError("candidate World contains duplicate avatar GUIDs");
+    }
+
+    std::set<std::uint32_t> seen;
+    for (const auto& member : household) {
+        if (member.guid == 0 || !seen.insert(member.guid).second)
+            throw FormatError("selected household contains invalid or duplicate GUID");
+        if (!existing.count(member.guid) &&
+            (!member.neighbor || member.neighbor->guid != member.guid))
+            throw FormatError("missing household avatar has no matching valid neighbor record");
+    }
+
+    HouseholdSpawnResult result;
+    result.candidate = std::move(candidate);
+    result.new_members.reserve(household.size());
+    for (const auto& member : household) {
+        const auto found = existing.find(member.guid);
+        if (found != existing.end()) {
+            result.runtime_ids.emplace(member.guid, found->second);
+            continue;
+        }
+        const auto id = next_free_id(*result.candidate);
+        if (!result.candidate->create(id, EntityKind::avatar, {0, 101, 3, 16}) ||
+            !result.candidate->define_type(id, member.guid))
+            throw FormatError("cannot create household avatar within World budget");
+        initialize_constructor_words(*result.candidate, id);
+        if (!prepare_avatar(*result.candidate, id, member.guid))
+            throw FormatError("household avatar preparation failed");
+        inherit_neighbor(*result.candidate, id, *member.neighbor, family_chunk_id);
+        if (!result.candidate->set_person_data(id, 61, family_word(family_chunk_id)))
+            throw FormatError("household FAMI chunk id cannot be stored in PersonData[61]");
+        const auto arrival = resolve_arrival(*result.candidate, id, member.guid);
+        if (!arrival)
+            throw FormatError("household avatar arrival position was not accepted");
+        if (!result.candidate->set_position(id, *arrival))
+            throw FormatError("accepted household arrival position cannot be applied");
+        result.runtime_ids.emplace(member.guid, id);
+        result.new_members.push_back({member.guid, id});
+    }
+    return result;
+}
+} // namespace odh

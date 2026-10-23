@@ -71,6 +71,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Adicionada infraestrutura testável para preparar moradores FAMI ausentes em
+  um World temporário, preservando a casa original e sem inventar registros
+  OBJM/OBJT. Os testes sintéticos verificam identidade, bancos, família,
+  alocação determinística e descarte em caso de falha. Os callbacks de preparo
+  do personagem e chegada ainda não estão ligados ao runtime; esta etapa não
+  faz moradores aparecerem numa partida. Veja `household_materialization`.
+
 - Adicionado o CTest `linux_move_out_integration`, que inicia o app Linux com
   dados sintéticos e percorre a janela real: House07 ocupado → confirmação e
   gravação do overlay → mapa atualizado → seleção cancelada em House08 →
