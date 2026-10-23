@@ -33,11 +33,10 @@ struct ReferenceSlotScores {
 bool is_child_shy_sitting_fallback_slot(const SlotTable&, std::size_t type3_index);
 // Conservative inventory gate: every positioned object on the target floor
 // must have a complete EntryPoint26 table before per-candidate footprint checks.
-// A caller may explicitly exclude known non-spatial object definitions (for
-// example SimType tools) when an unpositioned entity cannot be a seat target.
+// Entities without a position are the game's OUT_OF_WORLD objects and cannot
+// be found by Simitone's FindBestObjectForFunction scan.
 std::optional<std::string> child_shy_sitting_candidate_inventory_preflight(
-    const World&,const SlotTable&,std::size_t type3_index,const EntityPosition& target,
-    const std::function<bool(const Entity&)>& known_nonspatial_object={});
+    const World&,const SlotTable&,std::size_t type3_index,const EntityPosition& target);
 // Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle,
 // Door 16-to-32 ranged profiles and Global 16-to-64 randomized profile, with
 // optional RandomScoring /

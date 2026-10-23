@@ -1,5 +1,20 @@
 # Continuidade atual
 
+## Atualização: objetos fora do lote na busca de assentos (2026-10-23)
+
+O objeto salvo 218 da House05 tem posição `(-16,-16)`, que o Simitone trata
+como `OUT_OF_WORLD`. A busca `FindBestObjectForFunction` do Simitone pula esses
+objetos antes de conferir EntryPoint26. O preflight do ODH agora também pula
+entidades sem posição, em vez de declarar incompleta a lista de assentos. O
+teste sintético de SLOT cobre esse caso.
+
+Depois de recompilar, a execução headless da família House05 por 1 tick com
+neighbor 34 e idioma 1 terminou com código 0, `host_failed=false` e sem
+diagnóstico. Os dados do jogo foram lidos em modo somente leitura e as pastas
+XDG ficaram temporárias. Isso confirma que o objeto 218 deixou de bloquear esse
+primeiro passo; não valida a família completa nem outras interações. CTest
+passou 208/208, com `linux_window_backend` pulado porque não havia display.
+
 ## Atualização: save/reload sentado no House05 (2026-10-23)
 
 O formato SEAT agora grava a ligação exata do objeto ao banco semiglobal:

@@ -48,8 +48,7 @@ bool is_child_shy_sitting_fallback_slot(const SlotTable& table,std::size_t type3
         child_shy_slot_record(slot_of_type(table,3,type3_index));
 }
 std::optional<std::string> child_shy_sitting_candidate_inventory_preflight(
-    const World& world,const SlotTable& table,std::size_t type3_index,const EntityPosition& target,
-    const std::function<bool(const Entity&)>& known_nonspatial_object) {
+    const World& world,const SlotTable& table,std::size_t type3_index,const EntityPosition& target) {
     if(!is_child_shy_sitting_fallback_slot(table,type3_index))
         return "child-shy standing fallback received an unverified SLOT profile";
     auto object_id=world.next_entity(std::numeric_limits<std::int16_t>::min(),EntityKind::object);
@@ -57,13 +56,8 @@ std::optional<std::string> child_shy_sitting_candidate_inventory_preflight(
         const auto* object=world.find(*object_id);
         if(!object)return "World object inventory changed during child-shy SLOT preflight";
         if(!object->position) {
-            if(known_nonspatial_object&&known_nonspatial_object(*object)){
-                object_id=world.next_entity(*object_id,EntityKind::object);
-                continue;
-            }
-            if(!object->attachment)
-                return "object "+std::to_string(*object_id)+
-                    " has no known position; sitting target inventory is incomplete";
+            object_id=world.next_entity(*object_id,EntityKind::object);
+            continue;
         } else if(object->position->level==target.level) {
             // We do not yet have the exact footprint-aware candidate test used
             // by Simitone. Inspect every object on this floor; origin distance

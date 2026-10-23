@@ -346,14 +346,9 @@ void child_shy_sitting_fallback() {
         "a distant seat is accepted by inventory preflight and checked by its footprint per candidate");
     odh::World unpositioned_world;
     unpositioned_world.create(2,odh::EntityKind::object);
-    require(unpositioned_world.define_type(2,99),"unpositioned nonspatial fixture identity binds");
-    require(odh::child_shy_sitting_candidate_inventory_preflight(
-        unpositioned_world,slots,10,{100,100,1,0}).has_value(),
-        "an object without position keeps the sitting-target inventory incomplete");
     require(!odh::child_shy_sitting_candidate_inventory_preflight(
-        unpositioned_world,slots,10,{100,100,1,0},[](const odh::Entity& entity){
-            return entity.definition&&entity.definition->guid==99;
-        }),"an explicitly identified nonspatial tool is excluded from the sitting-target inventory");
+        unpositioned_world,slots,10,{100,100,1,0}),
+        "an out-of-world object without a position is excluded like Simitone's scan");
     require(odh::child_shy_sitting_candidate_inventory_preflight(
         chair_world,house07_global_range_table(),10,{100,100,1,0}).has_value(),
         "chair preflight refuses to classify an unrelated SLOT profile");

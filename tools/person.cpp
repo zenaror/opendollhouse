@@ -2119,13 +2119,6 @@ struct PlacementCandidateProbe {
             [&](const auto& member){return member->id==actor_id;});
         return found==household_runtime.end()?nullptr:&(*found)->action_code_owners;
     };
-    const auto is_known_nonspatial_object=[&](const odh::Entity& entity){
-        if(!entity.definition||!definition_index)return false;
-        const auto* candidate=definition_index->unique(entity.definition->guid);
-        // Simitone's OBJD type 7 covers tools/controllers such as AnimTester;
-        // these are not positioned furniture or sitting targets.
-        return candidate&&candidate->definition.object_type==7;
-    };
     const auto actor_seated_binding=[&](std::int16_t actor_id)
         ->std::tuple<std::optional<SavedObjectSelection>*,std::optional<std::uint64_t>*,
             std::optional<std::uint16_t>*> {
@@ -2789,8 +2782,7 @@ struct PlacementCandidateProbe {
                         });
                         runtime_routing->set_sitting_slot_candidate_preflight([&](const auto& table,
                             std::size_t index,const auto&,const auto& target) {
-                            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target,
-                                is_known_nonspatial_object);
+                            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
                         });
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
@@ -3188,8 +3180,7 @@ struct PlacementCandidateProbe {
             });
         runtime.routing->set_sitting_slot_candidate_preflight([&](const auto& table,std::size_t index,
             const auto&,const auto& target) {
-            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target,
-                is_known_nonspatial_object);
+            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
         });
         runtime.routing->set_stack_object_slot_table_provider(route_stack_slot_table);
         runtime.routing->set_route_goal_validator([&,resident_id=runtime.id](const odh::VmFrame& frame,
