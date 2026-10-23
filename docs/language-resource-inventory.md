@@ -149,8 +149,24 @@ comercial. O seletor de famílias também usa `STR# 128`, índices 8 (título) e
 conferidos. Essa ligação ainda não traduz o restante dessas telas: nomes,
 preços, instruções de teclado e outros rótulos continuam em inglês. O texto de
 despejo com patrimônio líquido não foi usado porque exige o nome real da família
-e o total correto. Também não é uma validação visual da janela; essa checagem
-aguarda a dependência gráfica Linux indicada acima.
+e o total correto. O mapa de vizinhança agora exibe o nome localizado da tela
+de `STR# 145`, índice 1, e o cancelamento de `STR# 128`, índice 5. O mapa da
+expansão modo 4 foi observado em português no Xephyr isolado, com os dois
+rótulos legíveis. Essa verificação não cobre visualmente o seletor de famílias
+nem as demais traduções. O build de teste usou arquivos de desenvolvimento
+temporários; nada foi instalado no sistema.
+
+Quando o jogador escolhe uma casa vazia e existe ao menos uma família sem casa,
+mas nenhuma tem saldo suficiente, o seletor agora mostra as frases
+correspondentes do jogo em `STR# 132`, índices 2 e 3 (`Sorry` / `You can't
+afford it.` em inglês), junto do botão
+Cancelar de `STR# 128`, índice 5. Os valores em português foram conferidos como
+`Desculpe!`, `Muito cara. Você não consegue pagar.` e `Cancelar`; em francês,
+`Dommage !`, `C'est trop cher. Vous n'avez pas les moyens.` e `Annuler`. Se
+faltar uma tradução, a busca existente recorre ao inglês. O caminho de teclado
+para fechar essa tela foi exercitado. O texto desse seletor ainda precisa de
+uma captura visual própria; a observação do mapa em Xephyr não valida essa outra
+tela.
 
 ## Referência de fontes
 

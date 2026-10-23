@@ -111,6 +111,28 @@ int main() {
         require(choice == odh_host::OccupiedLotChoice::cancel,
                 "E must not enable an unverified move-out");
 
+        std::optional<odh_host::MoveInFamilySelection> family_selection;
+        odh::Family poor_family;
+        poor_family.family_number = 43;
+        poor_family.house_number = 0;
+        poor_family.budget = 100;
+        poor_family.member_guids = {0x22345678};
+        const std::vector<odh::FamilyEntry> poor_families{{18, poor_family}};
+        run_with_keys_after_showing(window.native_id(), {XK_Escape}, [&] {
+            family_selection = odh_host::show_move_in_family_picker(window, poor_families,
+                5, 1000, 14, "Selecionar Esta Família", "SELECIONAR FAMÍLIA",
+                "Desculpe!", "Muito cara. Você não consegue pagar.", "Cancelar");
+        });
+        require(!family_selection,
+                "Escape must close the localized no-affordable-family screen");
+        const std::vector<odh::FamilyEntry> no_families;
+        run_with_keys_after_showing(window.native_id(), {XK_Escape}, [&] {
+            family_selection = odh_host::show_move_in_family_picker(window, no_families,
+                5, 1000, 14);
+        });
+        require(!family_selection,
+                "Escape must close the no-family-available screen");
+
         std::cout << "Neighborhood move-out and confirmation keyboard paths passed\n";
         return 0;
     } catch (const std::exception& error) {

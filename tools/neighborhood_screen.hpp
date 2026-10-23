@@ -39,7 +39,10 @@ std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
 // Show the real neighborhood map in an existing 800x600 window.
 // Returns a house number on selection, or nullopt when the user cancels.
 std::optional<std::uint16_t> show_neighborhood_picker(
-    LinuxWindow& window, const PreparedNeighborhoodMap& map);
+    LinuxWindow& window, const PreparedNeighborhoodMap& map,
+    const std::string& localized_title = "Neighborhood",
+    const std::string& localized_cancel = "Cancel",
+    std::uint8_t language = 1);
 
 // Choose whether to enter an occupied lot or move its current family out.
 // Move-out is disabled when the saved family history cannot calculate a
@@ -53,7 +56,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
     std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language,
     const std::string& localized_action = "Move In Family",
-    const std::string& localized_title = "SELECT A FAMILY");
+    const std::string& localized_title = "SELECT A FAMILY",
+    const std::string& localized_no_family_title = "Sorry",
+    const std::string& localized_no_family_message = "You can't afford it.",
+    const std::string& localized_cancel = "Cancel");
 
 // Final confirmation shown before a player-state write; closing cancels it.
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,

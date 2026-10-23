@@ -5,6 +5,15 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Alterado
+
+- Ao escolher uma casa vazia quando há famílias sem casa, mas nenhuma tem saldo
+  suficiente, a tela usa a mensagem e o botão Cancelar do idioma selecionado nos
+  dados do jogo.
+- O mapa de vizinhança mostra o título e a tecla de cancelamento no idioma
+  selecionado. Os textos STR# são convertidos da codificação original do jogo
+  para UTF-8 antes de serem desenhados na janela Linux.
+
 ### Planejado e acompanhado
 
 - Criada uma matriz entre o estado atual e os caminhos necessários para a

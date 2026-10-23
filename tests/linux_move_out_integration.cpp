@@ -188,7 +188,7 @@ Window new_map(Display* display, const std::set<Window>& before, pid_t expected_
         std::vector<Window> matches;
         for (auto window : windows(display, DefaultRootWindow(display)))
             if (!before.count(window) && title(display, window) ==
-                    "OpenDollhouse | choose a lot | Esc: cancel" &&
+                    "OpenDollhouse | Neighborhood | Esc: Cancel" &&
                     window_pid(display, window) == static_cast<unsigned long>(expected_pid))
                 matches.push_back(window);
         require(matches.size() <= 1, "ambiguous new odh-person windows; use an isolated X display");
@@ -270,7 +270,7 @@ int main(int argc, char** argv) {
             wait_title(display, window, "confirm move-out | House 7 | refund 2300 | budget after 9300");
             require(!fs::exists(overlay_path), "confirmation must not write before Enter");
             key(display, window, XK_Return);
-            wait_title(display, window, "choose a lot");
+            wait_title(display, window, "Neighborhood");
             marker(display, window, 200, false); marker(display, window, 600, true);
             const auto saved = odh_host::read_linux_family_overlay(overlay_path);
             require(saved.has_value(), "confirmed UI move-out must persist an overlay");
