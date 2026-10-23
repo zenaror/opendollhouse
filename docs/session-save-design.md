@@ -42,9 +42,9 @@ The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte he
 
 The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; there is no load path yet.
 
-A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; rebuilding a fresh World on load remains future work.
+A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; the reusable candidate-restore helper now rebuilds a fresh World, but the live host does not invoke it.
 
-The version-1 `RelationshipSnapshot` codec now stores its source/pair/value budgets and counts, matrix kind, signed source ID, object generation, signed 32-bit target, and each signed value. It uses canonical source and pair ordering and validates the decoded data by restoring it into a fresh `RelationshipState`. Empty sources/pairs, old object generations, negative or wide neighbor targets, and value tails are retained. Its synthetic test includes a 300-value tail and verifies a query after restore. The live capture includes it in the required `RELA` section; restoring the relationship state on load remains future work.
+The version-1 `RelationshipSnapshot` codec now stores its source/pair/value budgets and counts, matrix kind, signed source ID, object generation, signed 32-bit target, and each signed value. It uses canonical source and pair ordering and validates the decoded data by restoring it into a fresh `RelationshipState`. Empty sources/pairs, old object generations, negative or wide neighbor targets, and value tails are retained. Its synthetic test includes a 300-value tail and verifies a query after restore. The live capture includes it in the required `RELA` section; the candidate-restore helper now restores these values into a fresh relationship state, before VM callbacks are bound.
 
 The version-1 `VmSnapshot` codec now stores frames, arguments, locals, contexts, temporary registers, waits, suspended waits, return values, counters, and diagnostics with explicit little-endian fields. It bounds bytes, stack depth, frame variables, and diagnostic length; rejects invalid enum values, routine keys, booleans, truncation, and trailing bytes. The broad VM snapshot test now encodes and decodes each scenario before restoring it, then compares the resumed execution trace with uninterrupted execution. A separate codec test checks malformed inputs and limits. Code owners and equivalent memory/primitive callbacks still have to be rebuilt by the host; they are not in the bytes.
 
@@ -72,8 +72,9 @@ IdleForInput waits round-trip through the bundle tests. The Linux live host now
 has an experimental S-key capture path between ticks. It records the current
 bundle values, hashes the selected resource manifest only on request, and stores
 the archive atomically in the user data directory. Saves are rejected while
-Route45 is active or a dynamic portal code owner exists. This does not yet
-provide load, process-restart continuation, a public slot selector, or visual
+a route is active, Go Here is queued, any dynamic object/portal code owner exists,
+or a seated action requires an unserialized binding. This does not yet
+provide live-host load or process-restart continuation, a public slot selector, or visual
 X11 validation; do not treat the experimental file as a playable save yet.
 
 The Linux runtime receives the canonical game root and resolved resource paths
@@ -83,6 +84,37 @@ complete bundle before writing. The current plan still needs auditing for
 resources opened dynamically on other lots and expansion sidecars. Synthetic
 coverage and one real installation plan are recorded in
 [session-resource-manifest-validation.md](session-resource-manifest-validation.md).
+
+The reusable `SingleResidentSessionRestore` helper now decodes a bounded bundle
+against an explicitly supplied resource identity and selected lot/family/resident.
+It owns an unpublished candidate World, relationship state, lot globals and
+bootstrap globals. The caller must rebuild equivalent code, memory/primitive
+callbacks, controllers, Playback resolver and scheduler hooks against this
+candidate, then restore execution before starting Main. A failure invalidates
+that candidate: discard it and its execution objects; the live session must not
+be replaced until every restore step succeeds. Tick and RNG are published only
+after VM, controllers, Playback and scheduler accept their state.
+
+This helper currently accepts one resident thread and the unchanged original lot
+entity roster and generations, bank layouts, definitions, entry points and saved
+baseline metadata. Resource fingerprint, language, expansions, lot/family/resident
+selection and the exact supported global roster must match. Identity globals 9
+(family) and 10 (house) must match the selected household and original lot;
+other supported mutable globals are restored without dropping zero values.
+Routes, UI destination ghosts, external portal frames, dynamic code owners,
+non-standing posture and seated-action bindings remain unsupported. The original
+live-save restrictions are unchanged. There is no CLI or live-host load integration.
+
+Synthetic tests restore a real Sleep wait into a fresh VM/controller/scheduler
+graph without starting Main, continue six ticks, and compare the recaptured
+World, nonempty relationships, globals (including a mutable value of 321), VM,
+controllers, Playback, scheduler, RNG and tick with uninterrupted execution.
+Two CTest processes separately write and resume the synthetic archive. Rejection
+cases cover changed resources/selection/metadata/layout, missing or extra globals,
+altered family/house identity, routing footprint, seated posture, dynamic owners,
+truncation, archive limits, missing VM routines/hooks and missing Playback resource
+resolution. This is synthetic restart evidence only; it does not establish
+House07, Sit-to-Stand, expansion or live-window save/load behavior.
 
 Remaining for the House07 restart gate: add a loader that verifies the exact
 resource identity, rebuilds matching code owners and callbacks in a fresh host,
