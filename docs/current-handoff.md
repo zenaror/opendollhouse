@@ -49,6 +49,35 @@ passo: exercitar levantar e persistência do assento na mesma sessão e depois
 repetir em mais lotes/casas. A paridade funcional com Simitone continua sendo
 o critério da primeira build jogável.
 
+## Atualização: limite do Stand e do save sentado no House05 (2026-10-23)
+
+O alvo `build/linux-checkpoint/odh-person` estava mais antigo que
+`tools/person.cpp`; depois de recompilar o alvo, a execução headless integrada
+com a instalação `../referencias/The Sims`, modo 1, House05, morador neighbor
+ID 34 e objeto 173 voltou a confirmar a ação 8213: retorno `true`, avatar
+runtime 21 anexado ao slot 0 e animação `a2o-idle-sit-3` após 512 ticks.
+
+O próximo passo não passou. `--save-session-on-exit` recusou esse estado com
+“missing its exact completed Sit/Stand object binding”, porque a continuação
+serializada atual exige a ação privada 4097. No ensaio direto Sit→Stand dentro
+da mesma sessão, a ação 8213 sentou corretamente, mas o pedido de Stand no tick
+300 foi recusado antes de executar BHAV: EntryPoint27 não tem dono privado
+único. Uma leitura estática separada do `Sofas.iff#16848` confirma EntryPoint26
+8215 e EntryPoint27 8216; ambos são IDs semiglobais e o GLOB do objeto os liga
+ao banco SofaGlobals.iff. Portanto, não se deve relaxar a checagem privada: o
+próximo trabalho é carregar, limitar, identificar e restaurar o código
+semiglobal exato das ações 8213/8216 para a continuação sentada.
+
+Uma tentativa separada de executar Sit→Stand com o runtime de toda a família
+parou antes da interação: o Main do morador 16 falhou ao encontrar o objeto
+salvo 218 sem posição conhecida. Isso permanece uma lacuna independente da
+continuação de um único morador.
+
+O executável precisa ser recompilado antes de ensaios de código local; o alvo
+antigo retornou `unsupported` para o TTAB, resultado que não representa o
+código-fonte atual. Ainda não há evidência de BHAV8216 executado, de Stand
+concluído, nem de save/resume do assento House05.
+
 ## Atualização: condições simples da EntryPoint26 (2026-10-23)
 
 O avaliador isolado de condições da EntryPoint26 agora aceita apenas BHAVs

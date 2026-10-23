@@ -78,6 +78,15 @@ bundle values, hashes the selected resource manifest only on request, and stores
 the archive atomically in the user data directory. Saves are rejected while
 a route is active, Go Here is queued, any dynamic object/portal code owner exists,
 or a seated action requires an unserialized binding. The loader applies the corresponding supported profile before publishing a candidate session.
+
+The current seated continuation profile only captures the private Sit action
+4097 and its matching Stand action 4102. A real House05 run using bank
+`Sofas.iff#16848` succeeded at Sit 8213, but the save was rejected because its
+EntryPoint26/27 actions (8215/8216) are semiglobal routines linked through
+`SofaGlobals.iff`. The same-process Stand probe also stopped before BHAV
+execution because the current dispatcher requires a private EntryPoint27
+owner. These rejections are intentional until the exact linked semiglobal
+routine closure can be fingerprinted and rebuilt after restart.
 A public save selector and visual X11 validation are still absent; do not treat
 this limited persistence support as a playable build.
 
