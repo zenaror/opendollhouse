@@ -40,14 +40,21 @@ struct HouseholdSpawnResult {
 };
 
 // Copies the supplied owned WorldSnapshot and adds missing FAMI avatars to a
-// private candidate. This stage returns those avatars without positions so a
-// caller can run exact Init/EP8 and build their runtime controllers before
-// testing arrival. It does not execute BHAVs, run the scheduler, or persist
+// private candidate. This stage returns new avatars without NBRS inheritance,
+// family PersonData[61], or positions so a caller can run exact Init/EP8 and
+// build runtime controllers before applying inherited data and testing arrival.
+// It does not execute BHAVs, run the scheduler, or persist
 // SavedWorld/OBJM/OBJT records. The callback binds exact character resources
 // and metadata; callers remain responsible for successful runtime startup.
 // Callback failure throws FormatError; callback exceptions propagate. Failure
 // discards the private candidate and leaves source untouched.
 using HouseholdAvatarPreparer = std::function<bool(World&, std::int16_t, std::uint32_t)>;
+// Applies NBRS data and the FAMI chunk id to a member returned by
+// stage_household_members. The caller can run Init/EP8 in the preparer before
+// invoking this explicit inheritance phase.
+void inherit_staged_household_member(
+    World& candidate, std::int16_t runtime_id, const NeighborRecord& neighbor,
+    std::uint16_t family_chunk_id);
 using HouseholdArrivalResolver = std::function<std::optional<EntityPosition>(
     const World&, std::int16_t, std::uint32_t)>;
 HouseholdSpawnResult stage_household_members(

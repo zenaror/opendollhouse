@@ -97,7 +97,8 @@ HouseholdSpawnResult materialize_household_members_impl(
     const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
     std::uint16_t family_chunk_id,
     const HouseholdAvatarPreparer& prepare_avatar,
-    const HouseholdArrivalResolver* resolve_arrival, WorldLimits limits) {
+    const HouseholdArrivalResolver* resolve_arrival, bool defer_inheritance,
+    WorldLimits limits) {
     if (household.empty()) throw FormatError("selected household has no members");
     if (!prepare_avatar)
         throw FormatError("household avatar preparation callback is required");
@@ -142,9 +143,14 @@ HouseholdSpawnResult materialize_household_members_impl(
         initialize_constructor_words(*result.candidate, id);
         if (!prepare_avatar(*result.candidate, id, member.guid))
             throw FormatError("household avatar preparation failed");
-        inherit_neighbor(*result.candidate, id, *member.neighbor, family_chunk_id);
-        if (!result.candidate->set_person_data(id, 61, family_word(family_chunk_id)))
-            throw FormatError("household FAMI chunk id cannot be stored in PersonData[61]");
+        if (defer_inheritance) {
+            const auto* staged = result.candidate->find(id);
+            if (!staged || staged->position)
+                throw FormatError("staged household avatar must remain unpositioned");
+        } else {
+            inherit_staged_household_member(*result.candidate, id, *member.neighbor,
+                                            family_chunk_id);
+        }
         if (resolve_arrival) {
             const auto arrival = (*resolve_arrival)(*result.candidate, id, member.guid);
             if (!arrival)
@@ -159,12 +165,20 @@ HouseholdSpawnResult materialize_household_members_impl(
 }
 }
 
+void inherit_staged_household_member(
+    World& candidate, std::int16_t runtime_id, const NeighborRecord& neighbor,
+    std::uint16_t family_chunk_id) {
+    inherit_neighbor(candidate, runtime_id, neighbor, family_chunk_id);
+    if (!candidate.set_person_data(runtime_id, 61, family_word(family_chunk_id)))
+        throw FormatError("household FAMI chunk id cannot be stored in PersonData[61]");
+}
+
 HouseholdSpawnResult stage_household_members(
     const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
     std::uint16_t family_chunk_id,
     const HouseholdAvatarPreparer& prepare_avatar, WorldLimits limits) {
     return materialize_household_members_impl(source, household, family_chunk_id,
-                                              prepare_avatar, nullptr, limits);
+                                              prepare_avatar, nullptr, true, limits);
 }
 
 HouseholdSpawnResult materialize_household_members(
@@ -175,6 +189,6 @@ HouseholdSpawnResult materialize_household_members(
     if (!resolve_arrival)
         throw FormatError("household arrival resolver is required");
     return materialize_household_members_impl(source, household, family_chunk_id,
-                                              prepare_avatar, &resolve_arrival, limits);
+                                              prepare_avatar, &resolve_arrival, false, limits);
 }
 } // namespace odh

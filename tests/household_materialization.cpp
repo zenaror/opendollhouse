@@ -43,15 +43,22 @@ int main() {
             {{old_guid, nullptr}, {absent_guid, &nb}}, 123,
             [&](odh::World& world, std::int16_t id, std::uint32_t guid) {
                 staged_prepared = true;
-                check(guid == absent_guid && world.find(id)->definition->guid == guid);
+                const auto* avatar = world.find(id);
+                check(guid == absent_guid && avatar && avatar->definition->guid == guid);
+                check(avatar->person_data[31] == 0 && avatar->person_data[61] == 0);
                 return world.set_person_data(id, 65, 1);
             });
         check(staged_prepared && staged.runtime_ids.at(old_guid) == 5 &&
               staged.runtime_ids.at(absent_guid) == 2);
         check(staged.new_members.size() == 1 && staged.new_members[0].runtime_id == 2);
         const auto* staged_avatar = staged.candidate->find(2);
-        check(staged_avatar && !staged_avatar->position && staged_avatar->person_data[61] == 123 &&
-              staged_avatar->person_data[65] == 1);
+        check(staged_avatar && !staged_avatar->position && staged_avatar->person_data[31] == 0 &&
+              staged_avatar->person_data[61] == 0 && staged_avatar->person_data[65] == 1);
+        odh::inherit_staged_household_member(*staged.candidate,
+            staged.runtime_ids.at(absent_guid), nb, 123);
+        staged_avatar = staged.candidate->find(staged.runtime_ids.at(absent_guid));
+        check(staged_avatar && !staged_avatar->position && staged_avatar->person_data[31] == 42 &&
+              staged_avatar->person_data[61] == 123 && staged_avatar->person_data[65] == 1);
         check(source.entities.size() == original.entities.size() &&
               source.entities[1].object_words == original.entities[1].object_words);
 
@@ -60,7 +67,9 @@ int main() {
             {{old_guid, nullptr}, {absent_guid, &nb}}, 123,
             [&](odh::World& world, std::int16_t id, std::uint32_t guid) {
                 prepared = true;
-                check(guid == absent_guid && world.find(id)->definition->guid == guid);
+                const auto* avatar = world.find(id);
+                check(guid == absent_guid && avatar && avatar->definition->guid == guid);
+                check(avatar->person_data[31] == 0 && avatar->person_data[61] == 0);
                 return world.set_person_data(id, 65, 1);
             },
             [&](const odh::World& world, std::int16_t id, std::uint32_t) -> std::optional<odh::EntityPosition> {
@@ -84,6 +93,11 @@ int main() {
         check((added->position == std::optional<odh::EntityPosition>{{160, 224, 1, 4}}));
         check(added->object_words.at(8) == 256 && added->object_words.at(0) == 0);
         check(!added->saved_object_banks);
+
+        rejects([&] { odh::stage_household_members(source, {{absent_guid, &nb}}, 123,
+            [](odh::World&, std::int16_t, std::uint32_t) { return false; }); });
+        check(source.entities.size() == original.entities.size() &&
+              source.entities[1].person_data == original.entities[1].person_data);
 
         auto second = odh::materialize_household_members(source, {{absent_guid, &nb}}, 123,
             [](odh::World&, std::int16_t, std::uint32_t) { return true; },
