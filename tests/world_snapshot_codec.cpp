@@ -1,0 +1,114 @@
+#include "odh/world_snapshot_codec.hpp"
+
+#include <array>
+#include <cstdlib>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+void require(bool value, const char* message) {
+    if (!value) throw std::runtime_error(message);
+}
+template<class F>
+void rejects(F&& operation, const char* message) {
+    try { operation(); }
+    catch (const odh::FormatError&) { return; }
+    require(false, message);
+}
+odh::WorldSnapshot fixture() {
+    odh::World world({}, odh::AttributePolicy::ts1_bounded);
+    std::array<std::int16_t,68> raw{};
+    raw[1] = 7;
+    raw[3] = 19;
+    std::array<std::int16_t,5> extras{-1,2,-3,4,-5};
+    require(world.create(9, odh::EntityKind::object) && world.remove(9),
+            "fixture generation history");
+    require(world.create_saved_entity(1, odh::EntityKind::avatar, 123, {1,-2}, {3,-4},
+                {-300,200}, raw, extras, 1, 456) &&
+            world.create(2, odh::EntityKind::object, {2,0,1}) &&
+            world.create(3, odh::EntityKind::object, {1}),
+            "fixture entity creation");
+    require(world.define_type(2, 789) &&
+            world.define_entry_points(1, {{12,65535},{0,4}}) &&
+            world.define_entry_points(2, {}) &&
+            world.declare_definition_word(1, 255, -7) &&
+            world.declare_object_word(3, 78, -8),
+            "fixture definitions");
+    odh::VmFrame frame{odh::routine_key(4096),0,{1,1,1},{},{}};
+    require(world.write(frame,0,4,-55) && world.write(frame,3,0,999) &&
+            world.set_person_data(1,0,91) && world.set_motive(1,0,-25) &&
+            world.set_avatar_kill_timeout(1,72),
+            "fixture mutable banks");
+    require(world.set_position(1,{16,32,2,7}) &&
+            world.set_position(2,{48,64,1,3}) &&
+            world.place_in_slot(1,0,2) && world.attach(2,0,3) &&
+            world.set_radian_direction(1,-0.3f) &&
+            world.set_static_footprint(1,false) && world.set_ui_ghost(3,true),
+            "fixture positions and containment");
+    return world.snapshot();
+}
+}
+
+int main() {
+    try {
+        const auto snapshot = fixture();
+        const auto encoded = odh::encode_world_snapshot(snapshot);
+        const auto decoded = odh::decode_world_snapshot(encoded);
+        require(odh::encode_world_snapshot(decoded) == encoded,
+                "every World snapshot field round-trips byte-for-byte");
+        odh::World restored;
+        require(restored.restore_snapshot(decoded), "decoded snapshot restores into a fresh World");
+        require(odh::encode_world_snapshot(restored.snapshot()) == encoded,
+                "restored World retains the complete encoded state");
+
+        auto invalid_words = snapshot;
+        ++invalid_words.word_count;
+        rejects([&] { (void)odh::encode_world_snapshot(invalid_words); },
+                "inconsistent word accounting is rejected");
+        auto invalid_attachment = snapshot;
+        invalid_attachment.entities[1].attachment->container = 300;
+        rejects([&] { (void)odh::encode_world_snapshot(invalid_attachment); },
+                "missing containment parent is rejected");
+        rejects([&] { (void)odh::encode_world_snapshot(snapshot, {{}, 30}); },
+                "encoder enforces byte budget");
+
+        auto invalid_policy = encoded;
+        invalid_policy[2] = 255;
+        rejects([&] { (void)odh::decode_world_snapshot(invalid_policy); },
+                "unknown attribute policy is rejected");
+        auto unsupported_version = encoded;
+        unsupported_version[0] = 2;
+        rejects([&] { (void)odh::decode_world_snapshot(unsupported_version); },
+                "unsupported World section version is rejected");
+        for (std::size_t size = 0; size < encoded.size(); ++size) {
+            const std::vector<std::uint8_t> prefix(encoded.begin(),
+                encoded.begin() + static_cast<std::ptrdiff_t>(size));
+            rejects([&] { (void)odh::decode_world_snapshot(prefix); },
+                    "every truncated World snapshot is rejected");
+        }
+        auto tight_limits = odh::WorldSnapshotCodecLimits{};
+        tight_limits.world.entities = 2;
+        rejects([&] { (void)odh::decode_world_snapshot(encoded, tight_limits); },
+                "entity count is checked against configured limits");
+
+        const odh::World empty;
+        const auto empty_encoded = odh::encode_world_snapshot(empty.snapshot());
+        require(odh::encode_world_snapshot(odh::decode_world_snapshot(empty_encoded)) == empty_encoded,
+                "empty World snapshot round-trips");
+        odh::World one_entity;
+        require(one_entity.create(1, odh::EntityKind::object), "minimal entity fixture");
+        const auto minimal = odh::encode_world_snapshot(one_entity.snapshot());
+        require(odh::encode_world_snapshot(odh::decode_world_snapshot(minimal)) == minimal,
+                "minimum-size entity snapshot is accepted");
+        auto unsorted = snapshot;
+        std::swap(unsorted.entities[0], unsorted.entities[1]);
+        rejects([&] { (void)odh::encode_world_snapshot(unsorted); },
+                "non-canonical entity order is rejected");
+
+        std::cout << "World snapshot codec checks passed\n";
+    } catch (const std::exception& error) {
+        std::cerr << "FAILED: " << error.what() << '\n';
+        return 1;
+    }
+}

@@ -42,4 +42,6 @@ The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte he
 
 The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The file store is generic and is not connected to a running game session.
 
-There is still no serializer for `WorldSnapshot`, `RelationshipSnapshot`, `VmSnapshot`, scheduler or thread-controller snapshots; no resource identity check; and no host reconstruction. Those are the remaining steps before the House07 process-restart gate can run.
+A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. This byte representation can be stored in a required `WRLD` archive section by the future session host, but that connection is not wired yet.
+
+There is still no serializer for `RelationshipSnapshot`, `VmSnapshot`, scheduler or thread-controller snapshots; no resource identity check; and no host reconstruction. Those are the remaining steps before the House07 process-restart gate can run.
