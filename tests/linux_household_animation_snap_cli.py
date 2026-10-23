@@ -161,7 +161,8 @@ def main():
             character(root, 1, [(opcode, 254, 255, bytes(8))])
             report = run(code=3)
             resident = report['household_main']['additional_residents'][0]
-            assert resident['status'] == 'fault' and 'routing controllers are not implemented' in resident['diagnostic'], report
+            assert resident['status'] == 'fault' and resident['diagnostic'] == (
+                'household resident routing unavailable: prepared_lot_world_or_global_SLOT_unavailable'), report
     print('Household posture/Snap CLI: resident descriptors, shared SLOT occupancy, routing gates (synthetic only)')
 
 

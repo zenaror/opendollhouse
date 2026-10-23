@@ -434,3 +434,29 @@ lista detalhada de movimentos foi truncada pelo limite de registro. O início
 descartado como bloqueado. O teste integrado repetível é
 `tests/house02_cross_floor_go_here.py`. Essa evidência é do host ODH com avatar
 sintético e Main parada; não comprova o jogo original nem uma sessão visual.
+
+### Household resident routing — synthetic harness
+
+Each additional household resident now has a separately bound `Routing`
+controller and `HouseholdGoHereSession`, while sharing the restored `World`
+and global SLOT table. Route callbacks resolve the caller and obstacle snapshot
+for that resident. `--headless-resident-go-here ID X Y LEVEL TICK` schedules a
+request into that resident's VM and accepts only a destination in its prepared
+same-room grid. The household route grids share an aggregate budget of 262,144
+cells; a resident that would exceed it remains without a prepared route grid.
+The synthetic `odh-routing-tests` fixture verifies separate VMs, owners,
+markers and interleaved route ticks. It does not invoke `person.cpp` with a
+synthetic household Main, so host command execution against a full household
+fixture remains unverified. The opt-in
+`tests/house07_resident_go_here.py` CLI check is not registered with CTest. It
+was run against the explicitly supplied House07 installation with entity 137,
+primary neighbor 48, and tile (25,27). The resident moved from [424,440] to
+[408,440], returned true, and its marker was removed; this is ODH host evidence
+using that installation, not GUI or original-game equivalence evidence. The
+same host check also passed for entity 105 with primary neighbor 47, moving
+from [392,440] to [408,440] in 16 movement callbacks. Both runs used 512 host
+ticks and independent temporary XDG directories. A queued resident request is
+now finalized as host-failed, tick-limited, window-closed, or interrupted and
+has its marker removed before the final report is emitted.
+Cross-room portals, stairs and floor Snap remain outside this resident-routing
+addition.

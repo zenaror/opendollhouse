@@ -31,6 +31,7 @@
 
 namespace {
 struct Options {
+    struct ResidentGoHere {unsigned entity_id,x,y,level,tick;};
     std::filesystem::path game_root;
     unsigned mode = 0;
     unsigned language = 1;
@@ -42,6 +43,7 @@ struct Options {
     bool save_on_exit = false;
     bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
+    std::optional<ResidentGoHere> headless_resident_go_here;
     bool headless_stand = false;
     std::vector<std::uint8_t> restore_archive;
     std::optional<odh::SessionBundle> restore_bundle;
@@ -75,6 +77,18 @@ Options parse_options(int argc, char** argv) {
         }
         if (key == "--headless-stand" && !result.headless_stand) {
             result.headless_stand = true;
+            continue;
+        }
+        if (key == "--headless-resident-go-here" && !result.headless_resident_go_here) {
+            if (i + 5 >= argc) throw odh::FormatError("missing resident Go Here values");
+            const auto entity_id=parse_number(argv[++i],32767,"resident Go Here entity ID");
+            const auto x=parse_number(argv[++i],2046,"resident Go Here tile X");
+            const auto y=parse_number(argv[++i],2046,"resident Go Here tile Y");
+            const auto level=parse_number(argv[++i],2,"resident Go Here level");
+            const auto tick=parse_number(argv[++i],4096,"resident Go Here tick");
+            if(!entity_id||level==0||tick==0)
+                throw odh::FormatError("resident Go Here entity, level, or tick is outside the supported profile");
+            result.headless_resident_go_here=Options::ResidentGoHere{entity_id,x,y,level,tick};
             continue;
         }
         if (i + 1 >= argc) throw odh::FormatError("missing integrated game option value");
@@ -135,6 +149,9 @@ Options parse_options(int argc, char** argv) {
     if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
         result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
         throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
+    if(result.headless_resident_go_here&&(!result.headless_ticks||result.plan_only||result.load_session||
+       result.single_resident_session||result.headless_resident_go_here->tick>*result.headless_ticks))
+        throw odh::FormatError("--headless-resident-go-here requires an in-range tick in a new whole-household headless run");
     if ((result.save_on_exit && (!result.headless_ticks || result.plan_only)) ||
         (result.headless_ticks && (result.plan_only || !result.house)))
         throw odh::FormatError("headless execution needs --house (or --load-session); saving on exit needs --headless-ticks, without --plan-only");
@@ -507,8 +524,14 @@ int odh_linux_game_entry(int argc, char** argv) {
         }
 #endif
         else resident = &session.members.front();
-        const auto plan = build_runtime_arguments(options, game, house, session, *resident,
+        auto plan = build_runtime_arguments(options, game, house, session, *resident,
                                                  graphics_resource);
+        if(options.headless_resident_go_here){
+            const auto& action=*options.headless_resident_go_here;
+            append(plan.arguments,{"--headless-resident-go-here",std::to_string(action.entity_id),
+                std::to_string(action.x),std::to_string(action.y),std::to_string(action.level),
+                std::to_string(action.tick)});
+        }
         std::optional<odh::SessionResourceIdentity> verified_identity;
         if (options.restore_bundle) {
             verified_identity = odh_host::identify_session_resources(game, plan.resources,

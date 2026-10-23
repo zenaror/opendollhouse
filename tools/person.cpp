@@ -44,6 +44,7 @@
 #include "odh/rect_router.hpp"
 #include "odh/routing.hpp"
 #include "odh/world_room_route_grid.hpp"
+#include "household_go_here_session.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "person_session.hpp"
@@ -283,6 +284,10 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     std::vector<odh_host::WindowInput> headless_window_inputs;
     std::size_t headless_window_input_index=0;
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
+    struct HeadlessResidentGoHere {
+        std::int16_t actor;std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;bool applied=false;
+    };
+    std::vector<HeadlessResidentGoHere> headless_resident_go_here;
     std::optional<std::uint64_t> headless_go_here_interrupt_tick;
     std::optional<std::uint64_t> headless_go_here_interrupt_after_movements;
     bool headless_go_here_interrupt_applied=false,headless_go_here_interrupt_accepted=false;
@@ -469,6 +474,20 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             headless_go_here=HeadlessGoHere{static_cast<std::uint32_t>(x),static_cast<std::uint32_t>(y),
                 static_cast<std::uint8_t>(level),tick};
         }
+        else if(option=="--headless-resident-go-here"&&n+5<argc){
+            const auto id=selector(argv[++n]);
+            const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
+            const auto level=selector(argv[++n]),tick=selector(argv[++n]);
+            if(!id||id>32767||x<0||y<0||x>2046||y>2046||level<1||level>2||tick==0||
+               headless_resident_go_here.size()>=7)
+                throw odh::FormatError("resident Go Here identity/tile/level/tick is outside the supported profile");
+            const auto actor=static_cast<std::int16_t>(id);
+            if(std::any_of(headless_resident_go_here.begin(),headless_resident_go_here.end(),
+                [&](const auto& action){return action.actor==actor;}))
+                throw odh::FormatError("resident Go Here actor was scheduled more than once");
+            headless_resident_go_here.push_back({actor,static_cast<std::uint32_t>(x),
+                static_cast<std::uint32_t>(y),static_cast<std::uint8_t>(level),tick,false});
+        }
         else if(option=="--headless-go-here-interrupt"&&!headless_go_here_interrupt_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
             if(tick==0)throw odh::FormatError("Go Here interrupt tick must be nonzero");
@@ -531,6 +550,14 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     if(headless_go_here&&(!headless_main||headless_go_here->tick>ticks_limit||
        (!go_here_after_stand&&!standalone_go_here)))
         throw odh::FormatError("--headless-go-here requires an idle action probe or a later tick after Sit/Stand");
+    if(!headless_resident_go_here.empty()){
+        if(!headless_main||!saved_world_main||!session_context||session_context->single_resident_session||
+           session_context->household_members.empty()||headless_interaction||headless_stand||headless_portal)
+            throw odh::FormatError("--headless-resident-go-here requires a fresh whole-household Main probe");
+        for(const auto& action:headless_resident_go_here)
+            if(action.tick>ticks_limit)
+                throw odh::FormatError("--headless-resident-go-here tick exceeds the runtime limit");
+    }
     if(headless_go_here_interrupt_tick&&(!headless_main||!headless_go_here||
        *headless_go_here_interrupt_tick>ticks_limit||
        *headless_go_here_interrupt_tick<headless_go_here->tick||headless_entity_move))
@@ -1025,6 +1052,12 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         std::optional<odh::Playback> playback;
         std::optional<odh::AvatarBodyDescriptor> body_state;
         std::unique_ptr<odh::Vm> vm;
+        std::optional<odh::WorldRoomRouteGrid> route_grid;
+        std::unique_ptr<odh::Routing> routing;
+        std::unique_ptr<odh_host::HouseholdGoHereSession> go_here;
+        std::optional<std::uint64_t> route_spatial_revision;
+        std::size_t route_movement_callbacks=0,route_snapshot_refreshes=0;
+        std::string route_reason="runtime_route_context_not_prepared";
     };
     std::vector<std::unique_ptr<HouseholdRuntime>> household_runtime;
     const auto household_entity_count=entity_count();
@@ -1637,7 +1670,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         const auto member_sleep=runtime->controllers->sleep_primitive();
         const auto member_queue=runtime->controllers->interaction_primitive();
         const auto member_animation=runtime->playback?runtime->playback->primitive():odh::VmPrimitive{};
-        const auto primitive=[&,member_sleep,member_queue,member_animation](
+        const auto primitive=[&,runtime,member_sleep,member_queue,member_animation](
             const auto& f,const auto& i,const auto& t,const auto& d)->odh::PrimitiveOutcome{
             if(i.opcode==0)return member_sleep(f,i,t,d);
             if(i.opcode==17)return member_queue(f,i,t,d);
@@ -1645,8 +1678,14 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
                 if(member_animation)return member_animation(f,i,t,d);
                 return {odh::PrimitiveDisposition::unsupported,"household resident animation playback is unavailable"};
             }
-            if(i.opcode==27||i.opcode==45)
-                return {odh::PrimitiveDisposition::unsupported,"additional resident routing controllers are not implemented"};
+            if(i.opcode==27||i.opcode==45){
+                if(runtime->routing){
+                    const auto route=runtime->routing->primitive();
+                    return route(f,i,t,d);
+                }
+                return {odh::PrimitiveDisposition::unsupported,
+                    "household resident routing unavailable: "+runtime->route_reason};
+            }
             return person_primitive(f,i,t,d);
         };
         runtime->vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},primitive,
@@ -2581,6 +2620,131 @@ struct PlacementCandidateProbe {
             }catch(const std::exception& error){return fail(error.what());}
         });
     }
+    const auto refresh_household_route=[&](HouseholdRuntime& runtime)->bool {
+        if(!runtime.route_grid||!runtime.route_grid->grid||!render_lot||!restored_world||!definition_index){
+            runtime.route_reason="runtime_route_refresh_context_unavailable";return false;
+        }
+        const auto* actor=world.find(runtime.id);
+        if(!actor||!actor->position||actor->position->level<1||actor->position->level>2){
+            runtime.route_reason="runtime_route_refresh_resident_position_unavailable";return false;
+        }
+        const auto revision=world.spatial_revision();
+        const auto room=render_lot->runtime_room_at(*actor->position);
+        if(!room){runtime.route_reason="runtime_route_refresh_resident_room_unresolved";return false;}
+        const auto level=static_cast<std::uint8_t>(actor->position->level-1);
+        if(*room==runtime.route_grid->room_id&&level==runtime.route_grid->level&&
+           runtime.route_spatial_revision&&*runtime.route_spatial_revision==revision)return true;
+        const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+            render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,level,
+            runtime.id,true,{},resolve_read_only_ep5);
+        if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
+            runtime.route_reason=std::string("runtime_route_refresh_snapshot_")+
+                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);return false;
+        }
+        auto updated=odh::build_world_room_route_grid(probe.snapshot);
+        if(updated.reason==odh::WorldRoomRouteGridReason::route_grid_over_budget){
+            constexpr std::int32_t radius=128;
+            const auto x=actor->position->x,y=actor->position->y;
+            updated=odh::build_world_room_route_grid(probe.snapshot,{},
+                odh::WorldRoomRouteGridWindow{{x-radius,y-radius},{x+radius,y+radius}});
+        }
+        if(updated.state!=odh::WorldRoomRouteGridState::ready||!updated.grid||
+           updated.room_id!=*room||updated.level!=level){
+            runtime.route_reason=std::string("runtime_route_refresh_grid_")+
+                odh::world_room_route_grid_reason_name(updated.reason);return false;
+        }
+        constexpr std::size_t household_route_cell_budget=262144;
+        std::size_t other_cells=0;
+        for(const auto& member:household_runtime)
+            if(member.get()!=&runtime&&member->route_grid&&member->route_grid->grid)
+                other_cells+=member->route_grid->grid->cells();
+        if(other_cells+updated.grid->cells()>household_route_cell_budget){
+            runtime.route_reason="household_route_grid_aggregate_cell_budget_exceeded";return false;
+        }
+        *runtime.route_grid->grid=std::move(*updated.grid);
+        runtime.route_grid->windowed=updated.windowed;runtime.route_grid->room_id=updated.room_id;
+        runtime.route_grid->level=updated.level;
+        runtime.route_grid->obstacle_rectangles=updated.obstacle_rectangles;
+        runtime.route_grid->rasterized_cells=updated.rasterized_cells;
+        runtime.route_grid->newly_blocked_cells=updated.newly_blocked_cells;
+        runtime.route_spatial_revision=world.spatial_revision();
+        ++runtime.route_snapshot_refreshes;runtime.route_reason.clear();return true;
+    };
+    for(auto& member:household_runtime){
+        auto& runtime=*member;
+        const auto* actor=world.find(runtime.id);
+        if(!render_lot||!render_lot->prepared_architecture()||!shared.routing_slots||!actor||
+           !actor->position||actor->position->level<1||actor->position->level>2){
+            runtime.route_reason="prepared_lot_world_or_global_SLOT_unavailable";continue;
+        }
+        const auto room=render_lot->runtime_room_at(*actor->position);
+        if(!room){runtime.route_reason="household_resident_room_unresolved";continue;}
+        const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
+            render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
+            static_cast<std::uint8_t>(actor->position->level-1),runtime.id,true,{},resolve_read_only_ep5);
+        if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
+            runtime.route_reason=std::string("attempt_walk_snapshot_")+
+                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);continue;
+        }
+        auto grid=odh::build_world_room_route_grid(probe.snapshot);
+        if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid){
+            runtime.route_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);continue;
+        }
+        constexpr std::size_t household_route_cell_budget=262144;
+        std::size_t existing_cells=0;
+        for(const auto& other:household_runtime)
+            if(other.get()!=&runtime&&other->route_grid&&other->route_grid->grid)
+                existing_cells+=other->route_grid->grid->cells();
+        if(existing_cells+grid.grid->cells()>household_route_cell_budget){
+            runtime.route_reason="household_route_grid_aggregate_cell_budget_exceeded";continue;
+        }
+        runtime.route_grid.emplace(std::move(grid));
+        runtime.route_spatial_revision=world.spatial_revision();
+        runtime.routing=std::make_unique<odh::Routing>(world,*runtime.route_grid->grid,*shared.routing_slots);
+        runtime.routing->set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+            const auto& caller,const auto& target){return odh::rank_reference_range_slot(table,index,caller,target,random);});
+        runtime.routing->set_stack_object_slot_table_provider(route_stack_slot_table);
+        runtime.routing->set_route_goal_validator([&,resident_id=runtime.id](const odh::VmFrame& frame,
+            odh::RoutePoint point){
+            const auto* route_actor=world.find(frame.context.caller);
+            const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
+                [&](const auto& item){return item->id==resident_id;});
+            if(frame.context.caller!=resident_id||resident==household_runtime.end()||
+               !route_actor||!route_actor->position||!render_lot||!(*resident)->route_grid||
+               !(*resident)->route_grid->grid)return false;
+            const auto actor_room=render_lot->runtime_room_at(*route_actor->position);
+            return actor_room&&*actor_room==(*resident)->route_grid->room_id&&
+                (*resident)->route_grid->grid->walkable(point);
+        });
+        runtime.routing->set_route_grid_refresh([&,resident=&runtime](const odh::EntityPosition&){
+            return refresh_household_route(*resident);
+        });
+        if(!runtime.vm||!runtime.routing->bind(*runtime.vm)){
+            runtime.route_reason="route_controller_vm_binding_failed";runtime.routing.reset();continue;
+        }
+        runtime.go_here=std::make_unique<odh_host::HouseholdGoHereSession>(world,runtime.id,
+            *runtime.vm,*runtime.controllers,*runtime.routing);
+        runtime.route_reason.clear();
+    }
+    for(const auto& action:headless_resident_go_here){
+        const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& item){return item->id==action.actor;});
+        if(resident==household_runtime.end())
+            throw odh::FormatError("resident Go Here actor is not an additional household member");
+        const auto* actor=world.find(action.actor);
+        const odh::RoutePoint goal{static_cast<std::int32_t>(action.x*16+8),
+            static_cast<std::int32_t>(action.y*16+8)};
+        if(!actor||!actor->position||!(*resident)->route_grid||!(*resident)->route_grid->grid||
+           !(*resident)->routing||!(*resident)->go_here||
+           actor->position->level!=action.level||
+           static_cast<unsigned>((*resident)->route_grid->level)+1U!=action.level||
+           !(*resident)->route_grid->grid->contains(goal)||!(*resident)->route_grid->grid->walkable(goal))
+            throw odh::FormatError("resident Go Here target is outside that resident's prepared room grid "
+                "(route_reason="+(*resident)->route_reason+", room="+
+                ((*resident)->route_grid?std::to_string((*resident)->route_grid->room_id):"unavailable")+
+                ", floor="+((*resident)->route_grid?std::to_string((*resident)->route_grid->level):"unavailable")+
+                ", target="+std::to_string(goal.x)+","+std::to_string(goal.y)+")");
+    }
     const auto request_go_here=[&](const odh::EntityPosition& destination){
         const auto reject=[&](const std::string& reason){
             go_here_status="unsupported";go_here_diagnostic=reason;
@@ -3291,6 +3455,38 @@ struct PlacementCandidateProbe {
                 go_here_diagnostic="chained Go Here requires the preceding Sit and Stand actions to return true";
             }else request_go_here(destination);
         }
+        for(auto& scheduled:headless_resident_go_here){
+            if(scheduled.applied||ticks!=scheduled.tick)continue;
+            scheduled.applied=true;
+            auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
+                [&](const auto& item){return item->id==scheduled.actor;});
+            if(resident==household_runtime.end())continue; // rejected during host setup
+            const auto reject=[&](const std::string& reason){(*resident)->go_here->fail(reason);};
+            const auto* actor=world.find(scheduled.actor);
+            const odh::EntityPosition destination{static_cast<std::int32_t>(scheduled.x*16+8),
+                static_cast<std::int32_t>(scheduled.y*16+8),scheduled.level,0};
+            const odh::RoutePoint goal{destination.x,destination.y};
+            const auto* candidate=definition_index?definition_index->unique(0x7c4):nullptr;
+            if(!actor||!actor->position||actor->position->level!=scheduled.level||
+               !(*resident)->route_grid||!(*resident)->route_grid->grid||
+               !(*resident)->route_grid->grid->contains(goal)||!(*resident)->route_grid->grid->walkable(goal))
+                reject("resident Go Here destination no longer matches its actor and room grid");
+            else if(!candidate)reject("saved Destination definition is missing or ambiguous");
+            else if(saved_owner_ids_exhausted)reject("saved object code-owner identity space exhausted");
+            else try{
+                auto routines=load_saved_action_routines(*candidate,4096);
+                const auto key=odh::routine_key(4096);
+                if(key.scope!=odh::RoutineScope::private_object||!routines.count(key))
+                    reject("saved Destination ActionFunction is absent from its exact private owner");
+                else {
+                    const auto owner=next_saved_code_owner;
+                    if((*resident)->go_here->request(destination,owner,std::move(routines),4096)){
+                        if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                        else ++next_saved_code_owner;
+                    }
+                }
+            }catch(const std::exception& error){reject(error.what());}
+        }
         if(headless_portal&&!headless_portal_applied&&ticks==headless_portal->tick){
             headless_portal_applied=true;
             const auto fail_portal=[&](const std::string& reason){
@@ -3409,6 +3605,31 @@ struct PlacementCandidateProbe {
                 break;
             }
         }
+        for(auto& member:household_runtime){
+            auto& runtime=*member;
+            if(!runtime.routing||!runtime.routing->active())continue;
+            if(!refresh_household_route(runtime)){
+                host_failed=true;host_diagnostic=runtime.route_reason;break;
+            }
+            const bool route_ok=runtime.routing->tick(ticks,[&](const odh::RouteMovement&){
+                ++runtime.route_movement_callbacks;
+            });
+            if(!runtime.routing->active()){
+                if(!refresh_household_route(runtime)){
+                    host_failed=true;host_diagnostic=runtime.route_reason;break;
+                }
+            }else runtime.route_spatial_revision=world.spatial_revision();
+            if(!route_ok&&runtime.routing->active()){
+                host_failed=true;host_diagnostic=runtime.routing->diagnostic().empty()?
+                    "household resident routing rejected a host tick":runtime.routing->diagnostic();
+                break;
+            }
+        }
+        if(host_failed){
+            for(auto& member:household_runtime)
+                if(member->go_here)member->go_here->observe(true,host_diagnostic);
+            break;
+        }
         if(!thread_controllers.advance(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
         if(second_main_thread&&!second_main_thread->advance(ticks)){
             host_failed=true;host_diagnostic="second avatar thread controller rejected tick";break;
@@ -3429,8 +3650,14 @@ struct PlacementCandidateProbe {
             }
             if(member->playback)member->playback->tick(ticks,record_animation_event);
         }
-        if(host_failed)break;
+        if(host_failed){
+            for(auto& member:household_runtime)
+                if(member->go_here)member->go_here->observe(true,host_diagnostic);
+            break;
+        }
         execute(true);
+        for(auto& member:household_runtime)
+            if(member->go_here)member->go_here->observe(host_failed,host_diagnostic);
         if(go_here_status=="queued"){
             if(queue.completion()&&(!go_here_previous_completion_uid||
                queue.completion()->uid!=*go_here_previous_completion_uid)){
@@ -3519,6 +3746,23 @@ struct PlacementCandidateProbe {
 #endif
         }
         capture_frame();
+    }
+    if(host_failed){
+        // Every host-failure exit must finalize queued resident requests before
+        // their state is serialized to JSON; some failures break before the
+        // in-loop observer runs.
+        for(auto& member:household_runtime)
+            if(member->go_here)member->go_here->observe(true,host_diagnostic);
+    }else{
+        const bool exhausted=ticks-resumed_tick>=session_policy.tick_limit();
+        for(auto& member:household_runtime){
+            if(!member->go_here||member->go_here->status()!="queued")continue;
+            const auto terminal=window_closed?"window_closed":exhausted?"tick_limit":"interrupted";
+            const auto reason=window_closed?"window closed before resident Go Here completed":
+                exhausted?"resident Go Here remained queued when the tick budget ended":
+                          "host loop stopped before resident Go Here completed";
+            member->go_here->finish_incomplete(terminal,reason);
+        }
     }
     if(go_here_status=="queued"){
         if(host_failed){
@@ -3924,6 +4168,33 @@ struct PlacementCandidateProbe {
                 <<",\"diagnostic\":"<<json_bytes(member.vm->diagnostic())<<",\"steps\":"<<member.vm->steps()
                 <<",\"start_position\":";position_json(member.start);
             std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);
+            std::cout<<",\"routing\":{\"reason\":"<<json_bytes(member.route_reason)
+                <<",\"active\":"<<(member.routing&&member.routing->active()?"true":"false")
+                <<",\"movement_callbacks\":"<<member.route_movement_callbacks
+                <<",\"snapshot_refreshes\":"<<member.route_snapshot_refreshes<<",\"room_id\":";
+            if(member.route_grid)std::cout<<member.route_grid->room_id;else std::cout<<"null";
+            std::cout<<",\"floor\":";
+            if(member.route_grid)std::cout<<static_cast<unsigned>(member.route_grid->level);else std::cout<<"null";
+            std::cout<<"},\"go_here\":";
+            if(!member.go_here)std::cout<<"null";
+            else {
+                const auto destination=member.go_here->destination();
+                const auto start=member.go_here->start();
+                std::cout<<"{\"status\":"<<json_bytes(member.go_here->status())
+                    <<",\"route_status\":"<<json_bytes(member.go_here->route_status())
+                    <<",\"diagnostic\":"<<json_bytes(member.go_here->diagnostic())
+                    <<",\"marker_id\":"<<(member.go_here->marker_id()?std::to_string(*member.go_here->marker_id()):"null")
+                    <<",\"marker_alive\":"<<(member.go_here->marker_alive()?"true":"false")
+                    <<",\"code_owner\":"<<(member.go_here->owner()?std::to_string(*member.go_here->owner()):"null")
+                    <<",\"result\":"<<(member.go_here->result()?(*member.go_here->result()?"true":"false"):"null")
+                    <<",\"start_position\":";
+                if(start)std::cout<<'['<<start->x<<','<<start->y<<','<<start->level<<','<<unsigned(start->direction)<<']';
+                else std::cout<<"null";
+                std::cout<<",\"target_position\":";
+                if(destination)std::cout<<'['<<destination->x<<','<<destination->y<<','<<destination->level<<','<<unsigned(destination->direction)<<']';
+                else std::cout<<"null";
+                std::cout<<'}';
+            }
             std::cout<<",\"attachment\":";
             if(entity&&entity->attachment)std::cout<<'['<<entity->attachment->container<<','<<entity->attachment->slot<<']';
             else std::cout<<"null";

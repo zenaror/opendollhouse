@@ -1,6 +1,7 @@
 #include "odh/routing.hpp"
 #include "odh/route_frame.hpp"
 #include "odh/slot_scoring.hpp"
+#include "../tools/household_go_here_session.hpp"
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -321,6 +322,145 @@ void shared_world_dual_controller_tests() {
             world.find(1)->position->x!=world.find(3)->position->x,
             "interleaved deterministic ticks reach distinct goals and return only to each owning VM");
 }
+void household_resident_route_owner_tests() {
+    odh::World world;odh::RouteGrid first_grid{32,16},second_grid{48,32};auto globals=slot();
+    odh::Routing first{world,first_grid,globals},second{world,second_grid,globals};
+    odh::Vm first_vm{{},world.vm_memory(),{},first.primitive()};
+    odh::Vm second_vm{{},world.vm_memory(),{},second.primitive()};
+    constexpr odh::CodeOwner first_owner=501,second_owner=502;
+    require(first_vm.install_owner(first_owner,goto_relative())&&
+            second_vm.install_owner(second_owner,goto_relative()),
+            "each household VM installs the same synthetic Go Here BHAV under its own code owner");
+    world.create(11,odh::EntityKind::avatar,{0,88,0});world.create(12,odh::EntityKind::object,{0,0,1});
+    world.create(21,odh::EntityKind::avatar,{0,88,0});world.create(22,odh::EntityKind::object,{0,0,1});
+    world.set_position(11,{4,4,1,0});world.set_position(12,{12,4,1,0});
+    world.set_position(21,{4,20,1,0});world.set_position(22,{28,20,1,0});
+    bool first_context=false,second_context=false;
+    first.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point){
+        first_context=frame.context.caller==11&&frame.context.stack_object==12&&
+            frame.context.code_owner==first_owner;
+        return first_context&&point==odh::RoutePoint{12,4}&&first_grid.walkable(point);
+    });
+    second.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint point){
+        second_context=frame.context.caller==21&&frame.context.stack_object==22&&
+            frame.context.code_owner==second_owner;
+        return second_context&&point==odh::RoutePoint{28,20}&&second_grid.walkable(point);
+    });
+    require(first.bind(first_vm)&&second.bind(second_vm),"per-resident route controllers bind to their own VMs");
+    require(!first.bind(second_vm)&&!second.bind(first_vm),"per-resident route controllers reject cross-binding");
+    require(first_vm.start(odh::routine_key(4096),{11,12,12,first_owner})==odh::VmStatus::running&&
+            second_vm.start(odh::routine_key(4096),{21,22,22,second_owner})==odh::VmStatus::running,
+            "independent Go Here actions start with distinct resident and marker contexts");
+    require(first_vm.run(4)==odh::VmStatus::waiting&&second_vm.run(4)==odh::VmStatus::waiting&&
+            first_context&&second_context,"each controller validates its own resident, marker, owner, and grid");
+    for(std::uint64_t tick=1;tick<=32&&(first.active()||second.active());++tick){
+        first.tick(tick);second.tick(tick);
+    }
+    require(first_vm.status()==odh::VmStatus::returned_true&&second_vm.status()==odh::VmStatus::returned_true&&
+            world.find(11)->position->x==12&&world.find(11)->position->y==4&&
+            world.find(21)->position->x==28&&world.find(21)->position->y==20&&
+            world.find(11)->position->x!=world.find(21)->position->x,
+            "interleaved household Go Here routes complete independently at distinct destinations");
+}
+void household_go_here_session_tests() {
+    odh::World world;odh::RouteGrid first_grid{32,16},second_grid{48,32};auto globals=slot();
+    world.create(11,odh::EntityKind::avatar,{0,88,0});world.create(21,odh::EntityKind::avatar,{0,88,0});
+    world.set_position(11,{4,4,1,0});world.set_position(21,{4,20,1,0});
+    odh::EntityThreadControllers first_threads{world,11},second_threads{world,21};
+    odh::Routing first_routing{world,first_grid,globals},second_routing{world,second_grid,globals};
+    odh::VmPrimitive first_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==17)return first_threads.interaction_primitive()(f,i,t,d);
+        if(i.opcode==27)return first_routing.primitive()(f,i,t,d);
+        return odh::PrimitiveOutcome{};
+    };
+    odh::VmPrimitive second_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==17)return second_threads.interaction_primitive()(f,i,t,d);
+        if(i.opcode==27)return second_routing.primitive()(f,i,t,d);
+        return odh::PrimitiveOutcome{};
+    };
+    const odh::RoutineSet main{{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{17,254,255,{0,0,1,0}}},{},odh::Bhav::Metadata{0,1,0,0}}}};
+    odh::Vm first_vm{main,world.vm_memory(),{},first_primitive};
+    odh::Vm second_vm{main,world.vm_memory(),{},second_primitive};
+    require(first_threads.bind(first_vm)&&second_threads.bind(second_vm)&&
+            first_routing.bind(first_vm)&&second_routing.bind(second_vm),
+            "synthetic household Go Here sessions bind queue and route controllers to each resident VM");
+    first_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p){
+        return frame.context.caller==11&&frame.context.stack_object!=0&&frame.context.code_owner==501&&
+            p==odh::RoutePoint{12,4}&&first_grid.walkable(p);
+    });
+    second_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p){
+        return frame.context.caller==21&&frame.context.stack_object!=0&&frame.context.code_owner==502&&
+            p==odh::RoutePoint{28,20}&&second_grid.walkable(p);
+    });
+    first_vm.start(odh::routine_key(4096),{11,11,11,0},{120});
+    second_vm.start(odh::routine_key(4096),{21,21,21,0},{120});
+    require(first_vm.run(4)==odh::VmStatus::waiting&&second_vm.run(4)==odh::VmStatus::waiting,
+            "each resident Main waits independently for its own Go Here action");
+    odh_host::HouseholdGoHereSession first_session{world,11,first_vm,first_threads,first_routing};
+    odh_host::HouseholdGoHereSession second_session{world,21,second_vm,second_threads,second_routing};
+    require(first_session.request({12,4,1,0},501,goto_relative())&&
+            second_session.request({28,20,1,0},502,goto_relative()),
+            "each resident queues a Go Here marker and action under its own code owner");
+    require(first_session.marker_id()&&second_session.marker_id()&&
+            first_session.marker_id()!=second_session.marker_id()&&first_session.marker_alive()&&
+            second_session.marker_alive(),"resident Go Here sessions own distinct live World markers");
+    for(std::uint64_t tick=1;tick<=32&&(first_session.status()=="queued"||second_session.status()=="queued");++tick){
+        if(first_routing.active())first_routing.tick(tick);
+        if(second_routing.active())second_routing.tick(tick);
+        first_threads.advance(tick);second_threads.advance(tick);
+        first_vm.run(8);second_vm.run(8);
+        first_threads.observe();second_threads.observe();
+        first_session.observe();second_session.observe();
+    }
+    require(first_session.status()=="returned_true"&&second_session.status()=="returned_true"&&
+            first_session.owner()==501&&second_session.owner()==502&&first_session.result()==true&&
+            second_session.result()==true&&!first_session.marker_alive()&&!second_session.marker_alive()&&
+            world.find(11)->position->x==12&&world.find(11)->position->y==4&&
+            world.find(21)->position->x==28&&world.find(21)->position->y==20,
+            "interleaved resident Go Here sessions complete only their own VM, owner, marker, and destination");
+    world.create(31,odh::EntityKind::avatar,{0,88,0});world.set_position(31,{4,28,1,0});
+    odh::EntityThreadControllers failed_threads{world,31};
+    odh::Routing failed_routing{world,second_grid,globals};
+    odh::Vm failed_vm{main,world.vm_memory(),{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==17)return failed_threads.interaction_primitive()(f,i,t,d);
+        if(i.opcode==27)return failed_routing.primitive()(f,i,t,d);
+        return odh::PrimitiveOutcome{};
+    }};
+    require(failed_threads.bind(failed_vm)&&failed_routing.bind(failed_vm),
+            "host-failure fixture binds its resident interaction and route controllers");
+    failed_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p){
+        return frame.context.caller==31&&p==odh::RoutePoint{28,28}&&second_grid.walkable(p);
+    });
+    failed_vm.start(odh::routine_key(4096),{31,31,31,0},{120});failed_vm.run(4);
+    odh_host::HouseholdGoHereSession failed_session{world,31,failed_vm,failed_threads,failed_routing};
+    require(failed_session.request({28,28,1,0},503,goto_relative())&&failed_session.marker_alive(),
+            "host-failure fixture creates a queued request and owned marker");
+    failed_session.observe(true,"synthetic resident route tick failure");
+    require(failed_session.status()=="host_failed"&&!failed_session.marker_alive(),
+            "host route failure closes resident request and removes its marker before reporting");
+    world.create(32,odh::EntityKind::avatar,{0,88,0});world.set_position(32,{4,29,1,0});
+    odh::EntityThreadControllers incomplete_threads{world,32};
+    odh::Routing incomplete_routing{world,second_grid,globals};
+    odh::Vm incomplete_vm{main,world.vm_memory(),{},[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==17)return incomplete_threads.interaction_primitive()(f,i,t,d);
+        if(i.opcode==27)return incomplete_routing.primitive()(f,i,t,d);
+        return odh::PrimitiveOutcome{};
+    }};
+    require(incomplete_threads.bind(incomplete_vm)&&incomplete_routing.bind(incomplete_vm),
+            "incomplete resident fixture binds its interaction and route controllers");
+    incomplete_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p){
+        return frame.context.caller==32&&p==odh::RoutePoint{28,29}&&second_grid.walkable(p);
+    });
+    incomplete_vm.start(odh::routine_key(4096),{32,32,32,0},{120});incomplete_vm.run(4);
+    odh_host::HouseholdGoHereSession incomplete_session{world,32,incomplete_vm,incomplete_threads,incomplete_routing};
+    require(incomplete_session.request({28,29,1,0},504,goto_relative())&&incomplete_session.marker_alive(),
+            "incomplete resident fixture creates a queued request and owned marker");
+    incomplete_session.finish_incomplete("tick_limit","synthetic route tick budget ended");
+    require(incomplete_session.status()=="tick_limit"&&incomplete_session.route_status()=="incomplete"&&
+            !incomplete_session.marker_alive(),
+            "tick-limited resident request is finalized and its marker is removed before reporting");
+}
 void deferred_room_route_tests() {
     {
         odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
@@ -585,6 +725,8 @@ int main() {
         door_range_route_tests();
         route_frame_context_tests();
         shared_world_dual_controller_tests();
+        household_resident_route_owner_tests();
+        household_go_here_session_tests();
         deferred_room_route_tests();
         saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();
