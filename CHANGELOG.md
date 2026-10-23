@@ -36,6 +36,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Adicionado o CTest `linux_move_out_integration`, que inicia o app Linux com
+  dados sintéticos e percorre a janela real: House07 ocupado → confirmação e
+  gravação do overlay → mapa atualizado → seleção cancelada em House08 →
+  reabertura com o estado preservado. O teste liga a janela ao PID do processo
+  criado por ele e usa um perfil temporário; não executa a simulação nem lê
+  dados comerciais. Build completo e 214/214 CTests passaram sob Xephyr. Isso
+  valida esse fluxo sintético, não uma sessão jogável nem entrada humana. Veja
+  [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
+
 - O estado local de famílias agora aceita uma sequência versionada de ações:
   sair de uma casa originalmente ocupada e mudar para outra preservam o saldo,
   liberam o lote anterior e zeram `ValueInArch`. O formato antigo continua

@@ -96,6 +96,20 @@ still enter their house.
   lot entry, supported move-out selection, confirmation/cancel, and refusal of
   move-out when the refund is unverified. This covers screen decisions, not the
   entire UI-to-save-to-map path or a manual visual play session.
+- `linux_move_out_integration`: starts the real `odh-person` with generated
+  synthetic FAMI, LotLocations, empty house IFFs, and an 800x600 BMP in FAR1.
+  It clicks occupied House07, sends `E`, checks the refund/budget confirmation,
+  verifies no save exists before Enter, confirms, reads back the exact expected
+  identity-bound overlay, and checks the refreshed vacant House07 and occupied
+  House08 pixels. It selects House08 and cancels at its occupied-lot choice,
+  then reopens the app under the same isolated player profile and checks both
+  markers again. Cancellation preserves the overlay and source neighborhood
+  bytes. No simulation or commercial input is involved. The test sends events
+  only to the window whose `_NET_WM_PID` matches its child process, without
+  moving the pointer or focus;
+  use an isolated X server (for example Xephyr) for unobscured pixel checks.
+  Missing or inaccessible DISPLAY returns CTest skip code 77. A focused run in
+  Xephyr passed this integration and the three family-overlay/screen tests.
 - An isolated interactive run of `odh-person` against the local `../referencias/The Sims`
   data completed House05 → move-out → refreshed neighborhood → House01 family
   picker. The confirmation reported a 33,116 refund and 35,658 resulting
@@ -118,9 +132,9 @@ still enter their house.
 
 ## Still missing
 
-An automated end-to-end test of UI → compare-and-write → refreshed map →
-choosing another lot is still missing; the one-off Xephyr run above covered
-that path using this local installation. This build was configured without
+The automated UI → compare-and-write → refreshed map → choosing another lot
+path now has synthetic coverage; the one-off Xephyr run above additionally
+covered that path using this local installation. This build was configured without
 PangoCairo, so the map rendered but choice/confirmation text was absent from
 the canvas; the window title still showed the active choice and amounts. A
 human-input play test and a visible text-rendering build remain pending. The

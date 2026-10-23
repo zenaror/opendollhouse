@@ -1154,6 +1154,17 @@ if(BUILD_TESTING)
     add_test(NAME linux_neighborhood_screen_actions COMMAND odh-neighborhood-screen-actions-tests)
     set_tests_properties(linux_neighborhood_screen_actions PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 15)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET odh_linux_family_overlay_store)
+      add_executable(odh-linux-move-out-integration-tests tests/linux_move_out_integration.cpp)
+      target_include_directories(odh-linux-move-out-integration-tests PRIVATE ${X11_INCLUDE_DIR})
+      target_link_libraries(odh-linux-move-out-integration-tests PRIVATE
+        odh_linux_family_overlay_store ${X11_LIBRARIES})
+      add_dependencies(odh-linux-move-out-integration-tests odh-person)
+      add_test(NAME linux_move_out_integration COMMAND odh-linux-move-out-integration-tests
+        $<TARGET_FILE:odh-person>)
+      set_tests_properties(linux_move_out_integration PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 45 RUN_SERIAL TRUE)
+    endif()
   endif()
   add_executable(odh-projection-tests tests/projection.cpp)
   target_link_libraries(odh-projection-tests PRIVATE odh_projection)

@@ -2,6 +2,7 @@
 #include "odh/formats.hpp"
 
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <limits>
 #include <thread>
+#include <unistd.h>
 
 namespace odh_host {
 namespace {
@@ -143,6 +145,10 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
     p.window = XCreateSimpleWindow(p.display, RootWindow(p.display, screen), 0, 0,
                                    width, height, 0, 0, 0);
     if (!p.window) throw odh::FormatError("X11: cannot create window");
+    const Atom pid_atom = XInternAtom(p.display, "_NET_WM_PID", False);
+    const unsigned long process_id = static_cast<unsigned long>(::getpid());
+    XChangeProperty(p.display, p.window, pid_atom, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(&process_id), 1);
     p.alive = true;
     p.gc = XCreateGC(p.display, p.window, 0, nullptr);
     if (!p.gc) throw odh::FormatError("X11: cannot create graphics context");
