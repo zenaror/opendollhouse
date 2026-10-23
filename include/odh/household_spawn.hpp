@@ -39,20 +39,27 @@ struct HouseholdSpawnResult {
     std::vector<MaterializedHouseholdMember> new_members;
 };
 
-// Staged identity/world materialization only. This copies the supplied owned
-// WorldSnapshot into a candidate World and adds missing FAMI avatars. It does
-// not execute Main, run the scheduler, or persist SavedWorld/OBJM/OBJT records.
-// The preparation callback must perform exact character body, Init, and resource
-// setup and return false on any failure. The arrival callback must perform full
-// placement validation and return an accepted position. These callbacks are
-// integration points; this helper does not claim that either is currently
-// implemented. A returned position is applied with World::set_position only
-// after the callback accepts it; set_position is not the arrival validator.
-// Callback failure throws FormatError; callback exceptions propagate. In all
-// failure cases the private candidate is discarded and source remains untouched.
+// Copies the supplied owned WorldSnapshot and adds missing FAMI avatars to a
+// private candidate. This stage returns those avatars without positions so a
+// caller can run exact Init/EP8 and build their runtime controllers before
+// testing arrival. It does not execute BHAVs, run the scheduler, or persist
+// SavedWorld/OBJM/OBJT records. The callback binds exact character resources
+// and metadata; callers remain responsible for successful runtime startup.
+// Callback failure throws FormatError; callback exceptions propagate. Failure
+// discards the private candidate and leaves source untouched.
 using HouseholdAvatarPreparer = std::function<bool(World&, std::int16_t, std::uint32_t)>;
 using HouseholdArrivalResolver = std::function<std::optional<EntityPosition>(
     const World&, std::int16_t, std::uint32_t)>;
+HouseholdSpawnResult stage_household_members(
+    const WorldSnapshot& source,
+    const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar,
+    WorldLimits limits = {});
+
+// Convenience path for callers that already prepared each avatar completely.
+// Arrival must perform full placement validation; World::set_position is only
+// applied after acceptance and is not itself the validator.
 HouseholdSpawnResult materialize_household_members(
     const WorldSnapshot& source,
     const std::vector<HouseholdSpawnRequest>& household,

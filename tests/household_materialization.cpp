@@ -38,6 +38,23 @@ int main() {
         auto source = source_world();
         const auto original = source;
         const auto nb = neighbor(absent_guid);
+        bool staged_prepared = false;
+        auto staged = odh::stage_household_members(source,
+            {{old_guid, nullptr}, {absent_guid, &nb}}, 123,
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid) {
+                staged_prepared = true;
+                check(guid == absent_guid && world.find(id)->definition->guid == guid);
+                return world.set_person_data(id, 65, 1);
+            });
+        check(staged_prepared && staged.runtime_ids.at(old_guid) == 5 &&
+              staged.runtime_ids.at(absent_guid) == 2);
+        check(staged.new_members.size() == 1 && staged.new_members[0].runtime_id == 2);
+        const auto* staged_avatar = staged.candidate->find(2);
+        check(staged_avatar && !staged_avatar->position && staged_avatar->person_data[61] == 123 &&
+              staged_avatar->person_data[65] == 1);
+        check(source.entities.size() == original.entities.size() &&
+              source.entities[1].object_words == original.entities[1].object_words);
+
         bool prepared = false, resolved = false;
         auto result = odh::materialize_household_members(source,
             {{old_guid, nullptr}, {absent_guid, &nb}}, 123,
@@ -74,6 +91,26 @@ int main() {
                 return std::optional<odh::EntityPosition>{{160, 224, 1, 4}};
             });
         check(second.runtime_ids.size() == 1 && second.runtime_ids.at(absent_guid) == 2);
+
+        constexpr std::uint32_t sibling_guid = 0xdddd;
+        const auto sibling_neighbor = neighbor(sibling_guid, 43);
+        bool sibling_saw_first_arrival = false;
+        const auto sequential = odh::materialize_household_members(source,
+            {{absent_guid, &nb}, {sibling_guid, &sibling_neighbor}}, 123,
+            [](odh::World&, std::int16_t, std::uint32_t) { return true; },
+            [&](const odh::World& world, std::int16_t id, std::uint32_t guid)
+                -> std::optional<odh::EntityPosition> {
+                if (guid == sibling_guid) {
+                    const auto* first = world.find(2);
+                    sibling_saw_first_arrival = id == 3 && first &&
+                        first->position == std::optional<odh::EntityPosition>{{160, 224, 1, 4}};
+                    return odh::EntityPosition{176, 224, 1, 4};
+                }
+                return odh::EntityPosition{160, 224, 1, 4};
+            });
+        const std::optional<odh::EntityPosition> expected_sibling_position{{176, 224, 1, 4}};
+        check(sibling_saw_first_arrival && sequential.runtime_ids.at(sibling_guid) == 3 &&
+              sequential.candidate->find(3)->position == expected_sibling_position);
 
         rejects([&] { odh::materialize_household_members(source,
             {{absent_guid, &nb}, {absent_guid, &nb}}, 123,

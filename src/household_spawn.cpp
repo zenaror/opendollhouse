@@ -93,16 +93,14 @@ void initialize_constructor_words(World& world, std::int16_t id) {
             throw FormatError("household avatar constructor object words exceed World budget");
     }
 }
-}
-
-HouseholdSpawnResult materialize_household_members(
+HouseholdSpawnResult materialize_household_members_impl(
     const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
     std::uint16_t family_chunk_id,
     const HouseholdAvatarPreparer& prepare_avatar,
-    const HouseholdArrivalResolver& resolve_arrival, WorldLimits limits) {
+    const HouseholdArrivalResolver* resolve_arrival, WorldLimits limits) {
     if (household.empty()) throw FormatError("selected household has no members");
-    if (!prepare_avatar || !resolve_arrival)
-        throw FormatError("household materialization callbacks are required");
+    if (!prepare_avatar)
+        throw FormatError("household avatar preparation callback is required");
 
     auto candidate = std::make_unique<World>(limits, source.attribute_policy);
     if (!candidate->restore_snapshot(source))
@@ -147,14 +145,36 @@ HouseholdSpawnResult materialize_household_members(
         inherit_neighbor(*result.candidate, id, *member.neighbor, family_chunk_id);
         if (!result.candidate->set_person_data(id, 61, family_word(family_chunk_id)))
             throw FormatError("household FAMI chunk id cannot be stored in PersonData[61]");
-        const auto arrival = resolve_arrival(*result.candidate, id, member.guid);
-        if (!arrival)
-            throw FormatError("household avatar arrival position was not accepted");
-        if (!result.candidate->set_position(id, *arrival))
-            throw FormatError("accepted household arrival position cannot be applied");
+        if (resolve_arrival) {
+            const auto arrival = (*resolve_arrival)(*result.candidate, id, member.guid);
+            if (!arrival)
+                throw FormatError("household avatar arrival position was not accepted");
+            if (!result.candidate->set_position(id, *arrival))
+                throw FormatError("accepted household arrival position cannot be applied");
+        }
         result.runtime_ids.emplace(member.guid, id);
         result.new_members.push_back({member.guid, id});
     }
     return result;
+}
+}
+
+HouseholdSpawnResult stage_household_members(
+    const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar, WorldLimits limits) {
+    return materialize_household_members_impl(source, household, family_chunk_id,
+                                              prepare_avatar, nullptr, limits);
+}
+
+HouseholdSpawnResult materialize_household_members(
+    const WorldSnapshot& source, const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar,
+    const HouseholdArrivalResolver& resolve_arrival, WorldLimits limits) {
+    if (!resolve_arrival)
+        throw FormatError("household arrival resolver is required");
+    return materialize_household_members_impl(source, household, family_chunk_id,
+                                              prepare_avatar, &resolve_arrival, limits);
 }
 } // namespace odh
