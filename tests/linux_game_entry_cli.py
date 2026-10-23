@@ -94,6 +94,18 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     result = json.loads(run.stdout)
     check(result["status"] == "ready" and result["resident_count"] == 1,
           "synthetic family and lot resolve")
+    check(result["resident_execution"] == "whole_household",
+          "normal integrated launch selects the full household runtime")
+    single = subprocess.run(command + ["--single-resident-session"], capture_output=True, text=True, env=env)
+    check(single.returncode == 0 and
+          json.loads(single.stdout)["resident_execution"] == "single_resident_session",
+          "single resident continuation is an explicit diagnostic profile")
+    unsafe_save = subprocess.run([binary, "--game-root", str(root), "--mode", "1", "--house", "7",
+                                  "--headless-ticks", "1", "--save-session-on-exit"],
+                                 capture_output=True, text=True, env=env)
+    check(unsafe_save.returncode == 2 and not unsafe_save.stdout.strip() and
+          "explicit --single-resident-session" in unsafe_save.stderr,
+          "full household save cannot silently capture only the selected resident")
     identity = result["resource_identity"]
     check(identity["language"] == 15 and identity["expansion_mask"] == 0x7f and
           len(identity["sha256"]) == 64 and identity["resource_count"] == len(identity["files"]) and

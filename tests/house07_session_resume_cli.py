@@ -112,7 +112,7 @@ def main():
             seated = run('Sit and save', [
                 '--mode', '1', '--house', '7', '--resident-id', str(args.resident_id),
                 '--language', '1', '--headless-sit-object', str(args.sit_object),
-                '--headless-ticks', str(args.sit_ticks), '--save-session-on-exit'])
+                '--headless-ticks', str(args.sit_ticks), '--single-resident-session', '--save-session-on-exit'])
             require(seated['session_loaded'] is False and seated['resumed_tick'] == 0,
                     'first process unexpectedly resumed another session')
             require(seated['ticks'] == args.sit_ticks, 'Sit process did not reach requested stop')
@@ -131,7 +131,7 @@ def main():
             seated_archive_hash = digest(archive)
             standing = run('Load and Stand', [
                 '--load-session', str(archive), '--headless-stand',
-                '--headless-ticks', str(args.stand_ticks), '--save-session-on-exit'])
+                '--headless-ticks', str(args.stand_ticks), '--single-resident-session', '--save-session-on-exit'])
             require(standing['session_loaded'] is True and standing['resumed_tick'] == seated['ticks'],
                     'second process did not resume the exact saved tick')
             require(standing['ticks'] == seated['ticks'] + args.stand_ticks,

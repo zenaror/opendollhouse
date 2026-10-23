@@ -930,6 +930,66 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     if(saved_world_main&&active_family){
         family_world_reconciliation=odh::reconcile_session_household(active_family->family.member_guids,world);
     }
+    struct HouseholdRuntime {
+        Resource resource;
+        Loaded data;
+        std::int16_t id=0;
+        std::uint16_t main=0;
+        odh::EntityPosition start;
+        std::map<std::uint16_t,odh::SoundEvent> sounds;
+        std::unique_ptr<odh::EntityThreadControllers> controllers;
+        std::optional<odh::Playback> playback;
+        std::unique_ptr<odh::Vm> vm;
+    };
+    std::vector<std::unique_ptr<HouseholdRuntime>> household_runtime;
+    const auto household_entity_count=entity_count();
+    if(session_context&&!session_context->household_members.empty()){
+        if(!saved_world_main||!restored_world||!active_family||!family_world_reconciliation||
+           headless_second_main||session_restore||session_context->single_resident_session)
+            throw odh::FormatError("household execution requires a fresh integrated restored family World");
+        const auto& members=session_context->household_members;
+        if(members.size()>8||members.size()!=active_family->family.member_guids.size())
+            throw odh::FormatError("household execution requires every family member within the eight-resident profile");
+        std::set<std::uint32_t> guids;
+        bool primary_found=false;
+        for(const auto& member:members){
+            if(!member.guid||!guids.insert(member.guid).second||
+               !odh::FamilyContext::contains(*active_family,member.guid))
+                throw odh::FormatError("household execution contains a duplicate or mismatching family member");
+            const auto found=std::find_if(family_world_reconciliation->begin(),family_world_reconciliation->end(),
+                [&](const auto& item){return item.guid==member.guid;});
+            if(found==family_world_reconciliation->end()||
+               found->presence!=odh::HouseholdMemberPresence::present_with_position||!found->object_id||!found->position)
+                throw odh::FormatError("household member is absent or unpositioned in the restored World; placement is not implemented");
+            Resource resource{member.character_path.string(),{},true};
+            auto data=load(resource,odh::RoutineScope::private_object,member.object_definition_id);
+            if(data.binding->version!=138||data.object_type!=2||data.binding->guid!=member.guid||
+               !data.glob||data.glob->name.empty()||data.glob->name.find_first_of("/\\:")!=std::string::npos||
+               data.glob->name.find('\0')!=std::string::npos||fold(data.glob->name+".iff")!=fold(semi->entry))
+                throw odh::FormatError("household member does not match its exact person resource and semiglobal");
+            const auto main=data.entry_points?(data.entry_points->entries.size()>1?
+                data.entry_points->entries[1].action:std::uint16_t{0}):data.functions->main;
+            if(!main||odh::routine_key(main).scope!=odh::RoutineScope::private_object||
+               !data.routines.count(odh::routine_key(main)))
+                throw odh::FormatError("household member Main is absent from its exact private owner");
+            if(*found->object_id==runtime_avatar_id){
+                if(member.guid!=person.binding->guid||main!=root||
+                   std::filesystem::canonical(member.character_path)!=std::filesystem::canonical(avatar->archive))
+                    throw odh::FormatError("selected household resident resource does not match the primary runtime");
+                primary_found=true;
+                continue;
+            }
+            data.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
+            auto runtime=std::make_unique<HouseholdRuntime>();
+            runtime->resource=std::move(resource);runtime->data=std::move(data);
+            runtime->id=*found->object_id;runtime->main=main;runtime->start=*found->position;
+            runtime->sounds=load_sounds(runtime->resource);
+            household_runtime.push_back(std::move(runtime));
+        }
+        if(!primary_found)throw odh::FormatError("selected resident is absent from household execution");
+        std::sort(household_runtime.begin(),household_runtime.end(),
+            [](const auto& left,const auto& right){return left->id<right->id;});
+    }
     const odh::GeometricRoomMap* vm_room_map=nullptr;
     const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
         std::map<std::uint16_t,odh::StringTable>{};
@@ -984,6 +1044,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     tuning_resources.globals=std::move(shared.tuning);
     auto second_main_tuning=headless_second_main?std::optional<odh::TuningOwner>{
         odh::TuningOwner{second_data.tuning,semi_data.tuning,odh::TuningSemiState::loaded}}:std::nullopt;
+    for(const auto& member:household_runtime)
+        tuning_resources.owners.emplace(member->id,odh::TuningOwner{
+            member->data.tuning,semi_data.tuning,odh::TuningSemiState::loaded});
     tuning_resources.owners.emplace(runtime_avatar_id,odh::TuningOwner{std::move(person.tuning),std::move(semi_data.tuning),odh::TuningSemiState::loaded});
     if(second_main_tuning)tuning_resources.owners.emplace(headless_second_main->avatar.id,
         std::move(*second_main_tuning));
@@ -1030,6 +1093,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     std::unique_ptr<odh::EntityThreadControllers> second_main_thread;
     if(headless_second_main)second_main_thread=std::make_unique<odh::EntityThreadControllers>(world,
         static_cast<std::int16_t>(headless_second_main->avatar.id),[&]{++rng_requests;random.next(1);});
+    for(auto& member:household_runtime)
+        member->controllers=std::make_unique<odh::EntityThreadControllers>(world,member->id,
+            [&]{++rng_requests;random.next(1);});
     odh::EntityVmScheduler entity_scheduler(64);
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
@@ -1117,6 +1183,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         bind_tables(runtime_avatar_id,*avatar,person);
         if(headless_second_main)bind_tables(static_cast<std::int16_t>(headless_second_main->avatar.id),
             second_avatar?*second_avatar:*avatar,second_data);
+        for(const auto& member:household_runtime)bind_tables(member->id,member->resource,member->data);
         if(action)bind_tables(2,*action,*action_data);
         bind_world_object_tables=[&](std::int16_t owner){
             if(private_animation_tables.count(owner))return true;
@@ -1160,6 +1227,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             const auto find_table=[](const auto& tables,std::uint16_t key)->const odh::StringTable*{
                 const auto i=tables.find(key);return i==tables.end()?nullptr:&i->second;
             };
+            if(posture&&frame.context.caller!=runtime_avatar_id)
+                throw odh::FormatError("additional resident posture animation requires its own derived body descriptor");
             if(posture&&body_state){
                 auto resource=animation_catalog->resolve(body_state->walk.at(static_cast<std::size_t>(*posture)));
                 const auto* header=&resource->header;
@@ -1215,11 +1284,23 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     if(animation_catalog&&headless_second_main)second_main_playback.emplace(world,
         [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
         [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
+    if(animation_catalog)for(auto& member:household_runtime)
+        member->playback.emplace(world,
+            [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
+            [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
     const auto animation_handler=playback?playback->primitive():odh::VmPrimitive{};
     struct SoundRecord {odh::SoundRequest request;std::string status;};
     std::vector<SoundRecord> sound_records;
     const auto sound_handler=odh::sound_primitive(world,[&](const odh::VmFrame& frame,std::uint16_t id)
         ->std::optional<odh::SoundEvent>{
+        for(const auto& member:household_runtime)if(frame.context.code_owner==member->id){
+            const auto sound=member->sounds.find(id);
+            if(sound!=member->sounds.end())return sound->second;
+            const auto semi_sound=semiglobal_sounds.find(id);
+            if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
+            const auto global_sound=global_sounds.find(id);
+            return global_sound!=global_sounds.end()?std::optional<odh::SoundEvent>{global_sound->second}:std::nullopt;
+        }
         const bool second_owner=headless_second_main&&frame.context.code_owner==headless_second_main->avatar.id;
         const auto& private_sounds=second_owner?second_person_sounds:person_sounds;
         const auto private_sound=private_sounds.find(id);
@@ -1454,6 +1535,32 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         second_main_vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},
             second_primitive,std::move(second_owners));
     }
+    for(auto& member:household_runtime){
+        auto* runtime=member.get();
+        const auto member_sleep=runtime->controllers->sleep_primitive();
+        const auto member_queue=runtime->controllers->interaction_primitive();
+        const auto member_animation=runtime->playback?runtime->playback->primitive():odh::VmPrimitive{};
+        const auto primitive=[&,member_sleep,member_queue,member_animation](
+            const auto& f,const auto& i,const auto& t,const auto& d)->odh::PrimitiveOutcome{
+            if(i.opcode==0)return member_sleep(f,i,t,d);
+            if(i.opcode==17)return member_queue(f,i,t,d);
+            if(i.opcode==44){
+                if(member_animation)return member_animation(f,i,t,d);
+                return {odh::PrimitiveDisposition::unsupported,"household resident animation playback is unavailable"};
+            }
+            if(i.opcode==27||i.opcode==45||i.opcode==46)
+                return {odh::PrimitiveDisposition::unsupported,"additional resident routing and Snap controllers are not implemented"};
+            return person_primitive(f,i,t,d);
+        };
+        runtime->vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},primitive,
+            odh::RoutineOwners{{runtime->id,std::move(runtime->data.routines)}});
+        if(!runtime->controllers->bind(*runtime->vm)||(runtime->playback&&!runtime->playback->bind(*runtime->vm)))
+            throw odh::FormatError("household resident controllers could not bind");
+        if(!entity_scheduler.add(runtime->id,*runtime->vm,
+            [runtime](std::uint64_t){return runtime->controllers->observe();},
+            [runtime]{return runtime->controllers->observe();},[runtime]{return runtime->controllers->notify();}))
+            throw odh::FormatError("household resident could not join the entity scheduler");
+    }
     if(!thread_controllers.bind(vm))throw odh::FormatError("person controllers could not bind");
     if(playback&&!playback->bind(vm))throw odh::FormatError("person animation controller could not bind");
     if(second_main_vm&&(!second_main_thread->bind(*second_main_vm)||
@@ -1508,6 +1615,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             second_main_vm->start(odh::routine_key(headless_second_main->routine),
                 {id,id,0,static_cast<odh::CodeOwner>(id)},arguments);
         }
+        for(auto& member:household_runtime)
+            member->vm->start(odh::routine_key(member->main),
+                {member->id,member->id,0,static_cast<odh::CodeOwner>(member->id)},std::vector<std::int16_t>(4));
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
@@ -2472,6 +2582,10 @@ struct PlacementCandidateProbe {
 #ifdef __linux__
         if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
             throw odh::FormatError("saving requires a selected game installation");
+        if(!household_runtime.empty()||second_main_vm)
+            throw odh::FormatError("saving multiple resident threads is not implemented; use the explicit single-resident test profile");
+        if(!session_context->single_resident_session)
+            throw odh::FormatError("experimental session saving requires explicit --single-resident-session");
         if(runtime_routing&&runtime_routing->active())
             throw odh::FormatError("wait until the Sim finishes walking before saving");
         if(go_here_status=="queued")
@@ -2717,7 +2831,11 @@ struct PlacementCandidateProbe {
             actor_raster_pixels,actor_composited_pixels,
             render_lot!=nullptr,render_lot!=nullptr};
     };
-    const auto total_steps=[&]{return startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);};
+    const auto total_steps=[&]{
+        auto steps=startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);
+        for(const auto& member:household_runtime)steps+=member->vm->steps();
+        return steps;
+    };
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
         const auto budget=session_policy.entity_budget(total_steps());
@@ -2726,7 +2844,8 @@ struct PlacementCandidateProbe {
             const odh::EntityVmScheduler::Trace scheduled_trace=[&](std::int16_t entity,const odh::VmTrace& record){
                 if(headless_second_main&&entity==headless_second_main->avatar.id){
                     trace_in("second_main")(record);
-                }else phase_trace(record);
+                }else if(entity!=runtime_avatar_id)trace_in("household_main")(record);
+                else phase_trace(record);
             };
             if(!entity_scheduler.tick(ticks,session_policy.tick_budget(total_steps(),entity_scheduler.size()),budget,scheduled_trace)) {
                 host_failed=true;
@@ -2751,15 +2870,15 @@ struct PlacementCandidateProbe {
             if(target.status()==odh::VmStatus::fault){host_failed=true;host_diagnostic=target.diagnostic();return false;}
             return true;
         };
-        // Bootstrap is outside the tick scheduler, but it still follows the
-        // same ascending entity-ID order as scheduled turns.
-        if(second_main_vm&&headless_second_main->avatar.id<static_cast<std::uint16_t>(runtime_avatar_id)){
-            if(!run_initial(*second_main_vm,*second_main_thread,"second_main"))return;
-            if(!run_initial(vm,thread_controllers,initialize?"main":"root_probe"))return;
-        }else{
-            if(!run_initial(vm,thread_controllers,initialize?"main":"root_probe"))return;
-            if(second_main_vm)run_initial(*second_main_vm,*second_main_thread,"second_main");
-        }
+        // The initial dispatch follows the scheduler's ascending entity-ID order.
+        std::map<std::int16_t,std::tuple<odh::Vm*,odh::EntityThreadControllers*,std::string>> initial;
+        initial.emplace(runtime_avatar_id,std::make_tuple(&vm,&thread_controllers,initialize?"main":"root_probe"));
+        if(second_main_vm)initial.emplace(static_cast<std::int16_t>(headless_second_main->avatar.id),
+            std::make_tuple(second_main_vm.get(),second_main_thread.get(),"second_main"));
+        for(auto& member:household_runtime)initial.emplace(member->id,
+            std::make_tuple(member->vm.get(),member->controllers.get(),"household_main"));
+        for(const auto& item:initial)
+            if(!run_initial(*std::get<0>(item.second),*std::get<1>(item.second),std::get<2>(item.second)))return;
     };
     profile_mark("host-runtime-ready");
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -2972,7 +3091,8 @@ struct PlacementCandidateProbe {
             if(input.rotation||input.zoom||input.redraw)capture_frame();
             queue_headless_window_interaction();
             const bool runtime_finished=session_policy.limit_reached(ticks-resumed_tick,total_steps())||
-                (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status())));
+                (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))&&std::none_of(household_runtime.begin(),household_runtime.end(),
+                    [&](const auto& member){return vm_active(member->vm->status());}));
             if(runtime_finished&&!render_evidence)
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
             if(!render_window_host&&(runtime_finished||session_policy.limit_reached(ticks-resumed_tick,total_steps())))break;
@@ -2987,7 +3107,8 @@ struct PlacementCandidateProbe {
         }else
 #endif
         if(session_policy.limit_reached(ticks-resumed_tick,total_steps())||
-           (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))))break;
+           (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))&&std::none_of(household_runtime.begin(),household_runtime.end(),
+                    [&](const auto& member){return vm_active(member->vm->status());})))break;
         ++ticks;
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
@@ -3150,6 +3271,13 @@ struct PlacementCandidateProbe {
         };
         if(playback)playback->tick(ticks,record_animation_event);
         if(second_main_playback)second_main_playback->tick(ticks,record_animation_event);
+        for(auto& member:household_runtime){
+            if(!member->controllers->advance(ticks)){
+                host_failed=true;host_diagnostic="household resident controller rejected tick";break;
+            }
+            if(member->playback)member->playback->tick(ticks,record_animation_event);
+        }
+        if(host_failed)break;
         execute(true);
         if(go_here_status=="queued"){
             if(queue.completion()&&(!go_here_previous_completion_uid||
@@ -3459,10 +3587,12 @@ struct PlacementCandidateProbe {
     const auto unfinished=[](odh::VmStatus value){return value==odh::VmStatus::waiting||
         value==odh::VmStatus::yielded||value==odh::VmStatus::budget_exhausted;};
     const bool tick_exhausted=!host_failed&&ticks-resumed_tick==session_policy.tick_limit()&&
-        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
+        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status()))||std::any_of(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return unfinished(member->vm->status());}));
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
     const bool instruction_exhausted=session_policy.instruction_limit_reached(total_steps()) &&
-        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
+        (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status()))||std::any_of(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return unfinished(member->vm->status());}));
     if(render_requested&&!render_evidence){
         if(render_window&&host_failed)throw odh::FormatError("person window preview host failed before a live Playback sample: "+host_diagnostic);
         const std::string reason=render_window?(window_closed?"person window preview closed before a live Playback sample was available":
@@ -3625,6 +3755,26 @@ struct PlacementCandidateProbe {
         <<",\"stack_depth\":"<<second_main_vm->stack().size()<<'}';
     }
     else std::cout<<"null";
+    if(session_context){
+        std::cout<<",\"household_main\":{\"mode\":"<<json_bytes(session_context->single_resident_session?
+            "single_resident_session":"whole_household")<<",\"scheduler_entities\":"<<entity_scheduler.size()
+            <<",\"entities_before\":"<<household_entity_count<<",\"entities_after\":"<<entity_count()<<",\"additional_residents\":[";
+        for(std::size_t i=0;i<household_runtime.size();++i){
+            const auto& member=*household_runtime[i];if(i)std::cout<<',';
+            const auto* entity=world.find(member.id);
+            const auto position_json=[&](const std::optional<odh::EntityPosition>& p){
+                if(p)std::cout<<'['<<p->x<<','<<p->y<<','<<p->level<<','<<unsigned(p->direction)<<']';
+                else std::cout<<"null";
+            };
+            std::cout<<"{\"entity_id\":"<<member.id<<",\"guid\":"<<member.data.binding->guid
+                <<",\"file\":"<<json_bytes(member.resource.archive)<<",\"routine\":"<<member.main
+                <<",\"status\":"<<json_bytes(odh::vm_status_name(member.vm->status()))
+                <<",\"diagnostic\":"<<json_bytes(member.vm->diagnostic())<<",\"steps\":"<<member.vm->steps()
+                <<",\"start_position\":";position_json(member.start);
+            std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);std::cout<<'}';
+        }
+        std::cout<<"]}";
+    }
     if(second_saved_main){
         const auto position_json=[&](const std::optional<odh::EntityPosition>& p){
             if(p)std::cout<<'['<<p->x<<','<<p->y<<','<<p->level<<','<<unsigned(p->direction)<<']';

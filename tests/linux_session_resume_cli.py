@@ -175,14 +175,14 @@ def main():
             assert not data['host_failed'] and data['status'] != 'fault', data
             return data
         fresh = ['--mode', '1', '--house', '7', '--resident-id', '11', '--language', '1']
-        first = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'])
+        first = run(fresh + ['--headless-ticks', '1', '--single-resident-session', '--save-session-on-exit'])
         assert first['ticks'] == 1 and not first['session_loaded'] and first['resumed_tick'] == 0, first
         saved = Path(first['saved_session_path'])
         assert saved.is_file() and saved.stat().st_size > 0
-        resumed = run(['--load-session', str(saved), '--headless-ticks', '1', '--save-session-on-exit'])
+        resumed = run(['--load-session', str(saved), '--headless-ticks', '1', '--single-resident-session', '--save-session-on-exit'])
         assert resumed['session_loaded'] and resumed['resumed_tick'] == 1 and resumed['ticks'] == 2, resumed
         resumed_bytes = Path(resumed['saved_session_path']).read_bytes()
-        direct = run(fresh + ['--headless-ticks', '2', '--save-session-on-exit'])
+        direct = run(fresh + ['--headless-ticks', '2', '--single-resident-session', '--save-session-on-exit'])
         assert direct['ticks'] == 2 and not direct['session_loaded'], direct
         assert resumed_bytes == Path(direct['saved_session_path']).read_bytes(), 'resumed state differs from uninterrupted execution'
         assert resumed['actor_state']['person_data'][1] == direct['actor_state']['person_data'][1] == 1, 'Main restarted'

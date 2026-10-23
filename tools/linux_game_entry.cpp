@@ -40,6 +40,7 @@ struct Options {
     std::optional<std::filesystem::path> load_session;
     std::optional<unsigned> headless_ticks;
     bool save_on_exit = false;
+    bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
     bool headless_stand = false;
     std::vector<std::uint8_t> restore_archive;
@@ -60,6 +61,10 @@ Options parse_options(int argc, char** argv) {
     bool have_root = false, have_mode = false, have_language = false;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
+        if (key == "--single-resident-session" && !result.single_resident_session) {
+            result.single_resident_session = true;
+            continue;
+        }
         if (key == "--save-session-on-exit" && !result.save_on_exit) {
             result.save_on_exit = true;
             continue;
@@ -97,6 +102,8 @@ Options parse_options(int argc, char** argv) {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
     }
+    if ((result.save_on_exit || result.load_session) && !result.single_resident_session)
+        throw odh::FormatError("session save/restore currently requires explicit --single-resident-session; full household continuation is not implemented");
     if (result.load_session) {
 #ifdef __linux__
         result.restore_archive = odh::encode_session_archive(odh_host::read_session_archive(*result.load_session));
@@ -135,7 +142,8 @@ Options parse_options(int argc, char** argv) {
         (result.plan_only && !result.house))
         throw odh::FormatError(
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
-            "[--house 1..98] [--resident-id 1..32767] [--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--save-session-on-exit]]");
+            "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
+            "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
@@ -400,6 +408,7 @@ void print_plan(const Options& options, unsigned house,
         << ",\"resident_guid\":" << resident.guid << ",\"resident_neighbor_id\":"
         << resident.neighbor_id << ",\"resident_asset\":" << json_bytes(resident.character_asset)
         << ",\"resident_count\":" << session.members.size()
+        << ",\"resident_execution\":" << json_bytes(options.single_resident_session ? "single_resident_session" : "whole_household")
         << ",\"resource_identity\":{\"language\":" << static_cast<unsigned>(identity.language_code)
         << ",\"expansion_mask\":" << static_cast<unsigned>(identity.expansion_mask)
         << ",\"resource_count\":" << plan.resources.size()
@@ -475,6 +484,8 @@ int odh_linux_game_entry(int argc, char** argv) {
 
         const auto session = odh::load_session_entry(userdata, options.mode,
             static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language));
+        if (!options.single_resident_session && session.members.size() > 8)
+            throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
         const odh::SessionEntryMember* resident = nullptr;
         if (options.resident_id) {
             const auto found = std::find_if(session.members.begin(), session.members.end(),
@@ -530,6 +541,13 @@ int odh_linux_game_entry(int argc, char** argv) {
         session_context.resources = verified_identity;
         session_context.restore_archive = std::move(options.restore_archive);
         session_context.save_on_exit = options.save_on_exit;
+        session_context.single_resident_session = options.single_resident_session;
+        if (!options.single_resident_session) {
+            const auto characters = require_directory(game, userdata / "Characters");
+            for (const auto& member : session.members)
+                session_context.household_members.push_back({require_file(game, characters / member.character_asset),
+                    member.guid, member.object_definition_id});
+        }
         session_context.bounded_headless = options.headless_ticks.has_value();
         session_context.game_root = game;
         session_context.resource_paths = plan.resources;

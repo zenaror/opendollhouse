@@ -14,7 +14,15 @@ using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>
 
 // Stable launch identity retained by the Linux runtime for save metadata.
 // Direct diagnostic invocations may omit it; integrated game launches supply it.
+struct IntegratedHouseholdMember {
+    std::filesystem::path character_path;
+    std::uint32_t guid = 0;
+    std::uint16_t object_definition_id = 0;
+};
 struct IntegratedSessionContext {
+    // Empty only for the explicit single-resident save/restore test profile.
+    std::vector<IntegratedHouseholdMember> household_members;
+    bool single_resident_session = false;
     std::optional<odh::SessionResourceIdentity> resources;
     std::vector<std::uint8_t> restore_archive; // Verified launch input; never rewritten.
     bool save_on_exit = false;

@@ -78,6 +78,26 @@ Leitura de três saves externos, Debug e ASan/UBSan:
 
 ## Gates Linux de residentes
 
+### Main integrado de toda a família (2026-10-23)
+
+Sobre a revisão base `52e8306`, com mudanças ainda não commitadas, o gate
+headless curto iniciou os Main dos dois moradores reais já presentes em
+House07 no mesmo World e relógio. Contra os dados em
+`/home/rafael/_PROJETOS/TheSims1/referencias/The Sims`, as threads 105/GUID
+`850010198` (`--resident-id 48`) e 137/GUID `844195932`
+(`--resident-id 47`) completaram 32 ticks cada; ambas passaram com
+`scheduler_entities=2` e as posições dos moradores preservadas. Os quatro
+arquivos originais protegidos mantiveram seus SHA256 no gate. Tentativa de
+salvar a sessão multi-residente foi rejeitada antes de qualquer escrita.
+Build `odh-person` concluído e `git diff --check` passou. O CTest anterior
+registrou 201 aprovados e 1 ignorado (`linux_window_backend`, sem display).
+
+Este milestone demonstra Main integrado dos dois residentes presentes nesse
+gate. O gate é curto e headless: não valida UI/visuais, autonomia, roteamento,
+Snap/postura dos extras, save/resume multi-residente, residentes ausentes ou
+jogabilidade completa. Somente os quatro arquivos hashados tiveram
+fingerprint; não se mediu nem se deve inferir uma contagem total de inputs.
+
 ### Dois moradores carregados no mesmo lote (2026-10-23)
 
 O teste opcional `tests/house07_paired_main_smoke.py`, executado com
