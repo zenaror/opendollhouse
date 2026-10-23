@@ -96,6 +96,18 @@ still enter their house.
   lot entry, supported move-out selection, confirmation/cancel, and refusal of
   move-out when the refund is unverified. This covers screen decisions, not the
   entire UI-to-save-to-map path or a manual visual play session.
+- An isolated interactive run of `odh-person` against the local `../referencias/The Sims`
+  data completed House05 → move-out → refreshed neighborhood → House01 family
+  picker. The confirmation reported a 33,116 refund and 35,658 resulting
+  budget; House01 then showed a 9,500 budget after purchase. The move-in was
+  canceled before writing. Reopening the app with the same temporary player
+  profile showed House05's center marker in the vacant-lot color
+  `srgb(40,220,120)`. `Neighborhood.iff` kept SHA-256
+  `e585615fed1f9ddfb15ff8f5ebe7a09ea48a1369e9a3106f8331d3d9f5dde323` before
+  and after. Xephyr and X11-generated events isolated the run; its overlay and
+  screenshots stayed in `/tmp`, and no commercial input file changed. This is
+  an integrated Linux run on this installation, not proof against the original
+  executable or a human-input play test.
 - `session_entry_resolution`: the effective moved family resolves to the same
   lot and resident GUIDs.
 - Full Linux build completed; all 213 CTest cases passed in this run.
@@ -106,9 +118,11 @@ still enter their house.
 
 ## Still missing
 
-The synthetic keyboard test covers the choice and confirmation screens, while
-the overlay/store tests cover saving separately. An automated end-to-end test
-of UI → compare-and-write → refreshed map → choosing another lot is still
-missing. The visual move-in and move-out flows have not been manually clicked
-through. The runtime reloads the overlay when it starts; a future hardening
-step should verify the selected family identity at that boundary.
+An automated end-to-end test of UI → compare-and-write → refreshed map →
+choosing another lot is still missing; the one-off Xephyr run above covered
+that path using this local installation. This build was configured without
+PangoCairo, so the map rendered but choice/confirmation text was absent from
+the canvas; the window title still showed the active choice and amounts. A
+human-input play test and a visible text-rendering build remain pending. The
+runtime reloads the overlay when it starts; a future hardening step should
+verify the selected family identity at that boundary.

@@ -44,7 +44,10 @@ validação indicados por versão.
   vizinhança, `E` oferece a saída somente quando o reembolso tem origem
   verificada; a confirmação mostra o valor e o saldo final, e o mapa é atualizado
   depois de salvar. Testes sintéticos de teclado cobrem as telas; build Linux e
-  213 testes CTest passaram. Isso ainda não é uma validação manual de gameplay. Veja
+  213 testes CTest passaram. Um teste integrado isolado, com dados originais em
+  leitura, confirmou House05 → saída → mapa atualizado → seletor da House01, e a
+  saída persistiu ao reabrir o app. Isso não prova gameplay nem entrada humana.
+  Veja
   [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
 
 - Adicionado o codec versionado do estado local de mudança de família para lote.
