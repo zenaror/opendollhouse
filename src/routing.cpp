@@ -230,15 +230,52 @@ bool Routing::consume_portal_turn() noexcept {
     return consume_route_portal_turn(job_->frame,parent);
 }
 bool Routing::call_external_frame(const VmCall& call) {
-    if(executing_ || !vm_ || !job_ || job_->external_frame_active ||
+    if(executing_) return false;
+    return schedule_external_frame(call,false);
+}
+bool Routing::schedule_external_frame(const VmCall& call,bool sitting) {
+    if(!vm_ || !job_ || job_->external_frame_active ||
        vm_->run_generation()!=job_->run_generation || vm_->status()!=VmStatus::waiting ||
        !vm_->pending() || vm_->pending()->ticket!=job_->ticket ||
        call.return_mode!=VmCallReturnMode::ordinary) return false;
     if(!vm_->call_pending(job_->ticket,call)) return false;
     job_->external_frame_active=true;
+    job_->external_frame_sitting=sitting;
     job_->external_frame_owner=call.context.code_owner;
     job_->external_frame_call=call;
     job_->frame.state=RouteFrameState::room_portal;
+    return true;
+}
+bool Routing::try_next_sitting_goal() {
+    if(!job_||job_->fallback_goals.empty())return false;
+    const auto* actor=world_.find(job_->actor);
+    const auto* target=world_.find(job_->target);
+    if(!actor||!target||actor->generation!=job_->actor_generation||
+       target->generation!=job_->target_generation||!actor->position||!target->position||actor->attachment)
+        return false;
+    if(route_grid_refresh_&&!route_grid_refresh_(*actor->position))return false;
+    actor=world_.find(job_->actor);target=world_.find(job_->target);
+    if(!actor||!target||!actor->position||!target->position||actor->attachment||
+       actor->generation!=job_->actor_generation||target->generation!=job_->target_generation||
+       (job_->target!=job_->actor&&!(*target->position==job_->target_position)))
+        return false;
+    const auto result=find_pre_ranked_slot_route(grid_,{actor->position->x,actor->position->y},
+                                                 job_->fallback_goals,limits_);
+    if(result.path.status!=RouteStatus::found||!result.selected)return false;
+    const auto index=*result.selected;
+    const auto selected=job_->fallback_goals[index];
+    job_->fallback_goals.erase(job_->fallback_goals.begin()+static_cast<std::ptrdiff_t>(index));
+    job_->path=result.path.points;
+    job_->next=1;
+    job_->entry_flags=selected.entry_flags;
+    job_->facing=selected.facing;
+    job_->selected_sitting_object=selected.sitting_object;
+    job_->expected=*actor->position;
+    job_->expected_radian_direction=actor->radian_direction;
+    job_->walking_started=true;
+    job_->external_frame_sitting=false;
+    job_->frame.state=job_->path.size()==1?RouteFrameState::turn_only:RouteFrameState::walking;
+    diagnostic_.clear();
     return true;
 }
 PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,const VmDispatch& dispatch) {
@@ -437,6 +474,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
+    std::vector<PreRankedSlotGoal> fallback_goals;
     std::string invalid_route_input_diagnostic;
     std::size_t route_goal_count=0;
     if(goto_relative&&!in_front_goto_relative) {
@@ -491,7 +529,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             break;
         }
         auto result=find_pre_ranked_slot_route(grid_,start,accepted,limits_);
-        if(result.selected) selected=accepted[*result.selected];
+        if(result.selected) {
+            selected=accepted[*result.selected];
+            fallback_goals.reserve(accepted.size()-1);
+            for(std::size_t n=0;n<accepted.size();++n)
+                if(n!=*result.selected)fallback_goals.push_back(accepted[n]);
+        }
         path=std::move(result.path);
     }else {
         std::vector<RoutePoint> goals;
@@ -554,6 +597,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
              arrival_facing,goto_relative?i.operands[3]==255:slot->facing==-3,
              false,0,false,0,{},0,false,false,{}, {},0,false};
     job_->selected_sitting_object=selected?selected->sitting_object:std::nullopt;
+    job_->fallback_goals=std::move(fallback_goals);
     job_->run_generation=vm_->run_generation();
     job_->call_failure_trees=saved_go_here_relative&&!nested_request;
     return {PrimitiveDisposition::wait,{}};
@@ -746,6 +790,23 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
                 job_->failure_code=4;
                 return finish(false,"route interrupted by player");
             }
+            if(job_->external_frame_sitting) {
+                job_->external_frame_sitting=false;
+                if(result.result)return finish(true,{});
+                auto* actor=world_.find(job_->actor);
+                const auto* target=world_.find(job_->target);
+                if(!actor||!target||actor->generation!=job_->actor_generation||
+                   target->generation!=job_->target_generation||!actor->position||!target->position||
+                   actor->attachment||!grid_.contains({actor->position->x,actor->position->y})||
+                   !grid_.walkable({actor->position->x,actor->position->y})||
+                   (job_->target!=job_->actor&&!(*target->position==job_->target_position)))
+                    return finish(false,"failed EntryPoint26 changed or invalidated route participants");
+                if(route_grid_refresh_&&!route_grid_refresh_(*actor->position))
+                    return finish(false,"failed EntryPoint26 could not refresh the route grid");
+                job_->failure_code=5; // Simitone VMRouteFailCode.CantSit.
+                if(try_next_sitting_goal())return true;
+                return finish(false,"EntryPoint26 returned false and no alternate SLOT goal remains");
+            }
             job_->frame.state=RouteFrameState::room_portal;
             const auto* actor=world_.find(job_->actor);
             const auto* target=world_.find(job_->target);
@@ -877,6 +938,26 @@ bool Routing::tick(std::uint64_t now,const std::function<void(const RouteMovemen
         if(!job_->face_anywhere&&!world_.set_radian_direction(job_->actor,static_cast<float>(job_->facing)*pi_over_four))
             return finish(false,"route arrival facing rejected");
         if(event) event->position=position;
+        if(job_->selected_sitting_object) {
+            job_->failure_code=5; // Simitone VMRouteFailCode.CantSit.
+            std::optional<VmCall> call;
+            if(sitting_action_) {
+                try {call=sitting_action_(job_->actor,*job_->selected_sitting_object);}
+                catch(const std::exception& error) {diagnostic_=std::string("EntryPoint26 planning failed: ")+error.what();}
+            }
+            if(call&&schedule_external_frame(*call,true)) {
+                if(event&&moved)moved(*event);
+                return true;
+            }
+            if(call&&diagnostic_.empty())diagnostic_=std::string("EntryPoint26 VM call could not be scheduled: ")+vm_->diagnostic();
+            else if(!call&&diagnostic_.empty())diagnostic_="EntryPoint26 provider returned no VM call";
+            if(try_next_sitting_goal()) {
+                if(event&&moved)moved(*event);
+                return true;
+            }
+            return finish(false,diagnostic_.empty()?
+                "selected sitting goal has no schedulable EntryPoint26 or alternate SLOT goal":diagnostic_);
+        }
         const auto accepted=finish(true,{});
         if(event && moved) moved(*event);
         return accepted;

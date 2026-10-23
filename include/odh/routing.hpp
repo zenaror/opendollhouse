@@ -94,6 +94,8 @@ using RoutePortalStepProvider=std::function<RoutePortalStepPlan(
     const std::optional<VmCall>& previous_call,const std::optional<bool>& previous_result,
     std::size_t step_index)>;
 using RoutePortalContextEndProvider=std::function<void(std::uint64_t root_ticket)>;
+using RouteSittingActionProvider=std::function<std::optional<VmCall>(
+    std::int16_t actor_id,std::int16_t chair_id)>;
 // Controlled async route adapter: Route45's profiled SLOTs plus opcode27's
 // exact-point OnTopOf/SameDirection-or-Opposing/NoFailureTrees profile.
 // Opcode27 requires a host goal validator; this is not the complete TS1 routing policy.
@@ -140,6 +142,10 @@ public:
     void set_room_portal_context_end_provider(RoutePortalContextEndProvider provider) {
         if(executing_||job_)throw std::logic_error("cannot replace Route45 room context cleanup while active");
         room_portal_context_end_=std::move(provider);
+    }
+    void set_sitting_action_provider(RouteSittingActionProvider provider) {
+        if(executing_||job_)throw std::logic_error("cannot replace Route45 sitting action provider while active");
+        sitting_action_=std::move(provider);
     }
     // Provider for bounded, source-verified ranged SLOT profiles.
     void set_ranged_slot_goal_provider(PreRankedSlotGoalProvider provider) {
@@ -203,9 +209,13 @@ private:
         std::int16_t failure_blocker=0;
         std::string failure_reason{};
         std::optional<std::int16_t> selected_sitting_object{};
+        std::vector<PreRankedSlotGoal> fallback_goals{};
+        bool external_frame_sitting=false;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);
+    bool schedule_external_frame(const VmCall&,bool sitting);
+    bool try_next_sitting_goal();
     void end_room_context(Job&);
     bool finish(bool result,std::string reason);
     void cancel_chain(const std::string& reason);
@@ -223,6 +233,7 @@ private:
     RouteRoomPairProvider room_pair_;
     RoutePortalStepProvider room_portal_step_;
     RoutePortalContextEndProvider room_portal_context_end_;
+    RouteSittingActionProvider sitting_action_;
     RouteLimits limits_;
     Vm* vm_=nullptr;
     std::optional<Job> job_;

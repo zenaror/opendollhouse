@@ -826,9 +826,72 @@ int main() {
          vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(10)==odh::VmStatus::waiting&&routing.active_sitting_object()==2,
                  "Route45 keeps the selected sitting object attached while the avatar walks");
-         for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
-         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&!routing.active_sitting_object(),
-                 "selected sitting object is cleared when its Route45 ticket completes");}
+         for(std::uint64_t tick=1;tick<=64&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_false&&!routing.active()&&!routing.active_sitting_object(),
+                 "Route45 fails closed and clears a sitting goal when no EntryPoint26 provider exists");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();
+         odh::PreRankedSlotGoalProvider goals=[](const auto&,std::size_t,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{{{12,12},
+                 odh::reference_slot_entry_flags({28,12},0,{12,12},0x55),7,2}};
+         };
+         odh::Routing routing{world,grid,globals,goals};
+         odh::RoutineSet owner{{odh::routine_key(4097),odh::Bhav{0x8002,
+             {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive(),{{9,owner}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         routing.set_sitting_action_provider([](std::int16_t actor,std::int16_t chair)->std::optional<odh::VmCall> {
+             return odh::VmCall{odh::routine_key(4097),{actor,chair,chair,9},{}};
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active(),"Route45 starts a route to a sitting goal");
+         std::uint64_t tick=1;
+         for(;tick<=32&&routing.active()&&!routing.external_frame_active();++tick)routing.tick(tick);
+         const auto action_result=vm.run(1);
+         require(routing.external_frame_active()&&action_result==odh::VmStatus::yielded,
+                 "a chair EntryPoint26 success is awaited as a child VM action");
+         require(routing.tick(tick)&&!routing.active()&&vm.status()==odh::VmStatus::returned_true,
+                 "Route45 completes only after EntryPoint26 returns true");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();
+         const auto goal=[&](odh::RoutePoint point,std::optional<std::int16_t> chair) {
+             const auto flags=odh::reference_slot_entry_flags({28,12},0,point,0x55);
+             return odh::PreRankedSlotGoal{point,flags,7,chair};
+         };
+         odh::PreRankedSlotGoalProvider goals=[&](const auto&,std::size_t,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{goal({12,12},2),goal({20,12},{})};
+         };
+         odh::Routing routing{world,grid,globals,goals};
+         const auto action=odh::routine_key(4097);
+         odh::RoutineSet owner{{action,odh::Bhav{0x8002,
+             {{46,1,255,{}},{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+         odh::Vm vm{routines(),world.vm_memory(),{},
+             [primitive=routing.primitive()](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch) {
+                 if(instruction.opcode==46)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                 return primitive(frame,instruction,temps,dispatch);
+             },{{9,owner}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});
+         routing.set_sitting_action_provider([&](std::int16_t actor,std::int16_t chair)->std::optional<odh::VmCall> {
+             if(actor!=1||chair!=2)return {};
+             return odh::VmCall{action,{actor,chair,chair,9},{}};
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active()&&routing.active_sitting_object()==2,
+                 "Route45 starts at the ranked chair destination");
+         std::uint64_t tick=1;
+         for(;tick<=32&&routing.active()&&!routing.external_frame_active();++tick)routing.tick(tick);
+         require(routing.external_frame_active()&&routing.active_sitting_object()==2&&vm.run(1)==odh::VmStatus::waiting,
+                 "Route45 calls the selected chair action only after reaching its destination");
+         const auto child_ticket=vm.pending()->ticket;
+         const auto child_completed=vm.complete(child_ticket,false);
+         const auto child_status=vm.run(1);
+         const auto route_tick=routing.tick(tick++);
+         require(child_completed&&child_status==odh::VmStatus::yielded&&route_tick&&
+                 routing.active()&&!routing.active_sitting_object(),
+                 "a failed chair action selects the next ranked Route45 destination");
+         for(;tick<=64&&routing.active();++tick)routing.tick(tick);
+         require(!routing.active()&&vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->x==20,
+                 "Route45 succeeds at the alternate standing destination after EntryPoint26 returns false");}
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();odh::Routing routing{world,grid,globals};
          routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {

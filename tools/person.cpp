@@ -2471,6 +2471,45 @@ struct PlacementCandidateProbe {
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                             *shared.routing_slots);
                         runtime_routing->set_ranged_slot_goal_provider(std::move(range_slot_goals));
+                        runtime_routing->set_sitting_action_provider([&](std::int16_t actor_id,
+                            std::int16_t chair_id)->std::optional<odh::VmCall> {
+                            try {
+                                if(!restored_world||!definition_index||!globals||globals->standalone||
+                                   actor_id!=runtime_avatar_id||chair_id<=0||saved_owner_ids_exhausted)
+                                    return {};
+                                const auto record=std::find_if(restored_world->records.begin(),restored_world->records.end(),
+                                    [&](const auto& item){return item.saved.object_id==static_cast<std::uint16_t>(chair_id);});
+                                const auto* chair=world.find(chair_id);
+                                const auto* candidate=chair&&chair->definition?definition_index->unique(chair->definition->guid):nullptr;
+                                if(record==restored_world->records.end()||!chair||chair->kind!=odh::EntityKind::object||
+                                   !chair->position||!candidate)
+                                    throw odh::FormatError("selected chair identity or saved definition is unavailable");
+                                const auto function=saved_entry_point_function(*candidate,26);
+                                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,function.action);
+                                auto owner=saved_portal_code_owners.find(owner_key);
+                                const auto code_owner=owner==saved_portal_code_owners.end()?next_saved_code_owner:owner->second;
+                                std::optional<SavedSemiglobalCodeBank> semiglobal_bank;
+                                if(function.semiglobal_name)
+                                    semiglobal_bank=load_saved_semiglobal_code_bank(globals->archive,
+                                        *function.semiglobal_name+".iff");
+                                const auto global_bank=load_saved_global_code_bank(globals->archive,globals->entry);
+                                const auto plan=saved_avatar_entry_point_vm_call_plan(*record,world,*definition_index,
+                                    actor_id,chair_id,26,code_owner,
+                                    semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank);
+                                if(owner==saved_portal_code_owners.end()) {
+                                    if(!install_saved_entry_point_vm_call_plan(vm,plan))
+                                        throw odh::FormatError("Main VM rejected the EntryPoint26 code owner");
+                                    if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())
+                                        saved_owner_ids_exhausted=true;
+                                    else ++next_saved_code_owner;
+                                    saved_portal_code_owners.emplace(owner_key,code_owner);
+                                }
+                                return plan.call;
+                            } catch(const std::exception& error) {
+                                route_runtime_reason=std::string("sitting_entry_point_26_")+error.what();
+                                return {};
+                            }
+                        });
                         runtime_routing->set_sitting_slot_fallback_preflight([&](const auto& table,
                             std::size_t index,const auto&,const auto& target) {
                             return odh::child_shy_sitting_fallback_preflight(world,table,index,target);
