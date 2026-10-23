@@ -2594,9 +2594,35 @@ struct PlacementCandidateProbe {
                                     semiglobal_bank=load_saved_semiglobal_code_bank(globals->archive,
                                         *function.semiglobal_name+".iff");
                                 const auto global_bank=load_saved_global_code_bank(globals->archive,globals->entry);
+                                bool condition_passed=false;
+                                if(function.condition!=0) {
+                                    const auto condition_key=odh::routine_key(function.condition);
+                                    const odh::Bhav* condition=nullptr;
+                                    odh::RoutineSet private_bank;
+                                    switch(condition_key.scope) {
+                                    case odh::RoutineScope::private_object:
+                                        private_bank=load_saved_private_routines(*candidate);
+                                        if(const auto found=private_bank.find(condition_key);found!=private_bank.end())
+                                            condition=&found->second;
+                                        break;
+                                    case odh::RoutineScope::semiglobal:
+                                        if(semiglobal_bank)if(const auto found=semiglobal_bank->routines.find(condition_key);
+                                            found!=semiglobal_bank->routines.end())condition=&found->second;
+                                        break;
+                                    case odh::RoutineScope::global:
+                                        if(const auto found=global_bank.routines.find(condition_key);
+                                            found!=global_bank.routines.end())condition=&found->second;
+                                        break;
+                                    }
+                                    // Simitone permits an entry point when its optional condition
+                                    // routine is absent from the linked banks.
+                                    condition_passed=!condition||evaluate_saved_entry_point_condition(function.condition,*condition,world,
+                                        {actor_id,chair_id,chair_id,code_owner});
+                                    if(!condition_passed)return {};
+                                }
                                 const auto plan=saved_avatar_entry_point_vm_call_plan(*record,world,*definition_index,
                                     actor_id,chair_id,26,code_owner,
-                                    semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank);
+                                    semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank,condition_passed);
                                 if(owner==saved_portal_code_owners.end()) {
                                     if(!install_saved_entry_point_vm_call_plan(vm,plan))
                                         throw odh::FormatError("Main VM rejected the EntryPoint26 code owner");

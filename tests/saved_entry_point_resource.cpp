@@ -159,7 +159,8 @@ int main(){try{
     try{(void)saved_portal_action(candidate);}catch(const odh::FormatError&){missing_portal_bhav=true;}
     check(missing_portal_bhav,"authored Portal action without same-asset private BHAV fails closed");
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf(5006))+chunk("BHAV",5005,std::string{})+
-                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5006,portal_bhav(2))));
+                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav())+
+                    chunk("BHAV",5006,portal_bhav(2))));
     const auto condition_resource=saved_entry_point_resource(candidate);
     odh::World condition_world;
     check(condition_world.create(12,odh::EntityKind::avatar)&&condition_world.create(37,odh::EntityKind::object)&&
@@ -170,6 +171,28 @@ int main(){try{
     try{(void)saved_portal_vm_call_plan(condition_record,condition_world,odh::DefinitionIndex({candidate}),12,37,0x80000038U);}
     catch(const odh::FormatError&){portal_condition_unsupported=true;}
     check(portal_condition_unsupported,"portal condition is not silently skipped without an evaluator");
+    bool false_condition_rejected=false;
+    try{(void)saved_portal_vm_call_plan(condition_record,condition_world,odh::DefinitionIndex({candidate}),
+        12,37,0x80000038U,nullptr,nullptr,false);}
+    catch(const odh::FormatError&){false_condition_rejected=true;}
+    check(false_condition_rejected,"an evaluated false entry-point condition blocks the action plan");
+    const auto allowed_condition_plan=saved_portal_vm_call_plan(condition_record,condition_world,
+        odh::DefinitionIndex({candidate}),12,37,0x80000038U,nullptr,nullptr,true);
+    check(allowed_condition_plan.call.key.id==5015,
+        "an evaluated true entry-point condition allows the matching action plan");
+    const auto comparison=[](std::int16_t lhs,std::int16_t rhs){
+        return odh::Bhav{0x8002,{{2,0xFE,0xFF,{static_cast<std::uint8_t>(lhs),0,static_cast<std::uint8_t>(rhs),0,0,2,7,7}}},{},
+            odh::Bhav::Metadata{0,0,0,0}};
+    };
+    check(evaluate_saved_entry_point_condition(5006,comparison(9,9),condition_world,{12,37,37,0x80000039U}),
+        "read-only entry-point comparison accepts a true condition");
+    check(!evaluate_saved_entry_point_condition(5006,comparison(9,8),condition_world,{12,37,37,0x80000039U}),
+        "read-only entry-point comparison rejects a false condition");
+    bool unsafe_condition_rejected=false;
+    try{(void)evaluate_saved_entry_point_condition(5006,odh::Bhav{0x8002,{{45,0xFE,0xFF,{}}},{},
+            odh::Bhav::Metadata{0,0,0,0}},condition_world,{12,37,37,0x80000039U});}
+    catch(const odh::FormatError&){unsafe_condition_rejected=true;}
+    check(unsafe_condition_rejected,"condition with a service call is rejected by the read-only evaluator");
     const std::string door_glob=std::string(1,static_cast<char>(11))+"DoorGlobals";
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("GLOB",1,door_glob)+
                     chunk("BHAV",5005,std::string{})+chunk("BHAV",5015,portal_bhav(8192))));

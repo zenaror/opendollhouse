@@ -12,6 +12,34 @@ incluindo vizinhança e lotes das expansões, famílias e seus fluxos, seleção
 idioma e registro de falhas. Paridade ainda precisa ser verificada em uso; uma
 build compilada ou testes unitários aprovados não bastam.
 
+## Atualização: condições simples da EntryPoint26 (2026-10-23)
+
+O avaliador isolado de condições da EntryPoint26 agora aceita apenas BHAVs
+compostos inteiramente por expressões (opcode 2), com orçamento de 256 passos e
+sem permissão para escrever na memória do World. Retorna verdadeiro/falso para
+comparações e recusa rotinas que chamem serviços, tenham metadados ausentes,
+excedam o orçamento ou saiam da própria rotina. O caminho de roteamento usa o
+resultado antes de despachar a ação da cadeira; quando a rotina de condição não
+existe no banco vinculado, mantém a regra observada no Simitone de permitir a
+entrada. Duas condições reais não nulas foram encontradas nos assentos de
+diretor do Superstar (4116 e 4127), mas a integração delas com uma partida ainda
+não foi demonstrada.
+
+`odh-person` compilou e o teste `saved_entry_point_resource` passou, cobrindo
+comparação verdadeira/falsa, recusa de chamada a serviço e bloqueio/liberação
+do plano de ação conforme o resultado. O CTest completo passou 208/208; o teste
+de janela Linux foi pulado por falta de display. O teste integrado House07 foi
+reexecutado com dados da Legacy Collection em 32 ticks para cada seleção de
+morador: ambos os residentes executaram Main no mesmo World, e save/resume em
+processo separado gerou o mesmo arquivo que a execução contínua; arquivos
+originais incluídos no fingerprint permaneceram iguais. Isso é um gate headless
+curto, não prova de gameplay completo nem validação visual. A tentativa anterior
+de 214 ticks ficou sem relatório verificável e não conta como aprovada.
+Próximos passos: completar serviços necessários à ação real BHAV8215, observar
+os assentos Superstar com os dados da expansão e repetir House05→House07→House05.
+A prova atual do avaliador de condição é sintética e não altera o estado do
+jogo.
+
 ## Atualização: rastreio direto da ação sentar (2026-10-23)
 
 Com `Objects.far:Sofas.iff:8215`, `SofaGlobals.iff` e `Global.iff` da Legacy

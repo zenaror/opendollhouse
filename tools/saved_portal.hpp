@@ -18,6 +18,34 @@ struct SavedGlobalCodeBank {
     odh::RoutineSet routines;
 };
 
+// Evaluate the small, read-only BHAV profile used by the two known Superstar
+// chair entry-point conditions. This deliberately accepts only expression
+// instructions: a condition that calls a service or writes World memory stays
+// unsupported until that behavior has an explicit host implementation.
+inline bool evaluate_saved_entry_point_condition(std::uint16_t condition_id,const odh::Bhav& condition,
+    odh::World& world,odh::VmContext context,std::uint64_t instruction_budget=256) {
+    if(!condition.metadata||condition.instructions.empty())
+        throw odh::FormatError("entry-point condition has no executable metadata or instructions");
+    for(const auto& instruction:condition.instructions) {
+        if(instruction.opcode!=2)
+            throw odh::FormatError("entry-point condition uses an unsupported service or call");
+        for(const auto target:{instruction.on_true,instruction.on_false})
+            if(target<0xFD&&target>=condition.instructions.size())
+                throw odh::FormatError("entry-point condition branches outside its routine");
+    }
+    auto memory=world.vm_memory();
+    memory.write={}; // The condition probe may read the live World, never change it.
+    const auto key=odh::routine_key(condition_id);
+    odh::Vm evaluator(odh::RoutineSet{{key,condition}},std::move(memory));
+    context.code_owner=0; // The isolated probe has exactly one explicitly supplied routine.
+    if(evaluator.start(key,context)!=odh::VmStatus::running)
+        throw odh::FormatError("entry-point condition could not start");
+    const auto result=evaluator.run(instruction_budget);
+    if(result==odh::VmStatus::returned_true)return true;
+    if(result==odh::VmStatus::returned_false)return false;
+    throw odh::FormatError("entry-point condition did not finish within the read-only profile");
+}
+
 inline SavedGlobalCodeBank load_saved_global_code_bank(
     const std::string& archive,const std::string& entry) {
     const auto filename=std::filesystem::path(entry).filename().string();
@@ -98,7 +126,8 @@ inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
     const odh::DefinitionIndex& definitions,std::int16_t caller_id,
     std::int16_t object_id,std::size_t entry_point,odh::CodeOwner code_owner,
     const SavedSemiglobalCodeBank* semiglobal=nullptr,
-    const SavedGlobalCodeBank* globals=nullptr) {
+    const SavedGlobalCodeBank* globals=nullptr,
+    bool condition_passed=false) {
     if(caller_id<=0||object_id<=0||code_owner==0)
         throw odh::FormatError("entry-point call identities and resource CodeOwner must be explicit and valid");
     if(record.saved.object_id!=static_cast<std::uint16_t>(object_id))
@@ -117,7 +146,7 @@ inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
     const auto& live_function=object->entry_points->at(entry_point);
     if(live_function.condition!=function.condition||live_function.action!=function.action)
         throw odh::FormatError("live EntryPoint differs from the selected definition resource");
-    if(function.condition!=0)
+    if(function.condition!=0&&!condition_passed)
         throw odh::FormatError("entry-point condition requires an explicit evaluator");
     if(function.action==0)
         throw odh::FormatError("entry-point action is zero");
@@ -218,9 +247,9 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
     const odh::DefinitionIndex& definitions,std::int16_t caller_id,
     std::int16_t portal_id,odh::CodeOwner code_owner,
     const SavedSemiglobalCodeBank* semiglobal=nullptr,
-    const SavedGlobalCodeBank* globals=nullptr) {
+    const SavedGlobalCodeBank* globals=nullptr,bool condition_passed=false) {
     if(record.serialized_object_type!=8)
         throw odh::FormatError("saved World record is not a portal entity");
     return saved_avatar_entry_point_vm_call_plan(record,world,definitions,caller_id,portal_id,15,
-        code_owner,semiglobal,globals);
+        code_owner,semiglobal,globals,condition_passed);
 }
