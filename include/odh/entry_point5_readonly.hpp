@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/formats.hpp"
+#include "odh/read_only_bhav.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -30,5 +31,18 @@ ReadOnlyEntryPoint5Result evaluate_read_only_entry_point5(
     std::optional<std::int16_t> stack_object_person_data65 = {});
 
 const char* read_only_entry_point5_state_name(ReadOnlyEntryPoint5State) noexcept;
+
+// Runs a private EP5 action with Simitone's documented frame identities and
+// four arguments (stack object ID, ghost flag, 0, 0) in the bounded read-only
+// BHAV sandbox. `owner_routines` must be the exact private/linked-semiglobal
+// closure for that action; globals belong in `default_routines`. If ghost is
+// unknown, both possible values are tested and only an identical result is
+// accepted. This is diagnostic evidence, not a placement commit.
+ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(
+    const WorldSnapshot&, const RoutineSet& default_routines,
+    const RoutineSet& owner_routines, std::uint16_t action,
+    std::int16_t caller, std::int16_t stack_object,
+    std::optional<std::int16_t> ghost, std::uint64_t instruction_budget,
+    ReadOnlyBhavLimits limits = {});
 
 } // namespace odh

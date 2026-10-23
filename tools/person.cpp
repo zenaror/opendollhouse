@@ -2105,8 +2105,15 @@ struct PlacementCandidateProbe {
     };
     std::vector<EntryPoint5BhvEvidence> entry_point5_bhav_evidence;
     using EntryPoint5CacheKey=std::pair<std::uint32_t,std::uint16_t>;
-    std::map<EntryPoint5CacheKey,odh::Bhav> entry_point5_bhav_cache;
+    struct EntryPoint5Program {odh::RoutineSet owner;};
+    std::map<EntryPoint5CacheKey,EntryPoint5Program> entry_point5_bhav_cache;
     std::map<EntryPoint5CacheKey,std::string> entry_point5_bhav_errors;
+    std::map<std::string,SavedSemiglobalCodeBank> entry_point5_semiglobal_cache;
+    std::optional<SavedGlobalCodeBank> entry_point5_global_cache;
+    std::string entry_point5_global_error;
+    const odh::RoutineSet entry_point5_empty_globals;
+    bool entry_point5_global_loaded=false;
+    std::size_t entry_point5_evaluations=0;
     const odh::AttemptWalkEntryPoint5Resolver resolve_read_only_ep5=
         [&](std::int16_t caller_id,std::int16_t stack_object_id)->std::optional<bool>{
         EntryPoint5BhvEvidence evidence;
@@ -2130,37 +2137,98 @@ struct PlacementCandidateProbe {
         auto routine=entry_point5_bhav_cache.find(key);
         if(routine==entry_point5_bhav_cache.end()&&entry_point5_bhav_errors.find(key)==entry_point5_bhav_errors.end()){
             try{
-                auto loaded=saved_private_entry_point_bhav(*definition,evidence.action);
-                routine=entry_point5_bhav_cache.emplace(key,std::move(loaded)).first;
+                if(evidence.action<4096||evidence.action>=8192)
+                    throw odh::FormatError("EntryPoint 5 root is not a private BHAV");
+                if(entry_point5_bhav_cache.size()>=256)
+                    throw odh::FormatError("EntryPoint 5 program cache budget exceeded");
+
+                if(!entry_point5_global_loaded){
+                    entry_point5_global_loaded=true;
+                    if(globals&&!globals->standalone){
+                        try{entry_point5_global_cache=load_saved_global_code_bank(globals->archive,globals->entry);}
+                        catch(const std::exception& error){entry_point5_global_error=error.what();}
+                    }
+                }
+                auto owner_routines=load_saved_action_routines(*definition,evidence.action);
+                const auto root=odh::routine_key(evidence.action);
+                if(!owner_routines.count(root))
+                    throw odh::FormatError("EntryPoint 5 root missing from exact private action closure");
+
+                auto catalog=load_saved_tree_name_catalog(*definition);
+                auto semiglobal_name=unique_saved_semiglobal_name(catalog);
+                if(!semiglobal_name&&catalog.semiglobal_bindings!=0)
+                    throw odh::FormatError("EntryPoint 5 object has an empty GLOB link");
+                if(!semiglobal_name&&catalog.semiglobal_bindings==0&&
+                   definition->definition.tree_table_id==0xffff&&
+                   definition->definition.master_id!=0){
+                    if(const auto* master=definition_index->unique_master(*definition)){
+                        catalog=load_saved_tree_name_catalog(*master);
+                        semiglobal_name=unique_saved_semiglobal_name(catalog);
+                        if(!semiglobal_name&&catalog.semiglobal_bindings!=0)
+                            throw odh::FormatError("EntryPoint 5 master object has an empty GLOB link");
+                    }
+                }
+                if(semiglobal_name){
+                    if(semiglobal_name->empty()||semiglobal_name->find_first_of("/\\:.")!=std::string::npos||
+                       semiglobal_name->find('\0')!=std::string::npos)
+                        throw odh::FormatError("EntryPoint 5 GLOB link is not a flat resource name");
+                    if(!globals||globals->standalone)
+                        throw odh::FormatError("EntryPoint 5 linked semiglobal requires the selected Global FAR");
+                    const auto entry=*semiglobal_name+".iff";
+                    const auto cache_key=globals->archive+"\n"+entry;
+                    auto linked=entry_point5_semiglobal_cache.find(cache_key);
+                    if(linked==entry_point5_semiglobal_cache.end()){
+                        if(entry_point5_semiglobal_cache.size()>=64)
+                            throw odh::FormatError("EntryPoint 5 semiglobal cache budget exceeded");
+                        linked=entry_point5_semiglobal_cache.emplace(cache_key,
+                            load_saved_semiglobal_code_bank(globals->archive,entry)).first;
+                    }
+                    if(linked->second.name!=*semiglobal_name||linked->second.entry!=entry)
+                        throw odh::FormatError("EntryPoint 5 semiglobal does not match exact GLOB link");
+                    for(const auto& [code_key,code]:linked->second.routines)
+                        if(!owner_routines.emplace(code_key,code).second)
+                            throw odh::FormatError("duplicate routine across private and linked semiglobal banks");
+                }
+                routine=entry_point5_bhav_cache.emplace(key,
+                    EntryPoint5Program{std::move(owner_routines)}).first;
             }catch(const std::exception& error){entry_point5_bhav_errors.emplace(key,error.what());}
         }
         if(entry_point5_bhav_errors.find(key)!=entry_point5_bhav_errors.end()){
-            evidence.reason="selected_asset_bhav_unavailable";
+            evidence.reason="selected_asset_bhav_unavailable: "+entry_point5_bhav_errors.at(key);
             if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
-        if(routine==entry_point5_bhav_cache.end()||!stack_object||!stack_object->definition){
+        if(routine==entry_point5_bhav_cache.end()||!stack_object){
             evidence.reason="stack_object_identity_unavailable";
             if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
             return std::nullopt;
         }
-        const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
-        const auto attribute16=world.read(frame,1,16);
-        const auto* stack_definition=definition_index->unique(stack_object->definition->guid);
-        const auto definition_word9=stack_definition
-            ? std::optional<std::uint16_t>{stack_definition->definition.object_type}
-            : std::nullopt;
-        const auto person_data31=world.read(frame,19,31);
-        const auto attribute1=world.read(frame,0,1);
-        const auto person_data65=world.read(frame,19,65);
-        const auto execution=odh::evaluate_read_only_entry_point5(evidence.action,routine->second,
-            stack_object->definition->guid,stack_object->definition->master_guid,attribute16,
-            definition_word9,person_data31,attribute1,
-            stack_object->kind==odh::EntityKind::avatar,person_data65);
-        evidence.status=odh::read_only_entry_point5_state_name(execution.state);
-        evidence.reason=execution.reason;evidence.steps=execution.steps;
-        if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)evidence.result=true;
-        else if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)evidence.result=false;
+        if(entry_point5_evaluations>=1024){
+            evidence.reason="entry_point5_evaluation_budget_exhausted";
+            if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
+            return std::nullopt;
+        }
+        ++entry_point5_evaluations;
+        odh::ReadOnlyBhavLimits limits;
+        // Saved lots already use this bounded ceiling when restoring their World.
+        limits.world.words=131072;
+        const auto& default_routines=entry_point5_global_cache
+            ? entry_point5_global_cache->routines : entry_point5_empty_globals;
+        const auto execution=odh::evaluate_read_only_entry_point5_bhav(world.snapshot(),
+            default_routines,routine->second.owner,evidence.action,caller_id,
+            stack_object_id,{},256,limits);
+        switch(execution.state){
+        case odh::ReadOnlyBhavState::evaluated_true:
+            evidence.status="evaluated_true";evidence.result=true;break;
+        case odh::ReadOnlyBhavState::evaluated_false:
+            evidence.status="evaluated_false";evidence.result=false;break;
+        case odh::ReadOnlyBhavState::unsupported:
+            evidence.status="unsupported";break;
+        }
+        evidence.reason=execution.diagnostic.empty()?"read_only_bhav_completed":execution.diagnostic;
+        if(execution.state==odh::ReadOnlyBhavState::unsupported&&!entry_point5_global_error.empty())
+            evidence.reason+="; global bank unavailable: "+entry_point5_global_error;
+        evidence.steps=execution.steps;
         if(diagnostics.retain(Diagnostic::entry_point5,entry_point5_bhav_evidence.size(),4096))entry_point5_bhav_evidence.push_back(evidence);
         return evidence.result;
     };
@@ -5778,7 +5846,7 @@ struct PlacementCandidateProbe {
         const auto& probe=*placement_candidate_probe;
         const bool read_only_bhav_executed=std::any_of(entry_point5_bhav_evidence.begin(),entry_point5_bhav_evidence.end(),
             [](const auto& evidence){return evidence.steps!=0;});
-        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_subset\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"allowlisted_read_only_TestObjectType_and_attribute16_equality\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
+        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_probe\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; World_writes_denied; object_type_only; ambiguous_ghost_fails_closed\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
             <<",\"position\":["<<probe.position.x<<','<<probe.position.y<<','<<probe.position.level<<','<<unsigned(probe.position.direction)<<']'
             <<",\"inside_lot\":"<<(probe.inside_lot?"true":"false")<<",\"room\":";
         if(probe.room)std::cout<<*probe.room;else std::cout<<"null";
@@ -5813,7 +5881,7 @@ struct PlacementCandidateProbe {
             const auto& audit=*probe.overlap_audit;
             const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":
                 audit.rules.status==odh::SavedAvatarPlaceAuditStatus::blocked?"blocked":"unsupported";
-            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bound_EntryPoint_ids\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"status\":"<<json_bytes(status)
+            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bounded_read_only_EP5\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; World_writes_denied; ambiguous_ghost_fails_closed\",\"status\":"<<json_bytes(status)
                 <<",\"reason\":"<<json_bytes(odh::world_avatar_place_audit_reason_name(audit.reason))
                 <<",\"pair_classifications\":"<<audit.rules.pair_classifications
                 <<",\"final_blocker_id\":"<<audit.rules.final_blocker_id

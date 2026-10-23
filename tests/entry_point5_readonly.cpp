@@ -1,4 +1,5 @@
 #include "odh/entry_point5_readonly.hpp"
+#include "odh/world_snapshot_codec.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -152,6 +153,79 @@ int main() {
     result = evaluate_read_only_entry_point5(4122, changed_dining, 0, {}, {}, {}, {}, {}, true, 2);
     require(result.state == ReadOnlyEntryPoint5State::unsupported,
             "changed DiningTables logic remains outside the exact allowlist");
+
+    World ep5_world;
+    require(ep5_world.create(10, EntityKind::avatar, {2}) &&
+            ep5_world.create(20, EntityKind::object, {2}) &&
+            ep5_world.define_type(20, tested_guid), "generic EP5 caller and stack object");
+    const VmFrame ep5_frame{routine_key(4096), 0, {10, 10, 20, 0}, {}, {}};
+    require(ep5_world.write(ep5_frame, 0, 0, 44) && ep5_world.write(ep5_frame, 1, 0, 77),
+            "generic EP5 caller and stack-object attributes");
+    const auto ep5_snapshot = ep5_world.snapshot();
+    const auto ep5_before = encode_world_snapshot(ep5_snapshot);
+    Instruction caller_attribute_test{};
+    caller_attribute_test.opcode = 2; caller_attribute_test.on_true = 1; caller_attribute_test.on_false = 0xff;
+    caller_attribute_test.operands = {0, 0, 44, 0, 0, 2, 0, 7};
+    Instruction stack_attribute_test{};
+    stack_attribute_test.opcode = 2; stack_attribute_test.on_true = 2; stack_attribute_test.on_false = 0xff;
+    stack_attribute_test.operands = {0, 0, 77, 0, 0, 2, 1, 7};
+    Instruction stack_id_argument_test{};
+    stack_id_argument_test.opcode = 2; stack_id_argument_test.on_true = 0xfe; stack_id_argument_test.on_false = 0xff;
+    stack_id_argument_test.operands = {0, 0, 20, 0, 0, 2, 9, 7};
+    const auto stack_attribute = Bhav{0x8002,
+        {caller_attribute_test, stack_attribute_test, stack_id_argument_test}, {}, Bhav::Metadata{0, 4, 0, 4}};
+    RoutineSet ep5_owner{{routine_key(4108), stack_attribute}};
+    auto generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 20, {}, 8);
+    if(generic.state!=ReadOnlyBhavState::evaluated_true)
+        std::cerr<<"generic EP5 state="<<static_cast<int>(generic.state)<<" reason="
+                 <<static_cast<int>(generic.reason)<<" steps="<<generic.steps<<" diagnostic="
+                 <<generic.diagnostic<<'\n';
+    require(generic.state == ReadOnlyBhavState::evaluated_true && generic.steps == 6,
+            "generic EP5 receives Caller, StackObject and the stack-object ID argument");
+    require(encode_world_snapshot(ep5_snapshot) == ep5_before &&
+            encode_world_snapshot(ep5_world.snapshot()) == ep5_before,
+            "generic EP5 sandbox leaves saved and live World unchanged");
+
+    Instruction ghost_test{};
+    ghost_test.opcode = 2; ghost_test.on_true = 0xfe; ghost_test.on_false = 0xff;
+    ghost_test.operands = {1, 0, 1, 0, 0, 2, 9, 7};
+    auto ghost_bhav = Bhav{0x8002, {ghost_test}, {}, Bhav::Metadata{0, 4, 0, 4}};
+    ep5_owner[routine_key(4108)] = ghost_bhav;
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 20, 1, 8);
+    require(generic.state == ReadOnlyBhavState::evaluated_true,
+            "generic EP5 receives the known ghost argument");
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 20, {}, 8);
+    require(generic.state == ReadOnlyBhavState::unsupported &&
+            generic.diagnostic.find("unknown ghost argument") != std::string::npos,
+            "unknown ghost state cannot be guessed when the BHAV depends on it");
+    ghost_test.operands[0] = 0;
+    ghost_test.operands[2] = 1;
+    ep5_owner[routine_key(4108)] = Bhav{0x8002, {ghost_test}, {}, Bhav::Metadata{0, 4, 0, 4}};
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 20, {}, 8);
+    require(generic.state == ReadOnlyBhavState::evaluated_false,
+            "unknown ghost state is accepted only when both possibilities agree");
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 99, {}, 8);
+    require(generic.state == ReadOnlyBhavState::unsupported &&
+            generic.reason == ReadOnlyBhavReason::invalid_snapshot,
+            "missing EP5 stack object remains unsupported");
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4000, 10, 20, {}, 8);
+    require(generic.state == ReadOnlyBhavState::unsupported &&
+            generic.reason == ReadOnlyBhavReason::invalid_resources,
+            "generic EP5 rejects non-private root owners");
+    generic = evaluate_read_only_entry_point5_bhav(ep5_snapshot, {}, ep5_owner,
+        4108, 10, 20, 2, 8);
+    require(generic.state == ReadOnlyBhavState::unsupported &&
+            generic.reason == ReadOnlyBhavReason::invalid_resources,
+            "generic EP5 rejects invalid ghost flags");
+    require(encode_world_snapshot(ep5_snapshot) == ep5_before &&
+            encode_world_snapshot(ep5_world.snapshot()) == ep5_before,
+            "all generic EP5 variants leave the live World unchanged");
 
     std::cout << "Read-only EntryPoint 5 BHAV checks passed\n";
 }

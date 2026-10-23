@@ -3,6 +3,8 @@
 #include "odh/object_type.hpp"
 #include "odh/world.hpp"
 
+#include <algorithm>
+
 namespace odh {
 namespace {
 std::uint16_t word(const Instruction& instruction, std::size_t offset) {
@@ -160,6 +162,52 @@ const char* read_only_entry_point5_state_name(ReadOnlyEntryPoint5State state) no
     case ReadOnlyEntryPoint5State::unsupported: return "unsupported";
     }
     return "invalid_state";
+}
+
+ReadOnlyBhavResult evaluate_read_only_entry_point5_bhav(
+    const WorldSnapshot& snapshot, const RoutineSet& default_routines,
+    const RoutineSet& owner_routines, std::uint16_t action,
+    std::int16_t caller, std::int16_t stack_object,
+    std::optional<std::int16_t> ghost, std::uint64_t instruction_budget,
+    ReadOnlyBhavLimits limits) {
+    if (action < 4096 || action >= 8192 || caller <= 0 || stack_object <= 0 ||
+        (ghost && *ghost != 0 && *ghost != 1))
+        return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::invalid_resources, 0,
+                "invalid private EP5 action or execution context"};
+    const auto has_entity = [&](std::int16_t id) {
+        return std::any_of(snapshot.entities.begin(), snapshot.entities.end(),
+            [&](const Entity& entity) { return entity.id == id; });
+    };
+    if (!has_entity(caller) || !has_entity(stack_object))
+        return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::invalid_snapshot, 0,
+                "EP5 caller or stack object is absent from the World snapshot"};
+
+    // This disposable owner label is not an entity ID. Private/semiglobal
+    // lookup stays separate from the World identities in VmContext.
+    constexpr CodeOwner resource_owner = 1;
+    const RoutineOwners owners{{resource_owner, owner_routines}};
+    const auto run = [&](std::int16_t ghost_flag) {
+        const VmContext context{caller, caller, stack_object, resource_owner};
+        const std::vector<std::int16_t> arguments{stack_object, ghost_flag, 0, 0};
+        return evaluate_read_only_bhav(snapshot, default_routines, owners,
+            routine_key(action), context, arguments, instruction_budget, limits);
+    };
+    if (ghost) return run(*ghost);
+
+    const auto normal = run(0);
+    const auto ghost_image = run(1);
+    const auto total_steps = normal.steps > UINT64_MAX - ghost_image.steps
+        ? UINT64_MAX : normal.steps + ghost_image.steps;
+    if (normal.state == ReadOnlyBhavState::unsupported ||
+        ghost_image.state == ReadOnlyBhavState::unsupported) {
+        const auto& failed = normal.state == ReadOnlyBhavState::unsupported ? normal : ghost_image;
+        return {ReadOnlyBhavState::unsupported, failed.reason, total_steps,
+                "EP5 ghost argument is unknown; " + failed.diagnostic};
+    }
+    if (normal.state != ghost_image.state)
+        return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::did_not_complete, total_steps,
+                "EP5 result changes with the unknown ghost argument"};
+    return {normal.state, ReadOnlyBhavReason::completed, total_steps, {}};
 }
 
 } // namespace odh
