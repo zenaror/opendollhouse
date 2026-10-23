@@ -2,12 +2,27 @@
 
 #include "odh/character_catalog.hpp"
 #include "odh/lot.hpp"
+#include "odh/sha256.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <utility>
 
 namespace odh {
 namespace {
+std::array<std::uint8_t, 32> identity_of(const View& view) {
+    Sha256 hash;
+    std::array<std::uint8_t, 64 * 1024> block{};
+    for (std::uint64_t offset = 0; offset < view.size();) {
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(
+            block.size(), view.size() - offset));
+        view.read(offset, block.data(), count);
+        hash.update(block.data(), count);
+        offset += count;
+    }
+    return hash.finish();
+}
+
 template<class F>
 void with_iff_file(const std::filesystem::path& path, F&& read) {
     std::error_code error;
@@ -21,7 +36,8 @@ void with_iff_file(const std::filesystem::path& path, F&& read) {
 }
 
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
-        unsigned mode, std::uint16_t house, std::uint8_t language) {
+        unsigned mode, std::uint16_t house, std::uint8_t language,
+        const FamilyOverlay* saved_overlay) {
     if (!neighborhood_mode_supported(mode))
         throw FormatError("selected neighborhood mode is unsupported");
     if (house == 0 || house >= 99) throw FormatError("selected house is outside the selectable range");
@@ -44,8 +60,10 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
     if (!locations) throw FormatError("selected mode has no LotLocations table");
 
     std::vector<FamilyEntry> family_entries;
+    std::optional<std::array<std::uint8_t, 32>> neighborhood_identity;
     std::optional<Nbrs> raw_neighbors;
     with_iff_file(user_data / "Neighborhood.iff", [&](const auto& view) {
+        if (saved_overlay) neighborhood_identity = identity_of(view);
         iff_chunks(view, [&](const Chunk& chunk) {
             if (chunk.type == "FAMI") {
                 if (family_entries.size() >= 4096) throw FormatError("too many family records");
@@ -57,6 +75,9 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
         });
     });
     if (!raw_neighbors) throw FormatError("Neighborhood.iff has no NBRS1 table");
+    if (saved_overlay)
+        family_entries = apply_family_overlay(family_entries, *neighborhood_identity,
+                                               *saved_overlay);
 
     const auto house_file = user_data / "Houses" /
         ("House" + (house < 10 ? std::string("0") : std::string()) + std::to_string(house) + ".iff");

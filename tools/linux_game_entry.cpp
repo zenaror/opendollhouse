@@ -8,6 +8,7 @@
 #include "odh/session_bundle.hpp"
 #ifdef __linux__
 #include "linux_session_archive_store.hpp"
+#include "linux_family_overlay_store.hpp"
 #endif
 #include "odh/session_resource_identity.hpp"
 #include "json.hpp"
@@ -571,6 +572,12 @@ int odh_linux_game_entry(int argc, char** argv) {
             throw odh::FormatError("game root is not an accessible directory: " + options.game_root.string());
         options.game_root = game;
         const auto userdata = require_directory(game, game / "UserData");
+#ifdef __linux__
+        const auto family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+            userdata / "Neighborhood.iff");
+#else
+        const std::optional<odh::FamilyOverlay> family_overlay;
+#endif
         std::optional<std::filesystem::path> graphics_resource;
 #ifdef ODH_HAVE_X11
         const auto graphics = require_file(game, game / "UIGraphics/UIGraphics.far");
@@ -592,7 +599,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 }
                 options.language = *selected;
             }
-            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
+            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                family_overlay ? &*family_overlay : nullptr);
         }
 #else
         if (!options.plan_only && !options.headless_ticks)
@@ -634,7 +642,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 if (options.load_session && !options.restore_bundle)
                     load_travel_session(options);
                 const auto session = odh::load_session_entry(userdata, options.mode,
-                    static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language));
+                    static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
+                    family_overlay ? &*family_overlay : nullptr);
                 if (!options.single_resident_session && session.members.size() > 8)
                     throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
                 const odh::SessionEntryMember* resident = nullptr;

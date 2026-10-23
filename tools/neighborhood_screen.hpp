@@ -18,7 +18,8 @@ struct PreparedNeighborhoodMap {
 
 PreparedNeighborhoodMap prepare_neighborhood_map(
     const std::filesystem::path& user_data,
-    const std::filesystem::path& ui_graphics, unsigned mode);
+    const std::filesystem::path& ui_graphics, unsigned mode,
+    const odh::FamilyOverlay* saved_overlay = nullptr);
 
 // First-run choice for one of the 20 language codes present in The Sims 1 PC.
 // Returns nullopt when the player cancels or closes the window.

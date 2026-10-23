@@ -2,6 +2,7 @@
 
 #include "odh/definition_index.hpp"
 #include "odh/family.hpp"
+#include "odh/family_overlay.hpp"
 #include "odh/lot_locations.hpp"
 #include "odh/neighbor_context.hpp"
 #include "odh/world.hpp"
@@ -61,6 +62,7 @@ SessionEntry resolve_session_entry(unsigned neighborhood_mode,
 // Load and resolve a selected household from a player's installed UserData.
 // Reads only the named neighborhood, lot and character resources.
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
-    unsigned neighborhood_mode, std::uint16_t house_number, std::uint8_t language = 1);
+    unsigned neighborhood_mode, std::uint16_t house_number, std::uint8_t language = 1,
+    const FamilyOverlay* saved_overlay = nullptr);
 
 } // namespace odh

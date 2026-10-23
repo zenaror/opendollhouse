@@ -1,4 +1,5 @@
 #include "odh/session_entry.hpp"
+#include "odh/family_overlay.hpp"
 
 #include <iostream>
 #include <optional>
@@ -58,6 +59,22 @@ int main() {
                 entry.members[0].neighbor_id==11&&entry.members[0].character_asset=="User00004.iff"&&
                 entry.members[0].object_definition_id==128&&entry.members[1].guid==b&&
                 entry.members[1].neighbor_id==12,"family order and Sim resource identities resolved");
+
+        odh::Family vacant_family{};
+        vacant_family.house_number=0; vacant_family.family_number=900;
+        vacant_family.budget=20000; vacant_family.member_guids={a,b};
+        const odh::FamilyEntry vacant_entry{201,vacant_family};
+        std::array<std::uint8_t,32> neighborhood_identity{};
+        neighborhood_identity[0]=0x42;
+        const odh::FamilyOverlay move_in{neighborhood_identity,
+            {odh::plan_family_move_in(vacant_entry,7,5500)}};
+        const auto effective_entries=odh::apply_family_overlay(
+            {vacant_entry},neighborhood_identity,move_in);
+        const odh::FamilyContext effective_families(effective_entries);
+        const auto moved_entry=resolve(locations,effective_families,neighbors,characters);
+        require(effective_families.by_house(7)!=nullptr && moved_entry.family_chunk_id==201 &&
+                moved_entry.members.size()==2 && moved_entry.members[0].guid==a,
+                "one effective family overlay makes the moved household visible to lot entry");
 
         rejects([&]{(void)resolve(locations,families,neighbors,characters,6);},
                 "unsupported neighborhood mode rejected");

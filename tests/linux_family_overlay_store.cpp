@@ -1,4 +1,5 @@
 #include "linux_family_overlay_store.hpp"
+#include "odh/sha256.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -122,5 +123,32 @@ int main() {
             "overlay writer refuses a symbolic-link player-state directory");
     require(!std::filesystem::exists(directory_target / "child.odhp"),
             "refusing a linked directory does not write through it");
+
+    const auto config_home = temp.path / "config-home";
+    std::filesystem::create_directory(config_home);
+    if (::setenv("XDG_CONFIG_HOME", config_home.c_str(), 1) != 0)
+        throw std::runtime_error("cannot set test XDG_CONFIG_HOME");
+    const auto neighborhood = temp.path / "Neighborhood.iff";
+    const std::string source_bytes = "synthetic neighborhood source bytes";
+    { std::ofstream output(neighborhood, std::ios::binary); output << source_bytes; }
+    const auto identity = odh::sha256(source_bytes.data(), source_bytes.size());
+    auto persisted = first;
+    persisted.neighborhood_identity = identity;
+    odh_host::write_linux_family_overlay_atomic(
+        odh_host::linux_family_overlay_path(identity), persisted);
+    const auto selected = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+    require(selected && selected->neighborhood_identity == identity,
+            "neighborhood source selects the matching saved overlay");
+    auto mismatched = persisted;
+    mismatched.neighborhood_identity[0] ^= 1U;
+    odh_host::write_linux_family_overlay_atomic(
+        odh_host::linux_family_overlay_path(identity), mismatched);
+    rejects([&] { (void)odh_host::read_linux_family_overlay_for_neighborhood(neighborhood); },
+            "overlay content identity must match the path selected from Neighborhood.iff");
+    odh_host::write_linux_family_overlay_atomic(
+        odh_host::linux_family_overlay_path(identity), persisted);
+    { std::ofstream output(neighborhood, std::ios::binary | std::ios::trunc); output << "changed"; }
+    require(!odh_host::read_linux_family_overlay_for_neighborhood(neighborhood),
+            "changed neighborhood source cannot load a stale saved overlay");
     std::cout << "Linux family overlay store checks passed\n";
 }

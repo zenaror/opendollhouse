@@ -13,6 +13,11 @@ namespace odh_host {
 std::filesystem::path linux_family_overlay_path(
     const std::array<std::uint8_t, 32>& neighborhood_identity);
 
+// Finds the player's saved overlay using the exact bytes of Neighborhood.iff.
+// A missing overlay is normal; an unreadable source or invalid saved file is not.
+std::optional<odh::FamilyOverlay> read_linux_family_overlay_for_neighborhood(
+    const std::filesystem::path& neighborhood_iff);
+
 std::optional<odh::FamilyOverlay> read_linux_family_overlay(
     const std::filesystem::path& path);
 void write_linux_family_overlay_atomic(

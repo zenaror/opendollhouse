@@ -1,8 +1,10 @@
 #include "neighborhood_screen.hpp"
 
 #include "odh/family.hpp"
+#include "odh/family_overlay.hpp"
 #include "odh/neighborhood_picker.hpp"
 #include "odh/resident_selection.hpp"
+#include "odh/sha256.hpp"
 #include "resource.hpp"
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
 #include "linux_text_renderer.hpp"
@@ -17,10 +19,25 @@
 #include <utility>
 
 namespace odh_host {
+namespace {
+std::array<std::uint8_t, 32> neighborhood_identity(const odh::View& view) {
+    odh::Sha256 hash;
+    std::array<std::uint8_t, 64 * 1024> block{};
+    for (std::uint64_t offset = 0; offset < view.size();) {
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(
+            block.size(), view.size() - offset));
+        view.read(offset, block.data(), count);
+        hash.update(block.data(), count);
+        offset += count;
+    }
+    return hash.finish();
+}
+}
 
 PreparedNeighborhoodMap prepare_neighborhood_map(
         const std::filesystem::path& user_data,
-        const std::filesystem::path& ui_graphics, unsigned mode) {
+        const std::filesystem::path& ui_graphics, unsigned mode,
+        const odh::FamilyOverlay* saved_overlay) {
     const auto config = odh::neighborhood_map_config(mode);
     if (!config) throw odh::FormatError("neighborhood map is not available for this mode");
 
@@ -40,11 +57,15 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
 
     std::vector<odh::FamilyEntry> entries;
     with_iff_file((user_data / "Neighborhood.iff").string(), [&](const auto& view) {
+        const auto identity = saved_overlay ? neighborhood_identity(view) :
+            std::array<std::uint8_t, 32>{};
         odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
             if (chunk.type != "FAMI") return;
             if (entries.size() >= 4096) throw odh::FormatError("too many FAMI chunks");
             entries.push_back({chunk.id, odh::read_fami(chunk.payload)});
         });
+        if (saved_overlay)
+            entries = odh::apply_family_overlay(entries, identity, *saved_overlay);
     });
     const odh::FamilyContext families(entries);
     std::vector<odh::NeighborhoodMarker> markers;

@@ -1,9 +1,11 @@
 #include "linux_family_overlay_store.hpp"
 #include "linux_user_config.hpp"
+#include "odh/sha256.hpp"
 
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -105,6 +107,26 @@ std::optional<odh::FamilyOverlay> read_linux_family_overlay(
     if (count < 0) io_error("cannot finish reading family overlay", path);
     if (count != 0) throw odh::FormatError("family overlay changed while reading");
     return odh::decode_family_overlay(bytes);
+}
+
+std::optional<odh::FamilyOverlay> read_linux_family_overlay_for_neighborhood(
+        const std::filesystem::path& neighborhood_iff) {
+    std::ifstream input(neighborhood_iff, std::ios::binary);
+    if (!input) io_error("cannot open Neighborhood.iff for family overlay", neighborhood_iff);
+    odh::Sha256 hash;
+    std::array<std::uint8_t, 64 * 1024> block{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(block.data()),
+                   static_cast<std::streamsize>(block.size()));
+        const auto count = input.gcount();
+        if (count > 0) hash.update(block.data(), static_cast<std::size_t>(count));
+    }
+    if (!input.eof()) throw std::runtime_error("cannot read Neighborhood.iff for family overlay");
+    const auto identity = hash.finish();
+    auto overlay = read_linux_family_overlay(linux_family_overlay_path(identity));
+    if (overlay && overlay->neighborhood_identity != identity)
+        throw odh::FormatError("saved family overlay identity does not match Neighborhood.iff");
+    return overlay;
 }
 
 void write_linux_family_overlay_atomic(const std::filesystem::path& path,
