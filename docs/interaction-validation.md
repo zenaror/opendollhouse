@@ -564,3 +564,39 @@ prova que opcode20 ou o dispatcher completo do jogo original a disparariam.
 O grid de sala valida clearance no perfil suportado, não todos os footprints,
 raycasts ou regras do original. Dispatch de árvores nomeadas existentes,
 scheduler geral de objetos e uma sessão completa jogável continuam em aberto.
+
+## Comando do jogador para levantar (2026-10-22)
+
+Depois de concluir uma ação que deixou o Sim sentado e anexado ao objeto
+selecionado nesta sessão, a janela oferece `U to stand` no título e `U: Stand`
+na legenda disponível. A tecla U é um controle explícito do host ODH: ela
+solicita a função privada do EntryPoint27 do objeto. Não é uma linha TTAB
+inventada nem comprova a interface ou o despacho automático do jogo original.
+
+O pedido compartilha o carregamento da função e a mesma fila/VM do teste
+`--headless-stand`. Antes de carregar e imediatamente antes de enfileirar,
+confere identidade e geração do Sim e do objeto, GUID, postura sentada,
+attachment ao objeto selecionado e fila ociosa. A identidade da ação sentada
+bem-sucedida é preservada quando a seleção muda; selecionar novamente a mesma
+cadeira continua permitindo levantar. Objetos recriados sob o mesmo ID não
+herdam essa autorização. A função do recurso original ainda precisa executar
+e retornar seu próprio resultado; o host não força sucesso.
+
+O teste abaixo injeta clique e Space, depois um evento `WindowInput.stand` no
+tick270, pelo mesmo dispatcher usado pela janela. Em House07, Sit4097 e
+Stand4102 retornaram true, a postura terminou em0, sem attachment, e Main
+continuou aguardando até512 ticks:
+
+```sh
+python3 tests/house07_interaction_integration.py \
+  --binary /tmp/odh-acceleration-clean/odh-person \
+  --game-root '../referencias/The Sims' --window-input --window-stand
+```
+
+`--headless-window-stand-tick` é somente a entrada determinística do harness;
+`stand_runtime.trigger=headless_window_input` a distingue da solicitação
+fixture `headless_stand_request`. A entrada nativa usa
+`stand_runtime.trigger=window_input`. O teste de backend X11 também cobre U,
+retenção e soltura da tecla, mas continua pulado em sessões sem DISPLAY.
+Nenhum desses resultados estabelece equivalência de todos os objetos ou uma
+sessão completa jogável.

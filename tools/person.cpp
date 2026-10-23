@@ -249,6 +249,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     bool headless_entity_move_applied=false;
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
     std::optional<std::int16_t> headless_window_interaction;
+    std::optional<std::uint64_t> headless_window_stand_tick;
+    bool headless_window_stand_input_sent=false;
     // Synthetic WindowInput events enter the same dispatch as the X11 window;
     // they do not emulate Xlib's native key/button translation.
     std::vector<odh_host::WindowInput> headless_window_inputs;
@@ -272,6 +274,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     std::optional<odh::EntityPosition> headless_portal_start_position;
     std::optional<HeadlessInteraction> headless_stand;
     bool headless_stand_applied=false,headless_stand_precondition_met=false;
+    std::string stand_trigger;
+    std::uint64_t stand_request_tick=0;
+    std::int16_t stand_request_target=0;
     std::string headless_stand_status="not_requested",headless_stand_diagnostic;
     std::optional<std::uint16_t> headless_stand_action;
     std::optional<odh::CodeOwner> headless_stand_owner;
@@ -414,6 +419,11 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
             if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
             headless_window_interaction=static_cast<std::int16_t>(id);
         }
+        else if(option=="--headless-window-stand-tick"&&!headless_window_stand_tick&&n+1<argc){
+            const auto tick=selector(argv[++n]);
+            if(!tick)throw odh::FormatError("headless window Stand tick must be positive");
+            headless_window_stand_tick=tick;
+        }
         else if(option=="--headless-go-here"&&!headless_go_here&&n+4<argc){
             const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
             const auto level=selector(argv[++n]),tick=selector(argv[++n]);
@@ -494,6 +504,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     if(headless_window_interaction&&(!headless_main||!render_saved_id||!render_output||!render_floors||
        headless_interaction||headless_stand||headless_go_here||headless_portal||render_tick||ticks_limit<2))
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
+    if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
+        throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_selector&&!headless_main);
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&((!initialize&&!saved_world_main)||!lot_path||!neighborhood_path))||
@@ -1551,6 +1563,11 @@ struct PlacementCandidateProbe {
     std::optional<std::uint16_t> render_interaction_action;
     std::optional<odh::CodeOwner> render_interaction_owner;
     std::optional<SavedObjectSelection> render_interaction_target;
+    std::optional<std::uint64_t> render_interaction_actor_generation;
+    // Retain the successful seated action independently of menu selection, so
+    // clicking another object and then the chair does not lose the Stand gate.
+    std::optional<SavedObjectSelection> seated_action_target;
+    std::optional<std::uint64_t> seated_action_actor_generation;
     std::optional<bool> render_interaction_result;
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
@@ -1662,8 +1679,85 @@ struct PlacementCandidateProbe {
         render_interaction_enqueued=true;render_interaction_status="queued";render_interaction_action=row.action;
         render_interaction_owner=owner->second;
         render_interaction_target=selected;
+        render_interaction_actor_generation=actor->generation;
         previous_completion_uid=queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::optional<std::uint64_t>{};
         render_interaction_diagnostic.clear();
+    };
+    // Stand is an explicit host control, not a fabricated TTAB row. Its
+    // supported precondition is a successful action in this session that left
+    // this exact avatar attached to this exact selected object.
+    const auto stand_selection_is_current=[&](const SavedObjectSelection& selected){
+        const auto* actor=world.find(runtime_avatar_id);
+        const auto* target=world.find(selected.id);
+        return saved_world_main&&queue.size()==0&&!queue.active()&&
+            seated_action_target&&seated_action_target->id==selected.id&&
+            seated_action_target->generation==selected.generation&&seated_action_target->guid==selected.guid&&
+            actor&&seated_action_actor_generation&&actor->generation==*seated_action_actor_generation&&
+            actor->kind==odh::EntityKind::avatar&&
+            !actor->person_data.empty()&&actor->person_data[0]==1&&actor->attachment&&
+            actor->attachment->container==selected.id&&target&&target->generation==selected.generation&&
+            target->kind==odh::EntityKind::object&&target->definition&&target->definition->guid==selected.guid;
+    };
+    const auto request_stand=[&](const SavedObjectSelection& selected,const std::string& trigger,std::uint64_t request_tick){
+        if(headless_stand_status=="queued")return;
+        headless_stand_applied=true;stand_trigger=trigger;stand_request_tick=request_tick;stand_request_target=selected.id;
+        headless_stand_precondition_met=false;headless_stand_action.reset();headless_stand_owner.reset();
+        headless_stand_result.reset();headless_stand_diagnostic.clear();
+        headless_stand_posture_before.reset();headless_stand_attachment_before.reset();
+        const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
+        const auto completion=queue.completion();
+        const auto* actor=world.find(runtime_avatar_id);
+        const auto* target=world.find(selected.id);
+        if(actor&&actor->person_data.size()>0)headless_stand_posture_before=actor->person_data[0];
+        if(actor&&actor->attachment)headless_stand_attachment_before=actor->attachment->container;
+        if(!completion||!seated_action_target)
+            fail_stand("no successful seated action is available in this session");
+        else if(!stand_selection_is_current(selected))
+            fail_stand("Stand requires the same seated avatar and selected object generations, attachment and an idle queue");
+        else if(!target||target->kind!=odh::EntityKind::object||!target->entry_points||target->entry_points->size()<=27)
+            fail_stand("Stand target has no bound entry point 27");
+        else {
+            const auto stand_action=(*target->entry_points)[27].action;
+            const auto* candidate=target->definition?definition_index->unique(target->definition->guid):nullptr;
+            if(!stand_action||!candidate||odh::routine_key(stand_action).scope!=odh::RoutineScope::private_object)
+                fail_stand("Stand entry point 27 has no unique private function owner");
+            else {
+                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action);
+                auto owner=saved_code_owners.find(owner_key);
+                if(owner==saved_code_owners.end()){
+                    if(saved_owner_ids_exhausted)fail_stand("saved object code-owner identity space exhausted");
+                    else {
+                        try {
+                            auto routines=load_saved_action_routines(*candidate,stand_action);
+                            const auto key=odh::routine_key(stand_action);
+                            if(!routines.count(key))fail_stand("Stand private function is absent from its exact object resource");
+                            else {
+                                const auto code_owner=next_saved_code_owner;
+                                if(!vm.install_owner(code_owner,std::move(routines)))
+                                    fail_stand("Main VM rejected saved Stand code owner");
+                                else {
+                                    if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                                    else ++next_saved_code_owner;
+                                    owner=saved_code_owners.emplace(owner_key,code_owner).first;
+                                }
+                            }
+                        } catch(const std::exception& error){fail_stand(error.what());}
+                    }
+                }
+                if(owner!=saved_code_owners.end()){
+                    const odh::VmContext context{runtime_avatar_id,selected.id,selected.id,owner->second};
+                    if(!stand_selection_is_current(selected))
+                        fail_stand("Stand actor/target identity or attachment changed while loading its function");
+                    else if(!queue.enqueue(odh::routine_key(stand_action),context))
+                        fail_stand(queue.diagnostic());
+                    else {
+                        headless_stand_precondition_met=true;headless_stand_action=stand_action;
+                        headless_stand_owner=owner->second;headless_stand_status="queued";
+                        headless_stand_previous_completion=completion->uid;
+                    }
+                }
+            }
+        }
     };
     std::optional<std::string> current_overlay_text;
     std::uint8_t current_overlay_language=game_language;
@@ -1701,6 +1795,10 @@ struct PlacementCandidateProbe {
             const auto& ground=*render_ground_selection;
             title+=" | ground ("+std::to_string(ground.x)+","+std::to_string(ground.y)+") level "+
                 std::to_string(ground.level)+" room "+std::to_string(ground.room)+"; Space/Enter to Go Here";
+        }
+        if(render_selection&&stand_selection_is_current(*render_selection)){
+            title+=" | U to stand";
+            current_overlay_text="U: Stand";
         }
         return title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
@@ -2380,6 +2478,10 @@ struct PlacementCandidateProbe {
             else if(headless_window_input_index<headless_window_inputs.size())
                 input=headless_window_inputs[headless_window_input_index++];
             else if(headless_window_interaction&&!render_evidence)input.redraw=true;
+            if(headless_window_stand_tick&&!headless_window_stand_input_sent&&render_selection&&!input.primary_click&&
+               ticks>=*headless_window_stand_tick){
+                input.stand=true;headless_window_stand_input_sent=true;
+            }
             if(input.quit){
                 window_closed=true;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -2431,6 +2533,11 @@ struct PlacementCandidateProbe {
                 render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
                     render_selected_interaction_row,input.interaction_selection_delta);
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
+            }
+            if(input.stand&&!input.primary_click&&render_selection){
+                request_stand(*render_selection,headless_window_interaction?"headless_window_input":"window_input",ticks);
+                if(render_window_host)render_window_host->set_title("OpenDollhouse: Stand "+headless_stand_status+
+                    (headless_stand_diagnostic.empty()?"":" | "+headless_stand_diagnostic));
             }
             if(input.action&&!input.primary_click){
                 std::string title="OpenDollhouse Main preview: ";
@@ -2552,59 +2659,12 @@ struct PlacementCandidateProbe {
             } catch(const std::exception& error){fail_portal(error.what());}
         }
         if(headless_stand&&!headless_stand_applied&&ticks==headless_stand->tick){
-            headless_stand_applied=true;
-            const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
-            const auto completion=queue.completion();
-            const auto* actor=world.find(runtime_avatar_id);
-            const auto* target=world.find(headless_stand->id);
-            if(actor&&actor->person_data.size()>0)headless_stand_posture_before=actor->person_data[0];
-            if(actor&&actor->attachment)headless_stand_attachment_before=actor->attachment->container;
-            if(!completion||!completion->result||!render_interaction_result||!*render_interaction_result)
-                fail_stand("preceding Sit interaction did not complete successfully");
-            else if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=0||
-                    actor->person_data[0]!=1||!actor->attachment||actor->attachment->container!=headless_stand->id)
-                fail_stand("Stand requires the same avatar to remain seated in the requested object");
-            else if(!target||target->kind!=odh::EntityKind::object||!target->entry_points||target->entry_points->size()<=27)
-                fail_stand("Stand target has no bound entry point 27");
+            if(render_interaction_target&&render_interaction_target->id==headless_stand->id)
+                request_stand(*render_interaction_target,"headless_stand_request",ticks);
             else {
-                const auto stand_action=(*target->entry_points)[27].action;
-                const auto* candidate=target->definition?definition_index->unique(target->definition->guid):nullptr;
-                if(!stand_action||!candidate||odh::routine_key(stand_action).scope!=odh::RoutineScope::private_object)
-                    fail_stand("Stand entry point 27 has no unique private function owner");
-                else {
-                    const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action);
-                    auto owner=saved_code_owners.find(owner_key);
-                    if(owner==saved_code_owners.end()){
-                        if(saved_owner_ids_exhausted)fail_stand("saved object code-owner identity space exhausted");
-                        else {
-                            try {
-                                auto routines=load_saved_action_routines(*candidate,stand_action);
-                                const auto key=odh::routine_key(stand_action);
-                                if(!routines.count(key))fail_stand("Stand private function is absent from its exact object resource");
-                                else {
-                                    const auto code_owner=next_saved_code_owner;
-                                    if(!vm.install_owner(code_owner,std::move(routines)))
-                                        fail_stand("Main VM rejected saved Stand code owner");
-                                    else {
-                                        if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
-                                        else ++next_saved_code_owner;
-                                        owner=saved_code_owners.emplace(owner_key,code_owner).first;
-                                    }
-                                }
-                            } catch(const std::exception& error){fail_stand(error.what());}
-                        }
-                    }
-                    if(owner!=saved_code_owners.end()){
-                        const odh::VmContext context{runtime_avatar_id,headless_stand->id,headless_stand->id,owner->second};
-                        if(!queue.enqueue(odh::routine_key(stand_action),context))
-                            fail_stand(queue.diagnostic());
-                        else {
-                            headless_stand_precondition_met=true;headless_stand_action=stand_action;
-                            headless_stand_owner=owner->second;headless_stand_status="queued";
-                            headless_stand_previous_completion=completion->uid;
-                        }
-                    }
-                }
+                headless_stand_applied=true;stand_trigger="headless_stand_request";
+                stand_request_tick=ticks;stand_request_target=headless_stand->id;
+                headless_stand_status="unsupported";headless_stand_diagnostic="Stand target differs from the preceding action";
             }
         }
         if(headless_entity_move&&!headless_entity_move_applied&&ticks==headless_entity_move->tick){
@@ -2746,6 +2806,14 @@ struct PlacementCandidateProbe {
                 render_interaction_result=queue.completion()->result;
                 render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
                 render_interaction_diagnostic.clear();
+                const auto* seated_actor=world.find(runtime_avatar_id);
+                if(*render_interaction_result&&render_interaction_target&&render_interaction_actor_generation&&
+                   seated_actor&&seated_actor->generation==*render_interaction_actor_generation&&
+                   !seated_actor->person_data.empty()&&seated_actor->person_data[0]==1&&seated_actor->attachment&&
+                   seated_actor->attachment->container==render_interaction_target->id){
+                    seated_action_target=render_interaction_target;
+                    seated_action_actor_generation=render_interaction_actor_generation;
+                }
             }else if(vm.status()==odh::VmStatus::fault){
                 render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
             }
@@ -2754,6 +2822,7 @@ struct PlacementCandidateProbe {
                 std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
                 if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                 if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
+                if(render_selection&&stand_selection_is_current(*render_selection))title+=" | U to stand";
                 render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
@@ -3234,11 +3303,11 @@ struct PlacementCandidateProbe {
         std::cout<<"}";
     }
     std::cout<<",\"stand_runtime\":";
-    if(!headless_stand)std::cout<<"null";
+    if(!headless_stand_applied)std::cout<<"null";
     else {
         const auto* actor=world.find(runtime_avatar_id);
-        std::cout<<"{\"trigger\":\"headless_stand_request\",\"scheduled_tick\":"<<headless_stand->tick
-            <<",\"scheduled_target\":"<<headless_stand->id<<",\"precondition_met\":"
+        std::cout<<"{\"trigger\":"<<json_bytes(stand_trigger)<<",\"scheduled_tick\":"<<stand_request_tick
+            <<",\"scheduled_target\":"<<stand_request_target<<",\"precondition_met\":"
             <<(headless_stand_precondition_met?"true":"false")<<",\"entry_point\":27,\"action\":"
             <<(headless_stand_action?std::to_string(*headless_stand_action):"null")<<",\"code_owner\":"
             <<(headless_stand_owner?std::to_string(*headless_stand_owner):"null")<<",\"status\":"

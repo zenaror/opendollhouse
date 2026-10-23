@@ -30,6 +30,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  def run(extra=()):
   env=os.environ.copy();env['XDG_STATE_HOME']=str(root/'xdg-state')
   return subprocess.run(args+list(extra),capture_output=True,text=True,env=env)
+ setup();r=run(['--headless-window-stand-tick','0'])
+ assert r.returncode==2 and not r.stdout and 'Stand tick' in r.stderr
+ setup();r=run(['--headless-window-stand-tick','2'])
+ assert r.returncode==2 and not r.stdout and '--headless-window-stand-tick' in r.stderr
  setup();r=run(['--render-saved-avatar','105'])
  assert r.returncode==2 and not r.stdout and 'render-frame' in r.stderr
  setup();r=run(['--render-saved-guid','0'])

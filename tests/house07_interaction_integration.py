@@ -19,11 +19,19 @@ def main():
     parser.add_argument("--ticks", type=int, default=512)
     parser.add_argument("--window-input", action="store_true",
                         help="exercise the production click/pick/Space path with queued inputs and no display")
+    parser.add_argument("--window-stand", action="store_true",
+                        help="after window Sit, inject the player's U/Stand input at --stand-tick")
+    parser.add_argument("--window-stand-expect-rejected", action="store_true",
+                        help="expect the injected U request to be rejected while the avatar is not seated")
     parser.add_argument("--move-avatar-to", nargs=4, type=int,
                         metavar=("X", "Y", "LEVEL", "DIRECTION"),
                         help="schedule the saved avatar at this World position on tick 1")
     args = parser.parse_args()
 
+    if args.window_stand_expect_rejected and not args.window_stand:
+        parser.error("--window-stand-expect-rejected requires --window-stand")
+    if args.window_stand and not args.window_input:
+        parser.error("--window-stand requires --window-input")
     if args.move_avatar_to:
         x, y, level, direction = args.move_avatar_to
         if not (0 <= x <= 32767 and 0 <= y <= 32767 and
@@ -81,6 +89,8 @@ def main():
     else:
         command += ["--headless-interaction", str(args.object_id), "1",
                     "--headless-stand", str(args.object_id), str(args.stand_tick)]
+    if args.window_stand:
+        command += ["--headless-window-stand-tick", str(args.stand_tick)]
     if args.move_avatar_to:
         command += ["--headless-move-entity", str(args.avatar_id),
                     *(str(value) for value in args.move_avatar_to), "1"]
@@ -167,12 +177,30 @@ def main():
             selection["interaction_requested"] and selection["interaction_action"] == 4097 and
             interaction["trigger"] == "headless_window_input" and interaction["enqueued"] and
             interaction["status"] == "returned_true" and interaction["result"] is True and
-            actor["id"] == args.avatar_id and actor["attachment"] is not None and
-            actor["attachment"]["container"] == args.object_id and
+            actor["id"] == args.avatar_id and
+            (args.window_stand or (actor["attachment"] is not None and
+             actor["attachment"]["container"] == args.object_id)) and
             interaction["queue_size"] == 0 and not interaction["queue_active"] and
             report["completion"] is not None and report["completion"]["result"] is True and
             report["status"] in ("waiting", "yielded") and not report["host_failed"]
         )
+        if args.window_stand_expect_rejected:
+            completed_sit = completed_sit and (
+                stand is not None and stand["trigger"] == "headless_window_input" and
+                stand["status"] == "unsupported" and not stand["precondition_met"] and
+                stand["action"] is None and stand["result"] is None and
+                stand["actor_posture"] == 1 and stand["actor_attached"] and
+                actor["attachment"] is not None and actor["attachment"]["container"] == args.object_id and
+                4102 not in action_routines)
+        elif args.window_stand:
+            completed_sit = completed_sit and (
+                stand is not None and stand["trigger"] == "headless_window_input" and
+                stand["scheduled_tick"] == args.stand_tick and stand["scheduled_target"] == args.object_id and
+                stand["precondition_met"] and stand["precondition_posture"] == 1 and
+                stand["precondition_attachment"] == args.object_id and stand["entry_point"] == 27 and
+                stand["action"] == 4102 and stand["status"] == "returned_true" and stand["result"] is True and
+                stand["actor_posture"] == 0 and not stand["actor_attached"] and
+                actor["attachment"] is None and 4102 in action_routines)
     else:
         completed_sit = (
         household["evidence"] == "restored_World_exact_avatar_GUID_match_only" and

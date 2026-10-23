@@ -9,7 +9,7 @@
 namespace odh_host {
 
 struct WindowInput {
-    bool quit = false, action = false, pause = false, interrupt = false, redraw = false;
+    bool quit = false, action = false, pause = false, interrupt = false, stand = false, redraw = false;
     int rotation = 0, zoom = 0, interaction_selection_delta = 0;
     // Last Button1 press drained by this poll, in drawable pixels. Keyboard
     // action does not fabricate a pointer position; coordinates may be outside.

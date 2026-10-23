@@ -60,6 +60,9 @@ int main(){try{
     key(XK_BackSpace);input=window.poll();if(!input.interrupt||input.action||input.quit)throw std::runtime_error("Backspace interrupt mapping failed");
     key(XK_BackSpace);if(window.poll().interrupt)throw std::runtime_error("held interrupt repeated");
     key(XK_BackSpace,KeyRelease);window.poll();key(XK_BackSpace);if(!window.poll().interrupt)throw std::runtime_error("released interrupt not rearmed");
+    key(XK_u);input=window.poll();if(!input.stand||input.action||input.quit)throw std::runtime_error("U Stand mapping failed");
+    key(XK_u);if(window.poll().stand)throw std::runtime_error("held Stand repeated");
+    key(XK_u,KeyRelease);window.poll();key(XK_u);if(!window.poll().stand)throw std::runtime_error("released Stand not rearmed");
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
     key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
