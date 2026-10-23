@@ -190,12 +190,21 @@ void LinuxWindow::resize(std::uint32_t width, std::uint32_t height) {
     hints.min_height = hints.max_height = static_cast<int>(height);
     XSetWMNormalHints(p.display, p.window, &hints);
     XResizeWindow(p.display, p.window, width, height);
-    XSync(p.display, False);
-
     XWindowAttributes attributes{};
-    if (!XGetWindowAttributes(p.display, p.window, &attributes) ||
-        attributes.width != static_cast<int>(width) ||
-        attributes.height != static_cast<int>(height)) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    bool accepted = false;
+    do {
+        XSync(p.display, False);
+        if (XGetWindowAttributes(p.display, p.window, &attributes) &&
+            attributes.width == static_cast<int>(width) &&
+            attributes.height == static_cast<int>(height)) {
+            accepted = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    if (!accepted) {
         XSizeHints old_hints{};
         old_hints.flags = PMinSize | PMaxSize;
         old_hints.min_width = old_hints.max_width = static_cast<int>(p.width);
