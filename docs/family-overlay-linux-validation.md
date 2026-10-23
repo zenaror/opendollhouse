@@ -24,6 +24,25 @@ file remains beside the saved overlay in player state.
 
 ## Verified
 
+- A referência do Simitone distingue compra e despejo: `SetFamilyForHouse(...,
+  buy: true)` define a casa e desconta `SIMI.PurchaseValue`; `TS1GameScreen.EvictLot`
+  soma `FAMI.ValueInArch` ao orçamento, zera esse campo e chama `MoveOut`, que
+  define `HouseNumber` como zero. A tela de confirmação mostra orçamento mais
+  `ValueInArch`. Localizadores: `refs/upstream/Simitone/FreeSO/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs:221-234`,
+  `refs/upstream/Simitone/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs:249-254`
+  e `.../UI/Panels/UIHouseSelectPanel.cs:351-365`, Simitone
+  `4906db3156616bfaffc10ce0963cf08062975fef` e FreeSO do submódulo
+  `f86bbd34b2112296ed786741f640a0535886d180`. Isso é leitura estática do código,
+  não teste contra o executável original.
+- A leitura/escrita de FAMI nessa revisão apenas serializa `ValueInArch`; não
+  encontrei nesses caminhos TS1 um ponto que o atualize após compra ou construção.
+  Portanto, o reembolso de uma casa adquirida pelo novo fluxo não pode ser
+  deduzido com segurança do preço SIMI. Para uma família originalmente alojada,
+  o valor observado no FAMI pode ser devolvido segundo o comportamento do
+  Simitone; para uma família recém-mudada, ainda falta provar como obter o valor
+  de arquitetura atual. O overlay do OpenDollhouse continua sem despejo e sem
+  reembolso até essa fonte ser identificada.
+
 - The SIMI purchase price is now calculated as
   `LotValue + ObjectsValue + (ArchitectureValue * 7) / 10`, using integer
   division. This matches the Simitone TS1 SIMI property and its household

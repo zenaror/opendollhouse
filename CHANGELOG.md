@@ -15,6 +15,13 @@ validação indicados por versão.
 
 ### Investigado
 
+- Confirmado no código TS1 do Simitone que despejar uma família devolve
+  `FAMI.ValueInArch`, zera esse campo e libera a casa. Não foi encontrado nessa
+  revisão um ponto que atualize o valor após compra ou construção; o reembolso
+  de famílias recém-mudadas permanece sem suporte até essa origem ser provada.
+  É análise estática, não comparação com o jogo original. Veja
+  [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
+
 - Rastreada sem execução a fila de Hecuba na House77: a árvore 8236 existe em
   PersonGlobals, mas a TTAB#129 dessa fonte associa a ação 8236 ao índice 52,
   enquanto a fila salva marca TTA 33 (que aponta para outra ação). Nenhuma
