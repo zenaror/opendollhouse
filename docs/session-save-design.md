@@ -131,8 +131,13 @@ it is not a measurement of total process memory.
 
 The supported profile requires the household roster and resident resources to
 match the saved World. Additional-resident posture/accessory state, an active
-route, dynamic object or portal code owners, and residents absent from the
-saved World remain unsupported. UI/X11 interaction and a long-running
+route, live dynamic object-code references or portal code owners, and residents
+absent from the saved World remain unsupported. Installed action banks without
+references in the captured VM/controller/Playback state no longer block saving.
+The complete household restore validator still runs before writing, including
+checks on Playback carry. The real House07 gate verifies additional-resident
+Sit/Stand, save at tick512 and fresh-process continuation to tick1024 against
+uninterrupted execution, for both resident selections. UI/X11 interaction and a long-running
 household session still need validation.
 
 The Linux runtime receives the canonical game root and resolved resource paths

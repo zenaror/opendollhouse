@@ -151,6 +151,10 @@ void tests(){Fixture f;f.start();f.step();auto saved=f.snapshot();const auto byt
     auto carrying=saved;odh::PlaybackResourceKey key;key.source=1;key.id=7;
     key.caller=2;key.callee=2;key.stack_object=2;key.code_owner=2;
     carrying.runtime_entities[1].playback.carry=key;
+    auto dynamic_carry=carrying;
+    dynamic_carry.runtime_entities[1].playback.carry->code_owner=0x80000000U;
+    rejects([&]{prepare(odh::encode_session_bundle(dynamic_carry),f);},
+        "secondary carry with unserialized dynamic owner accepted");
     auto carry=prepare(odh::encode_session_bundle(carrying),f);
     odh::RandomState carry_rng{999};std::uint64_t carry_tick=999;
     Execution carry_a(carry->world(),1,carry_rng),carry_b(carry->world(),2,carry_rng);

@@ -34,6 +34,18 @@ validação indicados por versão.
   se executa a fila. Veja
   [`saved-world-definition-audit.md`](docs/saved-world-definition-audit.md).
 
+### Corrigido
+
+- A família House07 agora pode ser salva depois que o morador adicional conclui
+  Sit e Stand. Bancos de ações já instalados e sem referências vivas não impedem
+  o save; referências dinâmicas ainda usadas pela VM ou animação continuam
+  recusadas antes da escrita. O gate headless passou nos dois sentidos de
+  seleção do morador: save no tick512, outro processo até1024 e arquivo igual
+  à continuação contínua. Salvar sentado continuou recusado, o save anterior
+  permaneceu intacto e os quatro arquivos comerciais cobertos mantiveram seus
+  hashes. Oito testes focados passaram. Janela X11 e jogo completo não foram
+  validados. Veja [`family-restore-validation.md`](docs/family-restore-validation.md).
+
 ### Adicionado
 
 - Adicionado o CTest `linux_move_out_integration`, que inicia o app Linux com

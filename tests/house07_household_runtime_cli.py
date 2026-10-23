@@ -95,7 +95,7 @@ def main():
                 interaction_ticks, stand_tick = 512, 270
                 action_command = [str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
                     '--resident-id', str(resident_id), '--language', '1', '--headless-ticks', str(interaction_ticks),
-                    '--headless-resident-sit', str(extra_actor_id), '128', str(stand_tick)]
+                    '--headless-resident-sit', str(extra_actor_id), '128', str(stand_tick), '--save-session-on-exit']
                 action_result = subprocess.run(action_command, text=True, capture_output=True,
                     env=env, timeout=args.timeout)
                 if not action_result.stdout.strip():
@@ -117,6 +117,32 @@ def main():
                     'object_id': 128, 'sit_action': interaction['action'], 'sit_result': interaction['result'],
                     'stand_action': stand['action'], 'stand_result': stand['result'],
                     'final_posture': stand['actor_posture'], 'final_attached': stand['actor_attached']})
+                action_path = Path(action_report['saved_session_path'])
+                action_saved = action_path.read_bytes()
+                action_resumed_result = subprocess.run([str(binary), '--game-root', str(game),
+                    '--load-session', str(action_path), '--headless-ticks', str(interaction_ticks),
+                    '--save-session-on-exit'], text=True, capture_output=True, env=env, timeout=args.timeout)
+                assert action_resumed_result.returncode == 0, (action_resumed_result.returncode,
+                    action_resumed_result.stdout[-2000:], action_resumed_result.stderr)
+                action_resumed = json.loads(action_resumed_result.stdout)
+                assert (action_resumed['session_loaded'] and action_resumed['resumed_tick'] == interaction_ticks and
+                    action_resumed['ticks'] == 2*interaction_ticks and not action_resumed['host_failed'] and
+                    action_resumed['household_main']['scheduler_entities'] == 2), action_resumed
+                action_resumed_bytes = Path(action_resumed['saved_session_path']).read_bytes()
+                action_direct_command = list(action_command)
+                action_direct_command[action_direct_command.index('--headless-ticks')+1] = str(2*interaction_ticks)
+                action_direct_result = subprocess.run(action_direct_command, text=True, capture_output=True,
+                    env=env, timeout=args.timeout)
+                assert action_direct_result.returncode == 0, (action_direct_result.returncode,
+                    action_direct_result.stdout[-2000:], action_direct_result.stderr)
+                action_direct = json.loads(action_direct_result.stdout)
+                assert action_resumed_bytes == Path(action_direct['saved_session_path']).read_bytes(), \
+                    'post-Sit/Stand household resume differs from uninterrupted execution'
+                resident_actions[-1]['post_stand_saved_tick'] = interaction_ticks
+                resident_actions[-1]['post_stand_resumed_tick'] = action_resumed['resumed_tick']
+                resident_actions[-1]['post_stand_final_tick'] = action_resumed['ticks']
+                resident_actions[-1]['post_stand_resume_matches_continuous'] = True
+                resident_actions[-1]['post_stand_archive_sha256'] = hashlib.sha256(action_saved).hexdigest()
                 saved_before_blocked_attempt = path.read_bytes()
                 blocked_save = subprocess.run([str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
                     '--resident-id', str(resident_id), '--language', '1', '--headless-ticks', str(stand_tick),

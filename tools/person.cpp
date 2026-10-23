@@ -3524,11 +3524,10 @@ struct PlacementCandidateProbe {
                     resident->attachment.has_value();
             }))
             throw odh::FormatError("household session cannot yet restore a seated or attached additional resident");
-        if(!session_context->single_resident_session&&(!saved_code_owners.empty()||!saved_portal_code_owners.empty()))
-            throw odh::FormatError("household session cannot yet restore dynamic action owners");
-        if(!session_context->single_resident_session&&std::any_of(household_runtime.begin(),
-            household_runtime.end(),[](const auto& member){return !member->action_code_owners.empty();}))
-            throw odh::FormatError("household session cannot yet restore additional-resident dynamic action owners");
+        // Installed action banks can outlive a completed interaction. The
+        // HouseholdSessionRestore candidate below validates references in every
+        // captured VM/controller/Playback, including carry, before any write;
+        // unreferenced cached banks do not need to survive a fresh process.
         if(seated&&(!seated_action_target||!seated_action_actor_generation||!seated_action_code||
            !save_actor->attachment||
            save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||

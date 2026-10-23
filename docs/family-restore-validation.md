@@ -145,6 +145,38 @@ dynamic code owners e residentes ausentes continuam sem suporte no save/resume.
 UI e janela X11, interação visual com os dois moradores e uma sessão longa
 permanecem pendentes.
 
+### Salvar a família após Sit e Stand concluídos (2026-10-23)
+
+O gate opt-in agora também executa Sit4097 e Stand4102 com o morador adicional,
+salva a família no tick512, retoma em outro processo por mais512 ticks e
+compara o arquivo final, byte a byte, com a execução contínua até1024 ticks.
+Na instalação externa atual, os dois sentidos passaram: principal48/adicional137
+e principal47/adicional105. Os dois Sims continuaram no mesmo World e
+agendador; o morador que agiu terminou em postura0, sem attachment. A tentativa
+de salvar enquanto esse morador ainda estava sentado continuou recusada e o
+arquivo anterior permaneceu intacto. House07, Neighborhood.iff e os dois IFFs
+de personagens incluídos no fingerprint mantiveram seus hashes.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_household_runtime_cli.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '../referencias/The Sims' --ticks 1 --resident-sit-stand
+```
+
+A correção remove somente a recusa por existência de bancos de ações já
+instalados e sem referências no estado salvo. Antes de gravar, o host continua
+passando o snapshot completo por `HouseholdSessionRestore::prepare`, que
+rejeita referências dinâmicas vivas nos frames, esperas, fila, retorno de ação
+e Playback, incluindo carry. Um caso sintético adicional confirma a recusa de
+carry do segundo morador com owner `0x80000000`. Os oito testes focados de
+bundle, restauração da família, processos novos, Playback e CLI passaram; o
+gate de restauração foi repetido após incluir esse caso negativo e passou.
+
+Isso comprova continuação headless após ações concluídas nesse perfil House07.
+Não acrescenta suporte a salvar sentado, com ação/rota em curso, portal,
+referência dinâmica viva ou morador ausente; janela X11 e sessão longa seguem
+pendentes.
+
 ```sh
 ./build/odh-person \
   --avatar-file '../referencias/The Sims/UserData/Characters/User00000.iff' 128 \
