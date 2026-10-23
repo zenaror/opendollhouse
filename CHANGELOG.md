@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O diagnóstico de uma posição candidata agora reúne as regras de piso,
+  sobreposição de objetos, inventário de obstáculos e célula livre. A resposta
+  só é `clear` quando os quatro pontos estão conhecidos e liberados; isso ainda
+  não aprova uma rota nem a colocação final. Em House07, `(400,440)` ficou
+  `clear` e `(456,504)` ficou `blocked` no tick 214, em execução sem janela.
+  Veja [`world-room-info-validation.md`](docs/world-room-info-validation.md).
+
 - Um teste sintético liga a criação isolada de um morador ausente ao startup
   Init/entrada8, ao RNG explícito e à herança posterior dos dados NBRS/FAMI. Ele
   confirma que as escritas ficam no terreno temporário, mas não valida chegada,

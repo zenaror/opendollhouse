@@ -129,6 +129,16 @@ route to the position. The top-level `placement_decision` remains
 `not_evaluated` until the remaining position-validity inputs and integration
 are explicit.
 
+`candidate_cell_preflight` now combines four separately reported gates:
+`FloorChangeValid`, RoomInfo entity-overlap policy, availability of a complete
+AttemptWalk obstacle snapshot, and the candidate cell's walkability result.
+The cell gate also rejects coordinates outside the prepared lot bounds.
+The answer is `clear` only when all four are known and allowed; any known
+blocker yields `blocked`, and otherwise an unknown yields `unsupported`.
+The result applies to that cell only. It does not mean the Sim can reach it,
+pass through a changing door, or complete a room/lot transition, so the
+top-level `placement_decision` remains `not_evaluated`.
+
 After binding EntryPoint tables to the restored entities, both candidate probes
 also report `entity_overlap_policy_audit`. For `(392,440,1,3)`, RoomInfo returned
 only avatar 105's static footprint; the audit skipped the actor's own ID and
@@ -154,3 +164,19 @@ kill-timeout death/revival. It checks that each next query rebuild reflects the
 mutation; it does not add a persistent obstacle cache. `world_room_info` reports
 38 checks. This validates the query adapter's snapshot contract only, not VM
 placement decisions or live movement on the original engine.
+
+## Combined preflight in House07 at tick 214
+
+The rebuilt Linux CLI reran the two positions above after 214 ticks, with the
+23 loose architecture resources and no display. `(400,440,1,3)` reported all
+four preflight gates allowed and status `clear`; `(456,504,1,3)` reported two
+known blockers (entity overlap and candidate cell) and status `blocked`, with
+the floor and obstacle snapshot allowed. Both runs ended in the host's existing
+`waiting` result (exit code 3), kept `placement_decision=not_evaluated`, and
+produced the same 320x240 CPU frame (SHA-256
+`8e61cf69fac5b4235cd3f8736a4b93e8755d694863abe0347585f58d2408dd25`). The
+frames are `/tmp/odh-candidate-preflight-house07-400-440.ppm` and
+`/tmp/odh-candidate-preflight-house07-456-504.ppm`; their equal image hash is
+expected because the probe does not move Bob or alter the displayed scene.
+This confirms headless rendering and diagnostic composition for those
+positions; it does not validate a visible window, route, or final placement.

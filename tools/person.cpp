@@ -45,6 +45,7 @@
 #include "odh/world_avatar_place_audit.hpp"
 #include "odh/entry_point5_readonly.hpp"
 #include "odh/floor_placement.hpp"
+#include "odh/avatar_candidate_preflight.hpp"
 #include "odh/route_geometry.hpp"
 #include "odh/rect_router.hpp"
 #include "odh/routing.hpp"
@@ -5910,6 +5911,22 @@ struct PlacementCandidateProbe {
     }else std::cout<<"\"evidence\":\"unavailable\",\"reason\":"<<json_bytes(room_info_probe_unavailable)<<'}';
     if(placement_candidate_probe){
         const auto& probe=*placement_candidate_probe;
+        const auto floor_gate=!probe.floor_result?odh::CandidateCellGateStatus::unsupported:
+            *probe.floor_result==odh::FloorPlacementResult::allowed?odh::CandidateCellGateStatus::allowed:
+            odh::CandidateCellGateStatus::blocked;
+        const auto overlap_gate=!probe.overlap_audit?odh::CandidateCellGateStatus::unsupported:
+            probe.overlap_audit->rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?odh::CandidateCellGateStatus::allowed:
+            probe.overlap_audit->rules.status==odh::SavedAvatarPlaceAuditStatus::blocked?odh::CandidateCellGateStatus::blocked:
+            odh::CandidateCellGateStatus::unsupported;
+        const auto snapshot_gate=!probe.architecture_audit?odh::CandidateCellGateStatus::unsupported:
+            probe.architecture_audit->snapshot.state==odh::AttemptWalkObstacleState::ready?odh::CandidateCellGateStatus::allowed:
+            odh::CandidateCellGateStatus::unsupported;
+        const auto cell_gate=!probe.inside_lot?odh::CandidateCellGateStatus::blocked:
+            !probe.architecture_walkable?odh::CandidateCellGateStatus::unsupported:
+            *probe.architecture_walkable?odh::CandidateCellGateStatus::allowed:
+            odh::CandidateCellGateStatus::blocked;
+        const auto candidate_preflight=odh::evaluate_avatar_candidate_preflight(
+            {floor_gate,overlap_gate,snapshot_gate,cell_gate});
         const bool read_only_bhav_executed=std::any_of(entry_point5_bhav_evidence.begin(),entry_point5_bhav_evidence.end(),
             [](const auto& evidence){return evidence.steps!=0;});
         std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_probe\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; exact_read_only_allowlist; World_writes_denied; unsupported_primitives_fail_closed; ambiguous_ghost_fails_closed\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
@@ -5924,6 +5941,14 @@ struct PlacementCandidateProbe {
         std::cout<<",\"level_offset\":";if(probe.level_offset)std::cout<<*probe.level_offset;else std::cout<<"null";
         std::cout<<",\"floor_change_valid\":";
         if(probe.floor_result)std::cout<<json_bytes(floor_result_name(*probe.floor_result));else std::cout<<"null";
+        std::cout<<",\"candidate_cell_preflight\":{\"scope\":\"candidate_cell_only_not_route_or_final_placement\",\"status\":"
+            <<json_bytes(odh::avatar_candidate_preflight_status_name(candidate_preflight.status))
+            <<",\"blocked_gates\":"<<unsigned(candidate_preflight.blocked_gates)
+            <<",\"unsupported_gates\":"<<unsigned(candidate_preflight.unsupported_gates)
+            <<",\"gates\":{\"floor\":"<<json_bytes(odh::candidate_cell_gate_status_name(floor_gate))
+            <<",\"entity_overlap\":"<<json_bytes(odh::candidate_cell_gate_status_name(overlap_gate))
+            <<",\"attempt_walk_snapshot\":"<<json_bytes(odh::candidate_cell_gate_status_name(snapshot_gate))
+            <<",\"candidate_cell\":"<<json_bytes(odh::candidate_cell_gate_status_name(cell_gate))<<"}}";
         std::cout<<",\"floor_state\":";
         if(!probe.floor_result)std::cout<<"\"unknown\"";
         else std::cout<<json_bytes(*probe.floor_result==odh::FloorPlacementResult::allowed?"allowed":"rejected");
