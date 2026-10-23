@@ -66,62 +66,67 @@ inline SavedSemiglobalCodeBank load_saved_semiglobal_code_bank(
     return result;
 }
 
-struct SavedPortalVmCallPlan {
+struct SavedEntryPointVmCallPlan {
     odh::VmCall call;
     odh::RoutineSet owner_routines;
-    SavedPortalFunction function;
+    SavedEntryPointFunction function;
     std::vector<std::uint16_t> global_dependencies;
     std::optional<std::string> semiglobal_name;
 };
+using SavedPortalVmCallPlan=SavedEntryPointVmCallPlan;
 
 // Installs the exact private/semiglobal closure at a VM safe point. Shared
 // global dependencies remain in the VM's default bank and must be checked by
 // the caller before dispatching `call`.
-inline bool install_saved_portal_vm_call_plan(
-    odh::Vm& vm,const SavedPortalVmCallPlan& plan) {
+inline bool install_saved_entry_point_vm_call_plan(
+    odh::Vm& vm,const SavedEntryPointVmCallPlan& plan) {
     if(plan.call.context.code_owner==0||plan.owner_routines.empty())return false;
     return vm.install_owner(plan.call.context.code_owner,plan.owner_routines);
 }
+inline bool install_saved_portal_vm_call_plan(
+    odh::Vm& vm,const SavedPortalVmCallPlan& plan) {
+    return install_saved_entry_point_vm_call_plan(vm,plan);
+}
 
-// Prepare the private-only portion of a saved portal call. The host allocates
+// Prepare an avatar-to-object entry-point call with the resource owner kept explicit. The host allocates
 // `code_owner` from the exact resource identity and installs owner_routines at
 // a VM safe point before dispatching call through Routing::call_external_frame.
 // Entry-point conditions and semiglobal/global bank discovery stay explicit;
 // this helper never maps an entity ID to a CodeOwner.
-inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
+inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
     const odh::SavedWorldEntity& record,const odh::World& world,
     const odh::DefinitionIndex& definitions,std::int16_t caller_id,
-    std::int16_t portal_id,odh::CodeOwner code_owner,
+    std::int16_t object_id,std::size_t entry_point,odh::CodeOwner code_owner,
     const SavedSemiglobalCodeBank* semiglobal=nullptr,
     const SavedGlobalCodeBank* globals=nullptr) {
-    if(caller_id<=0||portal_id<=0||code_owner==0)
-        throw odh::FormatError("portal call identities and resource CodeOwner must be explicit and valid");
-    if(record.saved.object_id!=static_cast<std::uint16_t>(portal_id)||record.serialized_object_type!=8)
-        throw odh::FormatError("saved World record is not the selected portal entity");
+    if(caller_id<=0||object_id<=0||code_owner==0)
+        throw odh::FormatError("entry-point call identities and resource CodeOwner must be explicit and valid");
+    if(record.saved.object_id!=static_cast<std::uint16_t>(object_id))
+        throw odh::FormatError("saved World record is not the selected object entity");
     const auto* caller=world.find(caller_id);
-    const auto* portal=world.find(portal_id);
-    if(!caller||caller->kind!=odh::EntityKind::avatar||!portal||portal->kind!=odh::EntityKind::object||
-       !portal->definition||portal->definition->guid!=record.saved.guid||
-       !portal->entry_points||portal->entry_points->size()<=15)
-        throw odh::FormatError("live caller or portal identity/EntryPoint table unavailable");
+    const auto* object=world.find(object_id);
+    if(!caller||caller->kind!=odh::EntityKind::avatar||!object||object->kind!=odh::EntityKind::object||
+       !object->definition||object->definition->guid!=record.saved.guid||
+       !object->entry_points||object->entry_points->size()<=entry_point)
+        throw odh::FormatError("live caller or object identity/EntryPoint table unavailable");
     const auto* candidate=definitions.unique(record.saved.guid);
     if(!candidate||candidate->definition.guid!=record.definition.guid)
-        throw odh::FormatError("portal definition resource is missing or ambiguous");
+        throw odh::FormatError("object definition resource is missing or ambiguous");
 
-    const auto function=saved_portal_function(*candidate);
-    const auto& live_function=portal->entry_points->at(15);
+    const auto function=saved_entry_point_function(*candidate,entry_point);
+    const auto& live_function=object->entry_points->at(entry_point);
     if(live_function.condition!=function.condition||live_function.action!=function.action)
-        throw odh::FormatError("live Portal15 differs from the selected definition resource");
+        throw odh::FormatError("live EntryPoint differs from the selected definition resource");
     if(function.condition!=0)
-        throw odh::FormatError("portal EntryPoint 15 condition requires an explicit evaluator");
+        throw odh::FormatError("entry-point condition requires an explicit evaluator");
     if(function.action==0||function.action<4096||function.action>=8192)
-        throw odh::FormatError("portal EntryPoint 15 action is not a private BHAV");
+        throw odh::FormatError("entry-point action is not a private BHAV");
 
     auto routines=load_saved_action_routines(*candidate,function.action);
     const auto key=odh::routine_key(function.action);
     const auto entry=routines.find(key);
     if(entry==routines.end()||!entry->second.metadata)
-        throw odh::FormatError("portal action routine or metadata absent from exact owner closure");
+        throw odh::FormatError("entry-point action routine or metadata absent from exact owner closure");
     std::vector<std::uint16_t> global_dependencies;
     std::vector<std::uint16_t> pending_semiglobal;
     const auto add_global=[&](std::uint16_t id){
@@ -145,27 +150,27 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
         const auto id=pending_semiglobal[cursor];
         if(!loaded_semiglobal.insert(id).second)continue;
         if(!function.semiglobal_name)
-            throw odh::FormatError("portal action has semiglobal calls but its GLOB link is absent");
+            throw odh::FormatError("entry-point action has semiglobal calls but its GLOB link is absent");
         if(!semiglobal)
-            throw odh::FormatError("portal action requires its explicitly linked semiglobal bank");
+            throw odh::FormatError("entry-point action requires its explicitly linked semiglobal bank");
         auto expected=*function.semiglobal_name+".iff";
         auto actual=std::filesystem::path(semiglobal->entry).filename().string();
         auto fold_ascii=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;};
         if(fold_ascii(expected)!=fold_ascii(actual)||semiglobal->name.empty()||
            fold_ascii(semiglobal->name)!=fold_ascii(*function.semiglobal_name))
-            throw odh::FormatError("explicit semiglobal resource does not match the portal GLOB link");
+            throw odh::FormatError("explicit semiglobal resource does not match the object GLOB link");
         const auto key=odh::routine_key(id);
         const auto found=semiglobal->routines.find(key);
         if(found==semiglobal->routines.end())
             throw odh::FormatError("semiglobal BHAV dependency absent from linked resource");
-        if(routines.size()>=512)throw odh::FormatError("portal code-owner closure exceeds routine budget");
+        if(routines.size()>=512)throw odh::FormatError("entry-point code-owner closure exceeds routine budget");
         routines.emplace(key,found->second);
         odh::RoutineSet one{{key,found->second}};
         scan_dependencies(one,true);
     }
     std::sort(global_dependencies.begin(),global_dependencies.end());
     if(!global_dependencies.empty()){
-        if(!globals)throw odh::FormatError("portal closure requires its explicitly linked global bank");
+        if(!globals)throw odh::FormatError("entry-point closure requires its explicitly linked global bank");
         std::set<std::uint16_t> checked_globals;
         for(std::size_t cursor=0;cursor<global_dependencies.size();++cursor){
             const auto id=global_dependencies[cursor];
@@ -183,8 +188,21 @@ inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
         }
         std::sort(global_dependencies.begin(),global_dependencies.end());
     }
-    odh::VmCall call{key,{caller_id,portal_id,portal_id,code_owner},
+    odh::VmCall call{key,{caller_id,object_id,object_id,code_owner},
         std::vector<std::int16_t>(entry->second.metadata->arguments,0)};
     return {std::move(call),std::move(routines),function,std::move(global_dependencies),
             function.semiglobal_name};
+}
+
+
+inline SavedPortalVmCallPlan saved_portal_vm_call_plan(
+    const odh::SavedWorldEntity& record,const odh::World& world,
+    const odh::DefinitionIndex& definitions,std::int16_t caller_id,
+    std::int16_t portal_id,odh::CodeOwner code_owner,
+    const SavedSemiglobalCodeBank* semiglobal=nullptr,
+    const SavedGlobalCodeBank* globals=nullptr) {
+    if(record.serialized_object_type!=8)
+        throw odh::FormatError("saved World record is not a portal entity");
+    return saved_avatar_entry_point_vm_call_plan(record,world,definitions,caller_id,portal_id,15,
+        code_owner,semiglobal,globals);
 }

@@ -82,13 +82,15 @@ int main(){try{
     check(malformed_binding_rejected,"Portal-capable resource lookup still validates its requested GLOB link");
 
     write(path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf())+chunk("BHAV",5005,std::string{})+
-                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(2))));
+                    chunk("BHAV",5015,portal_bhav())+chunk("BHAV",5016,portal_bhav(2))+
+                    chunk("BHAV",5026,portal_bhav())));
     const auto tabled=saved_entry_point_resource(candidate);
     check(tabled.functions.uses_function_table==1&&tabled.table.source==odh::EntryPointSource::objf&&
         tabled.table.entries.size()==27,"selected OBJf function table decoded");
     check(tabled.table.entries[1].action==5001&&tabled.table.entries[5].action==5005&&
         tabled.table.entries[15].action==5015&&tabled.table.entries[26].action==5026&&
-        tabled.bhavs.count(5005)&&tabled.bhavs.count(5015),"OBJf entries and matching asset BHAV reported");
+        tabled.bhavs.count(5005)&&tabled.bhavs.count(5015)&&tabled.bhavs.count(5026),
+        "OBJf entries and matching asset BHAV reported");
     const auto portal=saved_portal_function(candidate);
     check(portal.action==5015&&portal.action_bhav_in_asset&&portal.source==odh::EntryPointSource::objf&&
         portal.resource_source==candidate.source&&portal.resource_asset.empty()&&portal.chunk_id==candidate.chunk_id&&
@@ -117,6 +119,23 @@ int main(){try{
     check(call_plan.owner_routines.size()==2&&call_plan.owner_routines.count(odh::routine_key(5016))&&
         call_plan.global_dependencies.empty(),
         "portal plan resolves exact private closure without inventing shared-bank dependencies");
+    auto chair_record=portal_record;chair_record.serialized_object_type=7;
+    const auto chair_plan=saved_avatar_entry_point_vm_call_plan(
+        chair_record,portal_world,portal_definitions,12,37,26,0x80000038U);
+    check(chair_plan.call.key.scope==odh::RoutineScope::private_object&&
+        chair_plan.call.key.id==5026&&chair_plan.call.context.caller==12&&
+        chair_plan.call.context.callee==37&&chair_plan.call.context.stack_object==37&&
+        chair_plan.call.context.code_owner==0x80000038U,
+        "chair EntryPoint26 plan keeps avatar and chair roles separate from resource CodeOwner");
+    check(chair_plan.call.arguments.size()==4&&
+        chair_plan.owner_routines.count(odh::routine_key(5026))&&
+        chair_plan.global_dependencies.empty(),
+        "chair action plan loads only its exact private BHAV closure and metadata-sized arguments");
+    bool missing_chair_entry=false;
+    try{(void)saved_avatar_entry_point_vm_call_plan(
+        chair_record,portal_world,portal_definitions,12,37,27,0x80000038U);}
+    catch(const odh::FormatError&){missing_chair_entry=true;}
+    check(missing_chair_entry,"out-of-range chair EntryPoint fails closed");
     auto bad_portal_record=portal_record;bad_portal_record.serialized_object_type=7;
     bool wrong_portal_type=false;try{(void)saved_portal_vm_call_plan(bad_portal_record,portal_world,portal_definitions,12,37,0x80000037U);}
     catch(const odh::FormatError&){wrong_portal_type=true;}

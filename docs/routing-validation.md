@@ -460,3 +460,20 @@ now finalized as host-failed, tick-limited, window-closed, or interrupted and
 has its marker removed before the final report is emitted.
 Cross-room portals, stairs and floor Snap remain outside this resident-routing
 addition.
+
+### Preparação da chamada EntryPoint26 para um assento — 2026-10-23
+
+O resolvedor compartilhado de chamadas de EntryPoint agora também prepara uma
+chamada para EP26 de objeto salvo. Ele confere a tabela viva contra a tabela
+OBJf/OBJD do recurso exato, carrega o fechamento privado do BHAV e constrói o
+contexto com avatar como Caller, objeto como Callee/StackObject e `CodeOwner`
+independente dos IDs das entidades. O teste sintético confirma o contexto,
+os argumentos definidos pelo metadata do BHAV e a recusa de índice inexistente;
+o caminho legado Portal15 continua passando pelo mesmo resolvedor com a
+verificação de tipo Portal preservada.
+
+Isso é somente a preparação da chamada: o teste não usa a cadeira comercial
+173 nem o código real dela, não executa EP26, não valida EntryPoint Condition,
+nem decide a cadeira por footprint/parede/ocupação. A viagem ainda não chama
+este resolvedor e não tenta outra cadeira após retorno falso. Portanto não há
+prova de movimento, chegada ou ação de sentar no lote.

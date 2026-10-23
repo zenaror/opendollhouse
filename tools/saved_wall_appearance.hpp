@@ -15,7 +15,7 @@ struct SavedWallAppearance {
     std::vector<SavedWallAppearanceBinding> bindings;
     std::vector<odh::WallAppearanceInput> inputs;
 };
-struct SavedPortalFunction {
+struct SavedEntryPointFunction {
     odh::EntryPointSource source;
     std::uint16_t condition,action;
     bool action_bhav_in_asset;
@@ -25,8 +25,9 @@ struct SavedPortalFunction {
     std::uint16_t chunk_id;
     std::optional<std::string> semiglobal_name;
 };
+using SavedPortalFunction=SavedEntryPointFunction;
 struct SavedPortalAction {
-    SavedPortalFunction function;
+    SavedEntryPointFunction function;
     odh::Bhav routine;
 };
 
@@ -112,15 +113,21 @@ inline odh::Bhav saved_private_entry_point_bhav(const odh::DefinitionCandidate& 
 // Resolve the authored Portal entry (index 15) from the exact OBJD/OBJf asset
 // selected for a saved entity. This reads a function reference only: it does
 // not execute the BHAV or establish live portal/route state.
-inline SavedPortalFunction saved_portal_function(const odh::DefinitionCandidate& candidate) {
+inline SavedEntryPointFunction saved_entry_point_function(
+    const odh::DefinitionCandidate& candidate,std::size_t entry_point) {
     const auto resource=saved_entry_point_resource(candidate);
-    if(resource.table.entries.size()<=15) throw odh::FormatError("portal probe entry 15 unavailable");
-    const auto action=resource.table.entries[15].action;
-    const auto condition=resource.table.entries[15].condition;
+    if(resource.table.entries.size()<=entry_point)
+        throw odh::FormatError("requested entry-point function is unavailable");
+    const auto action=resource.table.entries[entry_point].action;
+    const auto condition=resource.table.entries[entry_point].condition;
     return {resource.table.source,condition,action,action!=0&&resource.bhavs.find(action)!=resource.bhavs.end(),
             resource.source,resource.asset,resource.chunk_id,
             resource.semiglobal_binding&&!resource.semiglobal_binding->name.empty()?
                 std::optional<std::string>{resource.semiglobal_binding->name}:std::nullopt};
+}
+
+inline SavedEntryPointFunction saved_portal_function(const odh::DefinitionCandidate& candidate) {
+    return saved_entry_point_function(candidate,15);
 }
 
 // Resolve and parse the private Portal action BHAV from the same selected
