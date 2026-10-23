@@ -23,6 +23,7 @@ int main(){try{
     odh_host::LinuxUserConfig config;std::string error;
     check(odh_host::load_linux_user_config(config,&error)&&config.language_code==1&&config.data_root.empty(),
           "missing config yields first supported language and empty data root");
+    check(!config.has_saved_settings,"missing config is recognized as first launch");
     config.language_code=20;config.data_root="/copied/game\nroot";
     check(odh_host::save_linux_user_config(config,&error),"settings save successfully");
     struct stat file_stat{},dir_stat{};
@@ -31,7 +32,8 @@ int main(){try{
           "application config directory is private");
     odh_host::LinuxUserConfig restored;
     check(odh_host::load_linux_user_config(restored,&error)&&restored.language_code==20&&
-          restored.data_root==config.data_root,"language and arbitrary path round-trip");
+          restored.data_root==config.data_root&&restored.has_saved_settings,
+          "language and arbitrary path round-trip and mark settings initialized");
     config.language_code=21;
     check(!odh_host::save_linux_user_config(config,&error),"out-of-range language is rejected");
     check(odh_host::load_linux_user_config(restored,&error)&&restored.language_code==20,

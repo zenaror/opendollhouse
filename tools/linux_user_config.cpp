@@ -66,6 +66,7 @@ bool load_linux_user_config(LinuxUserConfig& config,std::string* error) {
     }
     if(!input.eof()){set_error(error,"error reading user config");return false;}
     if(!have_language){set_error(error,"user config has no language code");return false;}
+    loaded.has_saved_settings=true;
     config=std::move(loaded);if(error)error->clear();return true;
 }
 

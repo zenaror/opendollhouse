@@ -8,6 +8,7 @@ namespace odh_host {
 struct LinuxUserConfig {
     int language_code=1;
     std::filesystem::path data_root;
+    bool has_saved_settings=false;
 };
 
 std::filesystem::path linux_user_config_path();

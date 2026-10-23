@@ -30,7 +30,7 @@ struct Options {
     unsigned language = 1;
     std::optional<unsigned> house;
     std::optional<unsigned> resident_id;
-    bool plan_only = false;
+    bool plan_only = false, choose_language = false;
 };
 
 unsigned parse_number(const std::string& text, unsigned maximum, const char* label) {
@@ -77,6 +77,7 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError(
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
             "[--house 1..98] [--resident-id 1..32767] [--plan-only]");
+    result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
     std::string config_error;
@@ -89,7 +90,10 @@ Options parse_options(int argc, char** argv) {
         result.game_root = saved.data_root;
         have_root = true;
     }
-    if (!have_language) result.language = static_cast<unsigned>(saved.language_code);
+    if (!have_language) {
+        result.language = static_cast<unsigned>(saved.language_code);
+        result.choose_language = !saved.has_saved_settings;
+    }
 #endif
     if (!have_root)
         throw odh::FormatError("game data path is not set; pass --game-root DIR on first launch");
@@ -257,10 +261,20 @@ int odh_linux_game_entry(int argc, char** argv) {
 
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
-        if (!options.plan_only) map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
         std::unique_ptr<odh_host::LinuxWindow> window;
-        if (!options.plan_only)
+        if (!options.plan_only) {
             window = std::make_unique<odh_host::LinuxWindow>(800, 600, "OpenDollhouse");
+            if (options.choose_language) {
+                const auto selected = odh_host::show_language_picker(*window,
+                    static_cast<std::uint8_t>(options.language));
+                if (!selected) {
+                    std::cout << "{\"status\":\"cancelled\",\"stage\":\"language\"}\n";
+                    return 0;
+                }
+                options.language = *selected;
+            }
+            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
+        }
 #else
         if (!options.plan_only)
             throw odh::FormatError("interactive game entry requires a build with X11 support");

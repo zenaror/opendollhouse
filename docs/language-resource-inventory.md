@@ -66,7 +66,12 @@ inclui `83 7c 81 5b 83 59` (CP932, `ポーズ`); o 17 inclui `d4 dd cd a3` (GBK,
 amostras confirmadas, não uma auditoria de todas as tabelas ou um mapa completo
 de codificação. Os parsers preservam os bytes sem converter para Unicode; a
 borda Linux agora converte rótulos escolhidos para UTF-8 e usa PangoCairo para
-desenhá-los na cena. O seletor e a preferência persistida ainda não existem.
+desenhá-los na cena. Na primeira execução, um seletor percorre os 20 idiomas
+encontrados com Tab/Shift+Tab e confirma com Enter; com Pango também aceita
+clique numa linha. Sem Pango, o título da janela mostra o idioma enquanto o
+jogador percorre a lista. O código escolhido fica na configuração privada do
+usuário quando a sessão inicia. A janela X11 do seletor ainda não recebeu uma
+validação visual nesta etapa.
 
 A checagem rápida da primeira build deve usar poucos exemplos que representem
 codificações diferentes (por exemplo, português, japonês e chinês simplificado),
@@ -96,7 +101,8 @@ um caso de ausência real para exercitar o fallback: `STR# 141`, índice 5 tem
 `*Close Photo Album` em inglês e não tem entrada francesa; o lookup com
 fallback retorna o texto inglês. Esses exemplos validam leitura, índice,
 fallback e conversão dos bytes; a faixa atual ainda não mostra esse caso dentro
-da cena porque não há seletor nem menu jogável.
+da cena porque o menu de pausa e outras telas do jogo seguem incompletos. A
+escolha de idioma acontece antes de abrir a vizinhança.
 
 ## Decodificação inicial para apresentação no Linux
 
@@ -124,8 +130,10 @@ em um quadro sintético com PangoCairo; verifica pixels alterados, glifos ausent
 UTF-8 inválido e limites geométricos. A prévia Linux também desenha o rótulo da
 ação selecionada numa faixa sobre a cena. Esses testes provam composição e
 fallback para as fontes instaladas neste computador, sem validar a captura da
-janela X11, todas as traduções ou outros computadores. O seletor e a preferência
-persistida continuam pendentes. Os idiomas 12 e 13 exigem confirmação com texto
+janela X11, todas as traduções ou outros computadores. O seletor de primeira
+execução já está ligado ao launcher e à configuração; ainda falta validá-lo
+visualmente e oferecer uma forma dentro do jogo para mudar o idioma depois. Os
+idiomas 12 e 13 exigem confirmação com texto
 localizado real antes de declarar seus dados totalmente decodificados.
 
 ## Referência de fontes

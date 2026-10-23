@@ -14,14 +14,17 @@ janela mostra uma barra para a posição selecionada e o título atualiza ID e
 arquivo. Esta etapa ainda não decodifica nomes localizados. A janela é
 redimensionada para o preview do lote e conserva sua identidade X11.
 `--plan-only` continua sem UI e usa o primeiro morador, a menos que
-`--resident-id` seja informado. Na primeira execução, o caminho
-dos dados e o idioma podem ser informados por `--game-root` e `--language`;
-depois de carregar família e lote, ambos são lembrados antes de iniciar o
-runtime, em
+`--resident-id` seja informado. Na primeira execução gráfica, se ainda não há
+configuração e `--language` não foi informado, o launcher abre um seletor com
+os 20 idiomas do jogo antes da vizinhança. Tab/Shift+Tab percorrem a lista,
+Enter confirma e Esc cancela; quando Pango está disponível, também é possível
+clicar numa linha. Sem Pango, o título da janela mostra o idioma atual enquanto
+o jogador percorre a lista pelo teclado. `--language` permite escolher
+diretamente pela linha de comando. Depois de carregar família e lote, a pasta
+de dados e o idioma são lembrados antes de iniciar o runtime, em
 `XDG_CONFIG_HOME/opendollhouse/config` (ou `~/.config/opendollhouse/config`).
 `--plan-only` imprime o plano em JSON sem abrir janela, exige `--house` e não
-grava configuração. Ainda não há tela para escolher o idioma: a escolha é feita
-pela opção `--language`.
+grava configuração.
 
 O runtime recebe recursos de uma única instalação: arquivos base de
 `GameData`, personagens do `UserData/Characters`,
@@ -43,7 +46,7 @@ porque o carregador de vizinhança não o suporta.
   da instalação indicada. Os moradores 47 e 48 resolveram respectivamente os
   GUIDs 844195932 e 850010198.
 - Modo 6 foi recusado com a mensagem de uso, sem abrir janela.
-- A configuração sintética passou 9 verificações de seleção XDG, idioma 1–20,
+- A configuração sintética passou 10 verificações de seleção XDG, idioma 1–20,
   caminho de dados, permissões privadas, substituição atômica e fallback para
   `~/.config`.
 - A seleção estrutural de House07 passou para idioma de runtime 15 em fixture
@@ -55,6 +58,10 @@ porque o carregador de vizinhança não o suporta.
   arquivo que aponta por link para fora da pasta do jogo. O modo `--plan-only`
   deixa a configuração do usuário intacta.
 - `git diff --check` passou.
+
+A seleção interativa ainda não recebeu smoke visual: `DISPLAY=:0` não aceita
+conexão nesta sessão. Os testes acima cobrem configuração e entrada sem janela,
+não a captura de teclas na tela de primeira execução.
 
 ## Limite desta evidência
 
