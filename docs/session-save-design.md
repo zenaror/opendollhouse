@@ -1,6 +1,6 @@
 # Durable session save design
 
-This is a design checkpoint for saving a running OpenDollhouse session across a process restart. It does not claim that save/load exists yet.
+This is a design checkpoint for saving a running OpenDollhouse session across a process restart. The Linux host now has an experimental single-resident save/load path; the playable restart gate below remains incomplete.
 
 ## Storage boundary
 
@@ -40,9 +40,9 @@ Passing this gate proves only restart persistence for that tested session and bu
 
 The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte header contains the eight-byte signature `ODHSES\r\n`, version, zeroed header flags, section count, payload length, and CRC-32. Each section has a four-byte uppercase/digit ID, a required bit, a 64-bit payload length, a CRC-32, and its payload. Defaults cap a file at 128 MiB, a section at 64 MiB, and the archive at 128 sections. The codec rejects duplicate IDs, unknown flag bits, unsupported versions, truncation, unclaimed bytes, checksum errors, and limit violations.
 
-The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; there is no load path yet.
+The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; the launch-time `--load-session PATH` restores supported single-resident sessions.
 
-A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; the reusable candidate-restore helper now rebuilds a fresh World, but the live host does not invoke it.
+A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; the reusable candidate-restore helper now rebuilds a fresh World, and the live host transfers that candidate into its lot container before binding callbacks or renderers.
 
 The version-1 `RelationshipSnapshot` codec now stores its source/pair/value budgets and counts, matrix kind, signed source ID, object generation, signed 32-bit target, and each signed value. It uses canonical source and pair ordering and validates the decoded data by restoring it into a fresh `RelationshipState`. Empty sources/pairs, old object generations, negative or wide neighbor targets, and value tails are retained. Its synthetic test includes a 300-value tail and verifies a query after restore. The live capture includes it in the required `RELA` section; the candidate-restore helper now restores these values into a fresh relationship state, before VM callbacks are bound.
 
@@ -73,12 +73,13 @@ has an experimental S-key capture path between ticks. It records the current
 bundle values, hashes the selected resource manifest only on request, and stores
 the archive atomically in the user data directory. Saves are rejected while
 a route is active, Go Here is queued, any dynamic object/portal code owner exists,
-or a seated action requires an unserialized binding. This does not yet
-provide live-host load or process-restart continuation, a public slot selector, or visual
-X11 validation; do not treat the experimental file as a playable save yet.
+or a seated action requires an unserialized binding. The experimental loader supports only the same restricted single-resident profile.
+A public save selector and visual X11 validation are still absent; do not treat
+this limited persistence support as a playable build.
 
 The Linux runtime receives the canonical game root and resolved resource paths
-without hashing them at launch. When the experimental save key is pressed, it
+without hashing them on a fresh launch; loading an ODH archive first hashes and
+compares the selected manifest, language and expansion mask. When the experimental save key is pressed, it
 computes the version-1 `META` identity from that manifest and checks/encodes the
 complete bundle before writing. The current plan still needs auditing for
 resources opened dynamically on other lots and expansion sidecars. Synthetic
@@ -103,7 +104,17 @@ selection and the exact supported global roster must match. Identity globals 9
 other supported mutable globals are restored without dropping zero values.
 Routes, UI destination ghosts, external portal frames, dynamic code owners,
 non-standing posture and seated-action bindings remain unsupported. The original
-live-save restrictions are unchanged. There is no CLI or live-host load integration.
+live-save guards remain; before filesystem mutation, the host also applies the
+loader profile against its retained original-lot baseline. Unsupported posture,
+attachment, roster, metadata, globals or runtime state therefore cannot replace
+a previously usable save. The integrated Linux launcher now accepts
+`--load-session PATH`; archive selection supplies mode, house, family, resident
+and language, while conflicting explicit options, changed resources and
+unsupported runtime state fail before Main is started. It rebuilds the original
+lot metadata, transfers the validated candidate World into the host lot container,
+binds fresh VM/controllers/Playback/scheduler callbacks, restores execution and
+continues at the saved logical tick plus one. Renderer and routing references
+use that same World. A failed launch does not rewrite the archive or user settings.
 
 Synthetic tests restore a real Sleep wait into a fresh VM/controller/scheduler
 graph without starting Main, continue six ticks, and compare the recaptured
@@ -116,10 +127,26 @@ truncation, archive limits, missing VM routines/hooks and missing Playback resou
 resolution. This is synthetic restart evidence only; it does not establish
 House07, Sit-to-Stand, expansion or live-window save/load behavior.
 
-Remaining for the House07 restart gate: add a loader that verifies the exact
-resource identity, rebuilds matching code owners and callbacks in a fresh host,
-restores in dependency order, and explicitly restores Playback from its `PLAY`
-values. Routing still has no bundle snapshot, so saving is refused while a
-route is in progress. Then run Sit → save → new process → load seated → Stand
-against the real House07 resources, and test truncation, changed game files,
-and failed writes without damaging the previous save.
+The same integrated path supports `--headless-ticks N` for a bounded run without
+opening a display. This is a count of additional ticks when loading. With
+`--save-session-on-exit`, a successful safe boundary uses the same atomic save
+operation and user-data directory as the S key; the JSON result includes
+`saved_session_path`. Finishing the requested tick count with a waiting or yielded
+VM is normal for this explicit bounded mode; VM faults, instruction exhaustion
+and incomplete requested actions still fail. `--plan-only` cannot be combined
+with `--load-session`, since a resource plan cannot prove restoration.
+
+The synthetic `linux_session_resume_cli` test runs the real executable in three
+processes: save after one tick; load and run one more tick; run two ticks without
+a restart. Its Main increments one value before Sleep and another after Sleep.
+The resumed value is not incremented a second time and the recaptured archive
+is byte-identical to uninterrupted execution. This exercises the integrated
+launcher, original-lot reconstruction, resource fingerprint, callback graph and
+production atomic file path without commercial files or a display.
+
+Remaining for the House07 restart gate: serialize/rebind dynamic code owners
+and the seated action needed to continue Stand; support routing persistence or
+retain its explicit save refusal. Then run Sit → save → new process → load
+seated → Stand against real House07 data, including the actual window and
+animation resources. The synthetic CLI result does not establish this gate,
+expansion coverage, multi-resident simulation or full game compatibility.

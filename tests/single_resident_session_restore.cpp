@@ -69,11 +69,17 @@ auto prepare(const std::vector<std::uint8_t>& bytes,Fixture& source) {
         source.baseline,source.lot,source.bootstrap,21);
 }
 void continue_candidate(odh::SingleResidentSessionRestore& candidate,const odh::SessionBundle& expected,
-                        bool missing_program=false,bool missing_hooks=false) {
+                        bool missing_program=false,bool missing_hooks=false,bool transfer=false) {
+    auto transferred=transfer?candidate.take_world():std::unique_ptr<odh::World>{};
+    auto& world=transferred?*transferred:candidate.world();
+    if(transfer){
+        rejects([&]{candidate.take_world();},"candidate World transferred twice");
+        rejects([&]{candidate.world();},"transferred World getter allowed stale ownership");
+    }
     odh::RandomState random{999};std::uint64_t tick=999;
-    odh::EntityThreadControllers controllers(candidate.world(),1,[&]{random.next(100);});
-    odh::Playback playback(candidate.world(),{});
-    odh::Vm vm(odh::RoutineSet{},candidate.world().vm_memory(),{},controllers.sleep_primitive(),
+    odh::EntityThreadControllers controllers(world,1,[&]{random.next(100);});
+    odh::Playback playback(world,{});
+    odh::Vm vm(odh::RoutineSet{},world.vm_memory(),{},controllers.sleep_primitive(),
         missing_program?odh::RoutineOwners{}:odh::RoutineOwners{{1,program()}});
     require(controllers.bind(vm)&&playback.bind(vm),"bind candidate before Main");
     odh::EntityVmScheduler scheduler(4);
@@ -89,7 +95,7 @@ void continue_candidate(odh::SingleResidentSessionRestore& candidate,const odh::
     rejects([&]{candidate.restore_execution(vm,controllers,playback,scheduler,{},random,tick);},"candidate restored twice");
     for(;tick<6;)require(scheduler.tick(++tick,8,8),"restored tick");
     odh::PlaybackSnapshot state;require(playback.capture_snapshot(state),"capture resumed animation");
-    auto resumed=expected;resumed.world=candidate.world().snapshot();resumed.relationships=candidate.relationships().snapshot();
+    auto resumed=expected;resumed.world=world.snapshot();resumed.relationships=candidate.relationships().snapshot();
     resumed.runtime_entities={{1,vm.snapshot(),controllers.snapshot(),state}};
     resumed.scheduler=scheduler.snapshot();resumed.host.tick=tick;resumed.host.random_seed=random.seed();
     resumed.host.global_values=capture_globals(candidate.lot(),candidate.bootstrap(),candidate.family_global());
@@ -132,6 +138,8 @@ void unit_tests() {
     require(candidate->relationships().object_value(candidate->world(),1,1,1)==-9,"restore nonempty relationship values");
     for(;source.tick<6;)source.step();const auto expected=source.snapshot();
     continue_candidate(*candidate,expected);
+    auto transferred=prepare(bytes,source);
+    continue_candidate(*transferred,expected,false,false,true);
     auto changed=saved;
     changed.resources.resource_fingerprint[0]^=1;
     rejects([&]{prepare(odh::encode_session_bundle(changed),source);},"wrong resources accepted");

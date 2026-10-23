@@ -24,7 +24,17 @@ public:
         std::optional<std::int16_t> family_global,
         SessionBundleLimits limits = {});
 
-    World& world() { return world_; }
+    World& world() {
+        if(!world_)throw FormatError("candidate World ownership was transferred to the host");
+        return *world_;
+    }
+    // A host whose lot container owns World may transfer the candidate before
+    // binding execution/rendering. Keep the returned World alive through restore.
+    // world() must not be called after this one-time transfer.
+    std::unique_ptr<World> take_world() {
+        if(attempted_||!world_)throw FormatError("candidate World can only transfer once before execution restore");
+        return std::move(world_);
+    }
     RelationshipState& relationships() { return relationships_; }
     LotContext& lot() { return lot_; }
     Ts1BootstrapGlobals& bootstrap() { return bootstrap_; }
@@ -43,7 +53,7 @@ private:
         const Ts1BootstrapGlobals&, std::optional<std::int16_t>, WorldLimits,
         RelationshipLimits);
     SessionBundle bundle_;
-    World world_;
+    std::unique_ptr<World> world_;
     RelationshipState relationships_;
     LotContext lot_;
     Ts1BootstrapGlobals bootstrap_;

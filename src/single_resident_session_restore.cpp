@@ -82,7 +82,7 @@ void validate_runtime(const SessionBundle& bundle) {
 SingleResidentSessionRestore::SingleResidentSessionRestore(SessionBundle bundle,
     const LotContext& lot,const Ts1BootstrapGlobals& bootstrap,
     std::optional<std::int16_t> family,WorldLimits world_limits,RelationshipLimits relationship_limits)
-    :bundle_(std::move(bundle)),world_(world_limits),relationships_(relationship_limits),
+    :bundle_(std::move(bundle)),world_(std::make_unique<World>(world_limits)),relationships_(relationship_limits),
      lot_(lot),bootstrap_(bootstrap),family_global_(family) {}
 
 std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prepare(
@@ -122,7 +122,7 @@ std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prep
         throw FormatError("session lot global differs from selected house");
     auto result=std::unique_ptr<SingleResidentSessionRestore>(new SingleResidentSessionRestore(
         std::move(bundle),globals,bootstrap,family,limits.world.world,limits.relationships.relationships));
-    if(!result->world_.restore_snapshot(result->bundle_.world)||
+    if(!result->world_->restore_snapshot(result->bundle_.world)||
        !result->relationships_.restore_snapshot(result->bundle_.relationships))
         throw FormatError("session world or relationships exceed fresh candidate limits");
     for(const auto& entry:result->bundle_.host.global_values) {

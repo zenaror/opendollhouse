@@ -16,6 +16,9 @@ using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>
 // Direct diagnostic invocations may omit it; integrated game launches supply it.
 struct IntegratedSessionContext {
     std::optional<odh::SessionResourceIdentity> resources;
+    std::vector<std::uint8_t> restore_archive; // Verified launch input; never rewritten.
+    bool save_on_exit = false;
+    bool bounded_headless = false;
     std::filesystem::path game_root;
     std::vector<std::filesystem::path> resource_paths;
     std::uint8_t language_code = 1;

@@ -5,6 +5,10 @@
 #include "resource.hpp"
 
 #include "odh/session_entry.hpp"
+#include "odh/session_bundle.hpp"
+#ifdef __linux__
+#include "linux_session_archive_store.hpp"
+#endif
 #include "odh/session_resource_identity.hpp"
 #include "json.hpp"
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -33,6 +37,11 @@ struct Options {
     std::optional<unsigned> house;
     std::optional<unsigned> resident_id;
     bool plan_only = false, choose_language = false;
+    std::optional<std::filesystem::path> load_session;
+    std::optional<unsigned> headless_ticks;
+    bool save_on_exit = false;
+    std::vector<std::uint8_t> restore_archive;
+    std::optional<odh::SessionBundle> restore_bundle;
 };
 
 unsigned parse_number(const std::string& text, unsigned maximum, const char* label) {
@@ -49,6 +58,10 @@ Options parse_options(int argc, char** argv) {
     bool have_root = false, have_mode = false, have_language = false;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
+        if (key == "--save-session-on-exit" && !result.save_on_exit) {
+            result.save_on_exit = true;
+            continue;
+        }
         if (key == "--plan-only" && !result.plan_only) {
             result.plan_only = true;
             continue;
@@ -66,19 +79,49 @@ Options parse_options(int argc, char** argv) {
             have_language = true;
         } else if (key == "--house" && !result.house) {
             result.house = parse_number(value, 98, "house number");
+        } else if (key == "--load-session" && !result.load_session) {
+            result.load_session = value;
+        } else if (key == "--headless-ticks" && !result.headless_ticks) {
+            result.headless_ticks = parse_number(value, 4096, "headless tick count");
         } else if (key == "--resident-id" && !result.resident_id) {
             result.resident_id = parse_number(value, 32767, "resident ID");
         } else {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
     }
+    if (result.load_session) {
+#ifdef __linux__
+        result.restore_archive = odh::encode_session_archive(odh_host::read_session_archive(*result.load_session));
+        result.restore_bundle = odh::decode_session_bundle(result.restore_archive);
+        const auto& bundle = *result.restore_bundle;
+        if ((have_mode && result.mode != bundle.host.neighborhood_mode) ||
+            (have_language && result.language != bundle.resources.language_code) ||
+            (result.house && *result.house != bundle.host.house_number) ||
+            (result.resident_id && *result.resident_id != static_cast<unsigned>(bundle.host.resident_neighbor_id)))
+            throw odh::FormatError("explicit launch options conflict with the saved session");
+        if (bundle.runtime_entities.size() != 1)
+            throw odh::FormatError("session loading currently supports one resident thread");
+        result.mode = bundle.host.neighborhood_mode;
+        result.language = bundle.resources.language_code;
+        result.house = bundle.host.house_number;
+        result.resident_id = static_cast<unsigned>(bundle.host.resident_neighbor_id);
+        have_mode = have_language = true;
+#else
+        throw odh::FormatError("session loading is currently available only on Linux");
+#endif
+    }
+    if (result.load_session && result.plan_only)
+        throw odh::FormatError("--load-session requires execution; use --headless-ticks for a display-free restore");
+    if ((result.save_on_exit && (!result.headless_ticks || result.plan_only)) ||
+        (result.headless_ticks && (result.plan_only || !result.house)))
+        throw odh::FormatError("headless execution needs --house (or --load-session); saving on exit needs --headless-ticks, without --plan-only");
     if (!have_mode || result.mode == 0 || result.mode == 6 || result.language == 0 ||
         (result.house && *result.house == 0) ||
         (result.resident_id && *result.resident_id == 0) ||
         (result.plan_only && !result.house))
         throw odh::FormatError(
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
-            "[--house 1..98] [--resident-id 1..32767] [--plan-only]");
+            "[--house 1..98] [--resident-id 1..32767] [--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
@@ -302,12 +345,14 @@ RuntimePlan build_runtime_arguments(const Options& options,
     for (const auto& archive : shared) append(args, {"--animation-source", archive.string()});
     for (const auto& archive : expansions) append(args, {"--animation-source", archive.string()});
     for (const auto& archive : download_archives) append(args, {"--animation-source", archive.string()});
-    append(args, {"--saved-world-main", "--render-window", "--render-saved-guid",
-        std::to_string(resident.guid), "--render-animation-far", animation_far.string(),
-        "--render-textures", textures_far.string(), "--render-skeleton",
-        "adult-skeleton.cmx.bcf", "adult", "--render-floors", floors.string(),
-        "--render-walls", walls.string(), "--render-level", "1", "--render-wall-mode",
-        "up", "--render-terrain-theme", "0"});
+    append(args, {options.headless_ticks?"--headless-main":"--saved-world-main", "--render-saved-guid", std::to_string(resident.guid),
+        "--render-floors", floors.string(), "--render-walls", walls.string(), "--render-level", "1",
+        "--render-wall-mode", "up", "--render-terrain-theme", "0"});
+    if (options.headless_ticks)
+        append(args, {"--ticks", std::to_string(*options.headless_ticks)});
+    else
+        append(args, {"--render-window", "--render-animation-far", animation_far.string(),
+            "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
     for (const auto& resource : architecture)
         append(args, {"--architecture-resource", resource.string()});
     return plan;
@@ -374,7 +419,7 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
         std::unique_ptr<odh_host::LinuxWindow> window;
-        if (!options.plan_only) {
+        if (!options.plan_only && !options.headless_ticks && !options.load_session) {
             window = std::make_unique<odh_host::LinuxWindow>(800, 600, "OpenDollhouse");
             if (options.choose_language) {
                 const auto selected = odh_host::show_language_picker(*window,
@@ -388,7 +433,7 @@ int odh_linux_game_entry(int argc, char** argv) {
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
         }
 #else
-        if (!options.plan_only)
+        if (!options.plan_only && !options.headless_ticks)
             throw odh::FormatError("interactive game entry requires a build with X11 support");
         if (!options.house)
             throw odh::FormatError("--house is required for --plan-only without X11 support");
@@ -416,7 +461,7 @@ int odh_linux_game_entry(int argc, char** argv) {
             resident = &*found;
         }
 #ifdef ODH_HAVE_X11
-        else if (!options.plan_only) {
+        else if (!options.plan_only && !options.headless_ticks) {
             const auto selected = odh_host::show_resident_picker(*window, session.members,
                 static_cast<std::uint8_t>(options.language));
             if (!selected) {
@@ -429,6 +474,18 @@ int odh_linux_game_entry(int argc, char** argv) {
         else resident = &session.members.front();
         const auto plan = build_runtime_arguments(options, game, house, session, *resident,
                                                  graphics_resource);
+        std::optional<odh::SessionResourceIdentity> verified_identity;
+        if (options.restore_bundle) {
+            verified_identity = odh_host::identify_session_resources(game, plan.resources,
+                static_cast<std::uint8_t>(options.language), plan.expansion_mask);
+            const auto& bundle = *options.restore_bundle;
+            if (odh::encode_session_resource_identity(bundle.resources) !=
+                odh::encode_session_resource_identity(*verified_identity))
+                throw odh::FormatError("saved session game resources do not match the selected installation");
+            if (bundle.host.family_chunk_id != session.family_chunk_id ||
+                bundle.host.family_number != session.family_number || bundle.host.resident_guid != resident->guid)
+                throw odh::FormatError("saved session family or resident no longer matches the selected lot");
+        }
         if (options.plan_only) {
             const auto identity = odh_host::identify_session_resources(game, plan.resources,
                 static_cast<std::uint8_t>(options.language), plan.expansion_mask);
@@ -440,13 +497,18 @@ int odh_linux_game_entry(int argc, char** argv) {
         saved.language_code = static_cast<int>(options.language);
         saved.data_root = game;
         std::string config_error;
-        if (!odh_host::save_linux_user_config(saved, &config_error))
+        if (!options.load_session && !options.headless_ticks && !odh_host::save_linux_user_config(saved, &config_error))
             throw odh::FormatError("cannot save user settings: " + config_error);
 #endif
         std::vector<char*> pointers;
         pointers.reserve(plan.arguments.size());
         for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
         odh_host::IntegratedSessionContext session_context;
+        options.restore_bundle.reset(); // Release preflight values before the runtime decodes its candidate.
+        session_context.resources = verified_identity;
+        session_context.restore_archive = std::move(options.restore_archive);
+        session_context.save_on_exit = options.save_on_exit;
+        session_context.bounded_headless = options.headless_ticks.has_value();
         session_context.game_root = game;
         session_context.resource_paths = plan.resources;
         session_context.language_code = static_cast<std::uint8_t>(options.language);
@@ -458,7 +520,11 @@ int odh_linux_game_entry(int argc, char** argv) {
         session_context.resident_guid = resident->guid;
         session_context.resident_neighbor_id = resident->neighbor_id;
 #ifdef ODH_HAVE_X11
-        window->resize(320, 240);
+        if (options.load_session && !options.headless_ticks) {
+            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
+            window = std::make_unique<odh_host::LinuxWindow>(320, 240, "OpenDollhouse");
+        }
+        if (window) window->resize(320, 240);
         odh_host::NeighborhoodResumeCallback neighborhood_resume;
         if (map) {
             const auto active_house = static_cast<std::uint16_t>(house);

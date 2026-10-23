@@ -24,6 +24,7 @@
 #include "odh/family.hpp"
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/single_resident_session_restore.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
@@ -879,6 +880,30 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         }else runtime_avatar_id=static_cast<std::int16_t>(headless_fixture_avatar->id);
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
+    std::optional<odh::WorldSnapshot> session_baseline;
+    if(session_context&&saved_world_main&&restored_world)session_baseline=restored_world->world->snapshot();
+    std::unique_ptr<odh::SingleResidentSessionRestore> session_restore;
+    if(session_context&&!session_context->restore_archive.empty()){
+        if(!saved_world_main||!restored_world||!lot||!bootstrap_globals||!session_context->resources||
+           headless_second_main||headless_fixture_avatar||initialize||action||seed||age||flags||routine)
+            throw odh::FormatError("session restore requires an unchanged single-resident integrated saved-lot host");
+        odh::SessionHostState selection;
+        selection.neighborhood_mode=session_context->neighborhood_mode;
+        selection.house_number=session_context->house_number;
+        selection.family_chunk_id=session_context->family_chunk_id;
+        selection.family_number=session_context->family_number;
+        selection.resident_guid=session_context->resident_guid;
+        selection.resident_neighbor_id=session_context->resident_neighbor_id;
+        selection.runtime_avatar_id=runtime_avatar_id;
+        session_restore=odh::SingleResidentSessionRestore::prepare(session_context->restore_archive,
+            *session_context->resources,selection,*session_baseline,*lot,*bootstrap_globals,family_global);
+        // This launch is still unpublished. Globals are host-owned values;
+        // all callbacks below bind to their restored values and candidate World.
+        *lot=session_restore->lot();*bootstrap_globals=session_restore->bootstrap();
+        family_global=session_restore->family_global();
+        restored_world->world=session_restore->take_world();
+        std::vector<std::uint8_t>{}.swap(session_context->restore_archive); // Release encoded input.
+    }
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
     std::optional<odh::EntityPosition> paired_primary_start;
     const auto entity_count=[&]{std::size_t count=0;std::int16_t cursor=0;
@@ -1054,8 +1079,10 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             return {odh::PrimitiveDisposition::unsupported,"RunTreeByName found a private tree but runtime subroutine dispatch is not installed"};
         return {odh::PrimitiveDisposition::goto_false,{}};
     };
-    std::optional<odh::RelationshipState> relationships;
-    if(neighbors)relationships.emplace(*neighbors);
+    std::optional<odh::RelationshipState> original_relationships;
+    if(neighbors&&!session_restore)original_relationships.emplace(*neighbors);
+    auto* relationships=session_restore?&session_restore->relationships():
+        original_relationships?&*original_relationships:nullptr;
     std::vector<odh::RelationshipRecord> relationship_records;
     const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
         if(diagnostics.retain(Diagnostic::relationship,relationship_records.size(),10000))relationship_records.push_back(value);
@@ -1463,7 +1490,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             startup_steps+=vm.steps();
         }
     }
-    if(!host_failed){
+    if(!host_failed&&!session_restore){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
         std::vector<std::int16_t> root_arguments(4);
@@ -1494,6 +1521,24 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         }
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
+    std::uint64_t ticks=0;
+    if(session_restore){
+        if(!playback)throw odh::FormatError("session restore needs the matching animation catalog");
+        random.reset(session_restore->host().random_seed);
+        body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
+        const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
+            odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
+            return resolve_animation(frame,key.source,key.id,key.kind==odh::PlaybackResourceKey::Kind::posture_reset
+                ?std::optional<std::int16_t>{key.posture}:std::nullopt);
+        };
+        session_restore->restore_execution(vm,thread_controllers,*playback,entity_scheduler,resolver,random,ticks);
+        profile_mark("session-restored-before-main");
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("session resumed saved_tick="+std::to_string(ticks));
+#endif
+    }
+    const auto resumed_tick=ticks;
+    const auto resumed_steps=session_restore?vm.steps():0;
     struct RenderEvidence {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
         std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
@@ -1843,7 +1888,7 @@ struct PlacementCandidateProbe {
             current_overlay_text="U: Stand";
         }
         if(neighborhood_resume)title+=" | M: neighborhood";
-        return title+" | S save (experimental; loading not ready), Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+        return title+" | S save (experimental), Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> owned_render_window;
@@ -2367,7 +2412,6 @@ struct PlacementCandidateProbe {
         snap_stair_placement_diagnostic="stairs destination tile passed the prepared walkability checks";
         return odh::Snap::StairPlacementStatus::accepted;
     };
-    std::uint64_t ticks=0;
     bool session_save_requested=false;
     const auto save_live_session=[&]()->std::string {
 #ifdef __linux__
@@ -2379,6 +2423,11 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until Go Here finishes before saving");
         if(!saved_portal_code_owners.empty()||!saved_code_owners.empty()||seated_action_target)
             throw odh::FormatError("this session has object actions that experimental saves cannot yet resume safely");
+        const auto* save_actor=world.find(runtime_avatar_id);
+        if(!save_actor||save_actor->attachment||save_actor->person_data.empty()||save_actor->person_data[0]!=0)
+            throw odh::FormatError("this session cannot yet be restored: the resident must be standing and unattached");
+        if(!session_baseline||!lot||!bootstrap_globals)
+            throw odh::FormatError("this session cannot yet be restored: original lot baseline is unavailable");
         const char* data_home=std::getenv("XDG_DATA_HOME");
         std::filesystem::path directory;
         if(data_home&&*data_home)directory=data_home;
@@ -2390,9 +2439,8 @@ struct PlacementCandidateProbe {
         if(!directory.is_absolute())
             throw odh::FormatError("save data directory must be an absolute path");
         directory/="opendollhouse";directory/="saves";
-        std::filesystem::create_directories(directory);
         std::error_code path_error;
-        directory=std::filesystem::canonical(directory,path_error);
+        directory=std::filesystem::weakly_canonical(directory,path_error);
         if(path_error)throw odh::FormatError("cannot resolve the user save directory");
         const auto is_within=[](const std::filesystem::path& root,const std::filesystem::path& candidate){
             const auto relative=candidate.lexically_relative(root);
@@ -2404,7 +2452,8 @@ struct PlacementCandidateProbe {
         auto checkout=std::filesystem::current_path(path_error);
         if(!path_error){
             for(;;){
-                if(std::filesystem::exists(checkout/".git")){
+                if(std::filesystem::is_regular_file(checkout/".git")||
+                   std::filesystem::is_regular_file(checkout/".git"/"HEAD")){
                     checkout=std::filesystem::canonical(checkout,path_error);
                     if(!path_error&&is_within(checkout,directory))
                         throw odh::FormatError("save directory must be outside the source checkout");
@@ -2458,12 +2507,21 @@ struct PlacementCandidateProbe {
             [](const auto& a,const auto& b){return a.id<b.id;});
         bundle.scheduler=entity_scheduler.snapshot();
         const auto encoded=odh::encode_session_bundle(bundle);
+        // Apply the loader's complete supported-profile validation before any
+        // filesystem mutation. A previous usable save must survive rejection.
+        try{
+            auto candidate=odh::SingleResidentSessionRestore::prepare(encoded,bundle.resources,bundle.host,
+                *session_baseline,*lot,*bootstrap_globals,family_global);
+        }catch(const std::exception& error){
+            throw odh::FormatError(std::string("this session cannot yet be restored: ")+error.what());
+        }
+        std::filesystem::create_directories(directory);
         odh_host::write_session_archive_atomic(save_path,odh::decode_session_archive(encoded));
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         session_log.event("experimental session save written tick="+std::to_string(ticks)+
             " path="+save_path.string());
 #endif
-        return "saved (experimental; loading is not ready): "+save_path.string();
+        return save_path.string();
 #else
         throw odh::FormatError("session saves are currently available only on Linux");
 #endif
@@ -2542,7 +2600,7 @@ struct PlacementCandidateProbe {
             actor_raster_pixels,actor_composited_pixels,
             render_lot!=nullptr,render_lot!=nullptr};
     };
-    const auto total_steps=[&]{return startup_steps+vm.steps()+(second_main_vm?second_main_vm->steps():0);};
+    const auto total_steps=[&]{return startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);};
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
         const auto budget=session_policy.entity_budget(total_steps());
@@ -2602,7 +2660,7 @@ struct PlacementCandidateProbe {
             " resource_files="+std::to_string(session_context->resource_paths.size()));
     }
 #endif
-    execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
+    if(!session_restore)execute(false); // Restored Main resumes only at saved tick + 1.
     profile_mark("first-main-execution");
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
@@ -2789,18 +2847,18 @@ struct PlacementCandidateProbe {
 #endif
                 }
                 if(render_window_host)render_window_host->set_title("OpenDollhouse | "+status+
-                    " | S save (experimental; loading not ready), Escape close");
+                    " | S save (experimental), Escape close");
             }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
             if(input.rotation||input.zoom||input.redraw)capture_frame();
             queue_headless_window_interaction();
-            const bool runtime_finished=session_policy.limit_reached(ticks,total_steps())||
+            const bool runtime_finished=session_policy.limit_reached(ticks-resumed_tick,total_steps())||
                 (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status())));
             if(runtime_finished&&!render_evidence)
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
-            if(!render_window_host&&(runtime_finished||session_policy.limit_reached(ticks,total_steps())))break;
+            if(!render_window_host&&(runtime_finished||session_policy.limit_reached(ticks-resumed_tick,total_steps())))break;
             if(render_window_host){
                 if(window_paused||runtime_finished){
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));window_deadline=std::chrono::steady_clock::now();continue;
@@ -2811,7 +2869,7 @@ struct PlacementCandidateProbe {
             }
         }else
 #endif
-        if(session_policy.limit_reached(ticks,total_steps())||
+        if(session_policy.limit_reached(ticks-resumed_tick,total_steps())||
            (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))))break;
         ++ticks;
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
@@ -3078,7 +3136,7 @@ struct PlacementCandidateProbe {
             go_here_status="vm_fault";
             go_here_route_status="host_failed";
             go_here_diagnostic=vm.diagnostic();
-        }else if(ticks>=session_policy.tick_limit()){
+        }else if(ticks-resumed_tick>=session_policy.tick_limit()){
             go_here_status="tick_limit";
             go_here_route_status="incomplete";
             go_here_diagnostic="Go Here remained queued when the tick budget ended";
@@ -3273,10 +3331,17 @@ struct PlacementCandidateProbe {
             render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
         }
     }
+    std::optional<std::string> saved_session_path;
+    if(session_context&&session_context->save_on_exit){
+        if(host_failed||vm.status()==odh::VmStatus::fault||vm.status()==odh::VmStatus::budget_exhausted||
+           session_policy.instruction_limit_reached(total_steps()))
+            throw odh::FormatError("failed or instruction-limited session will not replace the previous save");
+        saved_session_path=save_live_session();
+    }
     const auto status=vm.status();
     const auto unfinished=[](odh::VmStatus value){return value==odh::VmStatus::waiting||
         value==odh::VmStatus::yielded||value==odh::VmStatus::budget_exhausted;};
-    const bool tick_exhausted=!host_failed&&ticks==session_policy.tick_limit()&&
+    const bool tick_exhausted=!host_failed&&ticks-resumed_tick==session_policy.tick_limit()&&
         (unfinished(status)||(second_main_vm&&unfinished(second_main_vm->status())));
     const bool action_incomplete=action.has_value() && (!queue.completion() || queue.size()!=0);
     const bool instruction_exhausted=session_policy.instruction_limit_reached(total_steps()) &&
@@ -3301,7 +3366,10 @@ struct PlacementCandidateProbe {
         }
         throw odh::FormatError(failure+")");
     }
-    std::cout<<"{\"evidence\":"<<json_bytes(saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
+    std::cout<<"{\"evidence\":"<<json_bytes(session_restore?"ODH_session_resumed":saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
+        <<",\"session_loaded\":"<<(session_restore?"true":"false")
+        <<",\"resumed_tick\":"<<resumed_tick<<",\"saved_session_path\":"
+        <<(saved_session_path?json_bytes(*saved_session_path):"null")
         <<",\"integrated_session_context\":";
     if(session_context){
         std::cout<<"{\"neighborhood_mode\":"<<static_cast<unsigned>(session_context->neighborhood_mode)
@@ -3347,7 +3415,8 @@ struct PlacementCandidateProbe {
         std::cout<<json_bytes(odh_host::PersonDiagnosticRetention::names[n])<<':'<<diagnostics.dropped()[n];
     }
     std::cout<<'}'
-        <<",\"initialization\":"<<json_bytes(saved_world_main?
+        <<",\"initialization\":"<<json_bytes(session_restore?
+        "ODH session restored before Main dispatch; next logical tick continues the saved VM and controllers":saved_world_main?
         "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":
         "full Init/entry8/body-string pipeline not executed; explicit root may be Init")<<",\"startup_requested\":"<<(initialize?"true":"false")
@@ -4134,8 +4203,10 @@ struct PlacementCandidateProbe {
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<"}\n";
+    const bool requested_ticks_complete=session_context&&session_context->bounded_headless&&
+        ticks-resumed_tick==session_policy.tick_limit();
     const int exit_code=host_failed||status==odh::VmStatus::fault||
-        (!render_window&&status==odh::VmStatus::budget_exhausted)||tick_exhausted||instruction_exhausted||action_incomplete?3:0;
+        (!render_window&&status==odh::VmStatus::budget_exhausted)||(tick_exhausted&&!requested_ticks_complete)||instruction_exhausted||action_incomplete?3:0;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     if(host_failed||status==odh::VmStatus::fault)
         session_log.event("runtime session failed tick="+std::to_string(ticks)+" diagnostic="+
@@ -4156,7 +4227,7 @@ struct PlacementCandidateProbe {
 
 int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)
-        if(argv[i]&&(std::string(argv[i])=="--game-root"||std::string(argv[i])=="--mode"))
+        if(argv[i]&&(std::string(argv[i])=="--game-root"||std::string(argv[i])=="--mode"||std::string(argv[i])=="--load-session"))
             return odh_linux_game_entry(argc,argv);
     return odh_person_run(argc,argv,nullptr);
 }

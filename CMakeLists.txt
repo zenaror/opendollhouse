@@ -733,7 +733,7 @@ target_link_libraries(odh_single_resident_session_restore PUBLIC odh_session_bun
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_single_resident_session_restore PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
-target_link_libraries(odh-person PRIVATE odh_session_bundle)
+target_link_libraries(odh-person PRIVATE odh_session_bundle odh_single_resident_session_restore)
 if(TARGET odh_linux_session_archive_store)
   target_link_libraries(odh-person PRIVATE odh_linux_session_archive_store)
 endif()
@@ -1307,6 +1307,8 @@ if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME linux_game_entry_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_game_entry_cli.py $<TARGET_FILE:odh-person>)
+      add_test(NAME linux_session_resume_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_session_resume_cli.py $<TARGET_FILE:odh-person>)
     endif()
     add_test(NAME play_linux_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/play_linux_cli.py)
