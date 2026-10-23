@@ -17,6 +17,11 @@ validação indicados por versão.
   enquanto a primeira cena é preparada, evitando uma tela preta nessa espera.
   House07 foi aberto em X11 isolado, com mensagem em português, lote, HUD e dois
   moradores visíveis; os 215 CTests passaram sob Xephyr.
+- A troca de lotes simulada pelo teste integrado agora também funciona na
+  compilação sem X11. House07 → House08 → House07 passou com dados sintéticos
+  tanto na build X11 quanto na sem janela; na configuração sem X11, os 210
+  CTests passaram. Isso valida o teste de viagem e save/resume, não uma partida
+  completa nem uma interface sem janela.
 
 ### Planejado e acompanhado
 

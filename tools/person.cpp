@@ -3961,6 +3961,54 @@ struct PlacementCandidateProbe {
     bool window_paused=false,window_closed=false;
     std::optional<odh_host::NeighborhoodTransitionRequest> neighborhood_transition;
     auto window_deadline=std::chrono::steady_clock::now();
+    enum class NeighborhoodRequestResult { cancelled, same_lot, transitioned };
+    const auto process_neighborhood_request=[&](std::optional<std::uint16_t> selected){
+        const auto* actor_before=world.find(runtime_avatar_id);
+        const auto actor_generation_before=actor_before?actor_before->generation:0;
+        const auto actor_position_before=actor_before?actor_before->position:std::nullopt;
+        const auto actor_person_data_before=actor_before?actor_before->person_data:std::vector<std::int16_t>{};
+        const auto actor_attachment_before=actor_before?actor_before->attachment:std::nullopt;
+        if(actor_before&&!actor_before->person_data.empty())
+            neighborhood_resume_posture_before=actor_before->person_data[0];
+        if(actor_attachment_before)neighborhood_resume_attachment_before=actor_attachment_before->container;
+        const auto relationship_sources_before=relationships?relationships->source_count():0;
+        const auto relationship_pairs_before=relationships?relationships->pair_count():0;
+        const auto relationship_values_before=relationships?relationships->value_count():0;
+        neighborhood_resume_tick_before=ticks;
+        neighborhood_resume_vm_steps_before=vm.steps();
+        neighborhood_resume_requested=true;
+        if(!selected)return NeighborhoodRequestResult::cancelled;
+        neighborhood_resume_tick_after=ticks;
+        neighborhood_resume_vm_steps_after=vm.steps();
+        const auto* actor_after=world.find(runtime_avatar_id);
+        if(actor_after&&!actor_after->person_data.empty())
+            neighborhood_resume_posture_after=actor_after->person_data[0];
+        if(actor_after&&actor_after->attachment)
+            neighborhood_resume_attachment_after=actor_after->attachment->container;
+        neighborhood_resume_world_unchanged=actor_before&&actor_after&&
+            actor_after->generation==actor_generation_before&&actor_after->position==actor_position_before&&
+            actor_after->person_data==actor_person_data_before&&
+            ((!actor_attachment_before&&!actor_after->attachment)||
+             (actor_attachment_before&&actor_after->attachment&&
+              actor_attachment_before->container==actor_after->attachment->container&&
+              actor_attachment_before->slot==actor_after->attachment->slot&&
+              actor_attachment_before->positioned==actor_after->attachment->positioned));
+        neighborhood_resume_relationships_unchanged=relationship_sources_before==(relationships?relationships->source_count():0)&&
+            relationship_pairs_before==(relationships?relationships->pair_count():0)&&
+            relationship_values_before==(relationships?relationships->value_count():0);
+        const auto active_house=lot_id.value_or(0);
+        neighborhood_resume_same_lot=active_house&&*selected==active_house;
+        if(neighborhood_resume_same_lot)return NeighborhoodRequestResult::same_lot;
+        const auto save_path=save_live_session();
+        neighborhood_transition=odh_host::NeighborhoodTransitionRequest{
+            *selected,std::filesystem::path(save_path)};
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("neighborhood transition requested from house="+
+            std::to_string(active_house)+" to house="+std::to_string(*selected)+
+            " saved_session="+save_path);
+#endif
+        return NeighborhoodRequestResult::transitioned;
+    };
     while(!host_failed) {
 #ifdef ODH_HAVE_X11
         if(render_window_host||headless_window_interaction||headless_window_neighborhood_tick){
@@ -4042,70 +4090,28 @@ struct PlacementCandidateProbe {
             if(input.save)session_save_requested=true;
             if(input.neighborhood){
                 if(neighborhood_resume || headless_window_neighborhood_tick){
-                    const auto* actor_before=world.find(runtime_avatar_id);
-                    const auto actor_generation_before=actor_before?actor_before->generation:0;
-                    const auto actor_position_before=actor_before?actor_before->position:std::nullopt;
-                    const auto actor_person_data_before=actor_before?actor_before->person_data:std::vector<std::int16_t>{};
-                    const auto actor_attachment_before=actor_before?actor_before->attachment:std::nullopt;
-                    if(actor_before&&!actor_before->person_data.empty())
-                        neighborhood_resume_posture_before=actor_before->person_data[0];
-                    if(actor_attachment_before)neighborhood_resume_attachment_before=actor_attachment_before->container;
-                    const auto relationship_sources_before=relationships?relationships->source_count():0;
-                    const auto relationship_pairs_before=relationships?relationships->pair_count():0;
-                    const auto relationship_values_before=relationships?relationships->value_count():0;
-                    neighborhood_resume_tick_before=ticks;
-                    neighborhood_resume_vm_steps_before=vm.steps();
-                    neighborhood_resume_requested=true;
                     if(render_window_host)render_window_host->resize(800,600);
                     if(!neighborhood_resume&&headless_window_neighborhood_tick&&lot_id){
                         const auto selected=headless_window_neighborhood_house.value_or(*lot_id);
                         neighborhood_resume=[selected](){return std::optional<std::uint16_t>{selected};};
                     }
-                    const auto selected=neighborhood_resume?neighborhood_resume():std::nullopt;
-                    if(!selected){
-                        window_closed=true;
-                        break;
-                    }
-                    if(render_window_host)render_window_host->resize(render_camera.width,render_camera.height);
-                    neighborhood_resume_tick_after=ticks;
-                    neighborhood_resume_vm_steps_after=vm.steps();
-                    const auto* actor_after=world.find(runtime_avatar_id);
-                    if(actor_after&&!actor_after->person_data.empty())
-                        neighborhood_resume_posture_after=actor_after->person_data[0];
-                    if(actor_after&&actor_after->attachment)
-                        neighborhood_resume_attachment_after=actor_after->attachment->container;
-                    neighborhood_resume_world_unchanged=actor_before&&actor_after&&
-                        actor_after->generation==actor_generation_before&&actor_after->position==actor_position_before&&
-                        actor_after->person_data==actor_person_data_before&&
-                        ((!actor_attachment_before&&!actor_after->attachment)||
-                         (actor_attachment_before&&actor_after->attachment&&
-                          actor_attachment_before->container==actor_after->attachment->container&&
-                          actor_attachment_before->slot==actor_after->attachment->slot&&
-                          actor_attachment_before->positioned==actor_after->attachment->positioned));
-                    neighborhood_resume_relationships_unchanged=relationship_sources_before==(relationships?relationships->source_count():0)&&
-                        relationship_pairs_before==(relationships?relationships->pair_count():0)&&
-                        relationship_values_before==(relationships?relationships->value_count():0);
-                    const auto active_house=lot_id.value_or(0);
-                    neighborhood_resume_same_lot=selected&&active_house&&*selected==active_house;
-                    if(!neighborhood_resume_same_lot){
-                        try {
-                            const auto save_path=save_live_session();
-                            neighborhood_transition=odh_host::NeighborhoodTransitionRequest{
-                                *selected,std::filesystem::path(save_path)};
-#ifdef ODH_HAVE_LINUX_SESSION_LOG
-                            session_log.event("neighborhood transition requested from house="+
-                                std::to_string(active_house)+" to house="+std::to_string(*selected)+
-                                " saved_session="+save_path);
-#endif
-                            break;
-                        } catch(const std::exception& error) {
-                            if(render_window_host)render_window_host->set_title(
-                                std::string("OpenDollhouse | cannot switch lots: ")+error.what());
-                        }
+                    NeighborhoodRequestResult result;
+                    try{
+                        result=process_neighborhood_request(
+                            neighborhood_resume?neighborhood_resume():std::nullopt);
+                    }catch(const std::exception& error){
+                        if(render_window_host)render_window_host->set_title(
+                            std::string("OpenDollhouse | cannot switch lots: ")+error.what());
                         capture_frame();
                         window_deadline=std::chrono::steady_clock::now();
                         continue;
                     }
+                    if(result==NeighborhoodRequestResult::cancelled){
+                        window_closed=true;
+                        break;
+                    }
+                    if(render_window_host)render_window_host->resize(render_camera.width,render_camera.height);
+                    if(result==NeighborhoodRequestResult::transitioned)break;
                     capture_frame();
                     if(render_window_host)render_window_host->set_title(interaction_window_title());
                     window_deadline=std::chrono::steady_clock::now();
@@ -4277,6 +4283,23 @@ struct PlacementCandidateProbe {
                 std::this_thread::sleep_until(window_deadline);
             }
         }else
+#endif
+#ifndef ODH_HAVE_X11
+        // CLI-driven lot travel uses the same scheduled neighborhood request
+        // as the X11 test input, but must not depend on the window backend.
+        if(headless_window_neighborhood_tick&&!headless_window_neighborhood_input_sent&&
+           ticks>=*headless_window_neighborhood_tick){
+            headless_window_neighborhood_input_sent=true;
+            const auto selected=headless_window_neighborhood_house.value_or(lot_id.value_or(0));
+            const auto result=process_neighborhood_request(
+                selected?std::optional<std::uint16_t>{selected}:std::nullopt);
+            if(result==NeighborhoodRequestResult::cancelled){
+                window_closed=true;
+                break;
+            }
+            if(result==NeighborhoodRequestResult::transitioned)break;
+            continue;
+        }
 #endif
         if(session_policy.limit_reached(ticks-resumed_tick,total_steps())||
            (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))&&std::none_of(household_runtime.begin(),household_runtime.end(),
