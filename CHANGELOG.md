@@ -31,6 +31,11 @@ validação indicados por versão.
   e o teste X11 foi pulado porque não havia servidor gráfico acessível.
   Veja [`linux-launcher-preview-validation.md`](docs/linux-launcher-preview-validation.md).
 
+- A resolução dos dados de lote e família selecionados agora também é uma
+  função reutilizável da biblioteca, `odh::load_session_entry`. O CLI existente
+  e o futuro fluxo integrado compartilham o mesmo caminho de leitura.
+  A validação sintética e a House07 real continuam aprovadas.
+
 - Prévia de launcher Linux encadeia seleção de lote, família e preparação do
   lote salvo. `odh-person` agora resolve o GUID do morador durante a leitura do
   World (House07: vizinhança 48/47 → objetos 105/137), sem uma leitura extra do

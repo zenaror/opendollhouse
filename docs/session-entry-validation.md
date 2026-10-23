@@ -1,7 +1,8 @@
 # Resolução da família antes de abrir um lote
 
-O `odh-session-entry` recebe uma pasta `UserData`, o modo da vizinhança e o
-número da casa. Ele confere a casa em `LotLocations.iff`, localiza a família em
+`odh::load_session_entry` recebe uma pasta `UserData`, o modo da vizinhança, o
+número da casa e o idioma. O executável `odh-session-entry` usa essa função.
+Ela confere a casa em `LotLocations.iff`, localiza a família em
 `Neighborhood.iff`, liga cada morador ao registro NBRS e procura o mesmo GUID
 em um arquivo de personagem de `Characters/`. Também confere se o lote contém
 um SIMI1 que o leitor atual reconhece.
@@ -19,7 +20,8 @@ nenhum asset é copiado para o projeto.
 - `session_entry_resolution`: ligação sintética casa → família → vizinho →
   arquivo de personagem, incluindo entradas ausentes e ambíguas.
 - `session_entry_cli`: caminho completo sintético pela ferramenta de linha de
-  comando.
+  comando, agora passando pelo mesmo carregador reutilizável destinado ao
+  aplicativo Linux integrado.
 - `reconcile_session_household`: compara a família resolvida com avatares de um
   World restaurado por GUID exato. Preserva a ordem da família e separa avatar
   com posição, sem posição e ausente. Recusa avatares sem identidade legível e

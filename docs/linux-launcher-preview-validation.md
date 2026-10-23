@@ -13,6 +13,11 @@ seu identificador nativo, preservando a imagem e a entrada ao mudar de tamanho.
 Isso deixa as peças prontas para o futuro fluxo bairro→lote numa única janela;
 `odh-person` ainda não chama esse seletor nem reutiliza essa janela.
 
+A leitura da família selecionada também está disponível como
+`odh::load_session_entry(UserData, mode, house, language)` na biblioteca, em vez
+de existir apenas dentro do executável auxiliar. O CLI `odh-session-entry` e
+futuros caminhos integrados passam pelo mesmo carregador.
+
 Em House07 da instalação original, a vizinhança lista os moradores como 48 e
 47; os objetos correspondentes no World são 105 e 137. O smoke de 32 ticks
 selecionou cada um pelo GUID e confirmou o GUID, o objeto e o arquivo de

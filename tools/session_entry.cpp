@@ -1,12 +1,7 @@
-#include "odh/character_catalog.hpp"
-#include "odh/lot.hpp"
-#include "odh/lot_locations.hpp"
 #include "odh/session_entry.hpp"
 #include "json.hpp"
-#include "resource.hpp"
 
 #include <charconv>
-#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -20,54 +15,7 @@ unsigned number(const std::string& text, unsigned maximum) {
 }
 std::string run(const std::filesystem::path& root,unsigned mode,std::uint16_t house,
                 std::uint8_t language) {
-    if(!odh::neighborhood_mode_supported(mode))
-        throw odh::FormatError("selected neighborhood mode is unsupported");
-    std::optional<odh::LotLocations> locations;
-    with_iff_file((root/"LotLocations.iff").string(),[&](const auto& view){
-        odh::iff_chunks(view,[&](const auto& chunk){
-            if(chunk.type!="STR#"||chunk.id!=mode)return;
-            if(locations)throw odh::FormatError("ambiguous LotLocations mode table");
-            locations=odh::read_lot_locations(chunk.payload,language);
-        });
-    });
-    if(!locations)throw odh::FormatError("selected mode has no LotLocations table");
-
-    std::vector<odh::FamilyEntry> family_entries;
-    std::optional<odh::Nbrs> raw_neighbors;
-    with_iff_file((root/"Neighborhood.iff").string(),[&](const auto& view){
-        odh::iff_chunks(view,[&](const auto& chunk){
-            if(chunk.type=="FAMI"){
-                if(family_entries.size()>=4096)throw odh::FormatError("too many family records");
-                family_entries.push_back({chunk.id,odh::read_fami(chunk.payload)});
-            }else if(chunk.type=="NBRS"&&chunk.id==1){
-                if(raw_neighbors)throw odh::FormatError("ambiguous NBRS1 neighborhood table");
-                raw_neighbors=odh::read_nbrs(chunk.payload);
-            }
-        });
-    });
-    if(!raw_neighbors)throw odh::FormatError("Neighborhood.iff has no NBRS1 table");
-
-    std::ostringstream house_name;
-    house_name<<"House"<<std::setw(2)<<std::setfill('0')<<house<<".iff";
-    const auto house_path=root/"Houses"/house_name.str();
-    bool has_simi=false;
-    with_iff_file(house_path.string(),[&](const auto& view){
-        odh::iff_chunks(view,[&](const auto& chunk){
-            if(chunk.type=="SIMI"&&chunk.id==1){
-                if(has_simi)throw odh::FormatError("ambiguous SIMI1 selected house");
-                (void)odh::read_simi(chunk.payload);
-                has_simi=true;
-            }
-        });
-    });
-    if(!has_simi)throw odh::FormatError("selected house has no valid SIMI1");
-
-    const odh::FamilyContext families(family_entries);
-    const odh::NeighborContext neighbors(std::move(*raw_neighbors));
-    const auto definitions=odh::read_character_catalog(root/"Characters");
-    const odh::DefinitionIndex characters(definitions);
-    const auto entry=odh::resolve_session_entry(mode,house,house_path.string(),*locations,
-                                                families,neighbors,characters);
+    const auto entry=odh::load_session_entry(root,mode,house,language);
     std::ostringstream out;
     out<<"{\"evidence\":\"session_entry_resolved_only\",\"mode\":"<<entry.neighborhood_mode
        <<",\"house_number\":"<<entry.house_number<<",\"house_file\":"<<json_bytes(entry.house_file)
