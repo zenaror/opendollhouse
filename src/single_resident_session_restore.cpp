@@ -33,8 +33,9 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});
     if(actor==bundle.world.entities.end()||!actor->definition||
-       actor->definition->guid!=bundle.host.resident_guid||actor->attachment||
-       (!actor->person_data.empty()&&actor->person_data[0]!=0))
+       actor->definition->guid!=bundle.host.resident_guid||
+       (!bundle.seated_continuation&&(actor->attachment||
+       (!actor->person_data.empty()&&actor->person_data[0]!=0))))
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
 void validate_owner(const VmContext& context,std::int16_t actor) {
@@ -42,6 +43,7 @@ void validate_owner(const VmContext& context,std::int16_t actor) {
         throw FormatError("session requires an unserialized dynamic code owner");
 }
 void validate_runtime(const SessionBundle& bundle) {
+    if(bundle.seated_continuation){validate_seated_session_continuation(bundle);return;}
     if(bundle.runtime_entities.size()!=1||bundle.runtime_entities[0].id!=bundle.host.runtime_avatar_id||
        bundle.scheduler.faulted)
         throw FormatError("restore supports exactly one nonfaulted resident thread");
@@ -134,11 +136,27 @@ std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prep
     return result;
 }
 
+void SingleResidentSessionRestore::install_seated_continuation_owners(Vm& vm,
+    const DefinitionCandidate& candidate,const std::vector<EntryPoint>& entry_points,
+    const SessionActionRoutineLoader& load) {
+    if(attempted_||seated_owners_verified_||!bundle_.seated_continuation)
+        throw FormatError("seated owners can only be installed once before execution restore");
+    // Resolve every resource first. On installation failure the caller must
+    // discard this unpublished candidate and VM, just as for restore_execution.
+    const auto owners=resolve_seated_session_owners(bundle_,candidate,entry_points,load);
+    for(const auto& owner:owners)if(!vm.install_owner(owner.first,owner.second)){
+        attempted_=true;throw FormatError("fresh VM rejected verified seated action owner");
+    }
+    seated_owners_verified_=true;seated_vm_=&vm;
+}
+
 void SingleResidentSessionRestore::restore_execution(Vm& vm,EntityThreadControllers& controllers,
     Playback& playback,EntityVmScheduler& scheduler,const PlaybackRestoreResolver& resolver,
     RandomState& random,std::uint64_t& tick) {
     if(attempted_)throw FormatError("session candidate cannot be restored twice");
     attempted_=true;
+    if(bundle_.seated_continuation&&(!seated_owners_verified_||seated_vm_!=&vm))
+        throw FormatError("seated action resources were not verified and installed into this VM");
     const auto& state=bundle_.runtime_entities.front();
     if(!vm.restore_snapshot(state.vm))throw FormatError("session VM does not match fresh programs and bindings");
     if(!controllers.restore_snapshot(state.controllers))throw FormatError("session controllers do not match fresh VM and world");

@@ -1,4 +1,5 @@
 #include "odh/session_bundle.hpp"
+#include "odh/seated_session_continuation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,6 +18,7 @@ constexpr std::array<char,4> vm_id{{'V','M',' ',' '}};
 constexpr std::array<char,4> scheduler_id{{'S','C','H','D'}};
 constexpr std::array<char,4> controller_id{{'C','T','R','L'}};
 constexpr std::array<char,4> playback_id{{'P','L','A','Y'}};
+constexpr std::array<char,4> seated_id{{'S','E','A','T'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
 static_assert(sizeof(float)==sizeof(std::uint32_t),"session Playback codec requires 32-bit float");
@@ -45,6 +47,11 @@ public:
         bytes_.insert(bytes_.end(),data,data+size);
     }
     void append(const std::vector<std::uint8_t>& data) {append(data.data(),data.size());}
+    void string(const std::string& value) {
+        if(value.size()>4096)throw FormatError("seated continuation text exceeds limits");
+        u16(static_cast<std::uint16_t>(value.size()));
+        append(reinterpret_cast<const std::uint8_t*>(value.data()),value.size());
+    }
     std::vector<std::uint8_t> take() {return std::move(bytes_);}
 private:
     std::size_t limit_;
@@ -87,6 +94,10 @@ public:
     }
     std::size_t remaining() const {return bytes_.size()-offset_;}
     bool done() const {return offset_==bytes_.size();}
+    std::string string() {
+        const auto size=u16();if(size>4096)throw FormatError("seated continuation text exceeds limits");
+        const auto value=bytes(size);return {value.begin(),value.end()};
+    }
 private:
     void require(std::size_t count) const {
         if(count>remaining())throw FormatError("session bundle section is truncated");
@@ -210,6 +221,37 @@ SessionHostState decode_host(const std::vector<std::uint8_t>& bytes,
     if(!reader.done())throw FormatError("session host has trailing data");
     validate_host(host,limits);
     return host;
+}
+
+std::vector<std::uint8_t> encode_seated(const SessionSeatedContinuation& c,const SessionBundleLimits& limits) {
+    Writer w(limits.archive.max_section_bytes);w.u16(1);
+    w.i16(c.actor_id);w.u64(c.actor_generation);w.i16(c.target_id);w.u64(c.target_generation);
+    w.u32(c.target_guid);w.u32(c.target_slot);w.u16(c.action);
+    w.u64(c.completion.uid);w.u64(c.completion.ticket);w.u64(c.completion.tick);w.u8(c.completion.result?1:0);
+    w.string(c.source);w.string(c.asset);w.u16(c.definition_chunk_id);w.u16(c.tree_table_id);
+    w.u16(c.stand_entry_point);w.u16(c.stand_condition);w.u16(c.stand_action);
+    w.append(c.sit_routine_fingerprint.data(),32);w.append(c.stand_routine_fingerprint.data(),32);
+    w.u8(static_cast<std::uint8_t>(c.code_owners.size()));
+    for(const auto& binding:c.code_owners){w.u32(binding.owner);w.string(binding.source);w.string(binding.asset);
+        w.u16(binding.root_routine);w.append(binding.routine_fingerprint.data(),32);}
+    return w.take();
+}
+SessionSeatedContinuation decode_seated(const std::vector<std::uint8_t>& bytes) {
+    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported seated continuation version");
+    SessionSeatedContinuation c;c.actor_id=r.i16();c.actor_generation=r.u64();c.target_id=r.i16();c.target_generation=r.u64();
+    c.target_guid=r.u32();c.target_slot=r.u32();c.action=r.u16();
+    c.completion.uid=r.u64();c.completion.ticket=r.u64();c.completion.tick=r.u64();const auto result=r.u8();
+    if(result>1)throw FormatError("invalid seated completion boolean");
+    c.completion.result=result!=0;
+    c.source=r.string();c.asset=r.string();c.definition_chunk_id=r.u16();c.tree_table_id=r.u16();
+    c.stand_entry_point=r.u16();c.stand_condition=r.u16();c.stand_action=r.u16();
+    const auto digest=[&](auto& value){const auto data=r.bytes(32);std::copy(data.begin(),data.end(),value.begin());};
+    digest(c.sit_routine_fingerprint);digest(c.stand_routine_fingerprint);
+    const auto count=r.u8();if(count>1)throw FormatError("seated continuation owner count exceeds profile");
+    for(unsigned i=0;i<count;++i){SessionActionCodeOwner binding;binding.owner=r.u32();binding.source=r.string();
+        binding.asset=r.string();binding.root_routine=r.u16();digest(binding.routine_fingerprint);c.code_owners.push_back(std::move(binding));}
+    if(!r.done())throw FormatError("seated continuation has trailing data");
+    return c;
 }
 
 template<class Encoder>
@@ -468,6 +510,7 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
         previous=entity.id;
     }
     if(!found_primary)throw FormatError("session primary resident is absent from runtime roster");
+    if(bundle.seated_continuation)validate_seated_session_continuation(bundle);
 }
 
 const SessionArchiveSection& required_section(const SessionArchive& archive,
@@ -480,8 +523,13 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
 }
 bool recognized(const std::array<char,4>& id) {
     return id==meta_id||id==host_id||id==world_id||id==relation_id||
-           id==vm_id||id==scheduler_id||id==controller_id||id==playback_id;
+           id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||id==seated_id;
 }
+}
+
+void validate_session_playback_links(const SessionRuntimeEntity& state,const Entity& actor,
+    const SessionHostState& host,const SessionBundleLimits& limits) {
+    validate_playback_links(state,actor,host,limits);
 }
 
 std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
@@ -501,6 +549,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
         {playback_id,true,encode_roster(bundle.runtime_entities,limits,[&](const auto& entity){
             return encode_playback(entity.playback,limits);})}
     };
+    if(bundle.seated_continuation)archive.sections.push_back({seated_id,true,encode_seated(*bundle.seated_continuation,limits)});
     return encode_session_archive(archive,limits.archive);
 }
 
@@ -529,6 +578,10 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
             entity.controllers=decode_entity_thread_controllers_snapshot(data,limits.controllers);});
     decode_roster(required_section(archive,playback_id).data,result.runtime_entities,limits,
         [&](auto& entity,const auto& data){entity.playback=decode_playback(data,limits);});
+    for(const auto& section:archive.sections)if(section.id==seated_id){
+        if(!section.required)throw FormatError("seated continuation must be a required section");
+        result.seated_continuation=decode_seated(section.data);
+    }
     validate_links(result,limits);
     return result;
 }

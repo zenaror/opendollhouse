@@ -40,6 +40,8 @@ struct Options {
     std::optional<std::filesystem::path> load_session;
     std::optional<unsigned> headless_ticks;
     bool save_on_exit = false;
+    std::optional<unsigned> headless_sit_object;
+    bool headless_stand = false;
     std::vector<std::uint8_t> restore_archive;
     std::optional<odh::SessionBundle> restore_bundle;
 };
@@ -66,6 +68,10 @@ Options parse_options(int argc, char** argv) {
             result.plan_only = true;
             continue;
         }
+        if (key == "--headless-stand" && !result.headless_stand) {
+            result.headless_stand = true;
+            continue;
+        }
         if (i + 1 >= argc) throw odh::FormatError("missing integrated game option value");
         const std::string value = argv[++i];
         if (key == "--game-root" && !have_root) {
@@ -85,6 +91,8 @@ Options parse_options(int argc, char** argv) {
             result.headless_ticks = parse_number(value, 4096, "headless tick count");
         } else if (key == "--resident-id" && !result.resident_id) {
             result.resident_id = parse_number(value, 32767, "resident ID");
+        } else if (key == "--headless-sit-object" && !result.headless_sit_object) {
+            result.headless_sit_object = parse_number(value, 32767, "Sit object ID");
         } else {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
@@ -112,6 +120,12 @@ Options parse_options(int argc, char** argv) {
     }
     if (result.load_session && result.plan_only)
         throw odh::FormatError("--load-session requires execution; use --headless-ticks for a display-free restore");
+    if (result.headless_sit_object && (!*result.headless_sit_object || !result.headless_ticks ||
+        result.plan_only || result.load_session || result.headless_stand))
+        throw odh::FormatError("--headless-sit-object requires a new bounded lot session");
+    if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
+        result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
+        throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
     if ((result.save_on_exit && (!result.headless_ticks || result.plan_only)) ||
         (result.headless_ticks && (result.plan_only || !result.house)))
         throw odh::FormatError("headless execution needs --house (or --load-session); saving on exit needs --headless-ticks, without --plan-only");
@@ -353,6 +367,14 @@ RuntimePlan build_runtime_arguments(const Options& options,
     else
         append(args, {"--render-window", "--render-animation-far", animation_far.string(),
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
+    if (options.headless_sit_object)
+        append(args, {"--headless-interaction", std::to_string(*options.headless_sit_object), "1"});
+    if (options.headless_stand) {
+        if (!options.restore_bundle || !options.restore_bundle->seated_continuation)
+            throw odh::FormatError("Stand request has no verified saved seat");
+        append(args, {"--headless-stand",
+            std::to_string(options.restore_bundle->seated_continuation->target_id), "1"});
+    }
     for (const auto& resource : architecture)
         append(args, {"--architecture-resource", resource.string()});
     return plan;

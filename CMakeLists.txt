@@ -724,7 +724,7 @@ target_link_libraries(odh_entity_thread_controllers_snapshot_codec PUBLIC odh_in
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_entity_thread_controllers_snapshot_codec PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
-add_library(odh_session_bundle src/session_bundle.cpp)
+add_library(odh_session_bundle src/session_bundle.cpp src/seated_session_continuation.cpp)
 target_link_libraries(odh_session_bundle PUBLIC odh_session_archive odh_session_resource_identity
   odh_world_snapshot_codec odh_relationship_snapshot_codec odh_vm_snapshot_codec
   odh_entity_scheduler_snapshot_codec odh_entity_thread_controllers_snapshot_codec)
@@ -779,6 +779,9 @@ if(BUILD_TESTING)
   add_executable(odh-session-bundle-tests tests/session_bundle.cpp)
   target_link_libraries(odh-session-bundle-tests PRIVATE odh_session_bundle odh_playback)
   add_test(NAME session_bundle COMMAND odh-session-bundle-tests)
+  add_executable(odh-seated-session-continuation-tests tests/seated_session_continuation.cpp)
+  target_link_libraries(odh-seated-session-continuation-tests PRIVATE odh_single_resident_session_restore)
+  add_test(NAME seated_session_continuation COMMAND odh-seated-session-continuation-tests)
   add_executable(odh-single-resident-session-restore-tests tests/single_resident_session_restore.cpp)
   target_link_libraries(odh-single-resident-session-restore-tests PRIVATE odh_single_resident_session_restore)
   add_test(NAME single_resident_session_restore COMMAND odh-single-resident-session-restore-tests)

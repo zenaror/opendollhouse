@@ -25,6 +25,7 @@
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/single_resident_session_restore.hpp"
+#include "odh/seated_session_continuation.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
@@ -535,9 +536,11 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         throw odh::FormatError("--headless-go-here-interrupt-after-movements requires Go Here and no tick cancel or world mutation");
     if(headless_portal&&(!headless_main||headless_portal->tick>ticks_limit||headless_interaction||headless_stand||headless_go_here))
         throw odh::FormatError("--headless-portal requires --headless-main, an in-range tick, and an otherwise idle action probe");
-    if(headless_stand&&(!headless_main||!headless_interaction||headless_stand->tick>ticks_limit||
+    if(headless_stand&&(!headless_main||
+       (!headless_interaction&&(!session_context||session_context->restore_archive.empty()))||
+       headless_stand->tick>ticks_limit||
        (headless_interaction&&headless_stand->tick<=headless_interaction->tick)))
-        throw odh::FormatError("--headless-stand requires --headless-main, an in-range tick, and must follow the interaction request");
+        throw odh::FormatError("--headless-stand requires --headless-main, an in-range tick, and either a preceding Sit request or a seated restored session");
     if(headless_window_interaction&&(!headless_main||!render_saved_id||!render_output||!render_floors||
        headless_interaction||headless_stand||headless_go_here||headless_portal||render_tick||ticks_limit<2))
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
@@ -1526,6 +1529,28 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         if(!playback)throw odh::FormatError("session restore needs the matching animation catalog");
         random.reset(session_restore->host().random_seed);
         body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
+        if(const auto& seated=session_restore->seated_continuation();seated){
+            const auto* target=world.find(seated->target_id);
+            if(!target||!target->definition||target->definition->guid!=seated->target_guid||
+               !target->entry_points||!definition_index)
+                throw odh::FormatError("seated continuation target or definition index is unavailable");
+            const auto* candidates=definition_index->candidates(seated->target_guid);
+            if(!candidates)throw odh::FormatError("seated continuation object definition is absent");
+            const odh::DefinitionCandidate* exact=nullptr;
+            for(const auto& candidate:*candidates){
+                if(candidate.source==seated->source&&candidate.asset==seated->asset&&
+                   candidate.chunk_id==seated->definition_chunk_id&&
+                   candidate.definition.tree_table_id==seated->tree_table_id){
+                    if(exact)throw odh::FormatError("seated continuation object definition is ambiguous");
+                    exact=&candidate;
+                }
+            }
+            if(!exact)throw odh::FormatError("seated continuation object provenance no longer matches the selected resources");
+            session_restore->install_seated_continuation_owners(vm,*exact,*target->entry_points,
+                [](const odh::DefinitionCandidate& definition,std::uint16_t root){
+                    return load_saved_action_routines(definition,root);
+                });
+        }
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
             return resolve_animation(frame,key.source,key.id,key.kind==odh::PlaybackResourceKey::Kind::posture_reset
@@ -1538,6 +1563,12 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
 #endif
     }
     const auto resumed_tick=ticks;
+    std::optional<std::uint64_t> scheduled_stand_tick;
+    if(headless_stand){
+        if(session_restore&&headless_stand->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("resumed Stand tick overflows the session clock");
+        scheduled_stand_tick=headless_stand->tick+(session_restore?resumed_tick:0);
+    }
     const auto resumed_steps=session_restore?vm.steps():0;
     struct RenderEvidence {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
@@ -1656,6 +1687,19 @@ struct PlacementCandidateProbe {
     std::optional<SavedObjectSelection> seated_action_target;
     std::optional<std::uint64_t> seated_action_actor_generation;
     std::optional<bool> render_interaction_result;
+    if(session_restore&&session_restore->seated_continuation()){
+        const auto& seated=*session_restore->seated_continuation();
+        const auto* target=world.find(seated.target_id);
+        if(!target||!target->definition||target->definition->guid!=seated.target_guid||
+           target->generation!=seated.target_generation)
+            throw odh::FormatError("restored seated target identity changed before input binding");
+        render_interaction_target=SavedObjectSelection{seated.target_id,seated.target_guid,
+            seated.target_generation,seated.tree_table_id};
+        render_interaction_action=seated.action;render_interaction_result=true;
+        render_interaction_status="restored_sit";
+        seated_action_target=render_interaction_target;
+        seated_action_actor_generation=seated.actor_generation;
+    }
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     bool go_here_cancel_pending=false;
@@ -1669,6 +1713,17 @@ struct PlacementCandidateProbe {
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
     std::set<odh::CodeOwner> saved_stair_portal_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
+    if(session_restore&&session_restore->seated_continuation()){
+        for(const auto& binding:session_restore->seated_continuation()->code_owners){
+            const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
+            if(!saved_code_owners.emplace(key,binding.owner).second)
+                throw odh::FormatError("restored seated action owner identity is duplicated");
+            if(binding.owner>=next_saved_code_owner){
+                if(binding.owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                else next_saved_code_owner=binding.owner+1;
+            }
+        }
+    }
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
         render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
@@ -2421,11 +2476,18 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until the Sim finishes walking before saving");
         if(go_here_status=="queued")
             throw odh::FormatError("wait until Go Here finishes before saving");
-        if(!saved_portal_code_owners.empty()||!saved_code_owners.empty()||seated_action_target)
-            throw odh::FormatError("this session has object actions that experimental saves cannot yet resume safely");
+        if(!saved_portal_code_owners.empty())
+            throw odh::FormatError("this session has portal actions that experimental saves cannot yet resume safely");
         const auto* save_actor=world.find(runtime_avatar_id);
-        if(!save_actor||save_actor->attachment||save_actor->person_data.empty()||save_actor->person_data[0]!=0)
-            throw odh::FormatError("this session cannot yet be restored: the resident must be standing and unattached");
+        if(!save_actor||save_actor->person_data.empty())
+            throw odh::FormatError("this session cannot yet be restored: resident posture is unavailable");
+        const bool seated=save_actor->person_data[0]==1||save_actor->attachment.has_value();
+        if(seated&&(!seated_action_target||!seated_action_actor_generation||!save_actor->attachment||
+           save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||
+           save_actor->generation!=*seated_action_actor_generation))
+            throw odh::FormatError("this seated state has no verified completed Sit action to resume safely");
+        if(!seated&&(save_actor->attachment||save_actor->person_data[0]!=0))
+            throw odh::FormatError("this session cannot yet be restored: the resident posture is unsupported");
         if(!session_baseline||!lot||!bootstrap_globals)
             throw odh::FormatError("this session cannot yet be restored: original lot baseline is unavailable");
         const char* data_home=std::getenv("XDG_DATA_HOME");
@@ -2506,6 +2568,61 @@ struct PlacementCandidateProbe {
         std::sort(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [](const auto& a,const auto& b){return a.id<b.id;});
         bundle.scheduler=entity_scheduler.snapshot();
+        if(seated){
+            const auto& selected=*seated_action_target;
+            const auto* target=world.find(selected.id);
+            const auto* candidate=definition_index?definition_index->unique(selected.guid):nullptr;
+            const auto completion=queue.completion();
+            if(!target||target->generation!=selected.generation||target->kind!=odh::EntityKind::object||
+               !target->definition||target->definition->guid!=selected.guid||!target->entry_points||
+               target->entry_points->size()<=27||!completion||!completion->result||
+               !render_interaction_action||*render_interaction_action!=4097||!candidate||
+               candidate->definition.tree_table_id!=selected.tree_table_id)
+                throw odh::FormatError("this seated state is missing its exact completed Sit/Stand object binding");
+            odh::SessionSeatedContinuation continuation;
+            continuation.actor_id=runtime_avatar_id;continuation.actor_generation=*seated_action_actor_generation;
+            continuation.target_id=selected.id;continuation.target_generation=selected.generation;
+            continuation.target_guid=selected.guid;
+            continuation.target_slot=static_cast<std::uint32_t>(save_actor->attachment->slot);
+            continuation.action=4097;continuation.completion=*completion;
+            continuation.source=candidate->source;continuation.asset=candidate->asset;
+            continuation.definition_chunk_id=candidate->chunk_id;
+            continuation.tree_table_id=candidate->definition.tree_table_id;
+            continuation.stand_entry_point=27;
+            continuation.stand_condition=(*target->entry_points)[27].condition;
+            continuation.stand_action=(*target->entry_points)[27].action;
+            continuation.sit_routine_fingerprint=odh::session_action_routine_fingerprint(
+                load_saved_action_routines(*candidate,continuation.action));
+            continuation.stand_routine_fingerprint=odh::session_action_routine_fingerprint(
+                load_saved_action_routines(*candidate,continuation.stand_action));
+            std::set<odh::CodeOwner> referenced_owners;
+            const auto add_owner=[&](odh::CodeOwner owner){
+                if(owner!=static_cast<odh::CodeOwner>(runtime_avatar_id))referenced_owners.insert(owner);
+            };
+            const auto& runtime=bundle.runtime_entities.front();
+            for(const auto& frame:runtime.vm.stack)add_owner(frame.context.code_owner);
+            if(runtime.vm.pending)add_owner(runtime.vm.pending->context.code_owner);
+            for(const auto& pending:runtime.vm.suspended_pending)add_owner(pending.context.code_owner);
+            if(runtime.vm.interaction_return)add_owner(runtime.vm.interaction_return->code_owner);
+            if(runtime.vm.external_frame_return)add_owner(runtime.vm.external_frame_return->code_owner);
+            for(const auto& action:runtime.controllers.interactions.actions)add_owner(action.call.context.code_owner);
+            if(runtime.playback.state)add_owner(runtime.playback.state->resource.code_owner);
+            if(runtime.playback.carry)add_owner(runtime.playback.carry->code_owner);
+            for(const auto owner:referenced_owners){
+                const auto found=std::find_if(saved_code_owners.begin(),saved_code_owners.end(),
+                    [&](const auto& entry){return entry.second==owner&&std::get<2>(entry.first)==continuation.action&&
+                        std::get<0>(entry.first)==continuation.source&&std::get<1>(entry.first)==continuation.asset;});
+                if(found==saved_code_owners.end())
+                    throw odh::FormatError("seated animation or VM references an unverified dynamic action owner");
+                odh::SessionActionCodeOwner binding;binding.owner=owner;binding.source=continuation.source;
+                binding.asset=continuation.asset;binding.root_routine=continuation.action;
+                binding.routine_fingerprint=continuation.sit_routine_fingerprint;
+                continuation.code_owners.push_back(std::move(binding));
+            }
+            std::sort(continuation.code_owners.begin(),continuation.code_owners.end(),
+                [](const auto& a,const auto& b){return a.owner<b.owner;});
+            bundle.seated_continuation=std::move(continuation);
+        }
         const auto encoded=odh::encode_session_bundle(bundle);
         // Apply the loader's complete supported-profile validation before any
         // filesystem mutation. A previous usable save must survive rejection.
@@ -2952,7 +3069,7 @@ struct PlacementCandidateProbe {
                 }
             } catch(const std::exception& error){fail_portal(error.what());}
         }
-        if(headless_stand&&!headless_stand_applied&&ticks==headless_stand->tick){
+        if(headless_stand&&!headless_stand_applied&&ticks==*scheduled_stand_tick){
             if(render_interaction_target&&render_interaction_target->id==headless_stand->id)
                 request_stand(*render_interaction_target,"headless_stand_request",ticks);
             else {

@@ -4,6 +4,7 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/seated_session_continuation.hpp"
 #include <memory>
 
 namespace odh {
@@ -11,7 +12,8 @@ namespace odh {
 // An unpublished candidate. Prepare restores owned World/relationship/global
 // values before the caller constructs VM primitives and controllers against
 // them. The live session must remain intact until restore_execution succeeds.
-// This profile does not serialize routes, dynamic code owners or seated actions.
+// Routes and in-flight actions remain unsupported. Stable completed Sit state
+// requires exact resource/owner verification before execution restoration.
 class SingleResidentSessionRestore {
 public:
     static std::unique_ptr<SingleResidentSessionRestore> prepare(
@@ -40,6 +42,9 @@ public:
     Ts1BootstrapGlobals& bootstrap() { return bootstrap_; }
     std::optional<std::int16_t>& family_global() { return family_global_; }
     const SessionHostState& host() const { return bundle_.host; }
+    const std::optional<SessionSeatedContinuation>& seated_continuation() const {return bundle_.seated_continuation;}
+    void install_seated_continuation_owners(Vm&, const DefinitionCandidate&,
+        const std::vector<EntryPoint>&, const SessionActionRoutineLoader&);
 
     // Bind fresh VM/controllers/Playback and register equivalent scheduler hooks
     // against this candidate first. Never start Main. On any exception discard
@@ -59,6 +64,8 @@ private:
     Ts1BootstrapGlobals bootstrap_;
     std::optional<std::int16_t> family_global_;
     bool attempted_ = false;
+    bool seated_owners_verified_ = false;
+    const Vm* seated_vm_ = nullptr;
 };
 
 } // namespace odh
