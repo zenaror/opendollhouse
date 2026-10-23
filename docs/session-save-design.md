@@ -67,6 +67,9 @@ game language, seven expansion flags, and a 32-byte resource fingerprint. It
 rejects unknown language/expansion values and a missing fingerprint. The
 expansion bits are fixed in this order: Livin' Large, House Party, Hot Date,
 Vacation, Unleashed, Superstar, and Makin' Magic. The
-fingerprint is defined as SHA-256 over a canonical manifest of the exact game
-resources used by the session, but this checkpoint does not yet generate or
-compare that manifest, append `META` to an archive, or load a saved session.
+fingerprint is SHA-256 over a canonical manifest of the exact game resources
+used by the session. The SHA-256 implementation and bounded manifest builder
+now exist, but the launcher does not yet provide the exact runtime resource
+set, compare it while loading, append `META` to an archive, or restore a saved
+session. Synthetic coverage is recorded in
+[session-resource-manifest-validation.md](session-resource-manifest-validation.md).
