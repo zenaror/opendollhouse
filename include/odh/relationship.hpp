@@ -7,6 +7,23 @@ enum class RelationshipMatrix { neighbor, object };
 struct RelationshipLimits {
     std::size_t sources = 4096, pairs = 16384, values = 65536;
 };
+struct RelationshipPairSnapshot {
+    std::int32_t target;
+    std::vector<std::int16_t> values;
+};
+struct RelationshipSourceSnapshot {
+    RelationshipMatrix matrix;
+    std::int16_t id;
+    std::uint64_t generation;
+    std::vector<RelationshipPairSnapshot> pairs;
+};
+// Owned runtime values, including empty sources/pairs and obsolete object
+// generations. No World, resources, callbacks or session file format is implied.
+struct RelationshipSnapshot {
+    RelationshipLimits limits;
+    std::vector<RelationshipSourceSnapshot> sources;
+    std::size_t pair_count = 0, value_count = 0;
+};
 struct SavedObjectRelationship {
     std::int32_t target;
     std::vector<std::int32_t> values;
@@ -38,6 +55,12 @@ public:
     RelationshipState& operator=(const RelationshipState&) = delete;
     RelationshipState(RelationshipState&&) = delete;
     RelationshipState& operator=(RelationshipState&&) = delete;
+    RelationshipSnapshot snapshot() const;
+    // Fresh destination only, including for an empty snapshot. Saved limits
+    // must fit the destination's configured caps and become its runtime limits.
+    // Invalid state returns false; allocation exceptions propagate. Both leave
+    // the destination unchanged. No World or callback binding is restored.
+    bool restore_snapshot(const RelationshipSnapshot&);
     // Atomically bind saved OBJECT sources to their actual World generations.
     // Empty relations bind/count a source; empty batches succeed. Existing bound
     // generations, missing/duplicate sources, duplicate low16 target keys and
@@ -78,6 +101,7 @@ private:
     std::map<Source,Pairs> sources_;
     RelationshipLimits limits_;
     std::size_t pairs_ = 0, values_ = 0;
+    bool fresh_ = true;
     std::optional<std::int16_t> lookup(Source, std::int32_t, std::size_t) const;
 };
 }

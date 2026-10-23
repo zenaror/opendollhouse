@@ -259,8 +259,7 @@ int odh_linux_game_entry(int argc, char** argv) {
         if (!options.house) map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode);
         std::unique_ptr<odh_host::LinuxWindow> window;
         if (!options.plan_only)
-            window = std::make_unique<odh_host::LinuxWindow>(map ? 800 : 320, map ? 600 : 240,
-                "OpenDollhouse");
+            window = std::make_unique<odh_host::LinuxWindow>(800, 600, "OpenDollhouse");
 #else
         if (!options.plan_only)
             throw odh::FormatError("interactive game entry requires a build with X11 support");
@@ -282,13 +281,25 @@ int odh_linux_game_entry(int argc, char** argv) {
 
         const auto session = odh::load_session_entry(userdata, options.mode,
             static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language));
-        const odh::SessionEntryMember* resident = &session.members.front();
+        const odh::SessionEntryMember* resident = nullptr;
         if (options.resident_id) {
             const auto found = std::find_if(session.members.begin(), session.members.end(),
                 [&](const auto& member) { return member.neighbor_id == *options.resident_id; });
             if (found == session.members.end()) throw odh::FormatError("resident is not in the selected family");
             resident = &*found;
         }
+#ifdef ODH_HAVE_X11
+        else if (!options.plan_only) {
+            const auto selected = odh_host::show_resident_picker(*window, session.members,
+                static_cast<std::uint8_t>(options.language));
+            if (!selected) {
+                std::cout << "{\"status\":\"cancelled\",\"stage\":\"resident\"}\n";
+                return 0;
+            }
+            resident = &session.members[*selected];
+        }
+#endif
+        else resident = &session.members.front();
         const auto arguments = build_runtime_arguments(options, game, house, session, *resident);
         if (options.plan_only) {
             print_plan(options, house, session, *resident, arguments);
@@ -306,6 +317,7 @@ int odh_linux_game_entry(int argc, char** argv) {
         pointers.reserve(arguments.size());
         for (const auto& argument : arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
 #ifdef ODH_HAVE_X11
+        window->resize(320, 240);
         return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get());
 #else
         return odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr);

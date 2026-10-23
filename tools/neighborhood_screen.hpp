@@ -1,6 +1,7 @@
 #pragma once
 
 #include "linux_window.hpp"
+#include "odh/session_entry.hpp"
 #include "odh/neighborhood_picker.hpp"
 
 #include <cstdint>
@@ -23,5 +24,11 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
 // Returns a house number on selection, or nullopt when the user cancels.
 std::optional<std::uint16_t> show_neighborhood_picker(
     LinuxWindow& window, const PreparedNeighborhoodMap& map);
+
+// Select a family member in the existing window. Rows identify Sims by their
+// neighborhood ID and character resource filename; this is not a name editor.
+std::optional<std::size_t> show_resident_picker(
+    LinuxWindow& window, const std::vector<odh::SessionEntryMember>& residents,
+    std::uint8_t language);
 
 } // namespace odh_host

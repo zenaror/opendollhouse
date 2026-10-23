@@ -23,7 +23,7 @@ std::optional<std::int16_t> input(const VmFrame& f, const std::array<std::int16_
     }
 }
 }
-RelationshipState::RelationshipState(const NeighborContext& context, RelationshipLimits limits):limits_(limits) {
+RelationshipState::RelationshipState(const NeighborContext& context, RelationshipLimits limits):limits_(limits),fresh_(false) {
     if (context.active_count() > limits_.sources) throw FormatError("relationship source budget exceeded");
     for (const auto& entry : context.source().entries) {
         if (!entry.record) continue;
@@ -40,6 +40,56 @@ RelationshipState::RelationshipState(const NeighborContext& context, Relationshi
             ++pairs_; values_+=relation.values.size();
         }
     }
+}
+RelationshipSnapshot RelationshipState::snapshot() const {
+    RelationshipSnapshot result{limits_,{},pairs_,values_};
+    result.sources.reserve(sources_.size());
+    for (const auto& [source,pairs] : sources_) {
+        RelationshipSourceSnapshot entry{source.matrix,source.id,source.generation,{}};
+        entry.pairs.reserve(pairs.size());
+        for (const auto& [target,values] : pairs) entry.pairs.push_back({target,values});
+        result.sources.push_back(std::move(entry));
+    }
+    return result;
+}
+bool RelationshipState::restore_snapshot(const RelationshipSnapshot& snapshot) {
+    if (!fresh_ || !sources_.empty() || pairs_ || values_ ||
+        snapshot.limits.sources>limits_.sources || snapshot.limits.pairs>limits_.pairs ||
+        snapshot.limits.values>limits_.values || snapshot.sources.size()>snapshot.limits.sources)
+        return false;
+    std::size_t pairs=0,values=0;
+    for (const auto& source : snapshot.sources) {
+        switch (source.matrix) {
+        case RelationshipMatrix::neighbor:
+            // Neighbor IDs are signed serialized identities, including zero
+            // and negatives; only OBJECT sources carry World generations.
+            if (source.generation) return false;
+            break;
+        case RelationshipMatrix::object:
+            if (source.id<=0 || !source.generation) return false;
+            break;
+        default: return false;
+        }
+        if (source.pairs.size()>snapshot.limits.pairs-pairs) return false;
+        pairs+=source.pairs.size();
+        for (const auto& pair : source.pairs) {
+            if ((source.matrix==RelationshipMatrix::object && (pair.target<0 || pair.target>65535)) ||
+                pair.values.size()>snapshot.limits.values-values) return false;
+            values+=pair.values.size();
+        }
+    }
+    if (pairs!=snapshot.pair_count || values!=snapshot.value_count) return false;
+    std::map<Source,Pairs> candidate;
+    for (const auto& source : snapshot.sources) {
+        auto inserted=candidate.emplace(Source{source.matrix,source.id,source.generation},Pairs{});
+        if (!inserted.second) return false;
+        for (const auto& pair : source.pairs)
+            if (!inserted.first->second.emplace(pair.target,pair.values).second) return false;
+    }
+    sources_.swap(candidate);
+    limits_=snapshot.limits;
+    pairs_=pairs;values_=values;fresh_=false;
+    return true;
 }
 bool RelationshipState::import_object_relationships(const World& world,
     const std::vector<SavedObjectRelationships>& saved) {
@@ -78,7 +128,7 @@ bool RelationshipState::import_object_relationships(const World& world,
         }
     }
     sources_.swap(candidate);
-    pairs_=pairs;values_=values;
+    pairs_=pairs;values_=values;fresh_=false;
     return true;
 }
 std::optional<std::int16_t> RelationshipState::lookup(Source source,std::int32_t target,std::size_t index) const {
@@ -203,7 +253,7 @@ VmPrimitive RelationshipState::primitive(const World& world,VmMemory memory,std:
             if (!external_write()) return finish(PrimitiveDisposition::unsupported,"relationship external output rejected write");
             s->second.find(target)->second.swap(candidate);
         } else if (!external_write()) return finish(PrimitiveDisposition::unsupported,"relationship external output rejected write");
-        pairs_+=created?1:0;values_+=growth;
+        pairs_+=created?1:0;values_+=growth;fresh_=false;
         record.created=created;record.grown=grown;record.success=true;
         if (observer) observer(record);
         return outcome;

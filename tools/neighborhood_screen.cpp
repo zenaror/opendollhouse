@@ -2,9 +2,14 @@
 
 #include "odh/family.hpp"
 #include "odh/neighborhood_picker.hpp"
+#include "odh/resident_selection.hpp"
 #include "resource.hpp"
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+#include "linux_text_renderer.hpp"
+#endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
@@ -72,6 +77,88 @@ std::optional<std::uint16_t> show_neighborhood_picker(
             if (selected) return selected;
         }
         if (input.redraw) window.present(map.frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+std::optional<std::size_t> show_resident_picker(
+        LinuxWindow& window, const std::vector<odh::SessionEntryMember>& residents,
+        std::uint8_t language) {
+    if (residents.empty()) throw odh::FormatError("selected family has no residents");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    std::size_t selected = 0;
+    constexpr std::size_t row_height = 36;
+    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 184) / row_height);
+    const auto render = [&]() {
+        const std::size_t page_start = (selected / page_size) * page_size;
+        odh::RasterFrame frame{};
+        frame.width = window.width(); frame.height = window.height();
+        frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                            std::array<std::uint8_t,4>{35, 39, 48, 255});
+        for (std::size_t row = 0; row < page_size; ++row) {
+            const auto index = page_start + row;
+            if (index >= residents.size()) break;
+            const auto color = index == selected ? std::array<std::uint8_t,4>{47,93,138,255} :
+                std::array<std::uint8_t,4>{52,57,68,255};
+            const auto y0 = 92 + row * row_height;
+            for (std::size_t y = y0; y < y0 + 32; ++y)
+                for (std::size_t x = 24; x + 24 < frame.width; ++x)
+                    frame.pixels[y * frame.width + x] = color;
+        }
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        TextOverlayStyle style;
+        style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
+        style.height = 32; style.font_size_px = 17; style.padding = 7;
+        style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
+        style.y = 28;
+        draw_text_overlay(frame, "Choose a resident - Tab: next, click a row or Enter: continue, Esc: cancel", language, style);
+        for (std::size_t row = 0; row < page_size; ++row) {
+            const auto index = page_start + row;
+            if (index >= residents.size()) break;
+            const auto& member = residents[index];
+            const auto text = std::string(index == selected ? "> Resident ID " : "  Resident ID ") +
+                std::to_string(member.neighbor_id) + " - " + member.character_asset;
+            style.y = static_cast<std::int32_t>(92 + row * row_height);
+            style.background = {22,25,32,255};
+            draw_text_overlay(frame, text, language, style);
+        }
+        style.y = static_cast<std::int32_t>(frame.height) - 62;
+        style.background = {22,25,32,255};
+        const auto page_count = (residents.size() + page_size - 1) / page_size;
+        draw_text_overlay(frame, "Page " + std::to_string(page_start / page_size + 1) + "/" +
+            std::to_string(page_count) + " - selection is by neighborhood ID and character file", language, style);
+#else
+        (void)language;
+#endif
+        const auto& member = residents[selected];
+        window.set_title("OpenDollhouse | resident " + std::to_string(member.neighbor_id) +
+            " | " + member.character_asset + " | Tab: next, Enter: continue, Esc: cancel");
+        window.present(frame);
+    };
+    render();
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return std::nullopt;
+        if (input.interaction_selection_delta) {
+            selected = odh::advance_resident_selection(selected,
+                input.interaction_selection_delta, residents.size());
+            render();
+        }
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        if (input.primary_click) {
+            const auto y = (*input.primary_click)[1];
+            constexpr std::size_t row_start = 92;
+            const std::size_t row_end = row_start + page_size * row_height;
+            if (y >= static_cast<std::int32_t>(row_start) && y < static_cast<std::int32_t>(row_end)) {
+                const auto row = static_cast<std::size_t>(y - static_cast<std::int32_t>(row_start)) / row_height;
+                const auto page_start = (selected / page_size) * page_size;
+                const auto clicked = odh::resident_selection_row(page_start, row, page_size, residents.size());
+                if (clicked) return clicked;
+            }
+        }
+#endif
+        if (input.action && !input.primary_click) return selected;
+        if (input.redraw) render();
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }

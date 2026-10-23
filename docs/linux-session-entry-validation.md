@@ -4,9 +4,17 @@
 
 `odh-person --game-root DIR --mode N` agora tem um caminho integrado de entrada.
 Sem `--house`, prepara e mostra o seletor da vizinhança; ao escolher uma casa,
-carrega a família e os recursos da instalação e passa a mesma janela Linux para
-o runtime do lote. Com `--house N`, pula o seletor. `--resident-id N` escolhe o
-morador pela identificação usada na vizinhança. Na primeira execução, o caminho
+carrega a família, abre a escolha do morador na mesma janela e passa essa janela
+Linux para o runtime do lote. Com `--house N`, pula o seletor do mapa.
+`--resident-id N` escolhe o morador pela identificação usada na vizinhança sem
+mostrar a tela. Sem essa opção, use Tab para percorrer e Enter para continuar;
+Escape cancela a entrada. Com a sobreposição de texto opcional, a lista informa
+ID de vizinhança e arquivo do personagem e aceita clique na linha. Sem ela, a
+janela mostra uma barra para a posição selecionada e o título atualiza ID e
+arquivo. Esta etapa ainda não decodifica nomes localizados. A janela é
+redimensionada para o preview do lote e conserva sua identidade X11.
+`--plan-only` continua sem UI e usa o primeiro morador, a menos que
+`--resident-id` seja informado. Na primeira execução, o caminho
 dos dados e o idioma podem ser informados por `--game-root` e `--language`;
 depois de carregar família e lote, ambos são lembrados antes de iniciar o
 runtime, em
@@ -55,6 +63,7 @@ X11 e não há Xvfb disponível nesta sessão. Por isso, ainda não foi confirma
 visualmente que a escolha do mapa redimensiona a mesma janela e entra no lote.
 O plano headless comprova resolução de dados e montagem dos argumentos, não
 renderização, controles, ações ao vivo, salvamento, retorno à vizinhança ou
-equivalência jogável. A próxima prova é um smoke gráfico de mapa→lote na mesma
-janela; depois, o caminho precisa virar um ciclo jogável com interação e estado
-persistente.
+equivalência jogável. A seleção de morador tem cobertura lógica sem display;
+interação gráfica dessa tela e continuidade jogável ainda precisam de smoke
+visual. Esta etapa não edita nem exclui famílias, não salva progresso e não
+implementa retorno à vizinhança.
