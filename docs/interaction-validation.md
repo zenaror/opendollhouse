@@ -601,6 +601,27 @@ retenção e soltura da tecla, mas continua pulado em sessões sem DISPLAY.
 Nenhum desses resultados estabelece equivalência de todos os objetos ou uma
 sessão completa jogável.
 
+### Sit e Stand com um morador adicional — 2026-10-23
+
+A entrada integrada agora também consegue direcionar uma ação ao segundo Sim
+da família, usando a VM, a fila de ações e o código do objeto daquele Sim. O
+teste House07 executa Sit4097 e depois Stand4102 para os dois moradores,
+alternando qual deles é o principal. Nos dois sentidos, o Sit e o Stand
+retornaram true; antes de levantar, a postura era sentada (1) e o attachment
+apontava para a cadeira128; ao final, a postura era0 e o Sim estava solto.
+As hashes de House07, Neighborhood.iff e dos dois personagens não mudaram.
+
+```sh
+python3 tests/house07_household_runtime_cli.py \
+  --binary /tmp/odh-selected-actions/odh-person \
+  --game-root '../referencias/The Sims' --ticks 1 --resident-sit-stand
+```
+
+Essa prova usa a entrada integrada e uma ordem headless determinística; ainda
+não demonstra a seleção visual do segundo Sim por clique numa janela real.
+Enquanto o runtime não consegue salvar com segurança um morador sentado ou
+com código privado de ação instalado, o salvamento continua recusado.
+
 ### Sit, Stand e Go Here na mesma sessão — 2026-10-23
 
 O harness também pode enfileirar um pedido Go Here depois que Sit e Stand

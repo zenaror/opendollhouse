@@ -293,6 +293,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     std::optional<std::uint64_t> headless_go_here_interrupt_after_movements;
     bool headless_go_here_interrupt_applied=false,headless_go_here_interrupt_accepted=false;
     std::optional<HeadlessInteraction> headless_interaction;
+    std::optional<std::int16_t> headless_interaction_actor;
     bool headless_interaction_applied=false;
     std::optional<HeadlessGoHere> headless_go_here;
     bool headless_go_here_applied=false;
@@ -447,6 +448,13 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless interaction target/tick is outside the supported profile");
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
+        else if(option=="--headless-resident-interaction"&&!headless_interaction&&n+3<argc){
+            const auto actor=selector(argv[++n]),id=selector(argv[++n]),tick=selector(argv[++n]);
+            if(actor==0||actor>32767||id==0||id>32767||tick==0)
+                throw odh::FormatError("headless resident interaction actor/target/tick is outside the supported profile");
+            headless_interaction_actor=static_cast<std::int16_t>(actor);
+            headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
+        }
         else if(option=="--headless-window-interaction"&&!headless_window_interaction&&n+1<argc){
             const auto id=selector(argv[++n]);
             if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
@@ -544,6 +552,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
     if(headless_interaction&&(!headless_main||headless_interaction->tick>ticks_limit))
         throw odh::FormatError("--headless-interaction requires --headless-main and a tick within --ticks");
+    if(headless_interaction_actor&&(!session_context||session_context->single_resident_session||
+       session_context->household_members.empty()))
+        throw odh::FormatError("--headless-resident-interaction requires an integrated whole-household session");
     const bool go_here_after_stand=headless_go_here&&headless_interaction&&headless_stand&&
         !headless_portal&&headless_interaction->tick<headless_stand->tick&&
         headless_stand->tick<headless_go_here->tick;
@@ -1057,6 +1068,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         std::optional<odh::WorldRoomRouteGrid> route_grid;
         std::unique_ptr<odh::Routing> routing;
         std::unique_ptr<odh_host::HouseholdGoHereSession> go_here;
+        std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> action_code_owners;
+        std::optional<SavedObjectSelection> seated_action_target;
+        std::optional<std::uint64_t> seated_action_actor_generation;
         std::optional<std::uint64_t> route_spatial_revision;
         std::size_t route_movement_callbacks=0,route_snapshot_refreshes=0;
         bool go_here_cancel_pending=false;
@@ -1972,6 +1986,18 @@ struct PlacementCandidateProbe {
             [&](const auto& member){return member->id==active_household_actor;});
         return found==household_runtime.end()?nullptr:found->get();
     };
+    const auto actor_vm_for=[&](std::int16_t actor_id)->odh::Vm* {
+        if(actor_id==runtime_avatar_id)return &vm;
+        const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return member->id==actor_id;});
+        return found==household_runtime.end()?nullptr:(*found)->vm.get();
+    };
+    const auto actor_queue_for=[&](std::int16_t actor_id)->odh::InteractionQueue* {
+        if(actor_id==runtime_avatar_id)return &queue;
+        const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return member->id==actor_id;});
+        return found==household_runtime.end()||!(*found)->controllers?nullptr:&(*found)->controllers->interactions();
+    };
     std::optional<SavedObjectInteractions> render_interactions;
     std::optional<std::size_t> render_selected_interaction_row;
     std::vector<SavedTestFunctionResult> render_test_results;
@@ -1982,11 +2008,17 @@ struct PlacementCandidateProbe {
     std::optional<odh::CodeOwner> render_interaction_owner;
     std::optional<SavedObjectSelection> render_interaction_target;
     std::optional<std::uint64_t> render_interaction_actor_generation;
+    std::optional<std::int16_t> render_interaction_actor_id;
+    std::optional<std::int16_t> stand_actor_id;
     // Retain the successful seated action independently of menu selection, so
     // clicking another object and then the chair does not lose the Stand gate.
     std::optional<SavedObjectSelection> seated_action_target;
     std::optional<std::uint64_t> seated_action_actor_generation;
     std::optional<bool> render_interaction_result;
+    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
+    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
+    std::set<odh::CodeOwner> saved_stair_portal_code_owners;
+    odh::CodeOwner next_saved_code_owner=0x80000000U;
     if(session_restore&&session_restore->seated_continuation()){
         const auto& seated=*session_restore->seated_continuation();
         const auto* target=world.find(seated.target_id);
@@ -2000,6 +2032,21 @@ struct PlacementCandidateProbe {
         seated_action_target=render_interaction_target;
         seated_action_actor_generation=seated.actor_generation;
     }
+    using SavedOwnerMap=std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner>;
+    const auto actor_owner_map_for=[&](std::int16_t actor_id)->SavedOwnerMap* {
+        if(actor_id==runtime_avatar_id)return &saved_code_owners;
+        const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return member->id==actor_id;});
+        return found==household_runtime.end()?nullptr:&(*found)->action_code_owners;
+    };
+    const auto actor_seated_binding=[&](std::int16_t actor_id)
+        ->std::pair<std::optional<SavedObjectSelection>*,std::optional<std::uint64_t>*> {
+        if(actor_id==runtime_avatar_id)return {&seated_action_target,&seated_action_actor_generation};
+        const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
+            [&](const auto& member){return member->id==actor_id;});
+        if(found==household_runtime.end())return {nullptr,nullptr};
+        return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation};
+    };
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     bool go_here_cancel_pending=false;
@@ -2009,10 +2056,6 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> go_here_marker_generation,go_here_previous_completion_uid;
     std::optional<odh::EntityPosition> go_here_position,go_here_start_position;
     std::optional<bool> go_here_result;
-    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
-    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
-    std::set<odh::CodeOwner> saved_stair_portal_code_owners;
-    odh::CodeOwner next_saved_code_owner=0x80000000U;
     if(session_restore&&session_restore->seated_continuation()){
         for(const auto& binding:session_restore->seated_continuation()->code_owners){
             const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
@@ -2036,10 +2079,11 @@ struct PlacementCandidateProbe {
         std::vector<std::uint16_t> tests;
         tests.reserve(std::min<std::size_t>(rows.size(),32));
         for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
-        render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
+        const auto* actor=world.find(active_household_actor);
+        render_test_results=evaluate_saved_test_functions(*candidate,world,active_household_actor,
             render_selection->id,tests,4096,128);
         const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            world.find(runtime_avatar_id));
+            actor);
         if(!eligible.empty())render_selected_interaction_row=eligible.front();
         for(std::size_t n=render_test_results.size();n<rows.size();++n)
             render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
@@ -2050,11 +2094,15 @@ struct PlacementCandidateProbe {
         if(!saved_world_main||!render_selection||!render_interactions){
             render_interaction_status="unsupported";render_interaction_diagnostic="select a saved-lot object with a decoded TTAB first";return;
         }
-        if(queue.size()!=0){
-            render_interaction_status="rejected";render_interaction_diagnostic="manual preview action requires an empty interaction queue";return;
+        const auto actor_id=active_household_actor;
+        auto* actor_queue=actor_queue_for(actor_id);
+        auto* actor_vm=actor_vm_for(actor_id);
+        auto* owner_map=actor_owner_map_for(actor_id);
+        if(!actor_queue||!actor_vm||!owner_map||actor_queue->size()!=0||actor_queue->active()){
+            render_interaction_status="rejected";render_interaction_diagnostic="manual preview action requires this resident's available VM and an empty interaction queue";return;
         }
         const auto& selected=*render_selection;
-        const auto* actor=world.find(runtime_avatar_id);
+        const auto* actor=world.find(actor_id);
         const auto* target=world.find(selected.id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||!target||target->kind!=odh::EntityKind::object||
            target->generation!=selected.generation||!target->definition||target->definition->guid!=selected.guid){
@@ -2074,7 +2122,7 @@ struct PlacementCandidateProbe {
         current_tests.reserve(std::min<std::size_t>(render_interactions->table->interactions.size(),32));
         for(std::size_t n=0;n<std::min<std::size_t>(render_interactions->table->interactions.size(),32);++n)
             current_tests.push_back(render_interactions->table->interactions[n].test);
-        render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,selected.id,
+        render_test_results=evaluate_saved_test_functions(*candidate,world,actor_id,selected.id,
             current_tests,4096,128);
         const auto eligible_rows=eligible_saved_interaction_rows(*render_interactions,render_test_results,actor);
         if(eligible_rows.empty()){
@@ -2087,8 +2135,8 @@ struct PlacementCandidateProbe {
         }
         const auto& row=render_interactions->table->interactions[*render_selected_interaction_row];
         const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action);
-        auto owner=saved_code_owners.find(owner_key);
-        if(owner==saved_code_owners.end()){
+        auto owner=owner_map->find(owner_key);
+        if(owner==owner_map->end()){
             if(saved_owner_ids_exhausted){
                 render_interaction_status="unsupported";render_interaction_diagnostic="saved object code-owner identity space exhausted";return;
             }
@@ -2102,39 +2150,43 @@ struct PlacementCandidateProbe {
                 render_interaction_status="unsupported";render_interaction_diagnostic="selected ActionFunction is absent from its exact private owner";return;
             }
             const auto code_owner=next_saved_code_owner;
-            if(!vm.install_owner(code_owner,std::move(routines))){
-                render_interaction_status="unsupported";render_interaction_diagnostic="Main VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
+            if(!actor_vm->install_owner(code_owner,std::move(routines))){
+                render_interaction_status="unsupported";render_interaction_diagnostic="selected resident VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
             }
             if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
             else ++next_saved_code_owner;
-            owner=saved_code_owners.emplace(owner_key,code_owner).first;
+            owner=owner_map->emplace(owner_key,code_owner).first;
         }
-        actor=world.find(runtime_avatar_id);target=world.find(selected.id);
+        actor=world.find(actor_id);target=world.find(selected.id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||!target||target->generation!=selected.generation||
            !target->definition||target->definition->guid!=selected.guid){
             render_interaction_status="unsupported";render_interaction_diagnostic="live actor/target identity changed while loading action owner";return;
         }
-        const odh::VmContext context{runtime_avatar_id,selected.id,selected.id,owner->second};
-        if(!queue.enqueue(odh::routine_key(row.action),context)){
-            render_interaction_status="rejected";render_interaction_diagnostic=queue.diagnostic();return;
+        const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
+        if(!actor_queue->enqueue(odh::routine_key(row.action),context)){
+            render_interaction_status="rejected";render_interaction_diagnostic=actor_queue->diagnostic();return;
         }
         render_interaction_enqueued=true;render_interaction_status="queued";render_interaction_action=row.action;
         render_interaction_owner=owner->second;
         render_interaction_target=selected;
         render_interaction_actor_generation=actor->generation;
-        previous_completion_uid=queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::optional<std::uint64_t>{};
+        render_interaction_actor_id=actor_id;
+        previous_completion_uid=actor_queue->completion()?std::optional<std::uint64_t>{actor_queue->completion()->uid}:std::optional<std::uint64_t>{};
         render_interaction_diagnostic.clear();
     };
     // Stand is an explicit host control, not a fabricated TTAB row. Its
     // supported precondition is a successful action in this session that left
     // this exact avatar attached to this exact selected object.
     const auto stand_selection_is_current=[&](const SavedObjectSelection& selected){
-        const auto* actor=world.find(runtime_avatar_id);
+        const auto actor_id=active_household_actor;
+        const auto* actor=world.find(actor_id);
         const auto* target=world.find(selected.id);
-        return saved_world_main&&queue.size()==0&&!queue.active()&&
-            seated_action_target&&seated_action_target->id==selected.id&&
-            seated_action_target->generation==selected.generation&&seated_action_target->guid==selected.guid&&
-            actor&&seated_action_actor_generation&&actor->generation==*seated_action_actor_generation&&
+        const auto* actor_queue=actor_queue_for(actor_id);
+        const auto [seated_target,seated_generation]=actor_seated_binding(actor_id);
+        return saved_world_main&&actor_queue&&actor_queue->size()==0&&!actor_queue->active()&&
+            seated_target&&*seated_target&&(*seated_target)->id==selected.id&&
+            (*seated_target)->generation==selected.generation&&(*seated_target)->guid==selected.guid&&
+            actor&&seated_generation&&*seated_generation&&actor->generation==**seated_generation&&
             actor->kind==odh::EntityKind::avatar&&
             !actor->person_data.empty()&&actor->person_data[0]==1&&actor->attachment&&
             actor->attachment->container==selected.id&&target&&target->generation==selected.generation&&
@@ -2142,17 +2194,27 @@ struct PlacementCandidateProbe {
     };
     const auto request_stand=[&](const SavedObjectSelection& selected,const std::string& trigger,std::uint64_t request_tick){
         if(headless_stand_status=="queued")return;
+        const auto actor_id=active_household_actor;
+        auto* actor_queue=actor_queue_for(actor_id);
+        auto* actor_vm=actor_vm_for(actor_id);
+        auto* owner_map=actor_owner_map_for(actor_id);
+        if(!actor_queue||!actor_vm||!owner_map){
+            headless_stand_applied=true;stand_trigger=trigger;stand_request_tick=request_tick;
+            headless_stand_status="unsupported";headless_stand_diagnostic="selected resident VM/controller is unavailable";return;
+        }
         headless_stand_applied=true;stand_trigger=trigger;stand_request_tick=request_tick;stand_request_target=selected.id;
+        stand_actor_id=actor_id;
         headless_stand_precondition_met=false;headless_stand_action.reset();headless_stand_owner.reset();
         headless_stand_result.reset();headless_stand_diagnostic.clear();
         headless_stand_posture_before.reset();headless_stand_attachment_before.reset();
         const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
-        const auto completion=queue.completion();
-        const auto* actor=world.find(runtime_avatar_id);
+        const auto completion=actor_queue->completion();
+        const auto* actor=world.find(actor_id);
+        const auto [seated_target,seated_generation]=actor_seated_binding(actor_id);
         const auto* target=world.find(selected.id);
         if(actor&&actor->person_data.size()>0)headless_stand_posture_before=actor->person_data[0];
         if(actor&&actor->attachment)headless_stand_attachment_before=actor->attachment->container;
-        if(!completion||!seated_action_target)
+        if(!completion||!seated_target||!seated_generation||!*seated_target||!*seated_generation)
             fail_stand("no successful seated action is available in this session");
         else if(!stand_selection_is_current(selected))
             fail_stand("Stand requires the same seated avatar and selected object generations, attachment and an idle queue");
@@ -2165,8 +2227,8 @@ struct PlacementCandidateProbe {
                 fail_stand("Stand entry point 27 has no unique private function owner");
             else {
                 const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action);
-                auto owner=saved_code_owners.find(owner_key);
-                if(owner==saved_code_owners.end()){
+                auto owner=owner_map->find(owner_key);
+                if(owner==owner_map->end()){
                     if(saved_owner_ids_exhausted)fail_stand("saved object code-owner identity space exhausted");
                     else {
                         try {
@@ -2175,23 +2237,23 @@ struct PlacementCandidateProbe {
                             if(!routines.count(key))fail_stand("Stand private function is absent from its exact object resource");
                             else {
                                 const auto code_owner=next_saved_code_owner;
-                                if(!vm.install_owner(code_owner,std::move(routines)))
-                                    fail_stand("Main VM rejected saved Stand code owner");
+                                if(!actor_vm->install_owner(code_owner,std::move(routines)))
+                                    fail_stand("selected resident VM rejected saved Stand code owner");
                                 else {
                                     if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
                                     else ++next_saved_code_owner;
-                                    owner=saved_code_owners.emplace(owner_key,code_owner).first;
+                                    owner=owner_map->emplace(owner_key,code_owner).first;
                                 }
                             }
                         } catch(const std::exception& error){fail_stand(error.what());}
                     }
                 }
-                if(owner!=saved_code_owners.end()){
-                    const odh::VmContext context{runtime_avatar_id,selected.id,selected.id,owner->second};
+                if(owner!=owner_map->end()){
+                    const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
                     if(!stand_selection_is_current(selected))
                         fail_stand("Stand actor/target identity or attachment changed while loading its function");
-                    else if(!queue.enqueue(odh::routine_key(stand_action),context))
-                        fail_stand(queue.diagnostic());
+                    else if(!actor_queue->enqueue(odh::routine_key(stand_action),context))
+                        fail_stand(actor_queue->diagnostic());
                     else {
                         headless_stand_precondition_met=true;headless_stand_action=stand_action;
                         headless_stand_owner=owner->second;headless_stand_status="queued";
@@ -2207,12 +2269,12 @@ struct PlacementCandidateProbe {
         current_overlay_text.reset();
         std::string title="OpenDollhouse Main preview | resident "+std::to_string(active_household_actor)+" selected";
         if(active_household_actor!=runtime_avatar_id)
-            title+="; object actions still use the first resident";
+            title+="; object actions use this resident";
         if(render_selection){
             title+=" | object "+std::to_string(render_selection->id)+" GUID "+
                 std::to_string(render_selection->guid)+" TTAB "+std::to_string(render_selection->tree_table_id);
             const auto eligible=render_interactions?eligible_saved_interaction_rows(*render_interactions,
-                render_test_results,world.find(runtime_avatar_id)):std::vector<std::size_t>{};
+                render_test_results,world.find(active_household_actor)):std::vector<std::size_t>{};
             if(eligible.empty())title+=" | no supported eligible action";
             else {
                 auto selected=render_selected_interaction_row.value_or(eligible.front());
@@ -2967,9 +3029,13 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until Go Here finishes before saving");
         if(std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
             return (member->routing&&member->routing->active())||
-                (member->go_here&&member->go_here->status()=="queued");
+                (member->go_here&&member->go_here->status()=="queued")||
+                (member->controllers&&(member->controllers->interactions().size()!=0||
+                    member->controllers->interactions().active()));
         }))
-            throw odh::FormatError("wait until every household Sim finishes walking before saving");
+            throw odh::FormatError("wait until every household Sim finishes walking and acting before saving");
+        if(queue.size()!=0||queue.active())
+            throw odh::FormatError("wait until the primary resident finishes acting before saving");
         if(!saved_portal_code_owners.empty())
             throw odh::FormatError("this session has portal actions that experimental saves cannot yet resume safely");
         const auto* save_actor=world.find(runtime_avatar_id);
@@ -2978,8 +3044,18 @@ struct PlacementCandidateProbe {
         const bool seated=save_actor->person_data[0]==1||save_actor->attachment.has_value();
         if(!session_context->single_resident_session&&seated)
             throw odh::FormatError("household session cannot yet restore seated continuation or attachment");
+        if(!session_context->single_resident_session&&std::any_of(household_runtime.begin(),
+            household_runtime.end(),[&](const auto& member){
+                const auto* resident=world.find(member->id);
+                return !resident||resident->person_data.empty()||resident->person_data[0]!=0||
+                    resident->attachment.has_value();
+            }))
+            throw odh::FormatError("household session cannot yet restore a seated or attached additional resident");
         if(!session_context->single_resident_session&&(!saved_code_owners.empty()||!saved_portal_code_owners.empty()))
             throw odh::FormatError("household session cannot yet restore dynamic action owners");
+        if(!session_context->single_resident_session&&std::any_of(household_runtime.begin(),
+            household_runtime.end(),[](const auto& member){return !member->action_code_owners.empty();}))
+            throw odh::FormatError("household session cannot yet restore additional-resident dynamic action owners");
         if(seated&&(!seated_action_target||!seated_action_actor_generation||!save_actor->attachment||
            save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||
            save_actor->generation!=*seated_action_actor_generation))
@@ -3459,33 +3535,49 @@ struct PlacementCandidateProbe {
                     }
                 }
                 if(picked_resident){
-                    active_household_actor=*picked_resident;
+                    const bool manual_action_pending=(render_interaction_enqueued&&
+                        render_interaction_status=="queued")||headless_stand_status=="queued";
+                    if(!manual_action_pending)active_household_actor=*picked_resident;
+                    if(manual_action_pending&&*picked_resident!=active_household_actor){
+                        if(render_window_host)render_window_host->set_title(
+                            "OpenDollhouse: finish the current resident action before changing Sims");
+                        continue;
+                    }
                     render_ground_selection.reset();
                     prepare_selected_object(std::nullopt);
                     const bool any_interaction_active=queue.size()!=0||std::any_of(household_runtime.begin(),
                         household_runtime.end(),[](const auto& member){return member->controllers&&
-                            member->controllers->interactions().size()!=0;});
-                    if(!render_interaction_enqueued||!any_interaction_active){
+                            (member->controllers->interactions().size()!=0||
+                             member->controllers->interactions().active());});
+                    const bool any_actor_action_active=any_interaction_active||queue.active();
+                    if(!render_interaction_enqueued||!any_actor_action_active){
                         render_interaction_requested=false;render_interaction_enqueued=false;
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
-                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
+                        render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
                     }
                 }else{
                     auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
                     render_ground_selection.reset();
                     if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
                     prepare_selected_object(std::move(object));
-                    if(!render_interaction_enqueued||queue.size()==0){
+                    const bool any_interaction_active=queue.size()!=0||queue.active()||
+                        std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
+                            return member->controllers&&(member->controllers->interactions().size()!=0||
+                                member->controllers->interactions().active());});
+                    if(!render_interaction_enqueued||!any_interaction_active){
                         render_interaction_requested=false;render_interaction_enqueued=false;
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
-                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
+                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
+                        render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
                     }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
-            if(input.interaction_selection_delta&&!input.primary_click&&render_selection&&render_interactions&&
-               queue.size()==0&&!render_interaction_enqueued){
+        if(input.interaction_selection_delta&&!input.primary_click&&render_selection&&render_interactions&&
+               actor_queue_for(active_household_actor)&&actor_queue_for(active_household_actor)->size()==0&&
+               !render_interaction_enqueued){
                 const auto* candidate=definition_index?definition_index->unique(render_selection->guid):nullptr;
                 std::vector<std::uint16_t> tests;
                 if(candidate&&candidate->source==render_interactions->source&&
@@ -3494,11 +3586,11 @@ struct PlacementCandidateProbe {
                     const auto count=std::min<std::size_t>(render_interactions->table->interactions.size(),32);
                     tests.reserve(count);
                     for(std::size_t n=0;n<count;++n)tests.push_back(render_interactions->table->interactions[n].test);
-                    render_test_results=evaluate_saved_test_functions(*candidate,world,runtime_avatar_id,
+                    render_test_results=evaluate_saved_test_functions(*candidate,world,active_household_actor,
                         render_selection->id,tests,4096,128);
                 }else render_test_results.clear();
                 const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-                    world.find(runtime_avatar_id));
+                    world.find(active_household_actor));
                 render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
                     render_selected_interaction_row,input.interaction_selection_delta);
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
@@ -3575,6 +3667,16 @@ struct PlacementCandidateProbe {
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
             render_interaction_requested=true;
+            if(headless_interaction_actor){
+                const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
+                    [&](const auto& member){return member->id==*headless_interaction_actor;});
+                if(*headless_interaction_actor==runtime_avatar_id||resident==household_runtime.end()){
+                    render_interaction_status="unsupported";
+                    render_interaction_diagnostic="scheduled action actor is not an additional member of the loaded household";
+                    continue;
+                }
+                active_household_actor=*headless_interaction_actor;
+            }
             const auto* target=world.find(headless_interaction->id);
             const auto* candidate=target&&target->definition&&definition_index?
                 definition_index->unique(target->definition->guid):nullptr;
@@ -3852,36 +3954,53 @@ struct PlacementCandidateProbe {
         // terminal result so later Main instructions cannot overwrite the
         // route diagnostic or append unrelated movement to the probe.
         if(headless_portal_applied&&headless_portal_status!="queued")break;
-        if(headless_stand_applied&&headless_stand_status=="queued"&&queue.completion()&&
-           (!headless_stand_previous_completion||queue.completion()->uid!=*headless_stand_previous_completion)){
-            headless_stand_result=queue.completion()->result;
+        const auto stand_actor=stand_actor_id.value_or(runtime_avatar_id);
+        auto* stand_queue=actor_queue_for(stand_actor);
+        auto* stand_vm=actor_vm_for(stand_actor);
+        if(headless_stand_applied&&headless_stand_status=="queued"&&stand_queue&&stand_queue->completion()&&
+           (!headless_stand_previous_completion||stand_queue->completion()->uid!=*headless_stand_previous_completion)){
+            headless_stand_result=stand_queue->completion()->result;
             headless_stand_status=*headless_stand_result?"returned_true":"returned_false";
-        }else if(headless_stand_applied&&headless_stand_status=="queued"&&vm.status()==odh::VmStatus::fault){
-            headless_stand_status="vm_fault";headless_stand_diagnostic=vm.diagnostic();
+            if(*headless_stand_result){
+                const auto* resident=world.find(stand_actor);
+                if(resident&&(!resident->person_data.empty()&&resident->person_data[0]!=1)&&!resident->attachment){
+                    const auto [seated_target,seated_generation]=actor_seated_binding(stand_actor);
+                    if(seated_target&&seated_generation){seated_target->reset();seated_generation->reset();}
+                }
+            }
+        }else if(headless_stand_applied&&headless_stand_status=="queued"&&stand_vm&&stand_vm->status()==odh::VmStatus::fault){
+            headless_stand_status="vm_fault";headless_stand_diagnostic=stand_vm->diagnostic();
         }else if(headless_stand_applied&&headless_stand_status=="queued"&&host_failed){
             headless_stand_status="host_failed";headless_stand_diagnostic=host_diagnostic;
         }
         if(render_interaction_requested){
             const auto status_before=render_interaction_status;
+            const auto action_actor=render_interaction_actor_id.value_or(runtime_avatar_id);
+            auto* action_queue=actor_queue_for(action_actor);
+            auto* action_vm=actor_vm_for(action_actor);
             if(render_interaction_result){
                 // Preserve the action's completion even if the parent Main
                 // faults on a later tick after the interaction was removed.
             }else if(host_failed){
                 render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;
-            }else if(queue.completion()&&(!previous_completion_uid||queue.completion()->uid!=*previous_completion_uid)){
-                render_interaction_result=queue.completion()->result;
+            }else if(action_queue&&action_queue->completion()&&
+                     (!previous_completion_uid||action_queue->completion()->uid!=*previous_completion_uid)){
+                render_interaction_result=action_queue->completion()->result;
                 render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
                 render_interaction_diagnostic.clear();
-                const auto* seated_actor=world.find(runtime_avatar_id);
+                const auto* seated_actor=world.find(action_actor);
                 if(*render_interaction_result&&render_interaction_target&&render_interaction_actor_generation&&
                    seated_actor&&seated_actor->generation==*render_interaction_actor_generation&&
                    !seated_actor->person_data.empty()&&seated_actor->person_data[0]==1&&seated_actor->attachment&&
                    seated_actor->attachment->container==render_interaction_target->id){
-                    seated_action_target=render_interaction_target;
-                    seated_action_actor_generation=render_interaction_actor_generation;
+                    const auto [seated_target,seated_generation]=actor_seated_binding(action_actor);
+                    if(seated_target&&seated_generation){
+                        *seated_target=render_interaction_target;
+                        *seated_generation=render_interaction_actor_generation;
+                    }
                 }
-            }else if(vm.status()==odh::VmStatus::fault){
-                render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
+            }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
+                render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
             }
 #ifdef ODH_HAVE_X11
             if(render_window_host&&render_interaction_status!=status_before){
@@ -4108,16 +4227,19 @@ struct PlacementCandidateProbe {
         }
     }
     if(render_interaction_requested){
+        const auto action_actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);
+        auto* action_queue=actor_queue_for(action_actor_id);
+        auto* action_vm=actor_vm_for(action_actor_id);
         if(render_interaction_result){
             // The interaction result is independent from a later parent-Main fault.
         }else if(host_failed){render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;}
-        else if(queue.completion()&&(!previous_completion_uid||
-                                      queue.completion()->uid!=*previous_completion_uid)){
-            render_interaction_result=queue.completion()->result;
+        else if(action_queue&&action_queue->completion()&&(!previous_completion_uid||
+                                      action_queue->completion()->uid!=*previous_completion_uid)){
+            render_interaction_result=action_queue->completion()->result;
             render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
             render_interaction_diagnostic.clear();
-        }else if(vm.status()==odh::VmStatus::fault){
-            render_interaction_status="vm_fault";render_interaction_diagnostic=vm.diagnostic();
+        }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
+            render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
         }
     }
     std::optional<std::string> saved_session_path;
@@ -4392,8 +4514,13 @@ struct PlacementCandidateProbe {
     std::cout<<",\"interaction_runtime\":";
     if(!render_interaction_requested)std::cout<<"null";
     else {
-        const auto* actor=world.find(runtime_avatar_id);
-        const auto animation=playback?playback->progress():std::nullopt;
+        const auto actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);
+        const auto* actor=world.find(actor_id);
+        auto* actor_queue=actor_queue_for(actor_id);
+        auto* actor_vm=actor_vm_for(actor_id);
+        const auto* household_actor=actor_id==runtime_avatar_id?nullptr:selected_household_member();
+        const auto animation=actor_id==runtime_avatar_id?(playback?playback->progress():std::nullopt):
+            (household_actor&&household_actor->playback?household_actor->playback->progress():std::nullopt);
         std::cout<<"{\"trigger\":"<<json_bytes(headless_interaction?(headless_stand?"headless_sit_schedule":"headless_schedule"):
             headless_window_interaction?"headless_window_input":"window_input")
             <<",\"scheduled_tick\":"<<(headless_interaction?std::to_string(headless_interaction->tick):"null")
@@ -4403,11 +4530,14 @@ struct PlacementCandidateProbe {
             <<",\"diagnostic\":"<<json_bytes(render_interaction_diagnostic)
             <<",\"main_vm_status\":"<<json_bytes(odh::vm_status_name(vm.status()))
             <<",\"main_vm_diagnostic\":"<<json_bytes(vm.diagnostic())
+            <<",\"actor_vm_status\":"<<(actor_vm?json_bytes(odh::vm_status_name(actor_vm->status())):"null")
+            <<",\"actor_vm_diagnostic\":"<<(actor_vm?json_bytes(actor_vm->diagnostic()):"null")
             <<",\"action\":"<<(render_interaction_action?std::to_string(*render_interaction_action):"null")
             <<",\"code_owner\":"<<(render_interaction_owner?std::to_string(*render_interaction_owner):"null")
             <<",\"result\":"<<(render_interaction_result?(*render_interaction_result?"true":"false"):"null")
-            <<",\"queue_size\":"<<queue.size()<<",\"queue_active\":"<<(queue.active()?"true":"false")
-            <<",\"actor\":{\"id\":"<<runtime_avatar_id<<",\"generation\":"<<(actor?actor->generation:0)
+            <<",\"queue_size\":"<<(actor_queue?actor_queue->size():0)
+            <<",\"queue_active\":"<<(actor_queue&&actor_queue->active()?"true":"false")
+            <<",\"actor\":{\"id\":"<<actor_id<<",\"generation\":"<<(actor?actor->generation:0)
             <<",\"position\":";
         if(actor&&actor->position)std::cout<<'['<<actor->position->x<<','<<actor->position->y<<','
             <<actor->position->level<<','<<unsigned(actor->position->direction)<<']';
@@ -4493,8 +4623,10 @@ struct PlacementCandidateProbe {
     std::cout<<",\"stand_runtime\":";
     if(!headless_stand_applied)std::cout<<"null";
     else {
-        const auto* actor=world.find(runtime_avatar_id);
-        std::cout<<"{\"trigger\":"<<json_bytes(stand_trigger)<<",\"scheduled_tick\":"<<stand_request_tick
+        const auto actor_id=stand_actor_id.value_or(runtime_avatar_id);
+        const auto* actor=world.find(actor_id);
+        std::cout<<"{\"trigger\":"<<json_bytes(stand_trigger)<<",\"actor_id\":"<<actor_id
+            <<",\"scheduled_tick\":"<<stand_request_tick
             <<",\"scheduled_target\":"<<stand_request_target<<",\"precondition_met\":"
             <<(headless_stand_precondition_met?"true":"false")<<",\"entry_point\":27,\"action\":"
             <<(headless_stand_action?std::to_string(*headless_stand_action):"null")<<",\"code_owner\":"

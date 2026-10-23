@@ -18,6 +18,8 @@ def main():
     parser.add_argument('--game-root', required=True, type=Path)
     parser.add_argument('--ticks', type=int, default=32)
     parser.add_argument('--timeout', type=int, default=240)
+    parser.add_argument('--resident-sit-stand', action='store_true',
+                        help='also exercise Sit and Stand for the non-primary House07 resident')
     args = parser.parse_args()
     if not 1 <= args.ticks <= 4096:
         parser.error('--ticks must be in 1..4096')
@@ -36,6 +38,7 @@ def main():
         for key in ('DISPLAY', 'WAYLAND_DISPLAY'):
             env.pop(key, None)
         reports = []
+        resident_actions = []
         for resident_id in (48, 47):
             command = [str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
                        '--resident-id', str(resident_id), '--language', '1',
@@ -87,6 +90,33 @@ def main():
             assert direct_result.returncode == 0, (direct_result.returncode,direct_result.stdout[-2000:],direct_result.stderr)
             direct = json.loads(direct_result.stdout)
             assert resumed_bytes == Path(direct['saved_session_path']).read_bytes(), 'resumed household differs from uninterrupted execution'
+            if args.resident_sit_stand:
+                extra_actor_id = {48: 137, 47: 105}[resident_id]
+                interaction_ticks, stand_tick = 512, 270
+                action_command = [str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
+                    '--resident-id', str(resident_id), '--language', '1', '--headless-ticks', str(interaction_ticks),
+                    '--headless-resident-sit', str(extra_actor_id), '128', str(stand_tick)]
+                action_result = subprocess.run(action_command, text=True, capture_output=True,
+                    env=env, timeout=args.timeout)
+                if not action_result.stdout.strip():
+                    raise RuntimeError(f'resident Sit/Stand exit {action_result.returncode}: {action_result.stderr}')
+                action_report = json.loads(action_result.stdout)
+                interaction, stand = action_report['interaction_runtime'], action_report['stand_runtime']
+                assert (action_result.returncode == 0 and action_report['ticks'] == interaction_ticks and
+                    action_report['tick_budget_exhausted'] and not action_report['host_failed'] and
+                    interaction['trigger'] == 'headless_sit_schedule' and interaction['actor']['id'] == extra_actor_id and
+                    interaction['action'] == 4097 and interaction['status'] == 'returned_true' and
+                    interaction['result'] is True and interaction['queue_size'] == 0 and not interaction['queue_active'] and
+                    interaction['actor']['attachment'] is None and stand['actor_id'] == extra_actor_id and
+                    stand['scheduled_tick'] == stand_tick and stand['precondition_met'] and
+                    stand['precondition_posture'] == 1 and stand['precondition_attachment'] == 128 and
+                    stand['action'] == 4102 and stand['status'] == 'returned_true' and stand['result'] is True and
+                    stand['actor_posture'] == 0 and not stand['actor_attached']), action_report
+                resident_actions.append({'evidence': 'House07_additional_resident_Sit_Stand',
+                    'primary_neighbor_id': resident_id, 'actor_id': extra_actor_id,
+                    'object_id': 128, 'sit_action': interaction['action'], 'sit_result': interaction['result'],
+                    'stand_action': stand['action'], 'stand_result': stand['result'],
+                    'final_posture': stand['actor_posture'], 'final_attached': stand['actor_attached']})
             previous = path.read_bytes()
             for name, malformed in negative_archives(saved):
                 bad = Path(directory)/(str(resident_id)+'-'+name+'.odhs');bad.write_bytes(malformed)
@@ -102,6 +132,7 @@ def main():
     print(json.dumps({'evidence': 'integrated_House07_whole_household_own_Main_one_scheduler',
         'resident_orders': [{'primary_owner': item[4]['owner'], 'ticks': item[2]['ticks'],
                              'scheduler_entities': item[3]['scheduler_entities']} for item in reports],
+        'resident_sit_stand': resident_actions,
         'whole_household_save_resume_matches_continuous': True,
         'missing_partial_mismatched_rosters_rejected': True,
         'fingerprinted_original_inputs_unchanged': True, 'input_sha256': after,
