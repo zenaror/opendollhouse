@@ -136,6 +136,18 @@ visualmente e oferecer uma forma dentro do jogo para mudar o idioma depois. Os
 idiomas 12 e 13 exigem confirmação com texto
 localizado real antes de declarar seus dados totalmente decodificados.
 
+### Uso atual nas telas Linux
+
+As confirmações de compra e despejo agora leem seus títulos diretamente de
+`GameData/UIText.iff`: `STR# 132`, índice 0 (“Purchase House?”), e `STR# 131`,
+índice 2 (“Evict Family?”). A busca usa o idioma escolhido e recorre ao inglês
+quando faltar a frase; se `UIText.iff` não estiver disponível, usa o título em
+inglês embutido. Os títulos em português e francês foram conferidos na cópia
+comercial. Essa ligação ainda não traduz o restante dessas telas: nomes,
+preços, instruções de teclado e outros rótulos continuam em inglês. Também não
+é uma validação visual da janela; essa checagem aguarda a dependência gráfica
+Linux indicada acima.
+
 ## Referência de fontes
 
 A leitura do frontend Simitone fixado encontrou fontes MSDF carregadas de

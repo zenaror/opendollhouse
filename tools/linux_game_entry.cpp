@@ -5,6 +5,7 @@
 #include "resource.hpp"
 
 #include "odh/session_entry.hpp"
+#include "odh/animation.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/family.hpp"
 #include "odh/family_overlay.hpp"
@@ -316,6 +317,32 @@ std::filesystem::path require_file(const std::filesystem::path& root,
     return canonical;
 }
 
+#ifdef ODH_HAVE_X11
+std::string game_ui_string(const std::filesystem::path& game, std::uint16_t table_id,
+        std::size_t index, std::uint8_t language, const char* fallback) {
+    const auto candidate = game / "GameData/UIText.iff";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(candidate, error) || error) return fallback;
+    const auto path = std::filesystem::canonical(candidate, error);
+    if (error) throw odh::FormatError("cannot resolve UIText.iff inside the game installation");
+    if (!path_is_within(game, path))
+        throw odh::FormatError("UIText.iff resolves outside the selected game installation");
+    std::optional<std::string> result;
+    bool found_table = false;
+    with_iff_file(path.string(), [&](const auto& view) {
+        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+            if (chunk.type != "STR#" || chunk.id != table_id) return;
+            if (found_table) throw odh::FormatError("ambiguous UIText STR# resource");
+            found_table = true;
+            const auto table = odh::read_strings(chunk.payload);
+            if (const auto* entry = odh::string_in_language_or_english(table, language, index))
+                result = entry->value;
+        });
+    });
+    return result.value_or(fallback);
+}
+#endif
+
 std::int32_t house_purchase_price(const std::filesystem::path& game,
         const std::filesystem::path& user_data, std::uint16_t house_number) {
     std::ostringstream filename;
@@ -610,6 +637,8 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
         std::unique_ptr<odh_host::LinuxWindow> window;
+        std::string move_in_title = "Purchase House?";
+        std::string move_out_title = "Evict Family?";
         if (!options.plan_only && !options.headless_ticks) {
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
                 options.load_session ? 240 : 600, "OpenDollhouse");
@@ -622,6 +651,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                 }
                 options.language = *selected;
             }
+            move_in_title = game_ui_string(game, 132, 0,
+                static_cast<std::uint8_t>(options.language), "Purchase House?");
+            move_out_title = game_ui_string(game, 131, 2,
+                static_cast<std::uint8_t>(options.language), "Evict Family?");
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
                 family_overlay ? &*family_overlay : nullptr);
         }
@@ -673,7 +706,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                 if (choice == odh_host::OccupiedLotChoice::move_out) {
                     if (!odh_host::show_move_out_confirmation(*window, *current_family,
                             static_cast<std::uint16_t>(house),
-                            static_cast<std::uint8_t>(options.language))) {
+                            static_cast<std::uint8_t>(options.language), move_out_title)) {
                         std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-out-confirmation\"}\n";
                         return 0;
                     }
@@ -736,7 +769,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                     throw odh::FormatError("selected family changed before move-in confirmation");
                 if (!odh_host::show_move_in_confirmation(*window, *chosen_family,
                         static_cast<std::uint16_t>(house), purchase_price,
-                        static_cast<std::uint8_t>(options.language))) {
+                        static_cast<std::uint8_t>(options.language), move_in_title)) {
                     std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-in-confirmation\"}\n";
                     return 0;
                 }

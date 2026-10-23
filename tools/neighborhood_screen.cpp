@@ -338,7 +338,8 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
 }
 
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
-        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language) {
+        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language,
+        const std::string& localized_title) {
     if (house_number == 0 || house_number > 98 || purchase_price < 0 || language < 1 || language > 20 ||
         family.family.budget < purchase_price)
         throw odh::FormatError("move-in confirmation received an invalid purchase");
@@ -354,18 +355,21 @@ bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& fami
     style.height = 34; style.font_size_px = 18; style.padding = 7;
     style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
     style.y = 130;
-    draw_text_overlay(frame, "Move Family " + std::to_string(family.family.family_number) +
-        " into House " + std::to_string(house_number) + "?", language, style);
+    draw_text_overlay(frame, localized_title, language, style);
     style.y = 188;
+    draw_text_overlay(frame, "Family " + std::to_string(family.family.family_number) +
+        " | House " + std::to_string(house_number), language, style);
+    style.y = 236;
     draw_text_overlay(frame, "Price: " + std::to_string(purchase_price) + " | Current budget: " +
         std::to_string(family.family.budget), language, style);
-    style.y = 246;
+    style.y = 284;
     draw_text_overlay(frame, "Budget after purchase: " +
         std::to_string(family.family.budget - purchase_price), language, style);
     style.y = 330;
     draw_text_overlay(frame, "Enter or click to confirm; Esc cancels", language, style);
 #else
     (void)language;
+    (void)localized_title;
 #endif
     window.set_title("OpenDollhouse | confirm family move-in | House " +
         std::to_string(house_number) + " | price " + std::to_string(purchase_price) +
@@ -381,7 +385,8 @@ bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& fami
 }
 
 bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
-        std::uint16_t house_number, std::uint8_t language) {
+        std::uint16_t house_number, std::uint8_t language,
+        const std::string& localized_title) {
     if (house_number == 0 || house_number > 98 || language < 1 || language > 20 ||
         family.family.value_in_arch < 0 || family.family.budget < 0)
         throw odh::FormatError("move-out confirmation received invalid family data");
@@ -401,16 +406,19 @@ bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& fam
     style.height = 36; style.font_size_px = 18; style.padding = 7;
     style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
     style.y = 142;
-    draw_text_overlay(frame, "Move Family " + std::to_string(family.family.family_number) +
-        " out of House " + std::to_string(house_number) + "?", language, style);
+    draw_text_overlay(frame, localized_title, language, style);
     style.y = 202;
+    draw_text_overlay(frame, "Family " + std::to_string(family.family.family_number) +
+        " | House " + std::to_string(house_number), language, style);
+    style.y = 246;
     draw_text_overlay(frame, "Refund: " + std::to_string(family.family.value_in_arch), language, style);
-    style.y = 258;
+    style.y = 290;
     draw_text_overlay(frame, "Budget after move-out: " + std::to_string(next_budget), language, style);
     style.y = 340;
     draw_text_overlay(frame, "Enter or click to confirm; Esc cancels", language, style);
 #else
     (void)language;
+    (void)localized_title;
 #endif
     window.set_title("OpenDollhouse | confirm move-out | House " +
         std::to_string(house_number) + " | refund " +
