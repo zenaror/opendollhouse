@@ -56,6 +56,7 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
     if (!locations) throw odh::FormatError("LotLocations mode STR# not found");
 
     std::vector<odh::FamilyEntry> entries;
+    std::vector<odh::FamilyEntry> source_families;
     with_iff_file((user_data / "Neighborhood.iff").string(), [&](const auto& view) {
         const auto identity = saved_overlay ? neighborhood_identity(view) :
             std::array<std::uint8_t, 32>{};
@@ -64,6 +65,7 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
             if (entries.size() >= 4096) throw odh::FormatError("too many FAMI chunks");
             entries.push_back({chunk.id, odh::read_fami(chunk.payload)});
         });
+        source_families = entries;
         if (saved_overlay)
             entries = odh::apply_family_overlay(entries, identity, *saved_overlay);
     });
@@ -80,7 +82,8 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
     });
 
     return {odh::draw_neighborhood_map(*image, markers, config->marker_scale),
-            std::move(markers), config->marker_scale};
+            std::move(markers), config->marker_scale, std::move(source_families),
+            std::move(entries)};
 }
 
 std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
@@ -174,6 +177,155 @@ std::optional<std::uint16_t> show_neighborhood_picker(
             if (selected) return selected;
         }
         if (input.redraw) window.present(map.frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+std::optional<MoveInFamilySelection> show_move_in_family_picker(
+        LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
+        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language) {
+    if (!house_number || house_number > 98 || purchase_price < 0 || language < 1 || language > 20)
+        throw odh::FormatError("family picker received an invalid move-in request");
+    std::vector<const odh::FamilyEntry*> choices;
+    for (const auto& entry : families) {
+        const auto current_house = static_cast<std::uint16_t>(
+            static_cast<std::uint32_t>(entry.family.house_number) & 0xffffU);
+        if (current_house == 0 && !entry.family.member_guids.empty() &&
+            entry.family.budget >= purchase_price)
+            choices.push_back(&entry);
+    }
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    std::size_t selected = 0;
+    constexpr std::size_t row_height = 36, row_start = 92;
+    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 184) / row_height);
+    const auto render = [&]() {
+        odh::RasterFrame frame{};
+        frame.width = window.width(); frame.height = window.height();
+        frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                            std::array<std::uint8_t,4>{35, 39, 48, 255});
+        for (std::size_t row = 0; row < page_size; ++row) {
+            const auto index = (selected / page_size) * page_size + row;
+            if (index >= choices.size()) break;
+            const auto color = index == selected ? std::array<std::uint8_t,4>{47,93,138,255} :
+                std::array<std::uint8_t,4>{52,57,68,255};
+            const auto y0 = row_start + row * row_height;
+            for (std::size_t y = y0; y < y0 + 32; ++y)
+                for (std::size_t x = 24; x + 24 < frame.width; ++x)
+                    frame.pixels[y * frame.width + x] = color;
+        }
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        TextOverlayStyle style;
+        style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
+        style.height = 32; style.font_size_px = 17; style.padding = 7;
+        style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
+        style.y = 24;
+        draw_text_overlay(frame, "Move a family in - choose a family, Enter or click to continue, Esc to cancel",
+                          language, style);
+        style.y = 56;
+        draw_text_overlay(frame, "House " + std::to_string(house_number) + " costs " +
+            std::to_string(purchase_price) + " simoleons", language, style);
+        for (std::size_t row = 0; row < page_size; ++row) {
+            const auto index = (selected / page_size) * page_size + row;
+            if (index >= choices.size()) break;
+            const auto& family = choices[index]->family;
+            const auto label = std::string(index == selected ? "> Family " : "  Family ") +
+                std::to_string(family.family_number) + " | " +
+                std::to_string(family.member_guids.size()) + " residents | budget " +
+                std::to_string(family.budget);
+            style.y = static_cast<std::int32_t>(row_start + row * row_height);
+            draw_text_overlay(frame, label, language, style);
+        }
+        if (choices.empty()) {
+            style.y = 128;
+            draw_text_overlay(frame, "No unhoused family with enough money is available",
+                              language, style);
+        }
+#else
+        (void)language;
+#endif
+        const std::string title = choices.empty() ?
+            "OpenDollhouse | no family can afford House " + std::to_string(house_number) + " | Esc: cancel" :
+            "OpenDollhouse | choose family for House " + std::to_string(house_number) +
+                " | budget after: " + std::to_string(choices[selected]->family.budget - purchase_price) +
+                " | Tab: next, Enter: continue, Esc: cancel";
+        window.set_title(title);
+        window.present(frame);
+    };
+    render();
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return std::nullopt;
+        if (choices.empty()) {
+            if (input.action || input.primary_click) return std::nullopt;
+        } else {
+            if (input.interaction_selection_delta) {
+                selected = odh::advance_resident_selection(selected,
+                    input.interaction_selection_delta, choices.size());
+                render();
+            }
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+            if (input.primary_click) {
+                const auto y = (*input.primary_click)[1];
+                const std::size_t row_end = row_start + page_size * row_height;
+                if (y >= static_cast<std::int32_t>(row_start) && y < static_cast<std::int32_t>(row_end)) {
+                    const auto row = static_cast<std::size_t>(y - static_cast<std::int32_t>(row_start)) / row_height;
+                    const auto index = (selected / page_size) * page_size + row;
+                    if (index < choices.size()) {
+                        const auto& entry = *choices[index];
+                        return MoveInFamilySelection{entry.chunk_id,
+                            odh::family_overlay_identity(entry)};
+                    }
+                }
+            }
+#endif
+            if (input.action && !input.primary_click) {
+                const auto& entry = *choices[selected];
+                return MoveInFamilySelection{entry.chunk_id, odh::family_overlay_identity(entry)};
+            }
+        }
+        if (input.redraw) render();
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
+        std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language) {
+    if (house_number == 0 || house_number > 98 || purchase_price < 0 || language < 1 || language > 20 ||
+        family.family.budget < purchase_price)
+        throw odh::FormatError("move-in confirmation received an invalid purchase");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    odh::RasterFrame frame{};
+    frame.width = window.width(); frame.height = window.height();
+    frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                        std::array<std::uint8_t,4>{35, 39, 48, 255});
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;
+    style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
+    style.height = 34; style.font_size_px = 18; style.padding = 7;
+    style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
+    style.y = 130;
+    draw_text_overlay(frame, "Move Family " + std::to_string(family.family.family_number) +
+        " into House " + std::to_string(house_number) + "?", language, style);
+    style.y = 188;
+    draw_text_overlay(frame, "Price: " + std::to_string(purchase_price) + " | Current budget: " +
+        std::to_string(family.family.budget), language, style);
+    style.y = 246;
+    draw_text_overlay(frame, "Budget after purchase: " +
+        std::to_string(family.family.budget - purchase_price), language, style);
+    style.y = 330;
+    draw_text_overlay(frame, "Enter or click to confirm; Esc cancels", language, style);
+#else
+    (void)language;
+#endif
+    window.set_title("OpenDollhouse | confirm family move-in | House " +
+        std::to_string(house_number) + " | price " + std::to_string(purchase_price) +
+        " | budget after " + std::to_string(family.family.budget - purchase_price));
+    window.present(frame);
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return false;
+        if (input.action || input.primary_click) return true;
+        if (input.redraw) window.present(frame);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }

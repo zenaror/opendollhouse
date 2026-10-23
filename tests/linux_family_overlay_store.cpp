@@ -65,6 +65,19 @@ int main() {
             loaded->assignments[0].house_number == 7 &&
             loaded->assignments[0].purchase_price == 5500,
             "saved overlay can be reopened from disk");
+    auto stale_expected = *loaded;
+    ++stale_expected.assignments[0].purchase_price;
+    --stale_expected.assignments[0].budget_after_purchase;
+    rejects([&] { odh_host::compare_exchange_linux_family_overlay_atomic(
+                path, stale_expected, replacement); },
+            "move-in compare-and-write rejects a stale player-state snapshot");
+    const auto after_stale_reject = odh_host::read_linux_family_overlay(path);
+    require(after_stale_reject && after_stale_reject->assignments[0].purchase_price == 5500,
+            "stale move-in transaction leaves the previously saved overlay unchanged");
+    odh_host::compare_exchange_linux_family_overlay_atomic(path, loaded, replacement);
+    const auto exchanged = odh_host::read_linux_family_overlay(path);
+    require(exchanged && exchanged->assignments[0].family_chunk_id == 18,
+            "move-in compare-and-write publishes when its expected state still matches");
     struct stat info {};
     require(::stat(path.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600,
             "overlay file is private to its owner");
@@ -132,6 +145,27 @@ int main() {
     const std::string source_bytes = "synthetic neighborhood source bytes";
     { std::ofstream output(neighborhood, std::ios::binary); output << source_bytes; }
     const auto identity = odh::sha256(source_bytes.data(), source_bytes.size());
+    odh::Family free_family;
+    free_family.family_number = 42;
+    free_family.budget = 9000;
+    free_family.member_guids = {0x12345678U, 0x87654321U};
+    const std::vector<odh::FamilyEntry> synthetic_families{{700, free_family}};
+    const auto planned = odh::plan_family_move_in_overlay(
+        synthetic_families, identity, nullptr, 700, 5, 3200);
+    const auto transaction_path = odh_host::linux_family_overlay_path(identity);
+    odh_host::compare_exchange_linux_family_overlay_atomic(
+        transaction_path, std::nullopt, planned);
+    const auto committed = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+    require(committed && committed->assignments.size() == 1 &&
+            committed->assignments[0].purchase_price == 3200,
+            "synthetic move-in plan is written and selected by the source neighborhood identity");
+    const auto effective_families = odh::apply_family_overlay(
+        synthetic_families, identity, *committed);
+    const odh::FamilyContext effective_context(effective_families);
+    require(effective_context.by_house(5) &&
+            effective_context.by_house(5)->family.budget == 5800 &&
+            odh_host::linux_neighborhood_identity(neighborhood) == identity,
+            "saved synthetic move-in appears at its lot, charges the budget, and leaves source bytes unchanged");
     auto persisted = first;
     persisted.neighborhood_identity = identity;
     odh_host::write_linux_family_overlay_atomic(

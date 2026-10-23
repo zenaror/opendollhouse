@@ -32,6 +32,15 @@ std::array<std::uint8_t, 32> family_overlay_identity(const FamilyEntry&);
 FamilyOverlayAssignment plan_family_move_in(
     const FamilyEntry&, std::uint16_t house_number, std::int32_t purchase_price);
 
+// Appends one purchase to the current overlay after checking its latest
+// effective family/house state against the immutable source snapshot.
+FamilyOverlay plan_family_move_in_overlay(
+    const std::vector<FamilyEntry>& source,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay,
+    std::uint16_t family_chunk_id, std::uint16_t house_number,
+    std::int32_t purchase_price);
+
 // Bounded v1 codec. The caller supplies SHA-256 of the exact source
 // Neighborhood.iff so stale player data can fail closed.
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay&);

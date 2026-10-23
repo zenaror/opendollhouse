@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <vector>
 
@@ -77,6 +78,22 @@ std::filesystem::path linux_family_overlay_path(
         ("neighborhood-" + identity_hex(neighborhood_identity) + ".odhp");
 }
 
+std::array<std::uint8_t, 32> linux_neighborhood_identity(
+        const std::filesystem::path& neighborhood_iff) {
+    std::ifstream input(neighborhood_iff, std::ios::binary);
+    if (!input) io_error("cannot open Neighborhood.iff for family overlay", neighborhood_iff);
+    odh::Sha256 hash;
+    std::array<std::uint8_t, 64 * 1024> block{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(block.data()),
+                   static_cast<std::streamsize>(block.size()));
+        const auto count = input.gcount();
+        if (count > 0) hash.update(block.data(), static_cast<std::size_t>(count));
+    }
+    if (!input.eof()) throw std::runtime_error("cannot read Neighborhood.iff for family overlay");
+    return hash.finish();
+}
+
 std::optional<odh::FamilyOverlay> read_linux_family_overlay(
         const std::filesystem::path& path) {
     FileDescriptor file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
@@ -111,18 +128,7 @@ std::optional<odh::FamilyOverlay> read_linux_family_overlay(
 
 std::optional<odh::FamilyOverlay> read_linux_family_overlay_for_neighborhood(
         const std::filesystem::path& neighborhood_iff) {
-    std::ifstream input(neighborhood_iff, std::ios::binary);
-    if (!input) io_error("cannot open Neighborhood.iff for family overlay", neighborhood_iff);
-    odh::Sha256 hash;
-    std::array<std::uint8_t, 64 * 1024> block{};
-    while (input) {
-        input.read(reinterpret_cast<char*>(block.data()),
-                   static_cast<std::streamsize>(block.size()));
-        const auto count = input.gcount();
-        if (count > 0) hash.update(block.data(), static_cast<std::size_t>(count));
-    }
-    if (!input.eof()) throw std::runtime_error("cannot read Neighborhood.iff for family overlay");
-    const auto identity = hash.finish();
+    const auto identity = linux_neighborhood_identity(neighborhood_iff);
     auto overlay = read_linux_family_overlay(linux_family_overlay_path(identity));
     if (overlay && overlay->neighborhood_identity != identity)
         throw odh::FormatError("saved family overlay identity does not match Neighborhood.iff");
@@ -171,6 +177,46 @@ void write_linux_family_overlay_atomic(const std::filesystem::path& path,
         }
         throw;
     }
+}
+
+void compare_exchange_linux_family_overlay_atomic(const std::filesystem::path& path,
+        const std::optional<odh::FamilyOverlay>& expected,
+        const odh::FamilyOverlay& replacement) {
+    if (path.empty() || path.filename().empty())
+        throw std::invalid_argument("family overlay path must name a file");
+    auto directory = path.parent_path();
+    if (directory.empty()) directory = ".";
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    if (ec) throw std::runtime_error("cannot create family overlay directory: " + ec.message());
+    const auto directory_status = std::filesystem::symlink_status(directory, ec);
+    if (ec || std::filesystem::is_symlink(directory_status) ||
+        !std::filesystem::is_directory(directory_status))
+        throw std::runtime_error("family overlay directory is not a real directory");
+
+    const auto lock_path = path.string() + ".lock";
+    FileDescriptor lock(::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+                               S_IRUSR | S_IWUSR));
+    if (lock.get() < 0) io_error("cannot open family overlay transaction lock", lock_path);
+    struct stat lock_info {};
+    if (::fstat(lock.get(), &lock_info) != 0)
+        io_error("cannot inspect family overlay transaction lock", lock_path);
+    if (!S_ISREG(lock_info.st_mode) || lock_info.st_nlink != 1)
+        throw std::runtime_error("family overlay transaction lock is not a private regular file");
+    if (::fchmod(lock.get(), S_IRUSR | S_IWUSR) != 0)
+        io_error("cannot protect family overlay transaction lock", lock_path);
+    while (::flock(lock.get(), LOCK_EX) != 0) {
+        if (errno == EINTR) continue;
+        io_error("cannot lock family overlay transaction", lock_path);
+    }
+
+    const auto current = read_linux_family_overlay(path);
+    const bool matches = current.has_value() == expected.has_value() &&
+        (!current || odh::encode_family_overlay(*current) ==
+                     odh::encode_family_overlay(*expected));
+    if (!matches)
+        throw std::runtime_error("family overlay changed during move-in; retry from the neighborhood map");
+    write_linux_family_overlay_atomic(path, replacement);
 }
 
 } // namespace odh_host

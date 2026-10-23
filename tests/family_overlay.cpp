@@ -69,6 +69,31 @@ int main() {
         require(applied[1].family.budget == 14500 && cas.family.house_number == 0 &&
                 cas.family.budget == 20000, "applies to owned copy and preserves source data");
 
+        const auto household = family(13, 0, 9000, {0x01020304U});
+        const auto expanded = odh::plan_family_move_in_overlay(
+            {resident, cas, household}, source_id, &decoded, household.chunk_id, 8, 4000);
+        const auto expanded_effective = odh::apply_family_overlay(
+            {resident, cas, household}, source_id, expanded);
+        require(expanded.assignments.size() == 2 &&
+                expanded_effective[1].family.house_number == 7 &&
+                expanded_effective[2].family.house_number == 8 &&
+                expanded_effective[2].family.budget == 5000,
+                "move-in transaction preserves prior moves and applies latest family/house state");
+        rejects([&] { (void)odh::plan_family_move_in_overlay(
+                    {resident, cas, household}, source_id, &decoded,
+                    household.chunk_id, 7, 4000); },
+                "move-in transaction rejects a destination occupied in current overlay");
+        rejects([&] { (void)odh::plan_family_move_in_overlay(
+                    {resident, cas, household}, source_id, &decoded,
+                    household.chunk_id, 8, 10000); },
+                "move-in transaction rejects unaffordable purchase");
+        auto stale_overlay = decoded;
+        stale_overlay.assignments[0].house_number = 8;
+        rejects([&] { (void)odh::plan_family_move_in_overlay(
+                    {resident, cas, household}, source_id, &stale_overlay,
+                    cas.chunk_id, 9, 1000); },
+                "move-in transaction rejects a conflicting current overlay");
+
         auto stale_source = source_id; stale_source[1] = 1;
         rejects([&] { (void)odh::apply_family_overlay({cas, resident}, stale_source, decoded); },
                 "changed Neighborhood identity fails closed");

@@ -6,6 +6,7 @@
 
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/lot.hpp"
 #ifdef __linux__
 #include "linux_session_archive_store.hpp"
 #include "linux_family_overlay_store.hpp"
@@ -27,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -312,6 +314,25 @@ std::filesystem::path require_file(const std::filesystem::path& root,
     return canonical;
 }
 
+std::int32_t house_purchase_price(const std::filesystem::path& game,
+        const std::filesystem::path& user_data, std::uint16_t house_number) {
+    std::ostringstream filename;
+    filename << "House" << (house_number < 10 ? "0" : "") << house_number << ".iff";
+    const auto house_file = require_file(game, user_data / "Houses" / filename.str());
+    std::optional<odh::Simi> simi;
+    with_iff_file(house_file.string(), [&](const auto& view) {
+        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+            if (chunk.type != "SIMI" || chunk.id != 1) return;
+            if (simi) throw odh::FormatError("ambiguous SIMI1 selected house");
+            simi = odh::read_simi(chunk.payload);
+        });
+    });
+    if (!simi) throw odh::FormatError("selected house has no valid SIMI1 purchase data");
+    const auto price = simi->purchase_value();
+    if (price < 0) throw odh::FormatError("selected house has a negative SIMI purchase value");
+    return price;
+}
+
 std::vector<std::filesystem::path> find_files(const std::filesystem::path& root,
         const std::string& exact_name, const std::set<std::string>& extensions,
         std::size_t maximum) {
@@ -573,10 +594,10 @@ int odh_linux_game_entry(int argc, char** argv) {
         options.game_root = game;
         const auto userdata = require_directory(game, game / "UserData");
 #ifdef __linux__
-        const auto family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+        auto family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
             userdata / "Neighborhood.iff");
 #else
-        const std::optional<odh::FamilyOverlay> family_overlay;
+        std::optional<odh::FamilyOverlay> family_overlay;
 #endif
         std::optional<std::filesystem::path> graphics_resource;
 #ifdef ODH_HAVE_X11
@@ -618,6 +639,74 @@ int odh_linux_game_entry(int argc, char** argv) {
                 return 0;
             }
             house = *selected;
+            const auto marker = std::find_if(map->markers.begin(), map->markers.end(),
+                [&](const auto& value) { return value.location.house == house; });
+            if (marker == map->markers.end())
+                throw odh::FormatError("selected lot is absent from the prepared neighborhood");
+            if (!marker->occupied) {
+                const auto purchase_price = house_purchase_price(game, userdata,
+                    static_cast<std::uint16_t>(house));
+                const auto family_choice = odh_host::show_move_in_family_picker(*window,
+                    map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
+                    static_cast<std::uint8_t>(options.language));
+                if (!family_choice) {
+                    std::cout << "{\"status\":\"cancelled\",\"stage\":\"family\"}\n";
+                    return 0;
+                }
+                const auto chosen_family = std::find_if(map->effective_families.begin(),
+                    map->effective_families.end(), [&](const auto& entry) {
+                        return entry.chunk_id == family_choice->family_chunk_id;
+                    });
+                if (chosen_family == map->effective_families.end() ||
+                    odh::family_overlay_identity(*chosen_family) != family_choice->family_identity)
+                    throw odh::FormatError("selected family changed before move-in confirmation");
+                if (!odh_host::show_move_in_confirmation(*window, *chosen_family,
+                        static_cast<std::uint16_t>(house), purchase_price,
+                        static_cast<std::uint8_t>(options.language))) {
+                    std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-in-confirmation\"}\n";
+                    return 0;
+                }
+
+                // Re-read both player state and commercial inputs after the
+                // confirmation, so stale selections cannot silently spend money.
+                const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+                    userdata / "Neighborhood.iff");
+                const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
+                    options.mode, latest_overlay ? &*latest_overlay : nullptr);
+                const auto latest_price = house_purchase_price(game, userdata,
+                    static_cast<std::uint16_t>(house));
+                if (latest_price != purchase_price)
+                    throw odh::FormatError("selected lot price changed before move-in was saved");
+                const auto latest_marker = std::find_if(latest_map.markers.begin(),
+                    latest_map.markers.end(), [&](const auto& value) { return value.location.house == house; });
+                if (latest_marker == latest_map.markers.end() || latest_marker->occupied)
+                    throw odh::FormatError("selected lot is no longer vacant");
+                const auto latest_family = std::find_if(latest_map.effective_families.begin(),
+                    latest_map.effective_families.end(), [&](const auto& entry) {
+                        return entry.chunk_id == family_choice->family_chunk_id;
+                    });
+                if (latest_family == latest_map.effective_families.end() ||
+                    odh::family_overlay_identity(*latest_family) != family_choice->family_identity ||
+                    (static_cast<std::uint32_t>(latest_family->family.house_number) & 0xffffU) != 0)
+                    throw odh::FormatError("selected family is no longer available for move-in");
+
+                const auto neighborhood_identity = odh_host::linux_neighborhood_identity(
+                    userdata / "Neighborhood.iff");
+                const auto next_overlay = odh::plan_family_move_in_overlay(
+                    latest_map.source_families, neighborhood_identity,
+                    latest_overlay ? &*latest_overlay : nullptr, family_choice->family_chunk_id,
+                    static_cast<std::uint16_t>(house), latest_price);
+                odh_host::compare_exchange_linux_family_overlay_atomic(
+                    odh_host::linux_family_overlay_path(neighborhood_identity),
+                    latest_overlay, next_overlay);
+                family_overlay = next_overlay;
+                map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                    &*family_overlay);
+                const auto committed_marker = std::find_if(map->markers.begin(), map->markers.end(),
+                    [&](const auto& value) { return value.location.house == house; });
+                if (committed_marker == map->markers.end() || !committed_marker->occupied)
+                    throw odh::FormatError("saved move-in did not appear on the refreshed neighborhood map");
+            }
         }
 #endif
 

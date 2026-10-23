@@ -84,6 +84,27 @@ FamilyOverlayAssignment plan_family_move_in(const FamilyEntry& family,
             purchase_price, family.family.budget - purchase_price};
 }
 
+FamilyOverlay plan_family_move_in_overlay(const std::vector<FamilyEntry>& source,
+        const std::array<std::uint8_t, 32>& neighborhood_identity,
+        const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id,
+        std::uint16_t house_number, std::int32_t purchase_price) {
+    if (current_overlay && current_overlay->neighborhood_identity != neighborhood_identity)
+        throw FormatError("current family overlay belongs to different Neighborhood.iff data");
+    const auto effective = current_overlay ?
+        apply_family_overlay(source, neighborhood_identity, *current_overlay) : source;
+    const FamilyContext families(effective);
+    if (families.by_house(static_cast<std::int16_t>(house_number)))
+        throw FormatError("family move-in destination is already occupied");
+    const auto* family = families.by_id(family_chunk_id);
+    if (!family) throw FormatError("selected family is absent from Neighborhood.iff");
+
+    FamilyOverlay result = current_overlay ? *current_overlay :
+        FamilyOverlay{neighborhood_identity, {}};
+    result.assignments.push_back(plan_family_move_in(*family, house_number, purchase_price));
+    (void)apply_family_overlay(source, neighborhood_identity, result);
+    return result;
+}
+
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
     validate_overlay(overlay);
     std::vector<std::uint8_t> out;
