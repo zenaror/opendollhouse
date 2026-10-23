@@ -57,26 +57,37 @@ com a instalação `../referencias/The Sims`, modo 1, House05, morador neighbor
 ID 34 e objeto 173 voltou a confirmar a ação 8213: retorno `true`, avatar
 runtime 21 anexado ao slot 0 e animação `a2o-idle-sit-3` após 512 ticks.
 
-O próximo passo não passou. `--save-session-on-exit` recusou esse estado com
-“missing its exact completed Sit/Stand object binding”, porque a continuação
-serializada atual exige a ação privada 4097. No ensaio direto Sit→Stand dentro
-da mesma sessão, a ação 8213 sentou corretamente, mas o pedido de Stand no tick
-300 foi recusado antes de executar BHAV: EntryPoint27 não tem dono privado
-único. Uma leitura estática separada do `Sofas.iff#16848` confirma EntryPoint26
-8215 e EntryPoint27 8216; ambos são IDs semiglobais e o GLOB do objeto os liga
-ao banco SofaGlobals.iff. Portanto, não se deve relaxar a checagem privada: o
-próximo trabalho é carregar, limitar, identificar e restaurar o código
-semiglobal exato das ações 8213/8216 para a continuação sentada.
+`--save-session-on-exit` ainda recusa esse estado com “missing its exact
+completed Sit/Stand object binding”, porque a continuação serializada atual
+exige a ação privada 4097. Uma execução direta Sit→Stand na mesma sessão
+primeiro foi recusada; o dispatcher foi então atualizado para carregar a
+função semiglobal somente pelo GLOB exato do objeto. O teste real no House05
+agora enfileirou 8213 e 8216, ambas retornaram `true`, e o morador terminou
+em pé, desanexado do banco. O Snap de saída usa o SLOT tipo 3, índice 1,
+versão 10, opção Shoo e o perfil bruto exato do banco; o suporte ficou limitado
+a esse formato, com teste sintético de destino livre e bloqueado.
+
+O ensaio integrado pelo launcher foi repetido com o alvo recompilado, sem
+display: `--single-resident-session --headless-sit-object 173
+--headless-stand-tick 300 --headless-ticks 512`. Terminou com código 0 e
+`status=waiting`. Sit 8213 e Stand 8216 retornaram `true`; o Stand encontrou
+postura sentada e vínculo com 173, e terminou em postura 0, desanexado, com a
+fila vazia e sem falha do host. O limite geral de 512 ticks foi alcançado; as
+ações solicitadas, porém, foram concluídas (`action_incomplete=false`). Os
+hashes de House05, Neighborhood, User00009 e Animation.far permaneceram iguais.
+Uma leitura estática separada do `Sofas.iff#16848` confirma EntryPoint26 8215
+e EntryPoint27 8216; ambos são IDs semiglobais e o GLOB do objeto os liga ao
+banco SofaGlobals.iff. Ainda falta serializar, autenticar e restaurar essa
+origem exata para save/resume.
 
 Uma tentativa separada de executar Sit→Stand com o runtime de toda a família
 parou antes da interação: o Main do morador 16 falhou ao encontrar o objeto
 salvo 218 sem posição conhecida. Isso permanece uma lacuna independente da
 continuação de um único morador.
 
-O executável precisa ser recompilado antes de ensaios de código local; o alvo
-antigo retornou `unsupported` para o TTAB, resultado que não representa o
-código-fonte atual. Ainda não há evidência de BHAV8216 executado, de Stand
-concluído, nem de save/resume do assento House05.
+Não há ainda evidência de save/resume do assento House05, clique natural ou
+Stand visual em janela. `odh-snap-tests` passou 350 verificações sintéticas e
+`linux_game_entry_cli.py` passou 49 verificações sintéticas após essas mudanças.
 
 ## Atualização: condições simples da EntryPoint26 (2026-10-23)
 

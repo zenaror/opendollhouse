@@ -31,6 +31,14 @@ bool stair_exact_point(const SlotRecord& route) {
        route.gradient_bits==0x3E400000 && route.proximity &&
        *route.proximity==std::array<std::int32_t,3>{16,16,16};
 }
+bool shoo_sitting_exit(const SlotRecord& route) {
+    return route.snap_target_slot==-1 && route.flags==0 &&
+       route.offset_bits==std::array<std::uint32_t,3>{0,0xC1800000,0} &&
+       route.standing==0 && route.sitting==0 && route.ground==0 && route.height==0 &&
+       route.facing==-2 && route.resolution==16 && route.max_size==0 && route.unknown_i10==0 &&
+       route.gradient_bits==0x3E400000 && route.proximity &&
+       *route.proximity==std::array<std::int32_t,3>{16,16,16};
+}
 }
 Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id,
            PlacementValidator placement_validator,StairPlacementValidator stair_placement_validator)
@@ -94,7 +102,37 @@ VmPrimitive Snap::primitive() {
                 return {world_.place_on_floor(actor_id,destination)?PrimitiveDisposition::goto_true:
                     PrimitiveDisposition::goto_false,{}};
             }
-            if(i.operands[4]==2)return fail("Snap Shoo flag outside the exact stair profile");
+            if(i.operands[4]==2) {
+                if(slots_.version!=10 || binding_.slot_table!=128 || index!=1 || !shoo_sitting_exit(*route))
+                    return fail("Snap Shoo flag outside the exact sitting-exit profile");
+                if(object->position->direction&1) return fail("sitting-exit Snap diagonal object geometry not implemented");
+                if(actor->position->level!=object->position->level)
+                    return fail("sitting-exit Snap floor level unsupported");
+                if(actor->attachment && actor->attachment->container!=object_)
+                    return {PrimitiveDisposition::goto_false,{}};
+                std::int32_t dx=0,dy=-16;
+                for(std::uint8_t turn=0;turn<object->position->direction/2;++turn) {
+                    const auto old_x=dx;dx=-dy;dy=old_x;
+                }
+                const auto object_position=*object->position,actor_position=*actor->position;
+                auto destination=object_position;destination.x+=dx;destination.y+=dy;
+                destination.direction=actor_position.direction;
+                if(destination.x<0 || destination.y<0 || destination.x>32767 || destination.y>32767)
+                    return {PrimitiveDisposition::goto_false,{}};
+                if(!placement_validator_)return fail("sitting-exit Snap placement validator missing");
+                const auto actor_id=actor->id;
+                const auto actor_generation=actor->generation;
+                struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+                if(!placement_validator_(actor_id,destination))return {PrimitiveDisposition::goto_false,{}};
+                object=world_.find(object_);actor=world_.find(actor_id);
+                if(!object || object->generation!=generation_ || !object->position || object->attachment ||
+                   !(*object->position==object_position) || !actor || actor->generation!=actor_generation ||
+                   !actor->position || !(*actor->position==actor_position) ||
+                   (actor->attachment && actor->attachment->container!=object_))
+                    return {PrimitiveDisposition::goto_false,{}};
+                return {world_.place_on_floor(actor_id,destination)?PrimitiveDisposition::goto_true:
+                    PrimitiveDisposition::goto_false,{}};
+            }
             const auto exit=floor_exit(*route);
             if(slots_.version!=10 || !exit) return fail("snap floor SLOT profile not implemented");
             if(!placement_validator_) return fail("snap floor placement validator missing");

@@ -117,6 +117,18 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "Downloads/Sample/Sample.far" in identity["files"] and
           "Downloads/Loose.iff" in identity["files"],
           "base, shared, expansion, and optional download resources reach runtime loaders")
+    stand_without_profile = subprocess.run(
+        [binary, "--game-root", str(root), "--mode", "1", "--house", "7", "--language", "15",
+         "--headless-sit-object", "1", "--headless-stand-tick", "3", "--headless-ticks", "4"],
+        capture_output=True, text=True, env=env)
+    check(stand_without_profile.returncode == 2 and "single-resident Sit run" in stand_without_profile.stderr,
+          "same-session Stand scheduling requires the explicit single-resident profile")
+    stand_outside_run = subprocess.run(
+        [binary, "--game-root", str(root), "--mode", "1", "--house", "7", "--language", "15",
+         "--single-resident-session", "--headless-sit-object", "1", "--headless-stand-tick", "4",
+         "--headless-ticks", "3"], capture_output=True, text=True, env=env)
+    check(stand_outside_run.returncode == 2 and "in-range tick" in stand_outside_run.stderr,
+          "same-session Stand tick must fit within the bounded run")
     (root / "ExpansionPack4" / "ExpansionPack4.far").unlink()
     partial = subprocess.run(command, capture_output=True, text=True, env=env)
     check(partial.returncode == 0, partial.stderr)

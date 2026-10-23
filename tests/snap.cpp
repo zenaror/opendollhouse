@@ -30,6 +30,15 @@ odh::SlotTable stair_table() {
     route.gradient_bits=0x3E400000;route.height=0;route.facing=-2;route.resolution=16;
     return {0,10,{route},0};
 }
+odh::SlotTable shoo_sitting_exit_table() {
+    auto slots=table();odh::SlotRecord route{};route.type=3;route.snap_target_slot=-1;
+    route.offset_bits={0,0xC1800000,0};route.proximity=std::array<std::int32_t,3>{16,16,16};
+    route.max_size=0;route.unknown_i10=0;route.gradient_bits=0x3E400000;
+    route.height=0;route.facing=-2;route.resolution=16;slots.records.push_back(route);return slots;
+}
+odh::RoutineSet shoo_sitting_exit_routine() {
+    auto result=routine(3,1);result.begin()->second.instructions[0].operands[4]=2;return result;
+}
 odh::RoutineSet stair_routine(unsigned flags=2,unsigned index=0) {
     return {{odh::routine_key(4113),odh::Bhav{0x8002,{{46,254,255,{static_cast<std::uint8_t>(index),
         static_cast<std::uint8_t>(index>>8),3,0,static_cast<std::uint8_t>(flags),0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
@@ -187,6 +196,25 @@ int main(){try{
      f.snap.emplace(f.world,2,odh::ObjdBinding{138,0x12345678,129,128},f.slots,128,[&](auto,const auto&){f.world.remove(1);f.world.create(1,odh::EntityKind::avatar,{0,88,0});f.world.set_position(1,{11,12,1,4});return true;});
      odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::returned_false && *f.world.find(1)->position==odh::EntityPosition{11,12,1,4},"callback reused actor ID prevents placement against stale generation");}
+    {odh::World world;auto slots=shoo_sitting_exit_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,1});world.set_position(1,{30,20,1,2});world.set_position(2,{30,20,1,0});
+     world.place_in_slot(2,0,1);world.set_person_data(1,0,1);bool observed=false;
+     odh::Snap snap{world,2,odh::ObjdBinding{138,3586796916U,129,128},slots,128,
+         [&](auto actor,const auto& point){observed=actor==1&&point==odh::EntityPosition{30,4,1,2}&&
+             world.find(1)->attachment&&world.find(2)->slots[0]==1;return true;}};
+     odh::Vm vm(shoo_sitting_exit_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);
+     vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true&&observed,"exact semiglobal sitting-exit Snap validates outside goal before moving");
+     require(*world.find(1)->position==odh::EntityPosition{30,4,1,2}&&!world.find(1)->attachment&&
+             world.find(2)->slots[0]==0&&world.find(1)->person_data[0]==1,"sitting-exit Snap detaches the resident without changing posture");}
+    {odh::World world;auto slots=shoo_sitting_exit_table();world.create(1,odh::EntityKind::avatar,{0,88,1});
+     world.create(2,odh::EntityKind::object,{0,0,1});world.set_position(1,{30,20,1,2});world.set_position(2,{30,20,1,0});
+     world.place_in_slot(2,0,1);world.set_person_data(1,0,1);odh::Snap snap{world,2,
+         odh::ObjdBinding{138,3586796916U,129,128},slots,128,[](auto,const auto&){return false;}};
+     odh::Vm vm(shoo_sitting_exit_routine(),world.vm_memory(),{},snap.primitive());snap.bind(vm);
+     vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false&&world.find(1)->attachment&&world.find(2)->slots[0]==1&&
+             world.find(1)->person_data[0]==1,"blocked semiglobal sitting exit preserves the complete seat state");}
     for(const auto position:{odh::EntityPosition{-1,20,1,0},odh::EntityPosition{30,-1,1,0},odh::EntityPosition{32768,20,1,0},
                              odh::EntityPosition{30,32768,1,0},odh::EntityPosition{30,20,0,0},odh::EntityPosition{30,20,1,8}}) {
         FloorFixture f;seat(f);f.world.create(3,odh::EntityKind::object);f.world.set_position(3,{0,0,1,6});f.world.place_in_slot(1,0,3);

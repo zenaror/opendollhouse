@@ -83,10 +83,17 @@ The current seated continuation profile only captures the private Sit action
 4097 and its matching Stand action 4102. A real House05 run using bank
 `Sofas.iff#16848` succeeded at Sit 8213, but the save was rejected because its
 EntryPoint26/27 actions (8215/8216) are semiglobal routines linked through
-`SofaGlobals.iff`. The same-process Stand probe also stopped before BHAV
-execution because the current dispatcher requires a private EntryPoint27
-owner. These rejections are intentional until the exact linked semiglobal
-routine closure can be fingerprinted and rebuilt after restart.
+`SofaGlobals.iff`. The same-process Stand dispatcher now loads EntryPoint27
+8216 from that exact GLOB-linked bank; the real Sit→Stand path returned true
+and detached the resident. Its Snap uses a narrow, tested match for the
+bench's SLOT 128 type-3 index-1 exit record. The integrated launcher gate
+`--single-resident-session --headless-sit-object 173 --headless-stand-tick 300
+--headless-ticks 512` completed with exit code 0: both actions returned true,
+the resident ended standing and detached, and the original House05,
+Neighborhood, character and Animation.far hashes were unchanged. The general
+512-tick ceiling was reached after the requested actions completed. Save/resume
+still rejects the state until the exact semiglobal routine origin and closure
+can be fingerprinted and rebuilt after restart.
 A public save selector and visual X11 validation are still absent; do not treat
 this limited persistence support as a playable build.
 

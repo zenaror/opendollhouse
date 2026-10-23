@@ -47,6 +47,7 @@ struct Options {
     bool save_on_exit = false;
     bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
+    std::optional<unsigned> headless_stand_tick;
     std::optional<ResidentSit> headless_resident_sit;
     std::optional<ResidentInteraction> headless_resident_interaction;
     std::optional<ResidentGoHere> headless_resident_go_here;
@@ -146,6 +147,8 @@ Options parse_options(int argc, char** argv) {
             result.resident_id = parse_number(value, 32767, "resident ID");
         } else if (key == "--headless-sit-object" && !result.headless_sit_object) {
             result.headless_sit_object = parse_number(value, 32767, "Sit object ID");
+        } else if (key == "--headless-stand-tick" && !result.headless_stand_tick) {
+            result.headless_stand_tick = parse_number(value, 4096, "Stand tick");
         } else {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
@@ -180,6 +183,10 @@ Options parse_options(int argc, char** argv) {
     if (result.headless_sit_object && (!*result.headless_sit_object || !result.headless_ticks ||
         result.plan_only || result.load_session || result.headless_stand || result.headless_resident_sit))
         throw odh::FormatError("--headless-sit-object requires a new bounded lot session");
+    if (result.headless_stand_tick && (!result.headless_sit_object || !result.single_resident_session ||
+        !result.headless_ticks || result.plan_only || result.load_session || result.headless_stand ||
+        *result.headless_stand_tick < 2 || *result.headless_stand_tick > *result.headless_ticks))
+        throw odh::FormatError("--headless-stand-tick requires a new single-resident Sit run and an in-range tick");
     if (result.headless_resident_sit && (!result.headless_ticks || result.plan_only || result.load_session ||
         result.single_resident_session || result.headless_stand || result.headless_sit_object ||
         result.headless_resident_interaction ||
@@ -208,6 +215,7 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError(
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
             "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
+            "[--headless-sit-object ID --headless-stand-tick N] "
             "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -464,6 +472,9 @@ RuntimePlan build_runtime_arguments(const Options& options,
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
     if (options.headless_sit_object)
         append(args, {"--headless-interaction", std::to_string(*options.headless_sit_object), "1"});
+    if (options.headless_sit_object && options.headless_stand_tick)
+        append(args, {"--headless-stand", std::to_string(*options.headless_sit_object),
+            std::to_string(*options.headless_stand_tick)});
     if (options.headless_resident_sit) {
         append(args, {"--headless-resident-interaction", std::to_string(options.headless_resident_sit->actor_id),
             std::to_string(options.headless_resident_sit->object_id), "1"});

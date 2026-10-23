@@ -2314,8 +2314,10 @@ struct PlacementCandidateProbe {
         else {
             const auto stand_action=(*target->entry_points)[27].action;
             const auto* candidate=target->definition?definition_index->unique(target->definition->guid):nullptr;
-            if(!stand_action||!candidate||odh::routine_key(stand_action).scope!=odh::RoutineScope::private_object)
-                fail_stand("Stand entry point 27 has no unique private function owner");
+            const auto stand_scope=stand_action?odh::routine_key(stand_action).scope:odh::RoutineScope::private_object;
+            if(!stand_action||!candidate||(stand_scope!=odh::RoutineScope::private_object&&
+               stand_scope!=odh::RoutineScope::semiglobal))
+                fail_stand("Stand entry point 27 has no unique private or linked semiglobal function owner");
             else {
                 const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action);
                 auto owner=owner_map->find(owner_key);
@@ -2323,9 +2325,19 @@ struct PlacementCandidateProbe {
                     if(saved_owner_ids_exhausted)fail_stand("saved object code-owner identity space exhausted");
                     else {
                         try {
-                            auto routines=load_saved_action_routines(*candidate,stand_action);
+                            odh::RoutineSet routines;
+                            if(stand_scope==odh::RoutineScope::private_object)
+                                routines=load_saved_action_routines(*candidate,stand_action);
+                            else {
+                                const auto linked_bank=load_interaction_semiglobal(*candidate);
+                                if(!linked_bank)throw odh::FormatError("Stand semiglobal has no exact GLOB-linked bank");
+                                routines=load_saved_private_routines(*candidate);
+                                for(const auto& [key,routine]:linked_bank->routines)
+                                    if(!routines.emplace(key,routine).second)
+                                        throw odh::FormatError("duplicate private and linked semiglobal Stand routine");
+                            }
                             const auto key=odh::routine_key(stand_action);
-                            if(!routines.count(key))fail_stand("Stand private function is absent from its exact object resource");
+                            if(!routines.count(key))fail_stand("Stand function is absent from its exact private or linked semiglobal owner");
                             else {
                                 const auto code_owner=next_saved_code_owner;
                                 if(!actor_vm->install_owner(code_owner,std::move(routines)))
