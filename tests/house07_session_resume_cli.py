@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
@@ -60,7 +61,8 @@ def main():
     binary = args.binary.resolve(strict=True)
     protected = [game / name for name in (
         'UserData/Houses/House07.iff', 'UserData/Neighborhood.iff',
-        'UserData/Characters/User00000.iff', 'GameData/Animation/Animation.far')]
+        'UserData/Characters/User00000.iff', 'GameData/Animation/Animation.far',
+        'GameData/Global/Global.far', 'GameData/Objects/Objects.far')]
     for path in protected:
         require(path.is_file(), f'required original game input missing: {path}')
     before = {path: digest(path) for path in protected}
@@ -78,8 +80,10 @@ def main():
 
             def run(phase, options):
                 command = [str(binary), '--game-root', str(game)] + options
+                print(f'{phase}: starting', file=sys.stderr, flush=True)
                 result = subprocess.run(command, capture_output=True, text=True,
                                         timeout=args.timeout, env=env)
+                print(f'{phase}: process returned {result.returncode}', file=sys.stderr, flush=True)
                 if result.returncode != 0:
                     detail = result.stderr.strip()
                     if result.stdout.strip():
@@ -138,6 +142,13 @@ def main():
                     'second process did not advance the requested number of ticks')
             stand = standing['stand_runtime']
             require(stand is not None, 'Stand: stand_runtime is absent')
+            if args.resident_id == 48 and args.sit_object == 128:
+                require(interaction['action'] == 4097,
+                        f'House07 chair 128 Sit action changed: {interaction}')
+                require(stand['action'] == 4102,
+                        f'House07 chair 128 Stand action changed: {stand}')
+                require(interaction['code_owner'] == stand['code_owner'],
+                        'Sit and restored Stand did not use the same code owner')
             require(stand['precondition_met'] is True and stand['precondition_posture'] == 1 and
                     stand['precondition_attachment'] == args.sit_object,
                     f'Loaded Sim was not seated in the original seat before Stand: {stand}')
@@ -151,6 +162,8 @@ def main():
                 'evidence': 'House07 real resources; separate integrated headless processes',
                 'claim': 'Sim sat, saved, resumed in a fresh process, stood and saved again; no visual or original-executable equivalence claim',
                 'resident_id': args.resident_id, 'seat': args.sit_object,
+                'sit_action': interaction['action'], 'sit_code_owner': interaction['code_owner'],
+                'stand_action': stand['action'], 'stand_code_owner': stand['code_owner'],
                 'saved_tick': seated['ticks'], 'resumed_tick': standing['resumed_tick'],
                 'final_tick': standing['ticks'], 'sit_archive_sha256': seated_archive_hash,
                 'stand_archive_sha256': digest(standing_archive),

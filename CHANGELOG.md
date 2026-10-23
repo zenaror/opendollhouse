@@ -532,6 +532,11 @@ validação indicados por versão.
 
 ### Validação
 
+- House07 real: o Sim neighbor 48 sentou na cadeira 128, salvou, abriu a sessão
+  em um processo novo e levantou. Os hashes dos dados do lote, família,
+  animações, globais e objetos permaneceram iguais. Evidência limitada a esse
+  percurso headless; a tela e o clique natural ainda não foram validados. Veja
+  [`session-save-design.md`](docs/session-save-design.md).
 - Probe Portal15 no House07 da instalação: arquitetura preparada com 23 fontes
   loose explícitas; seis portas/grupos apontam para OBJf action 4105, cujo BHAV
   está presente no asset Doors.iff, e seis salas geométricas foram geradas.

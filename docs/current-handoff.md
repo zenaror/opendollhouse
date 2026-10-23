@@ -1,5 +1,31 @@
 # Continuidade atual
 
+## Atualização: save/reload de assento na House07 (2026-10-23)
+
+O gate opcional `tests/house07_session_resume_cli.py` passou após ampliar os
+hashes para incluir `Global.far` e `Objects.far`. Com os recursos reais, o Sim
+do neighbor 48 sentou na cadeira 128, salvou no tick 512 e encerrou o primeiro
+processo. O segundo processo carregou o save no tick 512, executou Stand 4102,
+terminou no tick 1024 em pé e desanexado. Os hashes de House07, Neighborhood,
+User00000, Animation.far, Global.far e Objects.far permaneceram iguais. Saves
+e XDG ficaram temporários.
+
+O recibo identificou Sit 4097 e Stand 4102; ambas as ações apontaram para o
+mesmo ID de dono do código, `2147483648`. O teste agora verifica esses IDs e a
+igualdade do dono nesse caso padrão. A identidade do código é revalidada ao
+restaurar, mas o recibo ainda não classifica a função como privada ou
+semiglobal. As fases de processo aparecem no stderr do script para que uma
+retomada lenta seja identificável.
+
+Isto confirma mais um caso real de cadeira e retomada em outro lote. Continua
+headless: não demonstra clique natural, tela
+visível, portais/expansões nem paridade geral. A House07 usou 48/128; a
+House05 segue validada em 34/173. A rodada da família House05 de 4096 ticks
+parou em 2852 ao atingir o limite total de 10000 instruções do probe; o Main
+principal estava `waiting`, um morador adicional estava `budget_exhausted` e
+`host_failed=false`. Esse resultado é limite de diagnóstico, não conclusão de
+que a partida completa terminou nem prova de falha do jogo.
+
 ## Atualização: objetos fora do lote na busca de assentos (2026-10-23)
 
 O objeto salvo 218 da House05 tem posição `(-16,-16)`, que o Simitone trata

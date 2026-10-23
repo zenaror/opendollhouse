@@ -32,11 +32,12 @@ Load into a separate candidate session: verify the file and game-resource identi
 
 ## Initial single-resident verification gate
 
-The initial real-House07 gate starts a session, performs Sit, saves at a safe
-tick boundary, exits, loads in a fresh process, verifies the seated resident
-state, then executes Stand and saves again. The single-resident CLI gate is
-recorded in [the playable feature matrix](playable-feature-matrix.md); the
-whole-household extension is documented below.
+The real-data gates now cover two single-resident seat paths: House05 neighbor
+34 on bench 173 and House07 neighbor 48 on chair 128. Each performs Sit, saves
+at a safe tick boundary, exits, loads in a fresh process, verifies the seated
+state, then executes Stand and saves again. Their specific evidence and
+resource fingerprints are recorded in [the playable feature matrix](playable-feature-matrix.md)
+and the current handoff; the whole-household extension is documented below.
 
 Passing this gate proves only restart persistence for that tested session and build. It does not prove that every lot, family, expansion, or running BHAV can be saved. Those remain separate coverage gates in [the playable feature matrix](playable-feature-matrix.md).
 
@@ -97,10 +98,19 @@ Process two loaded that archive at the same logical tick, completed Stand
 8216, and left the resident standing and detached. The test hashes House05,
 Neighborhood, User00009, Animation.far, Global.far and Objects.far before and
 after; all were unchanged. Session files and XDG state are isolated in a
-temporary directory. This proves
-only the tested headless House05 seat path. Other seats, a visual Stand, natural
-click dispatch, whole-family House05 execution, expansion coverage and full
-Simitone parity remain unverified; this is not yet a playable build.
+temporary directory. This proves only the tested headless House05 seat path.
+
+The opt-in real-data gate `tests/house07_session_resume_cli.py` repeats this
+boundary on House07, neighbor 48 and chair 128. Sit and Stand complete in
+separate processes across ticks 512 to 1024. The gate fingerprints House07,
+Neighborhood, User00000, Animation.far, Global.far and Objects.far; their hashes
+remain unchanged. Its save and XDG state are temporary. This extends the
+evidence to a second real lot and chair, not to visual interaction or expansion
+parity.
+
+Seats beyond these two cases, a visual Stand, natural click dispatch, full
+House05 household save/resume, expansion coverage and full Simitone parity
+remain unverified; this is not yet a playable build.
 
 ### Whole-household continuation
 
