@@ -1,4 +1,5 @@
 #include "odh/entity_thread_controllers.hpp"
+#include "odh/entity_thread_controllers_snapshot_codec.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -74,6 +75,9 @@ std::string values(const odh::VmSnapshot& s){
     out<<bool(s.external_frame_return)<<';';if(s.external_frame_return)returned(*s.external_frame_return);
     return out.str();
 }
+odh::EntityThreadControllersSnapshot roundtrip(const odh::EntityThreadControllersSnapshot& state){
+    return odh::decode_entity_thread_controllers_snapshot(odh::encode_entity_thread_controllers_snapshot(state));
+}
 struct Fixture{
     Kind kind;bool has_rng;std::uint64_t rng_cycles=0;
     odh::World world;odh::EntityThreadControllers controllers;odh::Vm vm;
@@ -116,7 +120,7 @@ void same(const Fixture& a,const Fixture& b){
             "fixture World flags and accounting match");
 }
 std::unique_ptr<Fixture> restored(const Fixture& source,bool composed=true){
-    auto result=destination(source);const auto snapshot=source.controllers.snapshot();
+    auto result=destination(source);const auto snapshot=roundtrip(source.controllers.snapshot());
     if(composed)require(result->controllers.restore_snapshot(snapshot),"restore combined controller state");
     else require(result->controllers.sleep().restore_snapshot(snapshot.sleep)&&
                  result->controllers.interactions().restore_snapshot(snapshot.interactions),"restore standalone services");
@@ -188,7 +192,7 @@ void actions_and_boundaries(){
 }
 void rejection_and_atomicity(){
     Fixture source(Kind::actions);require(source.enqueue()&&source.enqueue(4097),"validation actions");source.run(1);source.run(1);
-    const auto snapshot=source.controllers.snapshot();require(snapshot.sleep.job&&snapshot.interactions.active,"joint validation fixture contains active action and Sleep wait");
+    const auto snapshot=roundtrip(source.controllers.snapshot());require(snapshot.sleep.job&&snapshot.interactions.active,"joint validation fixture contains active action and Sleep wait");
     const auto reject=[&](const odh::EntityThreadControllersSnapshot& bad){
         auto target=destination(source);const auto before=values(target->controllers.snapshot());
         require(!target->controllers.restore_snapshot(bad)&&values(target->controllers.snapshot())==before,
@@ -225,6 +229,7 @@ void rejection_and_atomicity(){
     bad=snapshot;bad.sleep.job.reset();reject(bad);
     auto target=destination(source);const auto before=values(target->controllers.snapshot());
     auto payload=snapshot;payload.sleep.diagnostic=std::string(128,'s');payload.interactions.diagnostic=std::string(128,'q');
+    payload=roundtrip(payload);
     bool published=false;int failures=0;
     for(int fail=0;fail<256;++fail){
         allocation_countdown=fail;bool threw=false;

@@ -50,4 +50,14 @@ The version-1 `VmSnapshot` codec now stores frames, arguments, locals, contexts,
 
 A version-1 `EntityVmSchedulerSnapshot` codec stores the roster's entity IDs, VM generation/step/status stamps, hook-presence flags, entity limit, tick, instruction count, fairness cursor, and terminal diagnostic. The existing fairness/continuation test now round-trips valid scheduler states through this codec before restoration. Callables and VM pointers remain host bindings and are not serialized.
 
-There is still no serializer for thread-controller snapshots; no resource identity check; and no host reconstruction. The codecs are not yet assembled as `META`/`WRLD`/`RELA`/`VM`/`SCHD` sections or connected to the live session. Those are the remaining steps before the House07 process-restart gate can run.
+The version-1 `EntityThreadControllersSnapshot` codec now stores Sleep state,
+interaction queues and calls, waits, completions, and interrupt latches using
+bounded explicit little-endian fields. The continuation test exercises
+encode/decode before restore, and a dedicated codec test checks truncation,
+limits, malformed values, and noncanonical booleans. These bytes still depend
+on the host rebuilding the matching World, VMs, code resources, and callbacks.
+
+There is still no resource identity check or host reconstruction. The codecs
+are not yet assembled as `META`/`WRLD`/`RELA`/`VM`/`SCHD`/`CTRL` sections or
+connected to the live session. Those are the remaining steps before the
+House07 process-restart gate can run.

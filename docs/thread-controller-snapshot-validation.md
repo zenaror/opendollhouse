@@ -14,6 +14,14 @@ idle start/deadline, clock/last tick, local interrupt, Notify reexecution state,
 and diagnostic text. The combined snapshot also retains the shared thread
 interrupt latch, including a signal that one service has not consumed yet.
 
+The version-1 value codec now writes these fields as explicit little-endian
+values. It bounds the encoded bytes, action queue, queue capacity, call
+arguments, and diagnostics; rejects malformed clocks, deadlines, FIFO order,
+routine scopes, return modes, booleans, truncated input, unsupported versions,
+and trailing bytes. It does not store World/VM pointers, callbacks, or code
+resources, and it does not validate their identities; the host must rebuild and
+check those before restoring the decoded snapshot.
+
 ## Restoration contract
 
 Restore the surrounding World and VM first, with equivalent immutable programs,
@@ -53,6 +61,12 @@ sweeps the combined restore and confirms atomicity and retained freshness.
 Capture and restore from VM callbacks are rejected. Existing Sleep, queue and
 entity scheduler tests remain regression checks for runtime behavior.
 
+The continuation test now encodes and decodes each valid combined controller
+snapshot before restoration. `entity_thread_controllers_snapshot_codec` also
+checks every truncated prefix, canonical booleans, version and trailing-byte
+rejection, configured limits, malformed routine/FIFO state, and an expired
+Sleep deadline.
+
 Use a fresh build directory: caches copied from another checkout may still
 contain that checkout's absolute source paths.
 
@@ -60,21 +74,23 @@ contain that checkout's absolute source paths.
 cmake -S . -B /tmp/odh-thread-snapshot-build -DCMAKE_BUILD_TYPE=Debug \
   -DODH_X11=OFF -DODH_SDL_AUDIO=OFF
 cmake --build /tmp/odh-thread-snapshot-build --target \
-  odh-thread-controller-snapshot-tests odh-sleep-tests \
+  odh-thread-controller-snapshot-tests odh-thread-controller-snapshot-codec-tests odh-sleep-tests \
   odh-interaction-tests odh-entity-scheduler-tests -j2
 ctest --test-dir /tmp/odh-thread-snapshot-build \
-  -R '^(thread_controller_snapshot|sleep|interaction_queue|entity_vm_scheduler)$' \
+  -R '^(thread_controller_snapshot|entity_thread_controllers_snapshot_codec|sleep|interaction_queue|entity_vm_scheduler)$' \
   --output-on-failure
 ```
 
-On 2026-10-22 the fresh Debug build passed all four listed CTest cases; the
-new test reported 1014 synthetic checks. A separate fresh build with
-`ODH_SANITIZERS=ON` passed `thread_controller_snapshot` with
-`ASAN_OPTIONS=detect_leaks=0`. LeakSanitizer could not run in the traced tool
-environment (its reported ptrace limitation), so that run establishes no leak
-checking result. AddressSanitizer and UndefinedBehaviorSanitizer remained on.
+On 2026-10-22 the fresh Debug build passed all five listed CTest cases;
+`thread_controller_snapshot` reported 1014 checks and the dedicated codec test
+reported 297. The complete Debug build passed 192 of 193 CTests; the Linux
+window-backend test was skipped because no display was available. A separate
+fresh build with `ODH_SANITIZERS=ON` passed both controller tests with
+`ASAN_OPTIONS=detect_leaks=0`. LeakSanitizer therefore was not evaluated;
+AddressSanitizer and UndefinedBehaviorSanitizer were enabled.
 
-Passing these checks establishes synthetic in-process controller continuation
-only. File encoding, whole-session resource manifests, additional services,
-integrated playable save/load, and persistence across process restart require
-separate implementation and evidence.
+Passing these checks establishes synthetic controller snapshot encoding and
+in-process continuation only. The codec has not been assembled into the session
+archive; resource manifests, host reconstruction, integrated playable
+save/load, and persistence across process restart require separate
+implementation and evidence.
