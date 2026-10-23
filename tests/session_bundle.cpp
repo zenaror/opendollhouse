@@ -72,6 +72,39 @@ odh::SessionBundle live_wait_fixture(bool sleep_wait) {
     return bundle;
 }
 
+odh::SessionBundle live_playback_wait_fixture() {
+    odh::World world;
+    require(world.create(1,odh::EntityKind::avatar,{0,88,1}),"create animation actor");
+    world.declare_object_word(1,17,0);
+    odh::EntityThreadControllers controllers(world,1);
+    auto clip=std::make_shared<odh::AnimationHeader>();clip->name="bundle-animation";
+    odh::BoneMotion motion{};motion.frames=3;
+    motion.time_properties={{{0,{{"xevt","100"}}}}};clip->motions.push_back(motion);
+    odh::Playback playback(world,[&](const auto&,std::uint32_t,std::uint16_t){return clip;});
+    odh::Bhav routine{0x8002,{{44,254,1,{1,0,0,0,0,0,0,0}},
+        {2,0,255,{0,0,0,0,0,0,0,0}}},{},odh::Bhav::Metadata{1,2,0,0}};
+    odh::Vm vm({{odh::routine_key(4096),std::move(routine)}},world.vm_memory(),{},
+        [&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+            if(instruction.opcode==44)return playback.primitive()(frame,instruction,temps,dispatch);
+            return controllers.sleep_primitive()(frame,instruction,temps,dispatch);
+        });
+    if(vm.start(odh::routine_key(4096),{1,2,2})!=odh::VmStatus::running)
+        throw std::runtime_error("start animation VM: "+vm.diagnostic());
+    require(controllers.bind(vm)&&playback.bind(vm),"bind animation session controllers");
+    require(vm.run(8)==odh::VmStatus::waiting&&playback.progress().has_value(),
+            "real opcode 44 reaches pending animation event wait");
+    odh::EntityVmScheduler scheduler(4);
+    require(scheduler.add(1,vm,[](std::uint64_t){return true;},[]{return true;},[]{return true;}),
+            "register animation VM");
+    auto bundle=fixture();bundle.world=world.snapshot();
+    odh::PlaybackSnapshot playback_snapshot;std::string error;
+    require(playback.capture_snapshot(playback_snapshot,&error)&&playback_snapshot.state&&
+            playback_snapshot.state->wait,"capture live opcode 44 Playback wait");
+    bundle.runtime_entities={{1,vm.snapshot(),controllers.snapshot(),playback_snapshot}};
+    bundle.scheduler=scheduler.snapshot();
+    return bundle;
+}
+
 void u16(std::vector<std::uint8_t>& bytes,std::uint16_t value) {
     bytes.push_back(static_cast<std::uint8_t>(value));
     bytes.push_back(static_cast<std::uint8_t>(value>>8));
@@ -129,6 +162,46 @@ int main() {
     require(restored.host.random_seed==source.host.random_seed&&restored.host.global_values.size()==3&&
             restored.host.global_values[1].value==-4&&restored.runtime_entities.size()==2&&
             restored.runtime_entities[1].id==2,"host and both residents round-trip");
+    require(!restored.runtime_entities[0].playback.state&&
+            !restored.runtime_entities[0].playback.carry&&
+            !restored.runtime_entities[0].playback.hands,
+            "empty Playback state round-trips for each resident");
+    auto with_playback=source;
+    odh::PlaybackClipSnapshot clip{};clip.resource.kind=odh::PlaybackResourceKey::Kind::animation;
+    clip.resource.source=1;clip.resource.id=7;clip.resource.caller=1;clip.resource.actor_age=0;
+    clip.actor=1;clip.actor_generation=source.world.entities[0].generation;
+    clip.vm_generation=source.runtime_entities[0].vm.run_generation;clip.frame=2.5f;clip.speed=1.2f;
+    clip.frames=12;clip.high=0;clip.ticks=3;
+    with_playback.runtime_entities[0].playback.state=clip;
+    with_playback.runtime_entities[0].playback.hands=odh::PlaybackHandsSnapshot{
+        {odh::HandGesture::pointing,odh::HandGesture::fist},1,clip.actor_generation,clip.vm_generation};
+    with_playback.runtime_entities[0].playback.last_tick=0;
+    const auto playback_bytes=odh::encode_session_bundle(with_playback);
+    const auto playback_restored=odh::decode_session_bundle(playback_bytes,source.resources);
+    require(odh::encode_session_bundle(playback_restored)==playback_bytes&&
+            playback_restored.runtime_entities[0].playback.state->frame==2.5f&&
+            playback_restored.runtime_entities[0].playback.hands->value.left==odh::HandGesture::pointing,
+            "nonempty Playback state and hands round-trip canonically");
+    auto bad_playback=with_playback;
+    ++bad_playback.runtime_entities[0].playback.state->actor_generation;
+    rejects([&]{(void)odh::encode_session_bundle(bad_playback);},
+            "stale Playback avatar generation rejected");
+    bad_playback=source;
+    odh::PlaybackResourceKey reset_carry{};reset_carry.kind=odh::PlaybackResourceKey::Kind::posture_reset;
+    reset_carry.posture=2;reset_carry.caller=1;
+    bad_playback.runtime_entities[0].playback.carry=reset_carry;
+    rejects([&]{(void)odh::encode_session_bundle(bad_playback);},
+            "posture reset key cannot be used as a carry resource");
+    bad_playback=source;
+    bad_playback.runtime_entities[0].vm.status=odh::VmStatus::waiting;
+    bad_playback.runtime_entities[0].vm.ticket_sequence=1;
+    odh::VmPending animation_wait{};animation_wait.ticket=1;animation_wait.context.caller=1;
+    animation_wait.instruction.depth=1;
+    animation_wait.instruction.instruction=odh::Instruction{44,0,0,{}};
+    bad_playback.runtime_entities[0].vm.pending=animation_wait;
+    bad_playback.scheduler.entities[0].status=odh::VmStatus::waiting;
+    rejects([&]{(void)odh::encode_session_bundle(bad_playback);},
+            "pending opcode 44 without Playback state rejected");
     for(const bool sleep_wait:{true,false}) {
         const auto waiting=live_wait_fixture(sleep_wait);
         const auto waiting_bytes=odh::encode_session_bundle(waiting);
@@ -136,6 +209,34 @@ int main() {
         require(odh::encode_session_bundle(waiting_restored)==waiting_bytes,
                 "real Sleep and IdleForInput waits survive bundle round-trip");
     }
+    const auto animation_waiting=live_playback_wait_fixture();
+    const auto animation_bytes=odh::encode_session_bundle(animation_waiting);
+    const auto animation_restored=odh::decode_session_bundle(animation_bytes,animation_waiting.resources);
+    require(animation_restored.runtime_entities[0].playback.state->wait.has_value()&&
+            odh::encode_session_bundle(animation_restored)==animation_bytes,
+            "real pending opcode 44 Playback wait survives bundle round-trip");
+    auto broken_animation=animation_waiting;
+    ++broken_animation.runtime_entities[0].playback.state->wait->expected;
+    rejects([&]{(void)odh::encode_session_bundle(broken_animation);},
+            "Playback event output mismatch with pending opcode 44 rejected");
+    for(const std::uint8_t mode_flags:{std::uint8_t{1},std::uint8_t{16}}) {
+        auto nonblocking=animation_waiting;
+        nonblocking.runtime_entities[0].vm.pending->instruction.instruction.operands[5]=mode_flags;
+        rejects([&]{(void)odh::encode_session_bundle(nonblocking);},
+                "nonblocking opcode 44 mode cannot have a Playback VM wait");
+    }
+    broken_animation=with_playback;
+    broken_animation.runtime_entities[0].playback.state->queue.push_back(1);
+    auto tight_playback_limits=odh::SessionBundleLimits{};tight_playback_limits.max_playback_queue=0;
+    rejects([&]{(void)odh::encode_session_bundle(broken_animation,tight_playback_limits);},
+            "oversized Playback queue rejected");
+    broken_animation=with_playback;broken_animation.runtime_entities[0].playback.state->end=true;
+    broken_animation.runtime_entities[0].playback.state->loop=true;
+    rejects([&]{(void)odh::encode_session_bundle(broken_animation);},
+            "Playback state cannot be both ended and looping");
+    broken_animation=with_playback;broken_animation.runtime_entities[0].playback.state->end=true;
+    rejects([&]{(void)odh::encode_session_bundle(broken_animation);},
+            "forward Playback cannot end before its last frame");
 
     for(std::size_t size=0;size<bytes.size();++size) {
         std::vector<std::uint8_t> prefix(bytes.begin(),bytes.begin()+static_cast<std::ptrdiff_t>(size));

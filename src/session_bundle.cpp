@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -14,8 +16,11 @@ constexpr std::array<char,4> relation_id{{'R','E','L','A'}};
 constexpr std::array<char,4> vm_id{{'V','M',' ',' '}};
 constexpr std::array<char,4> scheduler_id{{'S','C','H','D'}};
 constexpr std::array<char,4> controller_id{{'C','T','R','L'}};
+constexpr std::array<char,4> playback_id{{'P','L','A','Y'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
+static_assert(sizeof(float)==sizeof(std::uint32_t),"session Playback codec requires 32-bit float");
+static_assert(std::numeric_limits<float>::is_iec559,"session Playback codec requires IEEE-754 float");
 
 class Writer {
 public:
@@ -89,6 +94,63 @@ private:
     const std::vector<std::uint8_t>& bytes_;
     std::size_t offset_=0;
 };
+
+void encode_key(Writer& w,const PlaybackResourceKey& k) {
+    w.u8(static_cast<std::uint8_t>(k.kind));w.u32(k.source);w.u16(k.id);w.i16(k.posture);
+    w.i16(k.caller);w.i16(k.callee);w.i16(k.stack_object);w.i16(k.actor_age);w.u32(k.code_owner);
+}
+PlaybackResourceKey decode_key(Reader& r) {
+    PlaybackResourceKey k{};const auto kind=r.u8();
+    if(kind>static_cast<std::uint8_t>(PlaybackResourceKey::Kind::posture_reset))
+        throw FormatError("invalid playback resource kind");
+    k.kind=static_cast<PlaybackResourceKey::Kind>(kind);k.source=r.u32();k.id=r.u16();k.posture=r.i16();
+    k.caller=r.i16();k.callee=r.i16();k.stack_object=r.i16();k.actor_age=r.i16();k.code_owner=r.u32();return k;
+}
+void encode_playback_value(Writer& w,const PlaybackSnapshot& p,const SessionBundleLimits& limits) {
+    const auto optional=[&](bool value){w.u8(value?1:0);};
+    optional(bool(p.state));if(p.state){const auto& s=*p.state;encode_key(w,s.resource);w.i16(s.actor);
+        w.u64(s.actor_generation);w.u64(s.vm_generation);std::uint32_t frame=0,speed=0;
+        std::memcpy(&frame,&s.frame,sizeof(frame));std::memcpy(&speed,&s.speed,sizeof(speed));w.u32(frame);w.u32(speed);w.u32(s.frames);
+        w.u8(s.backwards);w.u8(s.end);w.u8(s.loop);w.u64(s.low);w.u64(s.high);w.u16(s.events_run);w.u64(s.ticks);
+        if(s.queue.size()>limits.max_playback_queue||s.queue.size()>UINT16_MAX)throw FormatError("playback queue exceeds limits");
+        w.u16(static_cast<std::uint16_t>(s.queue.size()));for(auto item:s.queue)w.i16(item);
+        optional(bool(s.wait));if(s.wait){w.u64(s.wait->ticket);w.u8(static_cast<std::uint8_t>(s.wait->bank));
+            w.u64(s.wait->index);w.u8(s.wait->expected);}}
+    optional(bool(p.carry));if(p.carry)encode_key(w,*p.carry);
+    optional(bool(p.hands));if(p.hands){w.u8(static_cast<std::uint8_t>(p.hands->value.left));
+        w.u8(static_cast<std::uint8_t>(p.hands->value.right));w.i16(p.hands->actor);
+        w.u64(p.hands->actor_generation);w.u64(p.hands->vm_generation);}
+    optional(bool(p.last_tick));if(p.last_tick)w.u64(*p.last_tick);
+}
+PlaybackSnapshot decode_playback_value(Reader& r,const SessionBundleLimits& limits) {
+    const auto flag=[&](){const auto v=r.u8();if(v>1)throw FormatError("invalid playback boolean");return v!=0;};
+    PlaybackSnapshot p{};if(flag()){PlaybackClipSnapshot s{};s.resource=decode_key(r);s.actor=r.i16();
+        s.actor_generation=r.u64();s.vm_generation=r.u64();const auto f=r.u32(),speed=r.u32();
+        std::memcpy(&s.frame,&f,sizeof(f));std::memcpy(&s.speed,&speed,sizeof(speed));s.frames=r.u32();s.backwards=flag();s.end=flag();s.loop=flag();
+        const auto low=r.u64(),high=r.u64();if(low>SIZE_MAX||high>SIZE_MAX)throw FormatError("playback event cursor exceeds platform bounds");
+        s.low=static_cast<std::size_t>(low);s.high=static_cast<std::size_t>(high);s.events_run=r.u16();s.ticks=r.u64();
+        const auto count=r.u16();if(count>limits.max_playback_queue||count>r.remaining()/2)throw FormatError("playback queue exceeds bounds");
+        for(std::size_t i=0;i<count;++i)s.queue.push_back(r.i16());
+        if(flag()){PlaybackWaitSnapshot wait{};wait.ticket=r.u64();const auto bank=r.u8();
+            if(bank>static_cast<std::uint8_t>(VmFrameBank::locals))throw FormatError("invalid playback wait bank");
+            wait.bank=static_cast<VmFrameBank>(bank);const auto index=r.u64();if(index>SIZE_MAX)throw FormatError("playback wait index exceeds platform bounds");
+            wait.index=static_cast<std::size_t>(index);wait.expected=r.u8();s.wait=wait;}p.state=std::move(s);}
+    if(flag())p.carry=decode_key(r);
+    if(flag()){PlaybackHandsSnapshot h{};const auto left=r.u8(),right=r.u8();
+        if(left>3||right>3)throw FormatError("invalid playback hand gesture");
+        h.value={static_cast<HandGesture>(left),static_cast<HandGesture>(right)};h.actor=r.i16();
+        h.actor_generation=r.u64();h.vm_generation=r.u64();p.hands=h;}
+    if(flag())p.last_tick=r.u64();
+    if(!r.done())throw FormatError("playback state has trailing data");
+    return p;
+}
+std::vector<std::uint8_t> encode_playback(const PlaybackSnapshot& p,const SessionBundleLimits& limits) {
+    Writer w(limits.archive.max_section_bytes);w.u16(payload_version);encode_playback_value(w,p,limits);return w.take();
+}
+PlaybackSnapshot decode_playback(const std::vector<std::uint8_t>& bytes,const SessionBundleLimits& limits) {
+    Reader r(bytes);if(r.u16()!=payload_version)throw FormatError("unsupported playback snapshot version");
+    return decode_playback_value(r,limits);
+}
 
 void validate_host(const SessionHostState& host,const SessionBundleLimits& limits) {
     if(host.neighborhood_mode==0||host.neighborhood_mode==6||host.neighborhood_mode>7||
@@ -290,6 +352,80 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
         throw FormatError("session VM interaction return has no controller action");
 }
 
+bool valid_playback_key(const PlaybackResourceKey& key) {
+    return (key.kind==PlaybackResourceKey::Kind::animation&&((key.source||key.id)&&key.posture==0))||
+           (key.kind==PlaybackResourceKey::Kind::posture_reset&&!key.source&&!key.id&&
+            (key.posture==1||key.posture==2||key.posture==3));
+}
+void validate_playback_links(const SessionRuntimeEntity& entity,const Entity& actor,
+                             const SessionHostState& host,const SessionBundleLimits& limits) {
+    const auto& p=entity.playback;const auto& vm=entity.vm;
+    if(p.last_tick&&*p.last_tick>host.tick)throw FormatError("playback tick is ahead of session tick");
+    const auto key_actor_matches=[&](const PlaybackResourceKey& key){
+        return valid_playback_key(key)&&key.caller==entity.id&&
+               key.actor_age==(actor.person_data.size()>58?actor.person_data[58]:0);
+    };
+    if(p.state){const auto& s=*p.state;
+        const auto terminal_frame=std::trunc(static_cast<double>(s.frame));
+        const bool invalid_frame_state=(s.end&&s.loop)||
+            (!s.loop&&(s.end?(s.backwards?terminal_frame>=0:terminal_frame<s.frames):
+                              (s.backwards?(terminal_frame<0||s.frame>static_cast<float>(s.frames)):
+                                            (s.frame<0||terminal_frame>=s.frames))));
+        if(!key_actor_matches(s.resource)||s.actor!=entity.id||s.actor_generation!=actor.generation||
+           s.vm_generation!=vm.run_generation||!std::isfinite(s.frame)||!std::isfinite(s.speed)||
+           s.speed<=0||!s.frames||s.frames>limits.max_playback_frames||s.ticks>limits.max_playback_ticks||
+           s.events_run>255||s.low>s.high||s.high>limits.max_playback_events||
+           s.low>limits.max_playback_events||s.queue.size()>limits.max_playback_queue||
+           s.frame<static_cast<float>(std::numeric_limits<std::int32_t>::min())||
+           s.frame>static_cast<float>(std::numeric_limits<std::int32_t>::max())||
+           invalid_frame_state||
+           (s.backwards?s.low!=0:s.high>limits.max_playback_events)||!p.hands||
+           (s.wait&&(!s.wait->ticket||s.wait->ticket>vm.ticket_sequence)))
+            throw FormatError("session playback state identity or limits are invalid");
+        if(s.wait){if(vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=s.wait->ticket||
+            vm.pending->context.caller!=entity.id||vm.pending->instruction.instruction.opcode!=44||
+            !vm.pending->instruction.depth||vm.pending->instruction.depth>vm.stack.size())
+                throw FormatError("session playback wait does not match VM pending opcode 44");
+            const auto& ins=vm.pending->instruction.instruction;const auto flags=ins.operands[5];
+            const auto mode=static_cast<unsigned>((flags&1U)|((flags>>3)&2U));
+            if(mode!=0&&mode!=3)
+                throw FormatError("session playback wait uses a nonblocking opcode 44 mode");
+            if((flags&0x80U)||s.resource.kind!=PlaybackResourceKey::Kind::animation||
+               s.resource.caller!=vm.pending->context.caller||s.resource.callee!=vm.pending->context.callee||
+               s.resource.stack_object!=vm.pending->context.stack_object||
+               s.resource.code_owner!=vm.pending->context.code_owner)
+                throw FormatError("session playback resource context does not match VM pending call");
+            const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
+            const auto index=static_cast<std::size_t>((flags&32U)?ins.operands[2]:0);
+            const auto& frame=vm.stack[vm.pending->instruction.depth-1];
+            if(s.wait->bank!=bank||s.wait->index!=index||s.wait->expected!=ins.operands[6]||
+               index>=(bank==VmFrameBank::arguments?frame.arguments.size():frame.locals.size()))
+                throw FormatError("session playback wait operands do not match VM");
+            auto resource_id=static_cast<std::uint16_t>(ins.operands[0]|(ins.operands[1]<<8));
+            auto resource_source=static_cast<std::uint32_t>(ins.operands[4]);
+            if(flags&4U){if(resource_id>=frame.arguments.size())
+                    throw FormatError("session playback animation parameter index is invalid");
+                resource_id=static_cast<std::uint16_t>(frame.arguments[resource_id]);
+                if(!resource_source)resource_source=65536;}
+            if(!resource_id||s.resource.id!=resource_id||s.resource.source!=resource_source||s.resource.posture)
+                throw FormatError("session playback resource key does not match VM opcode 44");
+        }else if(vm.pending&&vm.pending->context.caller==entity.id&&
+                 vm.pending->instruction.instruction.opcode==44)
+            throw FormatError("session pending animation VM call has no playback wait");
+    }else if(vm.pending&&vm.pending->context.caller==entity.id&&
+             vm.pending->instruction.instruction.opcode==44)
+        throw FormatError("session pending animation VM call has no playback state");
+    if(p.carry&&(p.carry->kind!=PlaybackResourceKey::Kind::animation||!key_actor_matches(*p.carry)))
+        throw FormatError("session playback carry identity is invalid");
+    if(p.hands){const auto& h=*p.hands;
+        if(h.actor!=entity.id||h.actor_generation!=actor.generation||h.vm_generation!=vm.run_generation||
+           !valid_hand_gesture(h.value.left)||!valid_hand_gesture(h.value.right))
+            throw FormatError("session playback hands identity is invalid");
+        if(p.state&&(h.actor!=p.state->actor||h.actor_generation!=p.state->actor_generation||
+           h.vm_generation!=p.state->vm_generation))throw FormatError("session playback state and hands disagree");
+    }
+}
+
 void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limits) {
     validate_host(bundle.host,limits);
     if(bundle.runtime_entities.empty()||bundle.runtime_entities.size()>limits.max_runtime_entities||
@@ -327,6 +463,7 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
                 throw FormatError("session queued interaction target is stale");
         }
         validate_controller_vm_links(entity);
+        validate_playback_links(entity,*world_actor,bundle.host,limits);
         found_primary|=entity.id==bundle.host.runtime_avatar_id;
         previous=entity.id;
     }
@@ -343,7 +480,7 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
 }
 bool recognized(const std::array<char,4>& id) {
     return id==meta_id||id==host_id||id==world_id||id==relation_id||
-           id==vm_id||id==scheduler_id||id==controller_id;
+           id==vm_id||id==scheduler_id||id==controller_id||id==playback_id;
 }
 }
 
@@ -360,7 +497,9 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
             return encode_vm_snapshot(entity.vm,limits.vm);})},
         {scheduler_id,true,encode_entity_vm_scheduler_snapshot(bundle.scheduler,limits.scheduler)},
         {controller_id,true,encode_roster(bundle.runtime_entities,limits,[&](const auto& entity){
-            return encode_entity_thread_controllers_snapshot(entity.controllers,limits.controllers);})}
+            return encode_entity_thread_controllers_snapshot(entity.controllers,limits.controllers);})},
+        {playback_id,true,encode_roster(bundle.runtime_entities,limits,[&](const auto& entity){
+            return encode_playback(entity.playback,limits);})}
     };
     return encode_session_archive(archive,limits.archive);
 }
@@ -388,6 +527,8 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     decode_roster(required_section(archive,controller_id).data,result.runtime_entities,limits,
         [&](auto& entity,const auto& data){
             entity.controllers=decode_entity_thread_controllers_snapshot(data,limits.controllers);});
+    decode_roster(required_section(archive,playback_id).data,result.runtime_entities,limits,
+        [&](auto& entity,const auto& data){entity.playback=decode_playback(data,limits);});
     validate_links(result,limits);
     return result;
 }

@@ -5,6 +5,7 @@
 #include "odh/relationship_snapshot_codec.hpp"
 #include "odh/session_archive.hpp"
 #include "odh/session_resource_identity.hpp"
+#include "odh/playback.hpp"
 #include "odh/vm_snapshot_codec.hpp"
 #include "odh/world_snapshot_codec.hpp"
 
@@ -34,6 +35,7 @@ struct SessionRuntimeEntity {
     std::int16_t id = 0;
     VmSnapshot vm;
     EntityThreadControllersSnapshot controllers;
+    PlaybackSnapshot playback;
 };
 
 // Values only. The host must rebuild matching resources, programs, callbacks,
@@ -55,6 +57,10 @@ struct SessionBundleLimits {
     VmSnapshotCodecLimits vm{};
     EntityVmSchedulerSnapshotCodecLimits scheduler{};
     EntityThreadControllersSnapshotCodecLimits controllers{};
+    std::size_t max_playback_events = 4096;
+    std::size_t max_playback_queue = 4096;
+    std::uint32_t max_playback_frames = 1048576;
+    std::uint64_t max_playback_ticks = 1048576;
     std::size_t max_runtime_entities = 64;
     std::size_t max_host_globals = 256;
 };

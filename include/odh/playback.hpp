@@ -23,6 +23,43 @@ struct PlaybackSample {
     AvatarHands hands;
 };
 struct PlaybackProgress {std::string name;float frame;std::uint32_t frames;std::size_t queued_events;bool end;bool loop=false;};
+// Resolver input captured from opcode 44, including the VM/object context and
+// actor age that can select private tables or child/adult variants. Reset
+// animations also retain the normalized posture passed to
+// AnimationResetResolver; ordinary and carry clips retain the resolved source/id.
+struct PlaybackResourceKey {
+    enum class Kind : std::uint8_t { animation, posture_reset };
+    Kind kind=Kind::animation;
+    std::uint32_t source=0;
+    std::uint16_t id=0;
+    std::int16_t posture=0;
+    std::int16_t caller=0,callee=0,stack_object=0,actor_age=0;
+    std::uint32_t code_owner=0;
+    bool operator==(const PlaybackResourceKey& other) const {
+        return kind==other.kind&&source==other.source&&id==other.id&&posture==other.posture&&
+               caller==other.caller&&callee==other.callee&&stack_object==other.stack_object&&
+               actor_age==other.actor_age&&code_owner==other.code_owner;
+    }
+};
+using PlaybackRestoreResolver=std::function<std::shared_ptr<const AnimationHeader>(const PlaybackResourceKey&)>;
+struct PlaybackWaitSnapshot {std::uint64_t ticket=0;VmFrameBank bank=VmFrameBank::arguments;std::size_t index=0;std::uint8_t expected=0;};
+struct PlaybackClipSnapshot {
+    PlaybackResourceKey resource;
+    std::int16_t actor=0;std::uint64_t actor_generation=0,vm_generation=0;
+    float frame=0,speed=0;std::uint32_t frames=0;bool backwards=false,end=false,loop=false;
+    std::size_t low=0,high=0;std::deque<std::int16_t> queue;
+    std::uint16_t events_run=0;std::uint64_t ticks=0;
+    std::optional<PlaybackWaitSnapshot> wait;
+};
+struct PlaybackHandsSnapshot {
+    AvatarHands value;std::int16_t actor=0;std::uint64_t actor_generation=0,vm_generation=0;
+};
+struct PlaybackSnapshot {
+    std::optional<PlaybackClipSnapshot> state;
+    std::optional<PlaybackResourceKey> carry;
+    std::optional<PlaybackHandsSnapshot> hands;
+    std::optional<std::uint64_t> last_tick;
+};
 // Silent animation controller. Resolver supplies explicit immutable resource
 // identity, including posture reset clips. Carry mode retains its resource but
 // is not composed by the renderer yet.
@@ -33,6 +70,8 @@ public:
     Playback(const Playback&)=delete;
     Playback& operator=(const Playback&)=delete;
     bool bind(Vm&);
+    bool capture_snapshot(PlaybackSnapshot&,std::string* error=nullptr) const;
+    bool restore_snapshot(const PlaybackSnapshot&,Vm&,const PlaybackRestoreResolver&,std::string* error=nullptr);
     VmPrimitive primitive();
     // At each consecutive tick, deliver prior queued event/end first, then
     // advance frames. Host resumes VM after this call. One actor per controller.
@@ -53,6 +92,7 @@ private:
     struct Wait {std::uint64_t ticket;VmFrameBank bank;std::size_t index;std::uint8_t expected;};
     struct State {
         std::shared_ptr<const AnimationHeader> clip;
+        PlaybackResourceKey resource;
         std::int16_t actor;std::uint64_t actor_generation,vm_generation;
         float frame,speed;std::uint32_t frames;bool backwards,end=false,loop=false;
         std::vector<AnimationTimeProperty> events;std::size_t low=0,high=0;
@@ -65,6 +105,7 @@ private:
     AnimationResetResolver reset_resolver_;
     Vm* vm_=nullptr;std::optional<State> state_;std::optional<Wait> wait_;
     std::shared_ptr<const AnimationHeader> carry_clip_;
+    std::optional<PlaybackResourceKey> carry_resource_;
     struct HandsState {AvatarHands value;std::int16_t actor;std::uint64_t actor_generation,vm_generation;};
     std::optional<HandsState> hands_;
     std::optional<std::uint64_t> last_tick_;std::string diagnostic_;bool executing_=false;

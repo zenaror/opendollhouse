@@ -58,12 +58,16 @@ limits, malformed values, and noncanonical booleans. These bytes still depend
 on the host rebuilding the matching World, VMs, code resources, and callbacks.
 
 The value-only `SessionBundle` now assembles required `META`, `HOST`, `WRLD`,
-`RELA`, `VM  `, `SCHD`, and `CTRL` sections. It stores launch identity, selected
+`RELA`, `VM  `, `SCHD`, `CTRL`, and `PLAY` sections. It stores launch identity, selected
 family/lot/resident, tick and RNG state, bounded mutable globals, World and
-relationship snapshots, and keyed VM/controller rosters. Decoding checks the
+relationship snapshots, and keyed VM/controller/Playback rosters. Playback
+stores animation resource keys and cursor, pending opcode-44 wait, carry key,
+hand gestures, and last playback tick as bounded values; it contains no loaded
+animation resources or resource fingerprint of its own. The session-wide
+`META` fingerprint remains the authority for game-data identity. Decoding checks the
 resource identity when the caller supplies the expected value, validates
-cross-links between world actors, generations, VM states, waits and queued
-actions, and rejects malformed or unsupported states. Real Sleep and
+cross-links between world actors, generations, VM states, waits, queued actions,
+and Playback's animation wait, and rejects malformed or unsupported states. Real Sleep and
 IdleForInput waits round-trip through the bundle tests. This is still a value
 codec: no live host captures or restores it yet.
 
@@ -76,7 +80,10 @@ still needs auditing for resources opened dynamically on other lots and
 expansion sidecars. Synthetic coverage and one real installation plan are
 recorded in [session-resource-manifest-validation.md](session-resource-manifest-validation.md).
 
-Remaining for the House07 restart gate: capture only at a safe tick boundary,
+Remaining for the House07 restart gate: capture Playback and the other values
+from the live host only at a safe tick boundary,
 write the bundle through the atomic Linux store, rebuild matching code owners
 and callbacks in a fresh host, restore in dependency order, and explicitly
-reject active routing/playback states that the bundle does not represent.
+restore Playback from its `PLAY` values. Routing still has no bundle snapshot;
+the live host must either serialize and restore active routes or reject a save
+while a route is in progress.

@@ -34,6 +34,84 @@ struct Fixture {
 };
 }
 int main(){try{
+    {Fixture source(1);source.a->motions[0].frames=1;source.xevt(0,"7");source.start();source.player.tick(1);
+     odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.state->resource.id==1&&
+        saved.state->resource.caller==1&&saved.state->resource.callee==2&&saved.state->resource.stack_object==2&&saved.last_tick==1,
+        "capture looping playback with stable opcode resource key");
+     Fixture resumed(1);resumed.a->motions[0].frames=1;resumed.xevt(0,"7");
+     require(resumed.vm.restore_snapshot(source.vm.snapshot()),"restore loop VM");
+     require(resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto& key){return key.kind==odh::PlaybackResourceKey::Kind::animation&&key.source==0&&key.id==1?resumed.a:std::shared_ptr<const odh::AnimationHeader>{};},&why),
+        "restore looping playback into fresh controller");
+     source.player.tick(2);resumed.player.tick(2);
+     require(source.player.progress()->frame==resumed.player.progress()->frame&&source.player.progress()->queued_events==resumed.player.progress()->queued_events&&
+        source.player.hands()->left==resumed.player.hands()->left,"restored loop matches uninterrupted next tick and event delivery");}
+    {Fixture source;source.xevt(0,"100");source.start();source.player.tick(1);
+     odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.state->wait&&
+        !saved.state->queue.empty(),"capture pending animation wait with queued xevt");
+     Fixture resumed;resumed.xevt(0,"100");
+     require(resumed.vm.restore_snapshot(source.vm.snapshot()),"restore waiting animation VM");
+     require(resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto& key){return key.kind==odh::PlaybackResourceKey::Kind::animation&&key.id==1?resumed.a:std::shared_ptr<const odh::AnimationHeader>{};},&why),
+        "restore pending animation wait and queue");
+     auto wrong=saved;wrong.state->actor_generation++;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"stale actor generation rejected");
+     wrong=saved;wrong.state->low=999;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"invalid event cursor rejected");
+     wrong=saved;wrong.state->wait->ticket++;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"mismatched pending VM ticket rejected");
+     wrong=saved;wrong.state->wait->expected++;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"mismatched pending VM output rejected");
+     for(const auto flags:{std::uint8_t{1},std::uint8_t{16}}){
+         Fixture nonblocking(flags);auto vm_state=source.vm.snapshot();
+         vm_state.pending->instruction.instruction.operands[5]=flags;
+         require(nonblocking.vm.restore_snapshot(vm_state),"construct malformed nonblocking animation wait fixture");
+         require(!nonblocking.player.restore_snapshot(saved,nonblocking.vm,[&](const auto&){return nonblocking.a;},&why),
+            "nonblocking mode cannot restore an opcode-44 wait");
+     }
+     wrong=saved;wrong.state->resource.id++;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"mismatched pending animation resource id rejected");
+     wrong=saved;wrong.state->resource.callee++;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"mismatched pending animation context rejected");
+     wrong=saved;wrong.state->end=true;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"terminal marker inside clip rejected");
+     wrong=saved;wrong.state->end=true;wrong.state->loop=true;
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),"looping terminal marker rejected");
+     require(!resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto&){return clip(9);},&why),"mismatched resolved clip rejected");
+     odh::PlaybackSnapshot before_failed_restore,after_failed_restore;
+     require(resumed.player.capture_snapshot(before_failed_restore,&why),"capture active controller before failed-restore checks");
+     odh::PlaybackSnapshot missing_state;
+     require(!resumed.player.restore_snapshot(missing_state,resumed.vm,[&](const auto&){return resumed.a;},&why),
+        "snapshot without playback state cannot discard pending opcode-44 VM wait");
+     require(!resumed.player.restore_snapshot(wrong,resumed.vm,[&](const auto&){return resumed.a;},&why),
+        "invalid wait output restore rejected without replacing active controller");
+     require(resumed.player.capture_snapshot(after_failed_restore,&why)&&after_failed_restore.state&&
+        before_failed_restore.state&&after_failed_restore.state->frame==before_failed_restore.state->frame&&
+        after_failed_restore.state->queue==before_failed_restore.state->queue&&
+        after_failed_restore.state->wait->ticket==before_failed_restore.state->wait->ticket,
+        "failed restore leaves previously active playback unchanged");
+     source.player.tick(2);resumed.player.tick(2);
+     require(source.vm.snapshot().stack.back().arguments==resumed.vm.snapshot().stack.back().arguments&&
+        source.vm.status()==resumed.vm.status()&&source.player.progress()->frame==resumed.player.progress()->frame,
+        "restored queued xevt delivers same VM write and continuation");
+     source.vm.run(20);resumed.vm.run(20);source.player.tick(3);resumed.player.tick(3);
+     require(source.vm.status()==resumed.vm.status()&&source.vm.temps()==resumed.vm.temps(),"restored animation wait continues identically");
+    }
+    {Fixture source;source.a->motions[0].time_properties={{{0,{{"righthand","1"}}}}};source.start();
+     odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.hands,
+        "capture active animation with required hand state");
+     Fixture target;target.a->motions[0].time_properties={{{0,{{"righthand","1"}}}}};target.vm.restore_snapshot(source.vm.snapshot());
+     saved.hands.reset();require(!target.player.restore_snapshot(saved,target.vm,[&](const auto&){return target.a;},&why),
+        "active animation without hand state is rejected before event tick");}
+    {Fixture source(0,0,0);source.world.set_person_data(1,0,2);source.start();
+     odh::PlaybackSnapshot saved;std::string why;require(source.player.capture_snapshot(saved,&why)&&saved.state&&saved.state->resource.kind==odh::PlaybackResourceKey::Kind::posture_reset&&saved.state->resource.posture==2,
+        "posture reset snapshot keeps normalized posture resource key");
+     Fixture resumed(0,0,0);resumed.world.set_person_data(1,0,2);resumed.vm.restore_snapshot(source.vm.snapshot());
+     require(resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto& key){return key.kind==odh::PlaybackResourceKey::Kind::posture_reset&&key.posture==2?resumed.reset_a:std::shared_ptr<const odh::AnimationHeader>{};},&why),
+        "posture reset resource key resolves on restore");}
+    {Fixture source;source.start();Fixture target;target.vm.restore_snapshot(source.vm.snapshot());
+     odh::PlaybackSnapshot saved;std::string why;
+     require(!target.player.capture_snapshot(saved,&why),"capture rejects opcode-44 VM wait missing its controller state");
+     require(!target.player.restore_snapshot(saved,target.vm,[&](const auto&){return target.a;},&why),
+        "restore rejects opcode-44 VM wait when snapshot has no controller state");}
     {Fixture f;f.xevt(0,"100");f.start();const auto ticket=f.vm.pending()->ticket;
      require(f.player.tick(1)&&f.vm.status()==odh::VmStatus::waiting&&f.player.progress()->queued_events==1,"event queues after frame advance");
      require(!f.player.tick(1)&&!f.player.tick(3)&&f.vm.pending()->ticket==ticket,"duplicate and gap ticks rejected");
@@ -77,6 +155,11 @@ int main(){try{
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"frame bound checked before progression");}
     {Fixture f(16);f.start();require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.progress()&&f.player.carry_clip()==f.a,
         "carry-only mode retains resolved resource without replacing primary Playback");}
+    {Fixture source(16);source.start();odh::PlaybackSnapshot saved;std::string why;
+     require(source.player.capture_snapshot(saved,&why)&&saved.carry&&saved.carry->id==1,"capture stable carry resource key");
+     Fixture resumed(16);resumed.vm.restore_snapshot(source.vm.snapshot());
+     require(resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto& key){return key.kind==odh::PlaybackResourceKey::Kind::animation&&key.id==1?resumed.a:std::shared_ptr<const odh::AnimationHeader>{};},&why)&&
+        resumed.player.carry_clip()==resumed.a,"restore carry resource through matching resolver");}
     {Fixture f(17);f.start();require(f.vm.status()==odh::VmStatus::waiting&&f.player.progress(),
         "carry-and-play mode clears carry and starts primary Playback");}
     {Fixture f(128);f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),

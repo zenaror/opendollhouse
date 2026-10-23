@@ -31,8 +31,162 @@ std::int16_t event_code(const std::string& text) {
     int value=0;const auto result=std::from_chars(first,last,value);
     return result.ec==std::errc{}&&result.ptr==last&&value>=-32768&&value<=32767?static_cast<std::int16_t>(value):0;
 }
+PlaybackResourceKey resource_key(const VmFrame& frame,const Entity& actor,PlaybackResourceKey::Kind kind,
+                                 std::uint32_t source,std::uint16_t id,std::int16_t posture=0) {
+    PlaybackResourceKey key{kind,source,id,posture};key.caller=frame.context.caller;key.callee=frame.context.callee;
+    key.stack_object=frame.context.stack_object;key.code_owner=frame.context.code_owner;
+    key.actor_age=actor.person_data.size()>58?actor.person_data[58]:0;return key;
+}
+bool wait_matches_vm(const PlaybackWaitSnapshot& saved,const PlaybackResourceKey& resource,
+                     std::int16_t actor,const VmSnapshot& vm) {
+    if(vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=saved.ticket||
+       vm.pending->context.caller!=actor||!vm.pending->instruction.depth||
+       vm.pending->instruction.depth>vm.stack.size())return false;
+    const auto& trace=vm.pending->instruction;const auto& instruction=trace.instruction;
+    if(instruction.opcode!=44||resource.kind!=PlaybackResourceKey::Kind::animation||
+       resource.caller!=vm.pending->context.caller||resource.callee!=vm.pending->context.callee||
+       resource.stack_object!=vm.pending->context.stack_object||resource.code_owner!=vm.pending->context.code_owner)return false;
+    const auto flags=instruction.operands[5];
+    const auto mode=(flags&1U)|((flags>>3)&2U);
+    if(mode!=0&&mode!=3)return false;
+    const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
+    const auto index=static_cast<std::size_t>((flags&32U)?instruction.operands[2]:0);
+    const auto& frame=vm.stack[trace.depth-1];
+    if(saved.bank!=bank||saved.index!=index||saved.expected!=instruction.operands[6]||
+       saved.index>=(saved.bank==VmFrameBank::arguments?frame.arguments.size():frame.locals.size()))return false;
+    auto id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
+    std::uint32_t source=instruction.operands[4];
+    if(flags&4U){if(id>=frame.arguments.size())return false;id=static_cast<std::uint16_t>(frame.arguments[id]);if(source==0)source=65536;}
+    return id!=0&&resource.source==source&&resource.id==id&&resource.posture==0;
+}
 }
 bool Playback::bind(Vm& vm) {if(executing_||(vm_&&vm_!=&vm))return false;vm_=&vm;return true;}
+bool Playback::capture_snapshot(PlaybackSnapshot& out,std::string* error) const {
+    const auto reject=[&](const char* text){if(error)*error=text;return false;};
+    if(executing_)return reject("animation snapshot requested during callback/tick");
+    if(wait_&&!state_)return reject("animation wait exists without playback state");
+    if(bool(carry_clip_)!=bool(carry_resource_))return reject("animation carry resource identity is missing");
+    if(hands_){const auto* actor=world_.find(hands_->actor);
+        if(!actor||actor->generation!=hands_->actor_generation||!vm_||hands_->vm_generation!=vm_->run_generation())
+            return reject("animation hand state identity is stale");}
+    PlaybackSnapshot next{};next.last_tick=last_tick_;
+    if(state_){
+        if(!vm_)return reject("animation snapshot has no bound VM");
+        if(!hands_)return reject("animation state is missing its required hand state");
+        if(!state_->resource.source&&!state_->resource.id&&state_->resource.kind==PlaybackResourceKey::Kind::animation)
+            return reject("animation snapshot has no stable resource key");
+        const auto* actor=world_.find(state_->actor);
+        if(!actor||actor->generation!=state_->actor_generation||state_->vm_generation!=vm_->run_generation()||
+           state_->resource.caller!=state_->actor||state_->resource.actor_age!=(actor->person_data.size()>58?actor->person_data[58]:0)||
+           !std::isfinite(state_->frame)||!std::isfinite(state_->speed)||state_->speed<=0||!state_->frames||
+           state_->frames>limits_.frames||state_->events.size()>limits_.events||state_->low>state_->high||
+           state_->high>state_->events.size()||state_->queue.size()>limits_.events||state_->events_run>255||
+           state_->ticks>limits_.ticks||(hands_&&(hands_->actor!=state_->actor||
+               hands_->actor_generation!=state_->actor_generation||hands_->vm_generation!=state_->vm_generation))||
+           (wait_&&!wait_matches_vm(
+               PlaybackWaitSnapshot{wait_->ticket,wait_->bank,wait_->index,wait_->expected},
+               state_->resource,state_->actor,vm_->snapshot())))
+            return reject("animation snapshot identity or continuation state is stale");
+        if(!wait_){const auto vm_state=vm_->snapshot();
+            if(vm_state.pending&&vm_state.pending->context.caller==state_->actor&&
+               vm_state.pending->instruction.instruction.opcode==44)
+                return reject("animation VM wait exists without playback wait state");}
+        PlaybackClipSnapshot saved{};saved.resource=state_->resource;saved.actor=state_->actor;
+        saved.actor_generation=state_->actor_generation;saved.vm_generation=state_->vm_generation;
+        saved.frame=state_->frame;saved.speed=state_->speed;saved.frames=state_->frames;
+        saved.backwards=state_->backwards;saved.end=state_->end;saved.loop=state_->loop;
+        saved.low=state_->low;saved.high=state_->high;saved.queue=state_->queue;
+        saved.events_run=state_->events_run;saved.ticks=state_->ticks;
+        if(wait_)saved.wait=PlaybackWaitSnapshot{wait_->ticket,wait_->bank,wait_->index,wait_->expected};
+        next.state=std::move(saved);
+    }else if(vm_){
+        const auto vm_state=vm_->snapshot();
+        if(vm_state.pending&&vm_state.pending->instruction.instruction.opcode==44)
+            return reject("animation VM wait exists without playback state");
+    }
+    if(carry_clip_)next.carry=carry_resource_;
+    if(hands_)next.hands=PlaybackHandsSnapshot{hands_->value,hands_->actor,hands_->actor_generation,hands_->vm_generation};
+    out=std::move(next);if(error)error->clear();return true;
+}
+bool Playback::restore_snapshot(const PlaybackSnapshot& saved,Vm& vm,const PlaybackRestoreResolver& resolver,std::string* error) {
+    const auto reject=[&](const char* text){if(error)*error=text;return false;};
+    if(executing_)return reject("animation restore requested during callback/tick");
+    if(vm_&&vm_!=&vm)return reject("animation restore VM identity mismatch");
+    const auto fail_key=[](const PlaybackResourceKey& key){
+        return (key.kind!=PlaybackResourceKey::Kind::animation&&key.kind!=PlaybackResourceKey::Kind::posture_reset)||
+               (key.kind==PlaybackResourceKey::Kind::animation&&((!key.source&&!key.id)||key.posture!=0))||
+               (key.kind==PlaybackResourceKey::Kind::posture_reset&&
+                (key.source||key.id||(key.posture!=1&&key.posture!=2&&key.posture!=3)));
+    };
+    std::optional<State> restored;std::optional<Wait> restored_wait;
+    std::shared_ptr<const AnimationHeader> carry;
+    const auto original_vm=vm_;
+    struct BindingRollback {Vm*& binding;Vm* old;bool committed=false;~BindingRollback(){if(!committed)binding=old;}} binding{vm_,original_vm};
+    vm_=&vm;
+    const auto rollback=[&](){vm_=original_vm;};
+    if(saved.state){
+        const auto& s=*saved.state;
+        const auto* actor=world_.find(s.actor);
+        if(!saved.hands||fail_key(s.resource)||!actor||actor->kind!=EntityKind::avatar||actor->generation!=s.actor_generation||
+           s.resource.caller!=s.actor||s.resource.actor_age!=(actor->person_data.size()>58?actor->person_data[58]:0)||
+           s.vm_generation!=vm.run_generation()||!std::isfinite(s.frame)||!std::isfinite(s.speed)||s.speed<=0||
+           !s.frames||s.frames>limits_.frames||s.ticks>limits_.ticks||s.queue.size()>limits_.events||
+           s.events_run>255||s.low>s.high||!resolver){rollback();return reject("animation snapshot state identity or limits invalid");}
+        const auto clip=resolver(s.resource);
+        if(!clip){rollback();return reject("animation snapshot resource key did not resolve");}
+        std::string why;auto base=prepare(clip,*actor,s.backwards,s.loop,false,why);
+        if(!base){rollback();if(error)*error=why;return false;}
+        const auto terminal_frame=std::trunc(static_cast<double>(s.frame));
+        const bool invalid_frame_state=(s.end&&s.loop)||
+            (!s.loop&&(s.end?(s.backwards?terminal_frame>=0:terminal_frame<s.frames):
+                              (s.backwards?(terminal_frame<0||s.frame>static_cast<float>(s.frames)):
+                                            (s.frame<0||terminal_frame>=s.frames))));
+        if(base->frames!=s.frames||s.low>base->events.size()||s.high>base->events.size()||
+           (s.backwards?(s.low!=0):(s.high!=base->events.size()))||
+           (s.frame<static_cast<float>(std::numeric_limits<std::int32_t>::min())||
+            s.frame>static_cast<float>(std::numeric_limits<std::int32_t>::max()))||
+           invalid_frame_state) {
+            rollback();return reject("animation snapshot cursor or frame invalid for resolved resource");}
+        base->resource=s.resource;base->frame=s.frame;base->speed=s.speed;base->end=s.end;
+        base->low=s.low;base->high=s.high;base->queue=s.queue;base->events_run=s.events_run;base->ticks=s.ticks;
+        restored=std::move(*base);
+        if(s.wait){
+            const auto vm_state=vm.snapshot();
+            if(s.wait->bank!=VmFrameBank::arguments&&s.wait->bank!=VmFrameBank::locals){rollback();return reject("animation wait bank invalid");}
+            if(!wait_matches_vm(*s.wait,s.resource,s.actor,vm_state)){
+                rollback();return reject("animation wait does not match restored VM pending call");}
+            restored_wait=Wait{s.wait->ticket,s.wait->bank,s.wait->index,s.wait->expected};
+        }else {
+            const auto vm_state=vm.snapshot();
+            if(vm_state.pending&&vm_state.pending->context.caller==s.actor&&
+               vm_state.pending->instruction.instruction.opcode==44){rollback();return reject("restored animation VM wait has no playback controller wait");}
+        }
+    }else {
+        const auto vm_state=vm.snapshot();
+        if(vm_state.pending&&vm_state.pending->instruction.instruction.opcode==44){
+            rollback();return reject("restored animation VM wait has no playback state");}
+    }
+    if(saved.carry){
+        if(fail_key(*saved.carry)||saved.carry->kind!=PlaybackResourceKey::Kind::animation||!resolver){rollback();return reject("animation carry key invalid or resolver unavailable");}
+        const auto* actor=world_.find(saved.carry->caller);
+        if(!actor||actor->kind!=EntityKind::avatar||saved.carry->actor_age!=(actor->person_data.size()>58?actor->person_data[58]:0)){
+            rollback();return reject("animation carry actor context is stale");}
+        carry=resolver(*saved.carry);if(!carry){rollback();return reject("animation carry key did not resolve");}
+    }
+    if(saved.hands){
+        const auto& h=*saved.hands;const auto* actor=world_.find(h.actor);
+        if(!valid_hand_gesture(h.value.left)||!valid_hand_gesture(h.value.right)||!actor||
+           actor->kind!=EntityKind::avatar||actor->generation!=h.actor_generation||h.vm_generation!=vm.run_generation()){
+            rollback();return reject("animation hand snapshot identity or value invalid");}
+    }
+    if(restored&&saved.hands&&(saved.hands->actor!=restored->actor||saved.hands->actor_generation!=restored->actor_generation||
+       saved.hands->vm_generation!=restored->vm_generation)){rollback();return reject("animation state and hands identities disagree");}
+    if(restored&&restored->vm_generation!=vm.run_generation()){rollback();return reject("animation VM generation mismatch");}
+    state_=std::move(restored);wait_=restored_wait;carry_clip_=std::move(carry);
+    carry_resource_=saved.carry;
+    hands_.reset();if(saved.hands)hands_=HandsState{saved.hands->value,saved.hands->actor,saved.hands->actor_generation,saved.hands->vm_generation};
+    last_tick_=saved.last_tick;diagnostic_.clear();vm_=&vm;binding.committed=true;if(error)error->clear();return true;
+}
 std::optional<AvatarHands> Playback::hands() const {
     if(!hands_||!vm_||hands_->vm_generation!=vm_->run_generation())return {};
     const auto* actor=world_.find(hands_->actor);
@@ -96,7 +250,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     if(!actor||actor->kind!=EntityKind::avatar)return unsupported("animation requires avatar caller");
     if(wait_)return unsupported("animation already has a pending wait");
     if(id==0){
-        if(mode==3){carry_clip_.reset();return {PrimitiveDisposition::goto_true,{}};}
+        if(mode==3){carry_clip_.reset();carry_resource_.reset();return {PrimitiveDisposition::goto_true,{}};}
         // FreeSO 4c6b3e8: Posture=0, HeadSeekState=42. An absent hand slot
         // is unknown, not evidence that the carry backend can be skipped.
         if(actor->slots.empty()||actor->slots[0]!=0)return unsupported("animation reset requires explicitly empty avatar hand slot zero");
@@ -108,14 +262,15 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         if(!next)return unsupported(error);
         // Commit only after resource and budget validation.
         if(actor->person_data[42]==1)world_.set_person_data(actor->id,42,4);
+        next->resource=resource_key(f,*actor,PlaybackResourceKey::Kind::posture_reset,0,0,normalized);
         state_=std::move(*next);hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
         return {PrimitiveDisposition::goto_true,{}};
     }
-    if(mode==3)carry_clip_.reset();
+    if(mode==3){carry_clip_.reset();carry_resource_.reset();}
     if(mode==2){
         const auto clip=resolver_?resolver_(f,source,id):nullptr;
         if(!clip)return unsupported("carry animation resource not supplied by explicit resolver");
-        carry_clip_=clip;
+        carry_clip_=clip;carry_resource_=resource_key(f,*actor,PlaybackResourceKey::Kind::animation,source,id);
         return {PrimitiveDisposition::goto_true,{}};
     }
     const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
@@ -126,6 +281,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     if(mode==1||!state_||state_->clip!=clip||state_->actor!=actor->id||state_->actor_generation!=actor->generation) {
         std::string error;auto next=prepare(clip,*actor,(flags&2U)!=0,mode==1,(flags&64U)!=0,error);
         if(!next)return unsupported(error);
+        next->resource=resource_key(f,*actor,PlaybackResourceKey::Kind::animation,source,id);
         state_=std::move(*next);
         hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
     }
