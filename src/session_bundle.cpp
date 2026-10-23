@@ -7,11 +7,13 @@
 #include <cstring>
 #include <limits>
 #include <utility>
+#include <set>
 
 namespace odh {
 namespace {
 constexpr std::array<char,4> meta_id{{'M','E','T','A'}};
 constexpr std::array<char,4> host_id{{'H','O','S','T'}};
+constexpr std::array<char,4> household_id{{'H','H','R','D'}};
 constexpr std::array<char,4> world_id{{'W','R','L','D'}};
 constexpr std::array<char,4> relation_id{{'R','E','L','A'}};
 constexpr std::array<char,4> vm_id{{'V','M',' ',' '}};
@@ -178,11 +180,11 @@ void validate_host(const SessionHostState& host,const SessionBundleLimits& limit
 }
 
 std::vector<std::uint8_t> encode_host(const SessionHostState& host,
-                                      const SessionBundleLimits& limits) {
+                                      const SessionBundleLimits& limits,bool household) {
     validate_host(host,limits);
     Writer writer(limits.archive.max_section_bytes);
     writer.append(host_magic.data(),host_magic.size());
-    writer.u16(payload_version);
+    writer.u16(household?2:1);
     writer.u8(host.neighborhood_mode);
     writer.u16(host.house_number);
     writer.u16(host.family_chunk_id);
@@ -198,11 +200,13 @@ std::vector<std::uint8_t> encode_host(const SessionHostState& host,
 }
 
 SessionHostState decode_host(const std::vector<std::uint8_t>& bytes,
-                             const SessionBundleLimits& limits) {
+                             const SessionBundleLimits& limits,bool& household) {
     Reader reader(bytes);
-    if(reader.bytes(host_magic.size())!=std::vector<std::uint8_t>(host_magic.begin(),host_magic.end())||
-       reader.u16()!=payload_version)
+    if(reader.bytes(host_magic.size())!=std::vector<std::uint8_t>(host_magic.begin(),host_magic.end()))
         throw FormatError("unsupported session host format");
+    const auto version=reader.u16();
+    if(version!=1&&version!=2)throw FormatError("unsupported session host version");
+    household=version==2;
     SessionHostState host;
     host.neighborhood_mode=reader.u8();
     host.house_number=reader.u16();
@@ -221,6 +225,54 @@ SessionHostState decode_host(const std::vector<std::uint8_t>& bytes,
     if(!reader.done())throw FormatError("session host has trailing data");
     validate_host(host,limits);
     return host;
+}
+
+std::vector<std::uint8_t> encode_household(const std::vector<SessionHouseholdMember>& roster,
+    const SessionBundleLimits& limits) {
+    Writer w(limits.archive.max_section_bytes);w.u16(1);w.u16(static_cast<std::uint16_t>(roster.size()));
+    for(const auto& member:roster){w.i16(member.id);w.u64(member.generation);w.u32(member.guid);
+        w.i16(member.neighbor_id);w.u16(member.object_definition_id);w.string(member.character_asset);
+        w.append(member.character_fingerprint.data(),member.character_fingerprint.size());}
+    return w.take();
+}
+std::vector<SessionHouseholdMember> decode_household(const std::vector<std::uint8_t>& bytes,
+    const SessionBundleLimits& limits) {
+    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported household roster version");
+    const auto count=r.u16();if(!count||count>8||count>limits.max_runtime_entities||count>r.remaining()/52)
+        throw FormatError("household roster count exceeds bounds");
+    std::vector<SessionHouseholdMember> result;result.reserve(count);
+    for(unsigned n=0;n<count;++n){SessionHouseholdMember member;member.id=r.i16();member.generation=r.u64();
+        member.guid=r.u32();member.neighbor_id=r.i16();member.object_definition_id=r.u16();
+        member.character_asset=r.string();const auto hash=r.bytes(32);
+        std::copy(hash.begin(),hash.end(),member.character_fingerprint.begin());result.push_back(std::move(member));}
+    if(!r.done())throw FormatError("household roster has trailing data");
+    return result;
+}
+void validate_household(const SessionBundle& bundle) {
+    if(bundle.household_roster.empty())return;
+    if(bundle.household_roster.size()>8||bundle.household_roster.size()!=bundle.runtime_entities.size())
+        throw FormatError("household roster does not cover every runtime resident");
+    std::set<std::uint32_t> guids;std::set<std::int16_t> neighbors;std::set<std::string> paths;
+    for(std::size_t n=0;n<bundle.household_roster.size();++n){const auto& m=bundle.household_roster[n];
+        if(m.id!=bundle.runtime_entities[n].id||!m.generation||!m.guid||m.neighbor_id<=0||!m.object_definition_id||
+           m.character_asset.empty()||m.character_asset.size()>4096||m.character_asset.front()=='/'||
+           m.character_asset.find('\\')!=std::string::npos||m.character_asset.find(':')!=std::string::npos||
+           m.character_asset.find('\0')!=std::string::npos||
+           std::all_of(m.character_fingerprint.begin(),m.character_fingerprint.end(),[](auto b){return b==0;})||
+           !guids.insert(m.guid).second||!neighbors.insert(m.neighbor_id).second||!paths.insert(m.character_asset).second)
+            throw FormatError("household roster identity is invalid or duplicated");
+        std::size_t start=0;
+        while(start<m.character_asset.size()) {const auto end=m.character_asset.find('/',start);
+            const auto part=m.character_asset.substr(start,end==std::string::npos?end:end-start);
+            if(part.empty()||part=="."||part=="..")throw FormatError("household character asset path is not canonical");
+            if(end==std::string::npos)break;
+            start=end+1;if(start==m.character_asset.size())throw FormatError("household character asset path ends in separator");}
+        const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& e){return e.id==m.id;});
+        if(actor==bundle.world.entities.end()||!actor->definition||actor->generation!=m.generation||actor->definition->guid!=m.guid)
+            throw FormatError("household roster differs from World resident identity");
+        if(m.id==bundle.host.runtime_avatar_id&&(m.guid!=bundle.host.resident_guid||m.neighbor_id!=bundle.host.resident_neighbor_id))
+            throw FormatError("household primary identity differs from HOST");
+    }
 }
 
 std::vector<std::uint8_t> encode_seated(const SessionSeatedContinuation& c,const SessionBundleLimits& limits) {
@@ -470,6 +522,7 @@ void validate_playback_links(const SessionRuntimeEntity& entity,const Entity& ac
 
 void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limits) {
     validate_host(bundle.host,limits);
+    validate_household(bundle);
     if(bundle.runtime_entities.empty()||bundle.runtime_entities.size()>limits.max_runtime_entities||
        bundle.runtime_entities.size()>UINT16_MAX||
        bundle.runtime_entities.size()!=bundle.scheduler.entities.size()||
@@ -523,8 +576,16 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
 }
 bool recognized(const std::array<char,4>& id) {
     return id==meta_id||id==host_id||id==world_id||id==relation_id||
-           id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||id==seated_id;
+           id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||id==seated_id;
 }
+}
+
+bool same_session_household_roster(const std::vector<SessionHouseholdMember>& a,
+    const std::vector<SessionHouseholdMember>& b) {
+    return a.size()==b.size()&&std::equal(a.begin(),a.end(),b.begin(),[](const auto& x,const auto& y){
+        return x.id==y.id&&x.generation==y.generation&&x.guid==y.guid&&x.neighbor_id==y.neighbor_id&&
+            x.object_definition_id==y.object_definition_id&&x.character_asset==y.character_asset&&
+            x.character_fingerprint==y.character_fingerprint;});
 }
 
 void validate_session_playback_links(const SessionRuntimeEntity& state,const Entity& actor,
@@ -538,7 +599,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     SessionArchive archive;
     archive.sections={
         {meta_id,true,encode_session_resource_identity(bundle.resources)},
-        {host_id,true,encode_host(bundle.host,limits)},
+        {host_id,true,encode_host(bundle.host,limits,!bundle.household_roster.empty())},
         {world_id,true,encode_world_snapshot(bundle.world,limits.world)},
         {relation_id,true,encode_relationship_snapshot(bundle.relationships,limits.relationships)},
         {vm_id,true,encode_roster(bundle.runtime_entities,limits,[&](const auto& entity){
@@ -549,6 +610,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
         {playback_id,true,encode_roster(bundle.runtime_entities,limits,[&](const auto& entity){
             return encode_playback(entity.playback,limits);})}
     };
+    if(!bundle.household_roster.empty())archive.sections.push_back({household_id,true,encode_household(bundle.household_roster,limits)});
     if(bundle.seated_continuation)archive.sections.push_back({seated_id,true,encode_seated(*bundle.seated_continuation,limits)});
     return encode_session_archive(archive,limits.archive);
 }
@@ -565,7 +627,11 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     if(expected_resources&&encode_session_resource_identity(*expected_resources)!=
                            encode_session_resource_identity(result.resources))
         throw FormatError("session game resources do not match");
-    result.host=decode_host(required_section(archive,host_id).data,limits);
+    bool household=false;
+    result.host=decode_host(required_section(archive,host_id).data,limits,household);
+    const auto roster_section=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& s){return s.id==household_id;});
+    if(household)result.household_roster=decode_household(required_section(archive,household_id).data,limits);
+    else if(roster_section!=archive.sections.end())throw FormatError("legacy session cannot contain household roster");
     result.world=decode_world_snapshot(required_section(archive,world_id).data,limits.world);
     result.relationships=decode_relationship_snapshot(required_section(archive,relation_id).data,
                                                        limits.relationships);

@@ -17,6 +17,7 @@ using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>
 struct IntegratedHouseholdMember {
     std::filesystem::path character_path;
     std::uint32_t guid = 0;
+    std::int16_t neighbor_id = 0;
     std::uint16_t object_definition_id = 0;
 };
 struct IntegratedSessionContext {

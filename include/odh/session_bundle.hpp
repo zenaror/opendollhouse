@@ -62,11 +62,25 @@ struct SessionSeatedContinuation {
     std::vector<SessionActionCodeOwner> code_owners; // Strictly ascending owner IDs.
 };
 
+// HOST v2 requires this complete, portable HHRD v1 roster. HOST v1 is legacy.
+struct SessionHouseholdMember {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+    std::int16_t neighbor_id = 0;
+    std::uint16_t object_definition_id = 0;
+    std::string character_asset; // Canonical path relative to game root.
+    std::array<std::uint8_t,32> character_fingerprint{};
+};
+bool same_session_household_roster(const std::vector<SessionHouseholdMember>&,
+    const std::vector<SessionHouseholdMember>&);
+
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
 struct SessionBundle {
     SessionResourceIdentity resources;
     SessionHostState host;
+    std::vector<SessionHouseholdMember> household_roster; // Empty only for legacy HOST v1.
     WorldSnapshot world;
     RelationshipSnapshot relationships;
     std::vector<SessionRuntimeEntity> runtime_entities; // Strictly ascending IDs.

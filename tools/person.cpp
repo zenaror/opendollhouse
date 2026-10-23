@@ -25,6 +25,8 @@
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/single_resident_session_restore.hpp"
+#include "odh/household_session_restore.hpp"
+#include "odh/sha256.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
@@ -80,13 +82,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <thread>
+#include <sstream>
 
 namespace {
-struct Resource {std::string archive,entry;bool standalone=false;};
+struct Resource {std::string archive,entry;bool standalone=false;std::shared_ptr<const std::string> frozen{};};
 struct PersonDefinitionSource {std::string path,entry;bool standalone=false;};
 constexpr std::size_t person_definition_source_limit=128;
 template<class F>void with_resource(const Resource& resource,F read){
-    if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
+    if(resource.frozen){std::istringstream input(*resource.frozen,std::ios::binary);read(odh::View(input,resource.frozen->size()));}
+    else if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
 }
 struct Loaded {
     odh::RoutineSet routines;
@@ -601,6 +605,29 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             if(*path)inputs.push_back(**path);
         for(const auto& input:inputs)different_render_path(*render_output,input);
     }
+    struct PinnedCharacter {std::shared_ptr<const std::string> bytes;std::array<std::uint8_t,32> fingerprint;};
+    std::map<std::filesystem::path,PinnedCharacter> pinned_characters;
+    if(session_context&&!session_context->single_resident_session){
+        std::uint64_t remaining=64u*1024u*1024u;
+        for(const auto& member:session_context->household_members){
+            const auto path=std::filesystem::canonical(member.character_path);
+            const auto size=std::filesystem::file_size(path);
+            if(!std::filesystem::is_regular_file(path)||size>remaining)
+                throw odh::FormatError("household character resources exceed the bounded loaded-byte budget");
+            auto bytes=std::make_shared<std::string>(static_cast<std::size_t>(size),'\0');
+            std::ifstream input(path,std::ios::binary);input.read(bytes->data(),static_cast<std::streamsize>(size));
+            if(!input||input.peek()!=std::char_traits<char>::eof())throw odh::FormatError("household character changed while loading");
+            const auto digest=odh::sha256(bytes->data(),bytes->size());remaining-=size;
+            if(!pinned_characters.emplace(path,PinnedCharacter{bytes,digest}).second)
+                throw odh::FormatError("duplicate household character resource");
+        }
+        const auto primary=pinned_characters.find(std::filesystem::canonical(avatar->archive));
+        if(primary==pinned_characters.end())throw odh::FormatError("primary character is absent from the complete household");
+        avatar->frozen=primary->second.bytes;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("household character resources pinned");
+#endif
+    }
     std::optional<SavedLotMaterialOptions> render_materials;
     if(!architecture_sources.empty()){
         render_materials.emplace();
@@ -631,7 +658,17 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             },limits);
         };
         for(const auto& source:definition_sources){
-            if(source.standalone){with_iff_file(source.path,[&](const auto& view){add_iff(view,source.path,"");});continue;}
+            if(source.standalone){
+                Resource resource{source.path,{},true};
+                if(!pinned_characters.empty()){
+                    std::error_code error;
+                    const auto canonical=std::filesystem::canonical(source.path,error);
+                    if(error)throw odh::FormatError("cannot open IFF file");
+                    const auto pinned=pinned_characters.find(canonical);
+                    if(pinned!=pinned_characters.end())resource.frozen=pinned->second.bytes;
+                }
+                with_resource(resource,[&](const auto& view){add_iff(view,source.path,"");});continue;
+            }
             if(!source.entry.empty()){
                 with_far_entry(source.path,source.entry,[&](const auto& view){add_iff(view,source.path,source.entry);});
                 continue;
@@ -885,11 +922,51 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     profile_mark("saved-world-restore-and-bindings");
     std::optional<odh::WorldSnapshot> session_baseline;
     if(session_context&&saved_world_main&&restored_world)session_baseline=restored_world->world->snapshot();
+    const auto capture_household_roster=[&](bool verify_current=false) {
+        std::vector<odh::SessionHouseholdMember> roster;
+        if(!session_context||session_context->single_resident_session)return roster;
+        if(!session_baseline||!active_family||!neighbors||session_context->household_members.empty()||
+           session_context->household_members.size()!=active_family->family.member_guids.size())
+            throw odh::FormatError("household session requires the complete selected FAMI roster");
+        const auto game=std::filesystem::canonical(session_context->game_root);
+        for(const auto& member:session_context->household_members){
+            const odh::Entity* actor=nullptr;
+            for(const auto& entity:session_baseline->entities)if(entity.kind==odh::EntityKind::avatar&&
+                entity.definition&&entity.definition->guid==member.guid){
+                if(actor)throw odh::FormatError("household GUID matches more than one World resident");
+                actor=&entity;
+            }
+            if(!actor||!actor->position||!odh::FamilyContext::contains(*active_family,member.guid)||
+               neighbors->id_for_guid(member.guid)!=std::optional<std::int16_t>{member.neighbor_id})
+                throw odh::FormatError("household session member differs from FAMI, NBRS or original World");
+            const auto path=std::filesystem::canonical(member.character_path);
+            const auto relative=path.lexically_relative(game);
+            if(relative.empty()||relative.is_absolute()||*relative.begin()==".."||
+               !std::filesystem::is_regular_file(path)||std::filesystem::file_size(path)>64u*1024u*1024u)
+                throw odh::FormatError("household character resource is outside the bounded game installation");
+            const auto pinned=pinned_characters.find(path);
+            if(pinned==pinned_characters.end())throw odh::FormatError("household character has no loaded-byte provenance");
+            if(verify_current){
+                if(std::filesystem::file_size(path)!=pinned->second.bytes->size())
+                    throw odh::FormatError("household character resource changed since it was loaded");
+                std::ifstream input(path,std::ios::binary);odh::Sha256 digest;std::array<char,65536> buffer{};
+                while(input){input.read(buffer.data(),static_cast<std::streamsize>(buffer.size()));
+                    if(input.gcount()>0)digest.update(buffer.data(),static_cast<std::size_t>(input.gcount()));}
+                if(!input.eof()||digest.finish()!=pinned->second.fingerprint)
+                    throw odh::FormatError("household character resource changed since it was loaded");
+            }
+            odh::SessionHouseholdMember entry;entry.id=actor->id;entry.generation=actor->generation;
+            entry.guid=member.guid;entry.neighbor_id=member.neighbor_id;entry.object_definition_id=member.object_definition_id;
+            entry.character_asset=relative.generic_string();entry.character_fingerprint=pinned->second.fingerprint;roster.push_back(std::move(entry));
+        }
+        std::sort(roster.begin(),roster.end(),[](const auto& a,const auto& b){return a.id<b.id;});return roster;
+    };
     std::unique_ptr<odh::SingleResidentSessionRestore> session_restore;
+    std::unique_ptr<odh::HouseholdSessionRestore> household_restore;
     if(session_context&&!session_context->restore_archive.empty()){
         if(!saved_world_main||!restored_world||!lot||!bootstrap_globals||!session_context->resources||
            headless_second_main||headless_fixture_avatar||initialize||action||seed||age||flags||routine)
-            throw odh::FormatError("session restore requires an unchanged single-resident integrated saved-lot host");
+            throw odh::FormatError("session restore requires an unchanged integrated saved-lot host");
         odh::SessionHostState selection;
         selection.neighborhood_mode=session_context->neighborhood_mode;
         selection.house_number=session_context->house_number;
@@ -898,15 +975,21 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         selection.resident_guid=session_context->resident_guid;
         selection.resident_neighbor_id=session_context->resident_neighbor_id;
         selection.runtime_avatar_id=runtime_avatar_id;
-        session_restore=odh::SingleResidentSessionRestore::prepare(session_context->restore_archive,
-            *session_context->resources,selection,*session_baseline,*lot,*bootstrap_globals,family_global);
-        // This launch is still unpublished. Globals are host-owned values;
-        // all callbacks below bind to their restored values and candidate World.
-        *lot=session_restore->lot();*bootstrap_globals=session_restore->bootstrap();
-        family_global=session_restore->family_global();
-        restored_world->world=session_restore->take_world();
+        // This launch remains unpublished until all execution graphs are restored.
+        if(session_context->single_resident_session){
+            session_restore=odh::SingleResidentSessionRestore::prepare(session_context->restore_archive,
+                *session_context->resources,selection,*session_baseline,*lot,*bootstrap_globals,family_global);
+            *lot=session_restore->lot();*bootstrap_globals=session_restore->bootstrap();
+            family_global=session_restore->family_global();restored_world->world=session_restore->take_world();
+        }else{
+            household_restore=odh::HouseholdSessionRestore::prepare(session_context->restore_archive,
+                *session_context->resources,selection,capture_household_roster(),*session_baseline,*lot,*bootstrap_globals,family_global);
+            *lot=household_restore->lot();*bootstrap_globals=household_restore->bootstrap();
+            family_global=household_restore->family_global();restored_world->world=household_restore->take_world();
+        }
         std::vector<std::uint8_t>{}.swap(session_context->restore_archive); // Release encoded input.
     }
+    const bool restoring_session=bool(session_restore)||bool(household_restore);
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
     std::optional<odh::EntityPosition> paired_primary_start;
     const auto entity_count=[&]{std::size_t count=0;std::int16_t cursor=0;
@@ -962,6 +1045,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
                found->presence!=odh::HouseholdMemberPresence::present_with_position||!found->object_id||!found->position)
                 throw odh::FormatError("household member is absent or unpositioned in the restored World; placement is not implemented");
             Resource resource{member.character_path.string(),{},true};
+            const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
+            if(pinned==pinned_characters.end())throw odh::FormatError("household member lacks loaded-byte provenance");
+            resource.frozen=pinned->second.bytes;
             auto data=load(resource,odh::RoutineScope::private_object,member.object_definition_id);
             if(data.binding->version!=138||data.object_type!=2||data.binding->guid!=member.guid||
                !data.glob||data.glob->name.empty()||data.glob->name.find_first_of("/\\:")!=std::string::npos||
@@ -1149,8 +1235,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         return {odh::PrimitiveDisposition::goto_false,{}};
     };
     std::optional<odh::RelationshipState> original_relationships;
-    if(neighbors&&!session_restore)original_relationships.emplace(*neighbors);
-    auto* relationships=session_restore?&session_restore->relationships():
+    if(neighbors&&!restoring_session)original_relationships.emplace(*neighbors);
+    auto* relationships=household_restore?&household_restore->relationships():session_restore?&session_restore->relationships():
         original_relationships?&*original_relationships:nullptr;
     std::vector<odh::RelationshipRecord> relationship_records;
     const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
@@ -1600,7 +1686,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             startup_steps+=vm.steps();
         }
     }
-    if(!host_failed&&!session_restore){
+    if(!host_failed&&!restoring_session){
         // Stack Main before post-body initialization, then dispatch its first
         // instruction only after the body data stage has completed.
         std::vector<std::int16_t> root_arguments(4);
@@ -1672,6 +1758,24 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         session_log.event("session resumed saved_tick="+std::to_string(ticks));
 #endif
     }
+    if(household_restore){
+        if(!playback)throw odh::FormatError("household restore needs the matching animation catalog");
+        random.reset(household_restore->host().random_seed);
+        body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
+        const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
+            odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
+            return resolve_animation(frame,key.source,key.id,key.kind==odh::PlaybackResourceKey::Kind::posture_reset
+                ?std::optional<std::int16_t>{key.posture}:std::nullopt);
+        };
+        std::vector<odh::SessionExecutionBinding> bindings{{runtime_avatar_id,&vm,&thread_controllers,&*playback,resolver}};
+        for(auto& member:household_runtime){
+            if(!member->playback)throw odh::FormatError("household resident animation catalog is unavailable");
+            bindings.push_back({member->id,member->vm.get(),member->controllers.get(),&*member->playback,resolver});
+        }
+        std::sort(bindings.begin(),bindings.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+        household_restore->restore_execution(bindings,entity_scheduler,random,ticks);
+        profile_mark("household-session-restored-before-main");
+    }
     const auto resumed_tick=ticks;
     std::optional<std::uint64_t> scheduled_stand_tick;
     if(headless_stand){
@@ -1679,7 +1783,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             throw odh::FormatError("resumed Stand tick overflows the session clock");
         scheduled_stand_tick=headless_stand->tick+(session_restore?resumed_tick:0);
     }
-    const auto resumed_steps=session_restore?vm.steps():0;
+    const auto resumed_steps=restoring_session?vm.steps():0;
+    std::uint64_t resumed_household_steps=0;
+    if(household_restore)for(const auto& member:household_runtime)resumed_household_steps+=member->vm->steps();
     struct RenderEvidence {
         std::string clip;float frame=0;std::int16_t actor=0;std::uint64_t tick=0;
         std::uint64_t actor_generation=0,vm_generation=0,cfp_samples=0;
@@ -2582,10 +2688,9 @@ struct PlacementCandidateProbe {
 #ifdef __linux__
         if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
             throw odh::FormatError("saving requires a selected game installation");
-        if(!household_runtime.empty()||second_main_vm)
-            throw odh::FormatError("saving multiple resident threads is not implemented; use the explicit single-resident test profile");
-        if(!session_context->single_resident_session)
-            throw odh::FormatError("experimental session saving requires explicit --single-resident-session");
+        if(second_main_vm)throw odh::FormatError("diagnostic second-Main sessions cannot be saved");
+        if(!session_context->single_resident_session&&session_context->household_members.empty())
+            throw odh::FormatError("household saving requires the complete integrated FAMI roster");
         if(runtime_routing&&runtime_routing->active())
             throw odh::FormatError("wait until the Sim finishes walking before saving");
         if(go_here_status=="queued")
@@ -2596,6 +2701,10 @@ struct PlacementCandidateProbe {
         if(!save_actor||save_actor->person_data.empty())
             throw odh::FormatError("this session cannot yet be restored: resident posture is unavailable");
         const bool seated=save_actor->person_data[0]==1||save_actor->attachment.has_value();
+        if(!session_context->single_resident_session&&seated)
+            throw odh::FormatError("household session cannot yet restore seated continuation or attachment");
+        if(!session_context->single_resident_session&&(!saved_code_owners.empty()||!saved_portal_code_owners.empty()))
+            throw odh::FormatError("household session cannot yet restore dynamic action owners");
         if(seated&&(!seated_action_target||!seated_action_actor_generation||!save_actor->attachment||
            save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||
            save_actor->generation!=*seated_action_actor_generation))
@@ -2646,6 +2755,7 @@ struct PlacementCandidateProbe {
         odh::SessionBundle bundle;
         bundle.resources=odh_host::identify_session_resources(session_context->game_root,
             session_context->resource_paths,session_context->language_code,session_context->expansion_mask);
+        if(!session_context->single_resident_session)bundle.household_roster=capture_household_roster(true);
         bundle.host.neighborhood_mode=session_context->neighborhood_mode;
         bundle.host.house_number=session_context->house_number;
         bundle.host.family_chunk_id=session_context->family_chunk_id;
@@ -2679,6 +2789,8 @@ struct PlacementCandidateProbe {
         if(second_main_vm&&second_main_thread)
             capture_runtime_entity(static_cast<std::int16_t>(headless_second_main->avatar.id),
                 *second_main_vm,*second_main_thread,second_main_playback);
+        for(const auto& member:household_runtime)
+            capture_runtime_entity(member->id,*member->vm,*member->controllers,member->playback);
         std::sort(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [](const auto& a,const auto& b){return a.id<b.id;});
         bundle.scheduler=entity_scheduler.snapshot();
@@ -2741,8 +2853,13 @@ struct PlacementCandidateProbe {
         // Apply the loader's complete supported-profile validation before any
         // filesystem mutation. A previous usable save must survive rejection.
         try{
-            auto candidate=odh::SingleResidentSessionRestore::prepare(encoded,bundle.resources,bundle.host,
-                *session_baseline,*lot,*bootstrap_globals,family_global);
+            if(session_context->single_resident_session){
+                auto candidate=odh::SingleResidentSessionRestore::prepare(encoded,bundle.resources,bundle.host,
+                    *session_baseline,*lot,*bootstrap_globals,family_global);
+            }else{
+                auto candidate=odh::HouseholdSessionRestore::prepare(encoded,bundle.resources,bundle.host,
+                    bundle.household_roster,*session_baseline,*lot,*bootstrap_globals,family_global);
+            }
         }catch(const std::exception& error){
             throw odh::FormatError(std::string("this session cannot yet be restored: ")+error.what());
         }
@@ -2834,7 +2951,7 @@ struct PlacementCandidateProbe {
     const auto total_steps=[&]{
         auto steps=startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);
         for(const auto& member:household_runtime)steps+=member->vm->steps();
-        return steps;
+        return steps-resumed_household_steps;
     };
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
@@ -2896,7 +3013,7 @@ struct PlacementCandidateProbe {
             " resource_files="+std::to_string(session_context->resource_paths.size()));
     }
 #endif
-    if(!session_restore)execute(false); // Restored Main resumes only at saved tick + 1.
+    if(!restoring_session)execute(false); // Restored Main resumes only at saved tick + 1.
     profile_mark("first-main-execution");
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
@@ -3613,8 +3730,8 @@ struct PlacementCandidateProbe {
         }
         throw odh::FormatError(failure+")");
     }
-    std::cout<<"{\"evidence\":"<<json_bytes(session_restore?"ODH_session_resumed":saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
-        <<",\"session_loaded\":"<<(session_restore?"true":"false")
+    std::cout<<"{\"evidence\":"<<json_bytes(restoring_session?"ODH_session_resumed":saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
+        <<",\"session_loaded\":"<<(restoring_session?"true":"false")
         <<",\"resumed_tick\":"<<resumed_tick<<",\"saved_session_path\":"
         <<(saved_session_path?json_bytes(*saved_session_path):"null")
         <<",\"integrated_session_context\":";
@@ -3662,7 +3779,7 @@ struct PlacementCandidateProbe {
         std::cout<<json_bytes(odh_host::PersonDiagnosticRetention::names[n])<<':'<<diagnostics.dropped()[n];
     }
     std::cout<<'}'
-        <<",\"initialization\":"<<json_bytes(session_restore?
+        <<",\"initialization\":"<<json_bytes(restoring_session?
         "ODH session restored before Main dispatch; next logical tick continues the saved VM and controllers":saved_world_main?
         "saved World banks/position restored; new Main entry starts; saved BHAV stacks and queues remain dormant":initialize?
         "ordered Init0/entry8/Main stack/postBodySTR reference subset; appearance resources, special tuning and full native save restoration not initialized":

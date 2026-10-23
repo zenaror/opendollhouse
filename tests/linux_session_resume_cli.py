@@ -56,12 +56,12 @@ class Bits:
         return bytes(int(bits[pos:pos + 8], 2) for pos in range(0, len(bits), 8))
 
 
-def saved_person():
+def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0):
     table = Bits()
-    for value in (1, 1, 0):
+    for value in (object_id, type_id, 0):
         table.word(value)
     container = struct.pack('<II4sB', 0, 62, b'MjbO', 1) + table.data()
-    block = Bits(len(container) + 4)
+    block = Bits(len(container) + 4 if block_offset is None else block_offset)
     for value in (0, 0, 0, 0, 504, 504, 1):
         block.integer(value)
     block.word()  # unknown
@@ -69,7 +69,7 @@ def saved_person():
     for _ in range(8):
         block.word()
     for index in range(68):
-        block.word(1 if index == 11 else -1 if index == 3 else 0)
+        block.word(object_id if index == 11 else -1 if index == 3 else 0)
     for _ in range(5):
         block.word()
     for value in (0, 0, -1, 0):  # stack, flags, relationship flag/count
@@ -86,8 +86,8 @@ def saved_person():
     block.integer()  # routing state
     for _ in range(9 + 16 + 16):
         block.integer()  # finite float zero
-    for _ in range(80):
-        block.word()
+    for index in range(80):
+        block.word(person_posture if index == 0 else 0)
     block.integer()  # routing frames
     for _ in range(2):  # active and last dormant interactions
         block.integer(); block.integer()

@@ -92,11 +92,12 @@ salvar a sessão multi-residente foi rejeitada antes de qualquer escrita.
 Build `odh-person` concluído e `git diff --check` passou. O CTest anterior
 registrou 201 aprovados e 1 ignorado (`linux_window_backend`, sem display).
 
-Este milestone demonstra Main integrado dos dois residentes presentes nesse
-gate. O gate é curto e headless: não valida UI/visuais, autonomia, roteamento,
-Snap/postura dos extras, save/resume multi-residente, residentes ausentes ou
-jogabilidade completa. Somente os quatro arquivos hashados tiveram
-fingerprint; não se mediu nem se deve inferir uma contagem total de inputs.
+Este gate demonstra Main integrado dos dois residentes presentes nesse
+cenário. O resultado é curto e headless: não valida UI/visuais, autonomia,
+roteamento, Snap/postura dos extras, residentes ausentes ou jogabilidade
+completa. Somente os arquivos comerciais cobertos pelos hashes desse gate
+tiveram fingerprint; não se mediu nem se deve inferir uma contagem total de
+inputs. O checkpoint de save/resume posterior está documentado abaixo.
 
 ### Dois moradores carregados no mesmo lote (2026-10-23)
 
@@ -112,11 +113,37 @@ segundo morador ao arquivo de personagem errado foi recusada.
 
 Este gate é uma base real para ativar a família inteira: os dois avatares já
 estavam salvos no lote e cada Main foi iniciado pela opção de teste
-`--headless-second-saved-main`. Ele não prova autonomia contínua, controles
-individuais, save/retomada dos dois VMs, criação de moradores ausentes,
-posicionamento em lote vazio ou o caminho normal do launcher; ainda não há
+`--headless-second-saved-main`. Esse checkpoint anterior não prova autonomia
+contínua, controles individuais, criação de moradores ausentes, posicionamento
+em lote vazio ou o caminho normal do launcher; ainda não há
 `VerifyFamily`/spawn coletivo nesse fluxo. Resultado observado: processo
 terminou com código 3 pelo limite deliberado de 32 ticks, sem falha do host.
+
+### Save/resume dos dois moradores House07 (2026-10-23)
+
+O teste integrado `tests/house07_household_runtime_cli.py` agora grava e retoma
+a família inteira com os dois moradores House07 em processos novos. Para cada
+morador selecionado como principal, a execução retomada e salva foi byte a byte
+igual à continuação contínua pelo mesmo número total de ticks. O teste também
+rejeitou arquivos de sessão sem a seção de household, com roster divergente e
+com conteúdo truncado/malformado antes de alterar o arquivo salvo válido.
+Os arquivos comerciais incluídos no fingerprint antes/depois mantiveram seus
+hashes. Os testes focados passaram 11/11 em Debug e 11/11 em Release. A
+validação completa Release também concluiu o build e o CTest com 206 testes:
+205 passaram, 1 foi ignorado (`linux_window_backend`, por falta de display) e
+0 falharam.
+
+O snapshot do conjunto de arquivos IFF de personagens usados pelo household
+tem budget cumulativo de 64 MiB. Se o conjunto ultrapassa esse limite ou um
+arquivo muda enquanto é lido, a execução falha antes da escrita do save.
+Esse limite protege a leitura e o pinning dos recursos; não é evidência de
+consumo de memória total nem de suporte a qualquer conjunto de personagens.
+
+O gate demonstra continuidade determinística desse perfil House07 e build,
+não jogo completo. Postura/acessório de morador adicional, roteamento em curso,
+dynamic code owners e residentes ausentes continuam sem suporte no save/resume.
+UI e janela X11, interação visual com os dois moradores e uma sessão longa
+permanecem pendentes.
 
 ```sh
 ./build/odh-person \

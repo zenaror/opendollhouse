@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 
 from house07_resident_main_smoke import RESIDENTS
+from linux_household_session_resume_cli import archive_sections, negative_archives
 
 
 def main():
@@ -38,7 +39,7 @@ def main():
         for resident_id in (48, 47):
             command = [str(binary), '--game-root', str(game), '--mode', '1', '--house', '7',
                        '--resident-id', str(resident_id), '--language', '1',
-                       '--headless-ticks', str(args.ticks)]
+                       '--headless-ticks', str(args.ticks), '--save-session-on-exit']
             result = subprocess.run(command, text=True, capture_output=True, env=env, timeout=args.timeout)
             if not result.stdout.strip():
                 raise RuntimeError(f'integrated household exit {result.returncode}: {result.stderr}')
@@ -66,22 +67,43 @@ def main():
                             extra['file'] == str(game / asset) and extra['routine'] == 4096 and
                             extra['status'] in ('waiting', 'yielded') and extra['steps'] > 0 and
                             extra['start_position'] == extra['position'] == positions[object_id]), extra
+            path = Path(report['saved_session_path'])
+            saved = path.read_bytes()
+            sections = {ident: body for ident, _, body in archive_sections(saved)}
+            assert sections[b'HOST'][8:10] == b'\x02\0'
+            assert int.from_bytes(sections[b'HHRD'][2:4], 'little') == 2
+            resumed_result = subprocess.run([str(binary), '--game-root', str(game), '--load-session', str(path),
+                '--headless-ticks', str(args.ticks), '--save-session-on-exit'], text=True, capture_output=True,
+                env=env, timeout=args.timeout)
+            assert resumed_result.returncode == 0, (resumed_result.returncode, resumed_result.stdout[-2000:], resumed_result.stderr)
+            resumed = json.loads(resumed_result.stdout)
+            assert (resumed['session_loaded'] and resumed['resumed_tick'] == args.ticks and resumed['ticks'] == 2*args.ticks and
+                    not resumed['host_failed'] and resumed['avatar']['owner'] == primary['owner'] and
+                    resumed['household_main']['scheduler_entities'] == 2), resumed
+            resumed_bytes = Path(resumed['saved_session_path']).read_bytes()
+            direct_command = list(command)
+            direct_command[direct_command.index('--headless-ticks')+1] = str(2*args.ticks)
+            direct_result = subprocess.run(direct_command, text=True, capture_output=True,env=env, timeout=args.timeout)
+            assert direct_result.returncode == 0, (direct_result.returncode,direct_result.stdout[-2000:],direct_result.stderr)
+            direct = json.loads(direct_result.stdout)
+            assert resumed_bytes == Path(direct['saved_session_path']).read_bytes(), 'resumed household differs from uninterrupted execution'
+            previous = path.read_bytes()
+            for name, malformed in negative_archives(saved):
+                bad = Path(directory)/(str(resident_id)+'-'+name+'.odhs');bad.write_bytes(malformed)
+                rejected = subprocess.run([str(binary),'--game-root',str(game),'--load-session',str(bad),
+                    '--headless-ticks','1'],text=True,capture_output=True,env=env,timeout=args.timeout)
+                assert rejected.returncode == 2, (name,rejected.returncode,rejected.stdout[-2000:],rejected.stderr)
+                assert bad.read_bytes() == malformed and path.read_bytes() == previous, 'rejected restore modified archive'
             reports.append((command, result, report, household, primary))
 
         assert [item[4]['owner'] for item in reports] == [105, 137]
-        # Save rejection occurs before launch and cannot write a partial archive.
-        command = reports[0][0]
-        rejected = subprocess.run(command + ['--save-session-on-exit'], text=True, capture_output=True,
-                                  env=env, timeout=args.timeout)
-        assert rejected.returncode == 2 and not rejected.stdout.strip(), rejected
-        assert 'explicit --single-resident-session' in rejected.stderr, rejected.stderr
-        assert not list((Path(directory) / 'XDG_DATA_HOME').rglob('*.odhs')), 'unexpected partial save'
     after = fingerprints()
     assert before == after, 'original game resources changed'
     print(json.dumps({'evidence': 'integrated_House07_whole_household_own_Main_one_scheduler',
         'resident_orders': [{'primary_owner': item[4]['owner'], 'ticks': item[2]['ticks'],
                              'scheduler_entities': item[3]['scheduler_entities']} for item in reports],
-        'multi_resident_save_rejected': True,
+        'whole_household_save_resume_matches_continuous': True,
+        'missing_partial_mismatched_rosters_rejected': True,
         'fingerprinted_original_inputs_unchanged': True, 'input_sha256': after,
         'visual_window_validated': False, 'full_gameplay': False}, indent=2))
 

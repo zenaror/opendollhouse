@@ -728,7 +728,7 @@ add_library(odh_session_bundle src/session_bundle.cpp src/seated_session_continu
 target_link_libraries(odh_session_bundle PUBLIC odh_session_archive odh_session_resource_identity
   odh_world_snapshot_codec odh_relationship_snapshot_codec odh_vm_snapshot_codec
   odh_entity_scheduler_snapshot_codec odh_entity_thread_controllers_snapshot_codec)
-add_library(odh_single_resident_session_restore src/single_resident_session_restore.cpp)
+add_library(odh_single_resident_session_restore src/single_resident_session_restore.cpp src/household_session_restore.cpp)
 target_link_libraries(odh_single_resident_session_restore PUBLIC odh_session_bundle odh_playback odh_lot_context odh_bootstrap odh_random)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_single_resident_session_restore PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
@@ -782,6 +782,13 @@ if(BUILD_TESTING)
   add_executable(odh-seated-session-continuation-tests tests/seated_session_continuation.cpp)
   target_link_libraries(odh-seated-session-continuation-tests PRIVATE odh_single_resident_session_restore)
   add_test(NAME seated_session_continuation COMMAND odh-seated-session-continuation-tests)
+  add_executable(odh-household-session-restore-tests tests/household_session_restore.cpp)
+  target_link_libraries(odh-household-session-restore-tests PRIVATE odh_single_resident_session_restore)
+  add_test(NAME household_session_restore COMMAND odh-household-session-restore-tests)
+  add_test(NAME household_session_write_process COMMAND odh-household-session-restore-tests --write ${CMAKE_CURRENT_BINARY_DIR}/synthetic-household-session.odhs)
+  set_tests_properties(household_session_write_process PROPERTIES FIXTURES_SETUP household_session_archive)
+  add_test(NAME household_session_resume_process COMMAND odh-household-session-restore-tests --resume ${CMAKE_CURRENT_BINARY_DIR}/synthetic-household-session.odhs)
+  set_tests_properties(household_session_resume_process PROPERTIES FIXTURES_REQUIRED household_session_archive)
   add_executable(odh-single-resident-session-restore-tests tests/single_resident_session_restore.cpp)
   target_link_libraries(odh-single-resident-session-restore-tests PRIVATE odh_single_resident_session_restore)
   add_test(NAME single_resident_session_restore COMMAND odh-single-resident-session-restore-tests)
@@ -1310,6 +1317,8 @@ if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME linux_game_entry_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_game_entry_cli.py $<TARGET_FILE:odh-person>)
+      add_test(NAME linux_household_session_resume_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_session_resume_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_session_resume_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_session_resume_cli.py $<TARGET_FILE:odh-person>)
     endif()

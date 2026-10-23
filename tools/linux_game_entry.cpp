@@ -102,8 +102,6 @@ Options parse_options(int argc, char** argv) {
             throw odh::FormatError("unknown or duplicate integrated game option");
         }
     }
-    if ((result.save_on_exit || result.load_session) && !result.single_resident_session)
-        throw odh::FormatError("session save/restore currently requires explicit --single-resident-session; full household continuation is not implemented");
     if (result.load_session) {
 #ifdef __linux__
         result.restore_archive = odh::encode_session_archive(odh_host::read_session_archive(*result.load_session));
@@ -114,8 +112,12 @@ Options parse_options(int argc, char** argv) {
             (result.house && *result.house != bundle.host.house_number) ||
             (result.resident_id && *result.resident_id != static_cast<unsigned>(bundle.host.resident_neighbor_id)))
             throw odh::FormatError("explicit launch options conflict with the saved session");
-        if (bundle.runtime_entities.size() != 1)
-            throw odh::FormatError("session loading currently supports one resident thread");
+        if (bundle.household_roster.empty() && !result.single_resident_session)
+            throw odh::FormatError("legacy single-resident session requires explicit --single-resident-session");
+        if (!bundle.household_roster.empty() && result.single_resident_session)
+            throw odh::FormatError("household session cannot use --single-resident-session");
+        if (bundle.runtime_entities.size() != (bundle.household_roster.empty() ? 1u : bundle.household_roster.size()))
+            throw odh::FormatError("session VM roster does not match its household profile");
         result.mode = bundle.host.neighborhood_mode;
         result.language = bundle.resources.language_code;
         result.house = bundle.host.house_number;
@@ -518,6 +520,19 @@ int odh_linux_game_entry(int argc, char** argv) {
             if (bundle.host.family_chunk_id != session.family_chunk_id ||
                 bundle.host.family_number != session.family_number || bundle.host.resident_guid != resident->guid)
                 throw odh::FormatError("saved session family or resident no longer matches the selected lot");
+            if (!bundle.household_roster.empty()) {
+                if (bundle.household_roster.size() != session.members.size())
+                    throw odh::FormatError("saved household roster differs from the current FAMI family");
+                for (const auto& saved_member : bundle.household_roster) {
+                    const auto found = std::find_if(session.members.begin(), session.members.end(),
+                        [&](const auto& member) { return member.neighbor_id == saved_member.neighbor_id; });
+                    if (found == session.members.end() || found->guid != saved_member.guid ||
+                        found->object_definition_id != saved_member.object_definition_id ||
+                        std::filesystem::canonical(userdata / "Characters" / found->character_asset).lexically_relative(game) !=
+                            std::filesystem::path(saved_member.character_asset))
+                        throw odh::FormatError("saved household member identity differs from the current FAMI family");
+                }
+            }
         }
         if (options.plan_only) {
             const auto identity = odh_host::identify_session_resources(game, plan.resources,
@@ -546,7 +561,7 @@ int odh_linux_game_entry(int argc, char** argv) {
             const auto characters = require_directory(game, userdata / "Characters");
             for (const auto& member : session.members)
                 session_context.household_members.push_back({require_file(game, characters / member.character_asset),
-                    member.guid, member.object_definition_id});
+                    member.guid, static_cast<std::int16_t>(member.neighbor_id), member.object_definition_id});
         }
         session_context.bounded_headless = options.headless_ticks.has_value();
         session_context.game_root = game;

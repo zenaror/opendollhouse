@@ -1,6 +1,6 @@
 # Durable session save design
 
-This is a design checkpoint for saving a running OpenDollhouse session across a process restart. The Linux host now has an experimental single-resident save/load path; the playable restart gate below remains incomplete.
+This is a design checkpoint for saving a running OpenDollhouse session across a process restart. The Linux host now has experimental save/load paths for a single resident and for the supported whole-household profile. House07 confirms short headless continuation for two present residents; UI/X11 and long-session gates remain incomplete.
 
 ## Storage boundary
 
@@ -30,9 +30,13 @@ Capture only at a safe point between simulation ticks, after VM/controller callb
 
 Load into a separate candidate session: verify the file and game-resource identity; rebuild immutable programs, resource catalogs, world, relationships, VMs, host bindings, controllers, scheduler, and random state in dependency order; validate all links; then replace the live session in one step. If any stage fails, keep the current session and report a useful log entry.
 
-## First verification gate
+## Initial single-resident verification gate
 
-Use the real House07 data and an integration test that starts a session, performs Sit, reaches a safe tick boundary, saves, exits the process, starts a fresh process, loads the file, and checks that the resident is still seated with the same lot, position, relationships, and pending runtime state. Then execute Stand and verify that the original action can continue. Include cases for a truncated file, changed game-resource identity, and an interrupted write; each must fail without damaging the prior save.
+The initial real-House07 gate starts a session, performs Sit, saves at a safe
+tick boundary, exits, loads in a fresh process, verifies the seated resident
+state, then executes Stand and saves again. The single-resident CLI gate is
+recorded in [the playable feature matrix](playable-feature-matrix.md); the
+whole-household extension is documented below.
 
 Passing this gate proves only restart persistence for that tested session and build. It does not prove that every lot, family, expansion, or running BHAV can be saved. Those remain separate coverage gates in [the playable feature matrix](playable-feature-matrix.md).
 
@@ -40,7 +44,7 @@ Passing this gate proves only restart persistence for that tested session and bu
 
 The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte header contains the eight-byte signature `ODHSES\r\n`, version, zeroed header flags, section count, payload length, and CRC-32. Each section has a four-byte uppercase/digit ID, a required bit, a 64-bit payload length, a CRC-32, and its payload. Defaults cap a file at 128 MiB, a section at 64 MiB, and the archive at 128 sections. The codec rejects duplicate IDs, unknown flag bits, unsupported versions, truncation, unclaimed bytes, checksum errors, and limit violations.
 
-The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; the launch-time `--load-session PATH` restores supported single-resident sessions.
+The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; `--load-session PATH` restores supported single-resident or whole-household sessions according to their profile.
 
 A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; the reusable candidate-restore helper now rebuilds a fresh World, and the live host transfers that candidate into its lot container before binding callbacks or renderers.
 
@@ -73,9 +77,32 @@ has an experimental S-key capture path between ticks. It records the current
 bundle values, hashes the selected resource manifest only on request, and stores
 the archive atomically in the user data directory. Saves are rejected while
 a route is active, Go Here is queued, any dynamic object/portal code owner exists,
-or a seated action requires an unserialized binding. The experimental loader supports only the same restricted single-resident profile.
+or a seated action requires an unserialized binding. The loader applies the corresponding supported profile before publishing a candidate session.
 A public save selector and visual X11 validation are still absent; do not treat
 this limited persistence support as a playable build.
+
+### Whole-household continuation
+
+The integrated House07 gate now saves the two residents present in the lot,
+starts a fresh process, restores both resident VMs/controllers and continues
+the household. For each of the two resident selections, the resumed run's
+saved archive is byte-for-byte equal to the archive from an uninterrupted run
+with the same total tick count. The focused test set passed 11/11 in Debug and
+11/11 in Release. Commercial files covered by the before/after fingerprints
+retained their hashes. This is bounded headless continuation evidence for the
+tested House07 state and build, not a complete gameplay result.
+
+The household loader pins the character IFF resources used by the resident
+roster under a cumulative 64 MiB byte budget. If the total exceeds that budget
+or a file changes while being read, the launch/save path fails before writing
+the session archive. This limit covers the bounded resident-resource snapshot;
+it is not a measurement of total process memory.
+
+The supported profile requires the household roster and resident resources to
+match the saved World. Additional-resident posture/accessory state, an active
+route, dynamic object or portal code owners, and residents absent from the
+saved World remain unsupported. UI/X11 interaction and a long-running
+household session still need validation.
 
 The Linux runtime receives the canonical game root and resolved resource paths
 without hashing them on a fresh launch; loading an ODH archive first hashes and
@@ -86,18 +113,18 @@ resources opened dynamically on other lots and expansion sidecars. Synthetic
 coverage and one real installation plan are recorded in
 [session-resource-manifest-validation.md](session-resource-manifest-validation.md).
 
-The reusable `SingleResidentSessionRestore` helper now decodes a bounded bundle
-against an explicitly supplied resource identity and selected lot/family/resident.
-It owns an unpublished candidate World, relationship state, lot globals and
-bootstrap globals. The caller must rebuild equivalent code, memory/primitive
-callbacks, controllers, Playback resolver and scheduler hooks against this
-candidate, then restore execution before starting Main. A failure invalidates
-that candidate: discard it and its execution objects; the live session must not
-be replaced until every restore step succeeds. Tick and RNG are published only
-after VM, controllers, Playback and scheduler accept their state.
+The `SingleResidentSessionRestore` helper remains the bounded single-resident
+candidate-restore path. It decodes a bundle against an explicitly supplied
+resource identity and selected lot/family/resident. It owns an unpublished
+candidate World, relationship state, lot globals and bootstrap globals. The
+caller rebuilds equivalent code, memory/primitive callbacks, controllers,
+Playback resolver and scheduler hooks against this candidate, then restores
+execution before starting Main. A failure invalidates that candidate; the live
+session is replaced only after every restore step succeeds. Tick and RNG are
+published only after VM, controllers, Playback and scheduler accept their state.
 
-This helper currently accepts one resident thread and the unchanged original lot
-entity roster and generations, bank layouts, definitions, entry points and saved
+That helper accepts one resident thread and the unchanged original lot entity
+roster and generations, bank layouts, definitions, entry points and saved
 baseline metadata. Resource fingerprint, language, expansions, lot/family/resident
 selection and the exact supported global roster must match. Identity globals 9
 (family) and 10 (house) must match the selected household and original lot;
@@ -107,10 +134,11 @@ non-standing posture and seated-action bindings remain unsupported. The original
 live-save guards remain; before filesystem mutation, the host also applies the
 loader profile against its retained original-lot baseline. Unsupported posture,
 attachment, roster, metadata, globals or runtime state therefore cannot replace
-a previously usable save. The integrated Linux launcher now accepts
-`--load-session PATH`; archive selection supplies mode, house, family, resident
-and language, while conflicting explicit options, changed resources and
-unsupported runtime state fail before Main is started. It rebuilds the original
+a previously usable save. The integrated Linux launcher also has a
+whole-household restore path for the profile described above.
+`--load-session PATH` selects mode, house, family, resident and language from
+the archive; conflicting explicit options, changed resources and unsupported
+runtime state fail before Main is started. It rebuilds the original
 lot metadata, transfers the validated candidate World into the host lot container,
 binds fresh VM/controllers/Playback/scheduler callbacks, restores execution and
 continues at the saved logical tick plus one. Renderer and routing references
@@ -144,9 +172,9 @@ is byte-identical to uninterrupted execution. This exercises the integrated
 launcher, original-lot reconstruction, resource fingerprint, callback graph and
 production atomic file path without commercial files or a display.
 
-Remaining for the House07 restart gate: serialize/rebind dynamic code owners
-and the seated action needed to continue Stand; support routing persistence or
-retain its explicit save refusal. Then run Sit → save → new process → load
-seated → Stand against real House07 data, including the actual window and
-animation resources. The synthetic CLI result does not establish this gate,
-expansion coverage, multi-resident simulation or full game compatibility.
+Remaining for the House07 restart gate: validate the supported household
+sequence through the actual X11 window and on a long-running session. Add
+profiles for additional-resident posture/accessory state, in-progress routing,
+dynamic code owners and residents absent from the saved World before claiming
+those cases. The completed two-resident headless gate does not establish
+expansion coverage or full game compatibility.

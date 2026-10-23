@@ -100,12 +100,7 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     check(single.returncode == 0 and
           json.loads(single.stdout)["resident_execution"] == "single_resident_session",
           "single resident continuation is an explicit diagnostic profile")
-    unsafe_save = subprocess.run([binary, "--game-root", str(root), "--mode", "1", "--house", "7",
-                                  "--headless-ticks", "1", "--save-session-on-exit"],
-                                 capture_output=True, text=True, env=env)
-    check(unsafe_save.returncode == 2 and not unsafe_save.stdout.strip() and
-          "explicit --single-resident-session" in unsafe_save.stderr,
-          "full household save cannot silently capture only the selected resident")
+    # Execution and complete household persistence use the richer session CLI fixture.
     identity = result["resource_identity"]
     check(identity["language"] == 15 and identity["expansion_mask"] == 0x7f and
           len(identity["sha256"]) == 64 and identity["resource_count"] == len(identity["files"]) and
