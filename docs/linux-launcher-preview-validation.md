@@ -1,20 +1,26 @@
-# Prévia do launcher Linux e ligação de identidade
+# Prévia do launcher Linux e seleção de morador
 
 `tools/play_linux.py` encadeia a escolha de lote, a resolução da família e a
-preparação da prévia residencial com `odh-person`. O vínculo entre um morador
-na vizinhança e sua entidade no lote é feito pelo GUID: os números não são os
-mesmos. Em House07 da instalação original, por exemplo, a vizinhança lista os
-moradores como 48 e 47; o World salvo guarda esses mesmos GUIDs nos objetos
-105 e 137. O launcher consulta `odh-saved-world`, exige uma única entidade do
-tipo avatar para o GUID escolhido e falha se não encontrar correspondência
-única.
+prévia residencial com `odh-person`. Para abrir um membro da família, o
+launcher passa o GUID ao `odh-person`; o runtime resolve o número correto
+quando já está restaurando o World do lote. Assim não se confunde o número do
+morador na vizinhança com o número de seu objeto salvo, nem se lê o lote uma
+segunda vez num processo auxiliar.
+
+Em House07 da instalação original, a vizinhança lista os moradores como 48 e
+47; os objetos correspondentes no World são 105 e 137. O smoke de 32 ticks
+selecionou cada um pelo GUID e confirmou o GUID, o objeto e o arquivo de
+personagem correspondentes. A saída 3 indica que o teste curto chegou ao seu
+limite enquanto Main continuava aguardando; o relatório confirma ausência de
+falha do host e da VM. Isso prova a seleção e uma execução limitada, não uma
+ação jogável completa.
 
 ## Verificação reproduzível
 
 ```sh
 cmake -S . -B /tmp/odh-play-linux-build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build /tmp/odh-play-linux-build --target odh-session-entry odh-saved-world odh-neighborhood-window odh-person -j4
-ctest --test-dir /tmp/odh-play-linux-build --output-on-failure -R 'session_entry_cli|play_linux_cli|neighborhood_window_cli'
+cmake --build /tmp/odh-play-linux-build --target odh-session-entry odh-neighborhood-window odh-person -j4
+ctest --test-dir /tmp/odh-play-linux-build --output-on-failure -R 'person_cli|session_entry_cli|play_linux_cli|neighborhood_window_cli'
 
 python3 -B tools/play_linux.py \
   --game-root '../referencias/The Sims' \
@@ -23,15 +29,15 @@ python3 -B tools/play_linux.py \
   --game-root '../referencias/The Sims' \
   --binary-dir /tmp/odh-play-linux-build --mode 1 --house 7 \
   --resident-id 47 --plan-only
+python3 -B tests/house07_resident_main_smoke.py \
+  --binary /tmp/odh-play-linux-build/odh-person \
+  --game-root '../referencias/The Sims' --ticks 32
 ```
 
-Em 2026-10-22, a build Debug e os três testes de CLI passaram. Com os dados
-originais externos, a preparação escolheu por padrão `User00000.iff`, ligou o
-ID da vizinhança 48 ao objeto salvo 105 e encontrou dois membros. Ao escolher
-o ID de vizinhança 47, usou `User00001.iff` e o objeto salvo 137. Os testes
-sintéticos também confirmam que mapeamento ausente ou duplicado é recusado.
-Uma captura headless do primeiro morador desenhou a casa e o Sim, mas o Main
-terminou incompleto (código 3); isso não comprova um ciclo de jogo concluído.
+Os testes de CLI cobrem GUIDs inválidos, o uso fora de um World salvo, seleção
+no launcher e cancelamento do mapa. O smoke com dados comerciais externos
+confirma que os GUIDs dos dois membros selecionam os objetos salvos 105 e 137.
+Esses dados permanecem fora do repositório.
 
 ## Limites desta etapa
 
@@ -39,6 +45,6 @@ A janela do mapa e a prévia do lote ainda são processos/janelas separados. O
 launcher executa somente o Main do morador escolhido; não implementa a sessão
 contínua dos outros moradores, retorno à vizinhança, criação ou edição de
 famílias, salvar/continuar, destinos e sistemas das expansões. A janela
-interativa do mapa→lote ainda não foi validada aqui. Esta etapa remove apenas
-a troca incorreta de identidade e torna reproduzível a preparação do caminho;
-não altera o critério completo de [primeira build jogável](linux-playable-scope.md).
+interativa do mapa→lote ainda não foi validada aqui. Esta etapa evita a leitura
+duplicada do World e resolve o morador no runtime que já o restaura; não altera
+o critério completo de [primeira build jogável](linux-playable-scope.md).

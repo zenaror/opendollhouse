@@ -32,7 +32,7 @@ def run_json(command, label):
     return value
 
 
-def build_person_command(args, game, binary_dir, house, session):
+def build_person_command(args, game, house, session):
     userdata = game / "UserData"
     gamedata = game / "GameData"
     global_far = require_file(gamedata / "Global/Global.far")
@@ -80,23 +80,6 @@ def build_person_command(args, game, binary_dir, house, session):
     if not isinstance(resident_guid, int) or not 1 <= resident_guid <= 0xFFFFFFFF:
         raise LaunchError("selected resident has an invalid identity GUID")
 
-    saved_world_command = [str(binary_dir / "odh-saved-world"), str(house_file),
-        "--object-definitions", str(objects_far)]
-    for character in character_files:
-        saved_world_command += ["--object-definition-file", str(character)]
-    saved_world_command += ["--neighborhood", str(neighborhood)]
-    saved_world = run_json(saved_world_command, "saved lot identity lookup")
-    records = saved_world.get("records")
-    if not isinstance(records, list):
-        raise LaunchError("saved lot identity lookup returned no entity records")
-    matches = [record for record in records if isinstance(record, dict) and
-        record.get("kind") == "avatar" and record.get("guid") == resident_guid]
-    if len(matches) != 1:
-        raise LaunchError("selected household member does not map to exactly one saved lot resident")
-    saved_object_id = matches[0].get("id")
-    if not isinstance(saved_object_id, int) or not 1 <= saved_object_id <= 32767:
-        raise LaunchError("selected resident has an invalid saved lot object ID")
-
     command = [str(args.binary_dir / "odh-person"),
         "--avatar-file", str(selected_character), str(object_definition_id),
         "--semiglobal", str(global_far), "PersonGlobals.iff",
@@ -110,7 +93,7 @@ def build_person_command(args, game, binary_dir, house, session):
     for archive in shared_archives:
         command += ["--animation-source", str(archive.resolve())]
     command += ["--saved-world-main", "--render-window",
-        "--render-saved-avatar", str(saved_object_id),
+        "--render-saved-guid", str(resident_guid),
         "--render-animation-far", str(animation_far),
         "--render-textures", str(textures_far),
         "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
@@ -120,7 +103,7 @@ def build_person_command(args, game, binary_dir, house, session):
     for path in sorted(game.rglob("*")):
         if path.is_file() and path.suffix.lower() in (".flr", ".wll"):
             command += ["--architecture-resource", str(path.resolve())]
-    return command, resident, saved_object_id
+    return command, resident
 
 
 def main():
@@ -143,7 +126,7 @@ def main():
         game = args.game_root.resolve()
         binary_dir = args.binary_dir.resolve()
         args.binary_dir = binary_dir
-        for name in ("odh-neighborhood-window", "odh-session-entry", "odh-saved-world", "odh-person"):
+        for name in ("odh-neighborhood-window", "odh-session-entry", "odh-person"):
             executable = binary_dir / name
             if not executable.is_file():
                 raise LaunchError(f"required OpenDollhouse program is missing: {executable}")
@@ -171,12 +154,11 @@ def main():
         if (session.get("evidence") != "session_entry_resolved_only" or
                 session.get("house_number") != house or session.get("mode") != args.mode):
             raise LaunchError("selected household validation returned an unexpected lot")
-        command, resident, saved_object_id = build_person_command(
-            args, game, binary_dir, house, session)
+        command, resident = build_person_command(args, game, house, session)
         if args.plan_only:
             print(json.dumps({"status": "ready", "house": house,
                 "family_chunk_id": session["family_chunk_id"],
-                "resident_id": saved_object_id,
+                "resident_guid": resident["guid"],
                 "resident_neighbor_id": resident["neighbor_id"],
                 "resident_asset": resident["character_asset"],
                 "resident_count": len(session["members"]), "interactive": False,
@@ -184,7 +166,7 @@ def main():
             return 0
         print(json.dumps({"status": "starting_lot_preview", "house": house,
             "family_chunk_id": session["family_chunk_id"],
-            "resident_id": saved_object_id,
+            "resident_guid": resident["guid"],
             "resident_neighbor_id": resident["neighbor_id"],
             "resident_count": len(session["members"]),
             "limitations": ["map and lot use separate windows", "only the selected resident Main runs",

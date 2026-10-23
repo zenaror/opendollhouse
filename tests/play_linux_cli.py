@@ -51,11 +51,6 @@ def main():
                 {"guid": 844195932, "neighbor_id": 47, "character_asset": "User00001.iff", "object_definition_id": 128},
             ]}))
         (root / "person-args.json").write_text("[]")
-        (root / "saved-world.json").write_text(json.dumps({"records": [
-            {"id": 105, "guid": 850010198, "kind": "avatar"},
-            {"id": 137, "guid": 844195932, "kind": "avatar"},
-        ]}))
-        (root / "saved-world-args.json").write_text("[]")
         fake_executable(binary_dir / "odh-neighborhood-window", f"""
 import pathlib
 print(pathlib.Path({str(root / 'map.json')!r}).read_text())
@@ -63,11 +58,6 @@ print(pathlib.Path({str(root / 'map.json')!r}).read_text())
         fake_executable(binary_dir / "odh-session-entry", f"""
 import json, pathlib
 print(pathlib.Path({str(root / 'session.json')!r}).read_text())
-""")
-        fake_executable(binary_dir / "odh-saved-world", f"""
-import json, pathlib, sys
-pathlib.Path({str(root / 'saved-world-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
-print(pathlib.Path({str(root / 'saved-world.json')!r}).read_text())
 """)
         fake_executable(binary_dir / "odh-person", f"""
 import json, pathlib, sys
@@ -78,37 +68,21 @@ pathlib.Path({str(root / 'person-args.json')!r}).write_text(json.dumps(sys.argv[
         assert planned.returncode == 0, planned.stderr
         report = json.loads(planned.stdout)
         assert report["status"] == "ready" and report["house"] == 7
-        assert report["family_chunk_id"] == 12 and report["resident_id"] == 105
+        assert report["family_chunk_id"] == 12 and report["resident_guid"] == 850010198
         assert report["resident_neighbor_id"] == 48
         command = report["command"]
         assert command[command.index("--avatar-file") + 1].endswith("User00000.iff")
-        assert command[command.index("--render-saved-avatar") + 1] == "105"
-        lookup_args = json.loads((root / "saved-world-args.json").read_text())
-        assert lookup_args[0].endswith("House07.iff")
-        assert lookup_args.count("--object-definition-file") == 2
+        assert command[command.index("--render-saved-guid") + 1] == "850010198"
+        assert "--render-saved-avatar" not in command
         assert command.count("--object-definition-file") == 2
         assert "--saved-world-main" in command and "--render-window" in command
         assert command.count("--architecture-resource") == 2
 
         other = run(binary_dir, game, "--resident-id", "47", "--plan-only")
         assert other.returncode == 0, other.stderr
-        assert json.loads(other.stdout)["resident_id"] == 137
+        assert json.loads(other.stdout)["resident_guid"] == 844195932
         assert json.loads(other.stdout)["resident_neighbor_id"] == 47
         assert "User00001.iff" in json.loads(other.stdout)["resident_asset"]
-
-        saved_world_good = (root / "saved-world.json").read_text()
-        (root / "saved-world.json").write_text(json.dumps({"records": [
-            {"id": 105, "guid": 850010198, "kind": "avatar"},
-        ]}))
-        missing = run(binary_dir, game, "--resident-id", "47", "--plan-only", "--house", "7")
-        assert missing.returncode == 2 and "does not map to exactly one" in missing.stderr
-        (root / "saved-world.json").write_text(json.dumps({"records": [
-            {"id": 105, "guid": 844195932, "kind": "avatar"},
-            {"id": 137, "guid": 844195932, "kind": "avatar"},
-        ]}))
-        ambiguous = run(binary_dir, game, "--resident-id", "47", "--plan-only", "--house", "7")
-        assert ambiguous.returncode == 2 and "does not map to exactly one" in ambiguous.stderr
-        (root / "saved-world.json").write_text(saved_world_good)
 
         launched = run(binary_dir, game, "--resident-id", "47", "--house", "7")
         assert launched.returncode == 0, launched.stderr

@@ -56,7 +56,7 @@ def main():
             "--object-definition-file", str(character_files[1]),
             "--animation-source", str(game / "GameData/Animation/Animation.far"),
             "--animation-source", str(game / "ExpansionShared/ExpansionShared.far"),
-            "--headless-main", "--render-saved-avatar", str(object_id),
+            "--headless-main", "--render-saved-guid", str(guid),
             "--ticks", str(args.ticks), "--render-floors", str(game / "GameData/floors.iff"),
             "--render-walls", str(game / "GameData/walls.iff"),
         ]

@@ -32,6 +32,14 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
   return subprocess.run(args+list(extra),capture_output=True,text=True,env=env)
  setup();r=run(['--render-saved-avatar','105'])
  assert r.returncode==2 and not r.stdout and 'render-frame' in r.stderr
+ setup();r=run(['--render-saved-guid','0'])
+ assert r.returncode==2 and not r.stdout and 'saved resident GUID' in r.stderr
+ setup();r=run(['--render-saved-guid','4294967296'])
+ assert r.returncode==2 and not r.stdout and 'saved resident GUID' in r.stderr
+ setup();r=run(['--render-saved-guid','1'])
+ assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
+ setup();r=run(['--render-saved-avatar','1','--render-saved-guid','1'])
+ assert r.returncode==2 and not r.stdout and 'usage:' in r.stderr
  log=root/'xdg-state'/'opendollhouse'/'logs'/'odh-person.log'
  assert log.exists() and 'fatal exception:' in log.read_text() and 'session ended exit_code=2' in log.read_text()
  assert 'log saved to' in r.stderr,repr(r.stderr)
