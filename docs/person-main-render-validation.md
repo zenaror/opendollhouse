@@ -89,6 +89,21 @@ porque o limite de ticks foi atingido; o JSON registra 604 passos de VM e
 nenhum diagnóstico de falha. Isso não afirma que o Main terminou ou que a
 simulação é jogável.
 
+### Contagem de pixels do avatar no lote salvo (2026-10-23)
+
+O modo `--saved-world-main --render-frame` exportava a imagem corretamente,
+mas informava `actor_raster_pixels=0` e `actor_composited_pixels=0`: a coleta
+estava habilitada apenas para `--headless-main`, e a contagem composta lia a
+camada do chão em vez da camada própria dos avatares. A coleta agora abrange os
+dois modos e conta o token do avatar em `avatar_pick_ids`.
+
+Repetir House07 no tick 214 produziu 4.725 pixels do Sim antes da composição do
+lote e 4.150 pixels identificados como visíveis depois dela. O PPM foi idêntico
+ao anterior à correção (SHA256
+`8e61cf69fac5b4235cd3f8736a4b93e8755d694863abe0347585f58d2408dd25`), mostrando
+que o ajuste corrigiu a medição sem alterar a imagem. É evidência do caminho
+CPU de captura; não valida a janela Linux nem a aparência no jogo original.
+
 Arquivos:
 
 - `reports/odh-person-main-first-sample-20261020.json`

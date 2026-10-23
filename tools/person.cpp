@@ -3853,7 +3853,7 @@ struct PlacementCandidateProbe {
         }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
-        const bool track_actor_pixels=headless_main&&render_output;
+        const bool track_actor_pixels=(headless_main||saved_world_main)&&render_output;
         if(track_actor_pixels)scene_state.owner_id=std::numeric_limits<std::uint16_t>::max();
         else if(render_window||headless_window_interaction)
             scene_state.owner_id=static_cast<std::uint16_t>(runtime_avatar_id);
@@ -3866,7 +3866,7 @@ struct PlacementCandidateProbe {
         std::vector<SavedLotAvatarLayer> avatar_layers;
         if(render_lot){
             avatar_layers.push_back({std::move(frame.image),
-                static_cast<std::uint16_t>(render_window||headless_window_interaction?
+                static_cast<std::uint16_t>(render_window||headless_window_interaction||track_actor_pixels?
                     runtime_avatar_id:0)});
         }
         if((render_window||headless_window_interaction)&&render_lot){
@@ -3890,14 +3890,19 @@ struct PlacementCandidateProbe {
         }
         if(render_lot){
             auto lot=render_lot->render(render_camera,avatar_layers,
-                render_window||headless_window_interaction.has_value());
+                render_window||headless_window_interaction.has_value()||track_actor_pixels);
             frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
         std::uint64_t actor_composited_pixels=0;
         if(track_actor_pixels){
-            const auto& owner_ids=render_lot_evidence?render_lot_evidence->ground_pick_ids:frame.image.owner_ids;
-            if(owner_ids.size()==frame.image.pixels.size())
-                actor_composited_pixels=std::count(owner_ids.begin(),owner_ids.end(),scene_state.owner_id);
+            if(render_lot_evidence){
+                const auto& avatar_ids=render_lot_evidence->avatar_pick_ids;
+                if(avatar_ids.size()==frame.image.pixels.size())
+                    actor_composited_pixels=std::count(avatar_ids.begin(),avatar_ids.end(),
+                        static_cast<std::uint16_t>(runtime_avatar_id));
+            }else if(frame.image.owner_ids.size()==frame.image.pixels.size())
+                actor_composited_pixels=std::count(frame.image.owner_ids.begin(),frame.image.owner_ids.end(),
+                    scene_state.owner_id);
         }
         if(saved_world_main&&render_lot){
             odh_host::StatusHud hud;hud.actor=active_household_actor;
