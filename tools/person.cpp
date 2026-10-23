@@ -92,6 +92,7 @@
 #include <cstdlib>
 #include <thread>
 #include <sstream>
+#include <string_view>
 
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;std::shared_ptr<const std::string> frozen{};};
@@ -118,6 +119,52 @@ void different_render_path(const std::string& output,const std::string& input) {
         throw odh::FormatError("person frame output aliases an input");
 }
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
+#ifdef ODH_HAVE_X11
+std::string loading_lot_message(std::uint8_t language){
+    static constexpr std::array<std::string_view,20> messages{
+        "Loading lot...","Loading lot...","Chargement du terrain...","Grundstück wird geladen...",
+        "Caricamento del lotto...","Cargando el solar...","Kavel wordt geladen...","Indlæser grund...",
+        "Laddar tomten...","Laster tomten...","Tonttia ladataan...","טוען את המגרש...",
+        "Загрузка участка...","Carregando o lote...","区画を読み込んでいます...","Wczytywanie parceli...",
+        "正在加载地段...","正在載入地段...","กำลังโหลดพื้นที่...","부지를 불러오는 중..."};
+    return language>=1&&language<=messages.size()?std::string(messages[language-1]):std::string("Loading lot...");
+}
+odh::RasterFrame make_loading_lot_frame(std::uint32_t width,std::uint32_t height){
+    odh::RasterFrame frame{};frame.width=width;frame.height=height;
+    const auto count=static_cast<std::size_t>(width)*height;
+    frame.pixels.assign(count,{21,31,41,255});
+    frame.depth.assign(count,std::numeric_limits<float>::infinity());
+    const auto rectangle=[&](std::int32_t x,std::int32_t y,std::int32_t w,std::int32_t h,
+                             std::array<std::uint8_t,4> color){
+        const auto left=std::clamp<std::int32_t>(x,0,static_cast<std::int32_t>(width));
+        const auto top=std::clamp<std::int32_t>(y,0,static_cast<std::int32_t>(height));
+        const auto right=std::clamp<std::int32_t>(x+w,0,static_cast<std::int32_t>(width));
+        const auto bottom=std::clamp<std::int32_t>(y+h,0,static_cast<std::int32_t>(height));
+        for(auto row=top;row<bottom;++row)for(auto column=left;column<right;++column)
+            frame.pixels[static_cast<std::size_t>(row)*width+static_cast<std::size_t>(column)]=color;
+    };
+    const auto card_width=std::min<std::uint32_t>(width,288);
+    const auto card_height=std::min<std::uint32_t>(height,62);
+    const auto card_x=static_cast<std::int32_t>((width-card_width)/2);
+    const auto card_y=static_cast<std::int32_t>((height-card_height)/2);
+    rectangle(card_x,card_y,static_cast<std::int32_t>(card_width),static_cast<std::int32_t>(card_height),
+              {39,52,63,255});
+    rectangle(card_x,card_y,static_cast<std::int32_t>(card_width),3,{82,186,170,255});
+    return frame;
+}
+void present_loading_lot(odh_host::LinuxWindow& window,std::uint8_t language){
+    auto frame=make_loading_lot_frame(window.width(),window.height());
+    const auto message=loading_lot_message(language);
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    odh_host::TextOverlayStyle style;style.x=16;style.y=static_cast<std::int32_t>(frame.height/2)-20;
+    style.width=static_cast<std::int32_t>(frame.width)-32;style.height=40;style.font_size_px=15;
+    style.background={39,52,63,0};style.foreground={240,245,247,255};
+    (void)odh_host::draw_text_overlay(frame,message,language,style);
+#endif
+    window.set_title("OpenDollhouse | "+message);
+    window.present(frame);
+}
+#endif
 odh::SessionActionRoutineSource load_session_action_source(
     const odh::DefinitionCandidate& candidate,std::uint16_t root,
     const std::optional<odh::SessionLinkedSemiglobal>& expected_link,
@@ -2619,6 +2666,7 @@ struct PlacementCandidateProbe {
                     render_camera.width,render_camera.height,title);
                 render_window_host=owned_render_window.get();
             }
+            if(render_window_host)present_loading_lot(*render_window_host,game_language);
         }
 #else
         if(render_window&&shared_window)

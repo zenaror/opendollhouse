@@ -13,6 +13,10 @@ validação indicados por versão.
 - O mapa de vizinhança mostra o título e a tecla de cancelamento no idioma
   selecionado. Os textos STR# são convertidos da codificação original do jogo
   para UTF-8 antes de serem desenhados na janela Linux.
+- A janela do lote agora mostra uma mensagem de carregamento no idioma escolhido
+  enquanto a primeira cena é preparada, evitando uma tela preta nessa espera.
+  House07 foi aberto em X11 isolado, com mensagem em português, lote, HUD e dois
+  moradores visíveis; os 215 CTests passaram sob Xephyr.
 
 ### Planejado e acompanhado
 

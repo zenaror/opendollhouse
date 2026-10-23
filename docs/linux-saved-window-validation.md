@@ -32,3 +32,24 @@ Não foi repetida toda a suíte fora do sandbox.
 Próximo passo de UI: integrar câmera/input/story/walls ao renderer do World salvo,
 com os dados lógicos preservados. Playback/threads/VM do lote continuam pendentes;
 o objetivo funcional Linux permanece ativo.
+
+## Aviso de carregamento e lote real em X11 — 2026-10-23
+
+A primeira imagem da casa pode demorar enquanto o renderer prepara o lote. A
+janela agora apresenta um aviso traduzido para o idioma selecionado, sobre um
+fundo próprio, até a primeira cena ficar pronta. O aviso em português
+`Carregando o lote...` foi capturado dentro de Xephyr ao abrir House07 com
+idioma14. Em seguida, outra captura mostrou a casa, o HUD e os dois moradores.
+
+Na build `d4e7a9c` com essa alteração local, X11 virtual e dados originais,
+um clique sintético do `xdotool` selecionou o chão (23,26); Space iniciou o
+fluxo Go Here e `S` gravou um save em `XDG_DATA_HOME` temporário no tick1365.
+O mesmo build restaurou esse arquivo sem janela: `session_loaded=true`,
+`resumed_tick=1365`, `host_failed=false`, com o morador em [376,424,1,6].
+Os sete arquivos comerciais protegidos por hash continuaram iguais. O input foi
+sintético, não um clique físico, e o resultado cobre um lote residencial curto,
+não os demais modos, expansões ou equivalência completa.
+
+Após a alteração, `odh-person` compilou e os 215 CTests passaram em Xephyr.
+Esse teste confirma a janela X11 isolada e a cena residencial House07; não
+valida outro servidor gráfico ou hardware portátil.
