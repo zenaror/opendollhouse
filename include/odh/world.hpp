@@ -61,6 +61,14 @@ struct WorldLimits {
     std::size_t words = 65536;
     std::size_t bank_words = 4096;
 };
+// Owned values only; no VM callbacks, resource pointers, queues or clocks.
+struct WorldSnapshot {
+    std::vector<Entity> entities;
+    AttributePolicy attribute_policy = AttributePolicy::fixed;
+    std::size_t word_count = 0;
+    std::uint64_t generation_sequence = 0;
+    std::uint64_t spatial_revision = 0;
+};
 // Minimal entity state. Layouts/initial values come from explicit construction;
 // this does not load a lot, parse SLOT/OBJD, or initialize TS1 objects.
 class World {
@@ -74,6 +82,12 @@ public:
     World& operator=(const World&) = delete;
     World(World&&) = delete;
     World& operator=(World&&) = delete;
+    WorldSnapshot snapshot() const;
+    // Fresh empty destination only (no entities or prior generation/spatial
+    // history), using its capacity limits. Invalid values return false;
+    // allocation exceptions propagate. Both leave World unchanged.
+    // Restores entity state, policy and counters; not a full simulation save.
+    bool restore_snapshot(const WorldSnapshot&);
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
     // Import a new typed entity atomically. All banks are copied after validation;
     // motives retain their signed values without the runtime setter's clamp.

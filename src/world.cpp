@@ -37,6 +37,101 @@ std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
         ? frame.context.caller : frame.context.stack_object;
 }
 }
+WorldSnapshot World::snapshot() const {
+    WorldSnapshot result;
+    result.attribute_policy=attribute_policy_;
+    result.word_count=words_;
+    result.generation_sequence=generation_sequence_;
+    result.spatial_revision=spatial_revision_;
+    result.entities.reserve(entities_.size());
+    for(const auto& [id,entity]:entities_) result.entities.push_back(entity);
+    return result;
+}
+bool World::restore_snapshot(const WorldSnapshot& snapshot) {
+    if(!entities_.empty() || words_!=0 || generation_sequence_!=0 || spatial_revision_!=0 ||
+       snapshot.entities.size()>limits_.entities ||
+       (snapshot.attribute_policy!=AttributePolicy::fixed &&
+        snapshot.attribute_policy!=AttributePolicy::ts1_bounded)) return false;
+    auto available=limits_.words;
+    // Bound all banks before copying. ObjectData follows its fixed index range,
+    // as declare_object_word does, rather than the variable bank_words limit.
+    for(const auto& entity:snapshot.entities) {
+        if(entity.id<=0 || !entity.generation || entity.generation>snapshot.generation_sequence ||
+           (entity.kind!=EntityKind::object && entity.kind!=EntityKind::avatar) ||
+           entity.attributes.size()>limits_.bank_words || entity.attributes.size()>32768 ||
+           entity.person_data.size()>limits_.bank_words || entity.person_data.size()>32768 ||
+           entity.slots.size()>limits_.bank_words || entity.slots.size()>32767 ||
+           entity.motives.size()>limits_.bank_words || entity.motives.size()>16 ||
+           entity.definition_words.size()>limits_.bank_words ||
+           (entity.kind!=EntityKind::avatar &&
+            (!entity.person_data.empty() || !entity.motives.empty() || entity.kill_timeout)) ||
+           (entity.kill_timeout && *entity.kill_timeout < -1) ||
+           !std::isfinite(entity.radian_direction) ||
+           (entity.position && !valid_position(*entity.position)) ||
+           (entity.entry_points && (!entity.definition || entity.entry_points->size()>256 ||
+                                    entity.entry_points->size()>limits_.bank_words/2)) ||
+           (entity.saved_object_banks &&
+            (limits_.bank_words<68 || entity.saved_object_banks->object_data[1]<0 ||
+             entity.saved_object_banks->object_data[1]>7))) return false;
+        for(const auto& [index,value]:entity.object_words)
+            if(index<0 || index>=79 || derived(index)) return false;
+        for(const auto& [index,value]:entity.definition_words)
+            if(index<0 || index>255) return false;
+        if(entity.saved_object_banks) {
+            if(!entity.definition) return false;
+            for(std::int16_t index=0;index<68;++index)
+                if(!derived(index) && !entity.object_words.count(index)) return false;
+        } else if(entity.unattached_slot!=-1) return false;
+        for(const auto count:{entity.attributes.size(),entity.person_data.size(),entity.slots.size(),
+                              entity.motives.size(),entity.object_words.size(),entity.definition_words.size(),
+                              entity.entry_points?2*entity.entry_points->size():std::size_t{0},
+                              entity.saved_object_banks?std::size_t{73}:std::size_t{0}}) {
+            if(count>available) return false;
+            available-=count;
+        }
+    }
+    if(snapshot.word_count!=limits_.words-available) return false;
+    std::map<std::int16_t,Entity> candidate;
+    std::map<std::uint64_t,std::int16_t> generations;
+    for(const auto& entity:snapshot.entities) {
+        if(!candidate.emplace(entity.id,entity).second ||
+           !generations.emplace(entity.generation,entity.id).second) return false;
+    }
+    for(const auto& [id,entity]:candidate) {
+        for(std::size_t slot=0;slot<entity.slots.size();++slot) {
+            const auto occupant=entity.slots[slot];
+            if(!occupant) continue;
+            const auto child=candidate.find(occupant);
+            if(child==candidate.end() || !child->second.attachment ||
+               child->second.attachment->container!=id || child->second.attachment->slot!=slot) return false;
+        }
+        if(entity.attachment) {
+            const auto& attachment=*entity.attachment;
+            const auto parent=candidate.find(attachment.container);
+            if(parent==candidate.end() || attachment.slot>=parent->second.slots.size() ||
+               parent->second.slots[attachment.slot]!=id) return false;
+            if(attachment.positioned && (!entity.position || !parent->second.position ||
+               entity.position->x!=parent->second.position->x ||
+               entity.position->y!=parent->second.position->y ||
+               entity.position->level!=parent->second.position->level)) return false;
+        }
+        // Every ancestry chain must terminate, including unpositioned links.
+        auto ancestor=&entity;
+        std::size_t depth=0;
+        while(ancestor->attachment) {
+            if(++depth>candidate.size()) return false;
+            const auto parent=candidate.find(ancestor->attachment->container);
+            if(parent==candidate.end()) return false;
+            ancestor=&parent->second;
+        }
+    }
+    entities_.swap(candidate);
+    words_=snapshot.word_count;
+    generation_sequence_=snapshot.generation_sequence;
+    spatial_revision_=snapshot.spatial_revision;
+    attribute_policy_=snapshot.attribute_policy;
+    return true;
+}
 void World::mark_spatial_change() noexcept {
     if(spatial_revision_!=std::numeric_limits<std::uint64_t>::max())++spatial_revision_;
 }
