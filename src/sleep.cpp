@@ -25,6 +25,46 @@ PrimitiveOutcome unsupported(const std::string& reason) {
     return {PrimitiveDisposition::unsupported,reason};
 }
 }
+SleepSnapshot Sleep::snapshot() const {
+    if(executing_)throw std::logic_error("Sleep callbacks must not capture controller state");
+    if(vm_)(void)vm_->snapshot();
+    return {actor_,job_,last_tick_,clock_,interrupted_,notify_resume_,diagnostic_};
+}
+bool Sleep::valid_snapshot(const SleepSnapshot& state) const {
+    if(executing_)throw std::logic_error("Sleep callbacks must not restore controller state");
+    if(!vm_)return false;
+    const auto vm=vm_->snapshot();
+    if(!fresh_||state.clock>max_clock||(state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
+    if(state.actor){
+        const auto* entity=world_.find(state.actor->id);
+        if(!entity||state.actor->generation!=entity->generation||state.actor->run_generation!=vm.run_generation)return false;
+    }else if(state.job||state.interrupted||state.notify_resume)return false;
+    if(state.job){
+        const auto& job=*state.job;
+        if(!state.actor||state.notify_resume||!job.ticket||job.ticket>vm.ticket_sequence||job.idle_start>state.clock||
+           job.deadline<=state.clock||job.deadline>max_clock||vm.status!=VmStatus::waiting||!vm.pending||
+           vm.pending->ticket!=job.ticket||vm.pending->instruction.instruction.opcode!=0||
+           vm.pending->context.caller!=state.actor->id||vm.stack.empty()||job.argument>=vm.stack.back().arguments.size()||
+           job.argument>32767)return false;
+        const auto& operands=vm.pending->instruction.instruction.operands;
+        const auto index=static_cast<std::uint16_t>(operands[0]|(static_cast<unsigned>(operands[1])<<8));
+        const auto remaining=vm.stack.back().arguments[job.argument];
+        if(index!=job.argument||remaining<0||job.deadline!=job.idle_start+static_cast<std::uint64_t>(remaining)+1)return false;
+    }else if(vm.pending&&vm.pending->instruction.instruction.opcode==0)return false;
+    if(state.notify_resume&&(vm.stack.empty()||vm.stack.back().context.caller!=state.actor->id||
+       (vm.status!=VmStatus::running&&vm.status!=VmStatus::budget_exhausted)))return false;
+    return true;
+}
+void Sleep::publish_snapshot(SleepSnapshot&& state) noexcept {
+    actor_=state.actor;job_=state.job;last_tick_=state.last_tick;clock_=state.clock;
+    interrupted_=state.interrupted;notify_resume_=state.notify_resume;diagnostic_.swap(state.diagnostic);fresh_=false;
+}
+bool Sleep::restore_snapshot(const SleepSnapshot& state) {
+    if(!valid_snapshot(state))return false;
+    auto candidate=state;
+    publish_snapshot(std::move(candidate));
+    return true;
+}
 bool Sleep::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
     vm_=&vm;return true;
@@ -43,6 +83,7 @@ PrimitiveOutcome Sleep::request(const VmFrame& frame,const Instruction& i,const 
     if(executing_) return unsupported("Sleep callbacks cannot reenter controller");
     if(!vm_ || dispatch.origin!=vm_) return unsupported("Sleep controller bound to another VM");
     Guard guard(executing_);
+    fresh_=false;
     if(actor_ && actor_->run_generation!=vm_->run_generation()) {
         actor_.reset();job_.reset();interrupted_=false;notify_resume_=false;
     }
@@ -119,6 +160,7 @@ bool Sleep::evaluate() {
 bool Sleep::tick(std::uint64_t now) {
     if(executing_) throw std::logic_error("Sleep ticks must not reenter controller");
     Guard guard(executing_);
+    fresh_=false;
     if(now>max_clock || (!last_tick_ && now>1) ||
        (last_tick_ && (now<=*last_tick_ || now-*last_tick_!=1))) return false;
     last_tick_=now;clock_=now;
@@ -130,6 +172,7 @@ bool Sleep::tick(std::uint64_t now) {
 bool Sleep::interrupt() {
     if(executing_) throw std::logic_error("Sleep interrupts must not reenter controller");
     Guard guard(executing_);
+    fresh_=false;
     if(!vm_) return false;
     if(actor_ && actor_->run_generation!=vm_->run_generation()) {
         job_.reset();actor_.reset();interrupted_=false;
@@ -151,6 +194,7 @@ bool Sleep::interrupt() {
 bool Sleep::notify() {
     if(executing_) throw std::logic_error("Sleep notifications must not reenter controller");
     Guard guard(executing_);
+    fresh_=false;
     if(!vm_ || !job_ || !validate()) return false;
     const auto ticket=job_->ticket;
     const auto elapsed=job_->idle_start!=0 && job_->idle_start<clock_ ? clock_-job_->idle_start : 1;

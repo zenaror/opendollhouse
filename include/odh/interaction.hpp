@@ -4,6 +4,21 @@
 
 namespace odh {
 struct InteractionCompletion {std::uint64_t uid,ticket,tick;bool result;};
+struct InteractionActionSnapshot {std::uint64_t uid,target_generation;VmCall call;};
+struct InteractionActiveSnapshot {std::uint64_t uid,ticket;};
+struct InteractionWaitSnapshot {std::uint64_t ticket,deadline;};
+struct InteractionQueueSnapshot {
+    std::int16_t actor_id;
+    std::size_t capacity;
+    std::uint64_t actor_generation,run_generation,sequence,clock,idle_start;
+    std::optional<std::uint64_t> last_tick,resume_tick;
+    std::deque<InteractionActionSnapshot> actions;
+    std::optional<InteractionActiveSnapshot> active;
+    std::optional<InteractionWaitSnapshot> wait;
+    std::optional<InteractionCompletion> completion;
+    bool interrupted;
+    std::string diagnostic;
+};
 // Explicit runnable FIFO actions for one avatar/VM. This adapter implements the
 // Main-only IdleForInput slice, not TTAB eligibility/priorities/cancellation.
 // World and VM must outlive it. Host validates with observe before each run/budget slice and after completion, then
@@ -13,6 +28,12 @@ public:
     InteractionQueue(World& world,std::int16_t actor,std::size_t capacity=32)
         :world_(world),actor_id_(actor),capacity_(capacity) {}
     bool bind(Vm&);
+    InteractionQueueSnapshot snapshot() const;
+    // Fresh controller, already bound to an equivalently restored World/VM,
+    // with equivalent callbacks. Capacity is capped by the constructor value.
+    // Invalid values return false; allocation failures throw. Neither changes
+    // the destination. Capture/restore during controller or VM callbacks throws.
+    bool restore_snapshot(const InteractionQueueSnapshot&);
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
     bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={});
     VmPrimitive primitive();
@@ -26,9 +47,12 @@ public:
     const std::optional<InteractionCompletion>& completion() const {return completion_;}
     const std::string& diagnostic() const {return diagnostic_;}
 private:
-    struct Action {std::uint64_t uid,target_generation;VmCall call;};
-    struct Active {std::uint64_t uid,ticket;};
-    struct Wait {std::uint64_t ticket,deadline;};
+    friend class EntityThreadControllers;
+    using Action=InteractionActionSnapshot;
+    using Active=InteractionActiveSnapshot;
+    using Wait=InteractionWaitSnapshot;
+    bool valid_snapshot(const InteractionQueueSnapshot&) const;
+    void publish_snapshot(InteractionQueueSnapshot&&) noexcept;
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool validate();
     World& world_;std::int16_t actor_id_;std::size_t capacity_;
@@ -38,5 +62,6 @@ private:
     std::deque<Action> queue_;std::optional<Active> active_;std::optional<Wait> wait_;
     std::optional<InteractionCompletion> completion_;bool interrupted_=false,executing_=false;
     std::string diagnostic_;
+    bool fresh_=true;
 };
 }

@@ -10,6 +10,92 @@ std::int16_t word(std::uint64_t v) {
 }
 PrimitiveOutcome unsupported(const std::string& text) {return {PrimitiveDisposition::unsupported,text};}
 }
+InteractionQueueSnapshot InteractionQueue::snapshot() const {
+    if(executing_)throw std::logic_error("interaction callbacks must not capture controller state");
+    if(vm_)(void)vm_->snapshot(); // Reject capture inside another VM primitive/trace callback too.
+    return {actor_id_,capacity_,actor_generation_,run_generation_,sequence_,clock_,idle_start_,last_tick_,resume_tick_,
+            queue_,active_,wait_,completion_,interrupted_,diagnostic_};
+}
+bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) const {
+    if(executing_)throw std::logic_error("interaction callbacks must not restore controller state");
+    if(!vm_)return false;
+    const auto vm=vm_->snapshot();
+    constexpr auto max_clock=std::numeric_limits<std::uint32_t>::max();
+    const auto* actor=world_.find(actor_id_);
+    if(!fresh_||!actor||actor->kind!=EntityKind::avatar||state.actor_id!=actor_id_||
+       state.actor_generation!=actor->generation||state.actor_generation!=actor_generation_||
+       state.run_generation!=vm.run_generation||!state.capacity||state.capacity>capacity_||
+       state.actions.size()>state.capacity||state.clock>max_clock||state.idle_start>state.clock||
+       (state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
+    std::uint64_t previous_uid=0;
+    for(const auto& action:state.actions){
+        const auto& call=action.call;
+        const auto* target=world_.find(call.context.callee);
+        if(!action.uid||action.uid<=previous_uid||action.uid>state.sequence||!target||
+           action.target_generation!=target->generation||call.context.caller!=actor_id_||
+           call.context.stack_object!=call.context.callee||call.arguments.size()>4096||
+           call.key.scope!=routine_key(call.key.id).scope||call.return_mode!=VmCallReturnMode::interaction_next_tick)
+            return false;
+        previous_uid=action.uid;
+    }
+    const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
+    bool action_frame=false;
+    for(const auto& frame:vm.stack){
+        if(frame.return_mode!=VmCallReturnMode::interaction_next_tick)continue;
+        if(!state.active||state.actions.empty()||frame.invocation_ticket!=state.active->ticket)return false;
+        const auto& call=state.actions.front().call;
+        if(frame.key.scope!=call.key.scope||frame.key.id!=call.key.id||frame.context.caller!=call.context.caller||
+           frame.context.callee!=call.context.callee||frame.context.code_owner!=call.context.code_owner||
+           frame.arguments.size()<call.arguments.size())return false;
+        action_frame=true;
+    }
+    if(state.active){
+        if(state.actions.empty()||state.active->uid!=state.actions.front().uid||
+           !valid_ticket(state.active->ticket)||state.wait||state.resume_tick||state.idle_start)return false;
+        if(vm.interaction_return){
+            if(action_frame||vm.interaction_return->ticket!=state.active->ticket||
+               vm.interaction_return->code_owner!=state.actions.front().call.context.code_owner)return false;
+        }else if(!action_frame&&vm.status!=VmStatus::fault)return false;
+    }
+    if(state.wait){
+        if(state.active||state.resume_tick||!valid_ticket(state.wait->ticket)||
+           state.wait->deadline<=state.clock||state.wait->deadline>max_clock||
+           vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=state.wait->ticket||
+           vm.pending->context.caller!=actor_id_||vm.pending->instruction.instruction.opcode!=17||vm.stack.empty())return false;
+        const auto& operands=vm.pending->instruction.instruction.operands;
+        const auto index=static_cast<std::uint16_t>(operands[0]|(static_cast<unsigned>(operands[1])<<8));
+        const auto allow=static_cast<unsigned>(operands[2]|(static_cast<unsigned>(operands[3])<<8));
+        if(index>=vm.stack.back().arguments.size()||index>32767||allow>1)return false;
+        const auto remaining=vm.stack.back().arguments[index];
+        if(remaining<0||state.wait->deadline!=state.idle_start+(allow==1?1:static_cast<std::uint64_t>(remaining)+1))return false;
+    }else if(vm.pending&&vm.pending->instruction.instruction.opcode==17&&vm.pending->context.caller==actor_id_)
+        return false;
+    if(state.completion){
+        const auto& completion=*state.completion;
+        if(!completion.uid||completion.uid>state.sequence||!valid_ticket(completion.ticket)||completion.tick>state.clock||
+           (!state.actions.empty()&&completion.uid>=state.actions.front().uid))return false;
+    }
+    if(state.resume_tick){
+        if(!state.completion||state.active||state.wait||*state.resume_tick>max_clock||
+           *state.resume_tick<=state.clock||*state.resume_tick!=state.completion->tick+1||!vm.interaction_return||
+           vm.interaction_return->ticket!=state.completion->ticket||vm.interaction_return->result!=state.completion->result)
+            return false;
+    }
+    if(vm.interaction_return&&!state.active&&!state.resume_tick)return false;
+    return true;
+}
+void InteractionQueue::publish_snapshot(InteractionQueueSnapshot&& state) noexcept {
+    capacity_=state.capacity;actor_generation_=state.actor_generation;run_generation_=state.run_generation;
+    sequence_=state.sequence;clock_=state.clock;idle_start_=state.idle_start;last_tick_=state.last_tick;
+    resume_tick_=state.resume_tick;queue_.swap(state.actions);active_=state.active;wait_=state.wait;
+    completion_=state.completion;interrupted_=state.interrupted;diagnostic_.swap(state.diagnostic);fresh_=false;
+}
+bool InteractionQueue::restore_snapshot(const InteractionQueueSnapshot& state) {
+    if(!valid_snapshot(state))return false;
+    auto candidate=state;
+    publish_snapshot(std::move(candidate));
+    return true;
+}
 bool InteractionQueue::bind(Vm& vm) {
     if(executing_ || (vm_&&vm_!=&vm) || !capacity_)return false;
     const auto* actor=world_.find(actor_id_);
@@ -36,6 +122,7 @@ bool InteractionQueue::validate() {
 }
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
+    fresh_=false;
     if(!validate())return false;
     const auto* target=world_.find(context.callee);
     if(context.caller!=actor_id_ || !target || context.stack_object!=context.callee ||
@@ -56,6 +143,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     if(i.opcode!=17)return {};
     if(executing_ || !vm_ || dispatch.origin!=vm_)return unsupported("interaction controller identity/reentry rejected");
     Guard guard(executing_);
+    fresh_=false;
     if(!validate())return unsupported(diagnostic_);
     if(frame.context.caller!=actor_id_ || active_ || wait_)
         return unsupported("IdleForInput requires Main caller with no active interaction or idle wait");
@@ -92,6 +180,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
 }
 bool InteractionQueue::observe() {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter observe");
+    fresh_=false;
     Guard guard(executing_);
     if(!validate())return false;
     const auto& result=vm_->interaction_return();
@@ -126,12 +215,14 @@ bool InteractionQueue::tick(std::uint64_t now) {
 }
 bool InteractionQueue::interrupt() {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter interrupt");
+    fresh_=false;
     if(!validate() || active_ || (vm_->status()!=VmStatus::running && vm_->status()!=VmStatus::budget_exhausted &&
        vm_->status()!=VmStatus::waiting && vm_->status()!=VmStatus::yielded))return false;
     interrupted_=true;return true;
 }
 bool InteractionQueue::notify() {
     if(executing_)throw std::logic_error("interaction notifications must not reenter controller");
+    fresh_=false;
     if(!validate()||!wait_||vm_->status()!=VmStatus::waiting||!vm_->pending()||
        vm_->pending()->ticket!=wait_->ticket)return false;
     Guard guard(executing_);
