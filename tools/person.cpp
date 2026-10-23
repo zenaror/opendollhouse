@@ -10,6 +10,7 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/avatar_body.hpp"
+#include "odh/avatar_startup.hpp"
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
 #include "odh/relationship.hpp"
@@ -1916,8 +1917,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::vector<odh::VmTrace> trace;std::optional<odh::VmTrace> latest_trace;
     bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;
-    struct StartupStage {std::string phase;std::uint16_t routine;odh::VmStatus status;std::uint64_t steps;std::string diagnostic;};
-    std::vector<StartupStage> stages;
+    std::vector<odh::AvatarStartupStage> stages;
     std::uint64_t startup_steps=0;
     std::optional<odh::NeighborInheritance> inherited;
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
@@ -1950,16 +1950,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
     };};
     if(initialize){
-        for(const auto& entry:std::vector<std::pair<std::string,std::uint16_t>>{{"init",person.entry_points->entries[0].action},{"dynamic_multitile",person.entry_points->entries[8].action}}){
-            if(entry.second<=255){stages.push_back({entry.first,entry.second,odh::VmStatus::ready,0,"entry ID<=255 skipped by reference"});continue;}
-            vm.start(odh::routine_key(entry.second),{runtime_avatar_id,runtime_avatar_id,0,static_cast<odh::CodeOwner>(runtime_avatar_id)},{0,0,0,0});
-            vm.run(10000-startup_steps,trace_in(entry.first));
-            stages.push_back({entry.first,entry.second,vm.status(),vm.steps(),vm.diagnostic()});
-            if(vm.status()!=odh::VmStatus::returned_true&&vm.status()!=odh::VmStatus::returned_false){
-                host_failed=true;host_diagnostic="startup entry did not return synchronously";break;
-            }
-            startup_steps+=vm.steps();
-        }
+        const auto startup=odh::run_avatar_startup(vm,runtime_avatar_id,
+            person.entry_points->entries[0].action,person.entry_points->entries[8].action,10000,
+            [&](const std::string& phase,const odh::VmTrace& record){trace_in(phase)(record);});
+        stages=startup.stages;
+        for(const auto& stage:stages)
+            if(stage.status==odh::VmStatus::returned_true||stage.status==odh::VmStatus::returned_false)
+                startup_steps+=stage.steps;
+        if(!startup.completed){host_failed=true;host_diagnostic=startup.diagnostic;}
     }
     if(!host_failed&&!restoring_session){
         // Stack Main before post-body initialization, then dispatch its first

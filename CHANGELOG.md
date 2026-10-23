@@ -71,6 +71,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A inicialização de avatar agora usa uma sequência reutilizável para executar
+  Init e entrada 8 na VM já ligada ao código privado do personagem, com limite
+  compartilhado e resultado por etapa. Testes sintéticos cobrem owners, ordem,
+  entradas ignoradas e estouro de limite; moradores ausentes ainda não são
+  criados na partida. Veja `avatar-startup-validation`.
+
 - Adicionada infraestrutura testável para preparar moradores FAMI ausentes em
   um World temporário, preservando a casa original e sem inventar registros
   OBJM/OBJT. Os testes sintéticos verificam identidade, bancos, família,

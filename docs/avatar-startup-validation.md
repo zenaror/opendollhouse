@@ -46,6 +46,20 @@ O trace identifica init/dynamic_multitile/main; probes isolados são root_probe.
 O JSON distingue passos totais, passos de startup e do run atual, resultados
 das entradas, corpo aplicado, fault real e falha do host.
 
+## Helper reutilizável de construção do avatar
+
+A sequência Init/entrada8 agora é executada por `run_avatar_startup` em
+`include/odh/avatar_startup.hpp`. O helper recebe a VM já ligada ao código
+privado do avatar e não cria Main nem faz dispatch do scheduler. Init e entrada8
+compartilham o limite de instruções; IDs até255 continuam pulados. Cada estágio
+registra seu próprio resultado e o total do helper inclui instruções executadas
+mesmo na etapa que falhou. O campo legado `startup_steps` do CLI continua somando
+somente estágios concluídos. O teste
+`avatar_startup` cobre dois owners/IDs no mesmo callback de World, contexto e
+argumentos, ordem, entradas puladas, ausência de Main e limite agregado. Isso
+prepara a futura construção de membros FAMI, mas ainda não instancia residentes
+ausentes nem valida chegada, persistência ou equivalência nativa.
+
 ## BodySTR e dados de movimento
 
 O core usa somente o grupo US0/1. BodySTR presente requer índices0–22 e age13
