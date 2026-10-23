@@ -499,6 +499,28 @@ de cada passo. O teste usa arquivos comerciais só para leitura, avatar
 sintético e Main parada; não demonstra equivalência ao executável original,
 animação visual nem interação por clique.
 
+## Entrada de interação pelo mesmo caminho da janela sem display
+
+O modo `--window-input` do teste House07 renderiza o lote com pixels de seleção,
+acha um pixel que pertence à cadeira128 e alimenta dois `WindowInput` no mesmo
+despacho usado pelo aplicativo: Button1 seleciona o objeto e Space solicita a
+ação. A partir daí, o código de produção faz o pick, carrega TTAB, verifica a
+ação disponível e enfileira a função privada. O teste exige que a seleção
+continue sendo a cadeira128 e que Sit4097 conclua com resultado true.
+
+Reprodução sem servidor gráfico:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_interaction_integration.py \
+  --binary /tmp/odh-current-normal/odh-person \
+  --game-root '../referencias/The Sims' --window-input
+```
+
+Isso cobre o caminho interno entre entrada lógica, pick do pixel e ação, usando
+os recursos comerciais apenas para leitura. Não testa como o sistema gráfico
+entrega um clique/tecla real, nem uma sessão completa; para isso ainda é preciso
+uma janela X11 acessível.
+
 ## Integração Sit/Stand em House07
 
 `odh-person --headless-main --headless-interaction ID TICK` agenda a seleção

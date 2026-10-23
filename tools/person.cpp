@@ -51,9 +51,7 @@
 #include "saved_portal.hpp"
 #include "saved_lot_renderer.hpp"
 #include "person_runtime.hpp"
-#ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
-#endif
 #ifdef ODH_HAVE_LINUX_TEXT_CODEC
 #include "linux_text_codec.hpp"
 #endif
@@ -250,6 +248,11 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     std::optional<HeadlessEntityMove> headless_entity_move;
     bool headless_entity_move_applied=false;
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
+    std::optional<std::int16_t> headless_window_interaction;
+    // Synthetic WindowInput events enter the same dispatch as the X11 window;
+    // they do not emulate Xlib's native key/button translation.
+    std::vector<odh_host::WindowInput> headless_window_inputs;
+    std::size_t headless_window_input_index=0;
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     std::optional<std::uint64_t> headless_go_here_interrupt_tick;
     std::optional<std::uint64_t> headless_go_here_interrupt_after_movements;
@@ -406,6 +409,11 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless interaction target/tick is outside the supported profile");
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
+        else if(option=="--headless-window-interaction"&&!headless_window_interaction&&n+1<argc){
+            const auto id=selector(argv[++n]);
+            if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
+            headless_window_interaction=static_cast<std::int16_t>(id);
+        }
         else if(option=="--headless-go-here"&&!headless_go_here&&n+4<argc){
             const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
             const auto level=selector(argv[++n]),tick=selector(argv[++n]);
@@ -483,6 +491,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
     if(headless_stand&&(!headless_main||!headless_interaction||headless_stand->tick>ticks_limit||
        (headless_interaction&&headless_stand->tick<=headless_interaction->tick)))
         throw odh::FormatError("--headless-stand requires --headless-main, an in-range tick, and must follow the interaction request");
+    if(headless_window_interaction&&(!headless_main||!render_saved_id||!render_output||!render_floors||
+       headless_interaction||headless_stand||headless_go_here||headless_portal||render_tick||ticks_limit<2))
+        throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
     const bool render_requested=render_output||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_selector&&!headless_main);
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&((!initialize&&!saved_world_main)||!lot_path||!neighborhood_path))||
@@ -508,9 +519,10 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_selector||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
+    if(headless_window_interaction)throw odh::FormatError("--headless-window-interaction requires an X11-enabled build, but does not require a running display");
 #endif
     const odh_host::PersonSessionPolicy session_policy{render_window,ticks_set,ticks_limit};
     odh_host::PersonDiagnosticRetention diagnostics;
@@ -2249,7 +2261,8 @@ struct PlacementCandidateProbe {
         if(track_actor_pixels&&frame.image.owner_ids.size()==frame.image.pixels.size())
             actor_raster_pixels=std::count(frame.image.owner_ids.begin(),frame.image.owner_ids.end(),scene_state.owner_id);
         if(render_lot){
-            auto lot=render_lot->render(render_camera,frame.image,render_window);
+            auto lot=render_lot->render(render_camera,frame.image,
+                render_window||headless_window_interaction.has_value());
             frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
         std::uint64_t actor_composited_pixels=0;
@@ -2339,14 +2352,34 @@ struct PlacementCandidateProbe {
     execute(false); // The initial Main dispatch remains host bootstrap, before logical tick 1.
     profile_mark("first-main-execution");
     capture_frame();
+    const auto queue_headless_window_interaction=[&]{
+        if(!headless_window_interaction||!headless_window_inputs.empty()||!render_lot||!render_lot_evidence)return;
+        const auto& picks=render_lot_evidence->object_pick_ids;
+        if(!render_lot_evidence->pick_width||picks.empty())
+            throw odh::FormatError("headless window interaction render has no object-pick pixels");
+        const auto pixel=std::find(picks.begin(),picks.end(),static_cast<std::uint16_t>(*headless_window_interaction));
+        if(pixel==picks.end())throw odh::FormatError("headless window interaction target is not visible in the captured lot frame");
+        const auto index=static_cast<std::size_t>(pixel-picks.begin());
+        const auto x=static_cast<std::int32_t>(index%render_lot_evidence->pick_width);
+        const auto y=static_cast<std::int32_t>(index/render_lot_evidence->pick_width);
+        odh_host::WindowInput click;click.action=true;click.primary_click=std::array<std::int32_t,2>{x,y};
+        odh_host::WindowInput action;action.action=true;
+        headless_window_inputs.push_back(click);
+        headless_window_inputs.push_back(action);
+    };
+    queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
         state!=odh::VmStatus::returned_false&&state!=odh::VmStatus::fault;};
     bool window_paused=false,window_closed=false;
     auto window_deadline=std::chrono::steady_clock::now();
     while(!host_failed) {
 #ifdef ODH_HAVE_X11
-        if(render_window_host){
-            const auto input=render_window_host->poll();
+        if(render_window_host||headless_window_interaction){
+            odh_host::WindowInput input;
+            if(render_window_host)input=render_window_host->poll();
+            else if(headless_window_input_index<headless_window_inputs.size())
+                input=headless_window_inputs[headless_window_input_index++];
+            else if(headless_window_interaction&&!render_evidence)input.redraw=true;
             if(input.quit){
                 window_closed=true;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -2364,7 +2397,7 @@ struct PlacementCandidateProbe {
             if(input.interrupt&&go_here_status=="queued"){
                 go_here_cancel_pending=true;
                 go_here_route_status="cancelling";
-                render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
+                if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
             }
             if(input.primary_click&&render_lot&&render_lot_evidence){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
@@ -2378,7 +2411,7 @@ struct PlacementCandidateProbe {
                     render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();render_interaction_result.reset();
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
-                render_window_host->set_title(interaction_window_title());
+                if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
             if(input.interaction_selection_delta&&!input.primary_click&&render_selection&&render_interactions&&
                queue.size()==0&&!render_interaction_enqueued){
@@ -2397,7 +2430,7 @@ struct PlacementCandidateProbe {
                     world.find(runtime_avatar_id));
                 render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
                     render_selected_interaction_row,input.interaction_selection_delta);
-                render_window_host->set_title(interaction_window_title());
+                if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
             if(input.action&&!input.primary_click){
                 std::string title="OpenDollhouse Main preview: ";
@@ -2416,22 +2449,26 @@ struct PlacementCandidateProbe {
                     if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                     if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 }
-                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+                if(render_window_host)render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
             if(input.rotation||input.zoom||input.redraw)capture_frame();
+            queue_headless_window_interaction();
             const bool runtime_finished=session_policy.limit_reached(ticks,total_steps())||
                 (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status())));
             if(runtime_finished&&!render_evidence)
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
-            if(window_paused||runtime_finished){
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));window_deadline=std::chrono::steady_clock::now();continue;
+            if(!render_window_host&&(runtime_finished||session_policy.limit_reached(ticks,total_steps())))break;
+            if(render_window_host){
+                if(window_paused||runtime_finished){
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));window_deadline=std::chrono::steady_clock::now();continue;
+                }
+                // Preview pacing only; original wall-clock cadence is not established.
+                window_deadline+=std::chrono::milliseconds(40);
+                std::this_thread::sleep_until(window_deadline);
             }
-            // Preview pacing only; original wall-clock cadence is not established.
-            window_deadline+=std::chrono::milliseconds(40);
-            std::this_thread::sleep_until(window_deadline);
         }else
 #endif
         if(session_policy.limit_reached(ticks,total_steps())||
@@ -3100,7 +3137,8 @@ struct PlacementCandidateProbe {
     else {
         const auto* actor=world.find(runtime_avatar_id);
         const auto animation=playback?playback->progress():std::nullopt;
-        std::cout<<"{\"trigger\":"<<json_bytes(headless_interaction?(headless_stand?"headless_sit_schedule":"headless_schedule"):"window_input")
+        std::cout<<"{\"trigger\":"<<json_bytes(headless_interaction?(headless_stand?"headless_sit_schedule":"headless_schedule"):
+            headless_window_interaction?"headless_window_input":"window_input")
             <<",\"scheduled_tick\":"<<(headless_interaction?std::to_string(headless_interaction->tick):"null")
             <<",\"scheduled_target\":"<<(headless_interaction?std::to_string(headless_interaction->id):"null")
             <<",\"enqueued\":"<<(render_interaction_enqueued?"true":"false")

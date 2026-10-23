@@ -2,8 +2,10 @@
 """Run resource-backed Sit then Stand through one saved-world session."""
 import argparse
 import json
+import os
 import pathlib
 import subprocess
+import tempfile
 
 
 def main():
@@ -15,6 +17,8 @@ def main():
     parser.add_argument("--object-id", type=int, default=128)
     parser.add_argument("--stand-tick", type=int, default=270)
     parser.add_argument("--ticks", type=int, default=512)
+    parser.add_argument("--window-input", action="store_true",
+                        help="exercise the production click/pick/Space path with queued inputs and no display")
     parser.add_argument("--move-avatar-to", nargs=4, type=int,
                         metavar=("X", "Y", "LEVEL", "DIRECTION"),
                         help="schedule the saved avatar at this World position on tick 1")
@@ -60,11 +64,23 @@ def main():
         "--animation-source", str(game / "GameData/Animation/Animation.far"),
         "--animation-source", str(expansion_shared),
         "--headless-main", "--render-saved-avatar", str(args.avatar_id),
-        "--headless-interaction", str(args.object_id), "1",
-        "--headless-stand", str(args.object_id), str(args.stand_tick),
         "--ticks", str(args.ticks), "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
     ]
+    frame_path = None
+    if args.window_input:
+        frame_fd, frame_name = tempfile.mkstemp(prefix="odh-house07-click-", suffix=".ppm")
+        os.close(frame_fd)
+        frame_path = pathlib.Path(frame_name)
+        frame_path.unlink()
+        command += ["--headless-window-interaction", str(args.object_id),
+                    "--render-animation-far", str(game / "GameData/Animation/Animation.far"),
+                    "--render-textures", str(game / "GameData/Textures/Textures.far"),
+                    "--render-skeleton", "adult-skeleton.cmx.bcf", "adult",
+                    "--render-frame", str(frame_path)]
+    else:
+        command += ["--headless-interaction", str(args.object_id), "1",
+                    "--headless-stand", str(args.object_id), str(args.stand_tick)]
     if args.move_avatar_to:
         command += ["--headless-move-entity", str(args.avatar_id),
                     *(str(value) for value in args.move_avatar_to), "1"]
@@ -73,6 +89,8 @@ def main():
 
     result = subprocess.run(command, check=False, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if frame_path is not None:
+        frame_path.unlink(missing_ok=True)
     if not result.stdout.strip():
         raise RuntimeError(f"odh-person exited {result.returncode}: {result.stderr.strip()}")
     report = json.loads(result.stdout)
@@ -142,7 +160,21 @@ def main():
     }
     print(json.dumps(evidence, indent=2))
 
-    completed_sit = (
+    if args.window_input:
+        selection = report["render"]["object_selection"]
+        completed_sit = (
+            selection["clicks"] == 1 and selection["id"] == args.object_id and
+            selection["interaction_requested"] and selection["interaction_action"] == 4097 and
+            interaction["trigger"] == "headless_window_input" and interaction["enqueued"] and
+            interaction["status"] == "returned_true" and interaction["result"] is True and
+            actor["id"] == args.avatar_id and actor["attachment"] is not None and
+            actor["attachment"]["container"] == args.object_id and
+            interaction["queue_size"] == 0 and not interaction["queue_active"] and
+            report["completion"] is not None and report["completion"]["result"] is True and
+            report["status"] in ("waiting", "yielded") and not report["host_failed"]
+        )
+    else:
+        completed_sit = (
         household["evidence"] == "restored_World_exact_avatar_GUID_match_only" and
         household["creates_or_moves_Sims"] is False and
         reconciled == {
@@ -167,9 +199,9 @@ def main():
         (args.ticks < 512 or report["status"] == "waiting") and
         (not args.move_avatar_to or route["movement_callbacks"] > 0) and
         not report["host_failed"]
-    )
+        )
     if not completed_sit:
-        raise SystemExit("House07 Sit/Stand sequence did not complete with the avatar detached and standing")
+        raise SystemExit("House07 interaction sequence did not pass its requested input path")
 
 
 if __name__ == "__main__":
