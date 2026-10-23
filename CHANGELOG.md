@@ -14,6 +14,12 @@ validação indicados por versão.
   `clear` e `(456,504)` ficou `blocked` no tick 214, em execução sem janela.
   Veja [`world-room-info-validation.md`](docs/world-room-info-validation.md).
 
+- O diagnóstico de rota agora parte da posição real do morador e usa um
+  snapshot separado daquele que valida a célula de destino. Em House07, o CLI
+  encontrou caminho até uma posição livre na mesma sala; para outra sala, deixou
+  a rota pendente de travessia por portal. Isso não move o Sim nem aprova a
+  chegada. Veja [`world-room-info-validation.md`](docs/world-room-info-validation.md).
+
 - Um teste sintético liga a criação isolada de um morador ausente ao startup
   Init/entrada8, ao RNG explícito e à herança posterior dos dados NBRS/FAMI. Ele
   confirma que as escritas ficam no terreno temporário, mas não valida chegada,

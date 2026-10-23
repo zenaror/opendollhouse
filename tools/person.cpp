@@ -49,6 +49,7 @@
 #include "odh/route_geometry.hpp"
 #include "odh/rect_router.hpp"
 #include "odh/routing.hpp"
+#include "odh/route.hpp"
 #include "odh/world_room_route_grid.hpp"
 #include "household_go_here_session.hpp"
 #include "animation_catalog.hpp"
@@ -2099,6 +2100,11 @@ struct PlacementCandidateProbe {
     std::optional<bool> architecture_walkable;
     std::string architecture_walkability_state="not_evaluated";
     std::string architecture_walkability_reason;
+    std::string route_audit_state="not_evaluated";
+    std::string route_audit_reason;
+    std::optional<odh::RoutePath> route_audit_path;
+    std::optional<odh::RoutePoint> route_audit_start,route_audit_goal;
+    std::string route_audit_scope;
     std::string room_info_reason;
 };
     struct EntryPoint5BhvEvidence {
@@ -5041,6 +5047,86 @@ struct PlacementCandidateProbe {
                                         "candidate_cell_walkable":"candidate_cell_blocked";
                                 }
                             }
+
+                            // A destination-cell probe uses an actor-position override. It
+                            // must not be reused as the route's starting snapshot: EntryPoint 5
+                            // can depend on where the actor is standing. Build a second,
+                            // read-only snapshot from the actor's actual position.
+                            if(!actor->position){
+                                probe.route_audit_state="unsupported";
+                                probe.route_audit_reason="actor_position_unavailable";
+                            }else{
+                                probe.route_audit_start=odh::RoutePoint{actor->position->x,actor->position->y};
+                                probe.route_audit_goal=odh::RoutePoint{probe.position.x,probe.position.y};
+                            }
+                            if(actor->position&&actor->position->level!=probe.position.level){
+                                probe.route_audit_state="not_evaluated";
+                                probe.route_audit_reason="different_floor_requires_stair_transition";
+                            }else if(actor->position){
+                                const auto start_room=render_lot->runtime_room_at(*actor->position);
+                                if(!start_room){
+                                    probe.route_audit_state="unsupported";
+                                    probe.route_audit_reason="actor_start_room_unresolved";
+                                }else if(*start_room==0){
+                                    probe.route_audit_state="unsupported";
+                                    probe.route_audit_reason="actor_start_outside_routable_room";
+                                }else if(*start_room!=*probe.room){
+                                    probe.route_audit_state="not_evaluated";
+                                    probe.route_audit_reason="different_room_requires_portal_transition";
+                                }else{
+                                    const auto start_probe=build_runtime_attempt_walk_probe(
+                                        *restored_world,world,*definition_index,render_lot->architecture_resource(),
+                                        *prepared,*start_room,static_cast<std::uint8_t>(actor->position->level-1),
+                                        runtime_avatar_id,true,other_avatars,resolve_read_only_ep5);
+                                    const auto& start_snapshot=start_probe.snapshot;
+                                    if(start_snapshot.state!=odh::AttemptWalkObstacleState::ready){
+                                        probe.route_audit_state="unsupported";
+                                        probe.route_audit_reason=odh::attempt_walk_obstacle_reason_name(start_snapshot.reason);
+                                    }else{
+                                        auto route_grid=odh::build_world_room_route_grid(start_snapshot);
+                                        if(route_grid.reason==odh::WorldRoomRouteGridReason::route_grid_over_budget){
+                                            const auto start_x=static_cast<std::int32_t>(actor->position->x);
+                                            const auto start_y=static_cast<std::int32_t>(actor->position->y);
+                                            const auto goal_x=static_cast<std::int32_t>(probe.position.x);
+                                            const auto goal_y=static_cast<std::int32_t>(probe.position.y);
+                                            constexpr std::int64_t margin=128;
+                                            const auto min_x=std::min<std::int64_t>(start_x,goal_x)-margin;
+                                            const auto min_y=std::min<std::int64_t>(start_y,goal_y)-margin;
+                                            const auto max_x=std::max<std::int64_t>(start_x,goal_x)+margin+1;
+                                            const auto max_y=std::max<std::int64_t>(start_y,goal_y)+margin+1;
+                                            const odh::WorldRoomRouteGridWindow route_window{
+                                                {static_cast<std::int32_t>(min_x),static_cast<std::int32_t>(min_y)},
+                                                {static_cast<std::int32_t>(max_x),static_cast<std::int32_t>(max_y)}};
+                                            route_grid=odh::build_world_room_route_grid(start_snapshot,{},route_window);
+                                        }
+                                        if(route_grid.state!=odh::WorldRoomRouteGridState::ready||!route_grid.grid){
+                                            probe.route_audit_state="unsupported";
+                                            probe.route_audit_reason=odh::world_room_route_grid_reason_name(route_grid.reason);
+                                        }else{
+                                            const odh::RoutePoint start{actor->position->x,actor->position->y};
+                                            const odh::RoutePoint goal{probe.position.x,probe.position.y};
+                                            probe.route_audit_scope=route_grid.windowed?"bounded_window":"complete_room_grid";
+                                            if(!route_grid.grid->contains(start)||!route_grid.grid->contains(goal)){
+                                                probe.route_audit_state="unsupported";
+                                                probe.route_audit_reason="start_or_candidate_outside_route_grid";
+                                            }else{
+                                                probe.route_audit_path=odh::find_route(*route_grid.grid,start,{goal});
+                                                switch(probe.route_audit_path->status){
+                                                case odh::RouteStatus::found:probe.route_audit_state="found";break;
+                                                case odh::RouteStatus::no_path:
+                                                    probe.route_audit_state=route_grid.windowed?"bounded_no_path":"no_path";break;
+                                                case odh::RouteStatus::invalid_input:probe.route_audit_state="invalid_input";break;
+                                                case odh::RouteStatus::budget_exhausted:probe.route_audit_state="budget_exhausted";break;
+                                                }
+                                                if(probe.route_audit_state=="found")probe.route_audit_reason="route_found_in_read_only_room_grid";
+                                                else if(probe.route_audit_state=="bounded_no_path")probe.route_audit_reason="no_path_inside_bounded_window_only";
+                                                else if(probe.route_audit_state=="no_path")probe.route_audit_reason="no_path_in_complete_room_grid";
+                                                else probe.route_audit_reason="route_search_did_not_complete";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }else if(probe.room&&*probe.room==0){
                         probe.architecture_walkability_state="unsupported";
@@ -5992,6 +6078,23 @@ struct PlacementCandidateProbe {
                 <<",\"entry_point5_exemptions\":"<<snapshot.exempted_by_entry_point5;
         }
         std::cout<<'}';
+        std::cout<<",\"same_room_route_audit\":{\"evidence\":\"actual_actor_position_to_candidate_using_fresh_live_AttemptWalk_snapshot\",\"candidate_probe_moves_avatar\":false,\"scope\":"
+            <<json_bytes(probe.route_audit_scope)<<",\"status\":"<<json_bytes(probe.route_audit_state)
+            <<",\"reason\":"<<json_bytes(probe.route_audit_reason)<<",\"start\":";
+        if(probe.route_audit_start)std::cout<<'['<<probe.route_audit_start->x<<','<<probe.route_audit_start->y<<']';
+        else std::cout<<"null";
+        std::cout<<",\"goal\":";
+        if(probe.route_audit_goal)std::cout<<'['<<probe.route_audit_goal->x<<','<<probe.route_audit_goal->y<<']';
+        else std::cout<<"null";
+        std::cout<<",\"route_clearance\":false,\"path_cost\":";
+        if(probe.route_audit_path&&probe.route_audit_path->status==odh::RouteStatus::found)
+            std::cout<<probe.route_audit_path->cost;
+        else std::cout<<"null";
+        std::cout<<",\"path_points\":";
+        if(probe.route_audit_path&&probe.route_audit_path->status==odh::RouteStatus::found)
+            std::cout<<probe.route_audit_path->points.size();
+        else std::cout<<"null";
+        std::cout<<"}";
         if(probe.overlap_audit){
             const auto& audit=*probe.overlap_audit;
             const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":

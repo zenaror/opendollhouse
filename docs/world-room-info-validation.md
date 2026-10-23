@@ -180,3 +180,26 @@ frames are `/tmp/odh-candidate-preflight-house07-400-440.ppm` and
 expected because the probe does not move Bob or alter the displayed scene.
 This confirms headless rendering and diagnostic composition for those
 positions; it does not validate a visible window, route, or final placement.
+
+## Same-room route preview from the live actor position
+
+The candidate CLI now builds a second obstacle snapshot from Bob's actual
+position before asking the ODH route grid for a path to the candidate. This is
+kept separate from the candidate-cell snapshot: EntryPoint 5 can depend on the
+actor's position, so the destination probe cannot stand in for the route's
+starting state. The route preview reports its start, goal, grid scope, path
+cost, and point count. It is read-only; `route_clearance` remains false and
+`placement_decision` remains `not_evaluated`.
+
+On House07, a headless 32-tick Main run from the real save found a same-room
+route from the live actor position `[392,440]` to candidate `[400,440]` in the
+complete room grid (cost 80, 9 path points). Candidate `[456,504]` is in a
+different room, so the route status is `not_evaluated` with reason
+`different_room_requires_portal_transition`; the existing cell and entity
+preflight still report its blockers. Neither query moved the avatar.
+
+`found` means only that ODH's bounded, 1/16-tile obstacle grid found a path in
+this snapshot. It does not establish equivalence with Simitone's `VMRectRouter`,
+prove door opening/portal behavior, or permit movement. If a full room grid
+exceeds its budget, the preview may use a bounded window; `bounded_no_path`
+then means only that no path was found inside that window.
