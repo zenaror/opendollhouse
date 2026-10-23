@@ -25,6 +25,11 @@ public:
     LinuxWindow& operator=(const LinuxWindow&) = delete;
 
     void present(const odh::RasterFrame& frame);
+    // Resize this native window and replace its pixel buffer. Existing native
+    // window identity, title, event selection, and key state are preserved.
+    void resize(std::uint32_t width, std::uint32_t height);
+    std::uint32_t width() const noexcept;
+    std::uint32_t height() const noexcept;
     WindowInput poll();
     void set_title(const std::string& title);
     // Read only this backend's drawable, synchronizing pending drawing first.

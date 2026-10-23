@@ -49,6 +49,35 @@ struct ImageDeleter {
 };
 using ImagePtr = std::unique_ptr<XImage, ImageDeleter>;
 
+void validate_dimensions(std::uint32_t width, std::uint32_t height) {
+    if (!width || !height || width > 2048 || height > 2048 ||
+        static_cast<std::uint64_t>(width) * height > 1048576)
+        throw odh::FormatError("X11: viewport exceeds 2048 per axis or 1048576 pixels");
+}
+
+ImagePtr create_image(Display* display, Visual* visual, int depth,
+                      std::uint32_t width, std::uint32_t height) {
+    ImagePtr image(XCreateImage(display, visual, static_cast<unsigned>(depth), ZPixmap,
+                                0, nullptr, width, height, 32, 0));
+    if (!image) throw odh::FormatError("X11: cannot create native image");
+    if (image->format != ZPixmap || image->xoffset != 0 ||
+        image->width != static_cast<int>(width) || image->height != static_cast<int>(height) ||
+        image->depth != depth ||
+        (image->bits_per_pixel != 16 && image->bits_per_pixel != 24 && image->bits_per_pixel != 32) ||
+        (image->byte_order != LSBFirst && image->byte_order != MSBFirst) ||
+        image->bytes_per_line < static_cast<int>(width * (image->bits_per_pixel / 8)) ||
+        image->red_mask != visual->red_mask || image->green_mask != visual->green_mask ||
+        image->blue_mask != visual->blue_mask)
+        throw odh::FormatError("X11: unsupported native image format");
+    const auto stride = static_cast<std::size_t>(image->bytes_per_line);
+    if (stride > std::numeric_limits<std::size_t>::max() / height ||
+        stride > static_cast<std::uint64_t>(width) * 4 + 4)
+        throw odh::FormatError("X11: native image allocation exceeds bounds");
+    image->data = static_cast<char*>(std::calloc(height, stride));
+    if (!image->data) throw odh::FormatError("X11: cannot allocate image buffer");
+    return image;
+}
+
 } // namespace
 
 struct LinuxWindow::Impl {
@@ -77,13 +106,14 @@ struct LinuxWindow::Impl {
         if (!alive) throw odh::FormatError("X11: window has been destroyed");
     }
 
-    void validate_image(const XImage& value, int depth, const Visual& visual) const {
+    void validate_image(const XImage& value, int depth, const Visual& visual,
+                        std::uint32_t expected_width, std::uint32_t expected_height) const {
         if (value.format != ZPixmap || value.xoffset != 0 ||
-            value.width != static_cast<int>(width) || value.height != static_cast<int>(height) ||
-            value.depth != depth ||
+            value.width != static_cast<int>(expected_width) ||
+            value.height != static_cast<int>(expected_height) || value.depth != depth ||
             (value.bits_per_pixel != 16 && value.bits_per_pixel != 24 && value.bits_per_pixel != 32) ||
             (value.byte_order != LSBFirst && value.byte_order != MSBFirst) ||
-            value.bytes_per_line < static_cast<int>(width * (value.bits_per_pixel / 8)) ||
+            value.bytes_per_line < static_cast<int>(expected_width * (value.bits_per_pixel / 8)) ||
             value.red_mask != visual.red_mask || value.green_mask != visual.green_mask ||
             value.blue_mask != visual.blue_mask)
             throw odh::FormatError("X11: unsupported native image format");
@@ -92,9 +122,7 @@ struct LinuxWindow::Impl {
 
 LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::string& title)
     : impl_(std::make_unique<Impl>()) {
-    if (!width || !height || width > 2048 || height > 2048 ||
-        static_cast<std::uint64_t>(width) * height > 1048576)
-        throw odh::FormatError("X11: viewport exceeds 2048 per axis or 1048576 pixels");
+    validate_dimensions(width, height);
     auto& p = *impl_;
     p.width = width; p.height = height;
     p.display = XOpenDisplay(nullptr);
@@ -110,15 +138,8 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
     p.red = channel(visual->red_mask, static_cast<unsigned>(depth));
     p.green = channel(visual->green_mask, static_cast<unsigned>(depth));
     p.blue = channel(visual->blue_mask, static_cast<unsigned>(depth));
-    p.image = XCreateImage(p.display, visual, static_cast<unsigned>(depth), ZPixmap,
-                           0, nullptr, width, height, 32, 0);
-    if (!p.image) throw odh::FormatError("X11: cannot create native image");
-    p.validate_image(*p.image, depth, *visual);
-    const auto stride = static_cast<std::size_t>(p.image->bytes_per_line);
-    if (stride > std::numeric_limits<std::size_t>::max() / height || stride > width * 4ULL + 4)
-        throw odh::FormatError("X11: native image allocation exceeds bounds");
-    p.image->data = static_cast<char*>(std::calloc(height, stride));
-    if (!p.image->data) throw odh::FormatError("X11: cannot allocate image buffer");
+    auto image = create_image(p.display, visual, depth, width, height);
+    p.image = image.release();
     p.window = XCreateSimpleWindow(p.display, RootWindow(p.display, screen), 0, 0,
                                    width, height, 0, 0, 0);
     if (!p.window) throw odh::FormatError("X11: cannot create window");
@@ -151,6 +172,51 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
 }
 
 LinuxWindow::~LinuxWindow() = default;
+
+void LinuxWindow::resize(std::uint32_t width, std::uint32_t height) {
+    auto& p = *impl_;
+    p.require_alive();
+    validate_dimensions(width, height);
+    if (width == p.width && height == p.height) return;
+
+    const int screen = DefaultScreen(p.display);
+    Visual* visual = DefaultVisual(p.display, screen);
+    const int depth = DefaultDepth(p.display, screen);
+    auto replacement = create_image(p.display, visual, depth, width, height);
+
+    XSizeHints hints{};
+    hints.flags = PMinSize | PMaxSize;
+    hints.min_width = hints.max_width = static_cast<int>(width);
+    hints.min_height = hints.max_height = static_cast<int>(height);
+    XSetWMNormalHints(p.display, p.window, &hints);
+    XResizeWindow(p.display, p.window, width, height);
+    XSync(p.display, False);
+
+    XWindowAttributes attributes{};
+    if (!XGetWindowAttributes(p.display, p.window, &attributes) ||
+        attributes.width != static_cast<int>(width) ||
+        attributes.height != static_cast<int>(height)) {
+        XSizeHints old_hints{};
+        old_hints.flags = PMinSize | PMaxSize;
+        old_hints.min_width = old_hints.max_width = static_cast<int>(p.width);
+        old_hints.min_height = old_hints.max_height = static_cast<int>(p.height);
+        XSetWMNormalHints(p.display, p.window, &old_hints);
+        XResizeWindow(p.display, p.window, p.width, p.height);
+        XSync(p.display, False);
+        throw odh::FormatError("X11: native window rejected requested viewport size");
+    }
+
+    XImage* previous = p.image;
+    p.image = replacement.release();
+    p.width = width;
+    p.height = height;
+    XDestroyImage(previous);
+    XFlush(p.display);
+}
+
+std::uint32_t LinuxWindow::width() const noexcept { return impl_->width; }
+
+std::uint32_t LinuxWindow::height() const noexcept { return impl_->height; }
 
 void LinuxWindow::present(const odh::RasterFrame& frame) {
     auto& p = *impl_;
@@ -261,7 +327,8 @@ std::vector<std::array<std::uint8_t,4>> LinuxWindow::readback() const {
     ImagePtr image(XGetImage(p.display, p.window, 0, 0, p.width, p.height, AllPlanes, ZPixmap));
     if (!image) throw odh::FormatError("X11: cannot read window image");
     const int screen = DefaultScreen(p.display);
-    p.validate_image(*image, DefaultDepth(p.display, screen), *DefaultVisual(p.display, screen));
+    p.validate_image(*image, DefaultDepth(p.display, screen), *DefaultVisual(p.display, screen),
+                      p.width, p.height);
     std::vector<std::array<std::uint8_t,4>> result(static_cast<std::size_t>(p.width) * p.height);
     for (std::uint32_t y = 0; y < p.height; ++y)
         for (std::uint32_t x = 0; x < p.width; ++x) {

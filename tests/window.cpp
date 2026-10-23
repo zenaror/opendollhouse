@@ -16,6 +16,25 @@ int main(){try{
     window.present(frame);if(window.readback()!=frame.pixels)throw std::runtime_error("native RGB readback differs");
     auto invalid=frame;invalid.pixels.pop_back();bool rejected=false;try{window.present(invalid);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("short image accepted");
     invalid=frame;invalid.pixels[0][3]=0;rejected=false;try{window.present(invalid);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("transparent frame accepted");
+    const auto original_window_id=window.native_id();
+    window.resize(64,48);
+    if(window.width()!=64||window.height()!=48||window.native_id()!=original_window_id)
+        throw std::runtime_error("resize did not preserve the native window identity and requested size");
+    odh::RasterFrame resized{64,48,{}, {}};
+    resized.pixels.resize(64*48);resized.depth.resize(64*48,std::numeric_limits<float>::infinity());
+    for(std::size_t i=0;i<resized.pixels.size();++i)
+        resized.pixels[i]={std::uint8_t((i&1)?32:224),std::uint8_t((i&2)?64:192),
+                           std::uint8_t((i&4)?96:160),255};
+    window.present(resized);
+    if(window.readback()!=resized.pixels)throw std::runtime_error("resized native RGB readback differs");
+    rejected=false;try{window.resize(0,48);}catch(const odh::FormatError&){rejected=true;}
+    if(!rejected||window.width()!=64||window.height()!=48||window.readback()!=resized.pixels)
+        throw std::runtime_error("invalid resize changed the active viewport or image buffer");
+    window.resize(128,96);
+    if(window.width()!=128||window.height()!=96||window.native_id()!=original_window_id)
+        throw std::runtime_error("resize back to original viewport failed");
+    window.present(frame);
+    if(window.readback()!=frame.pixels)throw std::runtime_error("restored viewport RGB readback differs");
     window.poll();
     std::unique_ptr<Display,decltype(&XCloseDisplay)> sender(XOpenDisplay(nullptr),&XCloseDisplay);
     if(!sender)throw std::runtime_error("cannot open own-window test sender");

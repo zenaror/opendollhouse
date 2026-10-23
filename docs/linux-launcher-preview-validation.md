@@ -7,6 +7,12 @@ quando já está restaurando o World do lote. Assim não se confunde o número d
 morador na vizinhança com o número de seu objeto salvo, nem se lê o lote uma
 segunda vez num processo auxiliar.
 
+A tela do mapa foi extraída para `show_neighborhood_picker`, que recebe uma
+janela Linux já aberta. O backend agora redimensiona a mesma janela sem trocar
+seu identificador nativo, preservando a imagem e a entrada ao mudar de tamanho.
+Isso deixa as peças prontas para o futuro fluxo bairro→lote numa única janela;
+`odh-person` ainda não chama esse seletor nem reutiliza essa janela.
+
 Em House07 da instalação original, a vizinhança lista os moradores como 48 e
 47; os objetos correspondentes no World são 105 e 137. O smoke de 32 ticks
 selecionou cada um pelo GUID e confirmou o GUID, o objeto e o arquivo de
@@ -38,6 +44,11 @@ Os testes de CLI cobrem GUIDs inválidos, o uso fora de um World salvo, seleçã
 no launcher e cancelamento do mapa. O smoke com dados comerciais externos
 confirma que os GUIDs dos dois membros selecionam os objetos salvos 105 e 137.
 Esses dados permanecem fora do repositório.
+
+O build dos alvos `odh-neighborhood-window`, `odh-person` e
+`odh-window-tests` passou. `neighborhood_window_cli` e `person_cli` passaram;
+`linux_window_backend` foi pulado porque esta sessão não tem um servidor X11
+acessível, então o resize ainda precisa de confirmação numa sessão gráfica.
 
 ## Limites desta etapa
 

@@ -25,6 +25,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A tela da vizinhança agora pode ser mostrada numa janela Linux existente, e o
+  backend pode redimensionar essa mesma janela preservando seu identificador.
+  Isso prepara a transição bairro→lote; o fluxo contínuo ainda não está ligado
+  e o teste X11 foi pulado porque não havia servidor gráfico acessível.
+  Veja [`linux-launcher-preview-validation.md`](docs/linux-launcher-preview-validation.md).
+
 - Prévia de launcher Linux encadeia seleção de lote, família e preparação do
   lote salvo. `odh-person` agora resolve o GUID do morador durante a leitura do
   World (House07: vizinhança 48/47 → objetos 105/137), sem uma leitura extra do
