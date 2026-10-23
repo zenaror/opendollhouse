@@ -152,6 +152,14 @@ with tempfile.TemporaryDirectory(prefix='odh-saved-scene-') as folder:
             '--floors', str(floors), '--walls', str(walls), '--level', '1',
             '--width', '128', '--height', '128', '--depth-output', str(depth)]
     resources = ['--architecture-resource', str(tile), '--architecture-resource', str(paint)]
+    extra_definitions = []
+    for index in range(128):
+        extra = root / f'extra-{index:03}.far'
+        extra_objd = bytearray(32)
+        struct.pack_into('<I', extra_objd, 0, 138)
+        struct.pack_into('<I', extra_objd, 28, 0x20000000 + index)
+        far(extra, [(f'Extra{index:03}.iff', iff([('OBJD', index + 1, extra_objd)]))])
+        extra_definitions.append(extra)
 
     def run(extra=(), base=None, success=True):
         for path in [output, depth]:
@@ -176,6 +184,16 @@ with tempfile.TemporaryDirectory(prefix='odh-saved-scene-') as folder:
     check(output.read_bytes().startswith(b'P6\n128 128\n255\n') and depth.stat().st_size == 128 * 128 * 4)
     check(bytes([210, 10, 20]) in output.read_bytes(), 'external floor color absent')
     first_frame = output.read_bytes()
+    at_source_limit = ['--object-definitions', str(definitions)]
+    for path in extra_definitions[:127]:
+        at_source_limit += ['--object-definitions', str(path)]
+    definition_base = args[:5] + ['--floors', str(floors), '--walls', str(walls)]
+    check(run(resources + at_source_limit, base=definition_base)['entities'] == 0,
+          '128 definition sources pass the bounded catalog')
+    over_source_limit = at_source_limit + ['--object-definitions', str(extra_definitions[127])]
+    check('definition source count exceeds limit' in
+          run(resources + over_source_limit, base=definition_base, success=False),
+          '129 definition sources exceed the bounded catalog')
     check(run(resources)['covered_pixels'] == result['covered_pixels'] and output.read_bytes() == first_frame)
     check('require --architecture-resource' in run(success=False))
     # A real saved object anchors the camera; there is still no avatar or

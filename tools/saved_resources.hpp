@@ -4,7 +4,7 @@
 
 struct SavedDefinitionSource {std::string path;bool standalone;};
 inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::vector<SavedDefinitionSource>& sources){
-    if(sources.size()>24)throw odh::FormatError("definition source count exceeds limit");
+    if(sources.size()>128)throw odh::FormatError("definition source count exceeds limit");
     std::vector<odh::DefinitionCandidate> candidates;
     std::uint64_t available=1024*1024;
     const auto add=[&](const odh::View& view,const std::string& path,const std::string& asset){
