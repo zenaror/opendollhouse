@@ -42,6 +42,15 @@ file remains beside the saved overlay in player state.
   Simitone; para uma família recém-mudada, ainda falta provar como obter o valor
   de arquitetura atual. O overlay do OpenDollhouse continua sem despejo e sem
   reembolso até essa fonte ser identificada.
+- Uma busca estática inicial com Ghidra 12.1.3 no executável original PE32/x86
+  (SHA-256 `32857c25e00594a9bc5d700f7b373b6df59ab76ec51b36aa1d30f3dd973eff58`)
+  não localizou os marcadores FAMI/IMAF nem confirmou gravações dos campos de
+  FAMI. Uma heurística por deslocamentos encontrou 25 funções candidatas nas
+  áreas de código adicionais `stxt774`/`stxt371`; as funções mais fortes
+  examinadas tratam de strings codificadas e acesso a arquivos, sem vínculo
+  demonstrado com famílias. Isso descarta essa heurística como prova, não prova
+  que o executável nunca grava FAMI. Projeto, scripts e saídas completos ficam
+  em `reports/ghidra/` (ignorado pelo Git).
 
 - The SIMI purchase price is now calculated as
   `LotValue + ObjectsValue + (ArchitectureValue * 7) / 10`, using integer

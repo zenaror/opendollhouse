@@ -21,6 +21,10 @@ validação indicados por versão.
   de famílias recém-mudadas permanece sem suporte até essa origem ser provada.
   É análise estática, não comparação com o jogo original. Veja
   [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
+- A análise inicial no Ghidra do executável original não identificou a gravação
+  de FAMI. As funções candidatas mais fortes eram rotinas de acesso a arquivos,
+  sem vínculo comprovado com famílias; o resultado não prova ausência de gravação.
+  Veja [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
 
 - Rastreada sem execução a fila de Hecuba na House77: a árvore 8236 existe em
   PersonGlobals, mas a TTAB#129 dessa fonte associa a ação 8236 ao índice 52,
