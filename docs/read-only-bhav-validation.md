@@ -8,9 +8,12 @@ No entity ID selects a resource owner. The API loads no files or network data.
 
 A fresh scratch `World` restores the snapshot under `WorldLimits`. `VmMemory.read`
 reads that scratch; every World write callback returns false. VM-local temps,
-arguments, locals and StackObjectID remain writable. The only host primitive is
-`object_type_primitive(scratch)` (opcode 32); other primitives, including WAIT
-services, fail closed. No caller-supplied callback or wait resumption exists.
+arguments, locals and StackObjectID remain writable. The host supports
+`object_type_primitive(scratch)` (opcode 32) and one exact opcode 31 form from
+Global 355: search the scratch World for the next avatar ID. That query changes
+only the disposable VM frame's StackObjectID. Other opcode 31 modes and all
+other primitives, including WAIT services, fail closed. No caller-supplied
+callback or wait resumption exists.
 
 The result distinguishes true/false completion from unsupported evaluation, with
 reason, executed instruction count and VM diagnostic. Invalid resources/snapshot,
@@ -47,6 +50,24 @@ Validation: GNU C++ 13.3.0 Debug headless build in
 synthetic API and adapter boundary only. It does not establish compatibility
 with arbitrary TS1 BHAVs, original executable behavior, commercial game data
 or console hardware.
+
+The focused EP5 test now follows the real `DiningTables.iff#4122` call into
+`Global.iff#355`, whose five BHAV instructions use opcode 31 in its `Person`
+search mode. A separate read-only probe loaded both routines from the Legacy
+Collection FAR files and ran them against a synthetic World: the action
+returned false with no flags and true with either tested flag in
+`PersonData[65]`. A second avatar with a lower ID verifies that the search
+continues until it finds the requested Sim. These results validate that exact
+code path and the isolated World model; they do not validate an actual lot or
+release path. A changed opcode-31 search mode still returns unsupported.
+
+The saved-World importer now retains OBJD Type at definition word 9, which is
+the exact field read by scope 21 in Simitone. This lets the generic evaluator
+run the Legacy `UrnStone.iff#4105` form against saved avatar banks: the avatar's
+OBJD Type is 2, and its `PersonData[31]` is compared with the caller object's
+`Attribute[1]`. A synthetic generic-API test confirms the true path and
+byte-for-byte immutability of both the snapshot and live World. The House05
+integration below exercises this with commercial resources in read-only mode.
 
 The Linux diagnostic uses the adapter, but this is still not real arrival
 execution or a complete placement decision.

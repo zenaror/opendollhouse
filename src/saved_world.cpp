@@ -240,6 +240,10 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
         check(result->world->create_saved_entity(id,r.tail.person?EntityKind::avatar:EntityKind::object,r.saved.guid,
             p.attributes,r.tail.person?r.tail.person->person_data:empty,r.tail.person?motives.at(id):empty,
             p.object_data,p.extras,r.common.slots.size(),masters.at(id)),"saved world runtime bank budget/validation rejected");
+        // Scope 21 is the StackObject's OBJD fields. Keep its Type field (word 9)
+        // available to BHAVs such as the Legacy UrnStone EP5 check.
+        check(result->world->declare_definition_word(id,9,r.definition.object_type),
+              "saved world runtime definition type rejected");
         if(p.x!=-16 || p.y!=-16)
             check(result->world->set_position(id,{p.x,p.y,static_cast<std::int16_t>(p.level),static_cast<std::uint8_t>(p.object_data[1])}),
                   "saved world runtime position rejected");

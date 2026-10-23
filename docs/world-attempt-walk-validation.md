@@ -107,15 +107,15 @@ essas formas BHAV exatas, lê os bancos do World atual e continua retornando
 sintéticos cobrem resultados verdadeiro/falso, curto-circuitos, dados ausentes
 e formatos alterados.
 
-Com essas regras, o snapshot real da House05 avançou para a criação da grade de
-rota. A grade completa excedia o teto de células; o início de rota agora aplica
-a mesma janela local de 128 unidades em cada direção que a atualização de rota
-já usava, mantendo o inventário completo de obstáculos. A execução headless
-confirmou `route_runtime=ready_dynamic_single_room_grid`, mas ainda não moveu o
-Sim (`movement_callbacks=0`). O teste de viagem 5→7 encerrou com código 3
-quando o residente 16 encontrou `SLOT runtime profile not implemented`; não
-houve chegada nem retorno. Portanto, esses resultados removem dois bloqueios
-de leitura e um bloqueio de alocação, mas não provam caminhada ou viagem real.
+O World salvo agora também preserva o campo `OBJD Type` que esse BHAV consulta.
+Com isso, o teste headless da House05 completou 4096 passos sem erro: o residente
+16 saiu de `(440,360,1,0)` e terminou em `(472,392,1,5)`, com 54 atualizações
+de movimento; o residente 18 permaneceu estável. A verificação oficial terminou
+com `status=passed`, `host_failed=false` e confirmou que os 131 arquivos de jogo
+usados mantiveram os mesmos hashes. Isso prova movimento nesse cenário real e
+limitado; não prova que toda a casa, outras rotas, animações, interações ou a
+interface estejam prontas. A viagem entre casas continua bloqueada pelo perfil
+de SLOT ainda não implementado.
 
 ## Testes
 

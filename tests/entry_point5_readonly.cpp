@@ -62,6 +62,37 @@ odh::Bhav dining_table_bhav() {
     bhav.instructions = {verify_person, flag_two, flag_three};
     return bhav;
 }
+
+odh::Bhav global355_person_lookup() {
+    odh::Instruction reject_zero_stack_object{};
+    reject_zero_stack_object.opcode = 2;
+    reject_zero_stack_object.on_true = 0xff;
+    reject_zero_stack_object.on_false = 1;
+    reject_zero_stack_object.operands = {0, 0, 0, 0, 0, 15, 10, 7};
+    odh::Instruction save_original_stack_object{};
+    save_original_stack_object.opcode = 2;
+    save_original_stack_object.on_true = 2;
+    save_original_stack_object.on_false = 0xfd;
+    save_original_stack_object.operands = {0, 0, 0, 0, 0, 5, 25, 10};
+    odh::Instruction reset_search_cursor{};
+    reset_search_cursor.opcode = 2;
+    reset_search_cursor.on_true = 3;
+    reset_search_cursor.on_false = 0xfd;
+    reset_search_cursor.operands = {0, 0, 0, 0, 0, 5, 10, 7};
+    odh::Instruction next_person{};
+    next_person.opcode = 31;
+    next_person.on_true = 4;
+    next_person.on_false = 0xff;
+    next_person.operands = {0, 0, 0, 0, 129, 10, 0, 0};
+    odh::Instruction compare_person_id{};
+    compare_person_id.opcode = 2;
+    compare_person_id.on_true = 0xfe;
+    compare_person_id.on_false = 3;
+    compare_person_id.operands = {0, 0, 0, 0, 0, 2, 25, 10};
+    return {0x8002,
+        {reject_zero_stack_object, save_original_stack_object, reset_search_cursor,
+         next_person, compare_person_id}, {}, odh::Bhav::Metadata{0, 0, 1, 2}};
+}
 }
 
 int main() {
@@ -187,6 +218,25 @@ int main() {
             encode_world_snapshot(ep5_world.snapshot()) == ep5_before,
             "generic EP5 sandbox leaves saved and live World unchanged");
 
+    World urn_world;
+    require(urn_world.create(11, EntityKind::object, {2}) &&
+            urn_world.create(16, EntityKind::avatar, {0, 32}) &&
+            urn_world.declare_definition_word(16, 9, 2) &&
+            urn_world.set_person_data(16, 31, 30),
+            "generic UrnStone caller and avatar fixture");
+    const VmFrame urn_frame{routine_key(4105),0,{11,11,16,1},{},{}};
+    require(urn_world.write(urn_frame,0,1,30),"set UrnStone caller Attribute[1]");
+    const auto urn_snapshot=urn_world.snapshot();
+    const auto urn_before=encode_world_snapshot(urn_snapshot);
+    const RoutineSet urn_owner{{routine_key(4105), urnstone_bhav()}};
+    auto urn_generic=evaluate_read_only_entry_point5_bhav(urn_snapshot, {}, urn_owner,
+        4105, 11, 16, {}, 8);
+    require(urn_generic.state==ReadOnlyBhavState::evaluated_true && urn_generic.steps==4,
+        "generic EP5 executes Legacy UrnStone using saved OBJD Type and avatar PersonData");
+    require(encode_world_snapshot(urn_snapshot)==urn_before &&
+            encode_world_snapshot(urn_world.snapshot())==urn_before,
+        "generic UrnStone evaluation leaves saved and live World unchanged");
+
     Instruction ghost_test{};
     ghost_test.opcode = 2; ghost_test.on_true = 0xfe; ghost_test.on_false = 0xff;
     ghost_test.operands = {1, 0, 1, 0, 0, 2, 9, 7};
@@ -226,6 +276,66 @@ int main() {
     require(encode_world_snapshot(ep5_snapshot) == ep5_before &&
             encode_world_snapshot(ep5_world.snapshot()) == ep5_before,
             "all generic EP5 variants leave the live World unchanged");
+
+    // Reproduce the real DiningTables.iff#4122 -> Global.iff#355 path. Global
+    // 355 searches the avatar list with SetToNext(Person), then compares each
+    // ID with the original StackObjectID. This verifies nested global lookup
+    // and read-only avatar enumeration in the same sandbox used by the resolver.
+    World dining_world;
+    require(dining_world.create(10, EntityKind::object, {2}) &&
+            dining_world.create(5, EntityKind::avatar, {2, 66}) &&
+            dining_world.create(20, EntityKind::avatar, {2, 66}) &&
+            dining_world.set_person_data(20, 65, 0),
+            "DiningTables caller and live avatar fixture");
+    const auto dining_snapshot = dining_world.snapshot();
+    const auto dining_before = encode_world_snapshot(dining_snapshot);
+    const auto dining_root = dining_table_bhav();
+    RoutineSet dining_owner{{routine_key(4122), dining_root}};
+    const RoutineSet dining_globals{{routine_key(355), global355_person_lookup()}};
+    auto dining_run = evaluate_read_only_entry_point5_bhav(dining_snapshot,
+        dining_globals, dining_owner, 4122, 10, 20, {}, 16);
+    require(dining_run.state == ReadOnlyBhavState::evaluated_false && dining_run.steps == 20,
+            "DiningTables global 355 and flags return false for a live avatar with no flags");
+    require(encode_world_snapshot(dining_snapshot) == dining_before &&
+            encode_world_snapshot(dining_world.snapshot()) == dining_before,
+            "DiningTables global enumeration does not change the snapshot or live World");
+    require(dining_world.set_person_data(20, 65, 2), "set DiningTables flag two");
+    auto flagged_snapshot = dining_world.snapshot();
+    const auto flagged_before = encode_world_snapshot(flagged_snapshot);
+    dining_run = evaluate_read_only_entry_point5_bhav(flagged_snapshot,
+        dining_globals, dining_owner, 4122, 10, 20, {}, 16);
+    require(dining_run.state == ReadOnlyBhavState::evaluated_true && dining_run.steps == 18,
+            "DiningTables resolves flag two through nested Global 355");
+    require(encode_world_snapshot(flagged_snapshot) == flagged_before &&
+            encode_world_snapshot(dining_world.snapshot()) == flagged_before,
+            "flag-two evaluation leaves the live World unchanged");
+    require(dining_world.set_person_data(20, 65, 4), "set DiningTables flag three");
+    flagged_snapshot = dining_world.snapshot();
+    const auto flag_three_before = encode_world_snapshot(flagged_snapshot);
+    dining_run = evaluate_read_only_entry_point5_bhav(flagged_snapshot,
+        dining_globals, dining_owner, 4122, 10, 20, {}, 16);
+    require(dining_run.state == ReadOnlyBhavState::evaluated_true && dining_run.steps == 20,
+            "DiningTables resolves flag three through nested Global 355");
+    require(encode_world_snapshot(flagged_snapshot) == flag_three_before &&
+            encode_world_snapshot(dining_world.snapshot()) == flag_three_before,
+            "flag-three evaluation leaves the live World unchanged");
+
+    World no_person_world;
+    require(no_person_world.create(10, EntityKind::object, {2}) &&
+            no_person_world.create(20, EntityKind::object, {2}),
+            "non-avatar StackObject fixture");
+    dining_run = evaluate_read_only_entry_point5_bhav(no_person_world.snapshot(),
+        dining_globals, dining_owner, 4122, 10, 20, {}, 16);
+    require(dining_run.state == ReadOnlyBhavState::evaluated_false,
+            "Global 355 returns false when the World has no active avatar to match");
+
+    auto unsupported_person_lookup = global355_person_lookup();
+    unsupported_person_lookup.instructions[3].operands[4] = 130;
+    const RoutineSet unsupported_globals{{routine_key(355), unsupported_person_lookup}};
+    dining_run = evaluate_read_only_entry_point5_bhav(dining_snapshot,
+        unsupported_globals, dining_owner, 4122, 10, 20, {}, 16);
+    require(dining_run.state == ReadOnlyBhavState::unsupported,
+            "unverified SetToNext search modes remain unsupported");
 
     std::cout << "Read-only EntryPoint 5 BHAV checks passed\n";
 }

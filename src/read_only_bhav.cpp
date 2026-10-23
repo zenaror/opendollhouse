@@ -10,6 +10,25 @@ bool valid_keys(const RoutineSet& routines, bool additional_owner) {
             (additional_owner && entry.first.scope == RoutineScope::global)) return false;
     return true;
 }
+
+PrimitiveOutcome set_to_next_person(const World& scratch, const VmFrame& frame,
+                                   const Instruction& instruction) {
+    // Simitone's opcode 31 has many search modes and some write object state.
+    // This one exact Global.iff#355 form searches the live avatar list using
+    // StackObjectID and changes only the disposable VM frame's StackObjectID.
+    static constexpr std::array<std::uint8_t, 8> operands{0, 0, 0, 0, 129, 10, 0, 0};
+    if (instruction.opcode != 31 || frame.key.scope != RoutineScope::global ||
+        frame.key.id != 355 || frame.pc != 3 || instruction.on_true != 4 ||
+        instruction.on_false != 0xff || instruction.operands != operands)
+        return {PrimitiveDisposition::unsupported, "unsupported read-only primitive"};
+
+    const auto next = scratch.next_entity(frame.context.stack_object, EntityKind::avatar);
+    if (!next) return {PrimitiveDisposition::goto_false, {}};
+    PrimitiveOutcome outcome;
+    outcome.disposition = PrimitiveDisposition::goto_true;
+    outcome.stack_object_write = VmStackObjectWrite{*next};
+    return outcome;
+}
 } // namespace
 
 ReadOnlyBhavResult evaluate_read_only_bhav(
@@ -34,7 +53,15 @@ ReadOnlyBhavResult evaluate_read_only_bhav(
     };
     memory.write = [](const VmFrame&, std::uint8_t, std::int16_t, std::int16_t) { return false; };
     try {
-        Vm vm(routines, std::move(memory), limits.vm, object_type_primitive(scratch), owners);
+        const auto object_type = object_type_primitive(scratch);
+        VmPrimitive primitive = [&scratch, &object_type](const VmFrame& frame,
+            const Instruction& instruction, const std::array<std::int16_t, 20>& temps,
+            const VmDispatch& dispatch) {
+            if (instruction.opcode == 31)
+                return set_to_next_person(scratch, frame, instruction);
+            return object_type(frame, instruction, temps, dispatch);
+        };
+        Vm vm(routines, std::move(memory), limits.vm, std::move(primitive), owners);
         if (vm.start(root, context, arguments) != VmStatus::running)
             return {ReadOnlyBhavState::unsupported, ReadOnlyBhavReason::start_failed,
                     vm.steps(), vm.diagnostic()};
