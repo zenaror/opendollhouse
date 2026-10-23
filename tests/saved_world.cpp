@@ -127,6 +127,11 @@ int main() {
             restored->records[1].serialized_object_type==2,"unattached slot and declared OBJT kind adaptation preserved");
         require(restored->multitile_groups.size()==1 && restored->multitile_groups[0].leader==3 &&
             restored->multitile_groups[0].members==std::vector<std::int16_t>({3,4}),"multitile leader first independent of decoded order");
+        require(odh::saved_world_has_multitile_member(*restored,3,105)&&
+            odh::saved_world_has_multitile_member(*restored,4,105)&&
+            !odh::saved_world_has_multitile_member(*restored,3,104)&&
+            !odh::saved_world_has_multitile_member(*restored,2,105),
+            "saved multi-tile membership requires the exact resolved master and a real group member");
         require(restored->relationships->object_value(w,1,2,0)==-1 && restored->relationships->object_value(w,1,2,1)==-32768 &&
             restored->relationships->object_value(w,1,2,2)==4464,"raw relationships adapted to signed low16 in generation backend");
         require(restored->records[1].tail.person->motive_data_old_bits[0]==0x7fc01234U &&

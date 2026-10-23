@@ -119,11 +119,29 @@ inline SavedPortalVmCallPlan saved_avatar_entry_point_vm_call_plan(
         throw odh::FormatError("live EntryPoint differs from the selected definition resource");
     if(function.condition!=0)
         throw odh::FormatError("entry-point condition requires an explicit evaluator");
-    if(function.action==0||function.action<4096||function.action>=8192)
-        throw odh::FormatError("entry-point action is not a private BHAV");
+    if(function.action==0)
+        throw odh::FormatError("entry-point action is zero");
 
-    auto routines=load_saved_action_routines(*candidate,function.action);
     const auto key=odh::routine_key(function.action);
+    odh::RoutineSet routines;
+    if(key.scope==odh::RoutineScope::private_object) {
+        routines=load_saved_action_routines(*candidate,function.action);
+    } else if(key.scope==odh::RoutineScope::semiglobal) {
+        if(!function.semiglobal_name||!semiglobal)
+            throw odh::FormatError("semiglobal entry-point root requires its explicit linked bank");
+        auto expected=*function.semiglobal_name+".iff";
+        auto actual=std::filesystem::path(semiglobal->entry).filename().string();
+        auto fold_ascii=[](std::string value){for(auto& c:value)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return value;};
+        if(fold_ascii(expected)!=fold_ascii(actual)||semiglobal->name.empty()||
+           fold_ascii(semiglobal->name)!=fold_ascii(*function.semiglobal_name))
+            throw odh::FormatError("explicit semiglobal resource does not match the object GLOB link");
+        const auto root=semiglobal->routines.find(key);
+        if(root==semiglobal->routines.end())
+            throw odh::FormatError("semiglobal entry-point root is absent from its linked bank");
+        routines.emplace(key,root->second);
+    } else {
+        throw odh::FormatError("global entry-point root requires the shared-owner call path");
+    }
     const auto entry=routines.find(key);
     if(entry==routines.end()||!entry->second.metadata)
         throw odh::FormatError("entry-point action routine or metadata absent from exact owner closure");

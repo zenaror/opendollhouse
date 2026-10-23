@@ -36,6 +36,10 @@ struct SavedWorld {
     std::vector<SavedWorldEntity> records;
     std::vector<SavedMultitileGroup> multitile_groups;
 };
+// True only for an entity retained in a validated saved multi-tile group whose
+// resolved master GUID matches the exact resource identity requested.
+bool saved_world_has_multitile_member(const SavedWorld&,std::int16_t entity_id,
+    std::uint32_t master_guid) noexcept;
 // A full snapshot is validated before any candidate World is created. Invalid
 // metadata/references/budgets throw FormatError; allocation exceptions propagate.
 // No partially built World is returned. neighbors, if supplied, are copied by

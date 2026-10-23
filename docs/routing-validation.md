@@ -463,17 +463,21 @@ addition.
 
 ### Preparação da chamada EntryPoint26 para um assento — 2026-10-23
 
-O resolvedor compartilhado de chamadas de EntryPoint agora também prepara uma
-chamada para EP26 de objeto salvo. Ele confere a tabela viva contra a tabela
-OBJf/OBJD do recurso exato, carrega o fechamento privado do BHAV e constrói o
-contexto com avatar como Caller, objeto como Callee/StackObject e `CodeOwner`
-independente dos IDs das entidades. O teste sintético confirma o contexto,
-os argumentos definidos pelo metadata do BHAV e a recusa de índice inexistente;
-o caminho legado Portal15 continua passando pelo mesmo resolvedor com a
-verificação de tipo Portal preservada.
+O resolvedor compartilhado prepara uma chamada para EP26 de objeto salvo e
+agora aceita raízes privadas ou semiglobais. Ele confere a tabela viva contra a
+tabela OBJf/OBJD do recurso exato, carrega as rotinas do dono correto e constrói
+o contexto com avatar como Caller, objeto como Callee/StackObject e `CodeOwner`
+independente dos IDs das entidades. No caminho semiglobal, o GLOB do objeto
+precisa corresponder ao arquivo explicitamente fornecido; a rotina raiz e os
+BHAVs semiglobais chamados são instalados sob o dono do recurso-objeto, enquanto
+as dependências globais compartilhadas são conferidas separadamente.
 
-Isso é somente a preparação da chamada: o teste não usa a cadeira comercial
-173 nem o código real dela, não executa EP26, não valida EntryPoint Condition,
-nem decide a cadeira por footprint/parede/ocupação. A viagem ainda não chama
-este resolvedor e não tenta outra cadeira após retorno falso. Portanto não há
-prova de movimento, chegada ou ação de sentar no lote.
+Na cópia da Legacy Collection, a cadeira 173 aponta EP26 para BHAV8215 e liga
+`SofaGlobals.iff`; SLOT100 marca Sitting=10 e proximidade 32–80. A leitura
+estática de `SofaGlobals.iff` mostra a cadeia 8215→8260→8259→Global.363. O teste
+de integração usa recursos sintéticos para verificar resolução e pilha dessa
+cadeia (43 checks focais). Isso valida o plano do ODH, não a execução da cadeira
+comercial: EntryPoint Condition, serviços da rotina, seleção por footprint/
+parede/ocupação e tentativa de outra cadeira após retorno falso continuam
+pendentes. A viagem ainda não chama este resolvedor, então não há prova de
+movimento, chegada ou ação de sentar no lote.

@@ -253,4 +253,17 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
     result->records=std::move(source);
     return result;
 }
+
+bool saved_world_has_multitile_member(const SavedWorld& saved,std::int16_t entity_id,
+                                      std::uint32_t master_guid) noexcept {
+    if(entity_id<=0||master_guid==0)return false;
+    for(const auto& group:saved.multitile_groups) {
+        if(group.master_guid!=master_guid||group.members.size()<2||
+           std::find(group.members.begin(),group.members.end(),entity_id)==group.members.end()||
+           std::find(group.members.begin(),group.members.end(),group.leader)==group.members.end())continue;
+        const auto* leader=saved.world?saved.world->find(group.leader):nullptr;
+        if(leader&&leader->definition&&leader->definition->master_guid==master_guid)return true;
+    }
+    return false;
+}
 } // namespace odh

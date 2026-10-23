@@ -12,6 +12,28 @@ incluindo vizinhança e lotes das expansões, famílias e seus fluxos, seleção
 idioma e registro de falhas. Paridade ainda precisa ser verificada em uso; uma
 build compilada ou testes unitários aprovados não bastam.
 
+## Atualização: rastreio direto da ação sentar (2026-10-23)
+
+Com `Objects.far:Sofas.iff:8215`, `SofaGlobals.iff` e `Global.iff` da Legacy
+Collection carregados explicitamente, `odh-bhav --world-probe --route-probe
+--route-slot-probe --object-def 16848 --stack-object-word 8 0` percorreu o
+`GotoRelativePosition` da ação e moveu o avatar sintético até `[64,48,1]`, na
+frente do assento sintético. A próxima instrução é `Snap` (opcode46), que esse
+perfil do probe ainda não instalou. A inspeção de `VMRoutingFrame` confirma que
+Simitone chama EntryPoint26 no assento escolhido e interpreta o retorno antes
+de continuar Route45. O runtime ODH agora permite que Snap e animação carreguem
+recursos de uma peça multipartes apenas quando o ID pertence a um grupo salvo
+validado e o Master GUID coincide. Um teste sintético cobre essa comprovação;
+falta, porém, conservar a cadeira escolhida na viagem e despachar sua EP26 para
+chegar até esse Snap com os dados reais.
+
+Isso é um trace do BHAV comercial em um World construído pelo ODH; o percurso,
+posição, atributos e entidade do assento são sintéticos. Não demonstra sentar
+nem uma interação na House07 real. Próxima frente: conservar a identidade do
+assento selecionado no Route45 e despachar a EntryPoint26 no dono correto. A
+seleção por Groups/footprint, avaliação das condições e os serviços restantes
+do BHAV continuam necessários antes da viagem real.
+
 ## Atualização: aproximação frontal do assento (2026-10-23)
 
 O `GotoRelativePosition` exato usado por BHAV8215 (operandos

@@ -39,12 +39,12 @@ std::string objd(std::uint16_t uses_table){
     put(bytes,64,4126,2); // generated EP26
     return bytes;
 }
-std::string objf(std::uint16_t portal_condition=0){
+std::string objf(std::uint16_t portal_condition=0,std::uint16_t chair_action=5026){
     std::string bytes(16,'\0');put(bytes,4,1,4);bytes.replace(8,4,"fJBO");put(bytes,12,27,4);
     for(unsigned index=0;index<27;++index){
         const std::size_t at=bytes.size();bytes.resize(at+4,'\0');
         put(bytes,at,index==15?portal_condition:0,2);
-        put(bytes,at+2,index==1?5001:index==5?5005:index==15?5015:index==26?5026:0,2);
+        put(bytes,at+2,index==1?5001:index==5?5005:index==15?5015:index==26?chair_action:0,2);
     }
     return bytes;
 }
@@ -242,8 +242,59 @@ int main(){try{
     try{(void)saved_portal_vm_call_plan(portal_record,linked_world,portal_definitions,12,37,0x8000003bU,&wrong_bank);}
     catch(const odh::FormatError&){mismatched_portal_bank=true;}
     check(mismatched_portal_bank,"portal semiglobal binding rejects a different explicit resource");
+    const auto chair_path=path.parent_path()/(path.stem().string()+"-chair.iff");
+    odh::DefinitionCandidate chair_candidate{chair_path.string(),"",7,candidate.definition};
+    const std::string sofa_glob=std::string(1,static_cast<char>(11))+"SofaGlobals";
+    write(chair_path,iff(chunk("OBJD",7,objd(1))+chunk("OBJf",7,objf(0,8215))+
+        chunk("GLOB",128,sofa_glob)));
+    const auto sofa_bank_path=path.parent_path()/(path.stem().string()+"-sofa-global.far");
+    const auto sofa_bank_asset=iff(chunk("BHAV",8215,portal_bhav(8260))+
+        chunk("BHAV",8260,portal_bhav(8259))+chunk("BHAV",8259,portal_bhav(301)));
+    write_far(sofa_bank_path,"SofaGlobals.iff",sofa_bank_asset);
+    const auto sofa_bank=load_saved_semiglobal_code_bank(sofa_bank_path.string(),"SofaGlobals.iff");
+    const auto sofa_global=load_saved_global_code_bank(globals_path.string(),"Global.iff");
+    odh::World chair_world;
+    check(chair_world.create(12,odh::EntityKind::avatar)&&chair_world.create(38,odh::EntityKind::object)&&
+        chair_world.define_type(38,chair_candidate.definition.guid)&&
+        chair_world.define_entry_points(38,saved_entry_point_resource(chair_candidate).table.entries),
+        "EP26 semiglobal-root object World initialized");
+    odh::SavedWorldEntity chair_world_record{};chair_world_record.saved.object_id=38;
+    chair_world_record.saved.guid=chair_candidate.definition.guid;chair_world_record.definition=chair_candidate.definition;
+    chair_world_record.serialized_object_type=7;
+    const auto chair_root_plan=saved_avatar_entry_point_vm_call_plan(
+        chair_world_record,chair_world,odh::DefinitionIndex({chair_candidate}),12,38,26,0x80000040U,
+        &sofa_bank,&sofa_global);
+    check(chair_root_plan.call.key.scope==odh::RoutineScope::semiglobal&&
+        chair_root_plan.call.key.id==8215&&chair_root_plan.call.context.caller==12&&
+        chair_root_plan.call.context.callee==38&&chair_root_plan.call.context.stack_object==38&&
+        chair_root_plan.call.context.code_owner==0x80000040U,
+        "chair EP26 resolves semiglobal root with avatar/seat context and separate object CodeOwner");
+    check(chair_root_plan.owner_routines.count(odh::routine_key(8215))&&
+        chair_root_plan.owner_routines.count(odh::routine_key(8260))&&
+        chair_root_plan.owner_routines.count(odh::routine_key(8259))&&
+        chair_root_plan.global_dependencies==std::vector<std::uint16_t>({301,302}),
+        "semiglobal EP26 root closure retains linked helpers and exact shared-global dependencies");
+    bool missing_root_semiglobal=false;
+    try{(void)saved_avatar_entry_point_vm_call_plan(chair_world_record,chair_world,
+        odh::DefinitionIndex({chair_candidate}),12,38,26,0x80000041U,nullptr,&sofa_global);}
+    catch(const odh::FormatError&){missing_root_semiglobal=true;}
+    check(missing_root_semiglobal,"EP26 semiglobal root fails closed without its linked bank");
+    odh::VmLimits chair_limits;chair_limits.code_owners=2;
+    odh::Vm chair_vm(sofa_global.routines,{},chair_limits,{},{});
+    check(install_saved_entry_point_vm_call_plan(chair_vm,chair_root_plan)&&
+        chair_vm.start(chair_root_plan.call.key,chair_root_plan.call.context,chair_root_plan.call.arguments)==odh::VmStatus::running&&
+        chair_vm.run(3)==odh::VmStatus::budget_exhausted&&chair_vm.stack().size()==4&&
+        chair_vm.stack()[0].key.id==8215&&chair_vm.stack()[1].key.id==8260&&
+        chair_vm.stack()[2].key.id==8259&&chair_vm.stack()[3].key.id==301&&
+        chair_vm.stack()[0].context.code_owner==0x80000040U&&
+        chair_vm.stack()[2].context.code_owner==0x80000040U,
+        "installed EP26 plan dispatches semiglobal closure into the shared global bank under the object owner");
+    std::error_code cleanup;std::filesystem::remove(chair_path,cleanup);
+    std::filesystem::remove(sofa_bank_path,cleanup);
     std::error_code ignored;std::filesystem::remove(bank_path,ignored);
     std::filesystem::remove(globals_path,ignored);
+    std::filesystem::remove(chair_path,ignored);
+    std::filesystem::remove(sofa_bank_path,ignored);
     std::filesystem::remove(path,ignored);
     std::cout<<"saved entry-point resource checks: "<<checks<<"\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

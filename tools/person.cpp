@@ -1343,13 +1343,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     }
                 },limits);
             });
-            const bool validated_stair_endpoint=saved_stair_portal_endpoint_ids.count(owner)!=0;
-            const bool valid_stair_group=binding&&candidate->asset=="stair.iff"&&
-                entity->definition->master_guid&&entity->position&&restored_world&&validated_stair_endpoint;
+            const bool valid_saved_group=binding&&entity->definition->master_guid&&restored_world&&
+                odh::saved_world_has_multitile_member(*restored_world,owner,*entity->definition->master_guid);
             if(!binding||binding->guid!=candidate->definition.guid||
                binding->master_id!=candidate->definition.master_id||
                binding->sub_index!=candidate->definition.sub_index||
-               (binding->master_id!=0&&!valid_stair_group))return false;
+               (binding->master_id!=0&&!valid_saved_group))return false;
             const auto base=binding->animation_table;
             auto tables=load_strings(resource,{base,static_cast<std::uint16_t>(base+1),129,130});
             animation_table_ids.emplace(owner,base);
@@ -1505,22 +1504,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         binding=odh::read_objd_binding(chunk.payload);
                     }
                 },limits);
-                bool matched_stair_group=false;
-                if(binding&&candidate->asset=="stair.iff"&&restored_world&&
-                   frame.key.id==4113&&(frame.pc==3||frame.pc==10)&&
-                   instruction.operands==std::array<std::uint8_t,8>{0,0,3,0,2,0,0,0}) {
-                    const auto* source=world.find(frame.context.callee);
-                    const auto* target=world.find(object_id);
-                    matched_stair_group=saved_stair_portal_endpoint_ids.count(object_id)!=0&&
-                        source&&target&&saved_stair_portal_endpoint_ids.count(source->id)!=0&&
-                        source->position&&target->position&&
-                        std::abs(static_cast<int>(source->position->level)-
-                                 static_cast<int>(target->position->level))==1;
-                }
+                bool matched_saved_group=binding&&entity->definition->master_guid&&restored_world&&
+                    odh::saved_world_has_multitile_member(*restored_world,object_id,
+                        *entity->definition->master_guid);
                 if(!binding||binding->guid!=candidate->definition.guid||
                    binding->master_id!=candidate->definition.master_id||
                    binding->sub_index!=candidate->definition.sub_index||
-                   (binding->master_id!=0&&!matched_stair_group))
+                   (binding->master_id!=0&&!matched_saved_group))
                     throw odh::FormatError("Snap OBJD identity or supported multi-tile profile mismatch");
                 if(binding->slot_table==0)throw odh::FormatError("Snap OBJD has no SLOT binding");
                 with_resource(resource,[&](const auto& second_view){
