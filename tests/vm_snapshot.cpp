@@ -1,4 +1,5 @@
 #include "odh/vm.hpp"
+#include "odh/vm_snapshot_codec.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <new>
@@ -73,7 +74,10 @@ odh::RoutineSet bank() {
 odh::RoutineOwners owners() { return {{7, {{key(4097), routine({op(10,1), op(11)})}}}}; }
 std::unique_ptr<odh::Vm> restored(const odh::Vm& source) {
     auto result = std::make_unique<odh::Vm>(bank(), odh::VmMemory{}, odh::VmLimits{}, service, owners());
-    require(result->restore_snapshot(source.snapshot()), "restore valid snapshot"); same(source, *result); return result;
+    const auto encoded = odh::encode_vm_snapshot(source.snapshot());
+    const auto decoded = odh::decode_vm_snapshot(encoded);
+    require(result->restore_snapshot(decoded), "restore valid encoded snapshot");
+    same(source, *result); return result;
 }
 void run_same(odh::Vm& a, odh::Vm& b, std::uint64_t budget) {
     std::ostringstream left, right;
