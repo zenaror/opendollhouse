@@ -32,7 +32,13 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
         iff_chunks(view, [&](const Chunk& chunk) {
             if (chunk.type != "STR#" || chunk.id != mode) return;
             if (locations) throw FormatError("ambiguous LotLocations mode table");
-            locations = read_lot_locations(chunk.payload, language);
+            // LotLocations rows are map coordinates, not interface text. In
+            // the installed TS1 tables, non-English groups contain an opaque
+            // first entry where the first lot coordinate should be, so they
+            // cannot be used to resolve selectable houses. Keep the selected
+            // UI language for runtime text while reading the canonical map
+            // coordinates from the English group.
+            locations = read_lot_locations(chunk.payload, 1);
         });
     });
     if (!locations) throw FormatError("selected mode has no LotLocations table");

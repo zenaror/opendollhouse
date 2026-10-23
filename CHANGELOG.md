@@ -25,6 +25,19 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `odh-person --game-root` prepara a entrada integrada da vizinhança ao lote,
+  carrega recursos limitados a uma instalação e reutiliza a mesma janela no
+  runtime. Depois de carregar o lote, dados e idioma podem ser lembrados na
+  configuração privada do usuário; `--plan-only` continua sem gravar. Os 179
+  CTests passaram, com o teste X11 pulado por falta de display; House07
+  resolveu os dois moradores em 20 idiomas nas instalações original e Legacy
+  em modo headless. O teste visual
+  ainda depende de um servidor X11 acessível. Um teste sintético também cobre
+  entrada integrada, recuperação de configuração inválida e recusa de atalhos
+  que escapam da instalação. Esta etapa não implementa um ciclo jogável nem
+  salvamento/retorno. Veja
+  [`linux-session-entry-validation.md`](docs/linux-session-entry-validation.md).
+
 - A tela da vizinhança agora pode ser mostrada numa janela Linux existente, e o
   backend pode redimensionar essa mesma janela preservando seu identificador.
   Isso prepara a transição bairro→lote; o fluxo contínuo ainda não está ligado

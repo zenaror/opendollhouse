@@ -1,0 +1,116 @@
+"""Synthetic integrated Linux entry checks; never copies commercial resources."""
+import json
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+binary = sys.argv[1]
+checks = 0
+
+
+def check(value, reason):
+    global checks
+    checks += 1
+    assert value, f"check {checks} failed: {reason}"
+
+
+def chunk(kind, ident, data):
+    return kind + struct.pack(">IHH", 76 + len(data), ident, 0) + bytes(64) + data
+
+
+def iff(chunks):
+    signature = b"IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1"
+    return signature.ljust(60, bytes(1)) + bytes(4) + b"".join(chunks)
+
+
+def make_game(root):
+    user = root / "UserData"
+    game = root / "GameData"
+    (user / "Houses").mkdir(parents=True)
+    (user / "Characters").mkdir()
+    (game / "Global").mkdir(parents=True)
+
+    locations = chunk(b"STR#", 1, struct.pack("<hH", -3, 1) + b"\1" +
+                      b"7,10,20\0\0")
+    family = chunk(b"FAMI", 201, struct.pack(
+        "<II4siiiiiiI", 0, 9, b"IMAF", 7, 900, 100, 0, 0, 0, 1) +
+        struct.pack("<I", 0x12345678))
+    name = b"Sim0"
+    neighbor = struct.pack("<II", 1, 4) + name + b"\0\0" + struct.pack("<ii", 0, 1)
+    neighbor += struct.pack("<80h", *([0] * 80))
+    neighbor += struct.pack("<hIii", 11, 0x12345678, -1, 0)
+    neighbors = chunk(b"NBRS", 1,
+                      struct.pack("<II4sI", 0, 62, b"SRBN", 1) + neighbor)
+    simi_data = bytearray(12 + 32 * 2 + 34 + 6 * 4)
+    struct.pack_into("<II", simi_data, 0, 0, 0x33)
+    simi_data[8:12] = b"IMIS"
+    simi = chunk(b"SIMI", 1, simi_data)
+    objd = bytearray(32)
+    struct.pack_into("<I", objd, 0, 138)
+    struct.pack_into("<H", objd, 18, 2)
+    struct.pack_into("<I", objd, 28, 0x12345678)
+
+    (user / "LotLocations.iff").write_bytes(iff([locations]))
+    (user / "Neighborhood.iff").write_bytes(iff([family, neighbors]))
+    (user / "LotZoning.iff").write_bytes(b"synthetic zoning")
+    (user / "Houses" / "House07.iff").write_bytes(iff([simi]))
+    (user / "Characters" / "User00000.iff").write_bytes(iff([chunk(b"OBJD", 128, objd)]))
+    for relative in [
+        "Global/Global.far", "Objects/Objects.far", "Animation/Animation.far",
+        "Textures/Textures.far", "floors.iff", "walls.iff",
+    ]:
+        path = game / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic resource")
+    for relative in ["UIGraphics/UIGraphics.far", "ExpansionShared/ExpansionShared.far"]:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic resource")
+
+
+with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
+    base = Path(directory)
+    root = base / "game"
+    make_game(root)
+    env = os.environ.copy()
+    env["XDG_CONFIG_HOME"] = str(base / "config")
+
+    command = [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
+               "--language", "15", "--plan-only"]
+    run = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(run.returncode == 0, run.stderr)
+    result = json.loads(run.stdout)
+    check(result["status"] == "ready" and result["resident_count"] == 1,
+          "synthetic family and lot resolve")
+    check("--language" in result["command"] and "15" in result["command"],
+          "selected language reaches runtime arguments")
+    for argument in result["command"]:
+        if argument.startswith("/"):
+            check(Path(argument).resolve().is_relative_to(root.resolve()),
+                  f"runtime resource stays inside selected installation: {argument}")
+
+    config = base / "config" / "opendollhouse" / "config"
+    config.parent.mkdir(parents=True)
+    config.write_text("invalid saved settings\n")
+    override = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(override.returncode == 0, "explicit game root recovers malformed saved config")
+    check(config.read_text() == "invalid saved settings\n",
+          "plan-only never rewrites user configuration")
+    implicit = subprocess.run([binary, "--mode", "1", "--house", "7", "--plan-only"],
+                              capture_output=True, text=True, env=env)
+    check(implicit.returncode == 2 and "pass --game-root" in implicit.stderr,
+          "malformed config asks for an explicit repair path")
+
+    global_far = root / "GameData" / "Global" / "Global.far"
+    global_far.unlink()
+    outside = base / "outside.far"
+    outside.write_bytes(b"outside resource")
+    global_far.symlink_to(outside)
+    escaped = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(escaped.returncode == 2 and "outside the selected installation" in escaped.stderr,
+          "symlinked resource outside selected installation is rejected")
+
+print(f"Integrated Linux entry CLI: {checks} checks passed (synthetic only)")

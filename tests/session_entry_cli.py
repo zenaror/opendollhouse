@@ -73,6 +73,12 @@ with tempfile.TemporaryDirectory(prefix="odh-session-entry-") as folder:
     check(result["members"]==[
         {"guid":guid_a,"neighbor_id":11,"character_asset":"User00002.iff","object_definition_id":128},
         {"guid":guid_b,"neighbor_id":12,"character_asset":"User00009.iff","object_definition_id":128}])
+    localized=subprocess.run([binary,"--user-data",str(root),"--mode","1","--house","7",
+                              "--language","15"],capture_output=True,text=True)
+    check(localized.returncode==0)
+    localized_result=json.loads(localized.stdout)
+    check(localized_result["family_chunk_id"]==201 and localized_result["house_number"]==7 and
+          localized_result["member_count"]==2)
     bad=subprocess.run([binary,"--user-data",str(root),"--mode","6","--house","7"],
                        capture_output=True,text=True)
     check(bad.returncode==2 and not bad.stdout)

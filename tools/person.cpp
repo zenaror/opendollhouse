@@ -50,6 +50,7 @@
 #include "saved_wall_appearance.hpp"
 #include "saved_portal.hpp"
 #include "saved_lot_renderer.hpp"
+#include "person_runtime.hpp"
 #ifdef ODH_HAVE_X11
 #include "linux_window.hpp"
 #endif
@@ -203,7 +204,7 @@ const char* floor_result_name(odh::FloorPlacementResult result){
     return "invalid_result";
 }
 }
-int main(int argc,char** argv) {
+int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window) {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
  odh_host::LinuxSessionLog session_log;
 #endif
@@ -1692,7 +1693,8 @@ struct PlacementCandidateProbe {
         return title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
-    std::unique_ptr<odh_host::LinuxWindow> render_window_host;
+    std::unique_ptr<odh_host::LinuxWindow> owned_render_window;
+    odh_host::LinuxWindow* render_window_host=nullptr;
 #endif
     odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
@@ -1755,9 +1757,23 @@ struct PlacementCandidateProbe {
             render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
         }
 #ifdef ODH_HAVE_X11
-        if(render_window)render_window_host=std::make_unique<odh_host::LinuxWindow>(render_camera.width,render_camera.height,
-            render_lot?"OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
-                       "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+        if(render_window){
+            const std::string title=render_lot?
+                "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
+                "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+            if(shared_window){
+                shared_window->resize(render_camera.width,render_camera.height);
+                shared_window->set_title(title);
+                render_window_host=shared_window;
+            }else{
+                owned_render_window=std::make_unique<odh_host::LinuxWindow>(
+                    render_camera.width,render_camera.height,title);
+                render_window_host=owned_render_window.get();
+            }
+        }
+#else
+        if(render_window&&shared_window)
+            throw odh::FormatError("shared Linux window requested but this build has no X11 backend");
 #endif
     }
     if(headless_main&&!render_lot){
@@ -3763,4 +3779,11 @@ struct PlacementCandidateProbe {
 #endif
     std::cerr<<"odh-person: "<<e.what()<<'\n';return 2;
  }
+}
+
+int main(int argc,char** argv) {
+    for(int i=1;i<argc;++i)
+        if(argv[i]&&(std::string(argv[i])=="--game-root"||std::string(argv[i])=="--mode"))
+            return odh_linux_game_entry(argc,argv);
+    return odh_person_run(argc,argv,nullptr);
 }

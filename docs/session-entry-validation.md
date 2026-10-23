@@ -1,5 +1,11 @@
 # Resolução da família antes de abrir um lote
 
+O idioma recebido pelo carregador é validado, mas não escolhe o grupo usado
+para localizar casas. `LotLocations` também carrega coordenadas de mapa; os
+grupos não ingleses inspecionados têm uma entrada opaca no lugar da primeira
+coordenada. O OpenDollhouse usa o grupo inglês para essas posições técnicas e
+preserva o idioma escolhido para os textos do runtime.
+
 `odh::load_session_entry` recebe uma pasta `UserData`, o modo da vizinhança, o
 número da casa e o idioma. O executável `odh-session-entry` usa essa função.
 Ela confere a casa em `LotLocations.iff`, localiza a família em
