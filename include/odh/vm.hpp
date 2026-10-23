@@ -138,6 +138,23 @@ struct VmExternalFrameReturn {
     std::uint64_t run_generation;
 };
 
+// Owned runtime values only. Resource/callback identity is a host precondition:
+// restore into a fresh Vm built with the same immutable routines/owners and
+// equivalent memory/primitive bindings. This is not a session-file envelope.
+struct VmSnapshot {
+    std::vector<VmFrame> stack;
+    std::array<std::int16_t, 20> temps{};
+    VmStatus status = VmStatus::ready;
+    std::string diagnostic;
+    std::uint64_t steps = 0;
+    std::optional<VmPending> pending;
+    std::vector<VmPending> suspended_pending;
+    std::optional<VmInteractionReturn> interaction_return;
+    std::optional<VmExternalFrameReturn> external_frame_return;
+    std::uint64_t ticket_sequence = 0;
+    std::uint64_t run_generation = 0;
+};
+
 // Host-independent, resumable instruction kernel. Owns immutable routine sets.
 // No scheduler, entities, queue, routing, animation, or clock is implied.
 class Vm {
@@ -150,6 +167,10 @@ public:
     Vm& operator=(const Vm&) = delete;
     Vm(Vm&&) = delete;
     Vm& operator=(Vm&&) = delete;
+    VmSnapshot snapshot() const;
+    // Invalid values return false; allocation failures throw. Both leave the
+    // fresh destination unchanged. Calls from callbacks are forbidden.
+    bool restore_snapshot(const VmSnapshot&);
     VmStatus start(RoutineKey, VmContext = {}, const std::vector<std::int16_t>& args = {});
     // Load a complete, already-resolved stack without starting Main or running
     // an instruction. Invalid snapshots throw and leave this VM unchanged.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <type_traits>
 
 namespace odh {
 namespace {
@@ -130,6 +131,147 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
     std::copy(args.begin(), args.end(), frame.arguments.begin());
     stack_.push_back(std::move(frame));
 }
+VmSnapshot Vm::snapshot() const {
+    if (executing_) throw std::logic_error("VM callbacks must not capture running state");
+    return {stack_, temps_, status_, diagnostic_, steps_, pending_, suspended_pending_,
+            interaction_return_, external_frame_return_, ticket_sequence_, run_generation_};
+}
+bool Vm::restore_snapshot(const VmSnapshot& state) {
+    if (executing_) throw std::logic_error("VM callbacks must not reenter state restore");
+    if (status_ != VmStatus::ready || !stack_.empty() || steps_ || run_generation_ ||
+        ticket_sequence_ || pending_ || !suspended_pending_.empty() || interaction_return_ ||
+        external_frame_return_ || !diagnostic_.empty() ||
+        std::any_of(temps_.begin(), temps_.end(), [](auto value) { return value != 0; })) return false;
+    if (state.stack.size() > limits_.stack_depth ||
+        state.suspended_pending.size() > state.stack.size()) return false;
+    const auto owner_valid = [&](CodeOwner owner) {
+        return owner == 0 || owners_.find(owner) != owners_.end();
+    };
+    const auto ticket_valid = [&](std::uint64_t ticket) {
+        return ticket != 0 && ticket <= state.ticket_sequence;
+    };
+    // Count each live invocation once; external children deliberately share
+    // their ticket with the parent wait retained in suspended_pending.
+    std::vector<std::uint64_t> tickets;
+    std::size_t external_count = 0, interaction_count = 0;
+    std::uint64_t last_ticket = 0;
+    for (std::size_t depth = 0; depth < state.stack.size(); ++depth) {
+        const auto& frame = state.stack[depth];
+        if (frame.key.scope != routine_key(frame.key.id).scope || !owner_valid(frame.context.code_owner)) return false;
+        const auto* routine = resolve(frame.key, frame.context.code_owner);
+        const auto metadata = routine ? execution_metadata(*routine) : std::nullopt;
+        if (!metadata || routine->instructions.empty() || frame.pc >= routine->instructions.size()) return false;
+        for (const auto& instruction : routine->instructions)
+            for (const auto target : {instruction.on_true, instruction.on_false})
+                if (target < 0xFD && target >= routine->instructions.size()) return false;
+        if (frame.arguments.size() < std::max<std::size_t>(4, metadata->arguments) ||
+            frame.locals.size() < std::max<std::size_t>(metadata->locals, metadata->arguments) ||
+            frame.arguments.size() > limits_.frame_variables || frame.locals.size() > limits_.frame_variables) return false;
+        if (!depth && (frame.return_mode != VmCallReturnMode::ordinary || frame.invocation_ticket)) return false;
+        switch (frame.return_mode) {
+        case VmCallReturnMode::ordinary: break;
+        case VmCallReturnMode::interaction_next_tick:
+            if (++interaction_count > 1 || !ticket_valid(frame.invocation_ticket)) return false;
+            break;
+        case VmCallReturnMode::external_frame_next_tick:
+            if (!ticket_valid(frame.invocation_ticket) || external_count >= state.suspended_pending.size()) return false;
+            if (state.suspended_pending[external_count].ticket != frame.invocation_ticket ||
+                state.suspended_pending[external_count].instruction.depth != depth) return false;
+            ++external_count;
+            break;
+        default: return false;
+        }
+        if (frame.invocation_ticket) {
+            if (!ticket_valid(frame.invocation_ticket) || !state.steps ||
+                frame.invocation_ticket <= last_ticket) return false;
+            last_ticket = frame.invocation_ticket;
+            tickets.push_back(frame.invocation_ticket);
+        }
+        if (state.status == VmStatus::dormant &&
+            (frame.return_mode != VmCallReturnMode::ordinary || frame.invocation_ticket)) return false;
+    }
+    if (external_count != state.suspended_pending.size()) return false;
+    const auto valid_wait = [&](const VmPending& wait) {
+        const auto& trace = wait.instruction;
+        if (!ticket_valid(wait.ticket) || !trace.depth || trace.depth > state.stack.size() || trace.step >= state.steps) return false;
+        const auto& frame = state.stack[trace.depth - 1];
+        const auto& instruction = current_routine(frame).instructions[frame.pc];
+        return trace.key.scope == frame.key.scope && trace.key.id == frame.key.id && trace.pc == frame.pc &&
+            trace.code_owner == frame.context.code_owner &&
+            wait.context.caller == frame.context.caller && wait.context.callee == frame.context.callee &&
+            wait.context.stack_object == frame.context.stack_object && wait.context.code_owner == frame.context.code_owner &&
+            trace.instruction.opcode == instruction.opcode && trace.instruction.on_true == instruction.on_true &&
+            trace.instruction.on_false == instruction.on_false && trace.instruction.operands == instruction.operands &&
+            instruction.opcode < 256 && instruction.opcode != 2;
+    };
+    for (std::size_t index = 0; index < state.suspended_pending.size(); ++index) {
+        const auto& wait = state.suspended_pending[index];
+        if (!valid_wait(wait) || (index &&
+            wait.instruction.step <= state.suspended_pending[index - 1].instruction.step)) return false;
+    }
+    if (state.pending) {
+        if (!valid_wait(*state.pending) || state.pending->instruction.depth != state.stack.size() ||
+            state.pending->ticket <= last_ticket || (!state.suspended_pending.empty() &&
+            state.pending->instruction.step <= state.suspended_pending.back().instruction.step)) return false;
+        tickets.push_back(state.pending->ticket);
+    }
+    const auto valid_return = [&](const auto& event) {
+        return ticket_valid(event.ticket) && state.steps && event.ticket > last_ticket &&
+            owner_valid(event.code_owner) && event.run_generation == state.run_generation;
+    };
+    if (state.interaction_return) {
+        if (!valid_return(*state.interaction_return) || interaction_count || state.stack.empty()) return false;
+        tickets.push_back(state.interaction_return->ticket);
+    }
+    if (state.external_frame_return && (!valid_return(*state.external_frame_return) ||
+        !state.pending || state.external_frame_return->ticket != state.pending->ticket)) return false;
+    std::sort(tickets.begin(), tickets.end());
+    if (std::adjacent_find(tickets.begin(), tickets.end()) != tickets.end()) return false;
+    switch (state.status) {
+    case VmStatus::ready:
+        if (!state.stack.empty() || state.steps || state.run_generation || state.ticket_sequence || !state.diagnostic.empty()) return false;
+        break;
+    case VmStatus::dormant:
+    case VmStatus::running:
+    case VmStatus::budget_exhausted:
+        if (state.stack.empty()) return false;
+        break;
+    case VmStatus::waiting:
+        if (!state.pending) return false;
+        break;
+    case VmStatus::yielded:
+        if (bool(state.interaction_return) == bool(state.external_frame_return)) return false;
+        break;
+    case VmStatus::returned_true:
+    case VmStatus::returned_false:
+        if (!state.stack.empty()) return false;
+        break;
+    case VmStatus::fault: break;
+    default: return false;
+    }
+    if (state.status != VmStatus::ready && !state.run_generation) return false;
+    if (state.pending && state.status != VmStatus::waiting &&
+        !(state.status == VmStatus::yielded && state.external_frame_return)) return false;
+    if ((state.interaction_return || state.external_frame_return) && state.status != VmStatus::yielded) return false;
+    // Every allocation finishes before any observable destination value changes.
+    auto candidate = state;
+    static_assert(std::is_nothrow_swappable_v<decltype(pending_)>);
+    static_assert(std::is_nothrow_swappable_v<decltype(interaction_return_)>);
+    static_assert(std::is_nothrow_swappable_v<decltype(external_frame_return_)>);
+    stack_.swap(candidate.stack);
+    diagnostic_.swap(candidate.diagnostic);
+    suspended_pending_.swap(candidate.suspended_pending);
+    temps_ = candidate.temps;
+    status_ = candidate.status;
+    steps_ = candidate.steps;
+    pending_.swap(candidate.pending);
+    interaction_return_.swap(candidate.interaction_return);
+    external_frame_return_.swap(candidate.external_frame_return);
+    ticket_sequence_ = candidate.ticket_sequence;
+    run_generation_ = candidate.run_generation;
+    return true;
+}
+
 VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int16_t>& args) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter start/run");
     if (run_generation_ == std::numeric_limits<std::uint64_t>::max())
