@@ -23,6 +23,8 @@ struct MoveInFamilySelection {
     std::array<std::uint8_t, 32> family_identity{};
 };
 
+enum class OccupiedLotChoice { enter, move_out, cancel };
+
 PreparedNeighborhoodMap prepare_neighborhood_map(
     const std::filesystem::path& user_data,
     const std::filesystem::path& ui_graphics, unsigned mode,
@@ -38,6 +40,13 @@ std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
 std::optional<std::uint16_t> show_neighborhood_picker(
     LinuxWindow& window, const PreparedNeighborhoodMap& map);
 
+// Choose whether to enter an occupied lot or move its current family out.
+// Move-out is disabled when the saved family history cannot calculate a
+// verified refund. Escape cancels; E selects move-out; Enter/click enters.
+OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
+    const odh::FamilyEntry& family, std::uint16_t house_number,
+    bool move_out_supported, std::uint8_t language);
+
 // Select a currently unhoused family that can afford the selected vacant lot.
 std::optional<MoveInFamilySelection> show_move_in_family_picker(
     LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
@@ -46,6 +55,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
 // Final confirmation shown before a player-state write; closing cancels it.
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
     std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language);
+
+// Confirm a move-out and show the source ValueInArch refund before writing.
+bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
+    std::uint16_t house_number, std::uint8_t language);
 
 // Resume the already-loaded lot from its neighborhood marker. Other lots remain
 // unavailable while this session owns one live World.

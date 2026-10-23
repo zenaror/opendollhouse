@@ -40,9 +40,11 @@ validação indicados por versão.
   sair de uma casa originalmente ocupada e mudar para outra preservam o saldo,
   liberam o lote anterior e zeram `ValueInArch`. O formato antigo continua
   legível. Um novo despejo após uma compra feita pelo jogador fica bloqueado
-  porque ainda não provamos como o jogo atualiza o valor da arquitetura. A
-  tela para escolher e confirmar a saída ainda não existe. Testes unitários e
-  da gravação no perfil passaram; build Linux e 212 testes CTest passaram. Veja
+  porque ainda não provamos como o jogo atualiza o valor da arquitetura. Na
+  vizinhança, `E` oferece a saída somente quando o reembolso tem origem
+  verificada; a confirmação mostra o valor e o saldo final, e o mapa é atualizado
+  depois de salvar. Testes sintéticos de teclado cobrem as telas; build Linux e
+  213 testes CTest passaram. Isso ainda não é uma validação manual de gameplay. Veja
   [`family-overlay-linux-validation.md`](docs/family-overlay-linux-validation.md).
 
 - Adicionado o codec versionado do estado local de mudança de família para lote.

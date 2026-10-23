@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -104,6 +105,7 @@ std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
         frame.width = window.width(); frame.height = window.height();
         frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
                             std::array<std::uint8_t,4>{35,39,48,255});
+        frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
         for (std::size_t index = 0; index < names.size(); ++index) {
             const auto color = index == selected ? std::array<std::uint8_t,4>{47,93,138,255} :
                 std::array<std::uint8_t,4>{52,57,68,255};
@@ -181,6 +183,52 @@ std::optional<std::uint16_t> show_neighborhood_picker(
     }
 }
 
+OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
+        const odh::FamilyEntry& family, std::uint16_t house_number,
+        bool move_out_supported, std::uint8_t language) {
+    const auto current_house = static_cast<std::uint16_t>(
+        static_cast<std::uint32_t>(family.family.house_number) & 0xffffU);
+    if (house_number == 0 || house_number > 98 || current_house != house_number ||
+        language < 1 || language > 20)
+        throw odh::FormatError("occupied-lot choice received an invalid family");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    odh::RasterFrame frame{};
+    frame.width = window.width(); frame.height = window.height();
+    frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                        std::array<std::uint8_t,4>{35, 39, 48, 255});
+    frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;
+    style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
+    style.height = 36; style.font_size_px = 18; style.padding = 7;
+    style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
+    style.y = 156;
+    draw_text_overlay(frame, "House " + std::to_string(house_number) + " | Family " +
+        std::to_string(family.family.family_number), language, style);
+    style.y = 220;
+    draw_text_overlay(frame, "Enter or click: enter this house", language, style);
+    style.y = 276;
+    draw_text_overlay(frame, move_out_supported ?
+        "E: move this family out" : "Move-out is unavailable for this family", language, style);
+    style.y = 350;
+    draw_text_overlay(frame, "Esc: cancel", language, style);
+#else
+    (void)language;
+#endif
+    window.set_title("OpenDollhouse | House " + std::to_string(house_number) +
+        " | Enter: enter | " + (move_out_supported ? "E: move out" : "move-out unavailable") +
+        " | Esc: cancel");
+    window.present(frame);
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return OccupiedLotChoice::cancel;
+        if (input.move_out && move_out_supported) return OccupiedLotChoice::move_out;
+        if (input.action || input.primary_click) return OccupiedLotChoice::enter;
+        if (input.redraw) window.present(frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
 std::optional<MoveInFamilySelection> show_move_in_family_picker(
         LinuxWindow& window, const std::vector<odh::FamilyEntry>& families,
         std::uint16_t house_number, std::int32_t purchase_price, std::uint8_t language) {
@@ -203,6 +251,7 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         frame.width = window.width(); frame.height = window.height();
         frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
                             std::array<std::uint8_t,4>{35, 39, 48, 255});
+        frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
         for (std::size_t row = 0; row < page_size; ++row) {
             const auto index = (selected / page_size) * page_size + row;
             if (index >= choices.size()) break;
@@ -298,6 +347,7 @@ bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& fami
     frame.width = window.width(); frame.height = window.height();
     frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
                         std::array<std::uint8_t,4>{35, 39, 48, 255});
+    frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
     TextOverlayStyle style;
     style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
@@ -320,6 +370,52 @@ bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& fami
     window.set_title("OpenDollhouse | confirm family move-in | House " +
         std::to_string(house_number) + " | price " + std::to_string(purchase_price) +
         " | budget after " + std::to_string(family.family.budget - purchase_price));
+    window.present(frame);
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) return false;
+        if (input.action || input.primary_click) return true;
+        if (input.redraw) window.present(frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
+        std::uint16_t house_number, std::uint8_t language) {
+    if (house_number == 0 || house_number > 98 || language < 1 || language > 20 ||
+        family.family.value_in_arch < 0 || family.family.budget < 0)
+        throw odh::FormatError("move-out confirmation received invalid family data");
+    const auto next_budget = static_cast<std::int64_t>(family.family.budget) +
+        family.family.value_in_arch;
+    if (next_budget > std::numeric_limits<std::int32_t>::max())
+        throw odh::FormatError("move-out refund overflows the family budget");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    odh::RasterFrame frame{};
+    frame.width = window.width(); frame.height = window.height();
+    frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                        std::array<std::uint8_t,4>{35, 39, 48, 255});
+    frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;
+    style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
+    style.height = 36; style.font_size_px = 18; style.padding = 7;
+    style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
+    style.y = 142;
+    draw_text_overlay(frame, "Move Family " + std::to_string(family.family.family_number) +
+        " out of House " + std::to_string(house_number) + "?", language, style);
+    style.y = 202;
+    draw_text_overlay(frame, "Refund: " + std::to_string(family.family.value_in_arch), language, style);
+    style.y = 258;
+    draw_text_overlay(frame, "Budget after move-out: " + std::to_string(next_budget), language, style);
+    style.y = 340;
+    draw_text_overlay(frame, "Enter or click to confirm; Esc cancels", language, style);
+#else
+    (void)language;
+#endif
+    window.set_title("OpenDollhouse | confirm move-out | House " +
+        std::to_string(house_number) + " | refund " +
+        std::to_string(family.family.value_in_arch) + " | budget after " +
+        std::to_string(next_budget));
     window.present(frame);
     for (;;) {
         const auto input = window.poll();
@@ -364,6 +460,7 @@ std::optional<std::size_t> show_resident_picker(
         frame.width = window.width(); frame.height = window.height();
         frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
                             std::array<std::uint8_t,4>{35, 39, 48, 255});
+        frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
         for (std::size_t row = 0; row < page_size; ++row) {
             const auto index = page_start + row;
             if (index >= residents.size()) break;

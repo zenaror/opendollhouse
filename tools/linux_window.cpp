@@ -299,6 +299,7 @@ WindowInput LinuxWindow::poll() {
         case XK_u: case XK_U: if (!held) result.stand = true; break;
         case XK_m: case XK_M: if (!held) result.neighborhood = true; break;
         case XK_s: case XK_S: if (!held) result.save = true; break;
+        case XK_e: case XK_E: if (!held) result.move_out = true; break;
         case XK_space: case XK_Return: case XK_KP_Enter: if (!held) result.action = true; break;
         case XK_Tab: result.interaction_selection_delta += (event.xkey.state & ShiftMask) ? -1 : 1; break;
         case XK_ISO_Left_Tab: --result.interaction_selection_delta; break;

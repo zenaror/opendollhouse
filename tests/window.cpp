@@ -66,6 +66,9 @@ int main(){try{
     key(XK_m);input=window.poll();if(!input.neighborhood||input.action||input.quit)throw std::runtime_error("M neighborhood mapping failed");
     key(XK_m);if(window.poll().neighborhood)throw std::runtime_error("held neighborhood key repeated");
     key(XK_m,KeyRelease);window.poll();key(XK_m);if(!window.poll().neighborhood)throw std::runtime_error("released neighborhood key not rearmed");
+    key(XK_e);input=window.poll();if(!input.move_out||input.action||input.quit)throw std::runtime_error("E move-out mapping failed");
+    key(XK_e);if(window.poll().move_out)throw std::runtime_error("held move-out key repeated");
+    key(XK_e,KeyRelease);window.poll();key(XK_e);if(!window.poll().move_out)throw std::runtime_error("released move-out not rearmed");
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
     key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");

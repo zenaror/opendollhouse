@@ -6,6 +6,8 @@
 
 #include "odh/session_entry.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/family.hpp"
+#include "odh/family_overlay.hpp"
 #include "odh/lot.hpp"
 #ifdef __linux__
 #include "linux_session_archive_store.hpp"
@@ -633,6 +635,7 @@ int odh_linux_game_entry(int argc, char** argv) {
         unsigned house = options.house.value_or(0);
 #ifdef ODH_HAVE_X11
         if (map && !options.house) {
+          for (;;) {
             const auto selected = odh_host::show_neighborhood_picker(*window, *map);
             if (!selected) {
                 std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\"}\n";
@@ -643,6 +646,77 @@ int odh_linux_game_entry(int argc, char** argv) {
                 [&](const auto& value) { return value.location.house == house; });
             if (marker == map->markers.end())
                 throw odh::FormatError("selected lot is absent from the prepared neighborhood");
+            if (marker->occupied) {
+                const odh::FamilyContext family_context(map->effective_families);
+                const auto* current_family = family_context.by_house(static_cast<std::int16_t>(house));
+                if (!current_family)
+                    throw odh::FormatError("occupied lot has no matching family record");
+                const auto neighborhood_identity = odh_host::linux_neighborhood_identity(
+                    userdata / "Neighborhood.iff");
+                bool can_move_out = false;
+                try {
+                    (void)odh::plan_family_move_out_overlay(map->source_families,
+                        neighborhood_identity, family_overlay ? &*family_overlay : nullptr,
+                        current_family->chunk_id);
+                    can_move_out = true;
+                } catch (const odh::FormatError&) {
+                    // Families without a verified source refund can still enter
+                    // their house; the move-out option remains unavailable.
+                }
+                const auto choice = odh_host::show_occupied_lot_choice(*window,
+                    *current_family, static_cast<std::uint16_t>(house), can_move_out,
+                    static_cast<std::uint8_t>(options.language));
+                if (choice == odh_host::OccupiedLotChoice::cancel) {
+                    std::cout << "{\"status\":\"cancelled\",\"stage\":\"occupied-lot-choice\"}\n";
+                    return 0;
+                }
+                if (choice == odh_host::OccupiedLotChoice::move_out) {
+                    if (!odh_host::show_move_out_confirmation(*window, *current_family,
+                            static_cast<std::uint16_t>(house),
+                            static_cast<std::uint8_t>(options.language))) {
+                        std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-out-confirmation\"}\n";
+                        return 0;
+                    }
+                    const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+                        userdata / "Neighborhood.iff");
+                    const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
+                        options.mode, latest_overlay ? &*latest_overlay : nullptr);
+                    const auto latest_neighborhood_identity = odh_host::linux_neighborhood_identity(
+                        userdata / "Neighborhood.iff");
+                    if (latest_neighborhood_identity != neighborhood_identity)
+                        throw odh::FormatError("Neighborhood.iff changed during move-out confirmation");
+                    const auto latest_marker = std::find_if(latest_map.markers.begin(),
+                        latest_map.markers.end(), [&](const auto& value) {
+                            return value.location.house == house;
+                        });
+                    if (latest_marker == latest_map.markers.end() || !latest_marker->occupied)
+                        throw odh::FormatError("selected family no longer occupies this house");
+                    const odh::FamilyContext latest_context(latest_map.effective_families);
+                    const auto* latest_family = latest_context.by_house(
+                        static_cast<std::int16_t>(house));
+                    if (!latest_family || latest_family->chunk_id != current_family->chunk_id ||
+                        odh::family_overlay_identity(*latest_family) !=
+                            odh::family_overlay_identity(*current_family))
+                        throw odh::FormatError("selected family changed before move-out was saved");
+                    const auto next_overlay = odh::plan_family_move_out_overlay(
+                        latest_map.source_families, latest_neighborhood_identity,
+                        latest_overlay ? &*latest_overlay : nullptr, latest_family->chunk_id);
+                    odh_host::compare_exchange_linux_family_overlay_atomic(
+                        odh_host::linux_family_overlay_path(latest_neighborhood_identity),
+                        latest_overlay, next_overlay);
+                    family_overlay = next_overlay;
+                    map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                        &*family_overlay);
+                    const auto released_marker = std::find_if(map->markers.begin(),
+                        map->markers.end(), [&](const auto& value) {
+                            return value.location.house == house;
+                        });
+                    if (released_marker == map->markers.end() || released_marker->occupied)
+                        throw odh::FormatError("saved move-out did not release the selected house");
+                    continue;
+                }
+                break;
+            }
             if (!marker->occupied) {
                 const auto purchase_price = house_purchase_price(game, userdata,
                     static_cast<std::uint16_t>(house));
@@ -707,6 +781,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 if (committed_marker == map->markers.end() || !committed_marker->occupied)
                     throw odh::FormatError("saved move-in did not appear on the refreshed neighborhood map");
             }
+            break;
+          }
         }
 #endif
 

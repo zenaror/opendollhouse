@@ -30,6 +30,14 @@ move-in to another house. A household that was first moved in by the player
 cannot be evicted again: the current Simitone source review does not establish
 how `ValueInArch` changes after purchase, so a second refund would be a guess.
 
+When the player selects an occupied lot, the Linux neighborhood window offers
+Enter/click to open it and `E` to move the family out only when the refund is
+supported by the original family data. The confirmation screen shows the
+refund and resulting budget. Confirming rereads the neighborhood and overlay,
+checks the family and lot identity, saves with compare-and-write, refreshes the
+map, and returns to lot selection. Families without a verified refund can
+still enter their house.
+
 ## Verified
 
 - A referência do Simitone distingue compra e despejo: `SetFamilyForHouse(...,
@@ -84,9 +92,13 @@ how `ValueInArch` changes after purchase, so a second refund would be a guess.
   compare-and-write conflict handling.
 - `family_overlay`: assignment validation, source identity, roster identity,
   vacant destination, one-time purchase accounting, and stale/conflict cases.
+- `linux_neighborhood_screen_actions`: synthetic X11 key events verify occupied
+  lot entry, supported move-out selection, confirmation/cancel, and refusal of
+  move-out when the refund is unverified. This covers screen decisions, not the
+  entire UI-to-save-to-map path or a manual visual play session.
 - `session_entry_resolution`: the effective moved family resolves to the same
   lot and resident GUIDs.
-- Full Linux build completed; all 212 CTest cases passed in this run.
+- Full Linux build completed; all 213 CTest cases passed in this run.
 - Read-only `odh-person --plan-only` on the installed game data resolved the
   original occupied House05 with three residents and seven expansion packs.
   Its player-state directory was isolated under `/tmp`; this does not verify
@@ -94,10 +106,9 @@ how `ValueInArch` changes after purchase, so a second refund would be a guess.
 
 ## Still missing
 
-There is no user-facing move-out choice or confirmation screen yet, so the
-move-out/rehome planner is not reachable from the neighborhood window.
-Synthetic checks cover the planner and persistent store separately, not the
-entire UI-to-runtime path. The visual move-in flow also has not been clicked
-through in this headless run. The runtime reloads the overlay when it starts;
-a future hardening step should verify the selected family identity at that
-boundary.
+The synthetic keyboard test covers the choice and confirmation screens, while
+the overlay/store tests cover saving separately. An automated end-to-end test
+of UI → compare-and-write → refreshed map → choosing another lot is still
+missing. The visual move-in and move-out flows have not been manually clicked
+through. The runtime reloads the overlay when it starts; a future hardening
+step should verify the selected family identity at that boundary.

@@ -1147,6 +1147,13 @@ if(BUILD_TESTING)
     target_link_libraries(odh-window-tests PRIVATE odh_linux_window ${X11_LIBRARIES})
     add_test(NAME linux_window_backend COMMAND odh-window-tests)
     set_tests_properties(linux_window_backend PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(odh-neighborhood-screen-actions-tests tests/neighborhood_screen_actions.cpp)
+    target_include_directories(odh-neighborhood-screen-actions-tests PRIVATE ${X11_INCLUDE_DIR})
+    target_link_libraries(odh-neighborhood-screen-actions-tests PRIVATE
+      odh_neighborhood_screen ${X11_LIBRARIES})
+    add_test(NAME linux_neighborhood_screen_actions COMMAND odh-neighborhood-screen-actions-tests)
+    set_tests_properties(linux_neighborhood_screen_actions PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 15)
   endif()
   add_executable(odh-projection-tests tests/projection.cpp)
   target_link_libraries(odh-projection-tests PRIVATE odh_projection)
