@@ -1,6 +1,7 @@
 """Synthetic integrated Linux entry checks; never copies commercial resources."""
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -74,6 +75,9 @@ def make_game(root):
         path = root / directory / f"{directory}.far"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"synthetic expansion resource")
+    (root / "Downloads" / "Sample").mkdir(parents=True)
+    (root / "Downloads" / "Sample" / "Sample.far").write_bytes(b"synthetic download archive")
+    (root / "Downloads" / "Loose.iff").write_bytes(b"synthetic download IFF")
 
 
 with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
@@ -100,18 +104,28 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "plan fingerprints every installed expansion archive and sets the matching flags")
     check("--language" in result["command"] and "15" in result["command"],
           "selected language reaches runtime arguments")
-    check(result["command"].count("--object-definitions") == 9 and
-          result["command"].count("--animation-source") == 9,
-          "base, shared, and seven expansion archives reach definition and animation loaders")
+    check(result["command"].count("--object-definitions") == 10 and
+          result["command"].count("--animation-source") == 10 and
+          result["command"].count("--object-definition-file") == 2 and
+          "Downloads/Sample/Sample.far" in identity["files"] and
+          "Downloads/Loose.iff" in identity["files"],
+          "base, shared, expansion, and optional download resources reach runtime loaders")
     (root / "ExpansionPack4" / "ExpansionPack4.far").unlink()
     partial = subprocess.run(command, capture_output=True, text=True, env=env)
     check(partial.returncode == 0, partial.stderr)
     partial_result = json.loads(partial.stdout)
     check(partial_result["resource_identity"]["expansion_mask"] == 0x77 and
           "ExpansionPack4/ExpansionPack4.far" not in partial_result["resource_identity"]["files"] and
-          partial_result["command"].count("--object-definitions") == 8 and
-          partial_result["command"].count("--animation-source") == 8,
+          partial_result["command"].count("--object-definitions") == 9 and
+          partial_result["command"].count("--animation-source") == 9 and
+          partial_result["command"].count("--object-definition-file") == 2,
           "missing optional pack is omitted from both runtime loaders and identity")
+    shutil.rmtree(root / "Downloads")
+    without_downloads = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(without_downloads.returncode == 0 and
+          not any(path.startswith("Downloads/") for path in
+                  json.loads(without_downloads.stdout)["resource_identity"]["files"]),
+          "Downloads remains optional for installations without user content")
     for argument in result["command"]:
         if argument.startswith("/"):
             check(Path(argument).resolve().is_relative_to(root.resolve()),

@@ -274,12 +274,12 @@ with tempfile.TemporaryDirectory(prefix='odh-person-animation-') as folder:
     result = run()
     assert result.returncode == 2 and not result.stdout and 'ambiguous' in result.stderr.lower()
 
-    # Repeated sources are accepted up to sixteen; a seventeenth is rejected.
+    # Repeated sources are accepted up to the bounded 128-source host profile.
     setup(private=fallback)
     empty = root / 'empty.far'
     far(empty, [])
-    selected(extra=['--animation-source', str(empty)] * 15)
-    result = run(['--animation-source', str(empty)] * 16)
+    selected(extra=['--animation-source', str(empty)] * 127)
+    result = run(['--animation-source', str(empty)] * 128)
     assert result.returncode == 2 and not result.stdout and result.stderr
     result = run(['--animation-source'])
     assert result.returncode == 2 and not result.stdout and result.stderr

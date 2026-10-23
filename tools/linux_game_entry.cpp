@@ -215,6 +215,21 @@ RuntimePlan build_runtime_arguments(const Options& options,
             throw odh::FormatError("optional expansion archive is not a regular file: " + archive.string());
         expansions.push_back(require_file(game, archive));
     }
+    std::vector<std::filesystem::path> download_archives, download_iffs;
+    const auto downloads_path = game / "Downloads";
+    std::error_code downloads_error;
+    const auto downloads_status = std::filesystem::status(downloads_path, downloads_error);
+    if (downloads_error != std::errc::no_such_file_or_directory) {
+        if (downloads_error)
+            throw odh::FormatError("cannot inspect optional Downloads directory: " + downloads_path.string());
+        if (downloads_status.type() != std::filesystem::file_type::not_found) {
+            if (!std::filesystem::is_directory(downloads_status))
+                throw odh::FormatError("optional Downloads path is not a directory: " + downloads_path.string());
+            const auto downloads = require_directory(game, downloads_path);
+            download_archives = find_files(downloads, "", {".far"}, 128);
+            download_iffs = find_files(downloads, "", {".iff"}, 128);
+        }
+    }
 
     const auto characters = require_directory(game, userdata / "Characters");
     std::vector<std::filesystem::path> character_files;
@@ -245,6 +260,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     record_resource(house_file);
     for (const auto& archive : shared) record_resource(archive);
     for (const auto& archive : expansions) record_resource(archive);
+    for (const auto& archive : download_archives) record_resource(archive);
+    for (const auto& iff : download_iffs) record_resource(iff);
     for (const auto& character : find_files(characters, "", {".iff"}, 4096))
         record_resource(character);
     for (const auto& resource : architecture) record_resource(resource);
@@ -275,11 +292,16 @@ RuntimePlan build_runtime_arguments(const Options& options,
         append(args, {"--object-definitions", archive.string()});
     for (const auto& archive : expansions)
         append(args, {"--object-definitions", archive.string()});
+    for (const auto& archive : download_archives)
+        append(args, {"--object-definitions", archive.string()});
     for (const auto& character : character_files)
         append(args, {"--object-definition-file", character.string()});
+    for (const auto& iff : download_iffs)
+        append(args, {"--object-definition-file", iff.string()});
     append(args, {"--animation-source", animation_far.string()});
     for (const auto& archive : shared) append(args, {"--animation-source", archive.string()});
     for (const auto& archive : expansions) append(args, {"--animation-source", archive.string()});
+    for (const auto& archive : download_archives) append(args, {"--animation-source", archive.string()});
     append(args, {"--saved-world-main", "--render-window", "--render-saved-guid",
         std::to_string(resident.guid), "--render-animation-far", animation_far.string(),
         "--render-textures", textures_far.string(), "--render-skeleton",

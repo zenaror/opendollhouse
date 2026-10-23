@@ -61,7 +61,7 @@ struct AnimationCatalog::Impl {
     }
 };
 AnimationCatalog::AnimationCatalog(const std::vector<std::string>& paths,CatalogLimits limits):impl_(std::make_unique<Impl>(limits)){
-    auto& p=*impl_;if(paths.size()>limits.sources||paths.size()>16)throw FormatError("catalog source count exceeds budget");
+    auto& p=*impl_;if(paths.size()>limits.sources)throw FormatError("catalog source count exceeds budget");
     for(const auto& path:paths){auto s=std::make_unique<Impl::Source>();s->path=path;s->stream.open(path,std::ios::binary);if(!s->stream)throw FormatError("cannot open catalog FAR");s->view=std::make_unique<View>(s->stream,std::filesystem::file_size(path));
         Limits far;far.far_entries=std::min(limits.far_entries,8192U);far.far_name_bytes=limits.name_bytes-p.stats.name_bytes;s->entries=far1_index(*s->view,far);
         charge(p.stats.name_bytes,path.size(),limits.name_bytes,"catalog source names exceed budget");charge(p.stats.index_bytes,sizeof(Impl::Source),limits.index_bytes,"catalog index exceeds budget");

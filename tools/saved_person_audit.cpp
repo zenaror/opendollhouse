@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         for (int n = 2; n < argc; ++n) {
             const std::string option = argv[n];
             if ((option == "--object-definitions" || option == "--object-definition-file") && n + 1 < argc) {
-                if (sources.size() >= 16) throw odh::FormatError("definition source count exceeds limit");
+                if (sources.size() >= 128) throw odh::FormatError("definition source count exceeds limit");
                 sources.push_back({argv[++n], option == "--object-definition-file"});
             } else {
                 throw odh::FormatError("invalid saved person audit option");

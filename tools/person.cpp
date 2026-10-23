@@ -77,7 +77,7 @@
 namespace {
 struct Resource {std::string archive,entry;bool standalone=false;};
 struct PersonDefinitionSource {std::string path,entry;bool standalone=false;};
-constexpr std::size_t person_definition_source_limit=24;
+constexpr std::size_t person_definition_source_limit=128;
 template<class F>void with_resource(const Resource& resource,F read){
     if(resource.standalone)with_iff_file(resource.archive,read);else with_far_entry(resource.archive,resource.entry,read);
 }
@@ -319,7 +319,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         else if(option=="--activate-family"&&!activate_family)activate_family=true;
         else if(option=="--neighborhood"&&!neighborhood_path&&n+1<argc)neighborhood_path=argv[++n];
         else if(option=="--animation-source"&&n+1<argc){
-            if(animation_sources.size()>=16)throw odh::FormatError("animation source count exceeds bounded host profile");
+            if(animation_sources.size()>=128)throw odh::FormatError("animation source count exceeds bounded host profile");
             animation_sources.emplace_back(argv[++n]);
             if(animation_sources.back().size()>4096)throw odh::FormatError("animation source path exceeds bounded host profile");
         }

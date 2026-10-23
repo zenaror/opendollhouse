@@ -68,7 +68,7 @@ struct SavedObjectRenderer::Impl {
         auto source_it=sources.find(candidate.source);
         const bool direct=candidate.asset.empty();
         if(source_it==sources.end()){
-            if(sources.size()>=16||candidate.source.size()>4096)
+            if(sources.size()>=128||candidate.source.size()>4096)
                 throw odh::FormatError("saved object source budget exceeded");
             auto source=std::make_unique<Source>(candidate.source,direct);
             source_it=sources.emplace(candidate.source,std::move(source)).first;

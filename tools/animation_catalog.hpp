@@ -3,8 +3,8 @@
 #include <memory>
 namespace odh::host {
 struct CatalogLimits {
-    std::uint32_t sources=16, far_entries=8192, cache_records=16;
-    std::uint64_t name_bytes=1024*1024, index_bytes=2*1024*1024;
+    std::uint32_t sources=128, far_entries=8192, cache_records=16;
+    std::uint64_t name_bytes=8*1024*1024, index_bytes=16*1024*1024;
     std::uint64_t metadata_bytes=1024*1024, cfp_samples=1048576;
     AnimationLimits parser{}; // Bounds each transient BCF/CFP decode too.
 };

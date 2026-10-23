@@ -11,7 +11,7 @@ int main(int argc,char** argv){try{
     std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
         if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
-            if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");
+            if(sources.size()>=128)throw odh::FormatError("definition source count exceeds limit");
             sources.push_back({argv[++n],option=="--object-definition-file"});
         }else if(option=="--neighborhood"&&!neighborhood&&n+1<argc)neighborhood=argv[++n];
         else if(option=="--semiglobal"&&!semiglobal&&n+2<argc){semiglobal=SavedThreadCodeResource{argv[n+1],argv[n+2]};n+=2;}

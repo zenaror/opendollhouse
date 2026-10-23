@@ -56,7 +56,7 @@ int main(int argc,char** argv){try{
     for(int n=5;n<argc;++n){const std::string option=argv[n];
         auto need=[&](int count){if(argc-n-1<count)throw odh::FormatError("incomplete saved scene option");};
         if(option=="--object-definitions"||option=="--object-definition-file"){
-            need(1);if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");
+            need(1);if(sources.size()>=128)throw odh::FormatError("definition source count exceeds limit");
             sources.push_back({argv[++n],option=="--object-definition-file"});continue;}
         if(option=="--architecture-resource"){
             need(1);if(architecture_sources.size()>=256)throw odh::FormatError("architecture resource source count exceeds bounded host profile");
