@@ -25,6 +25,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O probe headless `odh-person` mantém o limite padrão de 10.000 instruções e
+  aceita um teto explícito de até 1.000.000 em sessões novas e limitadas por
+  ticks. O gate opcional da família House05 completou 4.096 ticks com 50.000
+  disponíveis (14.439 usados), sem falha do host; o morador adicional 16 se
+  moveu e os 132 arquivos de recursos permaneceram sem alteração. Isso amplia
+  a observação Linux da família, sem demonstrar interação visual ou paridade.
+  Veja [`current-handoff.md`](docs/current-handoff.md) e
+  `tests/house05_household_budget_cli.py`.
+
 - `odh-person --game-root` prepara a entrada integrada da vizinhança ao lote,
   carrega recursos limitados a uma instalação e reutiliza a mesma janela no
   runtime. Depois de carregar o lote, dados e idioma podem ser lembrados na

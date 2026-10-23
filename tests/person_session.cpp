@@ -16,8 +16,12 @@ int main(){try{
     using odh_host::PersonDiagnostic;
     using odh_host::PersonDiagnosticRetention;
     const PersonSessionPolicy probe{false,false,256},bounded_window{true,true,3},window{true,false,256};
+    const PersonSessionPolicy extended_probe{false,true,4096,50000};
     require(probe.tick_limit()==256&&probe.entity_budget(9999)==1&&probe.entity_budget(10000)==0&&
             probe.limit_reached(256,2)&&probe.limit_reached(1,10000),"finite probe preserves historical budgets");
+    require(probe.probe_instructions==10000&&extended_probe.entity_budget(49999)==1&&
+            extended_probe.entity_budget(50000)==0&&extended_probe.instruction_limit_reached(50000)&&
+            extended_probe.limit_reached(1,50000),"explicit finite probe budget stops exactly at its configured cap");
     require(bounded_window.tick_limit()==3&&!bounded_window.limit_reached(2,40000)&&
             bounded_window.limit_reached(3,40000),"explicit window ticks remain finite while work grants renew");
     require(window.tick_limit()==std::numeric_limits<std::uint32_t>::max()&&
@@ -26,6 +30,11 @@ int main(){try{
             "default window has only the existing uint32 controller clock horizon");
     require(window.tick_budget(999999,std::numeric_limits<std::size_t>::max())==640000,
             "aggregate work is bounded and cannot overflow for oversized entity counts");
+    const PersonSessionPolicy window_with_probe_override{true,true,3,50000};
+    require(window_with_probe_override.entity_budget(0)==PersonSessionPolicy::instructions&&
+            window_with_probe_override.tick_budget(0,2)==20000&&
+            !window_with_probe_override.instruction_limit_reached(50000),
+            "windowed per-tick grants ignore the finite-probe override");
     std::cout<<"PASS finite probe, explicit ticks, continuous window, aggregate bound\n";
 
     // Two real VMs run beyond both historical limits without wall-clock pacing.

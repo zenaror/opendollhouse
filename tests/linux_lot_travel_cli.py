@@ -112,7 +112,7 @@ def main():
         command = [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
                    "--resident-id", "11", "--language", "1",
                    "--headless-travel-house", "8", "--headless-travel-house", "7",
-                   "--headless-ticks", "2"]
+                   "--headless-ticks", "2", "--instruction-budget", "25000"]
         result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=90)
         assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         visits = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
@@ -120,6 +120,7 @@ def main():
         assert [visit["integrated_session_context"]["house_number"] for visit in visits] == [7, 8, 7], visits
         assert [visit["session_loaded"] for visit in visits] == [False, False, True], visits
         assert [visit["resumed_tick"] for visit in visits] == [0, 0, 1], visits
+        assert [visit["runtime_instruction_budget"] for visit in visits] == [25000, 25000, 25000], visits
         assert [visit["neighborhood_resume_runtime"]["tick_before"] for visit in visits[:2]] == [1, 1], visits
         assert all(not visit["neighborhood_resume_runtime"]["selected_same_lot"] for visit in visits[:2]), visits
         assert all(not visit["host_failed"] for visit in visits), visits

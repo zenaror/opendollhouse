@@ -96,6 +96,23 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "synthetic family and lot resolve")
     check(result["resident_execution"] == "whole_household",
           "normal integrated launch selects the full household runtime")
+    budget_without_ticks = subprocess.run(
+        [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
+         "--instruction-budget", "25000"], capture_output=True, text=True, env=env)
+    check(budget_without_ticks.returncode == 2 and "requires a new bounded whole-household run" in budget_without_ticks.stderr,
+          "larger diagnostic instruction budgets require explicit headless ticks")
+    budget_single_resident = subprocess.run(
+        [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
+         "--single-resident-session", "--headless-ticks", "10", "--instruction-budget", "25000"],
+        capture_output=True, text=True, env=env)
+    check(budget_single_resident.returncode == 2 and "whole-household" in budget_single_resident.stderr,
+          "larger diagnostic budgets are reserved for the complete household")
+    budget_over_limit = subprocess.run(
+        [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
+         "--headless-ticks", "10", "--instruction-budget", "1000001"],
+        capture_output=True, text=True, env=env)
+    check(budget_over_limit.returncode == 2 and "invalid instruction budget" in budget_over_limit.stderr,
+          "integrated diagnostic budget has a one-million instruction ceiling")
     single = subprocess.run(command + ["--single-resident-session"], capture_output=True, text=True, env=env)
     check(single.returncode == 0 and
           json.loads(single.stdout)["resident_execution"] == "single_resident_session",

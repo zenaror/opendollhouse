@@ -13,11 +13,13 @@ struct PersonSessionPolicy {
     bool windowed=false,explicit_ticks=false;
     std::uint64_t requested_ticks=256;
     static constexpr std::uint64_t instructions=10000;
+    static constexpr std::uint64_t max_probe_instructions=1000000;
+    std::uint64_t probe_instructions=instructions;
     std::uint64_t tick_limit() const {
         return windowed&&!explicit_ticks?std::numeric_limits<std::uint32_t>::max():requested_ticks;
     }
     std::uint64_t entity_budget(std::uint64_t total_steps) const {
-        return windowed?instructions:(total_steps<instructions?instructions-total_steps:0);
+        return windowed?instructions:(total_steps<probe_instructions?probe_instructions-total_steps:0);
     }
     std::uint64_t tick_budget(std::uint64_t total_steps,std::size_t entities) const {
         // The host scheduler accepts at most 64 entities. Keep that aggregate
@@ -25,7 +27,7 @@ struct PersonSessionPolicy {
         return windowed?instructions*(entities<64?entities:64):entity_budget(total_steps);
     }
     bool instruction_limit_reached(std::uint64_t total_steps) const {
-        return !windowed&&total_steps>=instructions;
+        return !windowed&&total_steps>=probe_instructions;
     }
     bool limit_reached(std::uint64_t ticks,std::uint64_t total_steps) const {
         return ticks>=tick_limit()||instruction_limit_reached(total_steps);

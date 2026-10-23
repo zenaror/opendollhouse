@@ -267,14 +267,18 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert d['stack'][-1]['owner']==1 and d['stack'][-1]['routine']==256 and d['stack'][-1]['caller']==1
  setup(main=[expr(0,1,0)]);r=run();d=json.loads(r.stdout)
  assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==10000 and len(d['trace'])==10000
- assert d['runtime_policy']=='finite_probe_total_budget' and d['runtime_tick_limit']==256
+ assert d['runtime_policy']=='finite_probe_total_budget' and d['runtime_tick_limit']==256 and d['runtime_instruction_budget']==10000
  assert not d['diagnostics_truncated'] and all(value==0 for value in d['diagnostics_dropped'].values())
  for index in [1,25,26,29,41,62]:
   setup(main=[(2,254,255,[index,0,0,0,0,2,3,7])]);r=run();d=json.loads(r.stdout)
   assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
  setup();r=run(['--flags','65535','--age','27']+action_args);d=json.loads(r.stdout)
  assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-1 and d['actor_state']['age']==27
- for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256']]:
+ setup(main=[expr(0,1,0)]);r=run(['--ticks','1','--instruction-budget','12000']);d=json.loads(r.stdout)
+ assert r.returncode==3 and d['instruction_budget_exhausted'] and d['steps']==12000 and d['runtime_instruction_budget']==12000
+ for extra in [['--ticks','4097'],['--age','32768'],['--flags','0','--flags','1'],['--routine','9999'],['--routine','256'],
+               ['--instruction-budget','0'],['--instruction-budget','1000001'],['--instruction-budget','12000','--instruction-budget','13000'],
+               ['--instruction-budget','12000']]:
   setup();r=run(extra);assert r.returncode==2 and not r.stdout and r.stderr
  setup(glob_id=1);r=run();assert r.returncode==0 and json.loads(r.stdout)['status']=='returned_true'
  setup();archive(avatar,'Person.iff',[('OBJD',128,objd(1)),('GLOB',1,b'\x0dFixturePerson\xa3'),('GLOB',128,b'\x0dFixturePerson\xa3'),('BHAV',4096,routine([call(8192)]))]);r=run()

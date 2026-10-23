@@ -1,5 +1,28 @@
 # Continuidade atual
 
+## Atualização: orçamento limitado para a família House05 (2026-10-23)
+
+O probe finito continua com o padrão histórico de 10.000 instruções. Para
+rodadas headless novas da família, `odh-person --instruction-budget N` agora
+permite escolher um teto explícito entre 1 e 1.000.000, sempre junto de uma
+quantidade limitada de ticks. A entrada integrada só aceita essa opção para
+uma sessão headless nova da família inteira; não altera sessões gráficas nem
+loads de saves.
+
+O gate externo `tests/house05_household_budget_cli.py` passou com 4.096 ticks e
+50.000 instruções disponíveis. A partida usou 14.439 instruções, terminou no
+limite solicitado de ticks, com Main em `waiting`, sem falha do host e sem
+esgotar o orçamento de instruções. O morador 16 avançou de `[440,360,1,0]` a
+`[472,392,1,5]` em 54 callbacks de movimento; o morador 18 permaneceu na
+posição inicial e também ficou `waiting`. Foram conferidos os hashes dos 132
+arquivos de recurso do plano; nenhum mudou. Save e configurações ficaram fora
+da instalação, em área temporária.
+
+Isso resolve o teto artificial que impedia essa observação de 4.096 ticks e
+mostra movimento de um morador real nessa rodada. Ainda é uma execução
+headless: não prova interação do jogador, animação visível, atividades de
+expansão ou paridade com Simitone.
+
 ## Atualização: save/reload de assento na House07 (2026-10-23)
 
 O gate opcional `tests/house07_session_resume_cli.py` passou após ampliar os
@@ -18,13 +41,10 @@ semiglobal. As fases de processo aparecem no stderr do script para que uma
 retomada lenta seja identificável.
 
 Isto confirma mais um caso real de cadeira e retomada em outro lote. Continua
-headless: não demonstra clique natural, tela
-visível, portais/expansões nem paridade geral. A House07 usou 48/128; a
-House05 segue validada em 34/173. A rodada da família House05 de 4096 ticks
-parou em 2852 ao atingir o limite total de 10000 instruções do probe; o Main
-principal estava `waiting`, um morador adicional estava `budget_exhausted` e
-`host_failed=false`. Esse resultado é limite de diagnóstico, não conclusão de
-que a partida completa terminou nem prova de falha do jogo.
+headless: não demonstra clique natural, tela visível, portais/expansões nem
+paridade geral. A House07 usou 48/128; a House05 segue validada em 34/173. A
+limitação anterior de 10.000 instruções e sua repetição com teto de 50.000
+estão registradas acima.
 
 ## Atualização: objetos fora do lote na busca de assentos (2026-10-23)
 

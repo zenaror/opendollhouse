@@ -43,6 +43,7 @@ struct Options {
     bool plan_only = false, choose_language = false;
     std::optional<std::filesystem::path> load_session;
     std::optional<unsigned> headless_ticks;
+    std::optional<unsigned> instruction_budget;
     std::vector<unsigned> headless_travel_houses;
     bool save_on_exit = false;
     bool single_resident_session = false;
@@ -143,6 +144,8 @@ Options parse_options(int argc, char** argv) {
             result.load_session = value;
         } else if (key == "--headless-ticks" && !result.headless_ticks) {
             result.headless_ticks = parse_number(value, 4096, "headless tick count");
+        } else if (key == "--instruction-budget" && !result.instruction_budget) {
+            result.instruction_budget = parse_number(value, 1000000, "instruction budget");
         } else if (key == "--resident-id" && !result.resident_id) {
             result.resident_id = parse_number(value, 32767, "resident ID");
         } else if (key == "--headless-sit-object" && !result.headless_sit_object) {
@@ -205,6 +208,9 @@ Options parse_options(int argc, char** argv) {
         (!result.headless_ticks || *result.headless_ticks < 2 || result.plan_only || result.load_session ||
          result.single_resident_session || !result.house))
         throw odh::FormatError("--headless-travel-house requires a new whole-household run with --headless-ticks at least 2");
+    if (result.instruction_budget && (!*result.instruction_budget || !result.headless_ticks ||
+        result.plan_only || result.load_session || result.single_resident_session))
+        throw odh::FormatError("--instruction-budget requires a new bounded whole-household run with --headless-ticks");
     if ((result.save_on_exit && (!result.headless_ticks || result.plan_only)) ||
         (result.headless_ticks && (result.plan_only || !result.house)))
         throw odh::FormatError("headless execution needs --house (or --load-session); saving on exit needs --headless-ticks, without --plan-only");
@@ -216,7 +222,7 @@ Options parse_options(int argc, char** argv) {
             "Usage: odh-person [--game-root DIR] --mode 1..5,7 [--language 1..20] "
             "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
             "[--headless-sit-object ID --headless-stand-tick N] "
-            "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--save-session-on-exit]]");
+            "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
     odh_host::LinuxUserConfig saved;
@@ -470,6 +476,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     else
         append(args, {"--render-window", "--render-animation-far", animation_far.string(),
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
+    if (options.instruction_budget)
+        append(args, {"--instruction-budget", std::to_string(*options.instruction_budget)});
     if (options.headless_sit_object)
         append(args, {"--headless-interaction", std::to_string(*options.headless_sit_object), "1"});
     if (options.headless_sit_object && options.headless_stand_tick)
@@ -597,6 +605,7 @@ int odh_linux_game_entry(int argc, char** argv) {
         travel_options.mode = options.mode;
         travel_options.language = options.language;
         travel_options.single_resident_session = options.single_resident_session;
+        travel_options.instruction_budget = options.instruction_budget;
         std::map<unsigned, std::filesystem::path> saved_lots;
         std::optional<Options> rollback_options;
         std::size_t headless_travel_index = 0;
