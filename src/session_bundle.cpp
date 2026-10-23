@@ -276,12 +276,15 @@ void validate_household(const SessionBundle& bundle) {
 }
 
 std::vector<std::uint8_t> encode_seated(const SessionSeatedContinuation& c,const SessionBundleLimits& limits) {
-    Writer w(limits.archive.max_section_bytes);w.u16(1);
+    Writer w(limits.archive.max_section_bytes);w.u16(2);
     w.i16(c.actor_id);w.u64(c.actor_generation);w.i16(c.target_id);w.u64(c.target_generation);
     w.u32(c.target_guid);w.u32(c.target_slot);w.u16(c.action);
     w.u64(c.completion.uid);w.u64(c.completion.ticket);w.u64(c.completion.tick);w.u8(c.completion.result?1:0);
     w.string(c.source);w.string(c.asset);w.u16(c.definition_chunk_id);w.u16(c.tree_table_id);
     w.u16(c.stand_entry_point);w.u16(c.stand_condition);w.u16(c.stand_action);
+    w.u8(c.linked_semiglobal?1:0);
+    if(c.linked_semiglobal){w.string(c.linked_semiglobal->name);w.string(c.linked_semiglobal->archive);
+        w.string(c.linked_semiglobal->entry);}
     w.append(c.sit_routine_fingerprint.data(),32);w.append(c.stand_routine_fingerprint.data(),32);
     w.u8(static_cast<std::uint8_t>(c.code_owners.size()));
     for(const auto& binding:c.code_owners){w.u32(binding.owner);w.string(binding.source);w.string(binding.asset);
@@ -289,7 +292,7 @@ std::vector<std::uint8_t> encode_seated(const SessionSeatedContinuation& c,const
     return w.take();
 }
 SessionSeatedContinuation decode_seated(const std::vector<std::uint8_t>& bytes) {
-    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported seated continuation version");
+    Reader r(bytes);const auto version=r.u16();if(version!=1&&version!=2)throw FormatError("unsupported seated continuation version");
     SessionSeatedContinuation c;c.actor_id=r.i16();c.actor_generation=r.u64();c.target_id=r.i16();c.target_generation=r.u64();
     c.target_guid=r.u32();c.target_slot=r.u32();c.action=r.u16();
     c.completion.uid=r.u64();c.completion.ticket=r.u64();c.completion.tick=r.u64();const auto result=r.u8();
@@ -297,6 +300,9 @@ SessionSeatedContinuation decode_seated(const std::vector<std::uint8_t>& bytes) 
     c.completion.result=result!=0;
     c.source=r.string();c.asset=r.string();c.definition_chunk_id=r.u16();c.tree_table_id=r.u16();
     c.stand_entry_point=r.u16();c.stand_condition=r.u16();c.stand_action=r.u16();
+    if(version>=2){const auto linked=r.u8();if(linked>1)throw FormatError("invalid seated semiglobal presence flag");
+        if(linked){SessionLinkedSemiglobal value;value.name=r.string();value.archive=r.string();value.entry=r.string();
+            c.linked_semiglobal=std::move(value);}}
     const auto digest=[&](auto& value){const auto data=r.bytes(32);std::copy(data.begin(),data.end(),value.begin());};
     digest(c.sit_routine_fingerprint);digest(c.stand_routine_fingerprint);
     const auto count=r.u8();if(count>1)throw FormatError("seated continuation owner count exceeds profile");

@@ -58,6 +58,21 @@ int main(){try{
     const auto linked_catalog=load_saved_tree_name_catalog(part_candidate);
     check(linked_catalog.semiglobal_name==std::optional<std::string>("SofaGlobals"),
           "GLOB semiglobal link is decoded from the payload, not the IFF chunk label");
+    data=iff(chunk("GLOB",128,std::string(1,'\x0b')+"SofaGlobals")+
+             chunk("GLOB",129,std::string(1,'\x0b')+"SofaGlobals"));write(path,data);
+    const auto duplicate_catalog=load_saved_tree_name_catalog(part_candidate);
+    check(duplicate_catalog.semiglobal_bindings==2&&
+          duplicate_catalog.semiglobal_name==std::optional<std::string>("SofaGlobals"),
+          "shared catalog preserves duplicate GLOB count without disturbing non-SEAT callers");
+    bool duplicate_glob_rejected=false;
+    try{(void)unique_saved_semiglobal_name(duplicate_catalog);}
+    catch(const odh::FormatError&){duplicate_glob_rejected=true;}
+    check(duplicate_glob_rejected,"SEAT unique-link accessor rejects duplicate identical GLOBs");
+    data=iff(chunk("GLOB",128,std::string(1,'\x0b')+"SofaGlobals")+
+             chunk("GLOB",129,std::string(1,'\x0c')+"OtherGlobals"));write(path,data);
+    bool conflicting_glob_rejected=false;
+    try{(void)load_saved_tree_name_catalog(part_candidate);}catch(const odh::FormatError&){conflicting_glob_rejected=true;}
+    check(conflicting_glob_rejected,"conflicting GLOB bindings are rejected as ambiguous");
     data=iff(chunk("TTAB",128,ttab())+chunk("TTAs",128,localized_labels()));write(path,data);
     const auto portuguese=saved_object_interactions({path.string(),"",7,object},14);
     const auto missing_language=saved_object_interactions({path.string(),"",7,object},5);

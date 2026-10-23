@@ -16,7 +16,12 @@ std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&
 // its Playback wait must match the current VM pending opcode 44 completely.
 void validate_seated_session_continuation(const SessionBundle&);
 
-using SessionActionRoutineLoader = std::function<RoutineSet(const DefinitionCandidate&,std::uint16_t)>;
+struct SessionActionRoutineSource {
+    RoutineSet routines;
+    std::optional<SessionLinkedSemiglobal> linked_semiglobal;
+};
+using SessionActionRoutineLoader = std::function<SessionActionRoutineSource(
+    const DefinitionCandidate&,std::uint16_t)>;
 
 // Load only from the caller's unique immutable DefinitionCandidate. Verifies
 // exact provenance, live EntryPoint table and both Sit/Stand closure digests

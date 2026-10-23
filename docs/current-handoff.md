@@ -1,5 +1,30 @@
 # Continuidade atual
 
+## Atualização: save/reload sentado no House05 (2026-10-23)
+
+O formato SEAT agora grava a ligação exata do objeto ao banco semiglobal:
+nome GLOB, arquivo Global FAR relativo à raiz selecionada e entrada FAR. Ao
+reabrir, o ODH resolve novamente o GLOB do objeto, exige o mesmo arquivo e
+entrada e compara os bancos de código Sit e Stand. Ao salvar esse perfil,
+mais de um bloco GLOB no mesmo objeto é recusado; os outros leitores preservam
+seu comportamento anterior. Arquivos SEAT v1 privados continuam legíveis; o
+formato novo é v2. Limites de caminhos e código alterado são cobertos por
+rejeições sintéticas.
+
+O teste reproduzível `tests/house05_seated_session_resume_cli.py` passou com a
+instalação original, modo 1, House05, morador neighbor 34 e banco 173. Um
+processo concluiu Sit 8213, salvou no tick 512 e terminou sem falha. Um segundo
+processo leu esse arquivo, confirmou o mesmo tick, executou Stand 8216, levantou
+o morador e o desanexou do banco. House05.iff, Neighborhood.iff,
+User00009.iff, Animation.far, Global.far e Objects.far mantiveram seus hashes.
+O save ficou em XDG temporário e os dados comerciais permaneceram somente
+leitura.
+
+Esse marco comprova apenas esse percurso de assento e retomada em modo
+headless. Ainda faltam save/load visual, outros assentos, interação por clique,
+família completa (incluindo o problema já registrado do objeto 218), expansões
+e paridade com Simitone. A build jogável completa continua sendo o critério.
+
 ## Critério de build jogável
 
 Para este projeto, “build jogável” significa alcançar pelo menos a paridade
@@ -77,16 +102,17 @@ ações solicitadas, porém, foram concluídas (`action_incomplete=false`). Os
 hashes de House05, Neighborhood, User00009 e Animation.far permaneceram iguais.
 Uma leitura estática separada do `Sofas.iff#16848` confirma EntryPoint26 8215
 e EntryPoint27 8216; ambos são IDs semiglobais e o GLOB do objeto os liga ao
-banco SofaGlobals.iff. Ainda falta serializar, autenticar e restaurar essa
-origem exata para save/resume.
+banco SofaGlobals.iff. Naquele checkpoint ainda faltava serializar e restaurar
+a origem exata. A lacuna foi fechada no checkpoint descrito no início deste
+documento.
 
 Uma tentativa separada de executar Sit→Stand com o runtime de toda a família
 parou antes da interação: o Main do morador 16 falhou ao encontrar o objeto
 salvo 218 sem posição conhecida. Isso permanece uma lacuna independente da
 continuação de um único morador.
 
-Não há ainda evidência de save/resume do assento House05, clique natural ou
-Stand visual em janela. `odh-snap-tests` passou 350 verificações sintéticas e
+Naquele checkpoint ainda não havia evidência de save/resume do assento House05,
+clique natural ou Stand visual em janela. `odh-snap-tests` passou 350 verificações sintéticas e
 `linux_game_entry_cli.py` passou 49 verificações sintéticas após essas mudanças.
 
 ## Atualização: condições simples da EntryPoint26 (2026-10-23)

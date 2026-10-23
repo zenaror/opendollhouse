@@ -114,6 +114,56 @@ void different_render_path(const std::string& output,const std::string& input) {
         throw odh::FormatError("person frame output aliases an input");
 }
 std::string fold(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');return s;}
+odh::SessionActionRoutineSource load_session_action_source(
+    const odh::DefinitionCandidate& candidate,std::uint16_t root,
+    const std::optional<odh::SessionLinkedSemiglobal>& expected_link,
+    const std::filesystem::path& game_root,const std::optional<Resource>& globals,
+    const odh::DefinitionIndex* definitions) {
+    const auto scope=odh::routine_key(root).scope;
+    if(scope==odh::RoutineScope::private_object){
+        if(expected_link)throw odh::FormatError("private seated action unexpectedly declares a semiglobal bank");
+        return {load_saved_action_routines(candidate,root),{}};
+    }
+    if(scope!=odh::RoutineScope::semiglobal)
+        throw odh::FormatError("seated action root must belong to the exact private or linked semiglobal bank");
+    if(!globals||globals->standalone||!definitions)
+        throw odh::FormatError("seated semiglobal action needs the explicit Global FAR and definition index");
+    auto catalog=load_saved_tree_name_catalog(candidate);
+    auto semiglobal_name=unique_saved_semiglobal_name(catalog);
+    if(!semiglobal_name&&catalog.semiglobal_bindings==0&&
+       candidate.definition.tree_table_id==0xffff&&candidate.definition.master_id!=0){
+        if(const auto* master=definitions->unique_master(candidate)){
+            catalog=load_saved_tree_name_catalog(*master);
+            semiglobal_name=unique_saved_semiglobal_name(catalog);
+        }
+    }
+    if(!semiglobal_name||semiglobal_name->empty()||
+       semiglobal_name->find_first_of("/\\:")!=std::string::npos||
+       semiglobal_name->find('\0')!=std::string::npos||semiglobal_name->find('.')!=std::string::npos)
+        throw odh::FormatError("seated semiglobal action has no unique flat GLOB link");
+    const auto entry=*semiglobal_name+".iff";
+    auto bank=load_saved_semiglobal_code_bank(globals->archive,entry);
+    if(bank.name!=*semiglobal_name||bank.entry!=entry||!bank.routines.count(odh::routine_key(root)))
+        throw odh::FormatError("seated action root is absent from its exact GLOB-linked bank");
+    std::error_code error;
+    const auto root_path=std::filesystem::canonical(game_root,error);
+    if(error)throw odh::FormatError("cannot resolve selected game root for seated code provenance");
+    const auto archive_path=std::filesystem::canonical(globals->archive,error);
+    if(error)throw odh::FormatError("cannot resolve linked semiglobal archive");
+    const auto relative=archive_path.lexically_relative(root_path);
+    if(relative.empty()||relative.is_absolute()||*relative.begin()=="..")
+        throw odh::FormatError("linked semiglobal archive is outside the selected game root");
+    odh::SessionLinkedSemiglobal link{*semiglobal_name,relative.generic_string(),entry};
+    if(expected_link&&*expected_link!=link)
+        throw odh::FormatError("seated semiglobal GLOB or archive provenance changed");
+    auto routines=load_saved_private_routines(candidate,256);
+    if(bank.routines.size()>512||routines.size()+bank.routines.size()>768)
+        throw odh::FormatError("seated private/semiglobal owner exceeds routine budget");
+    for(const auto& [key,routine]:bank.routines)
+        if(!routines.emplace(key,routine).second)
+            throw odh::FormatError("private and linked semiglobal seated routines collide");
+    return {std::move(routines),std::move(link)};
+}
 const char* room_portal_route_status_name(odh::RoomPortalRouteStatus status) {
     switch (status) {
     case odh::RoomPortalRouteStatus::found: return "found";
@@ -1080,6 +1130,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> action_code_owners;
         std::optional<SavedObjectSelection> seated_action_target;
         std::optional<std::uint64_t> seated_action_actor_generation;
+        std::optional<std::uint16_t> seated_action_code;
         std::optional<std::uint64_t> route_spatial_revision;
         std::optional<std::int16_t> route_ep5_unknown_caller,route_ep5_unknown_stack_object;
         std::optional<std::uint16_t> route_ep5_unknown_action;
@@ -1851,8 +1902,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             }
             if(!exact)throw odh::FormatError("seated continuation object provenance no longer matches the selected resources");
             session_restore->install_seated_continuation_owners(vm,*exact,*target->entry_points,
-                [](const odh::DefinitionCandidate& definition,std::uint16_t root){
-                    return load_saved_action_routines(definition,root);
+                [&](const odh::DefinitionCandidate& definition,std::uint16_t root){
+                    return load_session_action_source(definition,root,seated->linked_semiglobal,
+                        session_context->game_root,globals,definition_index?&*definition_index:nullptr);
                 });
         }
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
@@ -2040,6 +2092,7 @@ struct PlacementCandidateProbe {
     // clicking another object and then the chair does not lose the Stand gate.
     std::optional<SavedObjectSelection> seated_action_target;
     std::optional<std::uint64_t> seated_action_actor_generation;
+    std::optional<std::uint16_t> seated_action_code;
     std::optional<bool> render_interaction_result;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
@@ -2057,6 +2110,7 @@ struct PlacementCandidateProbe {
         render_interaction_status="restored_sit";
         seated_action_target=render_interaction_target;
         seated_action_actor_generation=seated.actor_generation;
+        seated_action_code=seated.action;
     }
     using SavedOwnerMap=std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner>;
     const auto actor_owner_map_for=[&](std::int16_t actor_id)->SavedOwnerMap* {
@@ -2073,12 +2127,13 @@ struct PlacementCandidateProbe {
         return candidate&&candidate->definition.object_type==7;
     };
     const auto actor_seated_binding=[&](std::int16_t actor_id)
-        ->std::pair<std::optional<SavedObjectSelection>*,std::optional<std::uint64_t>*> {
-        if(actor_id==runtime_avatar_id)return {&seated_action_target,&seated_action_actor_generation};
+        ->std::tuple<std::optional<SavedObjectSelection>*,std::optional<std::uint64_t>*,
+            std::optional<std::uint16_t>*> {
+        if(actor_id==runtime_avatar_id)return {&seated_action_target,&seated_action_actor_generation,&seated_action_code};
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
             [&](const auto& member){return member->id==actor_id;});
-        if(found==household_runtime.end())return {nullptr,nullptr};
-        return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation};
+        if(found==household_runtime.end())return {nullptr,nullptr,nullptr};
+        return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation,&(*found)->seated_action_code};
     };
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
@@ -2273,11 +2328,12 @@ struct PlacementCandidateProbe {
         const auto* actor=world.find(actor_id);
         const auto* target=world.find(selected.id);
         const auto* actor_queue=actor_queue_for(actor_id);
-        const auto [seated_target,seated_generation]=actor_seated_binding(actor_id);
+        const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(actor_id);
         return saved_world_main&&actor_queue&&actor_queue->size()==0&&!actor_queue->active()&&
             seated_target&&*seated_target&&(*seated_target)->id==selected.id&&
             (*seated_target)->generation==selected.generation&&(*seated_target)->guid==selected.guid&&
-            actor&&seated_generation&&*seated_generation&&actor->generation==**seated_generation&&
+            seated_generation&&*seated_generation&&seated_code&&*seated_code&&
+            actor&&actor->generation==**seated_generation&&
             actor->kind==odh::EntityKind::avatar&&
             !actor->person_data.empty()&&actor->person_data[0]==1&&actor->attachment&&
             actor->attachment->container==selected.id&&target&&target->generation==selected.generation&&
@@ -2301,11 +2357,12 @@ struct PlacementCandidateProbe {
         const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
         const auto completion=actor_queue->completion();
         const auto* actor=world.find(actor_id);
-        const auto [seated_target,seated_generation]=actor_seated_binding(actor_id);
+        const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(actor_id);
         const auto* target=world.find(selected.id);
         if(actor&&actor->person_data.size()>0)headless_stand_posture_before=actor->person_data[0];
         if(actor&&actor->attachment)headless_stand_attachment_before=actor->attachment->container;
-        if(!completion||!seated_target||!seated_generation||!*seated_target||!*seated_generation)
+        if(!completion||!seated_target||!seated_generation||!seated_code||!*seated_target||
+           !*seated_generation||!*seated_code)
             fail_stand("no successful seated action is available in this session");
         else if(!stand_selection_is_current(selected))
             fail_stand("Stand requires the same seated avatar and selected object generations, attachment and an idle queue");
@@ -3408,9 +3465,10 @@ struct PlacementCandidateProbe {
         if(!session_context->single_resident_session&&std::any_of(household_runtime.begin(),
             household_runtime.end(),[](const auto& member){return !member->action_code_owners.empty();}))
             throw odh::FormatError("household session cannot yet restore additional-resident dynamic action owners");
-        if(seated&&(!seated_action_target||!seated_action_actor_generation||!save_actor->attachment||
+        if(seated&&(!seated_action_target||!seated_action_actor_generation||!seated_action_code||
+           !save_actor->attachment||
            save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||
-           save_actor->generation!=*seated_action_actor_generation))
+           save_actor->generation!=*seated_action_actor_generation||!*seated_action_code))
             throw odh::FormatError("this seated state has no verified completed Sit action to resume safely");
         if(!seated&&(save_actor->attachment||save_actor->person_data[0]!=0))
             throw odh::FormatError("this session cannot yet be restored: the resident posture is unsupported");
@@ -3505,7 +3563,7 @@ struct PlacementCandidateProbe {
             if(!target||target->generation!=selected.generation||target->kind!=odh::EntityKind::object||
                !target->definition||target->definition->guid!=selected.guid||!target->entry_points||
                target->entry_points->size()<=27||!completion||!completion->result||
-               !render_interaction_action||*render_interaction_action!=4097||!candidate||
+               !seated_action_code||!candidate||
                candidate->definition.tree_table_id!=selected.tree_table_id)
                 throw odh::FormatError("this seated state is missing its exact completed Sit/Stand object binding");
             odh::SessionSeatedContinuation continuation;
@@ -3513,17 +3571,24 @@ struct PlacementCandidateProbe {
             continuation.target_id=selected.id;continuation.target_generation=selected.generation;
             continuation.target_guid=selected.guid;
             continuation.target_slot=static_cast<std::uint32_t>(save_actor->attachment->slot);
-            continuation.action=4097;continuation.completion=*completion;
+            continuation.action=*seated_action_code;continuation.completion=*completion;
             continuation.source=candidate->source;continuation.asset=candidate->asset;
             continuation.definition_chunk_id=candidate->chunk_id;
             continuation.tree_table_id=candidate->definition.tree_table_id;
             continuation.stand_entry_point=27;
             continuation.stand_condition=(*target->entry_points)[27].condition;
             continuation.stand_action=(*target->entry_points)[27].action;
-            continuation.sit_routine_fingerprint=odh::session_action_routine_fingerprint(
-                load_saved_action_routines(*candidate,continuation.action));
-            continuation.stand_routine_fingerprint=odh::session_action_routine_fingerprint(
-                load_saved_action_routines(*candidate,continuation.stand_action));
+            const auto game_root=session_context->game_root;
+            const auto* definitions=definition_index?&*definition_index:nullptr;
+            const auto sit_source=load_session_action_source(*candidate,continuation.action,{},
+                game_root,globals,definitions);
+            const auto stand_source=load_session_action_source(*candidate,continuation.stand_action,{},
+                game_root,globals,definitions);
+            if(sit_source.linked_semiglobal!=stand_source.linked_semiglobal)
+                throw odh::FormatError("Sit and Stand do not resolve through the same exact GLOB-linked bank");
+            continuation.linked_semiglobal=sit_source.linked_semiglobal;
+            continuation.sit_routine_fingerprint=odh::session_action_routine_fingerprint(sit_source.routines);
+            continuation.stand_routine_fingerprint=odh::session_action_routine_fingerprint(stand_source.routines);
             std::set<odh::CodeOwner> referenced_owners;
             const auto add_owner=[&](odh::CodeOwner owner){
                 if(owner!=static_cast<odh::CodeOwner>(runtime_avatar_id))referenced_owners.insert(owner);
@@ -4344,8 +4409,9 @@ struct PlacementCandidateProbe {
             if(*headless_stand_result){
                 const auto* resident=world.find(stand_actor);
                 if(resident&&(!resident->person_data.empty()&&resident->person_data[0]!=1)&&!resident->attachment){
-                    const auto [seated_target,seated_generation]=actor_seated_binding(stand_actor);
-                    if(seated_target&&seated_generation){seated_target->reset();seated_generation->reset();}
+                    const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(stand_actor);
+                    if(seated_target&&seated_generation&&seated_code){
+                        seated_target->reset();seated_generation->reset();seated_code->reset();}
                 }
             }
         }else if(headless_stand_applied&&headless_stand_status=="queued"&&stand_vm&&stand_vm->status()==odh::VmStatus::fault){
@@ -4373,10 +4439,11 @@ struct PlacementCandidateProbe {
                    seated_actor&&seated_actor->generation==*render_interaction_actor_generation&&
                    !seated_actor->person_data.empty()&&seated_actor->person_data[0]==1&&seated_actor->attachment&&
                    seated_actor->attachment->container==render_interaction_target->id){
-                    const auto [seated_target,seated_generation]=actor_seated_binding(action_actor);
-                    if(seated_target&&seated_generation){
+                    const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(action_actor);
+                    if(seated_target&&seated_generation&&seated_code&&render_interaction_action){
                         *seated_target=render_interaction_target;
                         *seated_generation=render_interaction_actor_generation;
+                        *seated_code=render_interaction_action;
                     }
                 }
             }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){

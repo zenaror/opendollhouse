@@ -79,23 +79,28 @@ the archive atomically in the user data directory. Saves are rejected while
 a route is active, Go Here is queued, any dynamic object/portal code owner exists,
 or a seated action requires an unserialized binding. The loader applies the corresponding supported profile before publishing a candidate session.
 
-The current seated continuation profile only captures the private Sit action
-4097 and its matching Stand action 4102. A real House05 run using bank
-`Sofas.iff#16848` succeeded at Sit 8213, but the save was rejected because its
-EntryPoint26/27 actions (8215/8216) are semiglobal routines linked through
-`SofaGlobals.iff`. The same-process Stand dispatcher now loads EntryPoint27
-8216 from that exact GLOB-linked bank; the real Sit→Stand path returned true
-and detached the resident. Its Snap uses a narrow, tested match for the
-bench's SLOT 128 type-3 index-1 exit record. The integrated launcher gate
-`--single-resident-session --headless-sit-object 173 --headless-stand-tick 300
---headless-ticks 512` completed with exit code 0: both actions returned true,
-the resident ended standing and detached, and the original House05,
-Neighborhood, character and Animation.far hashes were unchanged. The general
-512-tick ceiling was reached after the requested actions completed. Save/resume
-still rejects the state until the exact semiglobal routine origin and closure
-can be fingerprinted and rebuilt after restart.
-A public save selector and visual X11 validation are still absent; do not treat
-this limited persistence support as a playable build.
+The seated continuation profile now supports a completed Sit whose EntryPoint26
+and EntryPoint27 actions are in the object's exact GLOB-linked semiglobal bank.
+SEAT v2 records the flat GLOB name, canonical Global FAR path relative to the
+selected game root, exact FAR entry and bounded fingerprints of the private
+and linked semiglobal owner routines. Restore resolves the object's GLOB again,
+requires the same provenance and compares both action banks before installing
+the owner. Multiple GLOB chunks are rejected specifically for this seated
+save/restore path. SEAT v1 private-action saves remain readable. This profile still
+represents only the stable completed Sit → Stand boundary; it does not save an
+in-flight interaction or route.
+
+The opt-in real-data gate `tests/house05_seated_session_resume_cli.py` runs the
+integrated Linux host in two processes against House05, resident neighbor 34
+and saved bench 173. Process one completed Sit 8213 and saved at tick 512.
+Process two loaded that archive at the same logical tick, completed Stand
+8216, and left the resident standing and detached. The test hashes House05,
+Neighborhood, User00009, Animation.far, Global.far and Objects.far before and
+after; all were unchanged. Session files and XDG state are isolated in a
+temporary directory. This proves
+only the tested headless House05 seat path. Other seats, a visual Stand, natural
+click dispatch, whole-family House05 execution, expansion coverage and full
+Simitone parity remain unverified; this is not yet a playable build.
 
 ### Whole-household continuation
 

@@ -47,7 +47,18 @@ struct SessionActionCodeOwner {
     std::array<std::uint8_t,32> routine_fingerprint{};
 };
 
-// Version 1 deliberately describes only the stable, completed Sit -> Stand
+// Provenance for a semiglobal code bank linked by the exact object's GLOB.
+// archive is canonical and relative to the selected game root; entry is the
+// exact FAR entry selected from that archive.
+struct SessionLinkedSemiglobal {
+    std::string name, archive, entry;
+    bool operator==(const SessionLinkedSemiglobal& other) const {
+        return name==other.name&&archive==other.archive&&entry==other.entry;
+    }
+    bool operator!=(const SessionLinkedSemiglobal& other) const { return !(*this==other); }
+};
+
+// The seated continuation describes only the stable, completed Sit -> Stand
 // boundary. It cannot represent an in-flight interaction, route or portal.
 struct SessionSeatedContinuation {
     std::int16_t actor_id = 0, target_id = 0;
@@ -58,6 +69,7 @@ struct SessionSeatedContinuation {
     std::string source, asset;
     std::uint16_t definition_chunk_id = 0, tree_table_id = 0;
     std::uint16_t stand_entry_point = 27, stand_condition = 0, stand_action = 4102;
+    std::optional<SessionLinkedSemiglobal> linked_semiglobal;
     std::array<std::uint8_t,32> sit_routine_fingerprint{}, stand_routine_fingerprint{};
     std::vector<SessionActionCodeOwner> code_owners; // Strictly ascending owner IDs.
 };

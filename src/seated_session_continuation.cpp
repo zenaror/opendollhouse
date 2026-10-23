@@ -12,6 +12,20 @@ bool nonzero(const std::array<std::uint8_t,32>& value) {
 bool valid_text(const std::string& value,bool allow_empty) {
     return (allow_empty||!value.empty())&&value.size()<=4096&&value.find('\0')==std::string::npos;
 }
+bool canonical_relative_path(const std::string& value) {
+    if(value.empty()||value.size()>4096||value.front()=='/'||value.back()=='/'||
+       value.find('\\')!=std::string::npos||
+       value.find(':')!=std::string::npos||value.find('\0')!=std::string::npos)return false;
+    std::size_t begin=0;
+    while(begin<value.size()){
+        const auto end=value.find('/',begin);
+        const auto part=value.substr(begin,end==std::string::npos?end:end-begin);
+        if(part.empty()||part=="."||part=="..")return false;
+        if(end==std::string::npos)break;
+        begin=end+1;
+    }
+    return true;
+}
 const Entity& entity(const SessionBundle& bundle,std::int16_t id) {
     const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& value){return value.id==id;});
@@ -25,15 +39,16 @@ void digest_u16(Sha256& hash,std::uint16_t value) {
 }
 
 std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet& routines) {
-    if(routines.empty()||routines.size()>256)throw FormatError("seated action closure exceeds routine limit");
+    if(routines.empty()||routines.size()>768)throw FormatError("seated action owner exceeds routine limit");
     Sha256 hash;static constexpr char domain[]="ODH-SEATED-ACTION-CLOSURE-V1";
     hash.update(domain,sizeof(domain));digest_u16(hash,static_cast<std::uint16_t>(routines.size()));
     std::size_t instructions=0;
     for(const auto& item:routines) {
         const auto& key=item.first;const auto& bhav=item.second;
-        if(key.scope!=RoutineScope::private_object||routine_key(key.id).scope!=key.scope||
-           bhav.version!=0x8002||!bhav.metadata||bhav.instructions.size()>16384-instructions)
-            throw FormatError("seated action closure is not bounded private BHAV 8002");
+        if((key.scope!=RoutineScope::private_object&&key.scope!=RoutineScope::semiglobal)||
+           routine_key(key.id).scope!=key.scope||bhav.version!=0x8002||!bhav.metadata||
+           bhav.instructions.size()>32768-instructions)
+            throw FormatError("seated action owner is not bounded private/semiglobal BHAV 8002");
         instructions+=bhav.instructions.size();digest_u16(hash,key.id);digest_u16(hash,bhav.version);
         hash.update(bhav.header.data(),bhav.header.size());
         const auto& m=*bhav.metadata;hash.update(&m.type,1);hash.update(&m.arguments,1);
@@ -42,8 +57,10 @@ std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&
         for(const auto& ins:bhav.instructions) {
             digest_u16(hash,ins.opcode);hash.update(&ins.on_true,1);hash.update(&ins.on_false,1);
             hash.update(ins.operands.data(),ins.operands.size());
-            if(ins.opcode>=4096&&ins.opcode<8192&&!routines.count(routine_key(ins.opcode)))
-                throw FormatError("seated action closure has an unresolved private call");
+            const auto called=routine_key(ins.opcode);
+            if((called.scope==RoutineScope::private_object||called.scope==RoutineScope::semiglobal)&&
+               !routines.count(called))
+                throw FormatError("seated action owner has an unresolved private/semiglobal call");
         }
     }
     return hash.finish();
@@ -52,9 +69,21 @@ std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&
 void validate_seated_session_continuation(const SessionBundle& bundle) {
     if(!bundle.seated_continuation)throw FormatError("seated continuation metadata is absent");
     const auto& c=*bundle.seated_continuation;
+    const auto sit_scope=routine_key(c.action).scope;
+    const auto stand_scope=routine_key(c.stand_action).scope;
+    const bool private_profile=c.action==4097&&c.stand_action==4102&&
+        sit_scope==RoutineScope::private_object&&stand_scope==RoutineScope::private_object&&
+        !c.linked_semiglobal;
+    const bool linked_profile=sit_scope==RoutineScope::semiglobal&&stand_scope==RoutineScope::semiglobal&&
+        c.linked_semiglobal&&valid_text(c.linked_semiglobal->name,false)&&
+        c.linked_semiglobal->name.find_first_of("/\\:")==std::string::npos&&
+        c.linked_semiglobal->name.find('.')==std::string::npos&&
+        canonical_relative_path(c.linked_semiglobal->archive)&&
+        c.linked_semiglobal->entry==c.linked_semiglobal->name+".iff"&&
+        c.linked_semiglobal->entry.find('/')==std::string::npos;
     if(c.actor_id<=0||c.actor_id!=bundle.host.runtime_avatar_id||c.target_id<=0||c.actor_id==c.target_id||
        !c.actor_generation||!c.target_generation||!c.target_guid||!c.tree_table_id||
-       c.action!=4097||c.stand_entry_point!=27||c.stand_action!=4102||
+       (!private_profile&&!linked_profile)||c.stand_entry_point!=27||
        !valid_text(c.source,false)||!valid_text(c.asset,true)||
        !nonzero(c.sit_routine_fingerprint)||!nonzero(c.stand_routine_fingerprint)||
        c.code_owners.size()>1||!c.completion.uid||!c.completion.ticket||!c.completion.result||
@@ -140,12 +169,13 @@ RoutineOwners resolve_seated_session_owners(const SessionBundle& bundle,
        entry_points.size()<=27||entry_points[27].condition!=c.stand_condition||entry_points[27].action!=c.stand_action)
         throw FormatError("seated continuation exact DefinitionCandidate or Stand EntryPoint changed");
     auto sit=load(candidate,c.action);auto stand=load(candidate,c.stand_action);
-    if(!sit.count(routine_key(c.action))||!stand.count(routine_key(c.stand_action))||
-       session_action_routine_fingerprint(sit)!=c.sit_routine_fingerprint||
-       session_action_routine_fingerprint(stand)!=c.stand_routine_fingerprint)
+    if(sit.linked_semiglobal!=c.linked_semiglobal||stand.linked_semiglobal!=c.linked_semiglobal||
+       !sit.routines.count(routine_key(c.action))||!stand.routines.count(routine_key(c.stand_action))||
+       session_action_routine_fingerprint(sit.routines)!=c.sit_routine_fingerprint||
+       session_action_routine_fingerprint(stand.routines)!=c.stand_routine_fingerprint)
         throw FormatError("seated continuation exact Sit or Stand routine identity changed");
     RoutineOwners result;
-    for(const auto& binding:c.code_owners)result.emplace(binding.owner,sit);
+    for(const auto& binding:c.code_owners)result.emplace(binding.owner,sit.routines);
     return result;
 }
 } // namespace odh

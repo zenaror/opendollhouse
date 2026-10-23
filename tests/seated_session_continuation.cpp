@@ -29,10 +29,14 @@ struct Fixture {
     odh::Ts1BootstrapGlobals bootstrap;
     odh::DefinitionCandidate definition{};
     odh::SessionBundle bundle;
-    Fixture(){
+    std::optional<odh::SessionLinkedSemiglobal> linked;
+    std::uint16_t sit_action=4097,stand_action=4102;
+    odh::RoutineSet linked_owner;
+    Fixture(std::optional<odh::SessionLinkedSemiglobal> link={},std::uint16_t sit=4097,
+            std::uint16_t stand=4102):linked(std::move(link)),sit_action(sit),stand_action(stand){
         require(world.create(1,odh::EntityKind::avatar,{0,88,0})&&world.define_type(1,123),"actor");
         require(world.create(2,odh::EntityKind::object,{0,0,1})&&world.define_type(2,456),"chair");
-        std::vector<odh::EntryPoint> eps(28);eps[27]={0,4102};
+        std::vector<odh::EntryPoint> eps(28);eps[27]={0,stand_action};
         require(world.define_entry_points(2,eps)&&world.set_position(1,{16,16,1,0})&&world.set_position(2,{32,48,1,0})&&
             world.attach(2,0,1)&&world.place_in_slot(2,0,1)&&world.set_person_data(1,0,1),"seated chair state");
         require(vm.start(odh::routine_key(4096),{1,1,1,1},{6})==odh::VmStatus::running&&controllers.bind(vm),"start Main");
@@ -54,15 +58,24 @@ struct Fixture {
         odh::SessionSeatedContinuation c;c.actor_id=1;c.target_id=2;c.actor_generation=world.find(1)->generation;
         c.target_generation=world.find(2)->generation;c.target_guid=456;c.completion=*queue.completion;
         c.source="synthetic/exact.far";c.asset="chair.iff";c.definition_chunk_id=5;c.tree_table_id=8;
-        c.sit_routine_fingerprint=odh::session_action_routine_fingerprint(action(4097));
-        c.stand_routine_fingerprint=odh::session_action_routine_fingerprint(action(4102));
-        c.code_owners={{0x80000000U,c.source,c.asset,4097,c.sit_routine_fingerprint}};
+        c.action=sit_action;c.stand_action=stand_action;c.linked_semiglobal=linked;
+        if(linked){linked_owner=action(sit_action);const auto stand=action(stand_action);
+            linked_owner.insert(stand.begin(),stand.end());
+            c.sit_routine_fingerprint=odh::session_action_routine_fingerprint(linked_owner);
+            c.stand_routine_fingerprint=c.sit_routine_fingerprint;
+        }else{
+            c.sit_routine_fingerprint=odh::session_action_routine_fingerprint(action(sit_action));
+            c.stand_routine_fingerprint=odh::session_action_routine_fingerprint(action(stand_action));
+        }
+        c.code_owners={{0x80000000U,c.source,c.asset,sit_action,c.sit_routine_fingerprint}};
         bundle.seated_continuation=c;
         definition.source=c.source;definition.asset=c.asset;definition.chunk_id=5;
         definition.definition.guid=456;definition.definition.tree_table_id=8;
     }
     auto resolve(const odh::SessionBundle& value){return odh::resolve_seated_session_owners(value,definition,
-        *world.find(2)->entry_points,[](const auto&,auto id){return action(id);});}
+        *world.find(2)->entry_points,[&](const auto&,auto id){
+            if(linked)return odh::SessionActionRoutineSource{linked_owner,linked};
+            return odh::SessionActionRoutineSource{action(id),{}};});}
 };
 odh::SessionBundle animation_main_fixture(Fixture& source) {
     odh::World world;require(world.restore_snapshot(source.bundle.world),"animation fixture World");
@@ -91,7 +104,27 @@ odh::SessionBundle animation_main_fixture(Fixture& source) {
 int main(){try{
     Fixture f;const auto bytes=odh::encode_session_bundle(f.bundle);const auto loaded=odh::decode_session_bundle(bytes,f.bundle.resources);
     require(odh::encode_session_bundle(loaded)==bytes&&f.resolve(loaded).count(0x80000000U),"canonical seated owner roundtrip");
+    auto legacy=odh::decode_session_archive(bytes);
+    auto legacy_seat=std::find_if(legacy.sections.begin(),legacy.sections.end(),[](const auto& s){
+        return s.id==std::array<char,4>{{'S','E','A','T'}};});
+    require(legacy_seat!=legacy.sections.end(),"legacy SEAT section exists");
+    const auto link_flag=std::size_t{2+20+10+25+2+f.bundle.seated_continuation->source.size()+
+        2+f.bundle.seated_continuation->asset.size()+10};
+    require(link_flag<legacy_seat->data.size()&&legacy_seat->data[link_flag]==0,
+        "private v2 profile has an empty link flag");
+    legacy_seat->data.erase(legacy_seat->data.begin()+static_cast<std::ptrdiff_t>(link_flag));
+    legacy_seat->data[0]=1;legacy_seat->data[1]=0;
+    const auto legacy_loaded=odh::decode_session_bundle(odh::encode_session_archive(legacy),f.bundle.resources);
+    require(legacy_loaded.seated_continuation&&!legacy_loaded.seated_continuation->linked_semiglobal&&
+        f.resolve(legacy_loaded).count(0x80000000U),"version 1 private seated profile remains readable");
+    Fixture linked(odh::SessionLinkedSemiglobal{"SofaGlobals","GameData/Global/Global.far","SofaGlobals.iff"},8213,8216);
+    const auto linked_bytes=odh::encode_session_bundle(linked.bundle);
+    const auto linked_loaded=odh::decode_session_bundle(linked_bytes,linked.bundle.resources);
+    require(linked_loaded.seated_continuation->linked_semiglobal==linked.linked&&
+        linked.resolve(linked_loaded).count(0x80000000U),"linked semiglobal provenance roundtrip and owner resolution");
     std::size_t rejections=0;
+    const auto bad_link=[&](auto mutate,const char* message){auto changed=linked.bundle;mutate(changed);
+        rejects([&]{odh::validate_seated_session_continuation(changed);},message);++rejections;};
     const auto bad=[&](auto mutate){auto changed=f.bundle;mutate(changed);rejects([&]{
         odh::validate_seated_session_continuation(changed);},"invalid seated continuation accepted");++rejections;};
     bad([](auto& b){++b.seated_continuation->actor_generation;});
@@ -113,25 +146,54 @@ int main(){try{
     bad([](auto& b){b.seated_continuation->code_owners[0].root_routine=4102;});
     bad([](auto& b){b.seated_continuation->source=std::string(4097,'x');});
     bad([](auto& b){b.seated_continuation->source.push_back('\0');});
+    bad_link([](auto& b){b.seated_continuation->linked_semiglobal->name="Other";},"changed semiglobal link accepted");
+    bad_link([](auto& b){b.seated_continuation->linked_semiglobal->archive="../Global.far";},"escaping semiglobal archive accepted");
+    bad_link([](auto& b){b.seated_continuation->linked_semiglobal->archive="C:/outside/Global.far";},"drive-qualified semiglobal archive accepted");
+    bad_link([](auto& b){b.seated_continuation->linked_semiglobal->archive="GameData/Global/";},"trailing-slash semiglobal archive accepted");
+    bad_link([](auto& b){b.seated_continuation->linked_semiglobal->entry="other.iff";},"mismatched semiglobal entry accepted");
     bad([](auto& b){b.runtime_entities[0].controllers.interactions.active=odh::InteractionActiveSnapshot{1,1};});
     bad([](auto& b){b.runtime_entities[0].controllers.interactions.resume_tick=3;});
     bad([](auto& b){b.runtime_entities[0].vm.stack[0].context.code_owner=0x80000000U;});
     bad([](auto& b){b.runtime_entities[0].vm.pending->instruction.instruction.opcode=44;});
     auto wrong=f.definition;wrong.asset="other.iff";
     rejects([&]{odh::resolve_seated_session_owners(f.bundle,wrong,*f.world.find(2)->entry_points,
-        [](const auto&,auto id){return action(id);});},"wrong exact asset accepted");
+        [](const auto&,auto id){return odh::SessionActionRoutineSource{action(id),{}};});},"wrong exact asset accepted");
     wrong=f.definition;++wrong.chunk_id;
     rejects([&]{odh::resolve_seated_session_owners(f.bundle,wrong,*f.world.find(2)->entry_points,
-        [](const auto&,auto id){return action(id);});},"wrong definition chunk accepted");
+        [](const auto&,auto id){return odh::SessionActionRoutineSource{action(id),{}};});},"wrong definition chunk accepted");
     rejects([&]{odh::resolve_seated_session_owners(f.bundle,f.definition,*f.world.find(2)->entry_points,
-        [](const auto&,auto id){auto routines=action(id);routines.begin()->second.instructions[0].operands[0]=1;return routines;});},
+        [](const auto&,auto id){auto source=odh::SessionActionRoutineSource{action(id),{}};source.routines.begin()->second.instructions[0].operands[0]=1;return source;});},
         "changed private closure accepted with same source/asset/owner and overall manifest");
     rejects([&]{odh::resolve_seated_session_owners(f.bundle,f.definition,*f.world.find(2)->entry_points,
-        [](const auto&,auto id){auto routines=action(id);if(id==4102)routines.begin()->second.header[0]=1;return routines;});},
+        [](const auto&,auto id){auto source=odh::SessionActionRoutineSource{action(id),{}};if(id==4102)source.routines.begin()->second.header[0]=1;return source;});},
         "changed Stand closure accepted with unchanged Sit closure");
+    rejects([&]{odh::resolve_seated_session_owners(linked.bundle,linked.definition,*linked.world.find(2)->entry_points,
+        [&](const auto&,auto){return odh::SessionActionRoutineSource{linked.linked_owner,
+            odh::SessionLinkedSemiglobal{"Other","GameData/Global/Global.far","Other.iff"}};});},
+        "changed exact GLOB link accepted by the restore loader");
+    ++rejections;
+    rejects([&]{odh::resolve_seated_session_owners(linked.bundle,linked.definition,*linked.world.find(2)->entry_points,
+        [&](const auto&,auto){return odh::SessionActionRoutineSource{linked.linked_owner,
+            odh::SessionLinkedSemiglobal{"SofaGlobals","GameData/Objects/Objects.far","SofaGlobals.iff"}};});},
+        "changed linked archive accepted by the restore loader");
+    ++rejections;
+    rejects([&]{odh::resolve_seated_session_owners(linked.bundle,linked.definition,*linked.world.find(2)->entry_points,
+        [&](const auto&,auto){return odh::SessionActionRoutineSource{linked.linked_owner,
+            odh::SessionLinkedSemiglobal{"SofaGlobals","GameData/Global/Global.far","Other.iff"}};});},
+        "changed linked archive entry accepted by the restore loader");
+    ++rejections;
+    rejects([&]{auto changed=linked.linked_owner;changed.begin()->second.instructions[0].operands[0]=1;
+        odh::resolve_seated_session_owners(linked.bundle,linked.definition,*linked.world.find(2)->entry_points,
+            [&](const auto&,auto){return odh::SessionActionRoutineSource{changed,linked.linked};});},
+        "changed semiglobal owner code accepted with unchanged archive provenance");
+    ++rejections;
+    rejects([&]{odh::session_action_routine_fingerprint({{odh::routine_key(8213),
+        odh::Bhav{0x8002,{{8217,254,255,{}}},{},odh::Bhav::Metadata{0,4,4,0}}}});},
+        "unresolved semiglobal call accepted in seated owner bank");
+    ++rejections;
     auto archive=odh::decode_session_archive(bytes);
     auto seat=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& s){return s.id==std::array<char,4>{{'S','E','A','T'}};});
-    require(seat!=archive.sections.end(),"SEAT section exists");seat->data[0]=2;
+    require(seat!=archive.sections.end(),"SEAT section exists");seat->data[0]=3;
     rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"unknown SEAT payload version accepted");
     archive=odh::decode_session_archive(bytes);archive.sections.back().required=false;
     rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"optional SEAT section accepted");
@@ -150,7 +212,7 @@ int main(){try{
         require(scheduler.add(1,vm,[&](std::uint64_t now){return controllers.advance(now);},
             [&]{return controllers.observe();},[&]{return controllers.notify();}),"register fresh seated execution");
         if(verify)candidate->install_seated_continuation_owners(vm,f.definition,*f.world.find(2)->entry_points,
-            [](const auto&,auto id){return action(id);});
+            [&](const auto&,auto id){return odh::SessionActionRoutineSource{action(id),{}};});
         odh::RandomState random{999};std::uint64_t tick=999;
         auto clip=std::make_shared<odh::AnimationHeader>();clip->name="synthetic-seated-carry";
         if(!verify||wrong_vm){
@@ -198,7 +260,7 @@ int main(){try{
     require(animation_scheduler.add(1,animation_vm,[&](std::uint64_t now){return animation_controllers.advance(now);},
         [&]{return animation_controllers.observe();},[&]{return animation_controllers.notify();}),"register Main animation restore");
     animation_candidate->install_seated_continuation_owners(animation_vm,f.definition,*f.world.find(2)->entry_points,
-        [](const auto&,auto id){return action(id);});
+        [&](const auto&,auto id){return odh::SessionActionRoutineSource{action(id),{}};});
     auto animation_clip=std::make_shared<odh::AnimationHeader>();animation_clip->name="synthetic-seated-Main-idle";
     odh::BoneMotion animation_motion{};animation_motion.frames=3;
     animation_motion.time_properties={{{0,{{"xevt","100"}}}}};animation_clip->motions.push_back(animation_motion);

@@ -102,16 +102,18 @@ struct SavedTreeNameCatalog {
     std::vector<std::string> private_bhav_labels;
     std::map<std::string,std::uint16_t> private_bhav_ids;
     std::optional<std::string> semiglobal_name;
+    std::size_t semiglobal_bindings=0;
 };
 
 // TreeByName in the reference is assembled from local BHAV chunk labels plus
 // the linked semiglobal's BHAV labels. Keep the link explicit so callers do not
 // treat a partial local scan as a complete negative lookup.
 inline SavedTreeNameCatalog load_saved_tree_name_catalog(const odh::DefinitionCandidate& definition) {
-    SavedTreeNameCatalog result;
+    SavedTreeNameCatalog result;std::size_t glob_count=0;
     const auto scan=[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
         odh::iff_chunks(view,[&](const odh::Chunk& chunk){
             if(chunk.type=="GLOB"){
+                ++glob_count;
                 const auto glob=odh::read_glob(chunk.payload);
                 if(glob.name.empty())return;
                 if(result.semiglobal_name&&*result.semiglobal_name!=glob.name)
@@ -126,7 +128,14 @@ inline SavedTreeNameCatalog load_saved_tree_name_catalog(const odh::DefinitionCa
         },limits);};
     if(definition.asset.empty())with_iff_file(definition.source,scan);
     else with_far_entry(definition.source,definition.asset,scan);
+    result.semiglobal_bindings=glob_count;
     return result;
+}
+
+inline std::optional<std::string> unique_saved_semiglobal_name(const SavedTreeNameCatalog& catalog) {
+    if(catalog.semiglobal_bindings>1)
+        throw odh::FormatError("multiple GLOB bindings in exact object resource");
+    return catalog.semiglobal_name;
 }
 
 // Load the statically reachable private-call closure for one selected action.
