@@ -343,6 +343,7 @@ texels conferidos e resultados estão em [render-validation.md](docs/render-vali
 - [Perfil dos formatos suportados e lacunas](docs/formats.md)
 - [Campos de colisão do OBJD](docs/object-collision-validation.md)
 - [Geometria de rota sobre arquitetura salva](docs/route-geometry-validation.md)
+- [Comparação da rota no cômodo com Simitone](docs/same-room-routing-simitone-comparison.md)
 - [Segmentação geométrica de salas salvas](docs/room-map-validation.md)
 - [Preparo de pisos/paredes salvos com aliases explícitos](docs/prepared-architecture-validation.md)
 - [Resolução explícita dos aliases FLRm/WALm](docs/architecture-alias-validation.md)
