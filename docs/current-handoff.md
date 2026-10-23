@@ -87,12 +87,26 @@ funcional.
 
 ## Atualização: assento da interação “do shy child” (2026-10-23)
 
+### Conferência da identidade no lote salvo (2026-10-23)
+
+Uma rechecagem do `House07.iff` atual nas instalações original e Legacy
+Collection encontrou uma divergência importante: o ID salvo 173 resolve para
+GUID `4088047151`, `comeandsee.iff`, TTAB 129, cuja única linha é ação 4102,
+teste 4111, flags 1024. Portanto, esse ID não é o banco `Sofas.iff`/OBJD16848
+no `House07.iff` que os testes atuais abrem. Tentar `--headless-sit-object 173`
+nesses dados não enfileira uma ação: a checagem retorna `unsupported` porque
+nenhuma linha TTAB passa pelo TestFunction ODH atualmente suportado. Não houve
+execução de BHAV8215 nesse teste. A associação anterior entre “objeto 173” e
+OBJD16848 pode pertencer a outro contexto de execução, mas não está confirmada
+para este lote salvo; usar GUID, recurso e lote junto com o ID em traces futuros.
+
 O teste real de viagem House05→House07 ainda para no BHAV8534, quando o
 morador 16 procura um adulto usando o Global SLOT100 v10, tipo 3, índice 10.
 Esse registro permite ficar em pé (peso 1) ou sentar (peso 10), no raio
-32–80. O objeto 173 que bloqueia a rota é o OBJD16848 de `Sofas.iff`, GUID
+32–80. Uma análise estática separada encontrou o OBJD16848 de `Sofas.iff`, GUID
 3586796916, rotulado “Bench - Garden 1 - Left”. Seu OBJf16848 tem EntryPoint26
-com condição zero e ação 8215. Na `SofaGlobals.iff` da Legacy Collection, a
+com condição zero e ação 8215. Ainda não foi demonstrado que essa peça seja o
+objeto que bloqueia a rota no lote/estado atual. Na `SofaGlobals.iff` da Legacy Collection, a
 ação 8215 está rotulada “sit function”; sua árvore chama “Scoot TEST” (8260),
 “Scoot” (8259) e o BHAV global 363 (“Am I a Child?”). Isso confirma por dados
 que o obstáculo é um assento e que não é correto ignorá-lo para forçar a
