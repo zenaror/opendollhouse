@@ -42,6 +42,15 @@ bool supported_ranged_slot_profile(const SlotRecord& slot) {
         slot.height==0&&slot.resolution==8;
     return door_range||house07_global_range;
 }
+bool supported_child_shy_sitting_fallback_profile(const SlotTable& table,std::size_t type3_index,
+    const SlotRecord& slot) {
+    return table.version==10&&type3_index==10&&slot.type==3&&slot.flags==0x8055&&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
+        slot.proximity==std::optional<std::array<std::int32_t,3>>{{32,80,32}}&&
+        slot.standing==1&&slot.sitting==10&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0x3E400000&&
+        slot.height==0&&slot.facing==-2&&slot.resolution==16;
+}
 std::int32_t floor_tile(std::int32_t coordinate) {
     auto quotient=coordinate/16;
     if(coordinate<0 && coordinate%16) --quotient;
@@ -297,16 +306,22 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         slot_index=static_cast<std::size_t>(frame.arguments[data]);
     }
     const auto* slot=goto_relative?nullptr:slot_of_type(*selected_slots,3,slot_index);
+    const bool child_shy_sitting_fallback=!goto_relative&&scope==2&&selected_slots==&globals_&&slot&&
+        supported_child_shy_sitting_fallback_profile(*selected_slots,slot_index,*slot);
     const bool ranged_slot=!goto_relative&&slot&&selected_slots->version==10&&
-        supported_ranged_slot_profile(*slot);
+        (supported_ranged_slot_profile(*slot)||child_shy_sitting_fallback);
     if(!goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
         if(selected_slots->version!=10 ||
            (!supported_circle_slot_profile(*slot)&&!ranged_slot))
             return unsupported("SLOT runtime profile not implemented");
+        if(slot->sitting!=0&&!child_shy_sitting_fallback)
+            return unsupported("sitting-weighted SLOT profile requires an exact supported fallback path");
         if(ranged_slot&&!ranged_slot_goals_)
             return unsupported("ranged SLOT requires an explicit scoring provider");
+        if(child_shy_sitting_fallback&&!sitting_slot_fallback_preflight_)
+            return unsupported("child-shy sitting SLOT requires a nearby-chair preflight");
         if(ranged_slot&&!goal_validator_)
             return unsupported("ranged SLOT requires a host room/clearance validator");
         if((slot->flags&0x0800U)!=0&&!goal_validator_)
@@ -321,6 +336,25 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         return unsupported("routing requires positioned free avatar and target on one level");
     if(nested_request && (actor->id!=job_->actor || actor->generation!=job_->actor_generation))
         return unsupported("nested Route45 changed the active avatar identity");
+    if(child_shy_sitting_fallback) {
+        if(target->kind!=EntityKind::avatar)
+            return unsupported("child-shy sitting SLOT requires an avatar target");
+        const auto actor_id=actor->id,target_id=target->id;
+        const auto actor_generation=actor->generation,target_generation=target->generation;
+        const auto actor_position=*actor->position,target_position=*target->position;
+        std::optional<std::string> preflight_diagnostic;
+        {
+            struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
+            preflight_diagnostic=sitting_slot_fallback_preflight_(*selected_slots,slot_index,
+                actor_position,target_position);
+        }
+        actor=world_.find(actor_id);target=world_.find(target_id);
+        if(!actor||!target||actor->generation!=actor_generation||target->generation!=target_generation||
+           !actor->position||!target->position||!(*actor->position==actor_position)||
+           !(*target->position==target_position)||actor->attachment)
+            return unsupported("entity changed during child-shy sitting SLOT preflight");
+        if(preflight_diagnostic)return unsupported(*preflight_diagnostic);
+    }
     if((!goto_relative||saved_go_here_relative)&&room_pair_) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;

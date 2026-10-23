@@ -3,7 +3,12 @@
 namespace odh {
 
 Glob read_glob(const View& view, GlobNameEncoding encoding) {
+    if (encoding == GlobNameEncoding::legacy_compatible)
+        encoding = view.u8(0) < static_cast<std::uint8_t>('0')
+            ? GlobNameEncoding::pascal_u8 : GlobNameEncoding::c_string;
     switch (encoding) {
+    case GlobNameEncoding::legacy_compatible:
+        throw FormatError("legacy GLOB layout selection failed");
     case GlobNameEncoding::pascal_u8: {
         const auto length = view.u8(0);
         const std::uint64_t extent = 1 + static_cast<std::uint64_t>(length);

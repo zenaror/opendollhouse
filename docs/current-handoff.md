@@ -1,5 +1,54 @@
 # Continuidade atual
 
+## Critério de build jogável
+
+Para este projeto, “build jogável” significa alcançar pelo menos a paridade
+funcional com o Simitone TS1. O Simitone é o mapa principal de recursos e
+comportamentos já conhecidos; o código original e os dados do jogo servem para
+completar lacunas quando a implementação do Simitone não responder à dúvida.
+Uma janela aberta ou um percurso isolado não satisfaz esse critério. A
+validação Linux deve avançar por uma matriz de recursos comparada ao Simitone,
+incluindo vizinhança e lotes das expansões, famílias e seus fluxos, seleção de
+idioma e registro de falhas. Paridade ainda precisa ser verificada em uso; uma
+build compilada ou testes unitários aprovados não bastam.
+
+## Atualização: assento da interação “do shy child” (2026-10-23)
+
+O teste real de viagem House05→House07 ainda para no BHAV8534, quando o
+morador 16 procura um adulto usando o Global SLOT100 v10, tipo 3, índice 10.
+Esse registro permite ficar em pé (peso 1) ou sentar (peso 10), no raio
+32–80. O objeto 173 que bloqueia a rota é o OBJD16848 de `Sofas.iff`, GUID
+3586796916, rotulado “Bench - Garden 1 - Left”. Seu OBJf16848 tem EntryPoint26
+com condição zero e ação 8215. Na `SofaGlobals.iff` da Legacy Collection, a
+ação 8215 está rotulada “sit function”; sua árvore chama “Scoot TEST” (8260),
+“Scoot” (8259) e o BHAV global 363 (“Am I a Child?”). Isso confirma por dados
+que o obstáculo é um assento e que não é correto ignorá-lo para forçar a
+alternativa em pé. Um probe direto de 8215 sem serviços de World parou na
+primeira leitura `scope 1, index 0`; isso localiza uma lacuna de serviços, mas
+não comprova a ação do banco. O leitor GLOB agora reconhece o formato legado
+Pascal ou C-string, seguindo a regra do FreeSO, e `odh-bhav` carrega a ligação
+real `Sofas.iff`→`SofaGlobals.iff` para análise estática.
+
+O Simitone confirma a regra de seleção: `VMSlotParser` trata um objeto sólido
+como assento quando Sitting é positivo e EntryPoint26 tem ação; Route45 chama
+EntryPoint26 e só conclui o caminho conforme o retorno dessa ação. Nosso
+preflight agora bloqueia qualquer objeto do mesmo piso com uma ação EP26 ativa
+e recusa quando posição ou tabela de ações está incompleta. Essa regra é
+deliberadamente conservadora: ainda não compara a área ocupada de cada móvel
+com os destinos individuais como faz o Simitone, e portanto não executa o
+assento nem prova que um destino em pé está livre. Os testes focados e o CTest
+completo passaram (208/208; `linux_window_backend` pulado por falta de
+display), mas o teste real continua sem movimento, chegada ou retorno. O
+próximo marco é implementar candidatos com geometria do móvel e executar a
+ação do assento com seu dono de código exato, preservando Sitting=10, e repetir
+a viagem com dados reais.
+
+Referências locais: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`,
+`FreeSO/TSOClient/tso.simantics/Engine/VMSlotParser.cs` e
+`Engine/VMRoutingFrame.cs`; FreeSO `4c6b3e8f5835b228723caea3c9f683c62f244f73`.
+Os arquivos comerciais foram somente lidos. As alterações de implementação
+e este registro ainda estão sem commit.
+
 ## Atualização: Go Here atravessa escadas salvas House02 e House03 (2026-10-22)
 
 O teste `tests/house03_cross_floor_go_here.py` agora acompanha um Sim sintético

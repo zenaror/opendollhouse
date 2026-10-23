@@ -106,12 +106,15 @@ struct Glob {
     std::string name; // Raw bytes; no encoding conversion or path normalization.
     std::uint64_t remaining_bytes;
 };
-enum class GlobNameEncoding { pascal_u8, c_string };
-// Native Pascal profile: byte length followed by that many name bytes (0..255).
+enum class GlobNameEncoding { legacy_compatible, pascal_u8, c_string };
+// Default matches the game readers: first byte below ASCII '0' selects a
+// Pascal string; otherwise the name is a NUL-terminated string. Both preserve
+// raw bytes and report any trailing extent.
+// Explicit Pascal profile: byte length followed by that many name bytes (0..255).
 // Empty names and embedded NUL are preserved; expose any unknown trailing extent.
 // Explicit c_string profile requires a NUL terminator and allows at most 256
-// name bytes. No heuristic selects a layout from the first byte.
-Glob read_glob(const View&, GlobNameEncoding = GlobNameEncoding::pascal_u8);
+// name bytes.
+Glob read_glob(const View&, GlobNameEncoding = GlobNameEncoding::legacy_compatible);
 
 struct SpriteFrame {
     std::uint16_t width;

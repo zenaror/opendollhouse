@@ -29,7 +29,7 @@ int main() {
         use(bytes, [](const odh::View& v) {
             const auto g = odh::read_glob(v);
             require(g.name == "SyntheticGlobals" && g.remaining_bytes == 0,
-                    "Pascal name needs no NUL terminator");
+                    "legacy-compatible parser recognizes a short Pascal name");
         });
         for (std::size_t n = 0; n < bytes.size(); ++n)
             use(bytes.substr(0, n), [](const odh::View& v) {
@@ -50,7 +50,7 @@ int main() {
         });
         const std::string maximum(255, static_cast<char>(0xfe));
         use(pascal(maximum), [&](const odh::View& v) {
-            const auto g = odh::read_glob(v);
+            const auto g = odh::read_glob(v, odh::GlobNameEncoding::pascal_u8);
             require(g.name == maximum && g.remaining_bytes == 0, "Pascal inherent 255-byte bound");
         });
         use("prefix" + bytes + "outside", [&](const odh::View& v) {
@@ -68,7 +68,10 @@ int main() {
         use(std::string("SemiGlobals\0tail", 16), [&](const odh::View& v) {
             const auto g = odh::read_glob(v, c_string);
             require(g.name == "SemiGlobals" && g.remaining_bytes == 4, "explicit C string and tail");
-            rejects([&] { odh::read_glob(v); }, "default does not guess C string");
+            require(odh::read_glob(v).name == "SemiGlobals",
+                    "legacy-compatible parser recognizes a C string GLOB");
+            rejects([&] { odh::read_glob(v, odh::GlobNameEncoding::pascal_u8); },
+                    "explicit Pascal mode does not reinterpret a C string");
         });
         use(std::string(1, '\0') + "tail", [&](const odh::View& v) {
             const auto g = odh::read_glob(v, c_string);

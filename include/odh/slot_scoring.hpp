@@ -27,6 +27,15 @@ struct ReferenceSlotScores {
     std::uint64_t seed_before, seed_after;
     std::size_t random_calls;
 };
+// Exact Legacy Collection Global SLOT100 v10/type-3/index-10 profile used by
+// BHAV 8534. Its Sitting=10 preference may be ignored only after a host has
+// proved that no eligible sitting target exists in range.
+bool is_child_shy_sitting_fallback_slot(const SlotTable&, std::size_t type3_index);
+// Conservative gate: returns no diagnostic only when every object that could
+// occupy the target floor is known not to expose EntryPoint26. It deliberately
+// does not use object-origin distance as a substitute for footprint checks.
+std::optional<std::string> child_shy_sitting_fallback_preflight(
+    const World&,const SlotTable&,std::size_t type3_index,const EntityPosition& target);
 // Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle,
 // Door 16-to-32 ranged profiles and Global 16-to-64 randomized profile, with
 // optional RandomScoring /
@@ -38,11 +47,11 @@ struct ReferenceSlotScores {
 ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable&, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>&,
-    RandomState&);
+    RandomState&, bool no_sitting_target_proven = false);
 // Generates, filters by ranged proximity/direction, scores and stably ranks the
 // verified ranged SLOT profiles. Room and clearance eligibility remain
 // the Routing host's responsibility; the supplied RNG is explicit and mutable.
 std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable&,std::size_t type3_index,const EntityPosition& caller,
-    const EntityPosition& target,RandomState&);
+    const EntityPosition& target,RandomState&,bool no_sitting_target_proven = false);
 } // namespace odh

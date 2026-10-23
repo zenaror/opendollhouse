@@ -8,6 +8,15 @@ namespace odh {
 namespace {
 constexpr std::uint32_t random_scoring = 8192;
 constexpr std::uint32_t equal_proximity = 1U << 29;
+bool child_shy_slot_record(const SlotRecord* slot) {
+    return slot && slot->type==3 && slot->flags==0x8055 &&
+        slot->offset_bits==std::array<std::uint32_t,3>{0,0,0} &&
+        slot->proximity==std::optional<std::array<std::int32_t,3>>{{32,80,32}} &&
+        slot->standing==1 && slot->sitting==10 && slot->ground==0 &&
+        slot->snap_target_slot==-1 && slot->max_size==0 && slot->unknown_i10==0 &&
+        slot->gradient_bits==0x3E400000 && slot->height==0 && slot->facing==-2 &&
+        slot->resolution==16;
+}
 void validate_position(RoutePoint p) {
     if (p.x < -32768 || p.x > 32767 || p.y < -32768 || p.y > 32767)
         throw std::invalid_argument("reference SLOT score position exceeds LotTilePos short coordinates");
@@ -22,14 +31,50 @@ std::int32_t distance(RoutePoint a, RoutePoint b) {
     return static_cast<std::int32_t>(std::sqrt(static_cast<double>(square)));
 }
 }
+bool is_child_shy_sitting_fallback_slot(const SlotTable& table,std::size_t type3_index) {
+    return table.version==10 && type3_index==10 &&
+        child_shy_slot_record(slot_of_type(table,3,type3_index));
+}
+std::optional<std::string> child_shy_sitting_fallback_preflight(
+    const World& world,const SlotTable& table,std::size_t type3_index,const EntityPosition& target) {
+    if(!is_child_shy_sitting_fallback_slot(table,type3_index))
+        return "child-shy standing fallback received an unverified SLOT profile";
+    auto object_id=world.next_entity(std::numeric_limits<std::int16_t>::min(),EntityKind::object);
+    while(object_id) {
+        const auto* object=world.find(*object_id);
+        if(!object)return "World object inventory changed during child-shy SLOT preflight";
+        if(!object->position) {
+            if(!object->attachment)
+                return "object "+std::to_string(*object_id)+
+                    " has no known position; sitting target inventory is incomplete";
+        } else if(object->position->level==target.level) {
+            // We do not yet have the exact footprint-aware candidate test used
+            // by Simitone. Inspect every object on this floor; origin distance
+            // cannot prove that a large/multitile seat misses the candidate ring.
+            if(!object->entry_points||object->entry_points->size()<=26)
+                return "object "+std::to_string(*object_id)+
+                    " has no complete EntryPoint26 table; sitting target inventory is incomplete";
+            // Simitone treats every non-zero action as an available sitting
+            // entry point. Keep the fallback closed until candidate geometry
+            // can prove whether this object blocks each generated destination.
+            if(object->entry_points->at(26).action!=0)
+                return "object "+std::to_string(*object_id)+
+                    " exposes EntryPoint26; footprint-aware sitting selection remains unsupported";
+        }
+        object_id=world.next_entity(*object_id,EntityKind::object);
+    }
+    return {};
+}
 ReferenceSlotScores score_reference_slot_candidates(
     const SlotTable& table, std::size_t type3_index, RoutePoint object_position,
     RoutePoint caller_position, const std::vector<ReferenceSlotScoreInput>& inputs,
-    RandomState& random) {
+    RandomState& random,bool no_sitting_target_proven) {
     const auto* slot = slot_of_type(table, 3, type3_index);
+    const bool shy_child_fallback=no_sitting_target_proven&&
+        is_child_shy_sitting_fallback_slot(table,type3_index);
     const bool common=table.version == 10 && slot &&
         slot->offset_bits == std::array<std::uint32_t,3>{0,0,0} && slot->standing == 1 &&
-        slot->sitting == 0 && slot->ground == 0 && slot->snap_target_slot == -1 &&
+        (slot->sitting == 0 || shy_child_fallback) && slot->ground == 0 && slot->snap_target_slot == -1 &&
         slot->max_size == 0 && slot->unknown_i10 == 0 && slot->gradient_bits == 0x3E400000 &&
         slot->height == 0 && slot->proximity &&
         (*slot->proximity)[0] > 0 && (*slot->proximity)[1] >= (*slot->proximity)[0] &&
@@ -51,7 +96,7 @@ ReferenceSlotScores score_reference_slot_candidates(
         slot->max_size==0 && slot->unknown_i10==0 && slot->gradient_bits==0 &&
         slot->height==0 && slot->facing==-3 && slot->resolution==8 &&
         slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,64,16}};
-    if (!circle && !door_range && !house07_global_range)
+    if (!circle && !door_range && !house07_global_range && !shy_child_fallback)
         throw std::invalid_argument("reference SLOT scoring requires a verified House07 circle or ranged profile");
     if (inputs.size() > 4096) throw std::length_error("reference SLOT scoring exceeds 4096 candidates");
     validate_position(object_position);
@@ -114,8 +159,10 @@ ReferenceSlotScores score_reference_slot_candidates(
 }
 std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const SlotTable& table,std::size_t type3_index,const EntityPosition& caller,
-    const EntityPosition& target,RandomState& random) {
+    const EntityPosition& target,RandomState& random,bool no_sitting_target_proven) {
     const auto* slot=slot_of_type(table,3,type3_index);
+    const bool shy_child_fallback=no_sitting_target_proven&&
+        is_child_shy_sitting_fallback_slot(table,type3_index);
     const bool door_range=table.version==10&&slot&&
        (slot->flags==0x54||slot->flags==0x45)&&slot->facing==-2&&
        slot->offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
@@ -129,7 +176,7 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
        slot->resolution==8&&slot->standing==1&&slot->sitting==0&&slot->ground==0&&
        slot->snap_target_slot==-1&&slot->max_size==0&&slot->unknown_i10==0&&
        slot->gradient_bits==0&&slot->height==0;
-    if(!door_range&&!house07_global_range)
+    if(!door_range&&!house07_global_range&&!shy_child_fallback)
         throw std::invalid_argument("ranged SLOT generation requires a source-verified profile");
     const RoutePoint center{target.x,target.y};
     const auto offsets=enumerate_reference_slot_range_lattice(table,type3_index,4096);
@@ -157,6 +204,7 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
         const auto proximity=std::sqrt(ox*ox+oy*oy);
         inputs.push_back({{position,entry_flags,facing},proximity,ReferenceSlotVerification::eligible});
     }
-    return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random).ranked_goals;
+    return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random,
+        no_sitting_target_proven).ranked_goals;
 }
 } // namespace odh

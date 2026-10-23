@@ -33,6 +33,16 @@ odh::SlotTable house07_global_range_table() {
     slot.gradient_bits=0;slot.facing=-3;slot.resolution=8;
     return result;
 }
+odh::SlotTable child_shy_sitting_table() {
+    std::vector<odh::SlotRecord> records(11);
+    for(auto& slot:records)slot.type=3;
+    auto& slot=records[10];
+    slot.flags=0x8055;slot.offset_bits={0,0,0};slot.proximity=std::array<std::int32_t,3>{32,80,32};
+    slot.standing=1;slot.sitting=10;slot.ground=0;slot.snap_target_slot=-1;
+    slot.max_size=0;slot.unknown_i10=0;slot.gradient_bits=0x3E400000;slot.height=0;
+    slot.facing=-2;slot.resolution=16;
+    return {0,10,std::move(records),0};
+}
 template<class F> void invalid_unchanged(odh::RandomState& random, F operation) {
     const auto before=random.seed();
     bool rejected=false;
@@ -191,6 +201,87 @@ void house07_global_range() {
     require(rejected&&route_random.seed()==seed_before,
         "unverified square-distance variant remains rejected without consuming RNG");
 }
+void child_shy_sitting_fallback() {
+    const auto slots=child_shy_sitting_table();
+    require(odh::is_child_shy_sitting_fallback_slot(slots,10),
+        "only the exact Legacy child-shy SLOT100 type-3 index10 record is recognized");
+    require(!odh::is_child_shy_sitting_fallback_slot(slots,9),
+        "the child-shy profile is bound to type-3 index10");
+    const odh::EntityPosition caller{0,0,1,0},target{100,100,1,0};
+    odh::RandomState random(7);
+    const auto before=random.seed();bool rejected=false;
+    try{(void)odh::rank_reference_range_slot(slots,10,caller,target,random);}
+    catch(const std::invalid_argument&){rejected=true;}
+    require(rejected&&random.seed()==before,
+        "Sitting=10 is never bypassed without a host proof that no sitting target exists");
+    const auto goals=odh::rank_reference_range_slot(slots,10,caller,target,random,true);
+    require(!goals.empty(),"verified no-chair fallback enumerates standing goals");
+    for(const auto& goal:goals){
+        const auto dx=goal.position.x-target.x,dy=goal.position.y-target.y;
+        const auto d2=static_cast<std::int64_t>(dx)*dx+static_cast<std::int64_t>(dy)*dy;
+        require(d2>=993&&d2<=6480&&goal.entry_flags!=0,
+            "standing fallback goals remain inside the authored 32-to-80 proximity band");
+    }
+    for(const auto mutate:{0,1,2,3}){
+        auto altered=child_shy_sitting_table();auto& slot=altered.records[10];
+        if(mutate==0)slot.flags^=1;
+        if(mutate==1)slot.sitting=0;
+        if(mutate==2)slot.proximity=std::array<std::int32_t,3>{32,80,31};
+        if(mutate==3)slot.resolution=8;
+        require(!odh::is_child_shy_sitting_fallback_slot(altered,10),
+            "changed flags, sitting weight, proximity, or resolution fail the exact-profile gate");
+    }
+
+    odh::World no_chair_world;
+    no_chair_world.create(1,odh::EntityKind::avatar);
+    no_chair_world.create(2,odh::EntityKind::object);
+    require(no_chair_world.define_type(2,1),"known empty-table object identity binds");
+    require(no_chair_world.define_entry_points(2,std::vector<odh::EntryPoint>(27)),
+        "known EntryPoint table without actions binds");
+    no_chair_world.set_position(2,{10,10,2,0});
+    require(!odh::child_shy_sitting_fallback_preflight(no_chair_world,slots,10,{100,100,1,0}),
+        "objects on another floor do not become sitting targets");
+    no_chair_world.set_position(2,{100,140,1,0});
+    require(!odh::child_shy_sitting_fallback_preflight(no_chair_world,slots,10,{100,100,1,0}),
+        "a known table without an active EntryPoint26 permits the standing fallback");
+    odh::World unknown_world;
+    unknown_world.create(2,odh::EntityKind::object);
+    unknown_world.set_position(2,{132,100,1,0});
+    auto unknown=odh::child_shy_sitting_fallback_preflight(unknown_world,slots,10,{100,100,1,0});
+    require(unknown&&unknown->find("EntryPoint26 table")!=std::string::npos,
+        "a nearby object without a known entry table keeps the sitting choice unsupported");
+    odh::World chair_world;
+    chair_world.create(2,odh::EntityKind::object);
+    require(chair_world.define_type(2,2),"chair object identity binds");
+    chair_world.set_position(2,{132,100,1,0});
+    std::vector<odh::EntryPoint> chair_entries(27);
+    chair_entries[26].action=4096;
+    require(chair_world.define_entry_points(2,chair_entries),"test chair EntryPoint table binds");
+    auto chair=odh::child_shy_sitting_fallback_preflight(chair_world,slots,10,{100,100,1,0});
+    require(chair&&chair->find("exposes EntryPoint26")!=std::string::npos,
+        "a nearby chair with an executable EntryPoint26 is never skipped");
+    odh::World small_action_world;
+    small_action_world.create(2,odh::EntityKind::object);
+    small_action_world.define_type(2,2);
+    small_action_world.set_position(2,{132,100,1,0});
+    chair_entries[26].action=1;
+    require(small_action_world.define_entry_points(2,chair_entries),"small EntryPoint26 action binds");
+    chair=odh::child_shy_sitting_fallback_preflight(small_action_world,slots,10,{100,100,1,0});
+    require(chair&&chair->find("exposes EntryPoint26")!=std::string::npos,
+        "any non-zero EntryPoint26 action blocks the unsupported sitting fallback");
+    chair_world.set_position(2,{181,100,1,0});
+    chair=odh::child_shy_sitting_fallback_preflight(chair_world,slots,10,{100,100,1,0});
+    require(chair&&chair->find("EntryPoint26")!=std::string::npos,
+        "a distant seat cannot be dismissed without checking its full footprint against each candidate");
+    odh::World unpositioned_world;
+    unpositioned_world.create(2,odh::EntityKind::object);
+    require(odh::child_shy_sitting_fallback_preflight(
+        unpositioned_world,slots,10,{100,100,1,0}).has_value(),
+        "an object without position keeps the sitting-target inventory incomplete");
+    require(odh::child_shy_sitting_fallback_preflight(
+        chair_world,house07_global_range_table(),10,{100,100,1,0}).has_value(),
+        "chair preflight refuses to classify an unrelated SLOT profile");
+}
 void invalid_inputs() {
     odh::RandomState random(42);
     auto invoke=[&](const odh::SlotTable& slots,const std::vector<odh::ReferenceSlotScoreInput>& inputs,
@@ -225,6 +316,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); door_range_generation(); house07_global_range(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); door_range_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

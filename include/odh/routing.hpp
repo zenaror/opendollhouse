@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,11 @@ PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid&,RoutePoint start,
 // Supplies already eligible destinations for the supported SLOT profile.
 // Called synchronously; reentry or changes to actor/target are rejected.
 using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
+    const SlotTable&,std::size_t,const EntityPosition&,const EntityPosition&)>;
+// A sitting-weighted SLOT can use its standing alternative only after this
+// host proves that no nearby eligible sitting object exists. A diagnostic
+// means the route must remain unsupported; it must not become a false result.
+using SittingSlotFallbackPreflight=std::function<std::optional<std::string>(
     const SlotTable&,std::size_t,const EntityPosition&,const EntityPosition&)>;
 // Resolves a StackObject's authored SLOT table for Route45 Literal scope.
 // Returned tables must outlive the Routing controller and remain immutable.
@@ -137,6 +143,10 @@ public:
         if(executing_||job_)throw std::logic_error("cannot replace ranged SLOT provider while active");
         ranged_slot_goals_=std::move(provider);
     }
+    void set_sitting_slot_fallback_preflight(SittingSlotFallbackPreflight preflight) {
+        if(executing_||job_)throw std::logic_error("cannot replace sitting SLOT preflight while active");
+        sitting_slot_fallback_preflight_=std::move(preflight);
+    }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
     // The host must supply the correct routine, code owner and VM context;
@@ -196,6 +206,7 @@ private:
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
     PreRankedSlotGoalProvider ranged_slot_goals_;
+    SittingSlotFallbackPreflight sitting_slot_fallback_preflight_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
     StairGotoRelativeValidator stair_goto_relative_;

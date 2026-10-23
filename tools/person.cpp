@@ -2458,11 +2458,16 @@ struct PlacementCandidateProbe {
                         runtime_route_grid.emplace(std::move(grid));
                         odh::PreRankedSlotGoalProvider range_slot_goals=[&](const auto& table,std::size_t index,
                             const auto& caller,const auto& target) {
-                            return odh::rank_reference_range_slot(table,index,caller,target,random);
+                            const bool no_sitting_target=odh::is_child_shy_sitting_fallback_slot(table,index);
+                            return odh::rank_reference_range_slot(table,index,caller,target,random,no_sitting_target);
                         };
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                             *shared.routing_slots);
                         runtime_routing->set_ranged_slot_goal_provider(std::move(range_slot_goals));
+                        runtime_routing->set_sitting_slot_fallback_preflight([&](const auto& table,
+                            std::size_t index,const auto&,const auto& target) {
+                            return odh::child_shy_sitting_fallback_preflight(world,table,index,target);
+                        });
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
                             const odh::Instruction& instruction) {
@@ -2820,7 +2825,14 @@ struct PlacementCandidateProbe {
         runtime.route_spatial_revision=world.spatial_revision();
         runtime.routing=std::make_unique<odh::Routing>(world,*runtime.route_grid->grid,*shared.routing_slots);
         runtime.routing->set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
-            const auto& caller,const auto& target){return odh::rank_reference_range_slot(table,index,caller,target,random);});
+            const auto& caller,const auto& target){
+                const bool no_sitting_target=odh::is_child_shy_sitting_fallback_slot(table,index);
+                return odh::rank_reference_range_slot(table,index,caller,target,random,no_sitting_target);
+            });
+        runtime.routing->set_sitting_slot_fallback_preflight([&](const auto& table,std::size_t index,
+            const auto&,const auto& target) {
+            return odh::child_shy_sitting_fallback_preflight(world,table,index,target);
+        });
         runtime.routing->set_stack_object_slot_table_provider(route_stack_slot_table);
         runtime.routing->set_route_goal_validator([&,resident_id=runtime.id](const odh::VmFrame& frame,
             odh::RoutePoint point){

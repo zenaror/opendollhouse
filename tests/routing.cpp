@@ -270,6 +270,15 @@ odh::SlotTable slot() {
     auto other=r;other.flags=0x8055;other.proximity=std::array<std::int32_t,3>{16,48,16};
     return {0,10,{other,r},0};
 }
+odh::SlotTable child_shy_global_slots() {
+    std::vector<odh::SlotRecord> records(11);
+    for(auto& record:records)record.type=3;
+    auto& record=records[10];record.flags=0x8055;record.offset_bits={0,0,0};
+    record.proximity=std::array<std::int32_t,3>{32,80,32};record.standing=1;record.sitting=10;
+    record.ground=0;record.snap_target_slot=-1;record.max_size=0;record.unknown_i10=0;
+    record.gradient_bits=0x3E400000;record.height=0;record.facing=-2;record.resolution=16;
+    return {0,10,std::move(records),0};
+}
 odh::RoutineSet routines(std::uint8_t scope=2,std::uint8_t flags=0,std::uint8_t data=1) {
     return {{odh::routine_key(4096),odh::Bhav{0x8002,{{45,254,255,{data,0,scope,0,flags,0,0,0}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
 }
@@ -715,6 +724,81 @@ void ignore_rooms_cross_room_test() {
             world.find(1)->position->x==20&&portal_plans==0,
             "IgnoreRooms completes through the local active-grid route while portal planning stays unused");
 }
+void child_shy_sitting_preflight_tests() {
+    {
+        odh::World world;odh::RouteGrid grid{256,256};auto globals=child_shy_global_slots();
+        bool provider_called=false;odh::RandomState random(0);
+        odh::Routing routing{world,grid,globals};
+        routing.set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+            const auto& caller,const auto& target) {
+            provider_called=true;
+            return odh::rank_reference_range_slot(table,index,caller,target,random,
+                odh::is_child_shy_sitting_fallback_slot(table,index));
+        });
+        odh::Vm vm{routines(2,0,10),world.vm_memory(),{},routing.primitive()};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::avatar,{0,88,0});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{100,100,1,0});
+        routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point) {
+            return grid.contains(point)&&grid.walkable(point);
+        });
+        routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(8)==odh::VmStatus::fault&&!provider_called&&!routing.active()&&
+                vm.diagnostic().find("nearby-chair preflight")!=std::string::npos,
+            "exact Global SLOT100 type3 index10 remains unsupported without chair preflight");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{256,256};auto globals=child_shy_global_slots();
+        bool provider_called=false;odh::RandomState random(0);
+        odh::Routing routing{world,grid,globals};
+        routing.set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+            const auto& caller,const auto& target) {
+            provider_called=true;
+            return odh::rank_reference_range_slot(table,index,caller,target,random,true);
+        });
+        routing.set_sitting_slot_fallback_preflight([](const auto&,std::size_t,const auto&,const auto&) {
+            return std::optional<std::string>{"nearby object exposes EntryPoint26"};
+        });
+        odh::Vm vm{routines(2,0,10),world.vm_memory(),{},routing.primitive()};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::avatar,{0,88,0});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{100,100,1,0});
+        routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point) {
+            return grid.contains(point)&&grid.walkable(point);
+        });
+        routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(8)==odh::VmStatus::fault&&!provider_called&&!routing.active()&&
+                vm.diagnostic().find("nearby object exposes EntryPoint26")!=std::string::npos,
+            "a nearby chair keeps the sitting preference and never falls through to standing goals");
+    }
+    {
+        odh::World world;odh::RouteGrid grid{256,256};auto globals=child_shy_global_slots();
+        std::size_t movement_callbacks=0;bool provider_called=false;odh::RandomState random(0);
+        odh::Routing routing{world,grid,globals};
+        routing.set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+            const auto& caller,const auto& target) {
+            provider_called=true;
+            return odh::rank_reference_range_slot(table,index,caller,target,random,true);
+        });
+        routing.set_sitting_slot_fallback_preflight([](const auto& table,std::size_t index,
+            const auto&,const auto&) -> std::optional<std::string> {
+            if(!odh::is_child_shy_sitting_fallback_slot(table,index))
+                return "unverified child-shy sitting profile";
+            return {};
+        });
+        odh::Vm vm{routines(2,0,10),world.vm_memory(),{},routing.primitive()};
+        world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::avatar,{0,88,0});
+        world.set_position(1,{4,12,1,0});world.set_position(2,{100,100,1,0});
+        routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point) {
+            return grid.contains(point)&&grid.walkable(point);
+        });
+        routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+        require(vm.run(8)==odh::VmStatus::waiting&&provider_called&&routing.active(),
+            "standing goals are generated only after the host confirms no nearby sitting target");
+        for(std::uint64_t tick=1;tick<=512&&routing.active();++tick)
+            routing.tick(tick,[&](const auto&){++movement_callbacks;});
+        require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&movement_callbacks>0,
+            "verified standing fallback performs real route movement in a constructed World");
+    }
+}
 }
 int main() {
     try {
@@ -730,6 +814,7 @@ int main() {
         deferred_room_route_tests();
         saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();
+        child_shy_sitting_preflight_tests();
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();odh::Routing routing{world,grid,globals};
          routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {
