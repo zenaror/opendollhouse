@@ -815,6 +815,20 @@ int main() {
         saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();
         child_shy_sitting_preflight_tests();
+        {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();
+         odh::PreRankedSlotGoalProvider goals=[](const auto&,std::size_t,const auto&,const auto&) {
+             return std::vector<odh::PreRankedSlotGoal>{{{44,12},4,7,2}};
+         };
+         odh::Routing routing{world,grid,globals,goals};
+         odh::Vm vm{routines(),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});grid.block({28,12});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active_sitting_object()==2,
+                 "Route45 keeps the selected sitting object attached while the avatar walks");
+         for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&!routing.active_sitting_object(),
+                 "selected sitting object is cleared when its Route45 ticket completes");}
         {odh::World world;odh::RouteGrid grid{64,32};auto globals=slot();globals.version=9;
          auto object_slots=slot();odh::Routing routing{world,grid,globals};
          routing.set_stack_object_slot_table_provider([&](const odh::VmFrame&) -> const odh::SlotTable* {

@@ -553,6 +553,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
              std::move(path.points),1,entry_flags,
              arrival_facing,goto_relative?i.operands[3]==255:slot->facing==-3,
              false,0,false,0,{},0,false,false,{}, {},0,false};
+    job_->selected_sitting_object=selected?selected->sitting_object:std::nullopt;
     job_->run_generation=vm_->run_generation();
     job_->call_failure_trees=saved_go_here_relative&&!nested_request;
     return {PrimitiveDisposition::wait,{}};

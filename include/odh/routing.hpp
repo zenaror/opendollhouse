@@ -41,6 +41,9 @@ struct PreRankedSlotGoal {
     RoutePoint position;
     std::uint8_t entry_flags;
     std::uint8_t facing;
+    // Set only when this goal is occupied by a validated sitting target whose
+    // EntryPoint26 should run after the actor reaches the destination.
+    std::optional<std::int16_t> sitting_object{};
 };
 struct PreRankedSlotRoute {
     RoutePath path;
@@ -155,6 +158,10 @@ public:
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
     bool external_frame_active() const {return job_&&job_->external_frame_active;}
+    // The selected chair remains attached to this Route45 ticket until it ends.
+    std::optional<std::int16_t> active_sitting_object() const noexcept {
+        return job_?job_->selected_sitting_object:std::nullopt;
+    }
     bool waiting_for_room_portal_step() const noexcept {
         return job_&&job_->deferred_room_route&&!job_->external_frame_active;
     }
@@ -195,6 +202,7 @@ private:
         std::int16_t failure_code=3;
         std::int16_t failure_blocker=0;
         std::string failure_reason{};
+        std::optional<std::int16_t> selected_sitting_object{};
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);
