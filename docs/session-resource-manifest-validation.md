@@ -4,8 +4,8 @@ O helper `odh_host::identify_session_resources` calcula o fingerprint que será
 gravado em `META`. Recebe a pasta de dados e a lista de arquivos que a sessão
 usou. Cada arquivo deve existir dentro dessa pasta e ser regular. O helper
 resolve caminhos com segurança, recusa caminhos repetidos ou externos, ordena
-os nomes relativos resolvidos e lê o conteúdo em blocos de 64 KiB. O limite padrão é
-4.096 arquivos e 16 GiB somados.
+os nomes relativos resolvidos e lê o conteúdo em blocos de 64 KiB. O limite
+padrão é 4.096 arquivos e 16 GiB somados.
 
 O SHA-256 de cada arquivo é colocado numa lista binária canônica com o caminho
 relativo em UTF-8, tamanho e hash. O hash da lista é independente da ordem de
@@ -22,7 +22,15 @@ conteúdo e caminho, conexão com o payload `META`, metadados separados,
 duplicatas, arquivo ausente, caminho externo, idioma inválido e limite de
 bytes.
 
-Este checkpoint ainda não prova uma identidade da instalação real. O launcher
-precisa fornecer a lista completa e exata dos recursos que seus leitores e o
-runtime abriram. Até essa ligação existir, nenhum save deve ser aceito ou
-recusado com base nesse fingerprint.
+O modo `--plan-only` do launcher agora monta essa lista do plano de entrada e
+imprime os caminhos relativos e o fingerprint para diagnóstico. Na instalação
+real usada neste checkout, `--mode 1 --house 7 --language 14 --plan-only`
+resolveu 55 arquivos e produziu fingerprint
+`6251e2f4ec41fc56d97c0aa435a36b376c2154ebedfa139b43a94a9ddeb84f63`. A máscara
+de expansão foi zero: o plano atual não passa nenhum `ExpansionPack*.far` ao
+runtime, mesmo que esses arquivos estejam na instalação.
+
+Esse resultado comprova a identidade do conjunto que o launcher resolveu,
+mas não prova ainda que todos os arquivos acessados dinamicamente pelo runtime
+foram enumerados. O jogo em execução também não grava nem compara esse valor;
+nenhum save é aceito ou recusado com base nele neste checkpoint.

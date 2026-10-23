@@ -5,10 +5,12 @@
 #include "resource.hpp"
 
 #include "odh/session_entry.hpp"
+#include "odh/session_resource_identity.hpp"
 #include "json.hpp"
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
 #include "linux_user_config.hpp"
 #endif
+#include "session_resource_manifest.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -170,9 +172,21 @@ std::vector<std::filesystem::path> find_files(const std::filesystem::path& root,
 
 void append(std::vector<std::string>& target, std::initializer_list<std::string> values);
 
-std::vector<std::string> build_runtime_arguments(const Options& options,
+struct RuntimePlan {
+    std::vector<std::string> arguments;
+    std::vector<std::filesystem::path> resources;
+    std::uint8_t expansion_mask = 0;
+};
+
+RuntimePlan build_runtime_arguments(const Options& options,
         const std::filesystem::path& game, unsigned house,
-        const odh::SessionEntry& session, const odh::SessionEntryMember& resident) {
+        const odh::SessionEntry& session, const odh::SessionEntryMember& resident,
+        const std::optional<std::filesystem::path>& neighborhood_graphics) {
+    RuntimePlan plan;
+    std::set<std::filesystem::path> unique_resources;
+    const auto record_resource = [&](const std::filesystem::path& path) {
+        if (unique_resources.insert(path).second) plan.resources.push_back(path);
+    };
     const auto userdata = require_directory(game, game / "UserData");
     const auto gamedata = require_directory(game, game / "GameData");
     const auto global_far = require_file(game, gamedata / "Global/Global.far");
@@ -184,6 +198,7 @@ std::vector<std::string> build_runtime_arguments(const Options& options,
     const auto zoning = require_file(game, userdata / "LotZoning.iff");
     const auto neighborhood = require_file(game, userdata / "Neighborhood.iff");
     const auto house_file = require_file(game, session.house_file);
+    const auto lot_locations = require_file(game, userdata / "LotLocations.iff");
     const auto shared = std::vector<std::filesystem::path>{
         require_file(game, game / "ExpansionShared/ExpansionShared.far")};
 
@@ -204,7 +219,38 @@ std::vector<std::string> build_runtime_arguments(const Options& options,
         throw odh::FormatError("selected resident character resource is absent from the resolved family");
     const auto architecture = find_files(gamedata, "", {".flr", ".wll"}, 4096);
 
-    std::vector<std::string> args{"odh-person", "--avatar-file", selected_character.string(),
+    record_resource(global_far);
+    record_resource(objects_far);
+    record_resource(animation_far);
+    record_resource(textures_far);
+    record_resource(floors);
+    record_resource(walls);
+    record_resource(zoning);
+    record_resource(neighborhood);
+    record_resource(lot_locations);
+    record_resource(house_file);
+    for (const auto& archive : shared) record_resource(archive);
+    for (const auto& character : find_files(characters, "", {".iff"}, 4096))
+        record_resource(character);
+    for (const auto& resource : architecture) record_resource(resource);
+    if (neighborhood_graphics) record_resource(*neighborhood_graphics);
+    std::sort(plan.resources.begin(), plan.resources.end());
+
+    // Expansion flags only describe pack archives actually passed to this
+    // runtime plan. ExpansionShared is common support data, not an expansion.
+    for (const auto& resource : plan.resources) {
+        const auto relative = resource.lexically_relative(game).generic_string();
+        for (unsigned pack = 1; pack <= 7; ++pack) {
+            const auto directory = pack == 1 ? std::string("ExpansionPack")
+                : std::string("ExpansionPack") + std::to_string(pack);
+            const auto filename = directory + ".far";
+            if (relative == directory + "/" + filename)
+                plan.expansion_mask |= static_cast<std::uint8_t>(1u << (pack - 1));
+        }
+    }
+
+    auto& args = plan.arguments;
+    args = {"odh-person", "--avatar-file", selected_character.string(),
         std::to_string(resident.object_definition_id), "--semiglobal", global_far.string(),
         "PersonGlobals.iff", "--global", global_far.string(), "Global.iff",
         "--lot", house_file.string(), std::to_string(house), "--zoning", zoning.string(),
@@ -222,20 +268,42 @@ std::vector<std::string> build_runtime_arguments(const Options& options,
         "up", "--render-terrain-theme", "0"});
     for (const auto& resource : architecture)
         append(args, {"--architecture-resource", resource.string()});
-    return args;
+    return plan;
+}
+
+std::string digest_hex(const std::array<std::uint8_t,32>& digest) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string text;
+    text.reserve(digest.size() * 2);
+    for (const auto byte : digest) {
+        text.push_back(digits[byte >> 4]);
+        text.push_back(digits[byte & 0x0f]);
+    }
+    return text;
 }
 
 void print_plan(const Options& options, unsigned house,
                 const odh::SessionEntry& session, const odh::SessionEntryMember& resident,
-                const std::vector<std::string>& args) {
+                const RuntimePlan& plan, const odh::SessionResourceIdentity& identity,
+                const std::filesystem::path& game_root) {
     std::cout << "{\"status\":\"ready\",\"mode\":" << options.mode
         << ",\"house\":" << house << ",\"family_chunk_id\":" << session.family_chunk_id
         << ",\"resident_guid\":" << resident.guid << ",\"resident_neighbor_id\":"
         << resident.neighbor_id << ",\"resident_asset\":" << json_bytes(resident.character_asset)
-        << ",\"resident_count\":" << session.members.size() << ",\"command\":[";
-    for (std::size_t i = 0; i < args.size(); ++i) {
+        << ",\"resident_count\":" << session.members.size()
+        << ",\"resource_identity\":{\"language\":" << static_cast<unsigned>(identity.language_code)
+        << ",\"expansion_mask\":" << static_cast<unsigned>(identity.expansion_mask)
+        << ",\"resource_count\":" << plan.resources.size()
+        << ",\"sha256\":" << json_bytes(digest_hex(identity.resource_fingerprint))
+        << ",\"files\":[";
+    for (std::size_t i = 0; i < plan.resources.size(); ++i) {
         if (i) std::cout << ',';
-        std::cout << json_bytes(args[i]);
+        std::cout << json_bytes(plan.resources[i].lexically_relative(game_root).generic_string());
+    }
+    std::cout << "]},\"command\":[";
+    for (std::size_t i = 0; i < plan.arguments.size(); ++i) {
+        if (i) std::cout << ',';
+        std::cout << json_bytes(plan.arguments[i]);
     }
     std::cout << "]}\n";
 }
@@ -255,8 +323,10 @@ int odh_linux_game_entry(int argc, char** argv) {
             throw odh::FormatError("game root is not an accessible directory: " + options.game_root.string());
         options.game_root = game;
         const auto userdata = require_directory(game, game / "UserData");
+        std::optional<std::filesystem::path> graphics_resource;
 #ifdef ODH_HAVE_X11
         const auto graphics = require_file(game, game / "UIGraphics/UIGraphics.far");
+        graphics_resource = graphics;
 #endif
 
 #ifdef ODH_HAVE_X11
@@ -315,9 +385,12 @@ int odh_linux_game_entry(int argc, char** argv) {
         }
 #endif
         else resident = &session.members.front();
-        const auto arguments = build_runtime_arguments(options, game, house, session, *resident);
+        const auto plan = build_runtime_arguments(options, game, house, session, *resident,
+                                                 graphics_resource);
         if (options.plan_only) {
-            print_plan(options, house, session, *resident, arguments);
+            const auto identity = odh_host::identify_session_resources(game, plan.resources,
+                static_cast<std::uint8_t>(options.language), plan.expansion_mask);
+            print_plan(options, house, session, *resident, plan, identity, game);
             return 0;
         }
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -329,8 +402,8 @@ int odh_linux_game_entry(int argc, char** argv) {
             throw odh::FormatError("cannot save user settings: " + config_error);
 #endif
         std::vector<char*> pointers;
-        pointers.reserve(arguments.size());
-        for (const auto& argument : arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
+        pointers.reserve(plan.arguments.size());
+        for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
 #ifdef ODH_HAVE_X11
         window->resize(320, 240);
         odh_host::NeighborhoodResumeCallback neighborhood_resume;

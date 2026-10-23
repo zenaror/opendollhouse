@@ -67,9 +67,10 @@ game language, seven expansion flags, and a 32-byte resource fingerprint. It
 rejects unknown language/expansion values and a missing fingerprint. The
 expansion bits are fixed in this order: Livin' Large, House Party, Hot Date,
 Vacation, Unleashed, Superstar, and Makin' Magic. The
-fingerprint is SHA-256 over a canonical manifest of the exact game resources
-used by the session. The SHA-256 implementation and bounded manifest builder
-now exist, but the launcher does not yet provide the exact runtime resource
-set, compare it while loading, append `META` to an archive, or restore a saved
-session. Synthetic coverage is recorded in
+fingerprint is SHA-256 over a canonical manifest of the game resources in the
+resolved launch plan. The launcher prints this identity in `--plan-only`, but
+the running game does not yet retain it, compare it while loading, append
+`META` to an archive, or restore a saved session. The plan also does not yet
+prove it captured every resource opened dynamically by the runtime. Synthetic
+coverage and one real installation plan are recorded in
 [session-resource-manifest-validation.md](session-resource-manifest-validation.md).

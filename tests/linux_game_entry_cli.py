@@ -85,6 +85,13 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     result = json.loads(run.stdout)
     check(result["status"] == "ready" and result["resident_count"] == 1,
           "synthetic family and lot resolve")
+    identity = result["resource_identity"]
+    check(identity["language"] == 15 and identity["expansion_mask"] == 0 and
+          len(identity["sha256"]) == 64 and identity["resource_count"] == len(identity["files"]) and
+          identity["resource_count"] >= 11 and
+          "UserData/LotLocations.iff" in identity["files"] and
+          not any(path.startswith("ExpansionPack") for path in identity["files"]),
+          "plan fingerprints the exact files it resolves and keeps unsupported expansions clear")
     check("--language" in result["command"] and "15" in result["command"],
           "selected language reaches runtime arguments")
     for argument in result["command"]:
@@ -99,6 +106,14 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     check(override.returncode == 0, "explicit game root recovers malformed saved config")
     check(config.read_text() == "invalid saved settings\n",
           "plan-only never rewrites user configuration")
+    objects_far = root / "GameData" / "Objects" / "Objects.far"
+    original_objects = objects_far.read_bytes()
+    objects_far.write_bytes(original_objects + b" changed")
+    changed_plan = subprocess.run(command, capture_output=True, text=True, env=env)
+    check(changed_plan.returncode == 0 and
+          json.loads(changed_plan.stdout)["resource_identity"]["sha256"] != identity["sha256"],
+          "changing an actual launch resource changes the planned session identity")
+    objects_far.write_bytes(original_objects)
     implicit = subprocess.run([binary, "--mode", "1", "--house", "7", "--plan-only"],
                               capture_output=True, text=True, env=env)
     check(implicit.returncode == 2 and "pass --game-root" in implicit.stderr,
