@@ -9,4 +9,6 @@ bool Ts1BootstrapGlobals::write(std::int16_t index,std::int16_t value) {
     for(std::size_t n=0;n<indices.size();++n)if(indices[n]==index){values_[n]=value;return true;}
     return false;
 }
+Ts1BootstrapGlobals::Snapshot Ts1BootstrapGlobals::snapshot() const { return values_; }
+void Ts1BootstrapGlobals::restore(const Snapshot& snapshot) { values_=snapshot; }
 }

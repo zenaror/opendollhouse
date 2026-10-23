@@ -45,6 +45,8 @@ bool LotContext::write(std::int16_t index,std::int16_t value) {
     if(!read(index))return false;
     globals_[static_cast<std::size_t>(index)]=value;return true;
 }
+LotContext::Snapshot LotContext::snapshot() const { return globals_; }
+void LotContext::restore(const Snapshot& snapshot) { globals_=snapshot; }
 std::optional<LotZoneResult> LotContext::zone(std::int16_t input) const {
     if(!zoning_)return {};
     const auto found=zoning_->find(input);

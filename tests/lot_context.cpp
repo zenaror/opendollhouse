@@ -1,4 +1,5 @@
 #include "odh/lot_context.hpp"
+#include "odh/bootstrap.hpp"
 #include <iostream>
 namespace {
 unsigned checks=0;
@@ -16,11 +17,21 @@ int main(){try{
         check(!lot.read(static_cast<std::int16_t>(n)));check(!lot.write(static_cast<std::int16_t>(n),7));
     }
     check(lot.write(10,58)&&lot.read(10)==58);check(lot.write(2,-32768)&&lot.read(2)==-32768);
+    const auto lot_snapshot=lot.snapshot();check(!lot_snapshot[0]&&lot_snapshot[10]==58&&lot_snapshot[23]==64);
+    check(lot.write(10,7)&&lot.write(23,8));lot.restore(lot_snapshot);
+    check(lot.read(10)==58&&lot.read(23)==64&&!lot.read(0));
     const auto residential=lot.zone(1),community=lot.zone(58);check(residential&&residential->value==0&&!residential->fallback);
     check(community&&community->value==1&&!community->fallback);
     for(const auto n:{-32768,0,80,81,89,90,32767}){const auto result=lot.zone(static_cast<std::int16_t>(n));
         check(result&&result->input==n&&result->fallback&&result->value==(n>=81&&n<=89?2:1));}
     odh::LotContext unavailable(1,saved);check(!unavailable.zone(81));
+    odh::Ts1BootstrapGlobals bootstrap;const auto bootstrap_initial=bootstrap.snapshot();
+    check(bootstrap_initial==odh::Ts1BootstrapGlobals::initial);
+    check(bootstrap.write(20,0));const auto bootstrap_snapshot=bootstrap.snapshot();
+    check(bootstrap_snapshot==std::array<std::int16_t,3>{4,0,4});
+    check(bootstrap.write(25,-3));bootstrap.restore(bootstrap_snapshot);
+    check(bootstrap.read(17)==4&&bootstrap.read(20)==0&&bootstrap.read(25)==4&&!bootstrap.read(10));
+    bootstrap.restore(bootstrap_initial);check(bootstrap.snapshot()==bootstrap_initial);
     saved.resize(64,0);saved[35]=4;saved[37]=-2;saved[38]=7;
     odh::LotContext expanded(2,saved,zones);check(expanded.read(35)==4&&expanded.read(37)==-2&&!expanded.read(38));
     rejects([&]{odh::LotContext bad(0,saved);});rejects([&]{odh::LotContext bad(-1,saved);});

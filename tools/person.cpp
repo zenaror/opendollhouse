@@ -23,6 +23,7 @@
 #include "odh/entry_points.hpp"
 #include "odh/family.hpp"
 #include "odh/session_entry.hpp"
+#include "odh/session_bundle.hpp"
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
@@ -52,6 +53,10 @@
 #include "saved_lot_renderer.hpp"
 #include "person_runtime.hpp"
 #include "linux_window.hpp"
+#include "session_resource_manifest.hpp"
+#ifdef __linux__
+#include "linux_session_archive_store.hpp"
+#endif
 #ifdef ODH_HAVE_LINUX_TEXT_CODEC
 #include "linux_text_codec.hpp"
 #endif
@@ -1838,7 +1843,7 @@ struct PlacementCandidateProbe {
             current_overlay_text="U: Stand";
         }
         if(neighborhood_resume)title+=" | M: neighborhood";
-        return title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+        return title+" | S save (experimental; loading not ready), Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
     };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> owned_render_window;
@@ -1907,8 +1912,8 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_X11
         if(render_window){
             std::string title=render_lot?
-                "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts with object, Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
-                "OpenDollhouse Main preview: Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+                "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts; S saves experimental state; Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
+                "OpenDollhouse Main preview: S saves experimental state; Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
             if(neighborhood_resume)title+=" | M: neighborhood";
             if(shared_window){
                 shared_window->resize(render_camera.width,render_camera.height);
@@ -2363,6 +2368,106 @@ struct PlacementCandidateProbe {
         return odh::Snap::StairPlacementStatus::accepted;
     };
     std::uint64_t ticks=0;
+    bool session_save_requested=false;
+    const auto save_live_session=[&]()->std::string {
+#ifdef __linux__
+        if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
+            throw odh::FormatError("saving requires a selected game installation");
+        if(runtime_routing&&runtime_routing->active())
+            throw odh::FormatError("wait until the Sim finishes walking before saving");
+        if(go_here_status=="queued")
+            throw odh::FormatError("wait until Go Here finishes before saving");
+        if(!saved_portal_code_owners.empty()||!saved_code_owners.empty()||seated_action_target)
+            throw odh::FormatError("this session has object actions that experimental saves cannot yet resume safely");
+        const char* data_home=std::getenv("XDG_DATA_HOME");
+        std::filesystem::path directory;
+        if(data_home&&*data_home)directory=data_home;
+        else {
+            const char* home=std::getenv("HOME");
+            if(!home||!*home)throw odh::FormatError("XDG_DATA_HOME or HOME is required to store saves");
+            directory=std::filesystem::path(home)/".local"/"share";
+        }
+        if(!directory.is_absolute())
+            throw odh::FormatError("save data directory must be an absolute path");
+        directory/="opendollhouse";directory/="saves";
+        std::filesystem::create_directories(directory);
+        std::error_code path_error;
+        directory=std::filesystem::canonical(directory,path_error);
+        if(path_error)throw odh::FormatError("cannot resolve the user save directory");
+        const auto is_within=[](const std::filesystem::path& root,const std::filesystem::path& candidate){
+            const auto relative=candidate.lexically_relative(root);
+            return relative.empty()||(!relative.is_absolute()&&*relative.begin()!="..");
+        };
+        const auto game_root=std::filesystem::canonical(session_context->game_root,path_error);
+        if(path_error||is_within(game_root,directory))
+            throw odh::FormatError("save directory must be outside the selected game installation");
+        auto checkout=std::filesystem::current_path(path_error);
+        if(!path_error){
+            for(;;){
+                if(std::filesystem::exists(checkout/".git")){
+                    checkout=std::filesystem::canonical(checkout,path_error);
+                    if(!path_error&&is_within(checkout,directory))
+                        throw odh::FormatError("save directory must be outside the source checkout");
+                    break;
+                }
+                const auto parent=checkout.parent_path();
+                if(parent==checkout||parent.empty())break;
+                checkout=parent;
+            }
+        }
+        const auto save_path=directory/("mode-"+std::to_string(session_context->neighborhood_mode)+
+            "-house-"+std::to_string(session_context->house_number)+
+            "-family-"+std::to_string(session_context->family_number)+".odhs");
+        odh::SessionBundle bundle;
+        bundle.resources=odh_host::identify_session_resources(session_context->game_root,
+            session_context->resource_paths,session_context->language_code,session_context->expansion_mask);
+        bundle.host.neighborhood_mode=session_context->neighborhood_mode;
+        bundle.host.house_number=session_context->house_number;
+        bundle.host.family_chunk_id=session_context->family_chunk_id;
+        bundle.host.family_number=session_context->family_number;
+        bundle.host.resident_guid=session_context->resident_guid;
+        bundle.host.resident_neighbor_id=session_context->resident_neighbor_id;
+        bundle.host.runtime_avatar_id=runtime_avatar_id;
+        bundle.host.tick=ticks;
+        bundle.host.random_seed=random.seed();
+        std::map<std::uint16_t,std::int16_t> globals_to_save;
+        for(std::int16_t index=0;index<38;++index){
+            std::optional<std::int16_t> value;
+            if(index==9&&family_global)value=family_global;
+            if(!value&&bootstrap_globals)value=bootstrap_globals->read(index);
+            if(!value&&lot)value=lot->read(index);
+            if(value)globals_to_save.emplace(static_cast<std::uint16_t>(index),*value);
+        }
+        for(const auto& entry:globals_to_save)bundle.host.global_values.push_back({entry.first,entry.second});
+        bundle.world=world.snapshot();
+        if(relationships)bundle.relationships=relationships->snapshot();
+        const auto capture_runtime_entity=[&](std::int16_t id,const odh::Vm& resident_vm,
+            const odh::EntityThreadControllers& controllers,const std::optional<odh::Playback>& resident_playback){
+            odh::SessionRuntimeEntity entity;entity.id=id;
+            entity.vm=resident_vm.snapshot();entity.controllers=controllers.snapshot();
+            if(resident_playback){std::string why;
+                if(!resident_playback->capture_snapshot(entity.playback,&why))
+                    throw odh::FormatError("cannot save animation state: "+why);}
+            bundle.runtime_entities.push_back(std::move(entity));
+        };
+        capture_runtime_entity(runtime_avatar_id,vm,thread_controllers,playback);
+        if(second_main_vm&&second_main_thread)
+            capture_runtime_entity(static_cast<std::int16_t>(headless_second_main->avatar.id),
+                *second_main_vm,*second_main_thread,second_main_playback);
+        std::sort(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+            [](const auto& a,const auto& b){return a.id<b.id;});
+        bundle.scheduler=entity_scheduler.snapshot();
+        const auto encoded=odh::encode_session_bundle(bundle);
+        odh_host::write_session_archive_atomic(save_path,odh::decode_session_archive(encoded));
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("experimental session save written tick="+std::to_string(ticks)+
+            " path="+save_path.string());
+#endif
+        return "saved (experimental; loading is not ready): "+save_path.string();
+#else
+        throw odh::FormatError("session saves are currently available only on Linux");
+#endif
+    };
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
         if(!render_window&&render_tick&&ticks!=*render_tick)return;
@@ -2543,6 +2648,7 @@ struct PlacementCandidateProbe {
 #endif
                 break;
             }
+            if(input.save)session_save_requested=true;
             if(input.neighborhood){
                 if(neighborhood_resume || headless_window_neighborhood_tick){
                     const auto* actor_before=world.find(runtime_avatar_id);
@@ -2671,6 +2777,19 @@ struct PlacementCandidateProbe {
                     if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 }
                 if(render_window_host)render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+            }
+            if(session_save_requested){
+                session_save_requested=false;
+                std::string status;
+                try{status=save_live_session();}
+                catch(const std::exception& error){status=std::string("save failed: ")+error.what();
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                    session_log.event("experimental session save failed tick="+std::to_string(ticks)+
+                        " reason="+error.what());
+#endif
+                }
+                if(render_window_host)render_window_host->set_title("OpenDollhouse | "+status+
+                    " | S save (experimental; loading not ready), Escape close");
             }
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);

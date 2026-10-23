@@ -40,11 +40,11 @@ Passing this gate proves only restart persistence for that tested session and bu
 
 The version-1 archive codec now encodes and decodes byte buffers. Its 28-byte header contains the eight-byte signature `ODHSES\r\n`, version, zeroed header flags, section count, payload length, and CRC-32. Each section has a four-byte uppercase/digit ID, a required bit, a 64-bit payload length, a CRC-32, and its payload. Defaults cap a file at 128 MiB, a section at 64 MiB, and the archive at 128 sections. The codec rejects duplicate IDs, unknown flag bits, unsupported versions, truncation, unclaimed bytes, checksum errors, and limit violations.
 
-The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The file store is generic and is not connected to a running game session.
+The Linux file store now writes an encoded archive to a private same-directory temporary file, flushes the contents, and atomically renames it into place. It reads only regular non-symlink files and checks the file-size cap before allocation. The parent directory is not fsynced yet, so power-loss durability of the rename still needs a follow-up. The live game now calls this store for the experimental S-key save; there is no load path yet.
 
-A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. This byte representation can be stored in a required `WRLD` archive section by the future session host, but that connection is not wired yet.
+A version-1 value codec now serializes `WorldSnapshot` with explicit little-endian fields, bounded banks/counts, canonical entity order, and validation through `World::restore_snapshot`. It preserves entity data, saved banks, definitions, entry points, containment, positions, flags, counters, and radian direction. The synthetic fixture round-trips through both the codec and a fresh `World`. The live capture places this value in the required `WRLD` section; rebuilding a fresh World on load remains future work.
 
-The version-1 `RelationshipSnapshot` codec now stores its source/pair/value budgets and counts, matrix kind, signed source ID, object generation, signed 32-bit target, and each signed value. It uses canonical source and pair ordering and validates the decoded data by restoring it into a fresh `RelationshipState`. Empty sources/pairs, old object generations, negative or wide neighbor targets, and value tails are retained. Its synthetic test includes a 300-value tail and verifies a query after restore. This codec can be placed in a required `RELA` archive section, but the game host does not yet assemble it with the world data.
+The version-1 `RelationshipSnapshot` codec now stores its source/pair/value budgets and counts, matrix kind, signed source ID, object generation, signed 32-bit target, and each signed value. It uses canonical source and pair ordering and validates the decoded data by restoring it into a fresh `RelationshipState`. Empty sources/pairs, old object generations, negative or wide neighbor targets, and value tails are retained. Its synthetic test includes a 300-value tail and verifies a query after restore. The live capture includes it in the required `RELA` section; restoring the relationship state on load remains future work.
 
 The version-1 `VmSnapshot` codec now stores frames, arguments, locals, contexts, temporary registers, waits, suspended waits, return values, counters, and diagnostics with explicit little-endian fields. It bounds bytes, stack depth, frame variables, and diagnostic length; rejects invalid enum values, routine keys, booleans, truncation, and trailing bytes. The broad VM snapshot test now encodes and decodes each scenario before restoring it, then compares the resumed execution trace with uninterrupted execution. A separate codec test checks malformed inputs and limits. Code owners and equivalent memory/primitive callbacks still have to be rebuilt by the host; they are not in the bytes.
 
@@ -68,22 +68,26 @@ animation resources or resource fingerprint of its own. The session-wide
 resource identity when the caller supplies the expected value, validates
 cross-links between world actors, generations, VM states, waits, queued actions,
 and Playback's animation wait, and rejects malformed or unsupported states. Real Sleep and
-IdleForInput waits round-trip through the bundle tests. This is still a value
-codec: no live host captures or restores it yet.
+IdleForInput waits round-trip through the bundle tests. The Linux live host now
+has an experimental S-key capture path between ticks. It records the current
+bundle values, hashes the selected resource manifest only on request, and stores
+the archive atomically in the user data directory. Saves are rejected while
+Route45 is active or a dynamic portal code owner exists. This does not yet
+provide load, process-restart continuation, a public slot selector, or visual
+X11 validation; do not treat the experimental file as a playable save yet.
 
-The Linux runtime now receives the canonical game root and resolved resource
-paths without hashing them at launch. The version-1 `META` codec contains the
-game language, seven expansion flags, and SHA-256 fingerprint of the canonical
-manifest. Hashing remains in `--plan-only` for diagnostics; the running session
-will need to compute and compare it when save/load is wired. The current plan
-still needs auditing for resources opened dynamically on other lots and
-expansion sidecars. Synthetic coverage and one real installation plan are
-recorded in [session-resource-manifest-validation.md](session-resource-manifest-validation.md).
+The Linux runtime receives the canonical game root and resolved resource paths
+without hashing them at launch. When the experimental save key is pressed, it
+computes the version-1 `META` identity from that manifest and checks/encodes the
+complete bundle before writing. The current plan still needs auditing for
+resources opened dynamically on other lots and expansion sidecars. Synthetic
+coverage and one real installation plan are recorded in
+[session-resource-manifest-validation.md](session-resource-manifest-validation.md).
 
-Remaining for the House07 restart gate: capture Playback and the other values
-from the live host only at a safe tick boundary,
-write the bundle through the atomic Linux store, rebuild matching code owners
-and callbacks in a fresh host, restore in dependency order, and explicitly
-restore Playback from its `PLAY` values. Routing still has no bundle snapshot;
-the live host must either serialize and restore active routes or reject a save
-while a route is in progress.
+Remaining for the House07 restart gate: add a loader that verifies the exact
+resource identity, rebuilds matching code owners and callbacks in a fresh host,
+restores in dependency order, and explicitly restores Playback from its `PLAY`
+values. Routing still has no bundle snapshot, so saving is refused while a
+route is in progress. Then run Sit → save → new process → load seated → Stand
+against the real House07 resources, and test truncation, changed game files,
+and failed writes without damaging the previous save.

@@ -11,12 +11,15 @@ LotZoning read_lot_zoning(const StringTable&);
 struct LotZoneResult {std::int16_t input,value;bool fallback;};
 class LotContext {
 public:
+    using Snapshot = std::array<std::optional<std::int16_t>,38>;
     // Preserve only serialized static globals. Clock-derived and entity/runtime
     // initialization fields remain unsupported until their backends exist.
     LotContext(std::int16_t selected_lot,const std::vector<std::int16_t>& serialized,
                std::optional<LotZoning> zoning = {});
     std::optional<std::int16_t> read(std::int16_t index) const;
     bool write(std::int16_t index,std::int16_t value);
+    Snapshot snapshot() const;
+    void restore(const Snapshot& snapshot);
     std::optional<LotZoneResult> zone(std::int16_t input) const;
     VmPrimitive primitive(std::function<void(const LotZoneResult&)> observed = {}) const;
 private:
