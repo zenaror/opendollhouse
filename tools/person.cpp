@@ -5846,7 +5846,7 @@ struct PlacementCandidateProbe {
         const auto& probe=*placement_candidate_probe;
         const bool read_only_bhav_executed=std::any_of(entry_point5_bhav_evidence.begin(),entry_point5_bhav_evidence.end(),
             [](const auto& evidence){return evidence.steps!=0;});
-        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_probe\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; World_writes_denied; object_type_only; ambiguous_ghost_fails_closed\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
+        std::cout<<",\"placement_candidate_probe\":{\"evidence\":\"restored_World_floor_RoomInfo_and_bounded_read_only_EP5_probe\",\"candidate_probe_moves_avatar\":false,\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; exact_read_only_allowlist; World_writes_denied; unsupported_primitives_fail_closed; ambiguous_ghost_fails_closed\",\"placement_decision\":\"not_evaluated\",\"route_clearance\":false"
             <<",\"position\":["<<probe.position.x<<','<<probe.position.y<<','<<probe.position.level<<','<<unsigned(probe.position.direction)<<']'
             <<",\"inside_lot\":"<<(probe.inside_lot?"true":"false")<<",\"room\":";
         if(probe.room)std::cout<<*probe.room;else std::cout<<"null";
@@ -5881,7 +5881,7 @@ struct PlacementCandidateProbe {
             const auto& audit=*probe.overlap_audit;
             const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":
                 audit.rules.status==odh::SavedAvatarPlaceAuditStatus::blocked?"blocked":"unsupported";
-            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bounded_read_only_EP5\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; World_writes_denied; ambiguous_ghost_fails_closed\",\"status\":"<<json_bytes(status)
+            std::cout<<",\"entity_overlap_policy_audit\":{\"evidence\":\"live_World_flags_and_bounded_read_only_EP5\",\"scope\":\"RoomInfo_entity_overlaps_only\",\"all_avatars_solid\":false,\"group_source\":\"restored_save_snapshot\",\"bhav_executed\":"<<(read_only_bhav_executed?"true":"false")<<",\"bhav_execution_scope\":\"explicit_resource_owner; exact_read_only_allowlist; World_writes_denied; unsupported_primitives_fail_closed; ambiguous_ghost_fails_closed\",\"status\":"<<json_bytes(status)
                 <<",\"reason\":"<<json_bytes(odh::world_avatar_place_audit_reason_name(audit.reason))
                 <<",\"pair_classifications\":"<<audit.rules.pair_classifications
                 <<",\"final_blocker_id\":"<<audit.rules.final_blocker_id

@@ -11,17 +11,16 @@ Para cada par, o chamador fornece a relação de grupo multitile e
 `AllAvatarsSolid`. O adaptador considera EntryPoint 5 falso quando a tabela
 existe e o índice não está presente, ou quando seu ActionFunction é menor ou
 igual a 255. O código Simitone retorna falso nesses casos. ActionFunction acima
-de 255 exige um resolver explícito. O CLI executa em World temporário apenas a
-forma BHAV estritamente validada `TestObjectType(StackObject)` seguida de
-`StackObjectAttributes[16] == 1`. O formato tem dois passos, não escreve
-memória e usa orçamento de duas instruções; qualquer outra estrutura permanece
-`unsupported`. O teste de tipo consulta GUID e master GUID explícitos. A
-comparação lê o atributo vivo do StackObject; se ele estiver ausente e o tipo
-corresponder, o resultado é `unsupported`, sem inferir zero. Isto não fornece
-estado ghost genérico nem implementa o restante do interpretador BHAV.
-EntryPoint 26 é lido da tabela do bloqueador para determinar se a varredura
-termina; se essa informação for desconhecida e houver bloqueadores posteriores,
-o resultado também fica `unsupported`.
+de 255 exige um resolver explícito. O CLI usa o avaliador BHAV read-only num
+World temporário, carrega a rotina do recurso exato e permite chamadas aninhadas
+apenas nos owners fornecidos. A allowlist atual inclui TestObjectType e a forma
+confirmada do opcode 31 em Global 355/Person. Toda escrita no World é negada;
+qualquer forma ou primitiva fora da lista permanece `unsupported`. O JSON chama
+essa fronteira de `exact_read_only_allowlist`. O perfil atual ainda não modela
+ghost genérico nem executa as demais funções de GetAvatarPlace. EntryPoint 26 é
+lido da tabela do bloqueador para determinar se a varredura termina; se essa
+informação for desconhecida e houver bloqueadores posteriores, o resultado
+também fica `unsupported`.
 
 Referência: Simitone `4906db3156616bfaffc10ce0963cf08062975fef`, FreeSO
 submodule `f86bbd34b2112296ed786741f640a0535886d180`,
