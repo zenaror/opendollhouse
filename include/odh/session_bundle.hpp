@@ -6,6 +6,7 @@
 #include "odh/session_archive.hpp"
 #include "odh/session_resource_identity.hpp"
 #include "odh/playback.hpp"
+#include "odh/ts1_simulation.hpp"
 #include "odh/vm_snapshot_codec.hpp"
 #include "odh/world_snapshot_codec.hpp"
 
@@ -87,9 +88,19 @@ struct SessionHouseholdMember {
 bool same_session_household_roster(const std::vector<SessionHouseholdMember>&,
     const std::vector<SessionHouseholdMember>&);
 
+struct SessionAvatarMotiveState {
+    std::int16_t id=0;
+    Ts1MotiveSnapshot decay;
+};
+struct SessionSimulationState {
+    Ts1ClockSnapshot clock;
+    std::vector<SessionAvatarMotiveState> avatars; // Strictly ascending runtime IDs.
+};
+
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
 struct SessionBundle {
+    std::optional<SessionSimulationState> simulation; // Absent in older archives.
     SessionResourceIdentity resources;
     SessionHostState host;
     std::vector<SessionHouseholdMember> household_roster; // Empty only for legacy HOST v1.

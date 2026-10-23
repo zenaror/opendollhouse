@@ -90,6 +90,19 @@ void resume(odh::HouseholdSessionRestore& candidate,const odh::SessionBundle& ex
     require(odh::encode_session_bundle(actual)==odh::encode_session_bundle(expected),"two residents differ from continuous execution");
 }
 void tests(){Fixture f;f.start();f.step();auto saved=f.snapshot();const auto bytes=odh::encode_session_bundle(saved);
+    {
+        auto with_sim=saved;with_sim.simulation.emplace();
+        odh::Ts1Clock clock;clock.initialize(7,17,4,6,1997);auto time=clock.snapshot();time.ticks=with_sim.host.tick;
+        with_sim.simulation->clock=time;clock.restore(time);
+        for(const auto& runtime:with_sim.runtime_entities)with_sim.simulation->avatars.push_back({runtime.id,{}});
+        for(std::int16_t i=0;i<9;++i)if(const auto v=clock.global(i))with_sim.host.global_values.push_back({static_cast<std::uint16_t>(i),*v});
+        std::sort(with_sim.host.global_values.begin(),with_sim.host.global_values.end(),[](const auto& a,const auto& b){return a.index<b.index;});
+        auto restored_sim=prepare(odh::encode_session_bundle(with_sim),f);
+        require(restored_sim->simulation() && restored_sim->simulation()->clock.minute==4 && !restored_sim->lot().read(0),
+            "SIMS globals are accepted and remain derived outside LotContext");
+        with_sim.host.global_values.erase(with_sim.host.global_values.begin());
+        rejects([&]{prepare(odh::encode_session_bundle(with_sim),f);},"SIMS missing clock global accepted");
+    }
     auto candidate=prepare(bytes,f);for(;f.tick<6;)f.step();resume(*candidate,f.snapshot());
     auto bad=saved;bad.household_roster[1].character_fingerprint[0]^=1;
     rejects([&]{prepare(odh::encode_session_bundle(bad),f);},"changed character hash accepted");

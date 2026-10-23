@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(OpenDollhouse VERSION 0.0.1 LANGUAGES CXX)
 
+add_library(odh_ts1_simulation src/ts1_simulation.cpp)
+target_include_directories(odh_ts1_simulation PUBLIC include)
+target_compile_features(odh_ts1_simulation PUBLIC cxx_std_17)
+set_target_properties(odh_ts1_simulation PROPERTIES CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(odh_ts1_simulation PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+endif()
+
 add_library(odh_formats src/formats.cpp src/glob.cpp src/ttab.cpp src/slot.cpp src/objd.cpp src/animation.cpp src/skeleton.cpp src/mesh.cpp src/bitmap.cpp src/sprite.cpp src/dgrp.cpp src/lot.cpp src/neighborhood.cpp)
 add_library(odh_session_archive src/session_archive.cpp)
 add_library(odh_session_resource_identity src/session_resource_identity.cpp src/sha256.cpp tools/session_resource_manifest.cpp)
@@ -725,7 +733,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_entity_thread_controllers_snapshot_codec PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 add_library(odh_session_bundle src/session_bundle.cpp src/seated_session_continuation.cpp)
-target_link_libraries(odh_session_bundle PUBLIC odh_session_archive odh_session_resource_identity
+target_link_libraries(odh_session_bundle PUBLIC odh_ts1_simulation odh_session_archive odh_session_resource_identity
   odh_world_snapshot_codec odh_relationship_snapshot_codec odh_vm_snapshot_codec
   odh_entity_scheduler_snapshot_codec odh_entity_thread_controllers_snapshot_codec)
 add_library(odh_single_resident_session_restore src/single_resident_session_restore.cpp src/household_session_restore.cpp)
@@ -764,6 +772,9 @@ if(TARGET odh_linux_window)
 endif()
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(odh-ts1-simulation-tests tests/ts1_simulation.cpp)
+  target_link_libraries(odh-ts1-simulation-tests PRIVATE odh_ts1_simulation)
+  add_test(NAME ts1_simulation COMMAND odh-ts1-simulation-tests)
   add_executable(odh-sha256-tests tests/sha256.cpp)
   target_link_libraries(odh-sha256-tests PRIVATE odh_session_resource_identity)
   add_test(NAME sha256 COMMAND odh-sha256-tests)

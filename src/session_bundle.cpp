@@ -20,6 +20,7 @@ constexpr std::array<char,4> vm_id{{'V','M',' ',' '}};
 constexpr std::array<char,4> scheduler_id{{'S','C','H','D'}};
 constexpr std::array<char,4> controller_id{{'C','T','R','L'}};
 constexpr std::array<char,4> playback_id{{'P','L','A','Y'}};
+constexpr std::array<char,4> simulation_id{{'S','I','M','S'}};
 constexpr std::array<char,4> seated_id{{'S','E','A','T'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
@@ -580,8 +581,38 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
         throw FormatError("session bundle is missing a required section");
     return *it;
 }
+void validate_simulation(const SessionBundle& bundle) {
+    if(!bundle.simulation)return;
+    const auto& sim=*bundle.simulation;Ts1Clock clock;
+    if(!clock.restore(sim.clock)||sim.clock.ticks!=bundle.host.tick || sim.avatars.size()!=bundle.runtime_entities.size())
+        throw FormatError("invalid session simulation clock or roster");
+    for(const auto& value:bundle.host.global_values){
+        const auto current=clock.global(static_cast<std::int16_t>(value.index));
+        if(current && *current!=value.value)throw FormatError("session globals differ from simulation clock");
+    }
+    for(std::size_t i=0;i<sim.avatars.size();++i) {
+        Ts1MotiveDecay decay;
+        if(sim.avatars[i].id!=bundle.runtime_entities[i].id || !decay.restore(sim.avatars[i].decay))
+            throw FormatError("invalid session motive state");
+    }
+}
+std::vector<std::uint8_t> encode_simulation(const SessionSimulationState& sim,std::size_t limit) {
+    Writer w(limit);w.u16(1);const auto& c=sim.clock;
+    w.u64(c.ticks);w.u16(c.minute_fraction);w.u8(c.minute);w.u8(c.hour);w.u8(c.day);w.u8(c.month);w.i32(c.year);
+    w.u16(static_cast<std::uint16_t>(sim.avatars.size()));
+    for(const auto& a:sim.avatars){w.i16(a.id);w.u8(a.decay.last_two_minute_bucket);for(auto f:a.decay.fractions)w.i16(f);}
+    return w.take();
+}
+SessionSimulationState decode_simulation(const std::vector<std::uint8_t>& bytes,std::size_t max_avatars) {
+    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported session simulation version");
+    SessionSimulationState sim;auto& c=sim.clock;c.ticks=r.u64();c.minute_fraction=r.u16();c.minute=r.u8();c.hour=r.u8();c.day=r.u8();c.month=r.u8();c.year=r.i32();
+    const auto count=r.u16();if(count>max_avatars)throw FormatError("session simulation roster exceeds bounds");
+    for(unsigned i=0;i<count;++i){SessionAvatarMotiveState a;a.id=r.i16();a.decay.last_two_minute_bucket=r.u8();for(auto& f:a.decay.fractions)f=r.i16();sim.avatars.push_back(a);}
+    if(!r.done())throw FormatError("session simulation has unclaimed bytes");
+    return sim;
+}
 bool recognized(const std::array<char,4>& id) {
-    return id==meta_id||id==host_id||id==world_id||id==relation_id||
+    return id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||id==seated_id;
 }
 }
@@ -602,6 +633,7 @@ void validate_session_playback_links(const SessionRuntimeEntity& state,const Ent
 std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
                                                  SessionBundleLimits limits) {
     validate_links(bundle,limits);
+    validate_simulation(bundle);
     SessionArchive archive;
     archive.sections={
         {meta_id,true,encode_session_resource_identity(bundle.resources)},
@@ -618,6 +650,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     };
     if(!bundle.household_roster.empty())archive.sections.push_back({household_id,true,encode_household(bundle.household_roster,limits)});
     if(bundle.seated_continuation)archive.sections.push_back({seated_id,true,encode_seated(*bundle.seated_continuation,limits)});
+    if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
     return encode_session_archive(archive,limits.archive);
 }
 
@@ -654,7 +687,12 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
         if(!section.required)throw FormatError("seated continuation must be a required section");
         result.seated_continuation=decode_seated(section.data);
     }
+    for(const auto& section:archive.sections)if(section.id==simulation_id){
+        if(!section.required)throw FormatError("session simulation section must be required");
+        result.simulation=decode_simulation(section.data,limits.max_runtime_entities);
+    }
     validate_links(result,limits);
+    validate_simulation(result);
     return result;
 }
 

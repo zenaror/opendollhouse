@@ -30,6 +30,14 @@ int main() {
         require(spatial.set_static_footprint(1,false) && spatial.spatial_revision()>spatial_revision,
                 "changing an entity footprint advances spatial revision");
 
+        odh::World motive_state;
+        require(motive_state.create(1,odh::EntityKind::avatar,{0,0,0,16}),
+                "motive revision fixture setup");
+        const auto motive_revision=motive_state.spatial_revision();
+        require(motive_state.set_motive(1,7,70) &&
+                    motive_state.spatial_revision()==motive_revision,
+                "motive updates do not invalidate room and route geometry");
+
         odh::World ui_ghosts;
         require(ui_ghosts.create(1,odh::EntityKind::avatar) &&
                     ui_ghosts.create(2,odh::EntityKind::object) &&

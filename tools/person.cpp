@@ -860,7 +860,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(zoning_path&&!zoning)throw odh::FormatError("zoning STR#1 absent");
     std::optional<odh::LotContext> lot;
     if(simi)lot.emplace(static_cast<std::int16_t>(*lot_id),simi->global_data,std::move(zoning));
-    enum class GlobalSource {lot,bootstrap,family};
+    enum class GlobalSource {lot,bootstrap,family,clock};
+    std::optional<odh::Ts1Clock> simulation_clock;
+    std::map<std::int16_t,odh::Ts1MotiveDecay> simulation_motives;
+    std::map<std::int16_t,std::string> simulation_motive_status;
+    std::uint64_t simulation_skipped_updates=0;
+    std::string simulation_profile="unavailable_without_saved_lot";
     struct GlobalRead {std::int16_t index,value;GlobalSource source;};
     std::vector<GlobalRead> global_reads;
     std::optional<odh::Ts1BootstrapGlobals> bootstrap_globals;
@@ -1119,6 +1124,30 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     }
     const bool restoring_session=bool(session_restore)||bool(household_restore);
     odh::World& world=saved_world_main?*restored_world->world:*world_owner;
+    if(saved_world_main && simi && simi->global_data.size()>8) {
+        const auto& g=simi->global_data;
+        odh::Ts1Clock clock;
+        if(g[0]>=0 && g[1]>=0 && g[5]>=0 && g[6]>=0 && g[7]>=0 &&
+           clock.initialize_simi(static_cast<unsigned>(g[0]),static_cast<unsigned>(g[1]),
+               static_cast<unsigned>(g[5]),static_cast<unsigned>(g[6]),static_cast<unsigned>(g[7]),g[8])) {
+            simulation_clock=clock;simulation_profile="Simitone_default_TS1_reference";
+        } else simulation_profile="unsupported_SIMI_clock";
+        const auto* saved_sim=session_restore?&session_restore->simulation():household_restore?&household_restore->simulation():nullptr;
+        if(saved_sim) {
+            if(*saved_sim){
+                if(!simulation_clock)simulation_clock.emplace();
+                if(!simulation_clock->restore((**saved_sim).clock))throw odh::FormatError("invalid restored simulation clock");
+                for(const auto& a:(**saved_sim).avatars){odh::Ts1MotiveDecay decay;
+                    if(!decay.restore(a.decay))throw odh::FormatError("invalid restored motive carries");
+                    simulation_motives.emplace(a.id,decay);}
+                simulation_profile="Simitone_default_TS1_reference";
+            }else {simulation_clock.reset();simulation_profile="legacy_session_without_simulation_state";}
+        }
+        if(simulation_clock){
+            simulation_motives.try_emplace(runtime_avatar_id);
+        }
+    }
+
     std::optional<odh::EntityPosition> paired_primary_start;
     const auto entity_count=[&]{std::size_t count=0;std::int16_t cursor=0;
         while(const auto next=world.next_entity(cursor)){++count;cursor=*next;}return count;};
@@ -1290,11 +1319,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(diagnostics.retain(Diagnostic::neighbor_reads,neighbor_reads.size(),20000))neighbor_reads.push_back(*value);
             return value->value;}
         if(scope==6){
+            const auto clock=simulation_clock?simulation_clock->global(index):std::nullopt;
             const auto runtime=bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
             const auto family_value=index==9?family_global:std::nullopt;
-            const auto value=family_value?family_value:runtime?runtime:(lot?lot->read(index):std::nullopt);
+            const auto value=clock?clock:family_value?family_value:runtime?runtime:(lot?lot->read(index):std::nullopt);
             if(value&&diagnostics.retain(Diagnostic::global_reads,global_reads.size(),20000))
-                global_reads.push_back({index,*value,family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});
+                global_reads.push_back({index,*value,clock?GlobalSource::clock:family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});
             return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
         const auto value=tuning.read(frame.context.code_owner,index);
@@ -1966,6 +1996,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         household_restore->restore_execution(bindings,entity_scheduler,random,ticks);
         profile_mark("household-session-restored-before-main");
     }
+    if(simulation_clock && restoring_session && simulation_clock->snapshot().ticks!=ticks)
+        throw odh::FormatError("simulation clock differs from restored host tick");
+    if(simulation_clock)for(const auto& member:household_runtime)simulation_motives.try_emplace(member->id);
     const auto resumed_tick=ticks;
     std::optional<std::uint64_t> scheduled_stand_tick;
     if(headless_stand){
@@ -3546,10 +3579,16 @@ struct PlacementCandidateProbe {
         bundle.host.runtime_avatar_id=runtime_avatar_id;
         bundle.host.tick=ticks;
         bundle.host.random_seed=random.seed();
+        if(simulation_clock){
+            odh::SessionSimulationState sim;sim.clock=simulation_clock->snapshot();
+            for(const auto& a:simulation_motives)sim.avatars.push_back({a.first,a.second.snapshot()});
+            bundle.simulation=std::move(sim);
+        }
         std::map<std::uint16_t,std::int16_t> globals_to_save;
         for(std::int16_t index=0;index<38;++index){
             std::optional<std::int16_t> value;
-            if(index==9&&family_global)value=family_global;
+            if(simulation_clock)value=simulation_clock->global(index);
+            if(!value&&index==9&&family_global)value=family_global;
             if(!value&&bootstrap_globals)value=bootstrap_globals->read(index);
             if(!value&&lot)value=lot->read(index);
             if(value)globals_to_save.emplace(static_cast<std::uint16_t>(index),*value);
@@ -4174,6 +4213,45 @@ struct PlacementCandidateProbe {
            (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))&&std::none_of(household_runtime.begin(),household_runtime.end(),
                     [&](const auto& member){return vm_active(member->vm->status());})))break;
         ++ticks;
+        if(simulation_clock){
+            if(!simulation_clock->tick(true))throw odh::FormatError("simulation clock exhausted");
+            const auto& time=simulation_clock->snapshot();
+            for(auto& entry:simulation_motives){
+                const auto* actor=world.find(entry.first);
+                odh::Ts1MotiveInputs in;
+                if(!actor || actor->person_data.size()<=6 || actor->motives.size()<16 || !actor->object_words.count(34)){
+                    simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;continue;
+                }
+                in.active_personality=actor->person_data[3];in.outgoing_personality=actor->person_data[6];
+                in.sleep_state=actor->motives[11];in.room_score=actor->motives[13];in.hidden=actor->object_words.at(34)>0;
+                // This host has no supported SetMotiveChange controller. The supported
+                // profile therefore has no active per-motive changes; custom controllers
+                // must supply those flags before they can join this decay profile.
+                for(std::size_t i=0;i<odh::ts1_need_count;++i)
+                    in.needs[i]=actor->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))];
+                const auto result=entry.second.update(time.hour,time.minute,in);
+                simulation_motive_status[entry.first]=result.status==odh::Ts1MotiveStatus::updated?"updated":
+                    result.status==odh::Ts1MotiveStatus::unchanged?"unchanged":"unsupported_input_profile";
+                if(result.status==odh::Ts1MotiveStatus::unsupported){++simulation_skipped_updates;continue;}
+                if(result.status==odh::Ts1MotiveStatus::updated){
+                    for(std::size_t i=0;i<odh::ts1_need_count;++i)
+                        if(!world.set_motive(entry.first,static_cast<std::int16_t>(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))),result.needs[i]))
+                            throw odh::FormatError("simulation motive write failed");
+                    if(!world.set_motive(entry.first,11,result.sleep_state)||!world.set_motive(entry.first,3,result.mood))
+                        throw odh::FormatError("simulation sleep/mood write failed");
+                }
+            }
+#ifdef ODH_HAVE_X11
+            if(render_window_host && (ticks==1 || ticks%30==0)){
+                std::string title="OpenDollhouse | "+std::to_string(time.hour)+":"+(time.minute<10?"0":"")+std::to_string(time.minute);
+                if(const auto* actor=world.find(active_household_actor);actor&&actor->motives.size()>=16)
+                    title+=" | Hunger "+std::to_string(actor->motives[7])+" Comfort "+std::to_string(actor->motives[6])+
+                        " Hygiene "+std::to_string(actor->motives[8])+" Bladder "+std::to_string(actor->motives[9])+
+                        " Energy "+std::to_string(actor->motives[5])+" Fun "+std::to_string(actor->motives[15])+" Social "+std::to_string(actor->motives[14]);
+                render_window_host->set_title(title+" | P pause, S save, Escape close");
+            }
+#endif
+        }
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
             render_interaction_requested=true;
@@ -4801,6 +4879,20 @@ struct PlacementCandidateProbe {
         }
         throw odh::FormatError(failure+")");
     }
+    const auto emit_simulation=[&]{
+        std::cout<<",\"simulation\":{\"profile\":"<<json_bytes(simulation_profile)<<",\"skipped_updates\":"<<simulation_skipped_updates<<",\"clock\":";
+        if(simulation_clock){const auto& c=simulation_clock->snapshot();
+            std::cout<<"{\"ticks\":"<<c.ticks<<",\"minute_fraction\":"<<c.minute_fraction<<",\"minute\":"<<unsigned(c.minute)<<",\"hour\":"<<unsigned(c.hour)<<",\"day\":"<<unsigned(c.day)<<",\"month\":"<<unsigned(c.month)<<",\"year\":"<<c.year<<"}";
+        }else std::cout<<"null";
+        std::cout<<",\"avatars\":[";bool first=true;
+        for(const auto& a:simulation_motives){if(!first)std::cout<<',';first=false;const auto* actor=world.find(a.first);
+            std::cout<<"{\"id\":"<<a.first<<",\"status\":"<<json_bytes(simulation_motive_status[a.first])<<",\"needs\":[";
+            for(std::size_t i=0;i<odh::ts1_need_count;++i){if(i)std::cout<<',';std::cout<<(actor&&actor->motives.size()>=16?actor->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))]:0);}
+            std::cout<<"],\"fractions\":[";for(std::size_t i=0;i<odh::ts1_need_count;++i){if(i)std::cout<<',';std::cout<<a.second.snapshot().fractions[i];}
+            std::cout<<"],\"last_two_minute_bucket\":"<<unsigned(a.second.snapshot().last_two_minute_bucket)
+                <<",\"sleep_state\":"<<(actor&&actor->motives.size()>=16?actor->motives[11]:0)<<",\"room_score\":"<<(actor&&actor->motives.size()>=16?actor->motives[13]:0)<<'}';
+        }std::cout<<"]}";
+    };
     std::cout<<"{\"evidence\":"<<json_bytes(restoring_session?"ODH_session_resumed":saved_world_main?"ODH_saved_World_new_Main_entry":"ODH_native_BHAV_constructed_person_host")<<",\"presentation_language\":"<<static_cast<unsigned>(game_language)
         <<",\"session_loaded\":"<<(restoring_session?"true":"false")
         <<",\"resumed_tick\":"<<resumed_tick<<",\"saved_session_path\":"
@@ -4822,6 +4914,7 @@ struct PlacementCandidateProbe {
         }else std::cout<<"null";
         std::cout<<"}";
     }else std::cout<<"null";
+    emit_simulation();
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     std::cout<<",\"session_log\":"<<(session_log.enabled()?json_bytes(session_log.path().string()):"null")
 #else
@@ -5208,7 +5301,7 @@ struct PlacementCandidateProbe {
     std::cout<<"],\"lot\":";
     if(lot)std::cout<<"{\"house\":"<<json_bytes(*lot_path)<<",\"selected_id\":"<<*lot_id<<",\"serialized_id\":"<<simi->global_data[10]
         <<",\"simi_version\":"<<simi->version<<",\"serialized_globals\":"<<simi->global_data.size()<<",\"remaining_bytes\":"<<simi->remaining_bytes
-        <<",\"profile\":\"SIMI static globals; selected lot overrides10; clock/entity fields unsupported; bootstrap globals provided separately when initialized\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
+        <<",\"profile\":\"SIMI globals with bounded Simitone reference clock when supported; selected lot overrides10; bootstrap globals provided separately\",\"zoning\":"<<(zoning_path?json_bytes(*zoning_path):"null")<<'}';
     else std::cout<<"null";
     std::cout<<",\"saved_objm_container\":";
     if(objm){std::uint64_t bytes=0;for(const auto& block:objm->blocks)bytes+=block.bytes.size();
@@ -5304,7 +5397,7 @@ struct PlacementCandidateProbe {
     }else std::cout<<"null";
     std::cout<<",\"global_reads\":[";
     for(std::size_t n=0;n<global_reads.size();++n){if(n)std::cout<<',';std::cout<<"{\"index\":"<<global_reads[n].index<<",\"value\":"<<global_reads[n].value
-        <<",\"source\":"<<json_bytes(global_reads[n].source==GlobalSource::family?"family_activation":global_reads[n].source==GlobalSource::bootstrap?"runtime_bootstrap":"lot_context")<<'}';}
+        <<",\"source\":"<<json_bytes(global_reads[n].source==GlobalSource::clock?"simulation_clock":global_reads[n].source==GlobalSource::family?"family_activation":global_reads[n].source==GlobalSource::bootstrap?"runtime_bootstrap":"lot_context")<<'}';}
     std::cout<<"],\"zoning_reads\":[";
     for(std::size_t n=0;n<zoning_reads.size();++n){if(n)std::cout<<',';const auto& value=zoning_reads[n];
         std::cout<<"{\"input\":"<<value.input<<",\"value\":"<<value.value<<",\"fallback\":"<<(value.fallback?"true":"false")<<'}';}

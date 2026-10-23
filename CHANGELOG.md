@@ -25,6 +25,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O host Linux agora avança um relógio do jogo nos passos não pausados, atualiza
+  sete necessidades com as regras padrão documentadas no Simitone, mostra esses
+  valores no título e guarda relógio/frações por morador no save. O gate real
+  House07 confirmou necessidade alterada e igualdade entre execução contínua e
+  save/resume; não valida paridade com o executável original nem uma build
+  completa. Veja [`house07-clock-validation.md`](docs/house07-clock-validation.md).
+
 - O gate House07 executa Sit, Stand e Go Here pelo caminho de clique e tecla
   usado pela janela. Sem DISPLAY, o Sim chegou a um quadrado de chão visível
   em 32 callbacks, com fila vazia e sem falha do host. Isso ainda não valida

@@ -41,6 +41,7 @@ public:
     LotContext& lot() { return lot_; }
     Ts1BootstrapGlobals& bootstrap() { return bootstrap_; }
     std::optional<std::int16_t>& family_global() { return family_global_; }
+    const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const SessionHostState& host() const { return bundle_.host; }
     const std::optional<SessionSeatedContinuation>& seated_continuation() const {return bundle_.seated_continuation;}
     void install_seated_continuation_owners(Vm&, const DefinitionCandidate&,

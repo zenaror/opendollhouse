@@ -166,6 +166,28 @@ int main() {
             !restored.runtime_entities[0].playback.carry&&
             !restored.runtime_entities[0].playback.hands,
             "empty Playback state round-trips for each resident");
+    require(!restored.simulation,"legacy archive without SIMS stays decodable");
+    auto simulated=source;simulated.simulation.emplace();
+    simulated.simulation->avatars={{1,{}},{2,{}}};
+    simulated.simulation->avatars[1].decay.fractions[4]=1000;
+    const auto simulation_bytes=odh::encode_session_bundle(simulated);
+    const auto simulation_restored=odh::decode_session_bundle(simulation_bytes,source.resources);
+    require(simulation_restored.simulation && simulation_restored.simulation->avatars[1].decay.fractions[4]==1000 &&
+        odh::encode_session_bundle(simulation_restored)==simulation_bytes,"SIMS v1 deterministic full round-trip");
+    auto invalid_sim=simulated;invalid_sim.simulation->clock.ticks=1;
+    rejects([&]{odh::encode_session_bundle(invalid_sim);},"simulation tick must match host");
+    invalid_sim=simulated;invalid_sim.simulation->avatars[1].id=1;
+    rejects([&]{odh::encode_session_bundle(invalid_sim);},"simulation roster IDs must match runtime roster");
+    invalid_sim=simulated;invalid_sim.simulation->avatars[0].decay.fractions[0]=-1;
+    rejects([&]{odh::encode_session_bundle(invalid_sim);},"invalid motive carry rejected");
+    invalid_sim=simulated;invalid_sim.host.global_values.insert(invalid_sim.host.global_values.begin(),{0,12});
+    rejects([&]{odh::encode_session_bundle(invalid_sim);},"clock globals cannot contradict simulation");
+    auto sim_archive=odh::decode_session_archive(simulation_bytes);
+    for(auto& section:sim_archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}})section.data[0]=2;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(sim_archive));},"unknown SIMS version rejected");
+    sim_archive=odh::decode_session_archive(simulation_bytes);
+    for(auto& section:sim_archive.sections)if(section.id==std::array<char,4>{{'S','I','M','S'}})section.data.push_back(0);
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(sim_archive));},"SIMS trailing bytes rejected");
     auto with_playback=source;
     odh::PlaybackClipSnapshot clip{};clip.resource.kind=odh::PlaybackResourceKey::Kind::animation;
     clip.resource.source=1;clip.resource.id=7;clip.resource.caller=1;clip.resource.actor_age=0;

@@ -1,5 +1,6 @@
 #include "odh/single_resident_session_restore.hpp"
 #include <fstream>
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
@@ -132,6 +133,19 @@ void restore_carry(odh::SingleResidentSessionRestore& candidate,const odh::Playb
 void unit_tests() {
     Fixture source;source.start();source.step();const auto saved=source.snapshot();
     const auto bytes=odh::encode_session_bundle(saved);
+    {
+        auto with_sim=saved;with_sim.simulation.emplace();
+        odh::Ts1Clock clock;clock.initialize(7,17,4,6,1997);auto time=clock.snapshot();time.ticks=with_sim.host.tick;
+        with_sim.simulation->clock=time;clock.restore(time);
+        for(const auto& runtime:with_sim.runtime_entities)with_sim.simulation->avatars.push_back({runtime.id,{}});
+        for(std::int16_t i=0;i<9;++i)if(const auto v=clock.global(i))with_sim.host.global_values.push_back({static_cast<std::uint16_t>(i),*v});
+        std::sort(with_sim.host.global_values.begin(),with_sim.host.global_values.end(),[](const auto& a,const auto& b){return a.index<b.index;});
+        auto restored_sim=prepare(odh::encode_session_bundle(with_sim),source);
+        require(restored_sim->simulation() && restored_sim->simulation()->clock.minute==4 && !restored_sim->lot().read(0),
+            "SIMS globals are accepted and remain derived outside LotContext");
+        with_sim.host.global_values.erase(with_sim.host.global_values.begin());
+        rejects([&]{prepare(odh::encode_session_bundle(with_sim),source);},"SIMS missing clock global accepted");
+    }
     auto candidate=prepare(bytes,source);
     require(candidate->bootstrap().read(17)==source.bootstrap.read(17)&&
         candidate->lot().read(10)==7&&candidate->lot().read(12)==321&&candidate->family_global()==21,"global restore");

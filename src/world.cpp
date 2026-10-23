@@ -310,10 +310,10 @@ bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) 
     if (found == entities_.end() || found->second.kind != EntityKind::avatar ||
         !valid_index(index,found->second.motives.size())) return false;
     auto& old = found->second.motives[static_cast<std::size_t>(index)];
-    // Fixed reference default: no tuning override or motive decay in this world.
     const auto updated=std::clamp(value,static_cast<std::int16_t>(-100),
                      std::max(old,static_cast<std::int16_t>(100)));
-    if(old!=updated){old=updated;mark_spatial_change();}
+    // Motives do not change room geometry or route obstacles.
+    if(old!=updated)old=updated;
     return true;
 }
 bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value) {

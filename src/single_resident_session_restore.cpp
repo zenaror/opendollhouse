@@ -106,9 +106,12 @@ std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prep
         throw FormatError("host lot global does not match selected house");
     // Require the exact set implemented by the host, with the same precedence
     // as scope 6 reads. No unsupported or missing global silently becomes zero.
+    std::optional<Ts1Clock> simulation_clock;
+    if(bundle.simulation){simulation_clock.emplace();
+        if(!simulation_clock->restore(bundle.simulation->clock))throw FormatError("invalid restored clock");}
     std::vector<std::uint16_t> expected;
     for(std::int16_t index=0;index<38;++index)
-        if((index==9&&family)||bootstrap.read(index)||globals.read(index))
+        if((simulation_clock&&simulation_clock->global(index))||(index==9&&family)||bootstrap.read(index)||globals.read(index))
             expected.push_back(static_cast<std::uint16_t>(index));
     if(expected.size()!=host.global_values.size())throw FormatError("session global roster differs from host");
     for(std::size_t n=0;n<expected.size();++n)
@@ -130,6 +133,7 @@ std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prep
         throw FormatError("session world or relationships exceed fresh candidate limits");
     for(const auto& entry:result->bundle_.host.global_values) {
         const auto index=static_cast<std::int16_t>(entry.index);
+        if(simulation_clock&&simulation_clock->global(index))continue; // Derived exclusively from SIMS.
         if(index==9&&result->family_global_)result->family_global_=entry.value;
         else if(result->bootstrap_.read(index))result->bootstrap_.write(index,entry.value);
         else if(!result->lot_.write(index,entry.value))throw FormatError("session global restore failed");
