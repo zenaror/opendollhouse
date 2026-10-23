@@ -2094,6 +2094,10 @@ struct PlacementCandidateProbe {
     std::string floor_reason;
     std::optional<odh::RoomInfoObstacleQuery> query;
     std::optional<odh::WorldAvatarPlaceAuditResult> overlap_audit;
+    std::optional<RuntimeAttemptWalkProbe> architecture_audit;
+    std::optional<bool> architecture_walkable;
+    std::string architecture_walkability_state="not_evaluated";
+    std::string architecture_walkability_reason;
     std::string room_info_reason;
 };
     struct EntryPoint5BhvEvidence {
@@ -4985,6 +4989,62 @@ struct PlacementCandidateProbe {
                         probe.overlap_audit=odh::audit_world_avatar_place_overlaps(
                             world,runtime_avatar_id,*probe.query,false,same_saved_group,resolve_read_only_ep5);
                     }
+                    if(probe.room&&*probe.room!=0&&restored_world&&definition_index){
+                        std::vector<std::int16_t> other_avatars;
+                        bool avatar_inventory_ready=true;
+                        for(auto cursor=std::int16_t{0};avatar_inventory_ready;){
+                            const auto next=world.next_entity(cursor,odh::EntityKind::avatar);
+                            if(!next)break;
+                            cursor=*next;
+                            if(cursor==runtime_avatar_id)continue;
+                            const auto* other=world.find(cursor);
+                            if(!other||!other->position){
+                                avatar_inventory_ready=false;
+                                probe.architecture_walkability_reason="other_avatar_position_unknown";
+                                break;
+                            }
+                            const auto other_room=render_lot->runtime_room_at(*other->position);
+                            if(!other_room){
+                                avatar_inventory_ready=false;
+                                probe.architecture_walkability_reason="other_avatar_room_unknown";
+                                break;
+                            }
+                            if(*other_room==*probe.room)other_avatars.push_back(cursor);
+                        }
+                        if(!avatar_inventory_ready){
+                            probe.architecture_walkability_state="unsupported";
+                        }else{
+                            probe.architecture_audit=build_runtime_attempt_walk_probe(
+                                *restored_world,world,*definition_index,render_lot->architecture_resource(),
+                                *prepared,*probe.room,static_cast<std::uint8_t>(probe.position.level-1),
+                                runtime_avatar_id,true,other_avatars,resolve_read_only_ep5,probe.position);
+                            const auto& snapshot=probe.architecture_audit->snapshot;
+                            if(snapshot.state!=odh::AttemptWalkObstacleState::ready){
+                                probe.architecture_walkability_state="unsupported";
+                                probe.architecture_walkability_reason=odh::attempt_walk_obstacle_reason_name(snapshot.reason);
+                            }else{
+                                const auto x=static_cast<std::int32_t>(probe.position.x);
+                                const auto y=static_cast<std::int32_t>(probe.position.y);
+                                const odh::WorldRoomRouteGridWindow window{{x-128,y-128},{x+128,y+128}};
+                                const auto grid=odh::build_world_room_route_grid(snapshot,{},window);
+                                if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid){
+                                    probe.architecture_walkability_state="unsupported";
+                                    probe.architecture_walkability_reason=odh::world_room_route_grid_reason_name(grid.reason);
+                                }else if(!grid.grid->contains({x,y})){
+                                    probe.architecture_walkability_state="candidate_outside_grid";
+                                    probe.architecture_walkability_reason="candidate_cell_outside_bounded_grid";
+                                }else{
+                                    probe.architecture_walkable=grid.grid->walkable({x,y});
+                                    probe.architecture_walkability_state=*probe.architecture_walkable?"clear":"blocked";
+                                    probe.architecture_walkability_reason=*probe.architecture_walkable?
+                                        "candidate_cell_walkable":"candidate_cell_blocked";
+                                }
+                            }
+                        }
+                    }else if(probe.room&&*probe.room==0){
+                        probe.architecture_walkability_state="unsupported";
+                        probe.architecture_walkability_reason="candidate_room_zero";
+                    }
                 }
                 placement_candidate_probe=std::move(probe);
             }
@@ -5883,6 +5943,30 @@ struct PlacementCandidateProbe {
                 <<",\"box\":["<<obstacle.box.x1<<','<<obstacle.box.y1<<','<<obstacle.box.x2<<','<<obstacle.box.y2<<"]}";
         }
         std::cout<<']';
+        std::cout<<",\"architecture_walkability_audit\":{\"evidence\":\"candidate_position_live_AttemptWalk_snapshot_and_bounded_local_grid\",\"candidate_probe_moves_avatar\":false,\"status\":"
+            <<json_bytes(probe.architecture_walkability_state)<<",\"reason\":"
+            <<json_bytes(probe.architecture_walkability_reason)<<",\"candidate_walkable\":";
+        if(probe.architecture_walkable)std::cout<<(*probe.architecture_walkable?"true":"false");
+        else std::cout<<"null";
+        if(probe.architecture_audit){
+            const auto& attempt=*probe.architecture_audit;
+            const auto& snapshot=attempt.snapshot;
+            std::cout<<",\"snapshot_state\":"<<json_bytes(snapshot.state==odh::AttemptWalkObstacleState::ready?"ready":"unsupported")
+                <<",\"snapshot_reason\":"<<json_bytes(odh::attempt_walk_obstacle_reason_name(snapshot.reason))
+                <<",\"architecture_complete\":"<<(attempt.architecture_complete?"true":"false")
+                <<",\"portal_inventory_complete\":"<<(attempt.portal_inventory_complete?"true":"false")
+                <<",\"other_avatars_in_room\":"<<attempt.other_avatars_in_room
+                <<",\"obstacle_rectangles\":"<<snapshot.obstacles.size()
+                <<",\"entity_obstacle_ids\":[";
+            for(std::size_t n=0;n<snapshot.entity_obstacle_ids.size();++n){
+                if(n)std::cout<<',';
+                std::cout<<snapshot.entity_obstacle_ids[n];
+            }
+            std::cout<<"],\"start_intersects\":"<<(snapshot.start_intersects?"true":"false")
+                <<",\"entry_point5_calls\":"<<snapshot.entry_point5_calls
+                <<",\"entry_point5_exemptions\":"<<snapshot.exempted_by_entry_point5;
+        }
+        std::cout<<'}';
         if(probe.overlap_audit){
             const auto& audit=*probe.overlap_audit;
             const char* status=audit.rules.status==odh::SavedAvatarPlaceAuditStatus::allowed?"allowed":

@@ -110,6 +110,19 @@ first query included only avatar 105's current static footprint, which the
 overlap audit skipped as self. The second had no intersections. Both overlap
 audits returned `allowed` with zero blocker pairs.
 
+The probe now also reports `architecture_walkability_audit`. It builds the
+candidate room's live AttemptWalk snapshot from complete Portal15, RoomObs,
+WallObs and RoomInfo/entity inputs, resolves EntryPoint 5 through the bounded
+read-only evaluator, then checks only the candidate cell in a bounded local
+grid. This is a walkability check for that cell, not a route to it or final
+placement approval. With 23 loose FLR/WLL sources, `(400,440,1,3)` returned
+`clear`, `candidate_walkable=true`, complete architecture/portal inventories,
+154 obstacle rectangles, one other avatar in the room and zero EP5 calls.
+Candidate `(456,504,1,3)` returned `blocked` in room 1; its complete snapshot
+had 190 rectangles, two EP5 calls, and `start_intersects=true`. The separate
+entity audit also returned blocked with ObjectID 35 as its final blocker.
+Neither query moved the avatar or executes a route.
+
 These results cover the floor rule and the entity-overlap part of
 `GetAvatarPlace` for those positions. They do not move the avatar or prove a
 route to the position. The top-level `placement_decision` remains
