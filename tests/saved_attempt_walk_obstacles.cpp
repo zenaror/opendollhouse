@@ -123,11 +123,24 @@ int main() {
             "true blocker EP5 must exempt after actor EP5 false");
 
     auto unknown_ep5 = [](std::int16_t, std::int16_t) { return std::optional<bool>{}; };
-    result = build({object(20, 0, 4108)}, 0, 0, true, {}, unknown_ep5);
+    result = build({object(20, 0, 4108)}, 0, 4108, true, {}, unknown_ep5);
     require(result.state == AttemptWalkObstacleState::unsupported &&
             result.reason == AttemptWalkObstacleReason::entry_point5_result_unknown &&
-            result.obstacles.empty(),
-            "unknown bilateral EP5 must fail closed without returning partial obstacles");
+            result.obstacles.empty() && result.entry_point5_unknown_caller == 10 &&
+            result.entry_point5_unknown_stack_object == 20 &&
+            result.entry_point5_unknown_action == 4108,
+            "unknown actor EP5 must fail closed and retain the exact pair for diagnosis");
+    auto unknown_blocker_ep5 = [](std::int16_t caller, std::int16_t) -> std::optional<bool> {
+        if (caller == 10) return false;
+        return std::nullopt;
+    };
+    result = build({object(20, 0, 4108)}, 0, 4108, true, {}, unknown_blocker_ep5);
+    require(result.state == AttemptWalkObstacleState::unsupported &&
+            result.reason == AttemptWalkObstacleReason::entry_point5_result_unknown &&
+            result.entry_point5_unknown_caller == 20 &&
+            result.entry_point5_unknown_stack_object == 10 &&
+            result.entry_point5_unknown_action == 4108,
+            "unknown blocker EP5 must retain its reversed caller/stack pair");
 
     auto actor_inside = object(20, 0, 0, 1, AttemptWalkFootprintState::present,
                                CollisionBox{30, 30, 35, 35});

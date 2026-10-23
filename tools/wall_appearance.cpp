@@ -211,8 +211,16 @@ void emit_route_grid_diagnostic(
   if(routine==ep5_cache.end())return std::nullopt;
   const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
   const auto attribute16=saved.world->read(frame,1,16);
+  const auto* stack_definition=definitions.unique(stack_object->definition->guid);
+  const auto definition_word9=stack_definition
+      ?std::optional<std::uint16_t>{stack_definition->definition.object_type}:std::nullopt;
+  const auto person_data31=saved.world->read(frame,19,31);
+  const auto attribute1=saved.world->read(frame,0,1);
+  const auto person_data65=saved.world->read(frame,19,65);
   const auto execution=odh::evaluate_read_only_entry_point5(action,routine->second,
-      stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
+      stack_object->definition->guid,stack_object->definition->master_guid,attribute16,
+      definition_word9,person_data31,attribute1,
+      stack_object->kind==odh::EntityKind::avatar,person_data65);
   if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)return true;
   if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_false)return false;
   return std::nullopt;

@@ -1072,6 +1072,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::optional<SavedObjectSelection> seated_action_target;
         std::optional<std::uint64_t> seated_action_actor_generation;
         std::optional<std::uint64_t> route_spatial_revision;
+        std::optional<std::int16_t> route_ep5_unknown_caller,route_ep5_unknown_stack_object;
+        std::optional<std::uint16_t> route_ep5_unknown_action;
         std::size_t route_movement_callbacks=0,route_snapshot_refreshes=0;
         bool go_here_cancel_pending=false;
         std::string ui_go_here_status="not_requested",ui_go_here_diagnostic;
@@ -1555,6 +1557,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::string route_runtime_reason=saved_world_main?"runtime_route_context_not_prepared":"requires_saved_world_main";
     std::string route_goal_validation_diagnostic;
     std::size_t route_runtime_movement_callbacks=0;
+    std::optional<std::int16_t> route_ep5_unknown_caller,route_ep5_unknown_stack_object;
+    std::optional<std::uint16_t> route_ep5_unknown_action;
     std::vector<odh::EntityPosition> route_runtime_movement_positions;
     std::size_t route_runtime_snapshot_refreshes=0;
     std::optional<std::uint64_t> route_runtime_spatial_revision;
@@ -1960,8 +1964,17 @@ struct PlacementCandidateProbe {
         }
         const odh::VmFrame frame{odh::routine_key(4096),0,{caller_id,caller_id,stack_object_id,0},{},{}};
         const auto attribute16=world.read(frame,1,16);
+        const auto* stack_definition=definition_index->unique(stack_object->definition->guid);
+        const auto definition_word9=stack_definition
+            ? std::optional<std::uint16_t>{stack_definition->definition.object_type}
+            : std::nullopt;
+        const auto person_data31=world.read(frame,19,31);
+        const auto attribute1=world.read(frame,0,1);
+        const auto person_data65=world.read(frame,19,65);
         const auto execution=odh::evaluate_read_only_entry_point5(evidence.action,routine->second,
-            stack_object->definition->guid,stack_object->definition->master_guid,attribute16);
+            stack_object->definition->guid,stack_object->definition->master_guid,attribute16,
+            definition_word9,person_data31,attribute1,
+            stack_object->kind==odh::EntityKind::avatar,person_data65);
         evidence.status=odh::read_only_entry_point5_state_name(execution.state);
         evidence.reason=execution.reason;evidence.steps=execution.steps;
         if(execution.state==odh::ReadOnlyEntryPoint5State::evaluated_true)evidence.result=true;
@@ -2420,13 +2433,25 @@ struct PlacementCandidateProbe {
                     render_lot->architecture_resource(),*render_lot->prepared_architecture(),*room,
                     static_cast<std::uint8_t>(actor->position->level-1),runtime_avatar_id,
                     true,{},resolve_read_only_ep5);
-                if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
+                if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
                     route_runtime_reason=std::string("attempt_walk_snapshot_")+odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
-                else {
+                    route_ep5_unknown_caller=probe.snapshot.entry_point5_unknown_caller;
+                    route_ep5_unknown_stack_object=probe.snapshot.entry_point5_unknown_stack_object;
+                    route_ep5_unknown_action=probe.snapshot.entry_point5_unknown_action;
+                }else {
                     saved_stair_portal_endpoint_ids=probe.stair_lower_portal_ids;
                     saved_stair_portal_endpoint_ids.insert(probe.stair_upper_portal_ids.begin(),
                         probe.stair_upper_portal_ids.end());
                     auto grid=odh::build_world_room_route_grid(probe.snapshot);
+                    if(grid.reason==odh::WorldRoomRouteGridReason::route_grid_over_budget){
+                        // Match the bounded refresh path below: large rooms keep
+                        // their full obstacle inventory while allocating only a
+                        // local window around the Sim.
+                        constexpr std::int32_t radius=128;
+                        const auto x=actor->position->x,y=actor->position->y;
+                        grid=odh::build_world_room_route_grid(probe.snapshot,{},
+                            odh::WorldRoomRouteGridWindow{{x-radius,y-radius},{x+radius,y+radius}});
+                    }
                     if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid)
                         route_runtime_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);
                     else {
@@ -2518,6 +2543,9 @@ struct PlacementCandidateProbe {
         if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
             route_runtime_reason=std::string("runtime_route_refresh_snapshot_")+
                 odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
+            route_ep5_unknown_caller=probe.snapshot.entry_point5_unknown_caller;
+            route_ep5_unknown_stack_object=probe.snapshot.entry_point5_unknown_stack_object;
+            route_ep5_unknown_action=probe.snapshot.entry_point5_unknown_action;
             return false;
         }
         auto updated=odh::build_world_room_route_grid(probe.snapshot);
@@ -2764,9 +2792,19 @@ struct PlacementCandidateProbe {
             static_cast<std::uint8_t>(actor->position->level-1),runtime.id,true,{},resolve_read_only_ep5);
         if(probe.snapshot.state!=odh::AttemptWalkObstacleState::ready){
             runtime.route_reason=std::string("attempt_walk_snapshot_")+
-                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);continue;
+                odh::attempt_walk_obstacle_reason_name(probe.snapshot.reason);
+            runtime.route_ep5_unknown_caller=probe.snapshot.entry_point5_unknown_caller;
+            runtime.route_ep5_unknown_stack_object=probe.snapshot.entry_point5_unknown_stack_object;
+            runtime.route_ep5_unknown_action=probe.snapshot.entry_point5_unknown_action;
+            continue;
         }
         auto grid=odh::build_world_room_route_grid(probe.snapshot);
+        if(grid.reason==odh::WorldRoomRouteGridReason::route_grid_over_budget){
+            constexpr std::int32_t radius=128;
+            const auto x=actor->position->x,y=actor->position->y;
+            grid=odh::build_world_room_route_grid(probe.snapshot,{},
+                odh::WorldRoomRouteGridWindow{{x-radius,y-radius},{x+radius,y+radius}});
+        }
         if(grid.state!=odh::WorldRoomRouteGridState::ready||!grid.grid){
             runtime.route_reason=std::string("route_grid_")+odh::world_room_route_grid_reason_name(grid.reason);continue;
         }
@@ -4454,6 +4492,15 @@ struct PlacementCandidateProbe {
             std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);
             std::cout<<",\"routing\":{\"reason\":"<<json_bytes(member.route_reason)
                 <<",\"active\":"<<(member.routing&&member.routing->active()?"true":"false")
+                <<",\"entry_point5_unknown\":";
+            if(member.route_ep5_unknown_caller&&member.route_ep5_unknown_stack_object){
+                std::cout<<"{\"caller\":"<<*member.route_ep5_unknown_caller
+                    <<",\"stack_object\":"<<*member.route_ep5_unknown_stack_object
+                    <<",\"action\":";
+                if(member.route_ep5_unknown_action)std::cout<<*member.route_ep5_unknown_action;else std::cout<<"null";
+                std::cout<<'}';
+            }else std::cout<<"null";
+            std::cout
                 <<",\"movement_callbacks\":"<<member.route_movement_callbacks
                 <<",\"snapshot_refreshes\":"<<member.route_snapshot_refreshes<<",\"room_id\":";
             if(member.route_grid)std::cout<<member.route_grid->room_id;else std::cout<<"null";
@@ -4878,7 +4925,14 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
         <<",\"reason\":"<<json_bytes(route_runtime_reason)
-        <<",\"goal_validation_diagnostic\":"<<json_bytes(runtime_routing&&
+        <<",\"entry_point5_unknown\":";
+    if(route_ep5_unknown_caller&&route_ep5_unknown_stack_object){
+        std::cout<<"{\"caller\":"<<*route_ep5_unknown_caller
+            <<",\"stack_object\":"<<*route_ep5_unknown_stack_object<<",\"action\":";
+        if(route_ep5_unknown_action)std::cout<<*route_ep5_unknown_action;else std::cout<<"null";
+        std::cout<<'}';
+    }else std::cout<<"null";
+    std::cout<<",\"goal_validation_diagnostic\":"<<json_bytes(runtime_routing&&
             (runtime_routing->diagnostic().rfind("host goal validator rejected",0)==0||
              runtime_routing->diagnostic().rfind("GotoRelativePosition target rejected by host",0)==0)?
                 route_goal_validation_diagnostic:std::string{})

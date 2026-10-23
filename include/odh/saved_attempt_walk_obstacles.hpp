@@ -64,6 +64,9 @@ struct AttemptWalkObstacleSnapshot {
     std::vector<std::int16_t> entity_obstacle_ids;
     std::optional<std::int16_t> unsupported_entity_id;
     std::size_t entry_point5_calls = 0;
+    std::optional<std::int16_t> entry_point5_unknown_caller;
+    std::optional<std::int16_t> entry_point5_unknown_stack_object;
+    std::optional<std::uint16_t> entry_point5_unknown_action;
     std::size_t skipped_nonblocking_entities = 0;
     std::size_t exempted_by_entry_point5 = 0;
     bool start_intersects = false;

@@ -22,7 +22,12 @@ ReadOnlyEntryPoint5Result evaluate_read_only_entry_point5(
     std::uint16_t routine_id, const Bhav&,
     std::uint32_t stack_object_guid,
     std::optional<std::uint32_t> stack_object_master_guid,
-    std::optional<std::int16_t> stack_object_attribute16);
+    std::optional<std::int16_t> stack_object_attribute16,
+    std::optional<std::uint16_t> stack_object_definition_word9 = {},
+    std::optional<std::int16_t> stack_object_person_data31 = {},
+    std::optional<std::int16_t> caller_attribute1 = {},
+    std::optional<bool> stack_object_is_live_avatar = {},
+    std::optional<std::int16_t> stack_object_person_data65 = {});
 
 const char* read_only_entry_point5_state_name(ReadOnlyEntryPoint5State) noexcept;
 

@@ -194,14 +194,24 @@ AttemptWalkObstacleSnapshot build_attempt_walk_obstacles(
             continue;
         }
         if (!actor_entry_point5_action)
-            return unsupported(AttemptWalkObstacleReason::entry_point5_unknown);
+        {
+            auto failure=unsupported(AttemptWalkObstacleReason::entry_point5_unknown);
+            failure.entry_point5_unknown_caller=actor_id;
+            failure.entry_point5_unknown_stack_object=entity.id;
+            return failure;
+        }
         const auto actor_calls_before = result.entry_point5_calls;
         const auto actor_exempts = evaluate_ep5(actor_id, entity.id, actor_entry_point5_action);
-        if (!actor_exempts)
-            return unsupported(result.entry_point5_calls == limits.entry_point5_calls &&
+        if (!actor_exempts) {
+            auto failure=unsupported(result.entry_point5_calls == limits.entry_point5_calls &&
                                actor_calls_before == result.entry_point5_calls
                 ? AttemptWalkObstacleReason::entry_point5_budget_exhausted
                 : AttemptWalkObstacleReason::entry_point5_result_unknown);
+            failure.entry_point5_unknown_caller=actor_id;
+            failure.entry_point5_unknown_stack_object=entity.id;
+            failure.entry_point5_unknown_action=actor_entry_point5_action;
+            return failure;
+        }
         bool exempt = *actor_exempts;
         if (!exempt) {
             if (!entity.entry_point5_action) {
@@ -212,12 +222,17 @@ AttemptWalkObstacleSnapshot build_attempt_walk_obstacles(
             const auto blocker_calls_before = result.entry_point5_calls;
             const auto blocker_exempts = evaluate_ep5(entity.id, actor_id,
                                                        entity.entry_point5_action);
-            if (!blocker_exempts)
-                return unsupported(result.entry_point5_calls == limits.entry_point5_calls &&
+            if (!blocker_exempts) {
+                auto failure=unsupported(result.entry_point5_calls == limits.entry_point5_calls &&
                                    blocker_calls_before == result.entry_point5_calls &&
                                    *entity.entry_point5_action > 255
                     ? AttemptWalkObstacleReason::entry_point5_budget_exhausted
                     : AttemptWalkObstacleReason::entry_point5_result_unknown);
+                failure.entry_point5_unknown_caller=entity.id;
+                failure.entry_point5_unknown_stack_object=actor_id;
+                failure.entry_point5_unknown_action=entity.entry_point5_action;
+                return failure;
+            }
             exempt = *blocker_exempts;
         }
         if (exempt) {

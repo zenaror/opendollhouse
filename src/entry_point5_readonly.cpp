@@ -33,12 +33,86 @@ bool supported_shape(std::uint16_t routine_id, const Bhav& bhav,
         return false;
     return true;
 }
+
+bool is_urnstone_shape(std::uint16_t routine_id, const Bhav& bhav) {
+    if (routine_id != 4105 || bhav.version != 0x8002 || !bhav.metadata ||
+        bhav.metadata->type != 0 || bhav.metadata->arguments != 1 ||
+        bhav.metadata->locals != 0 || bhav.metadata->tree_version != 3 ||
+        bhav.instructions.size() != 2) return false;
+    const auto& is_person = bhav.instructions[0];
+    const auto& same_neighbor = bhav.instructions[1];
+    return is_person.opcode == 2 && is_person.on_true == 1 && is_person.on_false == 0xff &&
+        word(is_person, 0) == 9 && word(is_person, 2) == 2 &&
+        is_person.operands[4] == 0 && is_person.operands[5] == 2 &&
+        is_person.operands[6] == 21 && is_person.operands[7] == 7 &&
+        same_neighbor.opcode == 2 && same_neighbor.on_true == 0xfe &&
+        same_neighbor.on_false == 0xff && word(same_neighbor, 0) == 31 &&
+        word(same_neighbor, 2) == 1 && same_neighbor.operands[4] == 0 &&
+        same_neighbor.operands[5] == 2 && same_neighbor.operands[6] == 19 &&
+        same_neighbor.operands[7] == 0;
+}
+
+bool is_dining_table_shape(std::uint16_t routine_id, const Bhav& bhav) {
+    if (routine_id != 4122 || bhav.version != 0x8002 || !bhav.metadata ||
+        bhav.metadata->type != 0 || bhav.metadata->arguments != 0 ||
+        bhav.metadata->locals != 0 || bhav.metadata->tree_version != 1 ||
+        bhav.instructions.size() != 3) return false;
+    const auto& verify_person = bhav.instructions[0];
+    const auto& bit_two = bhav.instructions[1];
+    const auto& bit_three = bhav.instructions[2];
+    const auto exact_flag_test = [](const Instruction& instruction, std::uint16_t bit,
+                                    std::uint8_t on_false) {
+        return instruction.opcode == 2 && instruction.on_true == 0xfe &&
+            instruction.on_false == on_false && word(instruction, 0) == 65 &&
+            word(instruction, 2) == bit && instruction.operands[4] == 0 &&
+            instruction.operands[5] == 8 && instruction.operands[6] == 19 &&
+            instruction.operands[7] == 7;
+    };
+    // The call is Global 355, the audited "verify person in stack obj" routine.
+    // Its exact behavior is to search the live avatar set for StackObjectID.
+    return verify_person.opcode == 355 && verify_person.on_true == 1 &&
+        verify_person.on_false == 0xff && verify_person.operands ==
+            std::array<std::uint8_t, 8>{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff} &&
+        exact_flag_test(bit_two, 2, 2) && exact_flag_test(bit_three, 3, 0xff);
+}
 } // namespace
 
 ReadOnlyEntryPoint5Result evaluate_read_only_entry_point5(
     std::uint16_t routine_id, const Bhav& bhav, std::uint32_t stack_object_guid,
     std::optional<std::uint32_t> stack_object_master_guid,
-    std::optional<std::int16_t> stack_object_attribute16) {
+    std::optional<std::int16_t> stack_object_attribute16,
+    std::optional<std::uint16_t> stack_object_definition_word9,
+    std::optional<std::int16_t> stack_object_person_data31,
+    std::optional<std::int16_t> caller_attribute1,
+    std::optional<bool> stack_object_is_live_avatar,
+    std::optional<std::int16_t> stack_object_person_data65) {
+    if (is_urnstone_shape(routine_id, bhav)) {
+        if (!stack_object_definition_word9)
+            return {ReadOnlyEntryPoint5State::unsupported, "stack_object_definition_word9_unavailable", 0};
+        if (*stack_object_definition_word9 != 2)
+            return {ReadOnlyEntryPoint5State::evaluated_false, "read_only_bhav_completed", 1};
+        if (!stack_object_person_data31)
+            return {ReadOnlyEntryPoint5State::unsupported, "stack_object_person_data31_unavailable", 1};
+        if (!caller_attribute1)
+            return {ReadOnlyEntryPoint5State::unsupported, "caller_attribute1_unavailable", 1};
+        return {*stack_object_person_data31 == *caller_attribute1
+                    ? ReadOnlyEntryPoint5State::evaluated_true
+                    : ReadOnlyEntryPoint5State::evaluated_false,
+                "read_only_bhav_completed", 2};
+    }
+    if (is_dining_table_shape(routine_id, bhav)) {
+        if (!stack_object_is_live_avatar)
+            return {ReadOnlyEntryPoint5State::unsupported, "stack_object_avatar_presence_unavailable", 1};
+        if (!*stack_object_is_live_avatar)
+            return {ReadOnlyEntryPoint5State::evaluated_false, "read_only_bhav_completed", 1};
+        if (!stack_object_person_data65)
+            return {ReadOnlyEntryPoint5State::unsupported, "stack_object_person_data65_unavailable", 1};
+        const auto flags = static_cast<std::uint16_t>(*stack_object_person_data65);
+        return {(flags & ((1U << 1) | (1U << 2))) != 0
+                    ? ReadOnlyEntryPoint5State::evaluated_true
+                    : ReadOnlyEntryPoint5State::evaluated_false,
+                "read_only_bhav_completed", 3};
+    }
     std::uint32_t tested_guid = 0;
     if (!supported_shape(routine_id, bhav, tested_guid))
         return {ReadOnlyEntryPoint5State::unsupported, "bhav_shape_not_in_read_only_allowlist", 0};

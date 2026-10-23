@@ -95,6 +95,28 @@ avatar e não integra Route45 ao Main. Esses campos continuam explicitamente
 falsos. Consulte [`rect-router-validation.md`](rect-router-validation.md) para
 comparar os corredores bruto e otimizado.
 
+## Legacy Collection House05, 2026-10-23
+
+O probe Linux com dados da Legacy Collection isolados em `/tmp` encontrou duas
+regras comerciais adicionais em `EntryPoint5`: `UrnStone.iff#4105` compara o
+tipo do objeto com 2 e, para Sims, `PersonData[31]` com `Attribute[1]`; já
+`DiningTables.iff#4122` confirma pelo `Global.iff#355` que o objeto é um avatar
+ativo e testa as flags 2 e 3 de `PersonData[65]`. O avaliador aceita apenas
+essas formas BHAV exatas, lê os bancos do World atual e continua retornando
+`unsupported` quando algum dado necessário não está disponível. Testes
+sintéticos cobrem resultados verdadeiro/falso, curto-circuitos, dados ausentes
+e formatos alterados.
+
+Com essas regras, o snapshot real da House05 avançou para a criação da grade de
+rota. A grade completa excedia o teto de células; o início de rota agora aplica
+a mesma janela local de 128 unidades em cada direção que a atualização de rota
+já usava, mantendo o inventário completo de obstáculos. A execução headless
+confirmou `route_runtime=ready_dynamic_single_room_grid`, mas ainda não moveu o
+Sim (`movement_callbacks=0`). O teste de viagem 5→7 encerrou com código 3
+quando o residente 16 encontrou `SLOT runtime profile not implemented`; não
+houve chegada nem retorno. Portanto, esses resultados removem dois bloqueios
+de leitura e um bloqueio de alocação, mas não provam caminhada ou viagem real.
+
 ## Testes
 
 `world_attempt_walk` usa um World sintético para confirmar caixas live,
