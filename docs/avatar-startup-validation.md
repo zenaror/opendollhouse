@@ -60,6 +60,13 @@ argumentos, ordem, entradas puladas, ausência de Main e limite agregado. Isso
 prepara a futura construção de membros FAMI, mas ainda não instancia residentes
 ausentes nem valida chegada, persistência ou equivalência nativa.
 
+O CTest sintético `household_startup` liga esse helper ao candidato privado de
+`stage_household_members`: Init e entrada8 escrevem palavras do próprio avatar,
+entrada8 usa o RNG explícito, e NBRS/FAMI só são herdados depois do startup. A
+fonte original permanece igual e a posição continua vazia. Isso valida a ligação
+entre essas peças com instruções inventadas; não demonstra os recursos reais do
+morador, chegada no lote, save ou uma partida jogável.
+
 ## BodySTR e dados de movimento
 
 O core usa somente o grupo US0/1. BodySTR presente requer índices0–22 e age13

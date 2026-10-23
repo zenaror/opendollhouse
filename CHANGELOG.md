@@ -5,6 +5,13 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Adicionado
+
+- Um teste sintético liga a criação isolada de um morador ausente ao startup
+  Init/entrada8, ao RNG explícito e à herança posterior dos dados NBRS/FAMI. Ele
+  confirma que as escritas ficam no terreno temporário, mas não valida chegada,
+  saves nem uma partida real.
+
 ### Alterado
 
 - Ao escolher uma casa vazia quando há famílias sem casa, mas nenhuma tem saldo
