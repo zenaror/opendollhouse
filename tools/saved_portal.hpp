@@ -11,6 +11,7 @@
 struct SavedSemiglobalCodeBank {
     std::string archive,entry,name;
     odh::RoutineSet routines;
+    std::map<std::string,std::uint16_t> named_routines;
 };
 
 struct SavedGlobalCodeBank {
@@ -88,6 +89,8 @@ inline SavedSemiglobalCodeBank load_saved_semiglobal_code_bank(
             instructions+=routine.instructions.size();
             if(!result.routines.emplace(odh::routine_key(chunk.id),std::move(routine)).second)
                 throw odh::FormatError("duplicate semiglobal BHAV in linked resource");
+            auto label=chunk.label.substr(0,chunk.label.find('\0'));
+            if(!label.empty())result.named_routines.emplace(std::move(label),chunk.id);
         },limits);
     });
     if(result.routines.empty())throw odh::FormatError("linked semiglobal contains no routines");

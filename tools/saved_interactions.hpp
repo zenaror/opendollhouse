@@ -1,10 +1,12 @@
 #pragma once
 #include "odh/animation.hpp"
 #include "odh/definition_index.hpp"
+#include "odh/entity_next.hpp"
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <map>
 
 // TTAB/TTAs discovery is static. The separate evaluator below reports only an
 // isolated ODH VM TestFunction result; neither operation exposes a pie menu or
@@ -98,6 +100,7 @@ inline odh::RoutineSet load_saved_private_routines(const odh::DefinitionCandidat
 
 struct SavedTreeNameCatalog {
     std::vector<std::string> private_bhav_labels;
+    std::map<std::string,std::uint16_t> private_bhav_ids;
     std::optional<std::string> semiglobal_name;
 };
 
@@ -108,13 +111,18 @@ inline SavedTreeNameCatalog load_saved_tree_name_catalog(const odh::DefinitionCa
     SavedTreeNameCatalog result;
     const auto scan=[&](const odh::View& view){odh::Limits limits;limits.iff_chunks=4096;
         odh::iff_chunks(view,[&](const odh::Chunk& chunk){
-            if(chunk.type=="GLOB"&&!chunk.label.empty()){
-                if(result.semiglobal_name&&*result.semiglobal_name!=chunk.label)
+            if(chunk.type=="GLOB"){
+                const auto glob=odh::read_glob(chunk.payload);
+                if(glob.name.empty())return;
+                if(result.semiglobal_name&&*result.semiglobal_name!=glob.name)
                     throw odh::FormatError("conflicting semiglobal links in exact object resource");
-                result.semiglobal_name=chunk.label;
+                result.semiglobal_name=glob.name;
             }
-            if(chunk.type=="BHAV"&&odh::routine_key(chunk.id).scope==odh::RoutineScope::private_object)
-                result.private_bhav_labels.push_back(chunk.label);
+            if(chunk.type=="BHAV"&&odh::routine_key(chunk.id).scope==odh::RoutineScope::private_object){
+                auto label=chunk.label.substr(0,chunk.label.find('\0'));
+                result.private_bhav_labels.push_back(label);
+                if(!label.empty())result.private_bhav_ids.emplace(std::move(label),chunk.id);
+            }
         },limits);};
     if(definition.asset.empty())with_iff_file(definition.source,scan);
     else with_far_entry(definition.source,definition.asset,scan);
@@ -175,7 +183,7 @@ struct SavedTestFunctionResult {
 // other TTAB permission bits remain unsupported.
 inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
-    const odh::Entity* actor) {
+    const odh::Entity* actor,const odh::RoutineSet* linked_semiglobal=nullptr) {
     std::vector<std::size_t> result;
     if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return result;
     // Simitone CheckTS1Action reads these saved person-data fields directly:
@@ -190,9 +198,13 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const auto count=std::min<std::size_t>({interactions.table->interactions.size(),tests.size(),32});
     for(std::size_t n=0;n<count;++n){
         const auto& row=interactions.table->interactions[n];
+        const auto action_key=odh::routine_key(row.action);
+        const bool action_owner_supported=action_key.scope==odh::RoutineScope::private_object||
+            (action_key.scope==odh::RoutineScope::semiglobal&&linked_semiglobal&&
+             linked_semiglobal->count(action_key));
         if((row.flags&~allow_visitors)!=0||(is_visitor&&(row.flags&allow_visitors)==0)||
            tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
-           odh::routine_key(row.action).scope!=odh::RoutineScope::private_object)continue;
+           !action_owner_supported)continue;
         result.push_back(n);
     }
     return result;
@@ -212,8 +224,8 @@ inline std::optional<std::size_t> cycle_eligible_saved_interaction_row(
 
 inline std::optional<std::size_t> first_eligible_saved_interaction(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
-    const odh::Entity* actor) {
-    const auto rows=eligible_saved_interaction_rows(interactions,tests,actor);
+    const odh::Entity* actor,const odh::RoutineSet* linked_semiglobal=nullptr) {
+    const auto rows=eligible_saved_interaction_rows(interactions,tests,actor,linked_semiglobal);
     return rows.empty()?std::nullopt:std::optional<std::size_t>(rows.front());
 }
 
@@ -225,7 +237,9 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const odh::DefinitionCandidate& definition,const odh::World& world,
     std::int16_t caller,std::int16_t target,const std::vector<std::uint16_t>& tests,
     std::uint64_t total_budget=4096,std::uint64_t per_test_budget=128,
-    const std::vector<std::int16_t>& arguments={0}) {
+    const std::vector<std::int16_t>& arguments={0},
+    const odh::RoutineSet* linked_semiglobal=nullptr,
+    const std::vector<std::vector<std::int16_t>>& multitile_groups={}) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -240,15 +254,30 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     catch(const odh::FormatError& error){invalid=true;load_error=error.what();}
     if(invalid){for(const auto test:tests)result.push_back({SavedTestFunctionResult::State::unsupported,test,0,load_error});return result;}
 
+    if(linked_semiglobal)for(const auto& [key,routine]:*linked_semiglobal)
+        if(key.scope==odh::RoutineScope::semiglobal&&!routines.emplace(key,routine).second){
+            for(const auto test:tests)result.push_back({SavedTestFunctionResult::State::unsupported,test,0,"private and linked semiglobal routine keys collide"});
+            return result;
+        }
     odh::VmLimits limits;limits.stack_depth=16;limits.frame_variables=256;limits.code_owners=2;
-    odh::VmMemory memory;memory.read=[&world](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){return world.read(frame,scope,index);};
+    odh::VmMemory memory;memory.read=[&world](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
+        const auto value=world.read(frame,scope,index);
+        // Simitone initializes every declared attribute to zero and reads
+        // beyond the declared length as zero. Preserve that read-only rule.
+        if(!value&&index>=0&&(scope==0||scope==1))return std::optional<std::int16_t>{0};
+        return value;
+    };
     odh::RoutineOwners owners;owners.emplace(static_cast<odh::CodeOwner>(target),std::move(routines));
-    odh::Vm probe({},std::move(memory),limits,{},std::move(owners));
+    auto primitive=odh::entity_next_primitive(world,memory,{},multitile_groups);
+    odh::Vm probe({},std::move(memory),limits,std::move(primitive),std::move(owners));
     std::uint64_t spent=0;
     for(const auto test:tests){
         SavedTestFunctionResult item;item.routine=test;
         const auto key=odh::routine_key(test);
-        if(key.scope!=odh::RoutineScope::private_object){item.diagnostic="test owner is not the selected object's private resource";result.push_back(std::move(item));continue;}
+        if(key.scope!=odh::RoutineScope::private_object&&
+           !(key.scope==odh::RoutineScope::semiglobal&&linked_semiglobal&&linked_semiglobal->count(key))){
+            item.diagnostic="test owner is not the selected object's private resource or its explicitly linked semiglobal";result.push_back(std::move(item));continue;
+        }
         if(spent>=total_budget){item.diagnostic="total TestFunction instruction budget exhausted";result.push_back(std::move(item));continue;}
         const auto budget=std::min(per_test_budget,total_budget-spent);
         const auto generation_actor=actor->generation,generation_object=object->generation;

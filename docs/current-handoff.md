@@ -28,13 +28,26 @@ asset. O teste sintético confirmou que essa herança encontra a tabela 131 e
 recusa usar um mestre de outro recurso; `odh-saved-interactions-tests` passou
 46 verificações.
 
-Uma execução headless de 512 ticks no House05 original com residente de
-neighbor ID 34 e alvo 173 agora encontra a TTAB, mas não enfileira a ação: o
-teste 8214 não pode ser avaliado pelo perfil atual do TestFunction. Portanto a
-ação 8213 e a EntryPoint26 8215 ainda não foram executadas, e o banco não está
-validado como interação funcional. Próximo passo: ampliar com segurança o
-avaliador/serviços de TestFunction necessários a 8214, repetir esse mesmo
-fluxo real e só então seguir para rota, animação e Snap.
+O teste 8214 do banco chama BHAV semiglobal 8260, ligado pelo GLOB do recurso
+do objeto, e usa SetToNext para percorrer as peças do banco. O avaliador agora
+carrega somente o semiglobal explicitamente ligado, usa a busca limitada às
+peças salvas do mesmo grupo e lê atributos ausentes como zero, conforme o
+comportamento observado no Simitone. A tabela GLOB é lida de seu conteúdo, e
+não do rótulo do bloco IFF. A ação 8213 também é semiglobal; só é aceita quando
+aparece no banco ligado. RunTreeByName agora chama rotinas privadas ou
+semiglobais identificadas pelo rótulo, no perfil de subrotina da mesma thread.
+
+No teste integrado de 512 ticks, instalação original, House05, modo 1,
+residente neighbor ID 34, sessão de um morador e alvo 173, a ação 8213 foi
+enfileirada e retornou `true`; o morador terminou anexado ao banco 173, slot 0,
+com a animação `a2o-idle-sit-3`. A VM terminou sem falha. Isso demonstra o
+primeiro sentar nesse lote real pelo ODH, mas não confirma levantar, salvar e
+retomar o assento, interação natural pelo clique, execução de toda expansão ou
+paridade geral com Simitone. O teste sintético de descoberta agora passa 49
+verificações; também passaram os testes focados de fila, SLOT e VM. Próximo
+passo: exercitar levantar e persistência do assento na mesma sessão e depois
+repetir em mais lotes/casas. A paridade funcional com Simitone continua sendo
+o critério da primeira build jogável.
 
 ## Atualização: condições simples da EntryPoint26 (2026-10-23)
 

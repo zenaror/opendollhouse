@@ -110,6 +110,9 @@ int main(int argc,char** argv){try {
   f.vm.start(key(4096),{1,1,1,0},{0});
   require(f.queue.bind(f.vm)&&f.queue.tick(1)&&f.queue.size()==0&&!f.queue.active()&&!f.queue.completion(),"restart invalidates events and queued state even after rebind");
  }
+ {Fixture f;f.vm.start(key(4096),{1,1,1,0},{0});
+  require(f.enqueue()&&f.queue.size()==1,"empty interaction queue adopts the first saved-world Main generation");
+ }
  {Fixture f;f.enqueue();f.world.remove(2);f.world.create(2,odh::EntityKind::object);
   require(f.vm.run(10)==odh::VmStatus::fault&&f.vm.stack().size()==1&&f.vm.stack()[0].arguments[0]==0,"recycled target generation fails before parent write/action execution");
  }

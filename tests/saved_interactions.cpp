@@ -54,6 +54,10 @@ int main(){try{
     check(no_cross_resource.state==SavedObjectInteractions::State::missing_ttab&&
           no_cross_resource.table_id==0xffff,
           "multitile part never inherits a master TTAB from another resource");
+    data=iff(chunk("GLOB",128,std::string(1,'\x0b')+"SofaGlobals"));write(path,data);
+    const auto linked_catalog=load_saved_tree_name_catalog(part_candidate);
+    check(linked_catalog.semiglobal_name==std::optional<std::string>("SofaGlobals"),
+          "GLOB semiglobal link is decoded from the payload, not the IFF chunk label");
     data=iff(chunk("TTAB",128,ttab())+chunk("TTAs",128,localized_labels()));write(path,data);
     const auto portuguese=saved_object_interactions({path.string(),"",7,object},14);
     const auto missing_language=saved_object_interactions({path.string(),"",7,object},5);
@@ -71,6 +75,13 @@ int main(){try{
     const auto* actor=actor_world.find(1);
     check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
         "zero-flag private action accepts resident with matching eligible TestFunction");
+    auto semiglobal_action=no_labels;
+    semiglobal_action.table->interactions[0].action=8213;
+    odh::RoutineSet linked_actions{{odh::routine_key(8213),odh::Bhav{0x8002,{}, {},odh::Bhav::Metadata{0,4,4,0}}}};
+    check(!first_eligible_saved_interaction(semiglobal_action,eligible_row,actor),
+        "semiglobal ActionFunction is rejected when its exact linked code bank is absent");
+    check(first_eligible_saved_interaction(semiglobal_action,eligible_row,actor,&linked_actions)==0,
+        "semiglobal ActionFunction is accepted only when present in the explicit linked bank");
     auto multiple=no_labels;
     multiple.table->interactions.push_back(multiple.table->interactions[0]);
     multiple.table->interactions.push_back(multiple.table->interactions[0]);

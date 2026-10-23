@@ -950,7 +950,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     throw odh::FormatError("saved World TreeByName definition cache budget exceeded");
                 const auto* candidate=definition_index->unique(entity->definition->guid);
                 if(!candidate)throw odh::FormatError("saved World TreeByName definition unavailable or ambiguous");
-                saved_tree_names.emplace(entity->definition->guid,load_saved_tree_name_catalog(*candidate));
+                auto catalog=load_saved_tree_name_catalog(*candidate);
+                if(!catalog.semiglobal_name&&candidate->definition.tree_table_id==0xffff&&
+                   candidate->definition.master_id!=0){
+                    if(const auto* master=definition_index->unique_master(*candidate))
+                        catalog.semiglobal_name=load_saved_tree_name_catalog(*master).semiglobal_name;
+                }
+                saved_tree_names.emplace(entity->definition->guid,std::move(catalog));
             }
             if(!restored_world->world->define_entry_points(id,cached->second))
                 throw odh::FormatError("saved World EntryPoint binding exceeds World limits");
@@ -1264,7 +1270,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(diagnostics.retain(Diagnostic::entity_next,entity_next.size(),10000))entity_next.push_back(value);
     },std::move(multitile_groups));
     const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
-        const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        const std::array<std::int16_t,20>& temps,const odh::VmDispatch&)->odh::PrimitiveOutcome{
         if(instruction.opcode!=28)return {};
         const auto table_id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
         const auto string_scope=instruction.operands[2];
@@ -1285,12 +1291,22 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto catalog=saved_tree_names.find(target->definition->guid);
         if(catalog==saved_tree_names.end())
             return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target catalog is unavailable"};
-        if(catalog->second.semiglobal_name)
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target has an unresolved semiglobal tree catalog"};
-        if(std::find(catalog->second.private_bhav_labels.begin(),catalog->second.private_bhav_labels.end(),name->value)!=
-           catalog->second.private_bhav_labels.end())
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName found a private tree but runtime subroutine dispatch is not installed"};
-        return {odh::PrimitiveDisposition::goto_false,{}};
+        std::optional<odh::RoutineKey> routine;
+        const auto private_tree=catalog->second.private_bhav_ids.find(name->value);
+        if(private_tree!=catalog->second.private_bhav_ids.end())
+            routine=odh::routine_key(private_tree->second);
+        if(!routine&&catalog->second.semiglobal_name&&globals&&!globals->standalone){
+            const auto entry=*catalog->second.semiglobal_name+".iff";
+            const auto bank=load_saved_semiglobal_code_bank(globals->archive,entry);
+            const auto named=bank.named_routines.find(name->value);
+            if(named!=bank.named_routines.end())routine=odh::routine_key(named->second);
+        }
+        if(!routine)return {odh::PrimitiveDisposition::goto_false,{}};
+        if(destination!=2)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName destination is not the supported same-thread subroutine profile"};
+        std::vector<std::int16_t> arguments(temps.begin(),temps.begin()+4);
+        return {odh::PrimitiveDisposition::call,{}, {},
+            odh::VmCall{*routine,frame.context,std::move(arguments)}};
     };
     std::optional<odh::RelationshipState> original_relationships;
     if(neighbors&&!restoring_session)original_relationships.emplace(*neighbors);
@@ -2049,6 +2065,13 @@ struct PlacementCandidateProbe {
             [&](const auto& member){return member->id==actor_id;});
         return found==household_runtime.end()?nullptr:&(*found)->action_code_owners;
     };
+    const auto is_known_nonspatial_object=[&](const odh::Entity& entity){
+        if(!entity.definition||!definition_index)return false;
+        const auto* candidate=definition_index->unique(entity.definition->guid);
+        // Simitone's OBJD type 7 covers tools/controllers such as AnimTester;
+        // these are not positioned furniture or sitting targets.
+        return candidate&&candidate->definition.object_type==7;
+    };
     const auto actor_seated_binding=[&](std::int16_t actor_id)
         ->std::pair<std::optional<SavedObjectSelection>*,std::optional<std::uint64_t>*> {
         if(actor_id==runtime_avatar_id)return {&seated_action_target,&seated_action_actor_generation};
@@ -2077,6 +2100,35 @@ struct PlacementCandidateProbe {
             }
         }
     }
+    const auto load_interaction_semiglobal=[&](const odh::DefinitionCandidate& candidate)
+        ->std::optional<SavedSemiglobalCodeBank>{
+        std::optional<SavedTreeNameCatalog> inherited_catalog;
+        const SavedTreeNameCatalog* catalog=nullptr;
+        const auto found=saved_tree_names.find(candidate.definition.guid);
+        if(found!=saved_tree_names.end())catalog=&found->second;
+        // A multitile child can inherit its TTAB from a master whose GLOB
+        // carries the semiglobal link; the child resource alone may not.
+        if((!catalog||!catalog->semiglobal_name)&&definition_index&&
+           candidate.definition.tree_table_id==0xffff&&candidate.definition.master_id!=0){
+            if(const auto* master=definition_index->unique_master(candidate)){
+                inherited_catalog=load_saved_tree_name_catalog(*master);
+                catalog=&*inherited_catalog;
+            }
+        }
+        if(catalog&&catalog->semiglobal_name&&globals&&!globals->standalone){
+            const auto entry=*catalog->semiglobal_name+".iff";
+            return load_saved_semiglobal_code_bank(globals->archive,entry);
+        }
+        return {};
+    };
+    const auto evaluate_interaction_tests=[&](const odh::DefinitionCandidate& candidate,
+        std::int16_t actor,std::int16_t target,const std::vector<std::uint16_t>& tests,
+        const odh::RoutineSet* linked_semiglobal=nullptr){
+        std::vector<std::vector<std::int16_t>> groups;
+        if(restored_world){groups.reserve(restored_world->multitile_groups.size());
+            for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
+        return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},linked_semiglobal,groups);
+    };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
         render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
@@ -2090,10 +2142,15 @@ struct PlacementCandidateProbe {
         tests.reserve(std::min<std::size_t>(rows.size(),32));
         for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
         const auto* actor=world.find(active_household_actor);
-        render_test_results=evaluate_saved_test_functions(*candidate,world,active_household_actor,
-            render_selection->id,tests,4096,128);
+        std::optional<SavedSemiglobalCodeBank> linked_bank;
+        try{linked_bank=load_interaction_semiglobal(*candidate);}
+        catch(const std::exception& error){
+            render_test_results.assign(tests.size(),{SavedTestFunctionResult::State::unsupported,0,0,error.what()});
+        }
+        if(render_test_results.empty())render_test_results=evaluate_interaction_tests(*candidate,
+            active_household_actor,render_selection->id,tests,linked_bank?&linked_bank->routines:nullptr);
         const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            actor);
+            actor,linked_bank?&linked_bank->routines:nullptr);
         if(!eligible.empty())render_selected_interaction_row=eligible.front();
         for(std::size_t n=render_test_results.size();n<rows.size();++n)
             render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
@@ -2132,11 +2189,26 @@ struct PlacementCandidateProbe {
         current_tests.reserve(std::min<std::size_t>(render_interactions->table->interactions.size(),32));
         for(std::size_t n=0;n<std::min<std::size_t>(render_interactions->table->interactions.size(),32);++n)
             current_tests.push_back(render_interactions->table->interactions[n].test);
-        render_test_results=evaluate_saved_test_functions(*candidate,world,actor_id,selected.id,
-            current_tests,4096,128);
-        const auto eligible_rows=eligible_saved_interaction_rows(*render_interactions,render_test_results,actor);
+        std::optional<SavedSemiglobalCodeBank> linked_bank;
+        try{linked_bank=load_interaction_semiglobal(*candidate);}
+        catch(const std::exception& error){
+            render_interaction_status="unsupported";render_interaction_diagnostic=error.what();return;
+        }
+        const auto* linked_routines=linked_bank?&linked_bank->routines:nullptr;
+        render_test_results=evaluate_interaction_tests(*candidate,actor_id,selected.id,current_tests,linked_routines);
+        const auto eligible_rows=eligible_saved_interaction_rows(*render_interactions,render_test_results,actor,linked_routines);
         if(eligible_rows.empty()){
-            render_interaction_status="unsupported";render_interaction_diagnostic="no supported private TTAB row has a matching eligible ODH TestFunction";return;
+            render_interaction_status="unsupported";
+            render_interaction_diagnostic="no TTAB row passed its TestFunction";
+            for(const auto& test:render_test_results){
+                render_interaction_diagnostic+="; BHAV"+std::to_string(test.routine)+" ";
+                if(test.state==SavedTestFunctionResult::State::ineligible)
+                    render_interaction_diagnostic+="returned false";
+                else if(test.state==SavedTestFunctionResult::State::unsupported)
+                    render_interaction_diagnostic+="unsupported: "+test.diagnostic;
+                else render_interaction_diagnostic+="eligible but row permission or action profile rejected it";
+            }
+            return;
         }
         if(!render_selected_interaction_row||std::find(eligible_rows.begin(),eligible_rows.end(),
             *render_selected_interaction_row)==eligible_rows.end()){
@@ -2151,13 +2223,22 @@ struct PlacementCandidateProbe {
                 render_interaction_status="unsupported";render_interaction_diagnostic="saved object code-owner identity space exhausted";return;
             }
             odh::RoutineSet routines;
-            try{routines=load_saved_action_routines(*candidate,row.action);}
+            const auto key=odh::routine_key(row.action);
+            try{
+                if(key.scope==odh::RoutineScope::private_object)
+                    routines=load_saved_action_routines(*candidate,row.action);
+                else if(key.scope==odh::RoutineScope::semiglobal&&linked_bank&&
+                        linked_bank->routines.count(key)){
+                    routines=load_saved_private_routines(*candidate);
+                    for(const auto& [linked_key,routine]:linked_bank->routines)
+                        routines.emplace(linked_key,routine);
+                }
+            }
             catch(const std::exception& error){
                 render_interaction_status="unsupported";render_interaction_diagnostic=error.what();return;
             }
-            const auto key=odh::routine_key(row.action);
-            if(key.scope!=odh::RoutineScope::private_object||!routines.count(key)){
-                render_interaction_status="unsupported";render_interaction_diagnostic="selected ActionFunction is absent from its exact private owner";return;
+            if(!routines.count(key)){
+                render_interaction_status="unsupported";render_interaction_diagnostic="selected ActionFunction is absent from its exact private or linked semiglobal owner";return;
             }
             const auto code_owner=next_saved_code_owner;
             if(!actor_vm->install_owner(code_owner,std::move(routines))){
@@ -2639,7 +2720,8 @@ struct PlacementCandidateProbe {
                         });
                         runtime_routing->set_sitting_slot_candidate_preflight([&](const auto& table,
                             std::size_t index,const auto&,const auto& target) {
-                            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
+                            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target,
+                                is_known_nonspatial_object);
                         });
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
@@ -3037,7 +3119,8 @@ struct PlacementCandidateProbe {
             });
         runtime.routing->set_sitting_slot_candidate_preflight([&](const auto& table,std::size_t index,
             const auto&,const auto& target) {
-            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
+            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target,
+                is_known_nonspatial_object);
         });
         runtime.routing->set_stack_object_slot_table_provider(route_stack_slot_table);
         runtime.routing->set_route_goal_validator([&,resident_id=runtime.id](const odh::VmFrame& frame,
@@ -3856,13 +3939,18 @@ struct PlacementCandidateProbe {
                     const auto count=std::min<std::size_t>(render_interactions->table->interactions.size(),32);
                     tests.reserve(count);
                     for(std::size_t n=0;n<count;++n)tests.push_back(render_interactions->table->interactions[n].test);
-                    render_test_results=evaluate_saved_test_functions(*candidate,world,active_household_actor,
-                        render_selection->id,tests,4096,128);
+                    std::optional<SavedSemiglobalCodeBank> linked_bank;
+                    try{linked_bank=load_interaction_semiglobal(*candidate);}
+                    catch(const std::exception& error){
+                        render_test_results.assign(tests.size(),{SavedTestFunctionResult::State::unsupported,0,0,error.what()});
+                    }
+                    render_test_results=evaluate_interaction_tests(*candidate,active_household_actor,
+                        render_selection->id,tests,linked_bank?&linked_bank->routines:nullptr);
+                    const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+                        world.find(active_household_actor),linked_bank?&linked_bank->routines:nullptr);
+                    render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
+                        render_selected_interaction_row,input.interaction_selection_delta);
                 }else render_test_results.clear();
-                const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-                    world.find(active_household_actor));
-                render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
-                    render_selected_interaction_row,input.interaction_selection_delta);
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
             if(input.stand&&!input.primary_click&&render_selection){
@@ -3937,16 +4025,19 @@ struct PlacementCandidateProbe {
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
             render_interaction_requested=true;
+            bool scheduled_actor_valid=true;
             if(headless_interaction_actor){
                 const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
                     [&](const auto& member){return member->id==*headless_interaction_actor;});
                 if(*headless_interaction_actor==runtime_avatar_id||resident==household_runtime.end()){
+                    scheduled_actor_valid=false;
                     render_interaction_status="unsupported";
                     render_interaction_diagnostic="scheduled action actor is not an additional member of the loaded household";
-                    continue;
+                }else{
+                    active_household_actor=*headless_interaction_actor;
                 }
-                active_household_actor=*headless_interaction_actor;
             }
+            if(scheduled_actor_valid){
             const auto* target=world.find(headless_interaction->id);
             const auto* candidate=target&&target->definition&&definition_index?
                 definition_index->unique(target->definition->guid):nullptr;
@@ -3960,6 +4051,7 @@ struct PlacementCandidateProbe {
                 prepare_selected_object(SavedObjectSelection{target->id,target->definition->guid,
                     target->generation,candidate->definition.tree_table_id});
                 request_selected_interaction();
+            }
             }
         }
         if(headless_go_here&&!headless_go_here_applied&&ticks==headless_go_here->tick){
@@ -4150,7 +4242,13 @@ struct PlacementCandidateProbe {
                 if(member->go_here)member->go_here->observe(true,host_diagnostic);
             break;
         }
-        if(!thread_controllers.advance(ticks)){host_failed=true;host_diagnostic=queue.diagnostic().empty()?sleep.diagnostic():queue.diagnostic();break;}
+        if(!thread_controllers.advance(ticks)){
+            host_failed=true;
+            host_diagnostic=!queue.diagnostic().empty()?queue.diagnostic():
+                !sleep.diagnostic().empty()?sleep.diagnostic():
+                "resident thread controller rejected host tick "+std::to_string(ticks);
+            break;
+        }
         if(second_main_thread&&!second_main_thread->advance(ticks)){
             host_failed=true;host_diagnostic="second avatar thread controller rejected tick";break;
         }

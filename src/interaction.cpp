@@ -109,9 +109,16 @@ bool InteractionQueue::validate() {
     const auto* actor=world_.find(actor_id_);
     if(!actor || actor->generation!=actor_generation_){diagnostic_="interaction actor identity stale";return false;}
     if(run_generation_!=vm_->run_generation()) {
+        // The host may bind its empty queue before starting the saved-world
+        // Main routine. Adopting that first run is safe because no action or
+        // event belongs to the previous generation.
+        if(queue_.empty()&&!active_&&!wait_&&!completion_){
+            run_generation_=vm_->run_generation();diagnostic_.clear();
+        }else{
         queue_.clear();active_.reset();wait_.reset();resume_tick_.reset();completion_.reset();
         interrupted_=false;idle_start_=0;run_generation_=vm_->run_generation();
         diagnostic_="VM restart invalidated queued interactions";
+        }
     }
     if(active_) {
         if(queue_.empty() || active_->uid!=queue_.front().uid){diagnostic_="active FIFO identity mismatch";return false;}
