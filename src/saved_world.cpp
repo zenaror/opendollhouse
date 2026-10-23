@@ -18,8 +18,12 @@ template<class T> void count_matches(std::int64_t count,const std::vector<T>& va
     check(count>=0 && static_cast<std::uint64_t>(count)==values.size(),"saved world serialized count mismatch");
 }
 struct Budget {
-    std::uint64_t words, strings, suffix;
-    void word(std::uint64_t n) { consume(words,n,"saved world retained word budget exceeded"); }
+    std::uint64_t words_limit, words_used=0, strings, suffix;
+    void word(std::uint64_t n) {
+        check(n<=std::numeric_limits<std::uint64_t>::max()-words_used,
+              "saved world retained word count overflow");
+        words_used+=n;
+    }
     void string(const ObjmSavedString& s) {
         word(2+(s.padding?1:0)); // String field, original byte offset, optional padding.
         consume(strings,s.bytes.size(),"saved world retained string budget exceeded");
@@ -77,7 +81,7 @@ std::int16_t saved_motive_word(std::uint32_t bits) {
 std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> source,
     const DefinitionIndex& definitions,const NeighborContext* neighbors,const SavedWorldLimits& limits) {
     check(source.size()<=limits.world.entities && source.size()<=32767,"saved world entity budget exceeded");
-    Budget budget{limits.retained_words,limits.retained_string_bytes,limits.retained_suffix_bytes};
+    Budget budget{limits.retained_words,0,limits.retained_string_bytes,limits.retained_suffix_bytes};
     std::map<std::int16_t,const SavedWorldEntity*> records;
     std::map<std::uint16_t,std::pair<std::uint32_t,std::uint16_t>> types;
     std::set<std::uint32_t> block_offsets;
@@ -86,6 +90,10 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
     // Validate budgets from actual owned vectors, never the caller's reported
     // decoded_words/string_bytes. All retained data is bounded before copying.
     for(const auto& r:source) account(r,budget);
+    if(budget.words_used>budget.words_limit)
+        throw FormatError("saved world retained word budget exceeded (needs at least "+
+            std::to_string(budget.words_used)+" logical words; limit "+
+            std::to_string(budget.words_limit)+")");
     for(const auto& r:source) {
         const auto id=r.saved.object_id;
         check(id>0 && id<=32767 && records.emplace(static_cast<std::int16_t>(id),&r).second,

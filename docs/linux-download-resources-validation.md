@@ -40,9 +40,11 @@ sem remover seus limites de caminho, nomes e índices.
   ausência em `unknown_int_present=false`; quando presente, o valor original
   continua preservado. A suíte sintética passou 1.549 verificações e cobre
   valores presentes, restos incompletos de 1–31 bits, nome/GUID diferentes e a
-  validação posterior do `SavedWorld`. Com 79 fontes FAR da Legacy, House21 e
-  House40 avançam até `saved world retained word budget exceeded`; House90
-  avança até `saved scene has no positioned avatars`. Isso confirma que as três
+  validação posterior do `SavedWorld`. Com 90 arquivos FAR da Legacy, House21
+  requer ao menos 123.680 palavras lógicas e House40 86.486; ambas passam do
+  teto atual de 65.536 sem elevar o limite para todos os aparelhos. O erro agora
+  informa a medida completa para orientar um orçamento por plataforma/lote.
+  House90 avança até `saved scene has no positioned avatars`. Isso confirma que as três
   passam pelo registro Placeholder; ainda faltam estado retido suficiente para
   House21/40 e um avatar posicionado para a prévia House90. A observação do
   leitor Simitone é uma pista, não uma prova do comportamento original.

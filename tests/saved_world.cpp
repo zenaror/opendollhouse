@@ -177,6 +177,27 @@ int main() {
             rejected([&]{odh::make_saved_world(fixture(),index,nullptr,l);},"whole candidate budget rejected without publication");
         }
         {
+            const auto source=fixture();
+            const auto defaults=odh::SavedWorldLimits{};
+            const auto accepts=[&](std::uint64_t cap) {
+                auto limits=defaults;limits.retained_words=cap;
+                try { return static_cast<bool>(odh::make_saved_world(source,index,nullptr,limits)); }
+                catch(const odh::FormatError&) { return false; }
+            };
+            std::uint64_t low=0,high=defaults.retained_words;
+            while(high-low>1) {
+                const auto middle=low+(high-low)/2;
+                if(accepts(middle))high=middle;else low=middle;
+            }
+            auto limits=defaults;limits.retained_words=1;
+            std::string diagnostic;
+            try { (void)odh::make_saved_world(source,index,nullptr,limits); }
+            catch(const odh::FormatError& error) { diagnostic=error.what(); }
+            require(diagnostic.find("saved world retained word budget exceeded (needs at least ")==0 &&
+                diagnostic.find("needs at least "+std::to_string(high)+" logical words; limit 1)")!=std::string::npos,
+                "retained-word budget reports measured requirement");
+        }
+        {
             const auto budget_source=fixture();
             const odh::SavedWorldLimits defaults{};
             const auto boundary=[&](std::uint64_t upper,auto set_limit,
