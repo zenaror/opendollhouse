@@ -39,6 +39,8 @@ com poucas interações é somente um teste intermediário. A build também deve
 gravar logs locais limitados e úteis para reproduzir bugs e identificar falhas.
 Os recursos obrigatórios, caminhos de aceitação e requisito de diagnóstico estão
 detalhados em [linux-playable-scope.md](linux-playable-scope.md).
+O fluxo de moradores FAMI ausentes no Simitone e os limites da comparação estão
+registrados em [household-resident-lifecycle-reference.md](household-resident-lifecycle-reference.md).
 
 Decisão de planejamento de 2026-10-20: após a primeira versão funcional Linux e
 os ports prioritários New 3DS/Vita/Android, manter Windows e macOS como alvos

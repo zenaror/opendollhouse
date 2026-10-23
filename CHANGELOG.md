@@ -40,6 +40,12 @@ validação indicados por versão.
 
 ### Investigado
 
+- Comparado o ciclo de moradores ausentes com a rota TS1 efetiva do Simitone:
+  Init e entry8 executam imediatamente, Main é apenas empilhado, e depois vêm
+  posicionamento inicial, herança NBRS, associação ao chunk FAMI e tentativa de
+  chegada pela caixa postal. A chegada do jogo original e a persistência em
+  OBJM/OBJT continuam sem prova. Veja
+  [`household-resident-lifecycle-reference.md`](docs/household-resident-lifecycle-reference.md).
 - Confirmado no código TS1 do Simitone que despejar uma família devolve
   `FAMI.ValueInArch`, zera esse campo e libera a casa. Não foi encontrado nessa
   revisão um ponto que atualize o valor após compra ou construção; o reembolso
