@@ -37,6 +37,9 @@
 #include "odh/slot_scoring.hpp"
 #include "odh/world_room_info.hpp"
 #include "odh/saved_attempt_walk_obstacles.hpp"
+#include "odh/saved_collision_candidates.hpp"
+#include "odh/saved_slot_goal_selection.hpp"
+#include "odh/collision.hpp"
 #include "runtime_attempt_walk_probe.hpp"
 #include "odh/world_avatar_place_audit.hpp"
 #include "odh/entry_point5_readonly.hpp"
@@ -1554,6 +1557,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::uint64_t> route_runtime_spatial_revision;
     std::optional<odh::EntityPosition> route_runtime_start_position;
     std::optional<odh::WorldRoomRouteGrid> runtime_route_grid;
+    std::optional<odh::AttemptWalkObstacleSnapshot> runtime_route_obstacle_snapshot;
+    std::size_t runtime_route_static_obstacle_count=0;
+    std::vector<odh::SavedCollisionCandidate> runtime_route_collision_candidates;
     std::size_t route_stack_slot_resolutions=0,route_stack_slot_loads=0;
     std::map<std::pair<std::uint32_t,std::uint16_t>,std::unique_ptr<odh::SlotTable>> route_stack_slot_cache;
     const auto route_stack_slot_table=[&](const odh::VmFrame& frame)->const odh::SlotTable* {
@@ -2429,6 +2435,21 @@ struct PlacementCandidateProbe {
                     route_ep5_unknown_stack_object=probe.snapshot.entry_point5_unknown_stack_object;
                     route_ep5_unknown_action=probe.snapshot.entry_point5_unknown_action;
                 }else {
+                    runtime_route_obstacle_snapshot=probe.snapshot;
+                    runtime_route_static_obstacle_count=probe.roughbalanced_architecture_rectangles+4;
+                    runtime_route_collision_candidates.clear();
+                    runtime_route_collision_candidates.reserve(restored_world->records.size());
+                    bool collision_inventory_complete=true;
+                    for(const auto& record:restored_world->records) {
+                        if(record.saved.object_id>static_cast<std::uint16_t>(std::numeric_limits<std::int16_t>::max())) {
+                            collision_inventory_complete=false;break;
+                        }
+                        const auto id=static_cast<std::int16_t>(record.saved.object_id);
+                        runtime_route_collision_candidates.push_back(
+                            odh::saved_collision_candidate(record,world.find(id)));
+                    }
+                    if(!collision_inventory_complete)
+                        runtime_route_collision_candidates.clear();
                     saved_stair_portal_endpoint_ids=probe.stair_lower_portal_ids;
                     saved_stair_portal_endpoint_ids.insert(probe.stair_upper_portal_ids.begin(),
                         probe.stair_upper_portal_ids.end());
@@ -2465,8 +2486,88 @@ struct PlacementCandidateProbe {
                                 return runtime_route_grid->grid->contains(point)&&
                                        runtime_route_grid->grid->walkable(point);
                             };
+                            const auto candidate_sitting_object=[&](odh::RoutePoint point,
+                                std::uint8_t facing)->std::optional<std::int16_t> {
+                                if(!odh::is_child_shy_sitting_fallback_slot(table,index)||!restored_world||
+                                   !render_lot->runtime_room_map()||!runtime_route_obstacle_snapshot||
+                                   runtime_route_obstacle_snapshot->state!=odh::AttemptWalkObstacleState::ready||
+                                   runtime_route_static_obstacle_count>runtime_route_obstacle_snapshot->obstacles.size()||
+                                   runtime_route_collision_candidates.size()!=restored_world->records.size())return {};
+                                const auto* source_slot=odh::slot_of_type(table,3,index);
+                                if(!source_slot||table.records.empty())return {};
+                                auto geometry_slots=table;
+                                const auto record_index=static_cast<std::size_t>(source_slot-table.records.data());
+                                if(record_index>=geometry_slots.records.size())return {};
+                                // The footprint selector accepts the matching standing profile. Its
+                                // result reports which object overlaps; EntryPoint26 and facing are
+                                // checked below before the SLOT score treats it as a seat.
+                                geometry_slots.records[record_index].sitting=0;
+                                auto* actor=world.find(runtime_avatar_id);
+                                if(!actor||!actor->position)return {};
+                                const auto actor_candidate=std::find_if(runtime_route_collision_candidates.begin(),
+                                    runtime_route_collision_candidates.end(),[&](const auto& item) {
+                                        return item.object_id==runtime_avatar_id;
+                                    });
+                                if(actor_candidate==runtime_route_collision_candidates.end())return {};
+                                actor_candidate->position=actor->position;
+                                auto candidate_position=target;
+                                candidate_position.x=point.x;candidate_position.y=point.y;
+                                candidate_position.direction=facing;
+                                const auto shape=odh::avatar_candidate_collision_shape(candidate_position);
+                                if(shape.state!=odh::CollisionShapeState::present)return {};
+                                for(std::size_t n=0;n<runtime_route_static_obstacle_count;++n) {
+                                    const auto& obstacle=runtime_route_obstacle_snapshot->obstacles[n];
+                                    if(odh::collision_boxes_intersect(shape.box,
+                                        {obstacle.x1,obstacle.y1,obstacle.x2,obstacle.y2}))return {};
+                                }
+                                const auto selection=odh::assess_saved_slot_goal_selection(
+                                    geometry_slots,index,*render_lot->runtime_room_map(),runtime_avatar_id,
+                                    candidate_position,runtime_route_collision_candidates,
+                                    restored_world->multitile_groups,true);
+                                if(selection.state!=odh::SavedSlotGoalSelectionState::object_overlap_rejected||
+                                   selection.object_overlaps!=1||selection.avatar_overlaps!=0||!selection.blocker)return {};
+                                const auto* chair=world.find(*selection.blocker);
+                                if(!chair||chair->kind!=odh::EntityKind::object||!chair->position||
+                                   !chair->entry_points||chair->entry_points->size()<=26||
+                                   chair->entry_points->at(26).action==0)return {};
+                                const auto delta=std::abs(static_cast<int>(facing)-
+                                                          static_cast<int>(chair->position->direction));
+                                if(std::min(delta,8-delta)>1)return {};
+                                return selection.blocker;
+                            };
+                            const auto candidate_sitting_approach=[&](odh::RoutePoint occupied)
+                                ->std::optional<odh::RoutePoint> {
+                                if(!runtime_route_grid||!runtime_route_grid->grid)return {};
+                                const auto* actor=world.find(runtime_avatar_id);
+                                if(!actor||!actor->position)return {};
+                                for(std::int32_t radius=1;radius<=16;++radius) {
+                                    std::optional<odh::RoutePoint> best;
+                                    std::int64_t best_distance=std::numeric_limits<std::int64_t>::max();
+                                    for(std::int32_t dx=-radius;dx<=radius;++dx) {
+                                        const auto dy=radius-std::abs(dx);
+                                        for(const auto sign:{-1,1}) {
+                                            if(dy==0&&sign==1)continue;
+                                            const auto x=static_cast<std::int64_t>(occupied.x)+dx;
+                                            const auto y=static_cast<std::int64_t>(occupied.y)+dy*sign;
+                                            if(x<std::numeric_limits<std::int32_t>::min()||
+                                               x>std::numeric_limits<std::int32_t>::max()||
+                                               y<std::numeric_limits<std::int32_t>::min()||
+                                               y>std::numeric_limits<std::int32_t>::max())continue;
+                                            const odh::RoutePoint point{static_cast<std::int32_t>(x),
+                                                                        static_cast<std::int32_t>(y)};
+                                            if(!candidate_position_valid(point)||!candidate_in_room(point))continue;
+                                            const auto ddx=x-actor->position->x,ddy=y-actor->position->y;
+                                            const auto distance=ddx*ddx+ddy*ddy;
+                                            if(distance<best_distance){best=point;best_distance=distance;}
+                                        }
+                                    }
+                                    if(best)return best;
+                                }
+                                return {};
+                            };
                             return odh::rank_reference_range_slot(table,index,caller,target,random,
-                                no_sitting_target,candidate_in_room,candidate_position_valid);
+                                no_sitting_target,candidate_in_room,candidate_position_valid,
+                                candidate_sitting_object,candidate_sitting_approach);
                         };
                         runtime_routing=std::make_unique<odh::Routing>(world,*runtime_route_grid->grid,
                             *shared.routing_slots);
@@ -2510,9 +2611,9 @@ struct PlacementCandidateProbe {
                                 return {};
                             }
                         });
-                        runtime_routing->set_sitting_slot_fallback_preflight([&](const auto& table,
+                        runtime_routing->set_sitting_slot_candidate_preflight([&](const auto& table,
                             std::size_t index,const auto&,const auto& target) {
-                            return odh::child_shy_sitting_fallback_preflight(world,table,index,target);
+                            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
                         });
                         runtime_routing->set_stack_object_slot_table_provider(route_stack_slot_table);
                         runtime_routing->set_stair_goto_relative_validator([&](const odh::VmFrame& frame,
@@ -2615,6 +2716,21 @@ struct PlacementCandidateProbe {
                 odh::world_room_route_grid_reason_name(updated.reason);
             return false;
         }
+        runtime_route_obstacle_snapshot=probe.snapshot;
+        runtime_route_static_obstacle_count=probe.roughbalanced_architecture_rectangles+4;
+        runtime_route_collision_candidates.clear();
+        runtime_route_collision_candidates.reserve(restored_world->records.size());
+        bool collision_inventory_complete=true;
+        for(const auto& record:restored_world->records) {
+            if(record.saved.object_id>static_cast<std::uint16_t>(std::numeric_limits<std::int16_t>::max())) {
+                collision_inventory_complete=false;
+                break;
+            }
+            const auto id=static_cast<std::int16_t>(record.saved.object_id);
+            runtime_route_collision_candidates.push_back(
+                odh::saved_collision_candidate(record,world.find(id)));
+        }
+        if(!collision_inventory_complete)runtime_route_collision_candidates.clear();
         *runtime_route_grid->grid=std::move(*updated.grid);
         runtime_route_grid->windowed=updated.windowed;
         runtime_route_grid->room_id=updated.room_id;
@@ -2893,9 +3009,9 @@ struct PlacementCandidateProbe {
                 return odh::rank_reference_range_slot(table,index,caller,target,random,
                     no_sitting_target,candidate_in_room,candidate_position_valid);
             });
-        runtime.routing->set_sitting_slot_fallback_preflight([&](const auto& table,std::size_t index,
+        runtime.routing->set_sitting_slot_candidate_preflight([&](const auto& table,std::size_t index,
             const auto&,const auto& target) {
-            return odh::child_shy_sitting_fallback_preflight(world,table,index,target);
+            return odh::child_shy_sitting_candidate_inventory_preflight(world,table,index,target);
         });
         runtime.routing->set_stack_object_slot_table_provider(route_stack_slot_table);
         runtime.routing->set_route_goal_validator([&,resident_id=runtime.id](const odh::VmFrame& frame,

@@ -102,6 +102,20 @@ void pre_ranked_goal_tests() {
     require(result.path.status==odh::RouteStatus::found&&result.selected==1,
             "definitively blocked goal falls through to next preference");
     grid.block({8,1},false);
+    odh::RouteGrid chair_grid(9,3);
+    chair_grid.block({4,1});
+    const std::vector<odh::PreRankedSlotGoal> chair_goals={
+        {{4,1},1,2,2,odh::RoutePoint{3,1}}
+    };
+    result=odh::find_pre_ranked_slot_route(chair_grid,{0,1},chair_goals);
+    require(result.path.status==odh::RouteStatus::found&&result.selected==0&&
+            result.path.points.back()==odh::RoutePoint{3,1},
+        "a seated SLOT can route to a clear adjacent point while preserving its occupied seat destination");
+    auto malformed_chair=chair_goals;
+    malformed_chair[0].sitting_object.reset();
+    result=odh::find_pre_ranked_slot_route(chair_grid,{0,1},malformed_chair);
+    require(result.path.status==odh::RouteStatus::invalid_input,
+        "an approach point without a resolved chair identity is rejected");
     for(int y=0;y<3;++y) grid.wall({4,y},{5,y});
     const auto failed=odh::find_route(grid,{0,1},{{8,1}});
     result=odh::find_pre_ranked_slot_route(grid,{0,1},goals);
@@ -755,7 +769,7 @@ void child_shy_sitting_preflight_tests() {
             provider_called=true;
             return odh::rank_reference_range_slot(table,index,caller,target,random,true);
         });
-        routing.set_sitting_slot_fallback_preflight([](const auto&,std::size_t,const auto&,const auto&) {
+        routing.set_sitting_slot_candidate_preflight([](const auto&,std::size_t,const auto&,const auto&) {
             return std::optional<std::string>{"nearby object exposes EntryPoint26"};
         });
         odh::Vm vm{routines(2,0,10),world.vm_memory(),{},routing.primitive()};
@@ -778,7 +792,7 @@ void child_shy_sitting_preflight_tests() {
             provider_called=true;
             return odh::rank_reference_range_slot(table,index,caller,target,random,true);
         });
-        routing.set_sitting_slot_fallback_preflight([](const auto& table,std::size_t index,
+        routing.set_sitting_slot_candidate_preflight([](const auto& table,std::size_t index,
             const auto&,const auto&) -> std::optional<std::string> {
             if(!odh::is_child_shy_sitting_fallback_slot(table,index))
                 return "unverified child-shy sitting profile";

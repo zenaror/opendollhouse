@@ -264,13 +264,19 @@ void child_shy_sitting_fallback() {
     odh::RandomState sitting_random(7);
     const auto sitting_goals=odh::rank_reference_range_slot(slots,10,caller,target,sitting_random,false,{},
         [blocked_position](odh::RoutePoint point){return !(point==blocked_position);},
-        [blocked_position](odh::RoutePoint point)->std::optional<std::int16_t>{
+        [blocked_position](odh::RoutePoint point,std::uint8_t)->std::optional<std::int16_t>{
             return point==blocked_position?std::optional<std::int16_t>{42}:std::nullopt;
+        },
+        [blocked_position](odh::RoutePoint)->std::optional<odh::RoutePoint>{
+            return odh::RoutePoint{blocked_position.x-1,blocked_position.y};
         });
     const auto selected_seat=std::find_if(sitting_goals.begin(),sitting_goals.end(),
         [](const auto& goal){return goal.sitting_object==42;});
     require(selected_seat!=sitting_goals.end(),
         "candidate resolver can retain one validated chair destination among standing fallback goals");
+    require(selected_seat->sitting_approach&&
+            *selected_seat->sitting_approach==odh::RoutePoint{blocked_position.x-1,blocked_position.y},
+        "seat destination retains a separately reachable route endpoint for EntryPoint26");
     const auto dx=selected_seat->position.x-target.x,dy=selected_seat->position.y-target.y;
     const double seat_distance=std::sqrt(static_cast<double>(dx*dx+dy*dy));
     const odh::PreRankedSlotGoal standing_goal{
@@ -304,15 +310,15 @@ void child_shy_sitting_fallback() {
     require(no_chair_world.define_entry_points(2,std::vector<odh::EntryPoint>(27)),
         "known EntryPoint table without actions binds");
     no_chair_world.set_position(2,{10,10,2,0});
-    require(!odh::child_shy_sitting_fallback_preflight(no_chair_world,slots,10,{100,100,1,0}),
+    require(!odh::child_shy_sitting_candidate_inventory_preflight(no_chair_world,slots,10,{100,100,1,0}),
         "objects on another floor do not become sitting targets");
     no_chair_world.set_position(2,{100,140,1,0});
-    require(!odh::child_shy_sitting_fallback_preflight(no_chair_world,slots,10,{100,100,1,0}),
+    require(!odh::child_shy_sitting_candidate_inventory_preflight(no_chair_world,slots,10,{100,100,1,0}),
         "a known table without an active EntryPoint26 permits the standing fallback");
     odh::World unknown_world;
     unknown_world.create(2,odh::EntityKind::object);
     unknown_world.set_position(2,{132,100,1,0});
-    auto unknown=odh::child_shy_sitting_fallback_preflight(unknown_world,slots,10,{100,100,1,0});
+    auto unknown=odh::child_shy_sitting_candidate_inventory_preflight(unknown_world,slots,10,{100,100,1,0});
     require(unknown&&unknown->find("EntryPoint26 table")!=std::string::npos,
         "a nearby object without a known entry table keeps the sitting choice unsupported");
     odh::World chair_world;
@@ -322,28 +328,28 @@ void child_shy_sitting_fallback() {
     std::vector<odh::EntryPoint> chair_entries(27);
     chair_entries[26].action=4096;
     require(chair_world.define_entry_points(2,chair_entries),"test chair EntryPoint table binds");
-    auto chair=odh::child_shy_sitting_fallback_preflight(chair_world,slots,10,{100,100,1,0});
-    require(chair&&chair->find("exposes EntryPoint26")!=std::string::npos,
-        "a nearby chair with an executable EntryPoint26 is never skipped");
+    auto chair=odh::child_shy_sitting_candidate_inventory_preflight(chair_world,slots,10,{100,100,1,0});
+    require(!chair,
+        "a known EntryPoint26 is left for exact per-candidate footprint selection");
     odh::World small_action_world;
     small_action_world.create(2,odh::EntityKind::object);
     small_action_world.define_type(2,2);
     small_action_world.set_position(2,{132,100,1,0});
     chair_entries[26].action=1;
     require(small_action_world.define_entry_points(2,chair_entries),"small EntryPoint26 action binds");
-    chair=odh::child_shy_sitting_fallback_preflight(small_action_world,slots,10,{100,100,1,0});
-    require(chair&&chair->find("exposes EntryPoint26")!=std::string::npos,
-        "any non-zero EntryPoint26 action blocks the unsupported sitting fallback");
+    chair=odh::child_shy_sitting_candidate_inventory_preflight(small_action_world,slots,10,{100,100,1,0});
+    require(!chair,
+        "any non-zero EntryPoint26 action is retained for per-candidate resolution");
     chair_world.set_position(2,{181,100,1,0});
-    chair=odh::child_shy_sitting_fallback_preflight(chair_world,slots,10,{100,100,1,0});
-    require(chair&&chair->find("EntryPoint26")!=std::string::npos,
-        "a distant seat cannot be dismissed without checking its full footprint against each candidate");
+    chair=odh::child_shy_sitting_candidate_inventory_preflight(chair_world,slots,10,{100,100,1,0});
+    require(!chair,
+        "a distant seat is accepted by inventory preflight and checked by its footprint per candidate");
     odh::World unpositioned_world;
     unpositioned_world.create(2,odh::EntityKind::object);
-    require(odh::child_shy_sitting_fallback_preflight(
+    require(odh::child_shy_sitting_candidate_inventory_preflight(
         unpositioned_world,slots,10,{100,100,1,0}).has_value(),
         "an object without position keeps the sitting-target inventory incomplete");
-    require(odh::child_shy_sitting_fallback_preflight(
+    require(odh::child_shy_sitting_candidate_inventory_preflight(
         chair_world,house07_global_range_table(),10,{100,100,1,0}).has_value(),
         "chair preflight refuses to classify an unrelated SLOT profile");
 }

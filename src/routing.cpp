@@ -199,7 +199,14 @@ PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid& grid,RoutePoint s
         if(!grid.contains(goal.position) || goal.entry_flags==0 || goal.facing>=8) {
             result.path={RouteStatus::invalid_input,{},0,0};return result;
         }
-        positions.push_back(goal.position);
+        if(goal.sitting_approach&&!goal.sitting_object) {
+            result.path={RouteStatus::invalid_input,{},0,0};return result;
+        }
+        const auto route_position=goal.sitting_approach.value_or(goal.position);
+        if(!grid.contains(route_position)) {
+            result.path={RouteStatus::invalid_input,{},0,0};return result;
+        }
+        positions.push_back(route_position);
     }
     auto ranked=find_ranked_route(grid,start,positions,limits);
     result.path=std::move(ranked.path);
@@ -379,7 +386,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return unsupported("sitting-weighted SLOT profile requires an exact supported fallback path");
         if(ranged_slot&&!ranged_slot_goals_)
             return unsupported("ranged SLOT requires an explicit scoring provider");
-        if(child_shy_sitting_fallback&&!sitting_slot_fallback_preflight_)
+        if(child_shy_sitting_fallback&&!sitting_slot_candidate_preflight_)
             return unsupported("child-shy sitting SLOT requires a nearby-chair preflight");
         if(ranged_slot&&!goal_validator_)
             return unsupported("ranged SLOT requires a host room/clearance validator");
@@ -404,7 +411,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         std::optional<std::string> preflight_diagnostic;
         {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
-            preflight_diagnostic=sitting_slot_fallback_preflight_(*selected_slots,slot_index,
+            preflight_diagnostic=sitting_slot_candidate_preflight_(*selected_slots,slot_index,
                 actor_position,target_position);
         }
         actor=world_.find(actor_id);target=world_.find(target_id);
@@ -516,7 +523,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 return unsupported("pre-ranked SLOT goal has unsupported entry flags");
         std::vector<PreRankedSlotGoal> accepted;
         accepted.reserve(candidates.size());
-        for(const auto& candidate:candidates)if(allow_goal(candidate.position))accepted.push_back(candidate);
+        for(const auto& candidate:candidates)
+            if(allow_goal(candidate.sitting_approach.value_or(candidate.position)))accepted.push_back(candidate);
         route_goal_count=accepted.size();
         if(!grid_.walkable(start))
             invalid_route_input_diagnostic="pre-ranked SLOT route start is outside the walkable grid";
@@ -524,7 +532,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             invalid_route_input_diagnostic="pre-ranked SLOT goal provider returned no candidates";
         else if(accepted.empty())
             invalid_route_input_diagnostic="host rejected every pre-ranked SLOT goal as outside the walkable grid";
-        else for(const auto& goal:accepted)if(!grid_.contains(goal.position)||goal.entry_flags==0||goal.facing>=8) {
+        else for(const auto& goal:accepted)if(!grid_.contains(goal.position)||
+            (goal.sitting_approach&&!grid_.contains(*goal.sitting_approach))||
+            goal.entry_flags==0||goal.facing>=8) {
             invalid_route_input_diagnostic="pre-ranked SLOT goal is outside the grid or has invalid facing flags";
             break;
         }

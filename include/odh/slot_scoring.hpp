@@ -29,13 +29,11 @@ struct ReferenceSlotScores {
     std::size_t random_calls;
 };
 // Exact Legacy Collection Global SLOT100 v10/type-3/index-10 profile used by
-// BHAV 8534. Its Sitting=10 preference may be ignored only after a host has
-// proved that no eligible sitting target exists in range.
+// BHAV 8534. Its Sitting=10 preference is resolved per candidate.
 bool is_child_shy_sitting_fallback_slot(const SlotTable&, std::size_t type3_index);
-// Conservative gate: returns no diagnostic only when every object that could
-// occupy the target floor is known not to expose EntryPoint26. It deliberately
-// does not use object-origin distance as a substitute for footprint checks.
-std::optional<std::string> child_shy_sitting_fallback_preflight(
+// Conservative inventory gate: every positioned object on the target floor
+// must have a complete EntryPoint26 table before per-candidate footprint checks.
+std::optional<std::string> child_shy_sitting_candidate_inventory_preflight(
     const World&,const SlotTable&,std::size_t type3_index,const EntityPosition& target);
 // Bounded Simitone-reference arithmetic for the House07 v10 type-3 circle,
 // Door 16-to-32 ranged profiles and Global 16-to-64 randomized profile, with
@@ -58,5 +56,6 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const EntityPosition& target,RandomState&,bool no_sitting_target_proven = false,
     const std::function<bool(RoutePoint)>& candidate_in_room = {},
     const std::function<bool(RoutePoint)>& candidate_position_valid = {},
-    const std::function<std::optional<std::int16_t>(RoutePoint)>& candidate_sitting_object = {});
+    const std::function<std::optional<std::int16_t>(RoutePoint,std::uint8_t)>& candidate_sitting_object = {},
+    const std::function<std::optional<RoutePoint>(RoutePoint)>& candidate_sitting_approach = {});
 } // namespace odh

@@ -44,6 +44,9 @@ struct PreRankedSlotGoal {
     // Set only when this goal is occupied by a validated sitting target whose
     // EntryPoint26 should run after the actor reaches the destination.
     std::optional<std::int16_t> sitting_object{};
+    // A clear grid point the actor can reach before EntryPoint26 takes over.
+    // The SLOT position remains in `position` for scoring and seat identity.
+    std::optional<RoutePoint> sitting_approach{};
 };
 struct PreRankedSlotRoute {
     RoutePath path;
@@ -61,7 +64,7 @@ using PreRankedSlotGoalProvider=std::function<std::vector<PreRankedSlotGoal>(
 // A sitting-weighted SLOT can use its standing alternative only after this
 // host proves that no nearby eligible sitting object exists. A diagnostic
 // means the route must remain unsupported; it must not become a false result.
-using SittingSlotFallbackPreflight=std::function<std::optional<std::string>(
+using SittingSlotCandidatePreflight=std::function<std::optional<std::string>(
     const SlotTable&,std::size_t,const EntityPosition&,const EntityPosition&)>;
 // Resolves a StackObject's authored SLOT table for Route45 Literal scope.
 // Returned tables must outlive the Routing controller and remain immutable.
@@ -152,9 +155,9 @@ public:
         if(executing_||job_)throw std::logic_error("cannot replace ranged SLOT provider while active");
         ranged_slot_goals_=std::move(provider);
     }
-    void set_sitting_slot_fallback_preflight(SittingSlotFallbackPreflight preflight) {
+    void set_sitting_slot_candidate_preflight(SittingSlotCandidatePreflight preflight) {
         if(executing_||job_)throw std::logic_error("cannot replace sitting SLOT preflight while active");
-        sitting_slot_fallback_preflight_=std::move(preflight);
+        sitting_slot_candidate_preflight_=std::move(preflight);
     }
     VmPrimitive primitive();
     // Schedule a host-resolved portal/route BHAV while Route45 is waiting.
@@ -224,7 +227,7 @@ private:
     const SlotTable& globals_;
     PreRankedSlotGoalProvider ranked_goals_;
     PreRankedSlotGoalProvider ranged_slot_goals_;
-    SittingSlotFallbackPreflight sitting_slot_fallback_preflight_;
+    SittingSlotCandidatePreflight sitting_slot_candidate_preflight_;
     StackObjectSlotTableProvider stack_object_slots_;
     RouteGoalValidator goal_validator_;
     StairGotoRelativeValidator stair_goto_relative_;

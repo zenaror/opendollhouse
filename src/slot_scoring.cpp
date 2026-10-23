@@ -47,7 +47,7 @@ bool is_child_shy_sitting_fallback_slot(const SlotTable& table,std::size_t type3
     return table.version==10 && type3_index==10 &&
         child_shy_slot_record(slot_of_type(table,3,type3_index));
 }
-std::optional<std::string> child_shy_sitting_fallback_preflight(
+std::optional<std::string> child_shy_sitting_candidate_inventory_preflight(
     const World& world,const SlotTable& table,std::size_t type3_index,const EntityPosition& target) {
     if(!is_child_shy_sitting_fallback_slot(table,type3_index))
         return "child-shy standing fallback received an unverified SLOT profile";
@@ -66,12 +66,8 @@ std::optional<std::string> child_shy_sitting_fallback_preflight(
             if(!object->entry_points||object->entry_points->size()<=26)
                 return "object "+std::to_string(*object_id)+
                     " has no complete EntryPoint26 table; sitting target inventory is incomplete";
-            // Simitone treats every non-zero action as an available sitting
-            // entry point. Keep the fallback closed until candidate geometry
-            // can prove whether this object blocks each generated destination.
-            if(object->entry_points->at(26).action!=0)
-                return "object "+std::to_string(*object_id)+
-                    " exposes EntryPoint26; footprint-aware sitting selection remains unsupported";
+            // A non-zero action is resolved against each candidate's saved
+            // footprint; object origin alone cannot select or rule out a seat.
         }
         object_id=world.next_entity(*object_id,EntityKind::object);
     }
@@ -135,6 +131,7 @@ ReferenceSlotScores score_reference_slot_candidates(
             input.goal.facing > 7 ||
             (input.goal.sitting_object &&
              (!sitting_candidates_resolved || !shy_child_fallback || *input.goal.sitting_object <= 0)) ||
+            (input.goal.sitting_approach && !input.goal.sitting_object) ||
             (input.verification != ReferenceSlotVerification::eligible &&
              input.verification != ReferenceSlotVerification::eligible_with_penalty &&
              input.verification != ReferenceSlotVerification::rejected_after_score))
@@ -178,7 +175,8 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
     const EntityPosition& target,RandomState& random,bool no_sitting_target_proven,
     const std::function<bool(RoutePoint)>& candidate_in_room,
     const std::function<bool(RoutePoint)>& candidate_position_valid,
-    const std::function<std::optional<std::int16_t>(RoutePoint)>& candidate_sitting_object) {
+    const std::function<std::optional<std::int16_t>(RoutePoint,std::uint8_t)>& candidate_sitting_object,
+    const std::function<std::optional<RoutePoint>(RoutePoint)>& candidate_sitting_approach) {
     const auto* slot=slot_of_type(table,3,type3_index);
     const bool relative_front=in_front_relative_slot_record(slot);
     const bool sitting_candidates_resolved=static_cast<bool>(candidate_sitting_object);
@@ -227,15 +225,22 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
         const auto ox=static_cast<double>(offset.x),oy=static_cast<double>(offset.y);
         const auto proximity=std::sqrt(ox*ox+oy*oy);
         std::optional<std::int16_t> sitting_object;
+        std::optional<RoutePoint> sitting_approach;
         bool position_valid=!candidate_position_valid||candidate_position_valid(position);
-        if(!position_valid&&sitting_candidates_resolved&&shy_child_fallback) {
-            sitting_object=candidate_sitting_object(position);
-            position_valid=sitting_object&&*sitting_object>0;
+        if(sitting_candidates_resolved&&shy_child_fallback) {
+            sitting_object=candidate_sitting_object(position,facing);
+            if(sitting_object&&*sitting_object<=0)sitting_object.reset();
+            if(sitting_object&&!position_valid&&candidate_sitting_approach) {
+                sitting_approach=candidate_sitting_approach(position);
+                if(sitting_approach&&candidate_position_valid)
+                    position_valid=candidate_position_valid(*sitting_approach);
+            }
+            if(!position_valid)sitting_object.reset();
         }
         const auto verification=position_valid
             ?ReferenceSlotVerification::eligible
             :ReferenceSlotVerification::rejected_after_score;
-        inputs.push_back({{position,entry_flags,facing,sitting_object},proximity,verification});
+        inputs.push_back({{position,entry_flags,facing,sitting_object,sitting_approach},proximity,verification});
     }
     return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random,
         no_sitting_target_proven,sitting_candidates_resolved).ranked_goals;
