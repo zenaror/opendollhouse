@@ -13,11 +13,12 @@ template<class F> void rejects(F&& action, const char* message) {
     require(rejected, message);
 }
 odh::FamilyEntry family(std::uint16_t id, std::int32_t house, std::int32_t budget,
-                        std::vector<std::uint32_t> members) {
+                        std::vector<std::uint32_t> members, std::int32_t value_in_arch = 0) {
     odh::Family value;
     value.house_number = house;
     value.family_number = static_cast<std::int32_t>(id + 20);
     value.budget = budget;
+    value.value_in_arch = value_in_arch;
     value.member_guids = std::move(members);
     return {id, std::move(value)};
 }
@@ -38,7 +39,7 @@ int main() {
         std::array<std::uint8_t, 32> source_id{};
         source_id[0] = 0x51; source_id[31] = 0xa7;
         const auto cas = family(12, 0, 20000, {0xffffffffU, 0x80000000U});
-        const auto resident = family(18, 5, 12000, {0x12345678U});
+        const auto resident = family(18, 5, 12000, {0x12345678U}, 6000);
         odh::FamilyOverlay overlay{source_id, {odh::plan_family_move_in(cas, 7, 5500)}};
         require(overlay.assignments[0].budget_after_purchase == 14500,
                 "move-in plan charges the supplied lot purchase price once");
@@ -52,7 +53,7 @@ int main() {
 
         const auto bytes = odh::encode_family_overlay(overlay);
         require(bytes.size() == 92 && le32(bytes, 80) == 5500 && le32(bytes, 84) == 14500,
-                "version 1 golden extent and purchase/budget byte offsets");
+                "version 2 golden extent and purchase/budget byte offsets");
         const auto decoded = odh::decode_family_overlay(bytes);
         require(decoded.neighborhood_identity == source_id && decoded.assignments.size() == 1,
                 "round trip retains source and assignment count");
@@ -68,6 +69,50 @@ int main() {
                 "reordered source chunks resolve by stable chunk identity");
         require(applied[1].family.budget == 14500 && cas.family.house_number == 0 &&
                 cas.family.budget == 20000, "applies to owned copy and preserves source data");
+
+        const auto moved_out = odh::plan_family_move_out_overlay(
+            {resident, cas}, source_id, nullptr, resident.chunk_id);
+        const auto moved_out_effective = odh::apply_family_overlay(
+            {resident, cas}, source_id, moved_out);
+        require(moved_out.assignments.size() == 1 &&
+                moved_out.assignments[0].action == odh::FamilyOverlayAction::move_out &&
+                moved_out_effective[0].family.house_number == 0 &&
+                moved_out_effective[0].family.budget == 18000 &&
+                moved_out_effective[0].family.value_in_arch == 0,
+                "move-out refunds the source ValueInArch, clears it, and releases the house");
+        const auto rehomed = odh::plan_family_move_in_overlay(
+            {resident, cas}, source_id, &moved_out, resident.chunk_id, 9, 3000);
+        const auto rehomed_effective = odh::apply_family_overlay(
+            {resident, cas}, source_id, rehomed);
+        require(rehomed.assignments.size() == 2 &&
+                rehomed_effective[0].family.house_number == 9 &&
+                rehomed_effective[0].family.budget == 15000 &&
+                rehomed_effective[0].family.value_in_arch == 0,
+                "rehome replays move-out then charges the new lot against the refunded budget");
+        rejects([&] { (void)odh::plan_family_move_out_overlay(
+                    {resident, cas}, source_id, &rehomed, resident.chunk_id); },
+                "rehome cannot invent a second architecture refund after a player move-in");
+        rejects([&] { (void)odh::plan_family_move_out_overlay(
+                    {resident, cas}, source_id, &decoded, cas.chunk_id); },
+                "a family without a source house cannot receive an unverified architecture refund");
+        rejects([&] { (void)odh::plan_family_move_out_overlay(
+                    {resident, cas}, source_id, nullptr, cas.chunk_id); },
+                "a newly moved family cannot receive a source architecture refund");
+        auto negative_refund = family(25, 4, 1000, {7}, -1);
+        rejects([&] { (void)odh::plan_family_move_out_overlay(
+                    {negative_refund}, source_id, nullptr, negative_refund.chunk_id); },
+                "negative source architecture value rejects move-out");
+        const auto forged_negative_refund = odh::FamilyOverlayAssignment{
+            negative_refund.chunk_id, odh::family_overlay_identity(negative_refund),
+            0, 0, 999, odh::FamilyOverlayAction::move_out};
+        rejects([&] { (void)odh::apply_family_overlay(
+                    {negative_refund}, source_id,
+                    odh::FamilyOverlay{source_id, {forged_negative_refund}}); },
+                "replay rejects a forged move-out with a negative architecture refund");
+        auto overflow_refund = family(26, 4, 2147483000, {7}, 1000);
+        rejects([&] { (void)odh::plan_family_move_out_overlay(
+                    {overflow_refund}, source_id, nullptr, overflow_refund.chunk_id); },
+                "move-out refund cannot overflow the family budget field");
 
         const auto household = family(13, 0, 9000, {0x01020304U});
         const auto expanded = odh::plan_family_move_in_overlay(
@@ -120,12 +165,13 @@ int main() {
                 "overlay cannot move a housed family without eviction accounting");
         auto duplicate = overlay;
         duplicate.assignments.push_back(assignment(family(13, 0, 500, {9}), 7, 500));
-        rejects([&] { (void)odh::encode_family_overlay(duplicate); },
-                "duplicate destination rejects before serialization");
+        rejects([&] { (void)odh::apply_family_overlay(
+                    {resident, cas, family(13, 0, 500, {9})}, source_id, duplicate); },
+                "duplicate destination rejects when replayed against current occupancy");
         duplicate = overlay;
         duplicate.assignments.push_back(assignment(family(12, 0, 500, {9}), 8, 400));
-        rejects([&] { (void)odh::encode_family_overlay(duplicate); },
-                "duplicate family assignment rejects before serialization");
+        rejects([&] { (void)odh::apply_family_overlay({cas}, source_id, duplicate); },
+                "duplicate family operations reject when replayed against current state");
         duplicate = overlay;
         duplicate.assignments[0].house_number = 99;
         rejects([&] { (void)odh::encode_family_overlay(duplicate); }, "house 99 outside supported range");
@@ -141,8 +187,13 @@ int main() {
         }
         auto malformed = bytes; malformed[0] = 'X';
         rejects([&] { (void)odh::decode_family_overlay(malformed); }, "bad signature rejects");
-        malformed = bytes; malformed[4] = 2;
+        malformed = bytes; malformed[4] = 3;
         rejects([&] { (void)odh::decode_family_overlay(malformed); }, "unknown version rejects");
+        auto legacy = bytes; legacy[4] = 1;
+        const auto decoded_legacy = odh::decode_family_overlay(legacy);
+        require(decoded_legacy.assignments.size() == 1 &&
+                decoded_legacy.assignments[0].action == odh::FamilyOverlayAction::move_in,
+                "version 1 purchase-only save remains readable as a move-in");
         malformed = bytes; malformed.push_back(0);
         rejects([&] { (void)odh::decode_family_overlay(malformed); }, "trailing bytes reject");
         malformed = bytes; malformed[40] = 0xff;

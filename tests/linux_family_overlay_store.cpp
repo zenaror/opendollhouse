@@ -149,7 +149,14 @@ int main() {
     free_family.family_number = 42;
     free_family.budget = 9000;
     free_family.member_guids = {0x12345678U, 0x87654321U};
-    const std::vector<odh::FamilyEntry> synthetic_families{{700, free_family}};
+    odh::Family resident_family;
+    resident_family.family_number = 43;
+    resident_family.house_number = 6;
+    resident_family.budget = 5000;
+    resident_family.value_in_arch = 2500;
+    resident_family.member_guids = {0x11223344U};
+    const std::vector<odh::FamilyEntry> synthetic_families{
+        {700, free_family}, {701, resident_family}};
     const auto planned = odh::plan_family_move_in_overlay(
         synthetic_families, identity, nullptr, 700, 5, 3200);
     const auto transaction_path = odh_host::linux_family_overlay_path(identity);
@@ -166,6 +173,20 @@ int main() {
             effective_context.by_house(5)->family.budget == 5800 &&
             odh_host::linux_neighborhood_identity(neighborhood) == identity,
             "saved synthetic move-in appears at its lot, charges the budget, and leaves source bytes unchanged");
+    const auto moveout_plan = odh::plan_family_move_out_overlay(
+        synthetic_families, identity, &planned, 701);
+    odh_host::compare_exchange_linux_family_overlay_atomic(
+        transaction_path, planned, moveout_plan);
+    const auto moveout_committed = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+    require(moveout_committed && moveout_committed->assignments.size() == 2 &&
+            moveout_committed->assignments[1].action == odh::FamilyOverlayAction::move_out,
+            "version 2 move-out operation survives the atomic player-save round trip");
+    const auto after_moveout = odh::apply_family_overlay(
+        synthetic_families, identity, *moveout_committed);
+    require(after_moveout[1].family.house_number == 0 &&
+            after_moveout[1].family.budget == 7500 &&
+            after_moveout[1].family.value_in_arch == 0,
+            "saved move-out gives back the recorded architecture value and clears the source marker");
     auto persisted = first;
     persisted.neighborhood_identity = identity;
     odh_host::write_linux_family_overlay_atomic(

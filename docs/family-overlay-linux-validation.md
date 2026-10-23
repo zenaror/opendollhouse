@@ -13,7 +13,7 @@ runtime loads the same identity-keyed overlay before selecting the active FAMI.
 This keeps the visible lot marker and the household lookup based on the same
 family assignment during normal play.
 
-The initial Linux neighborhood flow now lets the player click a vacant lot,
+The initial Linux neighborhood flow lets the player click a vacant lot,
 choose an unhoused family that can afford it, review the price and remaining
 budget, and confirm before saving. It reloads the neighborhood and player state
 after confirmation, verifies the selected family and lot are still available,
@@ -21,6 +21,14 @@ and refreshes the map before opening the lot. Move-in saves use a persistent
 private sibling lock and compare the expected overlay before atomic replacement;
 simultaneous launchers cannot silently erase each other's purchases. The lock
 file remains beside the saved overlay in player state.
+
+The local overlay is now a version 2 operation log; version 1 purchase-only
+saves remain readable. Its core can evict a household that was already in a
+house in the original neighborhood data, refund that source FAMI's
+`ValueInArch`, clear the value, and make the lot vacant. It can then replay a
+move-in to another house. A household that was first moved in by the player
+cannot be evicted again: the current Simitone source review does not establish
+how `ValueInArch` changes after purchase, so a second refund would be a guess.
 
 ## Verified
 
@@ -36,12 +44,12 @@ file remains beside the saved overlay in player state.
   não teste contra o executável original.
 - A leitura/escrita de FAMI nessa revisão apenas serializa `ValueInArch`; não
   encontrei nesses caminhos TS1 um ponto que o atualize após compra ou construção.
-  Portanto, o reembolso de uma casa adquirida pelo novo fluxo não pode ser
-  deduzido com segurança do preço SIMI. Para uma família originalmente alojada,
-  o valor observado no FAMI pode ser devolvido segundo o comportamento do
-  Simitone; para uma família recém-mudada, ainda falta provar como obter o valor
-  de arquitetura atual. O overlay do OpenDollhouse continua sem despejo e sem
-  reembolso até essa fonte ser identificada.
+  Portanto, o reembolso depois de uma compra nova não pode ser deduzido com
+  segurança do preço SIMI. O planejador permite devolver o valor observado no
+  FAMI somente para família que já estava alojada nos dados originais. Depois
+  que essa família é mudada, também bloqueia novo despejo até provar como o
+  campo de arquitetura muda. É o comportamento do núcleo local, não validação
+  contra o jogo original.
 - Uma busca estática inicial com Ghidra 12.1.3 no executável original PE32/x86
   (SHA-256 `32857c25e00594a9bc5d700f7b373b6df59ab76ec51b36aa1d30f3dd973eff58`)
   não localizou os marcadores FAMI/IMAF nem confirmou gravações dos campos de
@@ -65,6 +73,9 @@ file remains beside the saved overlay in player state.
   compared against a running Simitone build.
 - `plan_family_move_in_overlay` preserves prior purchases and rejects occupied
   lots, already housed families, stale identities, and unaffordable purchases.
+- `family_overlay` replays move-out and rehome operations, checks exact budget
+  refunds, clears `ValueInArch`, rejects new-family refunds, negative values,
+  overflow, and stale source data, and reads version 1 saves as move-ins.
 - `linux_family_overlay_store` verifies stale compare-and-write requests leave
   the current save unchanged, and matching snapshots publish successfully.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to
@@ -75,8 +86,7 @@ file remains beside the saved overlay in player state.
   vacant destination, one-time purchase accounting, and stale/conflict cases.
 - `session_entry_resolution`: the effective moved family resolves to the same
   lot and resident GUIDs.
-- Linux build completed; 211 CTest cases passed and the display-dependent
-  `linux_window_backend` case was skipped because this run had no display.
+- Full Linux build completed; all 212 CTest cases passed in this run.
 - Read-only `odh-person --plan-only` on the installed game data resolved the
   original occupied House05 with three residents and seven expansion packs.
   Its player-state directory was isolated under `/tmp`; this does not verify
@@ -84,9 +94,10 @@ file remains beside the saved overlay in player state.
 
 ## Still missing
 
-The visual family move-in flow compiled but could not be clicked through in this
-headless test run; `linux_window_backend` was skipped because no display was
-available. Synthetic checks cover the planner and persistent store separately,
-not the entire UI-to-runtime path. Move-out and refund accounting remain
-unsupported. The runtime reloads the overlay when it starts; a future hardening
-step should verify the selected family identity at that boundary.
+There is no user-facing move-out choice or confirmation screen yet, so the
+move-out/rehome planner is not reachable from the neighborhood window.
+Synthetic checks cover the planner and persistent store separately, not the
+entire UI-to-runtime path. The visual move-in flow also has not been clicked
+through in this headless run. The runtime reloads the overlay when it starts;
+a future hardening step should verify the selected family identity at that
+boundary.
