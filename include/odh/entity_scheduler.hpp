@@ -6,6 +6,24 @@
 
 namespace odh {
 
+// Value-only tick-boundary continuation. Recreate equivalent World/VM state and
+// hooks before restoring; no pointer, code/resource or callback is serialized.
+struct EntityVmSchedulerSnapshot {
+    struct Entity {
+        std::int16_t id = 0;
+        std::uint64_t run_generation = 0, steps = 0;
+        VmStatus status = VmStatus::ready;
+        bool before = false, after = false, interrupt = false;
+    };
+    std::vector<Entity> entities; // Strictly ascending IDs.
+    std::size_t entity_limit = 0;
+    std::optional<std::int16_t> budget_cursor;
+    std::optional<std::uint64_t> last_tick;
+    std::uint64_t instructions_last_tick = 0;
+    bool faulted = false;
+    std::string diagnostic;
+};
+
 // A deterministic, bounded host scheduler for independent entity VM states.
 // It shares one logical tick, runs controller hooks at the tick boundaries,
 // and caps both aggregate and per-entity VM instruction work.
@@ -17,6 +35,11 @@ public:
     using Trace = std::function<void(std::int16_t,const VmTrace&)>;
 
     explicit EntityVmScheduler(std::size_t entity_limit=64):entity_limit_(entity_limit) {}
+    EntityVmSchedulerSnapshot snapshot() const;
+    // Register rebuilt VMs/hooks first. Restore only before runtime operations;
+    // configured entity limit is a ceiling. False or allocation failure leaves
+    // destination untouched and fresh. Capture/restore during tick throws.
+    bool restore_snapshot(const EntityVmSchedulerSnapshot&);
     bool add(std::int16_t entity,Vm&,BeforeRun before={},AfterRun after={},Interrupt interrupt={});
     bool remove(std::int16_t entity);
     // Interrupt a registered thread. A higher ID can run later in this tick;
@@ -38,7 +61,7 @@ private:
     std::vector<std::int16_t> same_tick_ready_;
     std::optional<std::uint64_t> last_tick_;
     std::uint64_t instructions_last_tick_=0;
-    bool ticking_=false,faulted_=false;
+    bool ticking_=false,faulted_=false,fresh_=true;
     std::string diagnostic_;
 };
 

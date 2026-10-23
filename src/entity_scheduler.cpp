@@ -6,6 +6,51 @@
 
 namespace odh {
 
+EntityVmSchedulerSnapshot EntityVmScheduler::snapshot() const {
+    if(ticking_)throw std::logic_error("scheduler snapshot during tick");
+    EntityVmSchedulerSnapshot result;
+    result.entities.reserve(entities_.size());
+    for(const auto& [id,entity]:entities_)
+        result.entities.push_back({id,entity.vm->run_generation(),entity.vm->steps(),entity.vm->status(),
+                                   bool(entity.before),bool(entity.after),bool(entity.interrupt)});
+    result.entity_limit=entity_limit_;
+    result.budget_cursor=budget_cursor_;
+    result.last_tick=last_tick_;
+    result.instructions_last_tick=instructions_last_tick_;
+    result.faulted=faulted_;
+    result.diagnostic=diagnostic_;
+    return result;
+}
+
+bool EntityVmScheduler::restore_snapshot(const EntityVmSchedulerSnapshot& state) {
+    if(ticking_)throw std::logic_error("scheduler restore during tick");
+    if(!fresh_||state.entity_limit>entity_limit_||state.entities.size()>state.entity_limit||
+       state.entities.size()!=entities_.size()||
+       (state.last_tick&&(!*state.last_tick||*state.last_tick>std::numeric_limits<std::uint32_t>::max()))||
+       (state.instructions_last_tick&&!state.last_tick&&!state.faulted)||
+       (state.faulted&&state.diagnostic.empty())||
+       (state.budget_cursor&&!entities_.count(*state.budget_cursor)))return false;
+    auto registered=entities_.begin();
+    for(const auto& entity:state.entities) {
+        const auto& bound=registered->second;
+        if(entity.id!=registered->first||entity.run_generation!=bound.vm->run_generation()||
+           entity.steps!=bound.vm->steps()||entity.status!=bound.vm->status()||
+           entity.before!=bool(bound.before)||entity.after!=bool(bound.after)||
+           entity.interrupt!=bool(bound.interrupt))return false;
+        ++registered;
+    }
+    // The only potentially allocating owned value is copied before publishing.
+    auto diagnostic=state.diagnostic;
+    diagnostic_.swap(diagnostic);
+    entity_limit_=state.entity_limit;
+    budget_cursor_=state.budget_cursor;
+    last_tick_=state.last_tick;
+    instructions_last_tick_=state.instructions_last_tick;
+    faulted_=state.faulted;
+    fresh_=false;
+    return true;
+}
+
 bool EntityVmScheduler::add(std::int16_t entity,Vm& vm,BeforeRun before,AfterRun after,Interrupt interrupt) {
     if(ticking_||faulted_||!entity_limit_||entities_.size()>=entity_limit_||entities_.count(entity))
         return false;
@@ -19,6 +64,7 @@ bool EntityVmScheduler::interrupt(std::int16_t entity) {
     if(faulted_)return false;
     const auto found=entities_.find(entity);
     if(found==entities_.end()||!found->second.interrupt)return false;
+    fresh_=false; // A callback may mutate its VM even if it rejects or throws.
     if(!found->second.interrupt())return false;
     if(ticking_&&current_entity_&&entity>*current_entity_&&
        std::find(same_tick_ready_.begin(),same_tick_ready_.end(),entity)==same_tick_ready_.end())
@@ -36,6 +82,7 @@ bool EntityVmScheduler::remove(std::int16_t entity) {
         if(successor==found)budget_cursor_.reset();
         else budget_cursor_=successor->first;
     }
+    fresh_=false;
     entities_.erase(found);
     if(entities_.empty())budget_cursor_.reset();
     return true;
@@ -44,6 +91,7 @@ bool EntityVmScheduler::remove(std::int16_t entity) {
 bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
                              std::uint64_t per_entity_budget,const Trace& trace) {
     if(faulted_)return false;
+    fresh_=false;
     if(ticking_||!instruction_budget||!per_entity_budget||
        now>std::numeric_limits<std::uint32_t>::max()||
        (!last_tick_&&now!=1)||(last_tick_&&(now<=*last_tick_||now-*last_tick_!=1))) {
