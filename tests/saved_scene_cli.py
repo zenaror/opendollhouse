@@ -226,7 +226,9 @@ with tempfile.TemporaryDirectory(prefix='odh-saved-scene-') as folder:
     lot.write_bytes(house(preferred=False))
     check(run(resources)['floor_map_resolved'] == 1, 'ID0 fallback failed')
     lot.write_bytes(house(floor_name='missing.flr'))
-    check('external material alias unresolved' in run(resources, success=False))
+    alias_error = run(resources, success=False)
+    check('external material alias unresolved' in alias_error)
+    check('floor_map_misses=1 floor_alias_ids=[42]' in alias_error, alias_error)
     lot.write_bytes(house())
     # Explicit FAR and later loose duplicate retain deterministic precedence.
     archive = root / 'materials.FAR'

@@ -11,6 +11,7 @@
 #include "saved_tail_json.hpp"
 #include "json.hpp"
 #include "odh/graphics_state.hpp"
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -20,6 +21,15 @@
 #include <set>
 
 namespace {
+std::string alias_ids(const std::array<bool,256>& unresolved) {
+    std::string ids="[";bool first=true;
+    for(std::size_t id=0;id<unresolved.size();++id)if(unresolved[id]){
+        if(!first)ids+=",";
+        ids+=std::to_string(id);
+        first=false;
+    }
+    return ids+"]";
+}
 void different(const std::string& output,const std::string& input) {
     if(std::filesystem::weakly_canonical(output)==std::filesystem::weakly_canonical(input) ||
        (std::filesystem::exists(output)&&std::filesystem::exists(input)&&std::filesystem::equivalent(output,input)))
@@ -126,8 +136,14 @@ int main(int argc,char** argv){try{
             const odh::ArchitectureMap empty;
             aliases=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,wall_map?*wall_map:empty,
                 catalog.floors(),catalog.walls());
-            if(!aliases->floor_map_complete()||(walls_path&&!aliases->wall_map_complete()))
-                throw odh::FormatError("saved scene external material alias unresolved");
+            if(!aliases->floor_map_complete()||(walls_path&&!aliases->wall_map_complete())){
+                const auto& d=aliases->diagnostics;
+                std::string message="saved scene external material alias unresolved: floor_map_misses="+
+                    std::to_string(d.floor_map_misses)+" floor_alias_ids="+alias_ids(d.unresolved_floor_aliases);
+                if(walls_path)message+=" wall_map_misses="+std::to_string(d.wall_map_misses)+
+                    " wall_alias_ids="+alias_ids(d.unresolved_wall_aliases);
+                throw odh::FormatError(message);
+            }
             prepared=odh::prepare_saved_architecture(architecture->architecture,aliases->aliases);
             architecture->architecture=prepared_render_architecture(architecture->architecture,*prepared);
         }else if((floor_map&&!floor_map->entries.empty())||(walls_path&&wall_map&&!wall_map->entries.empty()))

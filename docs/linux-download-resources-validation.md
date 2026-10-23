@@ -24,11 +24,15 @@ sem remover seus limites de caminho, nomes e índices.
   70 Downloads) importou House81: 327 entidades e 5.188 GUIDs no catálogo. A
   fronteira sintética de 128 fontes passou; 129 foi recusada por
   `saved_scene_cli`.
-- Com as mesmas 79 fontes FAR, `odh-saved-scene --objects` completou um quadro
-  estático 640x400 de House81: 18 camadas de objetos, 174 frames únicos e
-  1.768.892 pixels decodificados (10.613.352 bytes RGBA/índice/Z), abaixo do
-  teto de 2.097.152 pixels. RSS máximo medido neste PC: 25.104 KiB; não é uma
-  medida de outro hardware nem prova de sessão jogável.
+- House81 agora tem quadro estático completo de 640x400: pisos, paredes e
+  objetos foram desenhados (`floors_rendered=true`, `walls_rendered=true`,
+  273 camadas de objetos). O catálogo usou os mesmos 79 FARs de definição e
+  106 fontes de arquitetura (arquivos `.flr`/`.wll` soltos e FARs de expansões
+  e Downloads); os 7 aliases de piso e 8 de parede ficaram resolvidos. Cache:174
+  frames,113.760 pixels/682.560 bytes RGBA/índice/Z. RSS máxima neste PC:
+  16.232 KiB. `architecture_loaded=false` indica que isso é um retrato, não uma
+  arquitetura carregada para simulação; ainda não é visita jogável nem medida de
+  outro aparelho. PPM: `/tmp/odh-house81-full-97aee44.ppm`.
 - O runtime leu esses recursos e escreveu um quadro PPM de 320×240 de House07,
   com o Sim, arquitetura e objetos visíveis. A medição deste computador foi
   30.752 KiB de RSS máxima para essa execução; ela não representa memória em
@@ -62,11 +66,13 @@ sem remover seus limites de caminho, nomes e índices.
 ## Limites
 
 O plano e os leitores de lotes agora aceitam os dados Downloads da instalação
-Legacy, House81 foi importada e o quadro estático de objetos passou pelo novo
-orçamento de frames. Isso ainda não abre um lote público como visita. House21,
-House40 e House90 param no leitor em `truncated OBJM tail fields`; a cena completa
-de House81 com mapas externos ainda para em `saved scene external material
-alias unresolved`. Também faltam sessão interativa contínua, confirmação visual
-da janela e dos controles, troca real de lote, gravação e recarga de uma partida
-ODH e validação das outras cidades/expansões. Nenhum comportamento foi
-verificado em hardware portátil.
+Legacy, House81 foi importada e agora renderiza estáticamente pisos, paredes e
+objetos quando o catálogo inclui os FARs de arquitetura das expansões e
+Downloads. Com só os 23 arquivos `.flr`/`.wll` soltos, o resolver ainda apontava
+7 aliases de piso e 8 de parede sem provedor; o erro agora lista quantidades e
+IDs para facilitar diagnósticos futuros. Isso ainda não abre o lote público como
+visita. House21, House40 e House90 param no leitor em `truncated OBJM tail
+fields`. Também faltam sessão interativa contínua, confirmação visual da janela e
+dos controles, troca real de lote, gravação e recarga de uma partida ODH e
+validação das outras cidades/expansões. Nenhum comportamento foi verificado em
+hardware portátil.
