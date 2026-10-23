@@ -829,7 +829,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         const auto table=strings.find(person.startup->body_strings);
         if(table==strings.end())throw odh::FormatError("startup BodySTR absent");
         body=odh::parse_avatar_body_strings(table->second);
-        if(body->avatar_type!="adult")throw odh::FormatError("startup constructor profile requires adult BodySTR type");
+        if(body->avatar_type!="adult"&&(!saved_world_main||body->avatar_type!="child"))
+            throw odh::FormatError("startup constructor profile requires adult BodySTR type or saved child");
         const auto special=strings.find(150);if(special!=strings.end())private_walk=std::move(special->second);
         const bool child=*body->age<18;
         const std::uint16_t walk_id=child?151:150,swim_id=child?160:158;
@@ -1022,6 +1023,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         std::map<std::uint16_t,odh::SoundEvent> sounds;
         std::unique_ptr<odh::EntityThreadControllers> controllers;
         std::optional<odh::Playback> playback;
+        std::optional<odh::AvatarBodyDescriptor> body_state;
         std::unique_ptr<odh::Vm> vm;
     };
     std::vector<std::unique_ptr<HouseholdRuntime>> household_runtime;
@@ -1048,7 +1050,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
             if(pinned==pinned_characters.end())throw odh::FormatError("household member lacks loaded-byte provenance");
             resource.frozen=pinned->second.bytes;
-            auto data=load(resource,odh::RoutineScope::private_object,member.object_definition_id);
+            auto data=load(resource,odh::RoutineScope::private_object,member.object_definition_id,true);
             if(data.binding->version!=138||data.object_type!=2||data.binding->guid!=member.guid||
                !data.glob||data.glob->name.empty()||data.glob->name.find_first_of("/\\:")!=std::string::npos||
                data.glob->name.find('\0')!=std::string::npos||fold(data.glob->name+".iff")!=fold(semi->entry))
@@ -1308,15 +1310,21 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         try{
             const auto* actor=world.find(frame.context.caller);
             if(!actor||actor->person_data.size()<=58)throw odh::FormatError("animation actor age unavailable");
-            const bool child=actor->person_data[58]<18;
+            const odh::AvatarBodyDescriptor* actor_body=body_state?&*body_state:nullptr;
+            if(frame.context.caller!=runtime_avatar_id){
+                actor_body=nullptr;
+                for(const auto& member:household_runtime)if(member->id==frame.context.caller&&member->body_state)
+                    actor_body=&*member->body_state;
+                if(posture&&!actor_body)
+                    throw odh::FormatError("additional resident posture animation requires its own derived body descriptor");
+            }
+            const bool child=actor_body?actor_body->child:actor->person_data[58]<18;
             const odh::StringTable* table=nullptr;
             const auto find_table=[](const auto& tables,std::uint16_t key)->const odh::StringTable*{
                 const auto i=tables.find(key);return i==tables.end()?nullptr:&i->second;
             };
-            if(posture&&frame.context.caller!=runtime_avatar_id)
-                throw odh::FormatError("additional resident posture animation requires its own derived body descriptor");
-            if(posture&&body_state){
-                auto resource=animation_catalog->resolve(body_state->walk.at(static_cast<std::size_t>(*posture)));
+            if(posture&&actor_body){
+                auto resource=animation_catalog->resolve(actor_body->walk.at(static_cast<std::size_t>(*posture)));
                 const auto* header=&resource->header;
                 return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
             }
@@ -1410,7 +1418,9 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         std::unique_ptr<odh::Snap> controller;
         odh::VmPrimitive primitive;
     };
-    std::map<std::int16_t,std::unique_ptr<SnapRuntime>> snap_runtimes;
+    // Snap controllers retain their VM binding; residents share the World and
+    // SLOT target, but must not reuse another resident's bound controller.
+    std::map<std::pair<std::int16_t,const odh::Vm*>,std::unique_ptr<SnapRuntime>> snap_runtimes;
     std::function<bool(std::int16_t,const odh::EntityPosition&)> snap_placement_validator;
     std::function<odh::Snap::StairPlacementStatus(std::int16_t,std::int16_t,const odh::EntityPosition&)>
         snap_stair_placement_validator;
@@ -1421,7 +1431,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         if(stack_object<=0||stack_object>32767)
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap stack object is outside the World ID range"};
         const auto object_id=static_cast<std::int16_t>(stack_object);
-        auto runtime=snap_runtimes.find(object_id);
+        const auto cache_key=std::make_pair(object_id,dispatch.origin);
+        auto runtime=snap_runtimes.find(cache_key);
         if(runtime==snap_runtimes.end()) {
             const auto* entity=world.find(object_id);
             if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!entity->position||!definition_index)
@@ -1478,14 +1489,14 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
             entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table,
                 [&](std::int16_t actor,const odh::EntityPosition& position){
                     return snap_placement_validator&&snap_placement_validator(actor,position);
-                },[&](std::int16_t actor,std::int16_t target,const odh::EntityPosition& position){
+                },[&,validated_stair_endpoint](std::int16_t actor,std::int16_t target,const odh::EntityPosition& position){
                     return validated_stair_endpoint&&snap_stair_placement_validator?
                         snap_stair_placement_validator(actor,target,position):odh::Snap::StairPlacementStatus::unsupported;
                 });
             if(!entry->controller->bind(*dispatch.origin))
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap controller could not bind to VM"};
             entry->primitive=entry->controller->primitive();
-            runtime=snap_runtimes.emplace(object_id,std::move(entry)).first;
+            runtime=snap_runtimes.emplace(cache_key,std::move(entry)).first;
         }
         return runtime->second->primitive(frame,instruction,tuning,dispatch);
     };
@@ -1634,8 +1645,8 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
                 if(member_animation)return member_animation(f,i,t,d);
                 return {odh::PrimitiveDisposition::unsupported,"household resident animation playback is unavailable"};
             }
-            if(i.opcode==27||i.opcode==45||i.opcode==46)
-                return {odh::PrimitiveDisposition::unsupported,"additional resident routing and Snap controllers are not implemented"};
+            if(i.opcode==27||i.opcode==45)
+                return {odh::PrimitiveDisposition::unsupported,"additional resident routing controllers are not implemented"};
             return person_primitive(f,i,t,d);
         };
         runtime->vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},primitive,
@@ -1668,6 +1679,28 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
     std::uint64_t startup_steps=0;
     std::optional<odh::NeighborInheritance> inherited;
     std::optional<std::uint64_t> body_seed_before,body_seed_after;
+    const auto prepare_household_bodies=[&]{
+        for(auto& member:household_runtime){
+            if(!member->data.startup)
+                throw odh::FormatError("household avatar body derivation requires startup OBJD fields");
+            auto strings=load_strings(member->resource,{member->data.startup->body_strings,150});
+            const auto table=strings.find(member->data.startup->body_strings);
+            if(table==strings.end())throw odh::FormatError("household startup BodySTR absent");
+            auto member_body=odh::parse_avatar_body_strings(table->second);
+            if(member_body.avatar_type!="adult"&&member_body.avatar_type!="child")
+                throw odh::FormatError("household descriptor profile requires adult or child BodySTR type");
+            const bool child=*member_body.age<18;
+            const std::uint16_t walk_id=child?151:150,swim_id=child?160:158;
+            const auto tables=load_strings(*globals,{walk_id,swim_id});
+            if(!tables.count(walk_id)||!tables.count(swim_id))
+                throw odh::FormatError("household global walk/swim STR# absent");
+            const auto special=strings.find(150);
+            const auto overrides=special==strings.end()?std::optional<odh::StringTable>{}:
+                std::optional<odh::StringTable>{std::move(special->second)};
+            member->body_state=odh::derive_avatar_body_descriptor(world,member->id,random,member_body,
+                tables.at(walk_id),tables.at(swim_id),overrides);
+        }
+    };
     const auto trace_in=[&](const std::string& phase){return [&,phase](const odh::VmTrace& record){
         latest_trace=record;
         if(diagnostics.retain(Diagnostic::trace,trace.size(),10000)){
@@ -1720,6 +1753,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         }
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
+    if(!restoring_session)prepare_household_bodies();
     std::uint64_t ticks=0;
     if(session_restore){
         if(!playback)throw odh::FormatError("session restore needs the matching animation catalog");
@@ -1762,6 +1796,7 @@ int odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
         if(!playback)throw odh::FormatError("household restore needs the matching animation catalog");
         random.reset(household_restore->host().random_seed);
         body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
+        prepare_household_bodies();
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
             return resolve_animation(frame,key.source,key.id,key.kind==odh::PlaybackResourceKey::Kind::posture_reset
@@ -3888,7 +3923,22 @@ struct PlacementCandidateProbe {
                 <<",\"status\":"<<json_bytes(odh::vm_status_name(member.vm->status()))
                 <<",\"diagnostic\":"<<json_bytes(member.vm->diagnostic())<<",\"steps\":"<<member.vm->steps()
                 <<",\"start_position\":";position_json(member.start);
-            std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);std::cout<<'}';
+            std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);
+            std::cout<<",\"attachment\":";
+            if(entity&&entity->attachment)std::cout<<'['<<entity->attachment->container<<','<<entity->attachment->slot<<']';
+            else std::cout<<"null";
+            std::cout<<'}';
+        }
+        std::cout<<"],\"snap_targets\":[";
+        std::set<std::int16_t> reported_snap_targets;
+        for(const auto& entry:snap_runtimes){
+            const auto id=entry.first.first;
+            if(!reported_snap_targets.insert(id).second)continue;
+            if(reported_snap_targets.size()>1)std::cout<<',';
+            const auto* target=world.find(id);
+            std::cout<<"{\"entity_id\":"<<id<<",\"slots\":[";
+            if(target)for(std::size_t i=0;i<target->slots.size();++i){if(i)std::cout<<',';std::cout<<target->slots[i];}
+            std::cout<<"]}";
         }
         std::cout<<"]}";
     }
@@ -4224,7 +4274,11 @@ struct PlacementCandidateProbe {
     for(std::size_t n=0;n<actor->person_data.size();++n){if(n)std::cout<<',';std::cout<<actor->person_data[n];}
     std::cout<<"],\"attributes\":[";
     for(std::size_t n=0;n<actor->attributes.size();++n){if(n)std::cout<<',';std::cout<<actor->attributes[n];}
-    std::cout<<"],\"motives\":[";for(std::size_t n=0;n<actor->motives.size();++n){if(n)std::cout<<',';std::cout<<actor->motives[n];}std::cout<<"]}";
+    std::cout<<"],\"motives\":[";for(std::size_t n=0;n<actor->motives.size();++n){if(n)std::cout<<',';std::cout<<actor->motives[n];}
+    std::cout<<"],\"attachment\":";
+    if(actor->attachment)std::cout<<'['<<actor->attachment->container<<','<<actor->attachment->slot<<']';
+    else std::cout<<"null";
+    std::cout<<'}';
     std::cout<<",\"stack\":[";for(std::size_t n=0;n<vm.stack().size();++n){if(n)std::cout<<',';const auto& f=vm.stack()[n];
         std::cout<<"{\"owner\":"<<f.context.code_owner<<",\"routine\":"<<f.key.id<<",\"pc\":"<<f.pc<<",\"caller\":"<<f.context.caller<<",\"callee\":"<<f.context.callee<<",\"stack_object\":"<<f.context.stack_object<<'}';}
     std::cout<<']';

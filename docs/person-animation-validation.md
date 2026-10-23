@@ -45,6 +45,53 @@ bytes, in addition to the catalog's resource budgets. Accounting is not RSS.
 
 ## Synthetic integration validation
 
+### Integrated household posture and Snap, 2026-10-23
+
+Each additional integrated household resident now derives an independent
+`AvatarBodyDescriptor` from its pinned character OBJD BodySTR, private STR#150,
+and age-selected global walk/swim tables. Derivation does not reinitialize the
+saved World banks or consume RNG. Posture reset selects the descriptor by the
+frame's Caller; an unavailable additional-resident descriptor remains an
+explicit failure. Ordinary animation table selection also uses that caller's
+derived adult/child choice. Integrated saved-world descriptors accept adult or
+child BodySTR types; fresh constructor initialization retains its adult profile.
+Descriptors are also prepared before household playback
+continuation is restored. The separate second-avatar fixture retains its
+existing restrictions.
+
+Additional integrated residents dispatch opcode46 through the existing
+SLOT-backed Snap handler. Controllers are cached by target object and origin VM,
+preserving VM binding while sharing target occupancy in the World. Opcodes27/45
+remain explicitly unsupported for additional residents. Existing SLOT geometry,
+placement, stair and occupancy restrictions remain in force.
+
+The reference consulted for this host integration is Simitone's FreeSO
+submodule `f86bbd34b2112296ed786741f640a0535886d180` (MPL-2.0):
+`Entities/VMAvatar.cs:364-389` stores per-avatar walk/swim strings with private
+overrides, `Primitives/VMAnimateSim.cs:40` uses the caller avatar's walk string,
+and `Primitives/VMSnap.cs:73-75` places the caller into the target's slot.
+
+`linux_household_animation_snap_cli` generates two character resources and a
+one-slot object entirely synthetically. With either resident selected as the
+primary, timed clip properties prove independent private posture names,
+adult/child global fallback selection, and ordinary Object animation selection
+by descriptor age even when the saved PersonData age differs. The child fixture
+has explicit child BodySTR type and age17. Missing resident BodySTR is rejected.
+Both resident VMs Snap to the same SLOT-backed object: resident1 returns true,
+resident2 returns false because the shared slot is occupied, without a VM
+binding fault. Resident1 repeats the Snap successfully through its cached
+controller. The CLI asserts the live target slot occupant and both resident
+attachments, rather than deriving occupancy from return status alone.
+The `snap` C++ test additionally binds two VMs to separate controllers for the
+same target, checks occupied rejection without changing either relation or the
+second resident's position, explicitly detaches the first resident through
+World, and proves the same second VM then succeeds with the exact target slot,
+attachment and position. Vacancy/retry is World/Snap evidence, not a household
+host interaction or floor/stair Snap milestone.
+Separate probes preserve both routing gates. This is headless
+Linux host/VM evidence; it does not establish original-game equivalence,
+commercial-lot completeness, rendered residents or console behavior.
+
 `tests/person_animation_cli.py` generates only synthetic FAR/IFF/BCF resources.
 It tests terminal completion, xevt/footstep observation, Local0 writes through
 the false branch and same-clip reentry, primary loops, private owner fallback,

@@ -1319,6 +1319,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_game_entry_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_household_session_resume_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_session_resume_cli.py $<TARGET_FILE:odh-person>)
+      add_test(NAME linux_household_animation_snap_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_animation_snap_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_session_resume_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_session_resume_cli.py $<TARGET_FILE:odh-person>)
     endif()

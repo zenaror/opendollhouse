@@ -287,6 +287,40 @@ struct Fixture {
     }
     void start() {vm.start(odh::routine_key(4096),{1,2,2});vm.run(10);}
 };
+void shared_world_dual_controller_tests() {
+    odh::World world; odh::RouteGrid grid{64,32}; auto globals=slot();
+    odh::Routing first{world,grid,globals}, second{world,grid,globals};
+    odh::Vm vm1{goto_relative(),world.vm_memory(),{},first.primitive()};
+    odh::Vm vm2{goto_relative(),world.vm_memory(),{},second.primitive()};
+    world.create(1,odh::EntityKind::avatar,{0,88,0});
+    world.create(2,odh::EntityKind::object,{0,0,1});
+    world.create(3,odh::EntityKind::avatar,{0,88,0});
+    world.create(4,odh::EntityKind::object,{0,0,1});
+    world.set_position(1,{4,4,1,0}); world.set_position(2,{12,4,1,0});
+    world.set_position(3,{4,20,1,0}); world.set_position(4,{28,20,1,0});
+    auto validator=[&](const odh::VmFrame& f,odh::RoutePoint p) {
+        const auto* target=world.find(f.context.stack_object);
+        return target&&target->position&&p==odh::RoutePoint{target->position->x,target->position->y}&&grid.walkable(p);
+    };
+    first.set_route_goal_validator(validator); second.set_route_goal_validator(validator);
+    require(first.bind(vm1)&&second.bind(vm2),"two routing controllers bind to separate VMs sharing world/grid/SLOT");
+    require(!first.bind(vm2)&&!second.bind(vm1),"each routing controller rejects cross-binding to the other VM");
+    vm1.start(odh::routine_key(4096),{1,2,2}); vm2.start(odh::routine_key(4096),{3,4,4});
+    require(vm1.run(4)==odh::VmStatus::waiting&&vm2.run(4)==odh::VmStatus::waiting&&first.active()&&second.active(),
+            "both VMs independently suspend on their own routes");
+    for(std::uint64_t tick=1;tick<=64&&(first.active()||second.active());++tick) {
+        first.tick(tick); second.tick(tick);
+        require(vm1.status()==odh::VmStatus::waiting||vm1.status()==odh::VmStatus::returned_true,
+                "first controller does not complete or fault the second VM");
+        require(vm2.status()==odh::VmStatus::waiting||vm2.status()==odh::VmStatus::returned_true,
+                "second controller does not complete or fault the first VM");
+    }
+    require(vm1.status()==odh::VmStatus::returned_true&&vm2.status()==odh::VmStatus::returned_true&&
+            world.find(1)->position->x==12&&world.find(1)->position->y==4&&
+            world.find(3)->position->x==28&&world.find(3)->position->y==20&&
+            world.find(1)->position->x!=world.find(3)->position->x,
+            "interleaved deterministic ticks reach distinct goals and return only to each owning VM");
+}
 void deferred_room_route_tests() {
     {
         odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
@@ -550,6 +584,7 @@ int main() {
         pre_ranked_goal_tests();
         door_range_route_tests();
         route_frame_context_tests();
+        shared_world_dual_controller_tests();
         deferred_room_route_tests();
         saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();

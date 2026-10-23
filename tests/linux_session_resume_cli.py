@@ -56,7 +56,7 @@ class Bits:
         return bytes(int(bits[pos:pos + 8], 2) for pos in range(0, len(bits), 8))
 
 
-def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0):
+def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, empty_hand_slot=False):
     table = Bits()
     for value in (object_id, type_id, 0):
         table.word(value)
@@ -74,7 +74,9 @@ def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0):
         block.word()
     for value in (0, 0, -1, 0):  # stack, flags, relationship flag/count
         block.integer(value)
-    block.word()  # slots
+    block.word(2 if empty_hand_slot else 0)  # linked slot plus explicit empty hand slot
+    if empty_hand_slot:
+        for _ in range(4): block.word()
     block.word()  # dynamic sprite flags
     block.integer()  # animation events
     block.integer()  # engaged

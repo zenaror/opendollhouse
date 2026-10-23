@@ -74,6 +74,29 @@ int main(){try{
      odh::Vm vm(routine(),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::returned_false && f.world.find(1)->position->x==10 &&
              !f.world.find(1)->attachment && f.world.find(2)->slots[0]==3,"occupied destination failure is atomic");}
+    {Fixture f;
+     require(f.world.create(3,odh::EntityKind::avatar,{0,88,1})&&f.world.set_position(3,{11,21,1,4}),"second resident fixture");
+     odh::Snap other(f.world,2,odh::ObjdBinding{138,0x12345678,129,128},f.slots,128);
+     odh::Vm first(routine(),f.world.vm_memory(),{},f.snap->primitive());
+     odh::Vm second(routine(),f.world.vm_memory(),{},other.primitive());
+     require(f.snap->bind(first)&&other.bind(second),"same target has distinct VM-bound Snap controllers");
+     first.start(odh::routine_key(4096),{1,2,2});
+     require(first.run(1)==odh::VmStatus::returned_true&&f.world.find(2)->slots[0]==1&&
+             f.world.find(1)->attachment&&f.world.find(1)->attachment->container==2&&
+             f.world.find(1)->attachment->slot==0,"first resident occupies target slot");
+     const auto second_position=*f.world.find(3)->position;
+     second.start(odh::routine_key(4096),{3,2,2});
+     require(second.run(1)==odh::VmStatus::returned_false&&f.world.find(2)->slots[0]==1&&
+             f.world.find(1)->attachment&&!f.world.find(3)->attachment&&
+             *f.world.find(3)->position==second_position,"occupied slot rejects second resident atomically");
+     require(f.world.detach(2,0)&&f.world.find(2)->slots[0]==0&&!f.world.find(1)->attachment,
+             "explicit World detach vacates both ends of first resident relation");
+     second.start(odh::routine_key(4096),{3,2,2});
+     require(second.run(1)==odh::VmStatus::returned_true&&f.world.find(2)->slots[0]==3&&
+             !f.world.find(1)->attachment&&f.world.find(3)->attachment&&
+             f.world.find(3)->attachment->container==2&&f.world.find(3)->attachment->slot==0&&
+             f.world.find(3)->attachment->positioned&&*f.world.find(3)->position==odh::EntityPosition{30,20,1,4},
+             "same second VM succeeds after vacancy with exact target attachment and position");}
     for(const auto facing:{-3,-2,-1,0,1,2,3,4,5,6,7}) {
         Fixture f;f.slots.records[1].flags=4096;f.slots.records[1].facing=facing;
         f.world.set_position(2,{30,20,1,7});
