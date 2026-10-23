@@ -36,6 +36,11 @@ validação indicados por versão.
 
 ### Corrigido
 
+- A configuração Linux padrão agora para com instrução clara se PangoCairo não
+  estiver disponível. Antes, o build podia continuar e abrir uma janela sem os
+  menus e rótulos necessários. Também exige os arquivos de desenvolvimento X11;
+  `ODH_X11=OFF` fica explícito para builds sem janela, enquanto
+  `ODH_LINUX_TEXT_RENDERER=OFF` só é indicado para depurar uma janela sem texto.
 - A família House07 agora pode ser salva depois que o morador adicional conclui
   Sit e Stand. Bancos de ações já instalados e sem referências vivas não impedem
   o save; referências dinâmicas ainda usadas pela VM ou animação continuam
