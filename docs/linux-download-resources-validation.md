@@ -32,12 +32,18 @@ sem remover seus limites de caminho, nomes e índices.
   de o processo relatar código 3 ao atingir o limite deliberado de 512 ticks
   com Main ainda esperando. O código 3 marca a sessão limitada incompleta; não
   foi uma falha da interação.
+- O mesmo teste, com `--window-input --window-stand`, percorreu o caminho de
+  clique, seleção do objeto, Space e a tecla U sem uma tela física; Sentar e
+  Levantar retornaram sucesso. Com `--window-neighborhood --neighborhood-house 7`,
+  a seleção M suspendeu e retomou o mesmo lote: tick 260, VM, World, relações,
+  postura sentada e vínculo ao objeto ficaram idênticos antes/depois.
 - Para repetir usando uma build local e a instalação do jogo:
 
   ```sh
   python3 tests/house07_interaction_integration.py \
     --binary build/odh-person --game-root "$GAME_ROOT" --ticks 512 \
-    --include-installed-resources
+    --include-installed-resources --window-input --window-stand \
+    --window-neighborhood --neighborhood-house 7
   ```
 - O teste anterior de quadro único chegou ao teto de 256 ticks. O JSON indicou
   `status=waiting`, `host_failed=false` e diagnóstico vazio. O código de saída
@@ -48,7 +54,8 @@ sem remover seus limites de caminho, nomes e índices.
 
 O plano e o Main do lote agora aceitam os dados Downloads da instalação Legacy,
 e a sequência Sentar/Levantar foi validada por agendamento de teste dentro do
-runtime real. Ainda faltam uma sessão interativa contínua, controles de jogador
-visuais, interação iniciada por clique na janela, gravação e recarga de uma
-partida ODH e validação das outras cidades/expansões. Nenhum comportamento foi
+runtime real, inclusive pelo fluxo de entrada de clique/tecla exercitado sem
+tela física. Ainda faltam uma sessão interativa contínua, confirmação visual da
+janela e dos controles, visita a outro lote, gravação e recarga de uma partida
+ODH e validação das outras cidades/expansões. Nenhum comportamento foi
 verificado em hardware portátil.
