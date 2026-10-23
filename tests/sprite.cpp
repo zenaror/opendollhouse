@@ -111,6 +111,13 @@ int main() { try {
         if(field==4)limits.palette_entries=2;
         rejects([&]{decode(bytes,limits);});
     }
+    limits={};limits.pixels=39;
+    try { decode(bytes,limits); require(false,"oversized SPR2 should reject"); }
+    catch(const odh::FormatError& error) {
+        const std::string diagnostic=error.what();
+        require(diagnostic.find("width=8 height=5 pixels=40 pixel_limit=39")!=std::string::npos,
+                "SPR2 allocation error reports measured dimensions and budget");
+    }
     for(std::size_t cut=0;cut<bytes.size();++cut) {
         rejects([&]{decode(bytes.substr(0,cut));});
         rejects([&]{std::istringstream stream(bytes.substr(0,cut));

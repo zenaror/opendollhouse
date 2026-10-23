@@ -68,7 +68,7 @@ modificam a imagem-base nem inputs; podem popular o cache limitado.
 Limites:16 fontes,256 assets,65.536 chunks cumulativos,4.096 por IFF,4.096
 DGRPs/imagens/frames,65.536 referências DGRP e65.536 flags dinâmicas. FAR:
 8.192 entradas e256KiB de nomes. Proveniência de assets e registros tem orçamento
-256KiB cada. Cache de frames:1.048.576 pixels únicos, até6MiB RGBA/índice/Z.
+256KiB cada. Cache de frames:2.097.152 pixels únicos, até12MiB RGBA/índice/Z.
 Viewport:até2048 por eixo e1.048.576 pixels. Draw extents repetidos:4.194.304
 pixels; samples do compositor:16.777.216. A soma de extents repetidos não duplica
 pixels do cache: House07r0z3 usa1.865.647 extents e1.029.033 pixels únicos.
@@ -76,8 +76,10 @@ pixels do cache: House07r0z3 usa1.865.647 extents e1.029.033 pixels únicos.
 Em cada render, o cache de frames marca as imagens requeridas pela vista atual.
 Ao atingir o limite, frames sem uso nesta vista são evictados antes de tentar
 decodificar a imagem nova; após composição bem-sucedida, o cache retém apenas os
-frames dessa vista. Um teste sintético alterna entre direções que exigem cada
-uma 1.048.576 pixels e confirma que ambas cabem sem acumular as imagens antigas.
+frames dessa vista. Testes sintéticos confirmam que dois quadros de1.048.576
+pixels cabem juntos (12MiB para RGBA/índice/Z), e que um terceiro é recusado
+sem manter cache acima do teto. O renderizador agora informa dimensões e limite
+quando um SPR2 ultrapassa seu orçamento de alocação.
 No preview X11 com House07, a cena passou por comandos de rotação e zoom e foi
 fechada normalmente: o relatório terminou em `waiting` no tick 131, sem
 diagnóstico, com 1.538.700 bytes de frames de objetos no último quadro. Isso
@@ -117,7 +119,7 @@ payloads e dados expandidos, além de4.096 chunks IFF.
 
 ## Verificação
 
-40 checks sintéticos do renderer de objetos;390 do adaptador gráfico (incluindo
+50 checks sintéticos do renderer de objetos;390 do adaptador gráfico (incluindo
 alturas0..9, NaN, limites, invalidação do resolver e saved attachment);228 dos
 arrays/maps. A seleção de soma low16 cobre valores positivos/negativos e
 NumGraphics0 com/sem DGRP. Suíte final Debug e ASAN/UBSAN:76 passaram, zero

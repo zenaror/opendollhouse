@@ -31,7 +31,7 @@ struct SavedObjectRenderResult {
 };
 // Host resource cache: immutable DefinitionIndex must outlive this object.
 // Strict SPR2+pixel+Z profile; SPR# and no-depth sprites fail explicitly.
-// Decoded frames used by one view <=1Mi pixels (RGBA+index+Z <=6MiB); obsolete
+// Decoded frames used by one view <=2Mi pixels (RGBA+index+Z <=12MiB); obsolete
 // frames are evicted on pixel pressure and after successful composition.
 // Repeated visible draw extents <=4Mi pixels, compositor samples <=16Mi,
 // viewport <=1Mi. Fully offscreen layers are culled before those draw budgets.

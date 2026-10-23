@@ -7,7 +7,7 @@
 #include <cmath>
 
 namespace {
-constexpr std::uint64_t pixel_budget=1048576, chunk_budget=65536;
+constexpr std::uint64_t pixel_budget=2*1048576, chunk_budget=65536;
 struct Source {
     std::ifstream stream;
     std::vector<odh::FarEntry> entries;
@@ -126,7 +126,7 @@ struct SavedObjectRenderer::Impl {
         odh::Spr2Frame result;
         try{result=read_frame();}
         catch(const odh::FormatError& error){
-            if(std::string(error.what())!="SPR2 dimensions exceed configured allocation budget"||
+            if(std::string(error.what()).rfind("SPR2 dimensions exceed configured allocation budget",0)!=0||
                !evict_unused_frames())throw;
             result=read_frame();
         }

@@ -94,7 +94,10 @@ Spr2Frame read_spr2_frame(const View& view, std::uint32_t frame_index,
     if(result.width>limits.width || result.height>limits.height ||
        count>limits.pixels || count>result.pixels.max_size() ||
        count>result.indices.max_size() || count>result.z.max_size())
-        throw FormatError("SPR2 dimensions exceed configured allocation budget");
+        throw FormatError("SPR2 dimensions exceed configured allocation budget: width="+
+            std::to_string(result.width)+" height="+std::to_string(result.height)+
+            " pixels="+std::to_string(count)+" pixel_limit="+std::to_string(limits.pixels)+
+            " size_limit="+std::to_string(limits.width)+"x"+std::to_string(limits.height));
     result.pixels.resize(static_cast<std::size_t>(count));
     result.indices.resize(static_cast<std::size_t>(count));
     const bool has_z=(result.flags&2U)!=0;

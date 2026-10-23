@@ -24,6 +24,11 @@ sem remover seus limites de caminho, nomes e índices.
   70 Downloads) importou House81: 327 entidades e 5.188 GUIDs no catálogo. A
   fronteira sintética de 128 fontes passou; 129 foi recusada por
   `saved_scene_cli`.
+- Com as mesmas 79 fontes FAR, `odh-saved-scene --objects` completou um quadro
+  estático 640x400 de House81: 18 camadas de objetos, 174 frames únicos e
+  1.768.892 pixels decodificados (10.613.352 bytes RGBA/índice/Z), abaixo do
+  teto de 2.097.152 pixels. RSS máximo medido neste PC: 25.104 KiB; não é uma
+  medida de outro hardware nem prova de sessão jogável.
 - O runtime leu esses recursos e escreveu um quadro PPM de 320×240 de House07,
   com o Sim, arquitetura e objetos visíveis. A medição deste computador foi
   30.752 KiB de RSS máxima para essa execução; ela não representa memória em
@@ -57,13 +62,11 @@ sem remover seus limites de caminho, nomes e índices.
 ## Limites
 
 O plano e os leitores de lotes agora aceitam os dados Downloads da instalação
-Legacy, e House81 foi importada. A sequência Sentar/Levantar foi validada por
-agendamento de teste dentro do runtime real, inclusive pelo fluxo de entrada de
-clique/tecla exercitado sem tela física. Ainda não abrimos um lote público como
-visita: House21, House40 e House90 param no leitor em `truncated OBJM tail
-fields`; House81 importa, mas o renderizador estático ainda para em
-`SPR2 dimensions exceed configured allocation budget` (e com mapa externo,
-`saved scene external material alias unresolved`). Ainda faltam uma sessão
-interativa contínua, confirmação visual da janela e dos controles, troca real de
-lote, gravação e recarga de uma partida ODH e validação das outras
-cidades/expansões. Nenhum comportamento foi verificado em hardware portátil.
+Legacy, House81 foi importada e o quadro estático de objetos passou pelo novo
+orçamento de frames. Isso ainda não abre um lote público como visita. House21,
+House40 e House90 param no leitor em `truncated OBJM tail fields`; a cena completa
+de House81 com mapas externos ainda para em `saved scene external material
+alias unresolved`. Também faltam sessão interativa contínua, confirmação visual
+da janela e dos controles, troca real de lote, gravação e recarga de uma partida
+ODH e validação das outras cidades/expansões. Nenhum comportamento foi
+verificado em hardware portátil.
