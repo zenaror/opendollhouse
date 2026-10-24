@@ -798,3 +798,21 @@ A captura temporária foi mantida fora do Git para não incluir arte comercial:
 não cobre o HUD nesse caso; ele continua provisório e não reproduz o pie menu
 ou a arte original. Ainda faltam fechar a ação numa sessão X11, testar outros
 objetos/idiomas e salvar/retomar após a sequência.
+
+### Clique X11 no launcher integrado — 2026-10-24
+
+Com `tools/play_linux.py`, a House07 abriu no Xvfb em 800×600, mostrando a
+casa, os dois moradores e o HUD. O clique real em `(338,291)` selecionou o
+objeto 128 (GUID `0x26BFBB29`, TTAB 128); a lista provisória mostrou `Sit`.
+O clique na linha enfileirou BHAV 4097. No tick 120, o ator estava anexado ao
+objeto 128 e tocava `a2o-sit-behind` no frame 19,2 de 161. O processo foi
+encerrado antes da conclusão: a fila permanecia ativa, o retorno era nulo e
+`host_failed=false`.
+
+Capturas mantidas fora do checkout e sem inclusão no Git:
+`/tmp/odh-x11-retry/retry-menu.png` e
+`/tmp/odh-x11-retry/retry-after-30s.png`. A segunda captura não prova que Sit
+terminou; o recibo no encerramento confirma que a ação ainda estava em curso.
+Na mesma rodada, o gate headless com entrada de janela completou Sit 4097 e
+Stand 4102, ambos com retorno `true`, fila vazia e sem falha do host. A janela
+X11 real ainda precisa mostrar a ação concluída e validar Stand e save/retomada.

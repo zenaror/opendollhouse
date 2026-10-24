@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Atualização: clique real em Sit na House07 pelo Xvfb (2026-10-24)
+
+A build `build-household-session/odh-person` abriu a House07 em uma janela X11
+de 800×600, com os dois moradores e o HUD. Um clique real no pixel `(338,291)`
+selecionou a cadeira salva 128 (GUID `0x26BFBB29`, TTAB 128); a lista mostrou
+`Sit`. Clicar na linha enfileirou a ação BHAV 4097. Ao fechar o teste no tick
+120, o morador estava anexado à cadeira e reproduzia `a2o-sit-behind`, mas a
+fila ainda estava ativa e o retorno da ação era nulo. Isso confirma seleção e
+início pelo X11, não a conclusão visual da ação. Capturas comerciais ficaram
+fora do Git em `/tmp/odh-x11-retry/`.
+
+Separadamente, o harness de integração com a instalação base completou Sit
+4097 e Stand 4102: ambas retornaram `true`, a fila ficou vazia e o host não
+falhou. O processo alcançou o limite explícito de 512 ticks (exit 3) depois
+que as ações terminaram. É evidência headless, sem conclusão visual ou
+paridade com o original. O servidor Xvfb e os processos do jogo foram
+encerrados após a captura.
+
+Pendente: deixar Sit concluir e verificar Stand/save/retomada numa sessão
+visível; a janela real ainda não confirmou o retorno da ação.
+
 ## Atualização: carregamento X11 e fingerprint dos recursos (2026-10-23)
 
 A primeira retomada gráfica de House07 exibiu o cartão e levou aproximadamente
