@@ -60,6 +60,30 @@ argumentos, ordem, entradas puladas, ausência de Main e limite agregado. Isso
 prepara a futura construção de membros FAMI, mas ainda não instancia residentes
 ausentes nem valida chegada, persistência ou equivalência nativa.
 
+### Smoke test com moradores reais de House07
+
+`tests/house07_resident_startup_smoke.py` repete o mesmo perfil com os dois
+arquivos comerciais `User00000.iff` e `User00001.iff`, cada qual em uma execução
+separada. A verificação exige Init verdadeiro, BodySTR aplicado, entrada8 zero
+pulada, zero ticks de Main e ausência de falha do host. Configurações e logs são
+redirecionados para uma pasta temporária; nove arquivos de dados são comparados
+por SHA-256 antes/depois. Os recursos comerciais permanecem fora do Git.
+
+Execução reproduzível, da raiz do checkout:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_resident_startup_smoke.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '../referencias/The Sims'
+```
+
+Resultado observado em 2026-10-24: os GUIDs 850010198 e 844195932 executaram
+Init com sucesso em 180 instruções cada; ambos tiveram entrada8 zero pulada,
+BodySTR aplicado e zero ticks Main. Os nove arquivos conferidos mantiveram seus
+hashes. Como os moradores foram testados separadamente e antes de Main, isso não
+prova construção conjunta, chegada ao lote, vizinhança visível, partida jogável
+ou compatibilidade com o executável original.
+
 O CTest sintético `household_startup` liga esse helper ao candidato privado de
 `stage_household_members`: Init e entrada8 escrevem palavras do próprio avatar,
 entrada8 usa o RNG explícito, e NBRS/FAMI só são herdados depois do startup. A
