@@ -3,11 +3,20 @@
 ## O que mudou
 
 `odh-person --game-root DIR --mode N` agora tem um caminho integrado de entrada.
+O launcher `tools/play_linux.py` encaminha para esse mesmo caminho; não inicia
+um seletor e um runtime de lote independentes nem reconstrói os argumentos de
+recursos por fora do host integrado.
+Para retomar uma sessão, o launcher aceita `--load-session PATH`; modo, idioma,
+família, lote e morador são conferidos com o arquivo salvo. Nesse caso `--mode`
+pode ser omitido. `--plan-only` requer `--house` e não combina com retomada. Por padrão, o
+launcher usa `build/linux-checkpoint/odh-person`; outra pasta pode ser indicada
+com `--binary-dir`.
 Sem `--house`, prepara e mostra o seletor da vizinhança; ao escolher uma casa,
 carrega a família, abre a escolha do morador na mesma janela e passa essa janela
 Linux para o runtime do lote. Quando o preview do lote fecha normalmente, o
-seletor da vizinhança abre novamente; Escape no mapa encerra o launcher. Com
-`--house N`, pula o seletor do mapa e encerra depois que o lote fecha.
+seletor da vizinhança abre novamente na mesma janela; Escape no mapa encerra o
+launcher. Com `--house N`, pula o seletor do mapa e encerra depois que o lote
+fecha.
 `--resident-id N` escolhe o morador pela identificação usada na vizinhança sem
 mostrar a tela. Sem essa opção, use Tab para percorrer e Enter para continuar;
 Escape cancela a entrada. Com a sobreposição de texto opcional, a lista informa
@@ -77,3 +86,9 @@ edição de famílias ou equivalência jogável. O teste sintético confirma o r
 do fluxo do launcher quando o processo do lote termina normalmente; não comprova
 que a família ou o progresso sejam salvos. Esta etapa não edita nem exclui
 famílias e não salva progresso ao fechar o lote.
+
+A tecla S grava uma sessão experimental em
+`$XDG_DATA_HOME/opendollhouse/saves` (ou `~/.local/share/opendollhouse/saves`).
+O título da janela e o log de sessão mostram o caminho; o launcher pode reabri-lo
+com `--load-session PATH`. O carregador compara a família e os recursos do jogo
+antes de retomar.

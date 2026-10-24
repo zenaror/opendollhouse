@@ -1,6 +1,6 @@
 # Durable session save design
 
-This is a design checkpoint for saving a running OpenDollhouse session across a process restart. The Linux host now has experimental save/load paths for a single resident and for the supported whole-household profile. House07 confirms short headless continuation for two present residents; UI/X11 and long-session gates remain incomplete.
+This is a design checkpoint for saving a running OpenDollhouse session across a process restart. The Linux host now has experimental save/load paths for a single resident and for the supported whole-household profile. House07 confirms short headless continuation for two present residents and one live X11 save/resume; player-driven interactions and long-session gates remain incomplete.
 
 ## Storage boundary
 
@@ -188,8 +188,9 @@ Two CTest processes separately write and resume the synthetic archive. Rejection
 cases cover changed resources/selection/metadata/layout, missing or extra globals,
 altered family/house identity, routing footprint, seated posture, dynamic owners,
 truncation, archive limits, missing VM routines/hooks and missing Playback resource
-resolution. This is synthetic restart evidence only; it does not establish
-House07, Sit-to-Stand, expansion or live-window save/load behavior.
+resolution. This synthetic restart evidence alone does not establish House07,
+Sit-to-Stand, expansion or live-window save/load behavior; see the separate
+real-data gate below.
 
 The same integrated path supports `--headless-ticks N` for a bounded run without
 opening a display. This is a count of additional ticks when loading. With
@@ -208,9 +209,34 @@ is byte-identical to uninterrupted execution. This exercises the integrated
 launcher, original-lot reconstruction, resource fingerprint, callback graph and
 production atomic file path without commercial files or a display.
 
-Remaining for the House07 restart gate: validate the supported household
-sequence through the actual X11 window and on a long-running session. Add
-profiles for additional-resident posture/accessory state, in-progress routing,
-dynamic code owners and residents absent from the saved World before claiming
-those cases. The completed two-resident headless gate does not establish
-expansion coverage or full game compatibility.
+## Real-data X11 checkpoint (2026-10-23)
+
+Using the integrated Linux launcher, the original game data in mode 1 and
+House07 loaded as family 5 with residents 48 and 47. The 800x600 X11 lot window now shows a localized loading card before resource
+preparation. During this test it appeared within three seconds; the house,
+furniture, both residents and HUD appeared after about 75 seconds. Pressing S
+wrote a 116895-byte experimental save at tick 81 to a temporary save folder,
+outside the game installation. Escape closed the first process with exit code 0.
+
+A new process loaded that `.odhs` through
+`tools/play_linux.py --game-root GAME --load-session PATH`, without `--mode` or
+`--language`, using the default `build/linux-checkpoint` executable. The JSON
+result reported `session_loaded=true` and `resumed_tick=81`. The restored X11
+window showed the house and both residents; simulation continued through tick
+138 before Escape closed the process with exit code 0. Captures of the loading
+card and the running lot were `/tmp/odh-loading-card.png` and
+`/tmp/odh-loading-later.png` during validation. The archive
+fingerprint matched the same 132 game resources, language and expansion mask
+before restore. Capture: `/tmp/odh-launcher-resumed.png`.
+
+This proves one real two-resident House07 save and restart through an X11 window
+on this Linux build. It does not prove long-session stability, every action or
+lot, all expansions, full game compatibility or original-game visual parity.
+The visible card makes the wait clear, but the roughly 75-second load still
+needs performance investigation.
+
+Remaining: validate live Sit/Stand and other player actions through X11, a
+long-running session, and expansion-specific data. Add profiles for
+additional-resident posture/accessory state, in-progress routing, dynamic code
+owners and residents absent from the saved World before claiming those cases.
+This checkpoint does not establish expansion coverage or full game compatibility.

@@ -1,6 +1,7 @@
 #include "person_runtime.hpp"
 #ifdef ODH_HAVE_X11
 #include "neighborhood_screen.hpp"
+#include "linux_text_renderer.hpp"
 #endif
 #include "resource.hpp"
 
@@ -25,21 +26,66 @@
 #include "session_resource_manifest.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cctype>
 #include <filesystem>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace {
+#ifdef ODH_HAVE_X11
+std::string_view loading_label(std::uint8_t language) {
+    static constexpr std::array<std::string_view,20> labels{
+        "Loading...","Loading...","Chargement...","Lädt...","Caricamento...",
+        "Cargando...","Laden...","Indlæser...","Laddar...","Laster...",
+        "Ladataan...","טוען...","Загрузка...","Carregando...","読み込み中...",
+        "Wczytywanie...","正在加载...","正在載入...","กำลังโหลด...","불러오는 중..."};
+    return language>=1&&language<=labels.size()?labels[language-1]:labels[0];
+}
+
+void present_loading_screen(odh_host::LinuxWindow& window, std::uint8_t language) {
+    odh::RasterFrame frame{};
+    frame.width=window.width();
+    frame.height=window.height();
+    const auto pixels=static_cast<std::size_t>(frame.width)*frame.height;
+    frame.pixels.assign(pixels,{15,22,29,255});
+    frame.depth.assign(pixels,std::numeric_limits<float>::infinity());
+    const auto card_width=std::min<std::uint32_t>(frame.width,480);
+    const auto card_height=std::min<std::uint32_t>(frame.height,88);
+    const auto left=(frame.width-card_width)/2;
+    const auto top=(frame.height-card_height)/2;
+    for(std::uint32_t y=top;y<top+card_height;++y)
+        for(std::uint32_t x=left;x<left+card_width;++x)
+            frame.pixels[static_cast<std::size_t>(y)*frame.width+x]={39,52,63,255};
+    for(std::uint32_t x=left;x<left+card_width;++x)
+        frame.pixels[static_cast<std::size_t>(top)*frame.width+x]={82,186,170,255};
+    odh_host::TextOverlayStyle style;
+    style.x=static_cast<std::int32_t>(left+20);
+    style.y=static_cast<std::int32_t>(top+(card_height>36?(card_height-36)/2:0));
+    style.width=static_cast<std::int32_t>(card_width>40?card_width-40:card_width);
+    style.height=36;
+    style.font_size_px=22;
+    style.padding=2;
+    style.foreground={240,245,247,255};
+    style.background={39,52,63,0};
+    (void)odh_host::draw_text_overlay(frame,loading_label(language),language,style);
+    const auto message=loading_label(language);
+    window.set_title("OpenDollhouse | "+std::string(message));
+    window.present(frame);
+}
+#endif
+
 struct Options {
     struct ResidentGoHere {unsigned entity_id,x,y,level,tick;};
     struct ResidentSit {unsigned actor_id,object_id,stand_tick;};
@@ -670,6 +716,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                 }
                 options.language = *selected;
             }
+            present_loading_screen(*window,static_cast<std::uint8_t>(options.language));
             move_in_title = game_ui_string(game, 132, 0,
                 static_cast<std::uint8_t>(options.language), "Purchase House?");
             move_in_question = game_ui_string(game, 132, 1,
@@ -910,6 +957,12 @@ int odh_linux_game_entry(int argc, char** argv) {
                 }
 #endif
                 else resident = &session.members.front();
+#ifdef ODH_HAVE_X11
+                if (window) {
+                    window->resize(800,600);
+                    present_loading_screen(*window,static_cast<std::uint8_t>(options.language));
+                }
+#endif
                 auto plan = build_runtime_arguments(options, game, house, session, *resident,
                                                          graphics_resource);
                 if (headless_travel_index < options.headless_travel_houses.size())
