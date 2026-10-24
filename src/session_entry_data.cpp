@@ -75,9 +75,13 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
         });
     });
     if (!raw_neighbors) throw FormatError("Neighborhood.iff has no NBRS1 table");
-    if (saved_overlay)
+    if (saved_overlay) {
         family_entries = apply_family_overlay(family_entries, *neighborhood_identity,
                                                *saved_overlay);
+        if (!saved_overlay->creations.empty())
+            *raw_neighbors = apply_neighbor_overlay(*raw_neighbors, *neighborhood_identity,
+                                                     *saved_overlay);
+    }
 
     const auto house_file = user_data / "Houses" /
         ("House" + (house < 10 ? std::string("0") : std::string()) + std::to_string(house) + ".iff");

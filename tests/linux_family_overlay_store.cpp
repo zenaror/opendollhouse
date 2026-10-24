@@ -187,6 +187,34 @@ int main() {
             after_moveout[1].family.budget == 7500 &&
             after_moveout[1].family.value_in_arch == 0,
             "saved move-out gives back the recorded architecture value and clears the source marker");
+    odh::Family created_family;
+    created_family.version = 9;
+    created_family.unknown = 24;
+    created_family.family_number = 44;
+    created_family.budget = 20000;
+    created_family.member_guids = {0xa0000001U};
+    odh::NeighborRecord created_neighbor{};
+    created_neighbor.version = 10;
+    created_neighbor.unknown3 = 9;
+    created_neighbor.name = "iffname";
+    created_neighbor.person_mode = 9;
+    created_neighbor.person_data = std::vector<std::int16_t>(256, 0);
+    (*created_neighbor.person_data)[61] = 702;
+    created_neighbor.neighbor_id = 100;
+    created_neighbor.guid = created_family.member_guids.front();
+    created_neighbor.unknown_neg_one = -1;
+    odh::FamilyOverlay created;
+    created.neighborhood_identity = identity;
+    created.creations.push_back({702, "Created in overlay",
+        odh::encode_simitone_create_family_fami(created_family), {created_neighbor}});
+    odh_host::compare_exchange_linux_family_overlay_atomic(
+        transaction_path, moveout_committed, created);
+    const auto reopened_creation = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+    require(reopened_creation && reopened_creation->creations.size() == 1 &&
+            reopened_creation->creations[0].family_name == "Created in overlay" &&
+            reopened_creation->creations[0].members[0].guid == created_family.member_guids[0] &&
+            odh::encode_family_overlay(*reopened_creation) == odh::encode_family_overlay(created),
+            "created-family v3 survives private atomic compare-and-write and neighborhood reload");
     auto persisted = first;
     persisted.neighborhood_identity = identity;
     odh_host::write_linux_family_overlay_atomic(

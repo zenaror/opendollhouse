@@ -76,6 +76,42 @@ int main() {
                 moved_entry.members.size()==2 && moved_entry.members[0].guid==a,
                 "one effective family overlay makes the moved household visible to lot entry");
 
+        constexpr std::uint32_t created_guid=0x0badcafe;
+        odh::Family created_family{};
+        created_family.version=9; created_family.unknown=24;
+        created_family.family_number=901; created_family.budget=20000;
+        created_family.member_guids={created_guid};
+        odh::NeighborRecord created_neighbor{};
+        created_neighbor.version=10; created_neighbor.unknown3=9;
+        created_neighbor.name="iffname"; created_neighbor.person_mode=9;
+        created_neighbor.person_data=std::vector<std::int16_t>(256,0);
+        (*created_neighbor.person_data)[61]=202;
+        created_neighbor.neighbor_id=13; created_neighbor.guid=created_guid;
+        created_neighbor.unknown_neg_one=-1;
+        odh::FamilyOverlayCreation creation{202,"New family",
+            odh::encode_simitone_create_family_fami(created_family),{created_neighbor}};
+        const odh::Nbrs source_neighbors{0,62,
+            {neighbor(11,a),neighbor(12,b)},0};
+        const auto created_overlay=odh::plan_family_creation_overlay(
+            {vacant_entry},source_neighbors,neighborhood_identity,nullptr,creation);
+        const auto moved_created_overlay=odh::plan_family_move_in_overlay(
+            {vacant_entry},neighborhood_identity,&created_overlay,202,7,5000);
+        const auto persisted_created_overlay=odh::decode_family_overlay(
+            odh::encode_family_overlay(moved_created_overlay));
+        const odh::FamilyContext created_families(odh::apply_family_overlay(
+            {vacant_entry},neighborhood_identity,persisted_created_overlay));
+        const odh::NeighborContext created_neighbors(odh::apply_neighbor_overlay(
+            source_neighbors,neighborhood_identity,persisted_created_overlay));
+        const odh::DefinitionIndex created_characters({character(a,"User00004.iff"),
+            character(b,"User00009.iff"),character(created_guid,"PlayerCreated.iff")});
+        const auto created_entry=resolve(locations,created_families,created_neighbors,
+                                         created_characters);
+        require(created_entry.family_chunk_id==202 && created_entry.family_number==901 &&
+                created_entry.members.size()==1 && created_entry.members[0].guid==created_guid &&
+                created_entry.members[0].neighbor_id==13 &&
+                created_entry.members[0].character_asset=="PlayerCreated.iff",
+                "created household FAMI and NBRS replay together into a resolvable lot entry");
+
         rejects([&]{(void)resolve(locations,families,neighbors,characters,6);},
                 "unsupported neighborhood mode rejected");
         rejects([&]{(void)resolve(locations,families,neighbors,characters,1,8);},
