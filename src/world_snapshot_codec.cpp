@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 3;
+constexpr std::uint16_t codec_version = 4;
 constexpr std::size_t minimum_header_size = 31;
 
 class Writer {
@@ -235,6 +235,7 @@ void write_entity(Writer& writer, const Entity& entity) {
     }
     writer.count(entity.bound_appearances.size());
     for(const auto& name:entity.bound_appearances)writer.text(name);
+    writer.u64(entity.dynamic_sprite_flags);
 }
 
 Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::uint16_t version) {
@@ -317,6 +318,7 @@ Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::u
         for(std::uint32_t i=0;i<appearances;++i)
             entity.bound_appearances.push_back(reader.text(256));
     }
+    if(version>=4)entity.dynamic_sprite_flags=reader.u64();
     return entity;
 }
 

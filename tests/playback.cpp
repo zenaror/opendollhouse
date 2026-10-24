@@ -17,11 +17,12 @@ struct Fixture {
     odh::World world;
     std::shared_ptr<odh::AnimationHeader> a=clip(),reset_a=clip();
     std::int16_t posture=-1;
+    bool carry_resolved=false;
     std::uint32_t source=0;std::uint16_t selected=0;
     odh::Playback player{world,[&](const auto&,auto scope,auto id){source=scope;selected=id;return a;}};
     odh::Vm vm;
     Fixture(std::uint8_t flags=0,std::uint8_t expected=0,std::uint16_t id=1,odh::PlaybackLimits limits={},bool reset_resources=true,odh::EntityLayout layout={0,88,1}):
-        player{world,[&](const auto&,auto scope,auto selected_id){source=scope;selected=selected_id;return a;},limits,reset_resources?odh::AnimationResetResolver{[&](const auto&,auto value){posture=value;return reset_a;}}:odh::AnimationResetResolver{}},
+        player{world,[&](const auto&,auto scope,auto selected_id){source=scope;selected=selected_id;return a;},limits,reset_resources?odh::AnimationResetResolver{[&](const auto&,auto value){if(value==-1)carry_resolved=true;else posture=value;return reset_a;}}:odh::AnimationResetResolver{}},
         vm({{odh::routine_key(4096),routine(flags,expected,id)}},world.vm_memory(),{},player.primitive()){
         world.create(1,odh::EntityKind::avatar,layout);world.declare_object_word(1,17,0);player.bind(vm);
     }
@@ -191,14 +192,14 @@ int main(){try{
     {Fixture f(1,0,1,{1,1048576,2});f.xevt(0,"100");f.start();f.player.tick(1);f.player.tick(2);
      require(f.player.progress()->queued_events==1,"nonconsuming loop queue respects exact event budget");
      require(f.player.tick(3)&&!f.player.progress()&&!f.vm.pending(),"loop tick budget cancels without creating ticket");}
-    for(const auto failure:{0,1,2,3,4}){Fixture f(1);f.start();f.player.tick(1);f.world.set_person_data(1,42,1);
+    for(const auto failure:{0,2,3,4}){Fixture f(1);f.start();f.player.tick(1);f.world.set_person_data(1,42,1);
      if(failure==0)f.reset_a.reset();
      if(failure==1){f.world.create(2,odh::EntityKind::object);f.world.attach(1,0,2);}
      if(failure==2)f.reset_a->motions[0].frames=0;
      if(failure==3)f.reset_a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};
      if(failure==4)f.reset_a->motions[0].frames=1048577;
      const auto before=f.player.progress();const auto world_before=*f.world.find(1);
-     require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported,"invalid reset resources or occupied hand explicitly unsupported");
+     require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported,"invalid reset resources remain explicitly unsupported");
      const auto after=f.player.progress();const auto* actor=f.world.find(1);
      require(after&&after->frame==before->frame&&after->frames==before->frames&&after->name==before->name&&after->loop==before->loop,"failed reset preserves existing primary clip");
      require(actor->person_data==world_before.person_data&&actor->slots==world_before.slots&&actor->object_words==world_before.object_words,"failed reset does not alter world state");}
@@ -207,6 +208,15 @@ int main(){try{
     {Fixture f(0,0,0,{},true,{0,88,0});f.world.set_person_data(1,42,1);f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress()&&f.posture==-1&&f.world.find(1)->person_data[42]==1,"absent hand slot is unknown and fails before reset resolution");}
     {Fixture f(0,0,0,{},true,{0,42,1});f.start();require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"reset requires explicit HeadSeekState bank entry");}
+    {Fixture f;f.world.create(2,odh::EntityKind::object);f.world.set_position(1,{16,16,1,3});
+     f.world.set_position(2,{16,16,1,3});f.world.attach(1,0,2);
+     const auto reset=f.apply(0);
+     require(reset.disposition==odh::PrimitiveDisposition::goto_true,
+             "posture reset succeeds while the avatar holds an object");
+     require(f.carry_resolved&&f.player.carry_clip()==f.reset_a,
+             "held object installs the default carry animation");
+     require(f.world.find(1)->slots[0]==2&&f.player.progress()->loop,
+             "posture reset preserves the held object and starts the posture loop");}
     for(const auto mode:{1,16}){Fixture f(static_cast<std::uint8_t>(mode),0,0);f.world.set_person_data(1,0,2);f.start();
      require(f.vm.status()==odh::VmStatus::returned_true&&!f.vm.pending()&&f.player.progress()->loop&&f.posture==2,"ID0 modes1 and2 use ordinary posture reset");}
     {Fixture f(0,0,1,{4096,0xffffffffU,10});f.a->motions[0].frames=0xffffffffU;f.start();

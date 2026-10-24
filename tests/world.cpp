@@ -30,6 +30,25 @@ int main() {
         require(spatial.set_static_footprint(1,false) && spatial.spatial_revision()>spatial_revision,
                 "changing an entity footprint advances spatial revision");
 
+        odh::World carried_object;
+        require(carried_object.create(105,odh::EntityKind::avatar,{0,88,3,16})&&
+                    carried_object.create(112,odh::EntityKind::object,{0,0,1})&&
+                    carried_object.create(180,odh::EntityKind::object,{0,0,1})&&
+                    carried_object.set_position(105,{360,456,1,6})&&
+                    carried_object.set_position(112,{360,456,1,2})&&
+                    carried_object.set_position(180,{360,456,1,2})&&
+                    carried_object.attach(112,0,180),"carried object fixture setup");
+        require(carried_object.move_to_slot(105,0,180,6)&&
+                    carried_object.find(112)->slots[0]==0&&carried_object.find(105)->slots[0]==180&&
+                    carried_object.find(180)->attachment&&carried_object.find(180)->attachment->container==105&&
+                    carried_object.find(180)->position->direction==6,
+                "Grab moves an object from its old container into the avatar hand slot");
+        require(carried_object.create(181,odh::EntityKind::object,{0,0,0})&&
+                    carried_object.attach(105,1,181)&&
+                    !carried_object.move_to_slot(105,1,180)&&
+                    carried_object.find(105)->slots[1]==181&&carried_object.find(105)->slots[0]==180,
+                "Grab rejects an occupied hand slot without changing either object");
+
         odh::World motive_state;
         require(motive_state.create(1,odh::EntityKind::avatar,{0,0,0,16}),
                 "motive revision fixture setup");

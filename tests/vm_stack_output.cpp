@@ -62,6 +62,15 @@ int main() {
             require(vm.run(1) == odh::VmStatus::returned_true,
                     "RoomByTemp0 backend value is read by an expression");
         }
+        {
+            odh::PrimitiveOutcome event{odh::PrimitiveDisposition::goto_false,{}};
+            event.write=odh::VmFrameWrite{odh::VmFrameBank::locals,21,7,true};
+            auto vm=machine(event);
+            require(vm.start(key(),context())==odh::VmStatus::running,"animation event local fixture starts");
+            require(vm.run(1)==odh::VmStatus::budget_exhausted&&vm.stack()[0].locals.size()==22&&
+                    vm.stack()[0].locals[21]==7,
+                    "explicit animation event output grows a short local bank within its byte index");
+        }
         for (const auto disposition : {odh::PrimitiveDisposition::goto_true,
                                        odh::PrimitiveDisposition::goto_false}) {
             for (const std::int16_t value : {std::int16_t{0}, std::int16_t{-7},

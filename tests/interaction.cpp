@@ -95,6 +95,36 @@ int main(int argc,char** argv){try {
           !queue.active()&&queue.tick(6)&&vm.run(30)==odh::VmStatus::returned_true,
           "Main resumes on the following tick after action-tree idle and successful completion");
  }
+ { // A named BHAV can change code owner while remaining part of the active action.
+  odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,16);odh::InteractionQueue queue(world,1);
+  const odh::Instruction run_named{28,1,1,{0,0,0,0,0,0,0,0}};
+  const odh::VmPrimitive nested=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+      const std::array<std::int16_t,20>& temps,const odh::VmDispatch& dispatch){
+   if(instruction.opcode==28){
+    auto context=odh::VmContext{1,2,2,33};
+    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::call,{}, {},
+        odh::VmCall{key(4097),context,{4}}};
+   }
+   return queue.primitive()(frame,instruction,temps,dispatch);
+  };
+  odh::Vm vm({{key(4098),bhav({idle(1,1),set(2,0)})}},world.vm_memory(),{},nested,
+      {{22,{{key(4096),bhav({run_named,set(2,0)})}}},
+       {33,{{key(4097),bhav({idle(0,1),set(1,42)})}}}});
+  require(queue.bind(vm),"named action fixture binds");vm.start(key(4098),{1,1,1,0},{0});
+  const bool named_enqueued=queue.enqueue(key(4096),{1,2,2,22});
+  if(!named_enqueued)std::cerr<<"named action enqueue: "<<queue.diagnostic()<<" vm="<<odh::vm_status_name(vm.status())<<" ("<<vm.diagnostic()<<")\n";
+  require(named_enqueued,"named action enters FIFO");
+  require(queue.tick(1)&&vm.run(30)==odh::VmStatus::waiting&&queue.active()&&queue.waiting()&&
+      vm.stack().back().key.id==4097&&vm.stack().back().context.code_owner==33,
+      "nested named BHAV IdleForInput waits inside the active action after code owner changes");
+  for(std::uint64_t tick=2;tick<5;++tick)
+   require(queue.tick(tick)&&vm.run(30)==odh::VmStatus::waiting,"nested named action keeps its full IdleForInput delay");
+  require(queue.tick(5)&&vm.run(30)==odh::VmStatus::yielded&&vm.temps()[1]==42,
+      "nested named action resumes and returns to its queue owner");
+  require(queue.observe()&&queue.completion()&&queue.completion()->result,
+      "nested named action completion is recorded");
+ }
  {Fixture f;require(f.world.tick_motive_changes()&&f.world.set_motive_change(1,6,1800,100)&&
                      f.world.has_motive_change(1,6),"fixture has an active TS1 motive change");
   require(f.enqueue()&&f.enqueue(4097)&&!f.enqueue(),"FIFO capacity includes active front");

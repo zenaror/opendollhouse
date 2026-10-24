@@ -1,30 +1,31 @@
 # Continuidade atual
 
-## Atualização: criação real da Food pelo opcode42 (2026-10-24)
+## Atualização: sequência real Have A Snack na House07 (2026-10-24)
 
-`odh-person` agora recebe opcode42 em espera, resolve o GUID único nos dados
-instalados, cria a entidade dentro do slot0, carrega os recursos da Food,
-executa EP0 e agenda Main1 com uma VM própria. O relógio dessa VM pode entrar
-no tick atual do lote por `Sleep::join_at`; o teste verifica entrada no tick40,
-avanço para41 e rejeição de nova entrada ou salto de tick. O Main é iniciado
-depois do Init síncrono.
+`RunTreeByName` destino2 agora continua na mesma VM do morador, usando o
+`CodeOwner` do objeto de destino. O teste de interação também confirma que
+`IdleForInput` dentro dessa rotina chamada continua pertencendo à ação ativa,
+mesmo quando o código muda de dono. CTest focal de `interaction`,
+`session_bundle`, `vm_stack_output`, `world_snapshot_codec`, `playback`, `vm`,
+`world`, `person_cli` e `snap` passou 8/8.
 
-Build de `odh-person` e `odh-sleep-tests` passou. CTest focal de
-`sleep`, `person_cli`, `create_object_instance`, `object_runtime_resources`,
-`object_startup` e `avatar_startup` passou 6/6; `git diff --check` passou.
-Na instalação original, House07, a ação Have A Snack criou a Food GUID
-`0xF301E375` como objeto180, anexado à geladeira112/slot0. EP0 real percorreu
-Food BHAV4100 → 4112 → Global271 e terminou em 41 instruções. O JSON registrou
-Main da Food em `running`, mas ainda com zero passos: o host parou no tick136
-quando a VM do morador entrou em RunTreeByName opcode28, tabela303, escopo
-local, destino2. Essa chamada executa a rotina na VM do objeto-alvo; o host
-ainda não transfere esse trabalho entre VMs. Portanto Have A Snack ainda não
-termina, e a Food Main não foi validada em execução.
+Na House07 original, Have A Snack criou Food GUID `0xF301E375` como objeto180,
+anexado à geladeira112/slot0. EP0 percorreu Food BHAV4100 → 4112 → Global271 e
+terminou em 41 instruções. A Main da Food chegou até executar BHAV4120, que
+chamou RunTreeByName e Global281. A chamada real avançou do antigo ponto no
+tick136 até o tick392 e moveu o morador de (360,456) para (376,456), mas o
+processo ainda falha no opcode13 (`PushInteraction`). A chamada observada foi
+no BHAV4120 com Caller=105, Callee=112, StackObject=105 e CodeOwner=2147483648;
+os argumentos começam `[7,0,0,0]`, Local0=180 (Food) e os operandos são
+`[2,0,0,7,0]`. Pelo código do Simitone/FreeSO, isso busca a interação de índice2
+na Food e a coloca na fila do StackObject (o avatar), com prioridade herdada e
+continuação no início da fila. Ainda falta implementar essa fila secundária e
+confirmar o próximo ciclo da ação; Have A Snack não terminou.
 
-A execução foi headless, sem iniciar Xvfb ou outra tela virtual. Próximo passo:
-carregar a tabela STR# local apropriada, montar o catálogo de rotinas da Food
-e criar uma espera entre VMs para que RunTreeByName destino2 seja executado
-pela VM da Food e devolva o resultado ao morador sem perder o estado do Main.
+O teste e as inspeções foram headless. Nenhuma tela virtual foi iniciada.
+Próximo passo: carregar o TTAB/ação da Food no `CodeOwner` já instalado,
+enfileirar a interação em `actor_queue_for(105)` com os limites e a ordem
+corretos, criar cobertura de teste para esse encaixe e repetir House07.
 
 ## Atualização: início síncrono de objetos e EP8 vazio (2026-10-24)
 

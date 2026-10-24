@@ -48,6 +48,7 @@ odh::WorldSnapshot fixture() {
             world.set_radian_direction(1,-0.3f) &&
             world.set_static_footprint(1,false) && world.set_ui_ghost(3,true),
             "fixture positions and containment");
+    require(world.set_dynamic_sprite_flag(1,5,true),"fixture dynamic sprite flag");
     return world.snapshot();
 }
 }
@@ -61,7 +62,9 @@ int main() {
                 "every World snapshot field round-trips byte-for-byte");
         odh::World restored;
         require(decoded.entities[0].bound_appearances==std::vector<std::string>{"suit-toothbrush.apr","suit-toothpaste.apr"},
-                "version 3 stores sorted avatar accessory names");
+                "version 4 stores sorted avatar accessory names and dynamic sprite flags");
+        require(decoded.entities[0].dynamic_sprite_flags==(std::uint64_t{1}<<5),
+                "dynamic sprite flags survive snapshot round-trip");
         require(restored.restore_snapshot(decoded), "decoded snapshot restores into a fresh World");
         require(odh::encode_world_snapshot(restored.snapshot()) == encoded,
                 "restored World retains the complete encoded state");
@@ -106,7 +109,7 @@ int main() {
         require(odh::encode_world_snapshot(odh::decode_world_snapshot(minimal)) == minimal,
                 "minimum-size entity snapshot is accepted");
         auto legacy_v2=minimal;
-        legacy_v2[0]=2;legacy_v2.resize(legacy_v2.size()-4); // v2 has no accessory vector.
+        legacy_v2[0]=2;legacy_v2.resize(legacy_v2.size()-12); // v2 has no accessory vector or sprite flags.
         const auto legacy_v2_world=odh::decode_world_snapshot(legacy_v2);
         require(legacy_v2_world.entities.size()==1&&legacy_v2_world.entities[0].bound_appearances.empty(),
                 "version 2 snapshots remain readable without avatar accessories");

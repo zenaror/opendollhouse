@@ -214,6 +214,10 @@ int main() {
     bad_playback.runtime_entities[0].playback.carry=reset_carry;
     rejects([&]{(void)odh::encode_session_bundle(bad_playback);},
             "posture reset key cannot be used as a carry resource");
+    reset_carry.posture=-1;
+    bad_playback.runtime_entities[0].playback.carry=reset_carry;
+    require(!odh::encode_session_bundle(bad_playback).empty(),
+            "default held-object carry animation has a stable snapshot key");
     bad_playback=source;
     bad_playback.runtime_entities[0].vm.status=odh::VmStatus::waiting;
     bad_playback.runtime_entities[0].vm.ticket_sequence=1;

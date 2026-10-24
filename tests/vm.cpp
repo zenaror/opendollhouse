@@ -63,6 +63,25 @@ int main() {
         auto vm = machine(parsed); vm.start(key());
         require(vm.run(1) == odh::VmStatus::returned_true && vm.temps()[0] == 1, "parsed expression executes");
 
+        std::optional<std::uint16_t> read_flag;
+        odh::VmMemory sprite_memory;
+        sprite_memory.dynamic_sprite_flag=[&](const odh::VmFrame&,std::uint16_t flag)->std::optional<bool>{
+            read_flag=flag;return flag==5;
+        };
+        odh::Vm sprite_read({{key(),routine({expr(2,0,1,27,7)})}},sprite_memory);
+        sprite_read.start(key());sprite_read.temps()[0]=5;
+        require(sprite_read.run(1)==odh::VmStatus::returned_true&&read_flag==5,
+                "scope 27 reads the sprite flag selected by the Temp register");
+        std::optional<std::pair<std::uint16_t,bool>> written_flag;
+        sprite_memory.set_dynamic_sprite_flag=[&](const odh::VmFrame&,std::uint16_t flag,bool enabled){
+            written_flag=std::make_pair(flag,enabled);return true;
+        };
+        odh::Vm sprite_write({{key(),routine({expr(5,0,1,27,7)})}},sprite_memory);
+        sprite_write.start(key());sprite_write.temps()[0]=69;
+        require(sprite_write.run(1)==odh::VmStatus::returned_true&&written_flag&&
+                written_flag->first==69&&written_flag->second,
+                "scope 27 writes the selected sprite flag using the Temp register value");
+
         auto restored = machine(routine({expr(2,0,37,9,7)},2));
         odh::VmFrame saved_frame{key(),0,{12,13,14,0},{37},{44},
                                  odh::VmCallReturnMode::ordinary,0};

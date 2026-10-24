@@ -1605,8 +1605,6 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             [](const auto& left,const auto& right){return left->id<right->id;});
     }
     const odh::GeometricRoomMap* vm_room_map=nullptr;
-    const auto tree_by_name_global_strings=saved_world_main?load_strings(*globals,{303}):
-        std::map<std::uint16_t,odh::StringTable>{};
     profile_mark("tree-by-name-strings");
     if(!saved_world_main){
         if(!world.create(runtime_avatar_id,odh::EntityKind::avatar,{0,101,3,16})||!world.define_type(runtime_avatar_id,person.binding->guid))throw odh::FormatError("avatar fixture construction failed");
@@ -1736,9 +1734,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     struct RuntimeObjectThread {
         std::unique_ptr<odh::Vm> vm;
         std::unique_ptr<odh::Sleep> sleep;
+        odh::CodeOwner owner = 0;
     };
     std::deque<PendingCreateObject> pending_create_objects;
     std::map<std::int16_t,std::unique_ptr<RuntimeObjectThread>> runtime_object_threads;
+    std::map<odh::CodeOwner,Resource> saved_action_resources;
+    std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
+    std::set<std::pair<odh::CodeOwner,std::uint16_t>> tree_name_local_string_attempted;
+    auto tree_name_global_strings=saved_world_main?load_strings(*globals,{303}):
+        std::map<std::uint16_t,odh::StringTable>{};
     std::string last_create_object_diagnostic;
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
@@ -1762,44 +1766,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const auto entity_handler=odh::entity_next_primitive(world,memory,[&](const auto& value){
         if(diagnostics.retain(Diagnostic::entity_next,entity_next.size(),10000))entity_next.push_back(value);
     },std::move(multitile_groups));
-    const auto tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
-        const std::array<std::int16_t,20>& temps,const odh::VmDispatch&)->odh::PrimitiveOutcome{
-        if(instruction.opcode!=28)return {};
-        const auto table_id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
-        const auto string_scope=instruction.operands[2];
-        const auto string_id=instruction.operands[4];
-        const auto destination=instruction.operands[5];
-        if(!saved_world_main)
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName requires a restored saved World catalog"};
-        if(string_scope!=1||destination>2)
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName scope/destination is outside the saved-World profile"};
-        const auto strings=tree_by_name_global_strings.find(table_id);
-        if(strings==tree_by_name_global_strings.end()||string_id==0)
-            return {odh::PrimitiveDisposition::goto_false,{}};
-        const auto* name=odh::string_in_language(strings->second,1,static_cast<std::uint32_t>(string_id-1));
-        if(!name)return {odh::PrimitiveDisposition::goto_false,{}};
-        const auto* target=world.find(frame.context.stack_object);
-        if(!target)return {odh::PrimitiveDisposition::goto_false,{}};
-        if(!target->definition)return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target definition is unavailable"};
-        const auto catalog=saved_tree_names.find(target->definition->guid);
-        if(catalog==saved_tree_names.end())
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target catalog is unavailable"};
-        std::optional<odh::RoutineKey> routine;
-        const auto private_tree=catalog->second.private_bhav_ids.find(name->value);
-        if(private_tree!=catalog->second.private_bhav_ids.end())
-            routine=odh::routine_key(private_tree->second);
-        if(!routine&&catalog->second.semiglobal_name&&globals&&!globals->standalone){
-            const auto entry=*catalog->second.semiglobal_name+".iff";
-            const auto bank=load_saved_semiglobal_code_bank(globals->archive,entry);
-            const auto named=bank.named_routines.find(name->value);
-            if(named!=bank.named_routines.end())routine=odh::routine_key(named->second);
-        }
-        if(!routine)return {odh::PrimitiveDisposition::goto_false,{}};
-        if(destination!=2)
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName destination is not the supported same-thread subroutine profile"};
-        std::vector<std::int16_t> arguments(temps.begin(),temps.begin()+4);
-        return {odh::PrimitiveDisposition::call,{}, {},
-            odh::VmCall{*routine,frame.context,std::move(arguments)}};
+    const odh::VmPrimitive grab_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const std::array<std::int16_t,20>&,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        if(instruction.opcode!=4)return {};
+        const auto* actor=world.find(frame.context.caller);
+        if(!actor||!actor->position)return {odh::PrimitiveDisposition::goto_false,{}};
+        return {world.move_to_slot(actor->id,0,frame.context.stack_object,actor->position->direction)?
+            odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
     };
     std::optional<odh::RelationshipState> original_relationships;
     if(neighbors&&!restoring_session)original_relationships.emplace(*neighbors);
@@ -1874,6 +1847,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         try{
             const auto* actor=world.find(frame.context.caller);
             if(!actor||actor->person_data.size()<=58)throw odh::FormatError("animation actor age unavailable");
+            if(posture&&*posture==-1){
+                auto resource=animation_catalog->resolve("a2o-rarm-carry-loop");
+                const auto* header=&resource->header;
+                return std::shared_ptr<const odh::AnimationHeader>(std::move(resource),header);
+            }
             const odh::AvatarBodyDescriptor* actor_body=body_state?&*body_state:nullptr;
             if(frame.context.caller!=runtime_avatar_id){
                 actor_body=nullptr;
@@ -1985,7 +1963,30 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     // Snap controllers retain their VM binding; residents share the World and
     // SLOT target, but must not reuse another resident's bound controller.
-    std::map<std::pair<std::int16_t,const odh::Vm*>,std::unique_ptr<SnapRuntime>> snap_runtimes;
+    std::map<std::tuple<std::int16_t,const odh::Vm*,bool>,std::unique_ptr<SnapRuntime>> snap_runtimes;
+    std::optional<odh::SlotTable> global_snap_slots;
+    bool global_snap_slots_attempted=false;
+    std::string global_snap_slots_diagnostic;
+    const auto global_snap_slot_table=[&]() -> const odh::SlotTable* {
+        if(global_snap_slots_attempted)return global_snap_slots?&*global_snap_slots:nullptr;
+        global_snap_slots_attempted=true;
+        if(!globals){global_snap_slots_diagnostic="global resource is unavailable";return nullptr;}
+        try{
+            with_resource(*globals,[&](const auto& view){
+                std::optional<odh::SlotTable> selected;
+                odh::Limits limits;limits.iff_chunks=4096;
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type=="SLOT"&&chunk.id==100){
+                        if(selected)throw odh::FormatError("ambiguous global SLOT100 resource");
+                        selected=odh::read_slot(chunk.payload);
+                    }
+                },limits);
+                global_snap_slots=std::move(selected);
+            });
+            if(!global_snap_slots)global_snap_slots_diagnostic="global SLOT100 resource is absent";
+        }catch(const std::exception& error){global_snap_slots_diagnostic=error.what();}
+        return global_snap_slots?&*global_snap_slots:nullptr;
+    };
     std::function<bool(std::int16_t,const odh::EntityPosition&)> snap_placement_validator;
     std::function<odh::Snap::StairPlacementStatus(std::int16_t,std::int16_t,const odh::EntityPosition&)>
         snap_stair_placement_validator;
@@ -1996,59 +1997,91 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(stack_object<=0||stack_object>32767)
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap stack object is outside the World ID range"};
         const auto object_id=static_cast<std::int16_t>(stack_object);
-        const auto cache_key=std::make_pair(object_id,dispatch.origin);
+        const auto mode=static_cast<std::uint16_t>(instruction.operands[2]|(instruction.operands[3]<<8));
+        const bool global_slot_scope=mode==4;
+        const auto cache_key=std::make_tuple(object_id,dispatch.origin,global_slot_scope);
         auto runtime=snap_runtimes.find(cache_key);
         if(runtime==snap_runtimes.end()) {
             const auto* entity=world.find(object_id);
-            if(!entity||entity->kind!=odh::EntityKind::object||!entity->definition||!entity->position||!definition_index)
-                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is unavailable"};
-            const auto* candidate=definition_index->unique(entity->definition->guid);
-            if(!candidate)
-                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is missing or ambiguous"};
-            const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+            if(!entity)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "Snap StackObject "+std::to_string(object_id)+" is absent from World"};
             std::optional<odh::ObjdBinding> binding;
             std::optional<odh::SlotTable> slots;
-            try {
-            with_resource(resource,[&](const auto& view){
-                odh::Limits limits;limits.iff_chunks=4096;
-                odh::iff_chunks(view,[&](const auto& chunk){
-                    if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id) {
-                        if(binding)throw odh::FormatError("ambiguous Snap OBJD resource");
-                        binding=odh::read_objd_binding(chunk.payload);
-                    }
-                },limits);
-                bool matched_saved_group=binding&&entity->definition->master_guid&&restored_world&&
-                    odh::saved_world_has_multitile_member(*restored_world,object_id,
-                        *entity->definition->master_guid);
-                if(!binding||binding->guid!=candidate->definition.guid||
-                   binding->master_id!=candidate->definition.master_id||
-                   binding->sub_index!=candidate->definition.sub_index||
-                   (binding->master_id!=0&&!matched_saved_group))
-                    throw odh::FormatError("Snap OBJD identity or supported multi-tile profile mismatch");
-                if(binding->slot_table==0)throw odh::FormatError("Snap OBJD has no SLOT binding");
-                with_resource(resource,[&](const auto& second_view){
-                    odh::iff_chunks(second_view,[&](const auto& chunk){
-                        if(chunk.type=="SLOT"&&chunk.id==binding->slot_table) {
-                            if(slots)throw odh::FormatError("ambiguous Snap SLOT resource");
-                            slots=odh::read_slot(chunk.payload);
-                        }
-                    },limits);
-                });
-            });
-            } catch(const std::exception& error) {
-                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                    std::string("Snap resource/profile unsupported: ")+error.what()};
+            std::uint16_t slot_id=0;
+            if(global_slot_scope){
+                if(entity->kind!=odh::EntityKind::avatar||object_id!=frame.context.caller)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "global SLOT Snap is supported only when the avatar is its own StackObject"};
+                if(object_id==runtime_avatar_id&&person.binding)binding=*person.binding;
+                else for(const auto& member:household_runtime)
+                    if(member->id==object_id&&member->data.binding){binding=*member->data.binding;break;}
+                if(!binding)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "global SLOT Snap avatar definition is unavailable"};
+                const auto* global_slots=global_snap_slot_table();
+                if(!global_slots)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "global SLOT100 could not be loaded: "+global_snap_slots_diagnostic};
+                slots=*global_slots;slot_id=100;
+            }else{
+                if(entity->kind!=odh::EntityKind::object)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "object SLOT Snap requires a game-object StackObject"};
+                if(!entity->definition)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "Snap StackObject "+std::to_string(object_id)+" has no object definition"};
+                if(!entity->position)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "Snap StackObject "+std::to_string(object_id)+" has no World position"};
+                if(!definition_index)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        "Snap object definition catalog is unavailable"};
+                const auto* candidate=definition_index->unique(entity->definition->guid);
+                if(!candidate)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap object definition is missing or ambiguous"};
+                const Resource resource{candidate->source,candidate->asset,candidate->asset.empty()};
+                try {
+                    with_resource(resource,[&](const auto& view){
+                        odh::Limits limits;limits.iff_chunks=4096;
+                        odh::iff_chunks(view,[&](const auto& chunk){
+                            if(chunk.type=="OBJD"&&chunk.id==candidate->chunk_id) {
+                                if(binding)throw odh::FormatError("ambiguous Snap OBJD resource");
+                                binding=odh::read_objd_binding(chunk.payload);
+                            }
+                        },limits);
+                        bool matched_saved_group=binding&&entity->definition->master_guid&&restored_world&&
+                            odh::saved_world_has_multitile_member(*restored_world,object_id,
+                                *entity->definition->master_guid);
+                        if(!binding||binding->guid!=candidate->definition.guid||
+                           binding->master_id!=candidate->definition.master_id||
+                           binding->sub_index!=candidate->definition.sub_index||
+                           (binding->master_id!=0&&!matched_saved_group))
+                            throw odh::FormatError("Snap OBJD identity or supported multi-tile profile mismatch");
+                        if(binding->slot_table==0)throw odh::FormatError("Snap OBJD has no SLOT binding");
+                        with_resource(resource,[&](const auto& second_view){
+                            odh::iff_chunks(second_view,[&](const auto& chunk){
+                                if(chunk.type=="SLOT"&&chunk.id==binding->slot_table) {
+                                    if(slots)throw odh::FormatError("ambiguous Snap SLOT resource");
+                                    slots=odh::read_slot(chunk.payload);
+                                }
+                            },limits);
+                        });
+                    });
+                } catch(const std::exception& error) {
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        std::string("Snap resource/profile unsupported: ")+error.what()};
+                }
+                if(!binding)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap OBJD resource is absent"};
+                slot_id=binding->slot_table;
             }
-            if(!slots) return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap SLOT resource is absent"};
+            if(!slots)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap SLOT resource is absent"};
             const bool validated_stair_endpoint=saved_stair_portal_endpoint_ids.count(object_id)!=0;
             auto entry=std::make_unique<SnapRuntime>();entry->slots=std::move(*slots);
-            entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,binding->slot_table,
+            entry->controller=std::make_unique<odh::Snap>(world,object_id,*binding,entry->slots,slot_id,
                 [&](std::int16_t actor,const odh::EntityPosition& position){
                     return snap_placement_validator&&snap_placement_validator(actor,position);
                 },[&,validated_stair_endpoint](std::int16_t actor,std::int16_t target,const odh::EntityPosition& position){
                     return validated_stair_endpoint&&snap_stair_placement_validator?
                         snap_stair_placement_validator(actor,target,position):odh::Snap::StairPlacementStatus::unsupported;
-                });
+                },global_slot_scope);
             if(!entry->controller->bind(*dispatch.origin))
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"Snap controller could not bind to VM"};
             entry->primitive=entry->controller->primitive();
@@ -2144,7 +2177,6 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         [&](const odh::VmFrame&)->std::optional<std::int32_t>{
             return active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt;
         });
-    std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<odh::CodeOwner,odh::StringTable> saved_action_string304;
     std::set<odh::CodeOwner> saved_action_string304_attempted;
     const auto change_suit_handler=odh::ts1_change_suit_or_accessory(world,
@@ -2164,6 +2196,90 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto* entry=odh::string_in_language(table->second,game_language,index);
             return entry?std::optional<std::string>{entry->value}:std::nullopt;
         });
+    const auto code_owner_resource=[&](odh::CodeOwner owner)->std::optional<Resource>{
+        const auto action=saved_action_resources.find(owner);
+        if(action!=saved_action_resources.end())return action->second;
+        if(owner==static_cast<odh::CodeOwner>(runtime_avatar_id))
+            return Resource{avatar->archive,avatar->entry,avatar->standalone};
+        for(const auto& member:household_runtime)
+            if(owner==static_cast<odh::CodeOwner>(member->id))return member->resource;
+        return std::nullopt;
+    };
+    const odh::VmPrimitive tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const std::array<std::int16_t,20>& temps,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        if(instruction.opcode!=28)return {};
+        const auto table_id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
+        const auto string_scope=instruction.operands[2];
+        const auto string_id=instruction.operands[4];
+        const auto destination=instruction.operands[5];
+        if(string_scope>1||destination>2)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName scope/destination is invalid"};
+        if(destination!=2)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName currently supports destination2 subroutines only"};
+        if(string_id==0)return {odh::PrimitiveDisposition::goto_false,{}};
+
+        const odh::StringTable* table=nullptr;
+        if(string_scope==1){
+            auto found=tree_name_global_strings.find(table_id);
+            if(found==tree_name_global_strings.end()&&globals){
+                try{
+                    auto loaded=load_strings(*globals,{table_id});
+                    const auto item=loaded.find(table_id);
+                    if(item!=loaded.end())found=tree_name_global_strings.emplace(table_id,std::move(item->second)).first;
+                }catch(const std::exception& error){
+                    return {odh::PrimitiveDisposition::unsupported,
+                        std::string("RunTreeByName global string table could not be read: ")+error.what()};
+                }
+            }
+            if(found!=tree_name_global_strings.end())table=&found->second;
+        }else{
+            const auto key=std::make_pair(frame.context.code_owner,table_id);
+            auto found=tree_name_local_strings.find(key);
+            if(found==tree_name_local_strings.end()&&tree_name_local_string_attempted.insert(key).second){
+                const auto resource=code_owner_resource(frame.context.code_owner);
+                if(resource){
+                    try{
+                        auto loaded=load_strings(*resource,{table_id});
+                        const auto item=loaded.find(table_id);
+                        if(item!=loaded.end())found=tree_name_local_strings.emplace(key,std::move(item->second)).first;
+                    }catch(const std::exception& error){
+                        return {odh::PrimitiveDisposition::unsupported,
+                            std::string("RunTreeByName local string table could not be read: ")+error.what()};
+                    }
+                }
+            }
+            if(found!=tree_name_local_strings.end())table=&found->second;
+        }
+        if(!table)return {odh::PrimitiveDisposition::goto_false,{}};
+        const auto* name=odh::string_in_language(*table,game_language,static_cast<std::uint32_t>(string_id-1));
+        if(!name)return {odh::PrimitiveDisposition::goto_false,{}};
+
+        const auto* target=world.find(frame.context.stack_object);
+        if(!target)return {odh::PrimitiveDisposition::goto_false,{}};
+        if(!target->definition)return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target definition is unavailable"};
+        const auto catalog=saved_tree_names.find(target->definition->guid);
+        if(catalog==saved_tree_names.end())
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target catalog is unavailable"};
+        std::optional<odh::RoutineKey> routine;
+        const auto private_tree=catalog->second.private_bhav_ids.find(name->value);
+        if(private_tree!=catalog->second.private_bhav_ids.end())
+            routine=odh::routine_key(private_tree->second);
+        if(!routine&&catalog->second.semiglobal_name&&globals&&!globals->standalone){
+            const auto entry=*catalog->second.semiglobal_name+".iff";
+            const auto bank=load_saved_semiglobal_code_bank(globals->archive,entry);
+            const auto named=bank.named_routines.find(name->value);
+            if(named!=bank.named_routines.end())routine=odh::routine_key(named->second);
+        }
+        if(!routine)return {odh::PrimitiveDisposition::goto_false,{}};
+        const auto target_thread=runtime_object_threads.find(frame.context.stack_object);
+        if(target_thread==runtime_object_threads.end()||!target_thread->second||!target_thread->second->owner)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target has no loaded runtime code owner"};
+        auto call_context=frame.context;
+        call_context.code_owner=target_thread->second->owner;
+        std::vector<std::int16_t> arguments(temps.begin(),temps.begin()+4);
+        return {odh::PrimitiveDisposition::call,{}, {},
+            odh::VmCall{*routine,call_context,std::move(arguments)}};
+    };
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==42){
             if(!d.origin||!d.ticket||pending_create_objects.size()>=64)
@@ -2195,6 +2311,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
+        if(i.opcode==4)return grab_handler(f,i,t,d);
+        if(i.opcode==48){
+            // This Linux host does not start audio playback, so there are no
+            // live sound threads to cancel. Keep sound diagnostics as history.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&i.operands[0]==15){
             // Simitone's TS1 GenericCall treats MyRoutingFootprintEqualsTemp0
@@ -4490,6 +4612,18 @@ struct PlacementCandidateProbe {
                 if(saved_owner_ids_exhausted)
                     throw odh::FormatError("runtime object code-owner identity space exhausted");
 
+                if(!saved_tree_names.count(candidate->definition.guid)){
+                    if(saved_tree_names.size()>=256)
+                        throw odh::FormatError("runtime TreeByName definition cache budget exceeded");
+                    auto catalog=load_saved_tree_name_catalog(*candidate);
+                    if(!catalog.semiglobal_name&&candidate->definition.tree_table_id==0xffff&&
+                       candidate->definition.master_id!=0){
+                        if(const auto* master=definition_index->unique_master(*candidate))
+                            catalog.semiglobal_name=load_saved_tree_name_catalog(*master).semiglobal_name;
+                    }
+                    saved_tree_names.emplace(candidate->definition.guid,std::move(catalog));
+                }
+
                 const Resource object_resource{candidate->source,candidate->asset,candidate->asset.empty()};
                 std::optional<odh::ObjectRuntimeResources> object_resources;
                 with_resource(object_resource,[&](const auto& view){
@@ -4516,9 +4650,11 @@ struct PlacementCandidateProbe {
                 else ++next_saved_code_owner;
                 saved_action_resources.emplace(owner,object_resource);
                 saved_action_tuning.emplace(owner,std::move(private_tuning));
+                auto caller_object_routines=object_resources->private_routines;
 
                 const auto entry_points=object_resources->entry_points;
                 auto runtime=std::make_unique<RuntimeObjectThread>();
+                runtime->owner=owner;
                 runtime->sleep=std::make_unique<odh::Sleep>(world,[&]{++rng_requests;random.next(1);});
                 const auto object_sleep=runtime->sleep->primitive();
                 const odh::VmPrimitive object_primitive=[&,object_sleep](const auto& frame,
@@ -4542,6 +4678,8 @@ struct PlacementCandidateProbe {
                 if(!startup.completed)
                     throw odh::FormatError(startup.diagnostic.empty()?
                         "runtime object startup did not complete":startup.diagnostic);
+                if(!pending.vm->install_owner(owner,std::move(caller_object_routines)))
+                    throw odh::FormatError("CreateObjectInstance code owner could not be installed in the caller VM");
 
                 const auto main=entry_points.entries.size()>1?entry_points.entries[1].action:0;
                 if(main>255){
@@ -6105,7 +6243,7 @@ struct PlacementCandidateProbe {
         std::cout<<"],\"snap_targets\":[";
         std::set<std::int16_t> reported_snap_targets;
         for(const auto& entry:snap_runtimes){
-            const auto id=entry.first.first;
+            const auto id=std::get<0>(entry.first);
             if(!reported_snap_targets.insert(id).second)continue;
             if(reported_snap_targets.size()>1)std::cout<<',';
             const auto* target=world.find(id);

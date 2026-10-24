@@ -17,6 +17,8 @@ std::optional<FloorExit> floor_exit(const SlotRecord& route) {
     if(route.flags==4097 && route.offset_bits==std::array<std::uint32_t,3>{0,negative,0}) return FloorExit{0,-16,0};
     if(route.flags==4100 && route.offset_bits==std::array<std::uint32_t,3>{positive,0,0}) return FloorExit{16,0,2};
     if(route.flags==4112 && route.offset_bits==std::array<std::uint32_t,3>{0,positive,0}) return FloorExit{0,16,4};
+    // Global SLOT100 index 5 uses a directional one-tile radius with no fixed offset.
+    if(route.flags==4112 && route.offset_bits==std::array<std::uint32_t,3>{0,0,0}) return FloorExit{0,16,4};
     if(route.flags==4160 && route.offset_bits==std::array<std::uint32_t,3>{negative,0,0}) return FloorExit{-16,0,6};
     return {};
 }
@@ -41,12 +43,16 @@ bool shoo_sitting_exit(const SlotRecord& route) {
 }
 }
 Snap::Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id,
-           PlacementValidator placement_validator,StairPlacementValidator stair_placement_validator)
+           PlacementValidator placement_validator,StairPlacementValidator stair_placement_validator,
+           bool global_slot_table)
     :world_(world),object_(object),generation_(0),binding_(binding),slots_(slots),
      placement_validator_(std::move(placement_validator)),
-     stair_placement_validator_(std::move(stair_placement_validator)) {
+     stair_placement_validator_(std::move(stair_placement_validator)),global_slot_table_(global_slot_table) {
     const auto* entity=world_.find(object);
-    if(!entity || entity->kind!=EntityKind::object || !slot_id || binding.slot_table!=slot_id)
+    const bool entity_kind_valid=entity&&(entity->kind==EntityKind::object||
+        (global_slot_table_&&entity->kind==EntityKind::avatar));
+    const bool slot_binding_valid=global_slot_table_?slot_id==100:binding.slot_table==slot_id;
+    if(!entity_kind_valid || !slot_id || !slot_binding_valid)
         throw std::invalid_argument("snap owner or SLOT binding mismatch (object="+std::to_string(object)+
             ", slot="+std::to_string(slot_id)+", bound="+std::to_string(binding.slot_table)+")");
     generation_=entity->generation;
@@ -60,7 +66,8 @@ VmPrimitive Snap::primitive() {
         if(!vm_ || dispatch.origin!=vm_) return fail("snap controller bound to another VM");
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
         const auto mode=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
-        if(mode!=3 || (i.operands[4]!=0 && i.operands[4]!=2 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
+        if((mode!=3&&!(global_slot_table_&&mode==4)) ||
+           (i.operands[4]!=0 && i.operands[4]!=2 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
             return fail("snap operand profile not implemented");
         const auto* object=world_.find(object_);const auto* actor=world_.find(frame.context.caller);
         if(!object || object->generation!=generation_ || frame.context.stack_object!=object_ ||

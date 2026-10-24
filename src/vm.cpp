@@ -21,14 +21,17 @@ std::int16_t& indexed(std::vector<std::int16_t>& values, std::int16_t index) {
         throw VmError("variable index outside frame");
     return values[static_cast<std::size_t>(index)];
 }
-std::int16_t* frame_output(VmFrame& frame, const VmFrameWrite& output) {
+std::int16_t* frame_output(VmFrame& frame, const VmFrameWrite& output,std::size_t maximum) {
     std::vector<std::int16_t>* bank = nullptr;
     switch (output.bank) {
     case VmFrameBank::arguments: bank = &frame.arguments; break;
     case VmFrameBank::locals: bank = &frame.locals; break;
     default: return nullptr;
     }
-    return output.index < bank->size() ? &(*bank)[output.index] : nullptr;
+    if(output.index<bank->size())return &(*bank)[output.index];
+    if(output.bank!=VmFrameBank::locals||!output.allow_local_growth||output.index>=maximum)return nullptr;
+    bank->resize(output.index+1,0);
+    return &(*bank)[output.index];
 }
 std::optional<Bhav::Metadata> execution_metadata(const Bhav& routine) {
     if (routine.metadata) return routine.metadata;
@@ -361,6 +364,12 @@ std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
     case 10: return frame.context.stack_object;
     case 25: return indexed(frame.locals, data);
     default:
+        if (scope == 27 && memory_.dynamic_sprite_flag) {
+            if (data < 0 || static_cast<std::size_t>(data) >= temps_.size())
+                throw VmError("dynamic sprite flag temp index outside registers");
+            const auto flag=static_cast<std::uint16_t>(temps_[static_cast<std::size_t>(data)]);
+            if (const auto value=memory_.dynamic_sprite_flag(frame,flag)) return *value?1:0;
+        }
         if (scope == 23 && memory_.room_by_temp0) {
             if (const auto value = memory_.room_by_temp0(frame, temps_[0], data)) return *value;
         }
@@ -382,6 +391,12 @@ void Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
     case 10: frame.context.stack_object = truncated; return;
     case 25: indexed(frame.locals, data) = truncated; return;
     default:
+        if (scope == 27 && memory_.set_dynamic_sprite_flag) {
+            if (data < 0 || static_cast<std::size_t>(data) >= temps_.size())
+                throw VmError("dynamic sprite flag temp index outside registers");
+            const auto flag=static_cast<std::uint16_t>(temps_[static_cast<std::size_t>(data)]);
+            if (memory_.set_dynamic_sprite_flag(frame,flag,truncated>0)) return;
+        }
         if (const auto address=resolve_person_data_address(scope,data,temps_);address&&memory_.write&&
             memory_.write(frame,address->scope,address->index,truncated)) return;
         throw VmError("unsupported write scope " + std::to_string(scope) + " index " + std::to_string(data));
@@ -535,22 +550,22 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     if(!outcome.call)throw VmError("primitive call requires child");
                     if(outcome.call->return_mode==VmCallReturnMode::external_frame_next_tick)
                         throw VmError("external frame child must be scheduled by its pending service");
-                    if(outcome.write && !frame_output(stack_.back(),*outcome.write))
+                    if(outcome.write && !frame_output(stack_.back(),*outcome.write,limits_.frame_variables))
                         throw VmError("primitive call output outside parent frame");
                     {
                     const auto parent_index=stack_.size()-1;
                     push(outcome.call->key,outcome.call->context,outcome.call->arguments,
                          outcome.call->return_mode, dispatch.ticket);
-                    if(outcome.write)*frame_output(stack_[parent_index],*outcome.write)=outcome.write->value;
+                    if(outcome.write)*frame_output(stack_[parent_index],*outcome.write,limits_.frame_variables)=outcome.write->value;
                     }
                     break;
                 case PrimitiveDisposition::goto_true:
                 case PrimitiveDisposition::goto_false:
                     // Validate all frame/temp/context outputs before publishing any.
-                    if (outcome.write && !frame_output(stack_.back(), *outcome.write))
+                    if (outcome.write && !frame_output(stack_.back(), *outcome.write,limits_.frame_variables))
                         throw VmError("primitive frame output bank/index outside frame");
                     if (outcome.write) {
-                        auto* destination = frame_output(stack_.back(), *outcome.write);
+                        auto* destination = frame_output(stack_.back(), *outcome.write,limits_.frame_variables);
                         *destination = outcome.write->value;
                     }
                     if (outcome.temp_write)
@@ -562,7 +577,7 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
                     if (outcome.write) {
-                        auto* destination = frame_output(stack_.back(), *outcome.write);
+                        auto* destination = frame_output(stack_.back(), *outcome.write,limits_.frame_variables);
                         if (!destination) throw VmError("primitive frame output bank/index outside frame");
                         *destination = outcome.write->value;
                     }
@@ -582,7 +597,7 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
 bool Vm::update_pending(std::uint64_t ticket, VmFrameWrite output) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter pending update");
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
-    auto* destination = frame_output(stack_.back(), output);
+    auto* destination = frame_output(stack_.back(), output,limits_.frame_variables);
     if (!destination) return false;
     *destination = output.value;
     return true;
@@ -593,7 +608,7 @@ bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite>
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
     std::int16_t* frame_destination = nullptr;
     if (output) {
-        frame_destination = frame_output(stack_.back(), *output);
+        frame_destination = frame_output(stack_.back(), *output,limits_.frame_variables);
         if (!frame_destination) return false;
     }
     if (frame_destination) *frame_destination = output->value;
@@ -608,7 +623,7 @@ bool Vm::retry_pending(std::uint64_t ticket, std::optional<VmFrameWrite> output)
     if (executing_) throw std::logic_error("VM callbacks must not reenter pending retry");
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
     if (output) {
-        auto* destination = frame_output(stack_.back(), *output);
+        auto* destination = frame_output(stack_.back(), *output,limits_.frame_variables);
         if (!destination) return false;
         *destination = output->value;
     }

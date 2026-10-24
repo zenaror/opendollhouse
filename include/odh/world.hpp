@@ -69,6 +69,8 @@ struct Entity {
     // Runtime avatar accessories restored by OBJM and changed by Simantics.
     // Names are flat `.apr` asset identifiers, never paths.
     std::vector<std::string> bound_appearances;
+    // Runtime VM state: dynamic sprite flags indexed by the game's ushort flag ID.
+    std::uint64_t dynamic_sprite_flags=0;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -174,12 +176,18 @@ public:
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_static_footprint(std::int16_t id, bool is_static);
     bool set_ui_ghost(std::int16_t id, bool is_ghost);
+    std::optional<bool> dynamic_sprite_flag(std::int16_t id,std::uint16_t flag) const;
+    bool set_dynamic_sprite_flag(std::int16_t id,std::uint16_t flag,bool enabled);
     bool set_avatar_kill_timeout(std::int16_t id, std::int32_t value);
     bool set_radian_direction(std::int16_t id, float radians);
     bool set_position(std::int16_t id, EntityPosition);
     bool attach(std::int16_t container, std::size_t slot, std::int16_t occupant);
     bool place_in_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
                        std::optional<std::uint8_t> direction={});
+    // Move an existing entity from its old container into an empty slot.
+    // Used by TS1 Grab; rejects occupied slots and containment cycles atomically.
+    bool move_to_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
+                      std::optional<std::uint8_t> direction={});
     // Validate and allocate the positioned descendant list before detaching.
     // Preserves child orientations and leaves invalid placements unchanged.
     bool place_on_floor(std::int16_t id,EntityPosition);

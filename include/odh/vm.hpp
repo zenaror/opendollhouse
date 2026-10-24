@@ -70,6 +70,9 @@ struct VmMemory {
     std::function<bool(const VmFrame&, std::uint8_t, std::int16_t, std::int16_t)> write;
     // Simantics scope 23 needs Temp0 as a room selector alongside its data index.
     std::function<std::optional<std::int16_t>(const VmFrame&, std::int16_t, std::int16_t)> room_by_temp0;
+    // Scope 27 selects a dynamic sprite flag with the Temp register named by data.
+    std::function<std::optional<bool>(const VmFrame&, std::uint16_t)> dynamic_sprite_flag;
+    std::function<bool(const VmFrame&, std::uint16_t, bool)> set_dynamic_sprite_flag;
 };
 struct VmMemoryAddress {std::uint8_t scope;std::int16_t index;};
 // Scopes30/31 select My/StackObject PersonData using temps[index]. The temp
@@ -94,6 +97,9 @@ struct VmFrameWrite {
     VmFrameBank bank;
     std::size_t index;
     std::int16_t value;
+    // Some game animation commands declare an event LocalNumber beyond the
+    // BHAV's declared local count. Permit bounded growth only for that output.
+    bool allow_local_growth = false;
 };
 struct VmTempWrite {
     std::size_t index;

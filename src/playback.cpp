@@ -53,7 +53,8 @@ bool wait_matches_vm(const PlaybackWaitSnapshot& saved,const PlaybackResourceKey
     const auto index=static_cast<std::size_t>((flags&32U)?instruction.operands[2]:0);
     const auto& frame=vm.stack[trace.depth-1];
     if(saved.bank!=bank||saved.index!=index||saved.expected!=instruction.operands[6]||
-       saved.index>=(saved.bank==VmFrameBank::arguments?frame.arguments.size():frame.locals.size()))return false;
+       (saved.bank==VmFrameBank::arguments?saved.index>=frame.arguments.size():
+        saved.index>=frame.locals.size()&&saved.index>=256))return false;
     auto id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
     std::uint32_t source=instruction.operands[4];
     if(flags&4U){if(id>=frame.arguments.size())return false;id=static_cast<std::uint16_t>(frame.arguments[id]);if(source==0)source=65536;}
@@ -116,7 +117,7 @@ bool Playback::restore_snapshot(const PlaybackSnapshot& saved,Vm& vm,const Playb
         return (key.kind!=PlaybackResourceKey::Kind::animation&&key.kind!=PlaybackResourceKey::Kind::posture_reset)||
                (key.kind==PlaybackResourceKey::Kind::animation&&((!key.source&&!key.id)||key.posture!=0))||
                (key.kind==PlaybackResourceKey::Kind::posture_reset&&
-                (key.source||key.id||(key.posture!=1&&key.posture!=2&&key.posture!=3)));
+                (key.source||key.id||(key.posture!=-1&&key.posture!=1&&key.posture!=2&&key.posture!=3)));
     };
     std::optional<State> restored;std::optional<Wait> restored_wait;
     std::shared_ptr<const AnimationHeader> carry;
@@ -127,7 +128,9 @@ bool Playback::restore_snapshot(const PlaybackSnapshot& saved,Vm& vm,const Playb
     if(saved.state){
         const auto& s=*saved.state;
         const auto* actor=world_.find(s.actor);
-        if(!saved.hands||fail_key(s.resource)||!actor||actor->kind!=EntityKind::avatar||actor->generation!=s.actor_generation||
+        if(!saved.hands||fail_key(s.resource)||
+           (s.resource.kind==PlaybackResourceKey::Kind::posture_reset&&s.resource.posture==-1)||
+           !actor||actor->kind!=EntityKind::avatar||actor->generation!=s.actor_generation||
            s.resource.caller!=s.actor||s.resource.actor_age!=(actor->person_data.size()>58?actor->person_data[58]:0)||
            s.vm_generation!=vm.run_generation()||!std::isfinite(s.frame)||!std::isfinite(s.speed)||s.speed<=0||
            !s.frames||s.frames>limits_.frames||s.ticks>limits_.ticks||s.queue.size()>limits_.events||
@@ -167,7 +170,10 @@ bool Playback::restore_snapshot(const PlaybackSnapshot& saved,Vm& vm,const Playb
             rollback();return reject("restored animation VM wait has no playback state");}
     }
     if(saved.carry){
-        if(fail_key(*saved.carry)||saved.carry->kind!=PlaybackResourceKey::Kind::animation||!resolver){rollback();return reject("animation carry key invalid or resolver unavailable");}
+        if(fail_key(*saved.carry)||
+           (saved.carry->kind!=PlaybackResourceKey::Kind::animation&&
+            !(saved.carry->kind==PlaybackResourceKey::Kind::posture_reset&&saved.carry->posture==-1))||
+           !resolver){rollback();return reject("animation carry key invalid or resolver unavailable");}
         const auto* actor=world_.find(saved.carry->caller);
         if(!actor||actor->kind!=EntityKind::avatar||saved.carry->actor_age!=(actor->person_data.size()>58?actor->person_data[58]:0)){
             rollback();return reject("animation carry actor context is stale");}
@@ -251,16 +257,23 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     if(wait_)return unsupported("animation already has a pending wait");
     if(id==0){
         if(mode==3){carry_clip_.reset();carry_resource_.reset();return {PrimitiveDisposition::goto_true,{}};}
-        // FreeSO 4c6b3e8: Posture=0, HeadSeekState=42. An absent hand slot
-        // is unknown, not evidence that the carry backend can be skipped.
-        if(actor->slots.empty()||actor->slots[0]!=0)return unsupported("animation reset requires explicitly empty avatar hand slot zero");
+        if(actor->slots.empty())return unsupported("animation reset requires avatar hand slot zero");
+        // Simitone resets posture and HeadSeekState while preserving a held object's carry loop.
         if(actor->person_data.size()<=42)return unsupported("animation reset requires Posture and HeadSeekState person data");
         if(!reset_resolver_)return unsupported("animation reset resource resolver not supplied");
         const auto posture=actor->person_data[0];
         const auto normalized=static_cast<std::int16_t>((posture==1||posture==2)?posture:3);
         std::string error;auto next=prepare(reset_resolver_(f,normalized),*actor,(flags&2U)!=0,true,false,error);
         if(!next)return unsupported(error);
+        std::shared_ptr<const AnimationHeader> next_carry;
+        if(actor->slots[0]!=0&&!carry_clip_){
+            next_carry=reset_resolver_(f,-1);
+            if(!next_carry)return unsupported("default carry animation resource not supplied");
+        }
         // Commit only after resource and budget validation.
+        if(actor->slots[0]==0){carry_clip_.reset();carry_resource_.reset();}
+        else if(next_carry){carry_clip_=std::move(next_carry);
+            carry_resource_=resource_key(f,*actor,PlaybackResourceKey::Kind::posture_reset,0,0,-1);}
         if(actor->person_data[42]==1)world_.set_person_data(actor->id,42,4);
         next->resource=resource_key(f,*actor,PlaybackResourceKey::Kind::posture_reset,0,0,normalized);
         state_=std::move(*next);hands_=HandsState{{},actor->id,actor->generation,vm_->run_generation()};
@@ -275,7 +288,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
     }
     const auto bank=(flags&32U)?VmFrameBank::locals:VmFrameBank::arguments;
     const auto index=static_cast<std::size_t>((flags&32U)?i.operands[2]:0);
-    if(mode==0&&index>=(bank==VmFrameBank::locals?f.locals.size():f.arguments.size()))return unsupported("animation event destination outside frame");
+    if(mode==0&&bank==VmFrameBank::arguments&&index>=f.arguments.size())return unsupported("animation event destination outside frame");
     const auto clip=resolver_?resolver_(f,source,id):nullptr;
     if(!clip)return unsupported("animation resource not supplied by explicit resolver");
     if(mode==1||!state_||state_->clip!=clip||state_->actor!=actor->id||state_->actor_generation!=actor->generation) {
@@ -291,7 +304,7 @@ PrimitiveOutcome Playback::request(const VmFrame& f,const Instruction& i,const V
         if(state_->queue.size()>=limits_.events)return unsupported("animation queue budget exceeded");
         state_->queue.push_back(static_cast<std::int16_t>(state_->events_run++));}
     if(!state_->queue.empty()){const auto value=state_->queue.front();state_->queue.pop_front();
-        return {PrimitiveDisposition::goto_false,{},VmFrameWrite{bank,index,value}};}
+        return {PrimitiveDisposition::goto_false,{},VmFrameWrite{bank,index,value,bank==VmFrameBank::locals}};}
     if(state_->end){state_.reset();return {PrimitiveDisposition::goto_true,{}};}
     wait_=Wait{d.ticket,bank,index,i.operands[6]};return {PrimitiveDisposition::wait,{}};
 }
@@ -303,7 +316,8 @@ bool Playback::deliver() {
         state_->queue.push_back(static_cast<std::int16_t>(state_->events_run++));}
     if(!state_->queue.empty()){
         const auto value=state_->queue.front();
-        if(!vm_->complete(wait_->ticket,false,VmFrameWrite{wait_->bank,wait_->index,value}))return false;
+        if(!vm_->complete(wait_->ticket,false,VmFrameWrite{wait_->bank,wait_->index,value,
+                wait_->bank==VmFrameBank::locals}))return false;
         state_->queue.pop_front();wait_.reset();return true;
     }
     if(state_->end){const auto accepted=vm_->complete(wait_->ticket,true);state_.reset();wait_.reset();return accepted;}

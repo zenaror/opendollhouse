@@ -24,6 +24,16 @@ odh::SlotTable floor_table() {
     }
     return slots;
 }
+odh::SlotTable global_idle_table() {
+    odh::SlotRecord route{};route.type=3;route.snap_target_slot=-1;
+    route.offset_bits={0,0,0};route.flags=4112;
+    route.proximity=std::array<std::int32_t,3>{16,16,16};route.max_size=0;route.unknown_i10=0;
+    route.gradient_bits=0x3E400000;route.height=0;route.facing=-2;route.resolution=16;
+    std::vector<odh::SlotRecord> records(6);
+    for(auto& item:records)item.type=3;
+    records[5]=route;
+    return {0,10,std::move(records),0};
+}
 odh::SlotTable stair_table() {
     odh::SlotRecord route{};route.type=3;route.snap_target_slot=-1;route.flags=2048;
     route.proximity=std::array<std::int32_t,3>{16,16,16};route.max_size=0;route.unknown_i10=0;
@@ -70,6 +80,16 @@ int main(){try{
     require(binding.guid==0x12345678 && binding.slot_table==128 && binding.animation_table==129,"OBJD prefix offsets");
     for(std::size_t n=0;n<b.size();++n){bool failed=false;try{parse(b.substr(0,n));}catch(const odh::FormatError&){failed=true;}require(failed,"prefix truncation rejected");}
     auto bad=b;bad[0]=0;bool failed=false;try{parse(bad);}catch(const odh::FormatError&){failed=true;}require(failed,"unknown prefix version");
+    {odh::World world;require(world.create(1,odh::EntityKind::avatar,{0,88,1})&&
+        world.set_position(1,{10,20,1,0}),"global self-snap avatar fixture");
+     auto slots=global_idle_table();auto routines=routine(4,5);routines.begin()->second.instructions[0].operands[4]=0;
+     odh::Snap snap{world,1,odh::ObjdBinding{138,0x12345678,129,128},slots,100,
+         [](auto,const auto&){return true;}, {},true};
+     odh::Vm vm(routines,world.vm_memory(),{},snap.primitive());require(snap.bind(vm),"global self-snap VM binding");
+     vm.start(odh::routine_key(4096),{1,1,1});
+     require(vm.run(1)==odh::VmStatus::returned_true&&world.find(1)->position&&
+             *world.find(1)->position==odh::EntityPosition{10,36,1,4},
+             "global SLOT100 index5 moves a Sim to its idle position");}
     {Fixture f;odh::Vm vm(routine(),f.world.vm_memory(),{},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
      require(vm.run(1)==odh::VmStatus::returned_true,"literal snap succeeds");
      require(f.world.find(2)->slots[0]==1 && f.world.find(1)->attachment->positioned,"both relation ends and placement marked");

@@ -12,7 +12,8 @@ public:
     using StairPlacementValidator=std::function<StairPlacementStatus(
         std::int16_t,std::int16_t,const EntityPosition&)>;
     Snap(World& world,std::int16_t object,ObjdBinding binding,const SlotTable& slots,std::uint16_t slot_id,
-         PlacementValidator placement_validator={},StairPlacementValidator stair_placement_validator={});
+         PlacementValidator placement_validator={},StairPlacementValidator stair_placement_validator={},
+         bool global_slot_table=false);
     Snap(const Snap&)=delete;
     Snap& operator=(const Snap&)=delete;
     bool bind(const Vm& vm);
@@ -25,6 +26,7 @@ private:
     const SlotTable& slots_;
     PlacementValidator placement_validator_;
     StairPlacementValidator stair_placement_validator_;
+    bool global_slot_table_=false;
     bool executing_=false;
     const Vm* vm_=nullptr;
 };

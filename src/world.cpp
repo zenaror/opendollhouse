@@ -520,6 +520,21 @@ bool World::set_ui_ghost(std::int16_t id,bool is_ghost) {
     if(found->second.ui_ghost!=is_ghost){found->second.ui_ghost=is_ghost;mark_spatial_change();}
     return true;
 }
+std::optional<bool> World::dynamic_sprite_flag(std::int16_t id,std::uint16_t flag) const {
+    const auto found=entities_.find(id);
+    if(found==entities_.end())return std::nullopt;
+    const auto bit=static_cast<unsigned>(flag&63U);
+    return (found->second.dynamic_sprite_flags&(std::uint64_t{1}<<bit))!=0;
+}
+bool World::set_dynamic_sprite_flag(std::int16_t id,std::uint16_t flag,bool enabled) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end())return false;
+    const auto bit=static_cast<unsigned>(flag&63U);
+    const auto mask=std::uint64_t{1}<<bit;
+    if(enabled)found->second.dynamic_sprite_flags|=mask;
+    else found->second.dynamic_sprite_flags&=~mask;
+    return true;
+}
 bool World::set_avatar_kill_timeout(std::int16_t id, std::int32_t value) {
     const auto found=entities_.find(id);
     if(found==entities_.end() || found->second.kind!=EntityKind::avatar || value < -1) return false;
@@ -597,6 +612,44 @@ bool World::place_in_slot(std::int16_t container,std::size_t slot,std::int16_t o
     if(!same && !attach(container,slot,occupant)) return false;
     auto p=*c->second.position;p.direction=direction.value_or(o->second.position->direction);
     apply_position(descendants,p);o->second.attachment->positioned=true;return true;
+}
+bool World::move_to_slot(std::int16_t container,std::size_t slot,std::int16_t occupant,
+                         std::optional<std::uint8_t> direction) {
+    auto c=entities_.find(container),o=entities_.find(occupant);
+    if(c==entities_.end()||o==entities_.end()||container==occupant||!c->second.position||
+       !o->second.position||slot>=c->second.slots.size()||(direction&&*direction>7))return false;
+    if(c->second.slots[slot]==occupant&&o->second.attachment&&
+       o->second.attachment->container==container&&o->second.attachment->slot==slot)return true;
+    if(c->second.slots[slot]!=0)return false;
+    const auto descendants=position_tree(occupant);
+    const auto previous=o->second.attachment;
+    const auto old_unattached_slot=o->second.unattached_slot;
+    if(previous){
+        const auto old_container=entities_.find(previous->container);
+        if(old_container==entities_.end()||previous->slot>=old_container->second.slots.size()||
+           old_container->second.slots[previous->slot]!=occupant)return false;
+        const Entity* ancestor=&c->second;
+        while(ancestor->attachment){
+            const auto parent=ancestor->attachment->container;
+            if(parent==occupant)return false;
+            ancestor=find(parent);
+            if(!ancestor)return false;
+        }
+        if(!detach(previous->container,previous->slot))return false;
+    }
+    if(!attach(container,slot,occupant)){
+        if(previous)(void)attach(previous->container,previous->slot,occupant);
+        if(previous){auto found=entities_.find(occupant);if(found!=entities_.end()){
+            found->second.unattached_slot=old_unattached_slot;
+            if(found->second.attachment)found->second.attachment->positioned=previous->positioned;
+        }}
+        return false;
+    }
+    auto position=*c->second.position;
+    position.direction=direction.value_or(o->second.position->direction);
+    apply_position(descendants,position);
+    o->second.attachment->positioned=true;
+    return true;
 }
 bool World::attach(std::int16_t container, std::size_t slot, std::int16_t occupant) {
     const auto c = entities_.find(container), o = entities_.find(occupant);
@@ -732,6 +785,12 @@ VmMemory World::vm_memory() {
     };
     memory.write=[this](const VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value) {
         return write(frame,scope,index,value);
+    };
+    memory.dynamic_sprite_flag=[this](const VmFrame& frame,std::uint16_t flag) {
+        return dynamic_sprite_flag(frame.context.stack_object,flag);
+    };
+    memory.set_dynamic_sprite_flag=[this](const VmFrame& frame,std::uint16_t flag,bool enabled) {
+        return set_dynamic_sprite_flag(frame.context.stack_object,flag,enabled);
     };
     return memory;
 }

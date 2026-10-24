@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include <algorithm>
 #include <limits>
 
 namespace odh {
@@ -160,11 +161,18 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     const auto allow=static_cast<unsigned>(i.operands[2]|(static_cast<unsigned>(i.operands[3])<<8));
     if(index<0 || static_cast<std::size_t>(index)>=frame.arguments.size() || allow>1)
         return unsupported("IdleForInput argument/AllowPush outside explicit profile");
+    const auto& stack=dispatch.origin->stack();
     const bool action_tree=active_&&!queue_.empty()&&
-        frame.context.caller==queue_.front().call.context.caller&&
-        frame.context.callee==queue_.front().call.context.callee&&
-        frame.context.stack_object==queue_.front().call.context.stack_object&&
-        frame.context.code_owner==queue_.front().call.context.code_owner;
+        std::any_of(stack.begin(),stack.end(),[&](const VmFrame& action_frame){
+            const auto& call=queue_.front().call;
+            return action_frame.return_mode==VmCallReturnMode::interaction_next_tick&&
+                action_frame.invocation_ticket==active_->ticket&&
+                action_frame.key.scope==call.key.scope&&action_frame.key.id==call.key.id&&
+                action_frame.context.caller==call.context.caller&&
+                action_frame.context.callee==call.context.callee&&
+                action_frame.context.stack_object==call.context.stack_object&&
+                action_frame.context.code_owner==call.context.code_owner;
+        });
     if(action_tree){
         if(wait_||resume_tick_)
             return unsupported("action-tree IdleForInput has no matching active interaction");
