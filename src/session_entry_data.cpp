@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <utility>
 
 namespace odh {
@@ -37,7 +38,8 @@ void with_iff_file(const std::filesystem::path& path, F&& read) {
 
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
         unsigned mode, std::uint16_t house, std::uint8_t language,
-        const FamilyOverlay* saved_overlay) {
+        const FamilyOverlay* saved_overlay,
+        const std::filesystem::path& player_character_directory) {
     if (!neighborhood_mode_supported(mode))
         throw FormatError("selected neighborhood mode is unsupported");
     if (house == 0 || house >= 99) throw FormatError("selected house is outside the selectable range");
@@ -98,7 +100,33 @@ SessionEntry load_session_entry(const std::filesystem::path& user_data,
 
     const FamilyContext families(family_entries);
     const NeighborContext neighbors(std::move(*raw_neighbors));
-    const DefinitionIndex characters(read_character_catalog(user_data / "Characters"));
+    auto character_candidates=read_character_catalog(user_data / "Characters");
+    for (auto& candidate:character_candidates) candidate.source="UserData/Characters";
+    if (!player_character_directory.empty()) {
+        std::error_code error;
+        const auto status=std::filesystem::symlink_status(player_character_directory,error);
+        if (error==std::errc::no_such_file_or_directory ||
+            (!error&&status.type()==std::filesystem::file_type::not_found)) {
+            error.clear();
+        } else {
+            if (error || std::filesystem::is_symlink(status) ||
+                !std::filesystem::is_directory(status))
+                throw FormatError("player character catalog path is not a real directory");
+            CharacterCatalogLimits private_limits;
+            private_limits.files=1024;
+            private_limits.total_file_bytes=64ull*1024ull*1024ull;
+            private_limits.person_definitions=4096;
+            auto private_candidates=read_character_catalog(player_character_directory,
+                                                            private_limits);
+            for (auto& candidate:private_candidates) candidate.source="PlayerData/Characters";
+            if (private_candidates.size()>8192-character_candidates.size())
+                throw FormatError("combined character definitions exceed configured limit");
+            character_candidates.insert(character_candidates.end(),
+                std::make_move_iterator(private_candidates.begin()),
+                std::make_move_iterator(private_candidates.end()));
+        }
+    }
+    const DefinitionIndex characters(character_candidates);
     return resolve_session_entry(mode, house, house_file.string(), *locations,
                                  families, neighbors, characters);
 }

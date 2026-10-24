@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <string_view>
+#include <stdexcept>
 #include <system_error>
 #include <vector>
 
@@ -46,6 +47,24 @@ std::filesystem::path linux_user_config_path() {
     const char* home=std::getenv("HOME");
     if(home&&*home)return std::filesystem::path(home)/".config"/"opendollhouse"/"config";
     return {};
+}
+
+std::filesystem::path linux_player_character_directory() {
+    const char* xdg=std::getenv("XDG_DATA_HOME");
+    std::filesystem::path base;
+    if(xdg&&*xdg){
+        const std::filesystem::path configured(xdg);
+        if(configured.is_absolute())base=configured;
+    }
+    if(base.empty()){
+        const char* home=std::getenv("HOME");
+        if(!home||!*home)return {};
+        base=std::filesystem::path(home)/".local"/"share";
+    }
+    const auto result=(base/"opendollhouse"/"Characters").lexically_normal();
+    if(result.native().size()>4096)
+        throw std::runtime_error("player character directory path exceeds limit");
+    return result;
 }
 
 bool load_linux_user_config(LinuxUserConfig& config,std::string* error) {

@@ -16,7 +16,9 @@ bool iff_extension(const std::filesystem::path& path) {
 std::vector<DefinitionCandidate> read_character_catalog(
     const std::filesystem::path& directory, const CharacterCatalogLimits& limits) {
     std::error_code error;
-    if (!std::filesystem::is_directory(directory, error) || error)
+    const auto directory_status=std::filesystem::symlink_status(directory,error);
+    if (error || std::filesystem::is_symlink(directory_status) ||
+        !std::filesystem::is_directory(directory_status))
         throw FormatError("character catalog path is not a readable directory");
 
     std::vector<std::filesystem::directory_entry> files;

@@ -84,8 +84,13 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     base = Path(directory)
     root = base / "game"
     make_game(root)
+    player_characters = base / "data" / "opendollhouse" / "Characters"
+    player_characters.mkdir(parents=True)
+    (root / "UserData" / "Characters" / "User00000.iff").replace(
+        player_characters / "PlayerCreated.iff")
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(base / "config")
+    env["XDG_DATA_HOME"] = str(base / "data")
 
     command = [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
                "--language", "15", "--plan-only"]
@@ -164,8 +169,13 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "Downloads remains optional for installations without user content")
     for argument in result["command"]:
         if argument.startswith("/"):
-            check(Path(argument).resolve().is_relative_to(root.resolve()),
-                  f"runtime resource stays inside selected installation: {argument}")
+            path = Path(argument).resolve()
+            check(path.is_relative_to(root.resolve()) or
+                  path == (player_characters / "PlayerCreated.iff").resolve(),
+                  f"runtime resource stays in the game or explicit player character catalog: {argument}")
+    check(any(argument.endswith("/PlayerCreated.iff") for argument in result["command"]) and
+          not any("PlayerCreated.iff" in path for path in identity["files"]),
+          "player-created IFF reaches the character loader without becoming a commercial game resource")
 
     config = base / "config" / "opendollhouse" / "config"
     config.parent.mkdir(parents=True)

@@ -1292,6 +1292,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
            session_context->household_members.size()!=active_family->family.member_guids.size())
             throw odh::FormatError("household session requires the complete selected FAMI roster");
         const auto game=std::filesystem::canonical(session_context->game_root);
+        std::filesystem::path player_root;
+        if(!session_context->player_character_root.empty()){
+            std::error_code root_error;
+            const auto status=std::filesystem::symlink_status(session_context->player_character_root,root_error);
+            if(!root_error&&!std::filesystem::is_symlink(status)&&std::filesystem::is_directory(status))
+                player_root=std::filesystem::canonical(session_context->player_character_root);
+        }
         for(const auto& member:session_context->household_members){
             const odh::Entity* actor=nullptr;
             for(const auto& entity:session_baseline->entities)if(entity.kind==odh::EntityKind::avatar&&
@@ -1303,10 +1310,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                neighbors->id_for_guid(member.guid)!=std::optional<std::int16_t>{member.neighbor_id})
                 throw odh::FormatError("household session member differs from FAMI, NBRS or original World");
             const auto path=std::filesystem::canonical(member.character_path);
-            const auto relative=path.lexically_relative(game);
-            if(relative.empty()||relative.is_absolute()||*relative.begin()==".."||
-               !std::filesystem::is_regular_file(path)||std::filesystem::file_size(path)>64u*1024u*1024u)
-                throw odh::FormatError("household character resource is outside the bounded game installation");
+            const auto game_relative=path.lexically_relative(game);
+            const auto player_relative=player_root.empty()?std::filesystem::path{}:path.lexically_relative(player_root);
+            const bool in_game=!game_relative.empty()&&!game_relative.is_absolute()&&*game_relative.begin()!="..";
+            const bool in_player=!player_relative.empty()&&!player_relative.is_absolute()&&*player_relative.begin()!=".."&&
+                player_relative.parent_path().empty();
+            if((!in_game&&!in_player)||!std::filesystem::is_regular_file(path)||
+               std::filesystem::file_size(path)>64u*1024u*1024u)
+                throw odh::FormatError("household character resource is outside the bounded game or player catalog");
+            const auto logical_asset=member.character_asset.empty()?
+                (in_game?game_relative.generic_string():"PlayerData/Characters/"+path.filename().string()):
+                member.character_asset;
+            const auto expected_asset=(in_game?std::string("UserData/Characters/"):std::string("PlayerData/Characters/"))+path.filename().string();
+            if(logical_asset!=expected_asset ||
+               (in_game&&game_relative.generic_string()!=expected_asset))
+                throw odh::FormatError("household character logical identity differs from its catalog location");
             const auto pinned=pinned_characters.find(path);
             if(pinned==pinned_characters.end())throw odh::FormatError("household character has no loaded-byte provenance");
             if(verify_current){
@@ -1320,7 +1338,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             }
             odh::SessionHouseholdMember entry;entry.id=actor->id;entry.generation=actor->generation;
             entry.guid=member.guid;entry.neighbor_id=member.neighbor_id;entry.object_definition_id=member.object_definition_id;
-            entry.character_asset=relative.generic_string();entry.character_fingerprint=pinned->second.fingerprint;roster.push_back(std::move(entry));
+            entry.character_asset=logical_asset;entry.character_fingerprint=pinned->second.fingerprint;roster.push_back(std::move(entry));
         }
         std::sort(roster.begin(),roster.end(),[](const auto& a,const auto& b){return a.id<b.id;});return roster;
     };

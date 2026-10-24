@@ -82,7 +82,8 @@ struct SessionHouseholdMember {
     std::uint32_t guid = 0;
     std::int16_t neighbor_id = 0;
     std::uint16_t object_definition_id = 0;
-    std::string character_asset; // Canonical path relative to game root.
+    // Stable catalog identity: UserData/Characters/... or PlayerData/Characters/...
+    std::string character_asset;
     std::array<std::uint8_t,32> character_fingerprint{};
 };
 bool same_session_household_roster(const std::vector<SessionHouseholdMember>&,

@@ -59,10 +59,12 @@ SessionEntry resolve_session_entry(unsigned neighborhood_mode,
     const LotLocations&, const FamilyContext&, const NeighborContext&,
     const DefinitionIndex& character_definitions);
 
-// Load and resolve a selected household from a player's installed UserData.
-// Reads only the named neighborhood, lot and character resources.
+// Load and resolve a selected household from installed UserData. An optional,
+// explicit player-owned character directory may supply additional OBJD138
+// person definitions; it is never inferred from a save or resource file.
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
     unsigned neighborhood_mode, std::uint16_t house_number, std::uint8_t language = 1,
-    const FamilyOverlay* saved_overlay = nullptr);
+    const FamilyOverlay* saved_overlay = nullptr,
+    const std::filesystem::path& player_character_directory = {});
 
 } // namespace odh

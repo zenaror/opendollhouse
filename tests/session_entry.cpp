@@ -99,7 +99,8 @@ void test_created_family_disk_reload() {
         std::error_code error;std::filesystem::remove_all(path,error);
     }} cleanup{root};
     if (!std::filesystem::create_directory(root/"Houses",create_error) || create_error ||
-        !std::filesystem::create_directory(root/"Characters",create_error) || create_error)
+        !std::filesystem::create_directory(root/"Characters",create_error) || create_error ||
+        !std::filesystem::create_directory(root/"PlayerCharacters",create_error) || create_error)
         throw std::runtime_error("cannot create synthetic session subdirectories");
 
     std::vector<std::uint8_t> locations;
@@ -163,14 +164,16 @@ void test_created_family_disk_reload() {
     std::vector<std::uint8_t> objd(32,0);
     objd[0]=138;objd[18]=2;
     for (unsigned i=0;i<4;++i)objd[28+i]=static_cast<std::uint8_t>(created_guid>>(8*i));
-    write_bytes(root/"Characters/PlayerCreated.iff",iff({iff_chunk("OBJD",128,objd)}));
+    write_bytes(root/"PlayerCharacters/PlayerCreated.iff",iff({iff_chunk("OBJD",128,objd)}));
 
-    const auto loaded=odh::load_session_entry(root,1,7,1,&overlay);
+    const auto loaded=odh::load_session_entry(root,1,7,1,&overlay,
+                                               root/"PlayerCharacters");
     require(loaded.family_chunk_id==202&&loaded.family_number==901&&
             loaded.members.size()==1&&loaded.members[0].guid==created_guid&&
             loaded.members[0].neighbor_id==1&&
+            loaded.members[0].character_source=="PlayerData/Characters"&&
             loaded.members[0].character_asset=="PlayerCreated.iff",
-            "store reload replays saved created FAMI and NBRS before resolving its character IFF");
+            "store reload resolves created FAMI and NBRS through the explicit player character directory");
 }
 }
 
@@ -337,7 +340,7 @@ int main() {
         std::cout<<"PASS session entry preserves house, family and ordered Sim resource identities\n";
         std::cout<<"PASS unsupported, missing, empty, mismatched and ambiguous input rejected\n";
         std::cout<<"PASS restored household reconciliation reuses avatars, distinguishes absence and position, and ignores visitors/objects\n";
-        std::cout<<"PASS synthetic store reload replays saved created FAMI and NBRS with its character IFF\n";
+        std::cout<<"PASS synthetic store reload resolves the created family through player-owned character IFFs\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; return 1;

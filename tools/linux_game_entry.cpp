@@ -442,7 +442,8 @@ struct RuntimePlan {
 RuntimePlan build_runtime_arguments(const Options& options,
         const std::filesystem::path& game, unsigned house,
         const odh::SessionEntry& session, const odh::SessionEntryMember& resident,
-        const std::optional<std::filesystem::path>& neighborhood_graphics) {
+        const std::optional<std::filesystem::path>& neighborhood_graphics,
+        const std::filesystem::path& player_character_directory) {
     RuntimePlan plan;
     std::set<std::filesystem::path> unique_resources;
     const auto record_resource = [&](const std::filesystem::path& path) {
@@ -493,18 +494,42 @@ RuntimePlan build_runtime_arguments(const Options& options,
     }
 
     const auto characters = require_directory(game, userdata / "Characters");
+    const auto resolve_character = [&](const odh::SessionEntryMember& member) {
+        const std::filesystem::path asset_path(member.character_asset);
+        if (asset_path.empty() || asset_path.filename()!=asset_path || asset_path.is_absolute())
+            throw odh::FormatError("character catalog returned an invalid asset name");
+        if (member.character_source=="UserData/Characters")
+            return require_file(game,characters/asset_path);
+        if (member.character_source!="PlayerData/Characters" || player_character_directory.empty())
+            throw odh::FormatError("character catalog returned an unknown resource source");
+        std::error_code character_error;
+        const auto directory_status=std::filesystem::symlink_status(
+            player_character_directory,character_error);
+        if (character_error || std::filesystem::is_symlink(directory_status) ||
+            !std::filesystem::is_directory(directory_status))
+            throw odh::FormatError("player character directory is missing or not a real directory");
+        const auto private_root=std::filesystem::canonical(player_character_directory,character_error);
+        if (character_error) throw odh::FormatError("cannot resolve player character directory");
+        const auto candidate=private_root/asset_path;
+        const auto status=std::filesystem::symlink_status(candidate,character_error);
+        if (character_error || std::filesystem::is_symlink(status) ||
+            !std::filesystem::is_regular_file(status))
+            throw odh::FormatError("player character resource is missing or not a regular file");
+        const auto resolved=std::filesystem::canonical(candidate,character_error);
+        if (character_error || resolved.parent_path()!=private_root)
+            throw odh::FormatError("player character resource escaped its private directory");
+        const auto size=std::filesystem::file_size(resolved,character_error);
+        if (character_error || size>64u*1024u*1024u)
+            throw odh::FormatError("player character resource exceeds the 64 MiB limit");
+        return resolved;
+    };
     std::vector<std::filesystem::path> character_files;
     for (const auto& member : session.members) {
-        const auto asset_path = std::filesystem::path(member.character_asset);
-        if (asset_path.filename() != asset_path || asset_path.empty())
-            throw odh::FormatError("character catalog returned an invalid asset name");
-        const auto character = require_file(game, characters / asset_path);
-        if (character.parent_path() != characters)
-            throw odh::FormatError("character resource escaped UserData/Characters");
+        const auto character=resolve_character(member);
         if (std::find(character_files.begin(), character_files.end(), character) == character_files.end())
             character_files.push_back(character);
     }
-    const auto selected_character = require_file(game, characters / resident.character_asset);
+    const auto selected_character=resolve_character(resident);
     if (std::find(character_files.begin(), character_files.end(), selected_character) == character_files.end())
         throw odh::FormatError("selected resident character resource is absent from the resolved family");
     const auto architecture = find_files(gamedata, "", {".flr", ".wll"}, 4096);
@@ -657,6 +682,11 @@ int odh_linux_game_entry(int argc, char** argv) {
             throw odh::FormatError("game root is not an accessible directory: " + options.game_root.string());
         options.game_root = game;
         const auto userdata = require_directory(game, game / "UserData");
+#ifdef ODH_HAVE_LINUX_USER_CONFIG
+        const auto player_character_directory=odh_host::linux_player_character_directory();
+#else
+        const std::filesystem::path player_character_directory;
+#endif
 #ifdef __linux__
         auto family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
             userdata / "Neighborhood.iff");
@@ -915,7 +945,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                     load_travel_session(options);
                 const auto session = odh::load_session_entry(userdata, options.mode,
                     static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
-                    family_overlay ? &*family_overlay : nullptr);
+                    family_overlay ? &*family_overlay : nullptr, player_character_directory);
                 if (!options.single_resident_session && session.members.size() > 8)
                     throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
                 const odh::SessionEntryMember* resident = nullptr;
@@ -946,7 +976,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                 }
 #endif
                 auto plan = build_runtime_arguments(options, game, house, session, *resident,
-                                                         graphics_resource);
+                    graphics_resource, player_character_directory);
                 if (headless_travel_index < options.headless_travel_houses.size())
                     append(plan.arguments, {"--headless-window-neighborhood-tick", "1",
                         "--headless-window-neighborhood-house",
@@ -976,7 +1006,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                                 [&](const auto& member) { return member.neighbor_id == saved_member.neighbor_id; });
                             if (found == session.members.end() || found->guid != saved_member.guid ||
                                 found->object_definition_id != saved_member.object_definition_id ||
-                                std::filesystem::canonical(userdata / "Characters" / found->character_asset).lexically_relative(game) !=
+                                std::filesystem::path(found->character_source + "/" + found->character_asset) !=
                                     std::filesystem::path(saved_member.character_asset))
                                 throw odh::FormatError("saved household member identity differs from the current FAMI family");
                         }
@@ -1007,12 +1037,21 @@ int odh_linux_game_entry(int argc, char** argv) {
                 session_context.single_resident_session = options.single_resident_session;
                 if (!options.single_resident_session) {
                     const auto characters = require_directory(game, userdata / "Characters");
-                    for (const auto& member : session.members)
-                        session_context.household_members.push_back({require_file(game, characters / member.character_asset),
-                            member.guid, static_cast<std::int16_t>(member.neighbor_id), member.object_definition_id});
+                    for (const auto& member : session.members) {
+                        std::filesystem::path character;
+                        if(member.character_source=="UserData/Characters")
+                            character=require_file(game,characters/member.character_asset);
+                        else if(member.character_source=="PlayerData/Characters")
+                            character=std::filesystem::canonical(player_character_directory/member.character_asset);
+                        else throw odh::FormatError("character catalog returned an unknown resource source");
+                        session_context.household_members.push_back({character,
+                            member.guid, static_cast<std::int16_t>(member.neighbor_id),
+                            member.object_definition_id,member.character_source+"/"+member.character_asset});
+                    }
                 }
                 session_context.bounded_headless = options.headless_ticks.has_value();
                 session_context.game_root = game;
+                session_context.player_character_root = player_character_directory;
                 session_context.resource_paths = plan.resources;
                 session_context.language_code = static_cast<std::uint8_t>(options.language);
                 session_context.expansion_mask = plan.expansion_mask;

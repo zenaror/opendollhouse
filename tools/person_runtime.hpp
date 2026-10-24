@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace odh_host {
@@ -28,6 +29,8 @@ struct IntegratedHouseholdMember {
     std::uint32_t guid = 0;
     std::int16_t neighbor_id = 0;
     std::uint16_t object_definition_id = 0;
+    // Stable logical location, independent of where the installation lives.
+    std::string character_asset;
 };
 struct IntegratedSessionContext {
     // Empty only for the explicit single-resident save/restore test profile.
@@ -38,6 +41,7 @@ struct IntegratedSessionContext {
     bool save_on_exit = false;
     bool bounded_headless = false;
     std::filesystem::path game_root;
+    std::filesystem::path player_character_root;
     std::vector<std::filesystem::path> resource_paths;
     std::uint8_t language_code = 1;
     std::uint8_t expansion_mask = 0;
