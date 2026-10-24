@@ -12,6 +12,11 @@ validação indicados por versão.
   de memória preservam o estado anterior; isso não restaura VMs/controladores,
   valida chegada ou liga a criação de moradores ausentes ao fluxo do jogo.
 
+- A retomada de uma sessão aplica o mundo validado ao `World` já carregado,
+  preservando o objeto usado pelo host. Os caminhos single-resident e household
+  passaram retomada headless; isso não valida renderização nem moradores FAMI
+  ausentes.
+
 - A entrada Linux lê as tabelas de menu necessárias de `UIText.iff` em uma
   única passagem e reutiliza os textos durante a escolha da vizinhança. Isso
   reduz trabalho repetido enquanto a tela de carregamento fica visível, sem

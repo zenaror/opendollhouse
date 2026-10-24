@@ -1189,12 +1189,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             session_restore=odh::SingleResidentSessionRestore::prepare(session_context->restore_archive,
                 *session_context->resources,selection,*session_baseline,*lot,*bootstrap_globals,family_global);
             *lot=session_restore->lot();*bootstrap_globals=session_restore->bootstrap();
-            family_global=session_restore->family_global();restored_world->world=session_restore->take_world();
+            family_global=session_restore->family_global();
+            auto candidate=session_restore->take_world();
+            if(!candidate||!restored_world->world->publish_snapshot(candidate->snapshot()))
+                throw odh::FormatError("single-resident session World candidate could not be published");
         }else{
             household_restore=odh::HouseholdSessionRestore::prepare(session_context->restore_archive,
                 *session_context->resources,selection,capture_household_roster(),*session_baseline,*lot,*bootstrap_globals,family_global);
             *lot=household_restore->lot();*bootstrap_globals=household_restore->bootstrap();
-            family_global=household_restore->family_global();restored_world->world=household_restore->take_world();
+            family_global=household_restore->family_global();
+            auto candidate=household_restore->take_world();
+            if(!candidate||!restored_world->world->publish_snapshot(candidate->snapshot()))
+                throw odh::FormatError("household session World candidate could not be published");
         }
         std::vector<std::uint8_t>{}.swap(session_context->restore_archive); // Release encoded input.
     }

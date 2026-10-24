@@ -25,6 +25,13 @@ construção real de moradores FAMI: `tools/person.cpp` continua recusando
 residentes ausentes ou sem posição. Publicar um snapshot também não prova
 `SetPosition`, entrada EP9, chegada, salvamento ou uma partida jogável.
 
+Os dois caminhos de retomada em `tools/person.cpp` agora publicam o mundo
+validado do save sobre o objeto `World` criado ao carregar o lote. Os testes
+headless House07 confirmaram a retomada de um morador e da família de dois
+moradores; nos dois casos, o arquivo salvo após retomar foi igual ao da
+continuação contínua equivalente. Isso exercita a publicação com dados reais,
+mas não acrescenta suporte a residentes ausentes nem valida tela ou jogo longo.
+
 O teste `world_snapshot` confere substituição de estado completo, rejeita
 regressão dos contadores e reciclagem de identidade, leitura e
 escrita por um `VmMemory` criado antes da publicação, rejeição atômica de dados
