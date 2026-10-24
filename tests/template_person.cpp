@@ -1,0 +1,107 @@
+#include "odh/animation.hpp"
+#include "odh/formats.hpp"
+#include "odh/template_person.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <iostream>
+#include <fstream>
+#include <filesystem>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+void need(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
+void add16(std::vector<std::uint8_t>& out, std::uint16_t v) { out.push_back(v); out.push_back(v >> 8); }
+void add16be(std::vector<std::uint8_t>& out, std::uint16_t v) { out.push_back(v >> 8); out.push_back(v); }
+void add32le(std::vector<std::uint8_t>& out, std::uint32_t v) { for (unsigned i=0;i<4;++i) out.push_back(v >> (8*i)); }
+void add32be(std::vector<std::uint8_t>& out, std::uint32_t v) { for (unsigned i=0;i<4;++i) out.push_back(v >> (8*(3-i))); }
+void patch32le(std::vector<std::uint8_t>& out, std::size_t p, std::uint32_t v) { for(unsigned i=0;i<4;++i)out.at(p+i)=v>>(8*i); }
+void patch16le(std::vector<std::uint8_t>& out, std::size_t p, std::uint16_t v) { out.at(p)=v;out.at(p+1)=v>>8; }
+std::vector<std::uint8_t> strings(const std::vector<std::string>& values) {
+    std::vector<std::uint8_t> out{0xFD,0xFF}; add16(out,static_cast<std::uint16_t>(values.size()));
+    for(const auto& value:values){out.push_back(1);out.insert(out.end(),value.begin(),value.end());out.push_back(0);out.push_back(0);}
+    out.insert(out.end(),values.size(),0xA3); return out;
+}
+void chunk(std::vector<std::uint8_t>& out,const std::string& type,std::uint16_t id,
+           std::uint16_t flags,const std::string& label,const std::vector<std::uint8_t>& payload) {
+    out.insert(out.end(),type.begin(),type.end()); add32be(out,static_cast<std::uint32_t>(76+payload.size()));
+    add16be(out,id);add16be(out,flags);std::vector<std::uint8_t> lab(64,0);
+    std::copy(label.begin(),label.end(),lab.begin());out.insert(out.end(),lab.begin(),lab.end());
+    out.insert(out.end(),payload.begin(),payload.end());
+}
+std::vector<std::uint8_t> template_iff(bool duplicate_body=false) {
+    const std::string signature="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";
+    std::vector<std::uint8_t> out(signature.begin(),signature.end());out.resize(64,0);
+    std::vector<std::uint8_t> objd(216,0);patch32le(objd,0,138);patch32le(objd,28,0x7FD96B54);
+    chunk(out,"OBJD",128,0x10,"TemplatePerson",objd);
+    const std::vector<std::string> body={"skin","body-old","head-old"};
+    chunk(out,"STR#",200,0x10,"bodystring",strings(body));
+    const std::vector<std::uint8_t> unknown={0xDE,0xAD,0xBE,0xEF,0x00,0x7F};
+    chunk(out,"ZZZZ",0xBEEF,0x4321,"unknown data",unknown);
+    if(duplicate_body)chunk(out,"STR#",200,0x20,"duplicate",strings(body));
+    return out;
+}
+struct Seen { std::string type,label;std::uint16_t id=0,flags=0;std::vector<std::uint8_t> payload; };
+std::vector<Seen> parse(const std::vector<std::uint8_t>& bytes) {
+    const std::string raw(bytes.begin(),bytes.end());std::istringstream in(raw,std::ios::in|std::ios::binary);
+    odh::View view(in,bytes.size());std::vector<Seen> result;
+    odh::iff_chunks(view,[&](const odh::Chunk& c){std::vector<std::uint8_t> p(c.payload.size());c.payload.read(0,p.data(),p.size());result.push_back({c.type,c.label,c.id,c.flags,std::move(p)});});
+    return result;
+}
+const Seen& find(const std::vector<Seen>& chunks,const char* type,std::uint16_t id) {
+    const auto it=std::find_if(chunks.begin(),chunks.end(),[&](const Seen& c){return c.type==type&&c.id==id;});
+    if(it==chunks.end())throw std::runtime_error("expected output chunk is missing");return *it;
+}
+void rejects(const std::vector<std::uint8_t>& input,odh::TemplatePersonRequest request,const char* label) {
+    try { (void)odh::clone_template_person(input,request); } catch(const odh::FormatError&) { return; }
+    throw std::runtime_error(std::string("expected rejection: ")+label);
+}
+}
+int main(int argc,char** argv) {
+    try {
+        const auto input=template_iff();
+        odh::TemplatePersonRequest request{0x12345678,"user00001 - Sim",1,"Name", "Bio",
+            {{1,"body-new"},{2,"head-new"}}};
+        const auto output=odh::clone_template_person(input,request);
+        const auto chunks=parse(output);
+        const auto& objd=find(chunks,"OBJD",128);
+        need(objd.label==request.object_label,"OBJD label changed");
+        need(objd.payload.size()==216,"OBJD payload extent changed");
+        need(objd.payload[28]==0x78&&objd.payload[29]==0x56&&objd.payload[30]==0x34&&objd.payload[31]==0x12,"new GUID not written");
+        need(objd.payload[80]==0xD0&&objd.payload[81]==0x07,"catalog string ID not written");
+        const auto& unknown=find(chunks,"ZZZZ",0xBEEF);
+        need(unknown.flags==0x4321&&unknown.label=="unknown data"&&unknown.payload==std::vector<std::uint8_t>({0xDE,0xAD,0xBE,0xEF,0,0x7F}),"unknown chunk changed");
+        const auto& body=find(chunks,"STR#",200);
+        std::string body_bytes(body.payload.begin(),body.payload.end());std::istringstream body_in(body_bytes,std::ios::in|std::ios::binary);
+        const auto table=odh::read_strings(odh::View(body_in,body.payload.size()));
+        need(table.entries.size()==3&&table.entries[0].value=="skin"&&table.entries[1].value=="body-new"&&table.entries[2].value=="head-new","body string replacements incorrect");
+        need(table.remaining_bytes==3,"body string padding extent changed");
+        const auto& catalog=find(chunks,"CTSS",2000);
+        std::string cat_bytes(catalog.payload.begin(),catalog.payload.end());std::istringstream cat_in(cat_bytes,std::ios::in|std::ios::binary);
+        const auto cat=odh::read_strings(odh::View(cat_in,catalog.payload.size()));
+        need(cat.entries.size()==2&&cat.entries[0].value=="Name"&&cat.entries[1].value=="Bio","name and biography missing");
+        need(chunks.size()==4,"unexpected chunk count");
+        rejects(template_iff(true),request,"duplicate body table");
+        auto bad=request;bad.body_strings.push_back({1,"duplicate"});rejects(input,bad,"duplicate replacement index");
+        bad=request;bad.name=std::string("bad\0name",8);rejects(input,bad,"embedded NUL");
+        bad=request;bad.guid=0x7FD96B54;rejects(input,bad,"template GUID reuse");
+        if(argc>1) {
+            const std::filesystem::path path(argv[1]);std::ifstream far(path,std::ios::binary);
+            if(!far)throw std::runtime_error("cannot open supplied Objects.far");
+            const odh::View far_view(far,std::filesystem::file_size(path));
+            const auto entries=odh::far1_index(far_view);const auto entry=std::find_if(entries.begin(),entries.end(),[](const odh::FarEntry& e){return e.name==R"(People\TemplatePerson.iff)";});
+            if(entry==entries.end())throw std::runtime_error("TemplatePerson.iff not found in supplied FAR");
+            const auto source=far_view.subview(entry->offset,entry->length);std::vector<std::uint8_t> real_template(static_cast<std::size_t>(source.size()));source.read(0,real_template.data(),real_template.size());
+            auto real_request=request;real_request.guid=0x12345679;real_request.object_label="user00002 - Check";
+            const auto generated=odh::clone_template_person(real_template,real_request);
+            const auto real_chunks=parse(generated);const auto& real_body=find(real_chunks,"STR#",200);
+            std::string payload(real_body.payload.begin(),real_body.payload.end());std::istringstream payload_in(payload,std::ios::in|std::ios::binary);
+            const auto real_strings=odh::read_strings(odh::View(payload_in,real_body.payload.size()));
+            need(real_strings.entries[1].value=="body-new"&&real_strings.entries[2].value=="head-new","real TemplatePerson body fields were not transformed");
+        }
+        std::cout<<"template-person clone checks passed\n";return 0;
+    } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
+}
