@@ -1,5 +1,9 @@
 # Funções de entrada da entidade
 
+O estágio transacional para EntryPoint 2, seus limites e o primeiro caminho
+comercial identificado estão em
+[`staged-load-entry-points-validation.md`](staged-load-entry-points-validation.md).
+
 O [checkpoint de família e ObjM](family-restore-validation.md) posterior
 documenta o caminho residente em House07; os gates visitantes abaixo
 permanecem evidência do perfil sem ativação.

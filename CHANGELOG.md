@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Foi criado um preparador transacional para a entrada Load (EP2). As ações
+  rodam na ordem informada dentro de uma cópia do lote; retorno verdadeiro ou
+  falso síncrono é aceito, enquanto esperas, falhas, falta de dono e estouro
+  do orçamento rejeitam o lote inteiro. O recurso ainda não está ligado ao
+  carregamento Linux e foi validado apenas com BHAVs sintéticos. Veja
+  [`staged-load-entry-points-validation.md`](docs/staged-load-entry-points-validation.md).
+
 - Entrada Linux agora reconstrói um morador adicional adulto presente em FAMI/NBRS e nos recursos de personagem, mas ausente de OBJM/OBJT. A criação acontece antes do baseline, reproduz startup, corpo, herança e horário do lote; chegada aceita apenas um perfil sem efeitos de sala/luz/portal/janela ainda não modelados. O runtime e o save/resume usam o World/HHRD existente, sem inventar registros do save do jogo. Fixture sintético confirma retomada em processo novo byte a byte igual à execução contínua e 13 recusas seguras. Não há ainda validação com instalação comercial ou janela. Veja a matriz `docs/playable-feature-matrix.md`.
 
 - `World::publish_snapshot` publica o estado validado de um lote candidato sem
