@@ -2,6 +2,7 @@
 #include "odh/route_frame.hpp"
 #include "odh/slot_scoring.hpp"
 #include "../tools/household_go_here_session.hpp"
+#include "../tools/room_portal_session.hpp"
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -504,6 +505,95 @@ void household_go_here_session_tests() {
             !incomplete_session.marker_alive(),
             "tick-limited resident request is finalized and its marker is removed before reporting");
 }
+void household_room_portal_isolation_tests() {
+    odh::World world;auto slots=slot();
+    odh::RouteGrid first_grid{64,32},second_grid{64,32};
+    odh_host::RoomPortalSession first_state,second_state;
+    const odh::PreRankedSlotGoalProvider local_goals=[](const auto&,auto,const auto&,const auto& target){
+        const odh::RoutePoint point{20,target.y};
+        const auto flags=odh::reference_slot_entry_flags({target.x,target.y},target.direction,point,0x55);
+        return std::vector<odh::PreRankedSlotGoal>{{point,flags,2}};
+    };
+    odh::Routing first{world,first_grid,slots,local_goals},second{world,second_grid,slots,local_goals};
+    odh::Vm first_vm{routines(),world.vm_memory(),{},first.primitive()};
+    odh::Vm second_vm{routines(),world.vm_memory(),{},second.primitive()};
+    world.create(11,odh::EntityKind::avatar,{0,88,0});world.create(12,odh::EntityKind::object,{0,0,1});
+    world.create(21,odh::EntityKind::avatar,{0,88,0});world.create(22,odh::EntityKind::object,{0,0,1});
+    world.set_position(11,{4,4,1,0});world.set_position(12,{28,4,1,0});
+    world.set_position(21,{4,20,1,0});world.set_position(22,{28,20,1,0});
+    const auto owner_key=std::make_tuple(std::string("synthetic"),std::string("door.iff"),std::uint16_t{4097});
+    const odh::RoutineSet portal{{odh::routine_key(4097),odh::Bhav{0x8002,
+        {{2,254,255,{0,0,0,0,0,2,7,7}}},{},odh::Bhav::Metadata{0,4,0,0}}}};
+    const auto configure=[&](odh::Routing& route,odh::Vm& vm,odh_host::RoomPortalSession& state,
+        std::int16_t actor,std::int16_t target,odh::CodeOwner owner) {
+        require(route.bind(vm),"household portal fixture binds each resident's own VM");
+        route.set_route_goal_validator([actor](const odh::VmFrame& frame,odh::RoutePoint goal){
+            return frame.context.caller==actor&&goal.x>=16;
+        });
+        route.set_room_pair_provider([](const auto& from,const auto& to)
+            ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
+            return std::pair{std::uint16_t(from.x<16?2:1),std::uint16_t(to.x<16?2:1)};
+        });
+        route.set_route_grid_refresh([](const auto&){return true;});
+        route.set_room_portal_context_end_provider([state=&state](auto ticket){state->contexts.erase(ticket);});
+        route.set_room_portal_step_provider([&,vm=&vm,state=&state,actor,target,owner](auto ticket,
+            const auto&,const auto&,const std::optional<odh::VmCall>& previous,
+            const std::optional<bool>& result,auto step){
+            state->prune(*vm);
+            if(!previous){
+                require(step==0&&state->contexts.emplace(ticket,odh_host::RoomPortalContext{}).second,
+                    "each resident accepts its independently numbered root portal context");
+                require(vm->install_owner(owner,portal),"portal code installs at the resident VM safe point");
+                state->code_owners.emplace(owner_key,owner);
+                const odh::VmCall call{odh::routine_key(4097),{actor,target,target,owner},{}};
+                state->contexts.at(ticket).pending_call=call;
+                return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::call_ready,call,{}};
+            }
+            require(step==1&&result==true&&state->contexts.count(ticket)==1&&
+                previous->context.caller==actor&&previous->context.stack_object==target&&
+                previous->context.code_owner==state->code_owners.at(owner_key),
+                "returned portal retains its resident, ticket, object and resource owner");
+            ++state->returns;
+            return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::destination_reached,{},{}};
+        });
+    };
+    configure(first,first_vm,first_state,11,12,501);
+    configure(second,second_vm,second_state,21,22,502);
+    first_vm.start(odh::routine_key(4096),{11,12,12});
+    second_vm.start(odh::routine_key(4096),{21,22,22});
+    require(first_vm.run(2)==odh::VmStatus::waiting&&second_vm.run(2)==odh::VmStatus::waiting&&
+        first_vm.pending()->ticket==second_vm.pending()->ticket,
+        "independent resident VMs deliberately reuse the same numeric route ticket");
+    const auto ticket=first_vm.pending()->ticket;
+    require(first.tick(1)&&second.tick(1)&&first.external_frame_active()&&second.external_frame_active(),
+        "both resident Route45 jobs schedule Portal15 on their own VM");
+    first_state.contexts.at(ticket).ignored.push_back({12,1});
+    first_state.prune(first_vm);second_state.prune(second_vm);
+    require(first_state.contexts.count(ticket)==1&&second_state.contexts.count(ticket)==1&&
+        second_state.contexts.at(ticket).ignored.empty()&&
+        first_state.code_owners.at(owner_key)==501&&second_state.code_owners.at(owner_key)==502,
+        "same ticket and same door resource keep independent ignored edges and code-owner maps");
+    world.set_position(11,{16,4,1,0});world.set_position(21,{16,20,1,0});
+    require(first_vm.run(1)==odh::VmStatus::yielded&&first.tick(2)&&first_state.contexts.empty()&&
+        second_state.contexts.count(ticket)==1&&second.external_frame_active(),
+        "one resident's portal return cleans only its own planner context");
+    require(second_vm.run(1)==odh::VmStatus::yielded&&second.tick(2)&&second_state.contexts.empty(),
+        "second resident resumes its own local SLOT route after its portal return");
+    for(std::uint64_t tick=3;tick<=16&&(first.active()||second.active());++tick){first.tick(tick);second.tick(tick);}
+    require(first_vm.status()==odh::VmStatus::returned_true&&second_vm.status()==odh::VmStatus::returned_true&&
+        world.find(11)->position->x==20&&world.find(11)->position->y==4&&
+        world.find(21)->position->x==20&&world.find(21)->position->y==20&&
+        first_state.returns==1&&second_state.returns==1,
+        ("interleaved cross-room Route45 routes finish under separate resident VMs: first="+
+            std::to_string(static_cast<int>(first_vm.status()))+","+first.diagnostic()+",x="+
+            std::to_string(world.find(11)->position->x)+"; second="+
+            std::to_string(static_cast<int>(second_vm.status()))+","+second.diagnostic()+",x="+
+            std::to_string(world.find(21)->position->x)).c_str());
+    // A completed VM cannot keep stale portal state alive.
+    first_state.contexts.emplace(ticket,odh_host::RoomPortalContext{});
+    first_state.prune(first_vm);
+    require(first_state.contexts.empty(),"completed resident VM prunes stale portal tickets");
+}
 void deferred_room_route_tests() {
     {
         odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();
@@ -644,6 +734,12 @@ void deferred_room_route_tests() {
                 vm.pending()->ticket!=root_ticket,
                 "parent Portal15 can start an independent nested deferred Route45 ticket");
         const auto child_ticket=vm.pending()->ticket;
+        odh_host::RoomPortalSession nested_state;
+        nested_state.contexts.emplace(root_ticket,odh_host::RoomPortalContext{});
+        nested_state.contexts.emplace(child_ticket,odh_host::RoomPortalContext{});
+        nested_state.prune(vm);
+        require(nested_state.contexts.size()==2,
+                "resident portal pruning preserves suspended parent and pending nested tickets");
         require(routing.tick(2)&&vm.status()==odh::VmStatus::yielded&&vm.pending()->ticket==root_ticket&&
                 ended_tickets==std::vector<std::uint64_t>{child_ticket},
                 "failed nested room route cleans only its own root-ticket planner state");
@@ -846,6 +942,7 @@ int main() {
         shared_world_dual_controller_tests();
         household_resident_route_owner_tests();
         household_go_here_session_tests();
+        household_room_portal_isolation_tests();
         deferred_room_route_tests();
         saved_go_here_cross_room_test();
         ignore_rooms_cross_room_test();

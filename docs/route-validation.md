@@ -81,3 +81,44 @@ revalidação posterior, registrada em `docs/current-handoff.md`, reportou 160
 CTest configurados, sem falhas, com o gate X11 pulado por falta de DISPLAY, e
 280 checks de routing após os reparos subsequentes. O probe Portal26 parou no
 resultado da ação (código 0, resultado da ação `false`).
+
+## Portal15 por morador da família (2026-10-24)
+
+O host agora configura os providers de sala e Portal15 para cada `Routing`
+de morador salvo, usando o ID do ator e a VM desse morador. Reutiliza a mesma
+inventariação viva, planejamento de grafo, verificação de identidade/geração
+do portal e validação do retorno que já eram usados pelo Sim principal.
+Durante caminhos locais conserva o domínio de obstáculos já validado, mesmo
+quando atravessa rótulos geométricos, e deixa a troca de grade após Portal15
+para o retorno do frame externo, como no fluxo principal.
+Os mapas de contextos/tickets e de code owners são separados por VM; a
+alocação de novos IDs de owner continua global, incluindo ações da fila e
+Go Here, para não reaproveitar IDs instalados por outro caminho. Cada morador
+conserva os limites de 16 contextos, 32 etapas e 32 arestas ignoradas por contexto.
+
+A referência local continua sendo `refs/upstream/Simitone/FreeSO/TSOClient/`
+`tso.simantics/Engine/VMRoutingFrame.cs`: `DoRoomRoute` usa o Caller como origem,
+e o estado `ROOM_PORTAL` chama EntryPoint15 no portal e conserva as arestas
+ignoradas no frame. A integração ODH executa a chamada na VM dona da rota;
+não encaminha o serviço bloqueado à VM principal. A rotina de poda conserva
+um ticket pai suspenso em um frame externo enquanto uma Route45 aninhada
+ocupa `pending()`.
+
+`tests/routing.cpp` acrescenta duas VMs sintéticas com o mesmo número de ticket
+e a mesma chave de recurso de porta, mas atores, destinos, owners e estados
+de arestas ignoradas distintos. Intercala os retornos e as rotas locais,
+verifica a limpeza independente e exercita a poda do pai durante uma rota
+aninhada. O JSON do host informa chamadas, retornos, transições e diagnóstico
+de portal por morador. Saves experimentais também recusam bancos de portal
+de moradores adicionais enquanto esses bancos não têm manifesto de retomada.
+
+Validação desta unidade: build Debug de `odh-person` e `odh-routing-tests`
+em `build-household-session`; CTests `routing`, `linux_household_session_resume_cli`,
+`linux_household_materialization_cli` e `linux_household_animation_snap_cli`
+passaram (4/4). Routing reportou 463 checks em World construído.
+
+Essa cobertura é sintética: não executa a configuração completa de um lote
+comercial na regressão de routing. Não valida uma interação de cama em House07,
+nem conclui suporte a escadas/Snap ou EntryPoint26 por morador. O Go Here
+headless por morador conserva sua validação restrita à grade preparada;
+a integração nova destina-se às Route45 emitidas pela própria VM do morador.

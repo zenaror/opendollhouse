@@ -56,6 +56,7 @@
 #include "odh/route.hpp"
 #include "odh/world_room_route_grid.hpp"
 #include "household_go_here_session.hpp"
+#include "room_portal_session.hpp"
 #include "household_runtime_arrival.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
@@ -1414,6 +1415,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::unique_ptr<odh::Vm> vm;
         std::optional<odh::WorldRoomRouteGrid> route_grid;
         std::unique_ptr<odh::Routing> routing;
+        odh_host::RoomPortalSession room_portals;
         std::unique_ptr<odh_host::HouseholdGoHereSession> go_here;
         std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> action_code_owners;
         std::optional<SavedObjectSelection> seated_action_target;
@@ -3350,18 +3352,13 @@ struct PlacementCandidateProbe {
     if(runtime_routing)runtime_routing->set_route_grid_refresh([&](const odh::EntityPosition&) {
         return refresh_route_obstacles();
     });
-    struct RuntimeRoomPortalContext {
-        std::vector<odh::IgnoredRoomPortal> ignored;
-        std::optional<odh::RoomPortalEdge> pending_edge;
-        std::optional<odh::VmCall> pending_call;
-        std::uint64_t portal_generation=0;
-    };
-    std::map<std::uint64_t,RuntimeRoomPortalContext> route_room_portal_contexts;
-    std::size_t route_room_portal_planned_calls=0,route_room_portal_returns=0;
-    std::size_t route_room_portal_transitions=0;
-    std::string route_room_portal_diagnostic;
-    if(runtime_routing){
-        runtime_routing->set_room_pair_provider([&](const odh::EntityPosition& actor,
+    odh_host::RoomPortalSession primary_room_portals;
+    // All providers capture stable resident state and their own VM. Ticket
+    // numbers and resource keys are local to a VM, never household identities.
+    const auto configure_room_portals=[&](odh::Routing& routing,odh::Vm& resident_vm,
+        std::int16_t actor_id,odh_host::RoomPortalSession& state,
+        odh_host::RoomPortalOwnerMap& owners){
+        routing.set_room_pair_provider([&](const odh::EntityPosition& actor,
             const odh::EntityPosition& target)
             ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {
             if(!render_lot)return std::nullopt;
@@ -3370,29 +3367,24 @@ struct PlacementCandidateProbe {
             if(!source||!destination)return std::nullopt;
             return std::make_pair(*source,*destination);
         });
-        runtime_routing->set_room_portal_context_end_provider([&](std::uint64_t ticket){
-            route_room_portal_contexts.erase(ticket);
+        routing.set_room_portal_context_end_provider([state=&state](std::uint64_t ticket){
+            state->contexts.erase(ticket);
         });
-        runtime_routing->set_room_portal_step_provider([&](std::uint64_t ticket,
+        routing.set_room_portal_step_provider([&,resident_vm=&resident_vm,actor_id,state=&state,owners=&owners](std::uint64_t ticket,
             const odh::EntityPosition& actor,const odh::EntityPosition& target,
             const std::optional<odh::VmCall>& previous_call,
             const std::optional<bool>& previous_result,std::size_t portal_step)
             ->odh::RoutePortalStepPlan {
             const auto fail=[&](const std::string& reason){
-                route_room_portal_contexts.erase(ticket);
-                route_room_portal_diagnostic=reason;
+                state->contexts.erase(ticket);
+                state->diagnostic=reason;
                 return odh::RoutePortalStepPlan{odh::RoutePortalStepStatus::unavailable,{},reason};
             };
-            // Suspended parent services are represented by external VM frames;
-            // prune canceled contexts without dropping a nested Route45 parent.
-            for(auto entry=route_room_portal_contexts.begin();entry!=route_room_portal_contexts.end();){
-                const auto live=(vm.pending()&&vm.pending()->ticket==entry->first)||
-                    std::any_of(vm.stack().begin(),vm.stack().end(),[&](const auto& frame){
-                        return frame.return_mode==odh::VmCallReturnMode::external_frame_next_tick&&
-                            frame.invocation_ticket==entry->first;
-                    });
-                if(!live)entry=route_room_portal_contexts.erase(entry);else ++entry;
-            }
+            state->prune(*resident_vm);
+            const auto* resident=world.find(actor_id);
+            if(!resident||resident->kind!=odh::EntityKind::avatar||!resident->position||
+               !(*resident->position==actor))
+                return fail("room portal planner actor differs from its resident VM");
             if(!ticket||portal_step>32||previous_call.has_value()!=previous_result.has_value())
                 return fail("room portal planner received invalid ticket, result, or step budget");
             if(!render_lot||!render_lot->prepared_architecture()||!restored_world||!definition_index||
@@ -3402,15 +3394,15 @@ struct PlacementCandidateProbe {
             const auto destination_room=render_lot->runtime_room_at(target);
             if(!source_room||!destination_room)
                 return fail("room portal planner could not resolve actor or destination room");
-            auto context=route_room_portal_contexts.find(ticket);
+            auto context=state->contexts.find(ticket);
             if(!previous_call){
-                if(context!=route_room_portal_contexts.end()||portal_step!=0)
+                if(context!=state->contexts.end()||portal_step!=0)
                     return fail("room portal planner initial context was reused");
-                if(route_room_portal_contexts.size()>=16)
+                if(state->contexts.size()>=16)
                     return fail("room portal planner context budget exhausted");
-                context=route_room_portal_contexts.emplace(ticket,RuntimeRoomPortalContext{}).first;
+                context=state->contexts.emplace(ticket,odh_host::RoomPortalContext{}).first;
             }else{
-                if(context==route_room_portal_contexts.end()||!context->second.pending_edge||
+                if(context==state->contexts.end()||!context->second.pending_edge||
                    !context->second.pending_call)
                     return fail("room portal planner has no matching pending edge");
                 const auto& edge=*context->second.pending_edge;
@@ -3426,11 +3418,11 @@ struct PlacementCandidateProbe {
                    portal->generation!=context->second.portal_generation||!portal->position||
                    !(*portal->position==edge.position))
                     return fail("returned room portal changed its call or live edge identity");
-                ++route_room_portal_returns;
+                ++state->returns;
                 if(*previous_result){
                     if(*source_room!=edge.target_room)
                         return fail("Portal15 returned true without reaching its planned destination room");
-                    ++route_room_portal_transitions;
+                    ++state->transitions;
                 }else{
                     if(context->second.ignored.size()>=32)
                         return fail("room portal ignored-edge budget exhausted");
@@ -3442,13 +3434,13 @@ struct PlacementCandidateProbe {
                 context->second.pending_edge.reset();context->second.pending_call.reset();
             }
             if(*source_room==*destination_room){
-                route_room_portal_contexts.erase(ticket);route_room_portal_diagnostic.clear();
+                state->contexts.erase(ticket);state->diagnostic.clear();
                 return {odh::RoutePortalStepStatus::destination_reached,{},{}};
             }
             try {
                 const auto probe=build_runtime_attempt_walk_probe(*restored_world,world,*definition_index,
                     render_lot->architecture_resource(),*render_lot->prepared_architecture(),*source_room,
-                    static_cast<std::uint8_t>(actor.level-1),runtime_avatar_id,true,{},resolve_read_only_ep5);
+                    static_cast<std::uint8_t>(actor.level-1),actor_id,true,{},resolve_read_only_ep5);
                 if(!probe.portal_inventory_complete||probe.snapshot.state!=odh::AttemptWalkObstacleState::ready)
                     return fail("room portal planner requires a complete live portal/obstacle inventory");
                 odh::RoomPortalInventory inventory;inventory.complete=probe.portal_inventory_complete;
@@ -3471,11 +3463,11 @@ struct PlacementCandidateProbe {
                     return fail("room portal requires an explicit Global.iff FAR resource");
                 const auto function=saved_portal_function(*candidate);
                 const auto owner_key=std::make_tuple(candidate->source,candidate->asset,function.action);
-                auto owner=saved_portal_code_owners.find(owner_key);
-                if(owner==saved_portal_code_owners.end()&&saved_owner_ids_exhausted)
+                auto owner=owners->find(owner_key);
+                if(owner==owners->end()&&saved_owner_ids_exhausted)
                     return fail("room portal code-owner identity space exhausted");
-                const auto code_owner=owner==saved_portal_code_owners.end()?next_saved_code_owner:owner->second;
-                if(candidate->asset=="stair.iff"&&saved_stair_portal_endpoint_ids.count(edge.portal_id)!=0)
+                const auto code_owner=owner==owners->end()?next_saved_code_owner:owner->second;
+                if(actor_id==runtime_avatar_id&&candidate->asset=="stair.iff"&&saved_stair_portal_endpoint_ids.count(edge.portal_id)!=0)
                     saved_stair_portal_code_owners.insert(code_owner);
                 std::optional<SavedSemiglobalCodeBank> semiglobal_bank;
                 if(function.semiglobal_name)
@@ -3483,23 +3475,25 @@ struct PlacementCandidateProbe {
                 // Main's default bank was loaded from this same exact resource.
                 // The plan verifies the transitive global/semiglobal dependencies.
                 const auto global_bank=load_saved_global_code_bank(globals->archive,globals->entry);
-                const auto plan=saved_portal_vm_call_plan(*record,world,*definition_index,runtime_avatar_id,
+                const auto plan=saved_portal_vm_call_plan(*record,world,*definition_index,actor_id,
                     edge.portal_id,code_owner,semiglobal_bank?&*semiglobal_bank:nullptr,&global_bank);
-                if(owner==saved_portal_code_owners.end()){
-                    if(!install_saved_portal_vm_call_plan(vm,plan))
-                        return fail("Main VM rejected the planned Portal15 code owner at its safe point");
+                if(owner==owners->end()){
+                    if(!install_saved_portal_vm_call_plan(*resident_vm,plan))
+                        return fail("resident VM rejected the planned Portal15 code owner at its safe point");
                     if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
                     else ++next_saved_code_owner;
-                    saved_portal_code_owners.emplace(owner_key,code_owner);
+                    owners->emplace(owner_key,code_owner);
                 }
                 context->second.pending_edge=edge;context->second.pending_call=plan.call;
                 context->second.portal_generation=portal->generation;
-                ++route_room_portal_planned_calls;route_room_portal_diagnostic.clear();
+                ++state->planned_calls;state->diagnostic.clear();
                 return {odh::RoutePortalStepStatus::call_ready,plan.call,{}};
             }catch(const std::exception& error){return fail(error.what());}
         });
-    }
-    const auto refresh_household_route=[&](HouseholdRuntime& runtime)->bool {
+    };
+    if(runtime_routing)configure_room_portals(*runtime_routing,vm,runtime_avatar_id,
+        primary_room_portals,saved_portal_code_owners);
+    const auto refresh_household_route=[&](HouseholdRuntime& runtime,bool preserve_local_room=false)->bool {
         if(!runtime.route_grid||!runtime.route_grid->grid||!render_lot||!restored_world||!definition_index){
             runtime.route_reason="runtime_route_refresh_context_unavailable";return false;
         }
@@ -3508,7 +3502,11 @@ struct PlacementCandidateProbe {
             runtime.route_reason="runtime_route_refresh_resident_position_unavailable";return false;
         }
         const auto revision=world.spatial_revision();
-        const auto room=render_lot->runtime_room_at(*actor->position);
+        // Match the primary route's checked obstacle domain while a local
+        // path crosses geometric labels inside its padded room bounds.
+        const auto room=preserve_local_room
+            ? std::optional<std::uint16_t>{runtime.route_grid->room_id}
+            : render_lot->runtime_room_at(*actor->position);
         if(!room){runtime.route_reason="runtime_route_refresh_resident_room_unresolved";return false;}
         const auto level=static_cast<std::uint8_t>(actor->position->level-1);
         if(*room==runtime.route_grid->room_id&&level==runtime.route_grid->level&&
@@ -3636,6 +3634,8 @@ struct PlacementCandidateProbe {
         if(!runtime.vm||!runtime.routing->bind(*runtime.vm)){
             runtime.route_reason="route_controller_vm_binding_failed";runtime.routing.reset();continue;
         }
+        configure_room_portals(*runtime.routing,*runtime.vm,runtime.id,
+            runtime.room_portals,runtime.room_portals.code_owners);
         runtime.go_here=std::make_unique<odh_host::HouseholdGoHereSession>(world,runtime.id,
             *runtime.vm,*runtime.controllers,*runtime.routing);
         runtime.route_reason.clear();
@@ -3871,7 +3871,10 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until every household Sim finishes walking and acting before saving");
         if(queue.size()!=0||queue.active())
             throw odh::FormatError("wait until the primary resident finishes acting before saving");
-        if(!saved_portal_code_owners.empty())
+        if(!saved_portal_code_owners.empty()||std::any_of(household_runtime.begin(),
+            household_runtime.end(),[](const auto& member){
+                return !member->room_portals.code_owners.empty();
+            }))
             throw odh::FormatError("this session has portal actions that experimental saves cannot yet resume safely");
         const auto* save_actor=world.find(runtime_avatar_id);
         if(!save_actor||save_actor->person_data.empty())
@@ -4895,7 +4898,8 @@ struct PlacementCandidateProbe {
             if(!runtime.routing||!runtime.routing->active())continue;
             if(runtime.go_here_cancel_pending&&runtime.go_here->status()=="queued"&&
                runtime.routing->interrupt())runtime.go_here_cancel_pending=false;
-            if(!refresh_household_route(runtime)){
+            if(!runtime.routing->external_frame_active()&&
+               !refresh_household_route(runtime,!runtime.routing->waiting_for_room_portal_step())){
                 host_failed=true;host_diagnostic=runtime.route_reason;break;
             }
             const bool route_ok=runtime.routing->tick(ticks,[&](const odh::RouteMovement&){
@@ -5655,7 +5659,12 @@ struct PlacementCandidateProbe {
             }else std::cout<<"null";
             std::cout
                 <<",\"movement_callbacks\":"<<member.route_movement_callbacks
-                <<",\"snapshot_refreshes\":"<<member.route_snapshot_refreshes<<",\"room_id\":";
+                <<",\"snapshot_refreshes\":"<<member.route_snapshot_refreshes
+                <<",\"portal_planned_calls\":"<<member.room_portals.planned_calls
+                <<",\"portal_returns\":"<<member.room_portals.returns
+                <<",\"portal_room_transitions\":"<<member.room_portals.transitions
+                <<",\"portal_planner_diagnostic\":"<<json_bytes(member.room_portals.diagnostic)
+                <<",\"room_id\":";
             if(member.route_grid)std::cout<<member.route_grid->room_id;else std::cout<<"null";
             std::cout<<",\"floor\":";
             if(member.route_grid)std::cout<<static_cast<unsigned>(member.route_grid->level);else std::cout<<"null";
@@ -6109,11 +6118,11 @@ struct PlacementCandidateProbe {
         <<",\"grid_windowed\":"<<(runtime_route_grid&&runtime_route_grid->windowed?"true":"false")
         <<",\"active\":"<<(runtime_routing&&runtime_routing->active()?"true":"false")
         <<",\"dynamic_obstacle_refresh\":true,\"cross_room_portal_scheduler\":"<<(runtime_routing?"true":"false")
-        <<",\"cross_room_portal_execution\":"<<(route_room_portal_returns?"true":"false")
-        <<",\"portal_planned_calls\":"<<route_room_portal_planned_calls
-        <<",\"portal_returns\":"<<route_room_portal_returns
-        <<",\"portal_room_transitions\":"<<route_room_portal_transitions
-        <<",\"portal_planner_diagnostic\":"<<json_bytes(route_room_portal_diagnostic)
+        <<",\"cross_room_portal_execution\":"<<(primary_room_portals.returns?"true":"false")
+        <<",\"portal_planned_calls\":"<<primary_room_portals.planned_calls
+        <<",\"portal_returns\":"<<primary_room_portals.returns
+        <<",\"portal_room_transitions\":"<<primary_room_portals.transitions
+        <<",\"portal_planner_diagnostic\":"<<json_bytes(primary_room_portals.diagnostic)
         <<",\"room_id\":";
     if(runtime_route_grid)std::cout<<runtime_route_grid->room_id;else std::cout<<"null";
     std::cout<<",\"floor\":";
