@@ -23,7 +23,7 @@ bool path_is_within(const std::filesystem::path& root,
 }
 
 bool is_ui_table(std::uint16_t id) {
-    static constexpr std::array<std::uint16_t, 5> ids{128, 131, 132, 142, 145};
+    static constexpr std::array<std::uint16_t, 6> ids{128, 131, 132, 134, 142, 145};
     return std::find(ids.begin(), ids.end(), id) != ids.end();
 }
 }

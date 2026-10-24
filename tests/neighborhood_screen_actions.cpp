@@ -144,6 +144,38 @@ int main() {
                 picker_result.mode == 4,
                 "clicking the Old Town map tab must request mode 4");
 
+        map.markers.push_back({{5, 320, 240}, true, false});
+        auto panel_choice = odh_host::NeighborhoodLotPanelChoice::back_to_map;
+        run_with_click_after_showing(window.native_id(), 70, 482, [&] {
+            panel_choice = odh_host::show_neighborhood_lot_panel(window, map, 5,
+                "5 Sim Lane", "A house for your family.", "Cost: 12,000",
+                "OK", "Cancel", 1);
+        });
+        require(panel_choice == odh_host::NeighborhoodLotPanelChoice::continue_to_lot,
+                "lot details OK button must continue to the existing lot flow");
+        run_with_keys_after_showing(window.native_id(), {XK_Return}, [&] {
+            panel_choice = odh_host::show_neighborhood_lot_panel(window, map, 5,
+                "5 Sim Lane", "A house for your family.", "Cost: 12,000",
+                "OK", "Cancel", 1);
+        });
+        require(panel_choice == odh_host::NeighborhoodLotPanelChoice::continue_to_lot,
+                "Enter in lot details must continue to the existing lot flow");
+        run_with_keys_after_showing(window.native_id(), {XK_Escape}, [&] {
+            panel_choice = odh_host::show_neighborhood_lot_panel(window, map, 5,
+                "5 Sim Lane", "A house for your family.", "Cost: 12,000",
+                "OK", "Cancel", 1);
+        });
+        require(panel_choice == odh_host::NeighborhoodLotPanelChoice::back_to_map &&
+                window.quit_reason() == odh_host::WindowQuitReason::none,
+                "Escape in lot details must return to the neighborhood map");
+        run_with_click_after_showing(window.native_id(), 250, 482, [&] {
+            panel_choice = odh_host::show_neighborhood_lot_panel(window, map, 5,
+                "5 Sim Lane", "A house for your family.", "Cost: 12,000",
+                "OK", "Cancel", 1);
+        });
+        require(panel_choice == odh_host::NeighborhoodLotPanelChoice::back_to_map,
+                "lot details Cancel button must return to the neighborhood map");
+
         odh::Family family;
         family.family_number = 42;
         family.house_number = 5;

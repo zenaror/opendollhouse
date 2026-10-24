@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Clicar em um lote agora abre primeiro um cartão com nome, descrição e estado
+  da família ou preço, usando textos localizados dos arquivos do jogo. Enter ou
+  OK segue para os fluxos de entrada existentes; Escape ou Cancelar volta ao
+  mapa. A validação visual em português usou dados originais somente para
+  leitura. O cartão é provisório e ainda não reproduz a aparência nem todas as
+  ações do painel do The Sims 1/Simitone. Veja
+  [`neighborhood-map-validation.md`](docs/neighborhood-map-validation.md).
+
 - A tela de vizinhança agora permite alternar entre os mapas disponíveis do
   jogo. Em uma validação Linux, todos os seis mapas apareceram na mesma janela;
   escolher um mapa ainda não inicia a viagem nem prova os lotes e atividades de

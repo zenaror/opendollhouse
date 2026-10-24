@@ -63,11 +63,37 @@ Sentinela 99, idioma 1, validação e limites CSV seguem o
 [catálogo](neighborhood-catalog-validation.md). Modo 6 retorna sem abrir dados
 ou display; modos fora de 1..7 falham. Argumentos ausentes/duplicados falham.
 
-Um clique válido fecha a janela e produz JSON `evidence=map_selection_only`,
-`status=selected`, `selected_house=N`; Esc ou fechar a janela produz
-`status=cancelled`, `selected_house=null`. A seleção não inicia uma sessão de
-lote. Ainda não há números/texto de lotes, hover, navegação por teclado entre
-mapas, idioma persistido, logs integrados ou gestão completa de famílias.
+O primeiro seletor independente de lote fechava a janela ao clicar e produzia
+JSON `evidence=map_selection_only`; esse comportamento é histórico. No fluxo de
+jogo atual, clicar num lote abre um cartão de detalhes antes de continuar para
+as escolhas já existentes de entrada ou mudança.
+
+### Cartão de detalhes do lote — 2026-10-24
+
+- O mapa permanece visível ao fundo. O cartão mostra o nome do lote; se o nome
+  estiver vazio, usa a rua atribuída em `StreetNames.iff`. Descrição e resumo
+  vêm das tabelas do lote em `UserData/Houses/NeighborhoodDesc.iff`, `STDesc.iff`
+  ou `MTDesc.iff`, e da `UIText.iff`, conforme a casa e o idioma escolhidos.
+- Lote ocupado mostra o nome localizado lido do chunk `FAMs`, valor, amizades
+  e aviso de ocupação. Lote vago
+  mostra preço e a instrução do próprio jogo para escolher/criar uma família.
+  OK ou Enter segue para os fluxos existentes; Cancelar ou Escape retorna ao
+  mapa sem sair da janela. O cartão foi implementado com desenho próprio; não
+  reutiliza ícones ou imagens do Simitone.
+- Verificação visual somente leitura com a instalação original, modo 1,
+  House 5 e idioma 14: a janela mostrou `5 Alameda Sim`, `Família Caixão`,
+  valores e botões em português. Escape retornou ao mapa, e um segundo Escape
+  encerrou a execução com `stage=neighborhood`, sem escrever nos dados do jogo.
+  A captura direcionada à janela e os detalhes da execução estão em
+  `reports/linux-lot-details-panel-20261024/`.
+- `cmake --build build/linux-checkpoint -j2` concluiu. Sob Xvfb, os gates
+  `linux_ui_strings`, `linux_neighborhood_screen_actions`,
+  `linux_game_entry_cli`, `play_linux_cli` e `neighborhood_window_cli` passaram
+  (5/5). A suíte completa passou 237/237 sob Xvfb; os displays virtuais foram
+  encerrados ao final.
+- Este cartão aproxima o fluxo de seleção do Simitone, mas usa layout e
+  controles provisórios. A descrição pode estar vazia nos dados do lote; os
+  fluxos de famílias, viagem e atividades de expansão continuam incompletos.
 
 ## Validação
 
@@ -77,7 +103,7 @@ mapas, idioma persistido, logs integrados ou gestão completa de famílias.
   00:13:04. No código, a janela mostra o cartão antes de buscar rótulos em
   `UIText.iff` e preparar o mapa. Essas capturas confirmam uma espera durante
   trabalho síncrono, mas não identificam qual etapa levou mais tempo.
-- A entrada agora decodifica as cinco tabelas de menu usadas em uma só passagem
+- A entrada agora decodifica as seis tabelas de menu usadas em uma só passagem
   pelo `UIText.iff`. `linux_ui_strings` verifica cache, idioma solicitado,
   fallback inglês, tabela ausente/duplicada e bloqueio de link para fora da
   pasta do jogo.

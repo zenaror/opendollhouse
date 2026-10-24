@@ -9,6 +9,9 @@
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
 #include "linux_text_renderer.hpp"
 #endif
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+#include "linux_text_codec.hpp"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -16,6 +19,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -95,9 +99,11 @@ std::string family_display_label(const odh::FamilyEntry& family) {
 PreparedNeighborhoodMap prepare_neighborhood_map(
         const std::filesystem::path& user_data,
         const std::filesystem::path& ui_graphics, unsigned mode,
-        const odh::FamilyOverlay* saved_overlay) {
+        const odh::FamilyOverlay* saved_overlay, std::uint8_t language) {
     const auto config = odh::neighborhood_map_config(mode);
     if (!config) throw odh::FormatError("neighborhood map is not available for this mode");
+    if (language < 1 || language > 20)
+        throw odh::FormatError("neighborhood map language is outside the supported range");
 
     std::optional<odh::BitmapImage> image;
     with_far_entry(ui_graphics.string(), config->resource,
@@ -121,14 +127,32 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
 
     std::vector<odh::FamilyEntry> entries;
     std::vector<odh::FamilyEntry> source_families;
+    std::map<std::uint16_t, std::string> family_names;
     with_iff_file((user_data / "Neighborhood.iff").string(), [&](const auto& view) {
         const auto identity = saved_overlay ? neighborhood_identity(view) :
             std::array<std::uint8_t, 32>{};
         odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+            if (chunk.type == "FAMs") {
+                if (family_names.count(chunk.id))
+                    throw odh::FormatError("ambiguous FAMs family name chunk");
+                const auto table = odh::read_strings(chunk.payload);
+                if (const auto* name = odh::string_in_language_or_english(table, language, 0)) {
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+                    family_names.emplace(chunk.id, legacy_text_to_utf8(name->value, language));
+#else
+                    family_names.emplace(chunk.id, name->value);
+#endif
+                }
+                return;
+            }
             if (chunk.type != "FAMI") return;
             if (entries.size() >= 4096) throw odh::FormatError("too many FAMI chunks");
             entries.push_back({chunk.id, odh::read_fami(chunk.payload)});
         });
+        for (auto& entry : entries) {
+            const auto name = family_names.find(entry.chunk_id);
+            if (name != family_names.end()) entry.display_name = name->second;
+        }
         source_families = entries;
         if (saved_overlay)
             entries = odh::apply_family_overlay(entries, identity, *saved_overlay);
@@ -369,6 +393,110 @@ std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_actions(
             if(selected)return NeighborhoodPickerResult{NeighborhoodPickerAction::lot,*selected,0};
         }
         if(input.redraw)window.present(frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+NeighborhoodLotPanelChoice show_neighborhood_lot_panel(LinuxWindow& window,
+        const PreparedNeighborhoodMap& map, std::uint16_t house_number,
+        const std::string& title, const std::string& description,
+        const std::string& summary, const std::string& localized_accept,
+        const std::string& localized_back, std::uint8_t language) {
+    if (map.frame.width != 800 || map.frame.height != 600 ||
+        !odh::neighborhood_mode_supported(map.mode) || house_number == 0 || house_number > 98 ||
+        title.empty() || language < 1 || language > 20)
+        throw odh::FormatError("lot details panel received invalid neighborhood data");
+    const auto marker = std::find_if(map.markers.begin(), map.markers.end(),
+        [&](const auto& value) { return value.location.house == house_number; });
+    if (marker == map.markers.end())
+        throw odh::FormatError("lot details panel house is absent from the selected map");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+
+    auto frame = map.frame;
+    constexpr std::int32_t panel_x = 20, panel_y = 92, panel_w = 420, panel_h = 438;
+    for (std::int32_t y = panel_y; y < panel_y + panel_h; ++y)
+        for (std::int32_t x = panel_x; x < panel_x + panel_w; ++x)
+            frame.pixels[static_cast<std::size_t>(y) * frame.width +
+                         static_cast<std::size_t>(x)] = {28, 33, 42, 255};
+    for (std::int32_t x = panel_x; x < panel_x + panel_w; ++x)
+        frame.pixels[static_cast<std::size_t>(panel_y) * frame.width +
+                     static_cast<std::size_t>(x)] = {81, 143, 162, 255};
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;
+    style.x = panel_x + 18; style.width = panel_w - 36; style.height = 34;
+    style.font_size_px = 21; style.padding = 3;
+    style.foreground = {248, 248, 248, 255}; style.background = {28, 33, 42, 0};
+    style.y = panel_y + 20;
+    draw_text_overlay(frame, title, language, style);
+    style.font_size_px = 14; style.height = 29;
+    style.foreground = {220, 225, 229, 255};
+    std::size_t line = 0;
+    std::size_t begin = 0;
+    while (begin < description.size() && line < 4) {
+        const auto end = description.find_first_of("\r\n", begin);
+        const auto part = description.substr(begin, end == std::string::npos ? end : end - begin);
+        if (!part.empty()) {
+            style.y = panel_y + 66 + static_cast<std::int32_t>(line++) * 28;
+            draw_text_overlay(frame, part, language, style);
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+        if (description[end] == '\r' && begin < description.size() && description[begin] == '\n')
+            ++begin;
+    }
+    line = 0;
+    begin = 0;
+    style.font_size_px = 15; style.height = 32;
+    style.foreground = {245, 245, 245, 255};
+    while (begin < summary.size() && line < 5) {
+        const auto end = summary.find_first_of("\r\n", begin);
+        const auto part = summary.substr(begin, end == std::string::npos ? end : end - begin);
+        if (!part.empty()) {
+            style.y = panel_y + 190 + static_cast<std::int32_t>(line++) * 34;
+            draw_text_overlay(frame, part, language, style);
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+        if (summary[end] == '\r' && begin < summary.size() && summary[begin] == '\n') ++begin;
+    }
+    const auto paint_button_y = panel_y + panel_h - 58;
+    for (std::int32_t y = paint_button_y; y < paint_button_y + 38; ++y) {
+        for (std::int32_t x = panel_x + 18; x < panel_x + 202; ++x)
+            frame.pixels[static_cast<std::size_t>(y) * frame.width +
+                         static_cast<std::size_t>(x)] = {47, 93, 138, 255};
+        for (std::int32_t x = panel_x + 210; x < panel_x + panel_w - 18; ++x)
+            frame.pixels[static_cast<std::size_t>(y) * frame.width +
+                         static_cast<std::size_t>(x)] = {52, 57, 68, 255};
+    }
+    style.x = panel_x + 26; style.y = paint_button_y + 5; style.width = 166;
+    style.height = 28; style.font_size_px = 15; style.padding = 2;
+    style.background = {0, 0, 0, 0}; style.foreground = {255, 255, 255, 255};
+    draw_text_overlay(frame, localized_accept, language, style);
+    style.x = panel_x + 218; style.width = panel_w - 244;
+    draw_text_overlay(frame, localized_back, language, style);
+#endif
+    window.set_title("OpenDollhouse | " + title + " | Enter: " + localized_accept +
+        " | Esc: " + localized_back);
+    window.present(frame);
+    constexpr std::int32_t button_y = panel_y + panel_h - 58;
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) {
+            if (input.quit_reason == WindowQuitReason::escape_key)
+                window.clear_escape_quit_reason();
+            return NeighborhoodLotPanelChoice::back_to_map;
+        }
+        if (input.confirm) return NeighborhoodLotPanelChoice::continue_to_lot;
+        if (input.primary_click) {
+            const auto x = (*input.primary_click)[0], y = (*input.primary_click)[1];
+            if (y >= button_y && y < button_y + 38) {
+                if (x >= panel_x + 18 && x < panel_x + 202)
+                    return NeighborhoodLotPanelChoice::continue_to_lot;
+                if (x >= panel_x + 210 && x < panel_x + panel_w - 18)
+                    return NeighborhoodLotPanelChoice::back_to_map;
+            }
+        }
+        if (input.redraw) window.present(frame);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }

@@ -313,6 +313,8 @@ int main(int argc, char** argv) {
                 "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
             marker(display, window, 200, true); marker(display, window, 600, true);
             click(display, window, 200);
+            wait_title(display, window, "Enter: OK | Esc: Cancel");
+            key(display, window, XK_Return);
             wait_title(display, window, "House 7 | Enter: enter | E: move out");
             key(display, window, XK_e);
             wait_title(display, window, "confirm move-out | House 7 | refund 2300 | budget after 9300");
@@ -326,6 +328,8 @@ int main(int argc, char** argv) {
             require(odh::encode_family_overlay(*saved) == odh::encode_family_overlay(expected),
                 "UI save must contain exactly the identity-bound move-out, refund and final budget");
             click(display, window, 600);
+            wait_title(display, window, "Enter: OK | Esc: Cancel");
+            key(display, window, XK_Return);
             wait_title(display, window, "House 8 | Enter: enter | E: move out");
             key(display, window, XK_Escape); app.expect_cancelled();
         }
@@ -336,6 +340,8 @@ int main(int argc, char** argv) {
             const auto window = new_map(display, before, app.pid);
             marker(display, window, 200, false); marker(display, window, 600, true);
             click(display, window, 600);
+            wait_title(display, window, "Enter: OK | Esc: Cancel");
+            key(display, window, XK_Return);
             wait_title(display, window, "House 8 | Enter: enter | E: move out");
             key(display, window, XK_Escape); app.expect_cancelled();
         }

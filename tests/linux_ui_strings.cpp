@@ -73,6 +73,7 @@ int main() {
         write_iff(path, {
             {128, string_table({{14, "Cancelar"}, {1, "Cancel"}})},
             {132, string_table({{1, "Purchase House?"}})},
+            {134, string_table({{14, "Casa %s"}})},
             {145, string_table({{14, "Vizinhança"}})},
         });
         odh_host::GameUiStrings strings(temp.root);
@@ -80,6 +81,8 @@ int main() {
                 "requested language is selected");
         require(strings.get(128, 0, 2, "fallback") == "Cancel",
                 "English fallback is preserved");
+        require(strings.get(134, 0, 14, "fallback") == "Casa %s",
+                "lot-selection text table is loaded and localized");
         std::filesystem::rename(path, path.string() + ".moved");
         require(strings.get(132, 0, 14, "fallback") == "Purchase House?",
                 "other menu tables are reused from the initial IFF read");

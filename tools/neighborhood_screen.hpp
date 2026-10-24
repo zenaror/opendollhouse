@@ -35,10 +35,18 @@ struct NeighborhoodPickerResult {
 
 enum class OccupiedLotChoice { enter, move_out, cancel };
 
+enum class NeighborhoodLotPanelChoice { continue_to_lot, back_to_map };
+NeighborhoodLotPanelChoice show_neighborhood_lot_panel(LinuxWindow& window,
+    const PreparedNeighborhoodMap& map, std::uint16_t house_number,
+    const std::string& title, const std::string& description,
+    const std::string& summary, const std::string& localized_accept,
+    const std::string& localized_back, std::uint8_t language);
+
 PreparedNeighborhoodMap prepare_neighborhood_map(
     const std::filesystem::path& user_data,
     const std::filesystem::path& ui_graphics, unsigned mode,
-    const odh::FamilyOverlay* saved_overlay = nullptr);
+    const odh::FamilyOverlay* saved_overlay = nullptr,
+    std::uint8_t language = 1);
 
 // Build the exact 800x600 neighborhood frame without opening an X11 window.
 odh::RasterFrame compose_neighborhood_picker_frame(

@@ -400,6 +400,81 @@ std::int32_t house_purchase_price(const std::filesystem::path& game,
     return price;
 }
 
+std::optional<std::string> read_user_string(const std::filesystem::path& game,
+        const std::filesystem::path& user_data, const std::filesystem::path& relative_file,
+        std::uint16_t chunk_id, std::size_t string_index, std::uint8_t language) {
+    const auto candidate = user_data / relative_file;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(candidate, error) || error) return std::nullopt;
+    const auto path = require_file(game, candidate);
+    std::optional<std::string> result;
+    bool found_chunk = false;
+    with_iff_file(path.string(), [&](const odh::View& view) {
+        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+            if (chunk.type != "STR#" || chunk.id != chunk_id) return;
+            if (found_chunk) throw odh::FormatError("ambiguous localized lot text resource");
+            found_chunk = true;
+            const auto table = odh::read_strings(chunk.payload);
+            if (const auto* entry = odh::string_in_language_or_english(
+                    table, language, string_index)) {
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+                result = odh_host::legacy_text_to_utf8(entry->value, language);
+#else
+                result = entry->value;
+#endif
+            }
+        });
+    });
+    return result;
+}
+
+std::pair<std::string, std::string> neighborhood_lot_text(
+        const std::filesystem::path& game, const std::filesystem::path& user_data,
+        std::uint16_t house_number, std::uint8_t language,
+        odh_host::GameUiStrings& ui_strings) {
+    const auto description_file = house_number < 80 ? "Houses/NeighborhoodDesc.iff" :
+        house_number < 90 ? "Houses/STDesc.iff" : "Houses/MTDesc.iff";
+    const auto description_chunk = static_cast<std::uint16_t>(2000 + house_number);
+    auto name = read_user_string(game, user_data, description_file,
+        description_chunk, 0, language).value_or("");
+    auto description = read_user_string(game, user_data, description_file,
+        description_chunk, 1, language).value_or("");
+
+    if (name.empty()) {
+        const auto assignment = read_user_string(game, user_data, "StreetNames.iff",
+            2001, house_number - 1, language);
+        if (assignment && !assignment->empty()) {
+            unsigned street = 0;
+            const auto parsed = std::from_chars(assignment->data(),
+                assignment->data() + assignment->size(), street);
+            if (parsed.ec == std::errc{} && parsed.ptr == assignment->data() + assignment->size() &&
+                street > 0) {
+                name = read_user_string(game, user_data, "StreetNames.iff", 2000,
+                    street - 1, language).value_or("");
+                const auto marker = name.find("%s");
+                if (marker != std::string::npos)
+                    name.replace(marker, 2, std::to_string(house_number));
+            }
+        }
+    }
+    if (name.empty()) name = ui_strings.get(134, 22, language, "House");
+    if (description.empty()) description = ui_strings.get(134, 23, language, "No Description");
+    return {std::move(name), std::move(description)};
+}
+
+std::string format_game_ui_string(std::string pattern,
+        const std::vector<std::string>& replacements) {
+    std::size_t cursor = 0;
+    for (const auto& replacement : replacements) {
+        const auto marker = pattern.find('%', cursor);
+        if (marker == std::string::npos || marker + 1 >= pattern.size()) break;
+        if (pattern[marker + 1] != 's' && pattern[marker + 1] != 'd') continue;
+        pattern.replace(marker, 2, replacement);
+        cursor = marker + replacement.size();
+    }
+    return pattern;
+}
+
 std::vector<std::filesystem::path> find_files(const std::filesystem::path& root,
         const std::string& exact_name, const std::set<std::string>& extensions,
         std::size_t maximum) {
@@ -707,6 +782,9 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         std::optional<odh_host::PreparedNeighborhoodMap> map;
         std::unique_ptr<odh_host::LinuxWindow> window;
+        std::unique_ptr<odh_host::GameUiStrings> ui_string_catalog;
+        std::string lot_panel_accept = "OK";
+        std::string lot_panel_back = "Cancel";
         std::string move_in_title = "Purchase House?";
         std::string move_in_question = "Are you sure you want to buy this house?";
         std::string move_out_title = "Evict Family?";
@@ -720,7 +798,8 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string neighborhood_title = "Neighborhood";
         std::string neighborhood_cancel = "Cancel";
         if (!options.plan_only && !options.headless_ticks) {
-            odh_host::GameUiStrings ui_strings(game);
+            ui_string_catalog = std::make_unique<odh_host::GameUiStrings>(game);
+            auto& ui_strings = *ui_string_catalog;
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
                 options.load_session ? 240 : 600, "OpenDollhouse");
             if (options.choose_language) {
@@ -758,8 +837,13 @@ int odh_linux_game_entry(int argc, char** argv) {
                 static_cast<std::uint8_t>(options.language), "Neighborhood");
             neighborhood_cancel = ui_strings.get(128, 5,
                 static_cast<std::uint8_t>(options.language), "Cancel");
+            lot_panel_accept = ui_strings.get(142, 0,
+                static_cast<std::uint8_t>(options.language), "OK");
+            lot_panel_back = ui_strings.get(142, 1,
+                static_cast<std::uint8_t>(options.language), "Cancel");
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
-                family_overlay ? &*family_overlay : nullptr);
+                family_overlay ? &*family_overlay : nullptr,
+                static_cast<std::uint8_t>(options.language));
         }
 #else
         if (!options.plan_only && !options.headless_ticks)
@@ -790,7 +874,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                     throw odh::FormatError("neighborhood map switch requested an unsupported mode");
                 options.mode = selected->mode;
                 map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
-                    family_overlay ? &*family_overlay : nullptr);
+                    family_overlay ? &*family_overlay : nullptr,
+                    static_cast<std::uint8_t>(options.language));
                 continue;
             }
 #ifdef ODH_HAVE_LINUX_CAS_SCREEN
@@ -828,7 +913,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                     members);
                 family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
                 map = odh_host::prepare_neighborhood_map(userdata, *graphics_resource,
-                    options.mode, family_overlay ? &*family_overlay : nullptr);
+                    options.mode, family_overlay ? &*family_overlay : nullptr,
+                    static_cast<std::uint8_t>(options.language));
                 continue;
             }
 #endif
@@ -837,6 +923,54 @@ int odh_linux_game_entry(int argc, char** argv) {
                 [&](const auto& value) { return value.location.house == house; });
             if (marker == map->markers.end())
                 throw odh::FormatError("selected lot is absent from the prepared neighborhood");
+            if (!ui_string_catalog)
+                throw odh::FormatError("localized lot details are unavailable outside the game UI");
+            auto [lot_title, lot_description] = neighborhood_lot_text(game, userdata,
+                static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
+                *ui_string_catalog);
+            std::int32_t selected_lot_price = -1;
+            std::string lot_summary;
+            if (marker->occupied) {
+                const odh::FamilyContext family_context(map->effective_families);
+                const auto* family = family_context.by_house(static_cast<std::int16_t>(house));
+                if (!family)
+                    throw odh::FormatError("occupied lot has no matching family record");
+                const auto net_worth = static_cast<std::int64_t>(family->family.value_in_arch) +
+                    family->family.budget;
+                const auto family_name = family->display_name.empty() ?
+                    ui_string_catalog->get(134, 22,
+                        static_cast<std::uint8_t>(options.language), "No Name") :
+                    family->display_name;
+                lot_summary = format_game_ui_string(ui_string_catalog->get(134, 0,
+                    static_cast<std::uint8_t>(options.language),
+                    "The %s Family\r\nNet Worth: %s\r\nFriends: %d"), {
+                        family_name, "\xc2\xa7" + std::to_string(net_worth),
+                        std::to_string(family->family.family_friends)});
+                lot_summary += "\r\n" + ui_string_catalog->get(132, 15,
+                    static_cast<std::uint8_t>(options.language),
+                    "This house is occupied by another family.");
+            } else {
+                selected_lot_price = house_purchase_price(game, userdata,
+                    static_cast<std::uint16_t>(house));
+                lot_summary = format_game_ui_string(ui_string_catalog->get(134, 1,
+                    static_cast<std::uint8_t>(options.language),
+                    "%s\r\n%s\r\nCost: %s\r\nPick or create a family and move them in to play."), {
+                        lot_title, lot_description, "\xc2\xa7" +
+                            std::to_string(selected_lot_price)});
+                for (int line = 0; line < 2; ++line) {
+                    const auto next_line = lot_summary.find_first_of("\r\n");
+                    if (next_line == std::string::npos) break;
+                    lot_summary.erase(0, next_line + 1);
+                    if (!lot_summary.empty() && lot_summary.front() == '\n') lot_summary.erase(0, 1);
+                }
+            }
+            const auto panel_choice = odh_host::show_neighborhood_lot_panel(*window, *map,
+                static_cast<std::uint16_t>(house), lot_title,
+                marker->occupied ? std::string{} : lot_description, lot_summary,
+                lot_panel_accept, lot_panel_back,
+                static_cast<std::uint8_t>(options.language));
+            if (panel_choice == odh_host::NeighborhoodLotPanelChoice::back_to_map)
+                continue;
             if (marker->occupied) {
                 const odh::FamilyContext family_context(map->effective_families);
                 const auto* current_family = family_context.by_house(static_cast<std::int16_t>(house));
@@ -872,7 +1006,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                     const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
                         userdata / "Neighborhood.iff");
                     const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
-                        options.mode, latest_overlay ? &*latest_overlay : nullptr);
+                        options.mode, latest_overlay ? &*latest_overlay : nullptr,
+                        static_cast<std::uint8_t>(options.language));
                     const auto latest_neighborhood_identity = odh_host::linux_neighborhood_identity(
                         userdata / "Neighborhood.iff");
                     if (latest_neighborhood_identity != neighborhood_identity)
@@ -898,7 +1033,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                         latest_overlay, next_overlay);
                     family_overlay = next_overlay;
                     map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
-                        &*family_overlay);
+                        &*family_overlay, static_cast<std::uint8_t>(options.language));
                     const auto released_marker = std::find_if(map->markers.begin(),
                         map->markers.end(), [&](const auto& value) {
                             return value.location.house == house;
@@ -910,8 +1045,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                 break;
             }
             if (!marker->occupied) {
-                const auto purchase_price = house_purchase_price(game, userdata,
-                    static_cast<std::uint16_t>(house));
+                const auto purchase_price = selected_lot_price;
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
                     map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
                     static_cast<std::uint8_t>(options.language), family_picker_action,
@@ -940,7 +1074,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
                     userdata / "Neighborhood.iff");
                 const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
-                    options.mode, latest_overlay ? &*latest_overlay : nullptr);
+                    options.mode, latest_overlay ? &*latest_overlay : nullptr,
+                    static_cast<std::uint8_t>(options.language));
                 const auto latest_price = house_purchase_price(game, userdata,
                     static_cast<std::uint16_t>(house));
                 if (latest_price != purchase_price)
@@ -969,7 +1104,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                     latest_overlay, next_overlay);
                 family_overlay = next_overlay;
                 map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
-                    &*family_overlay);
+                    &*family_overlay, static_cast<std::uint8_t>(options.language));
                 const auto committed_marker = std::find_if(map->markers.begin(), map->markers.end(),
                     [&](const auto& value) { return value.location.house == house; });
                 if (committed_marker == map->markers.end() || !committed_marker->occupied)

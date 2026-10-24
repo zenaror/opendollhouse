@@ -53,7 +53,8 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        const auto map = odh_host::prepare_neighborhood_map(*folder, *archive, *mode);
+        const auto map = odh_host::prepare_neighborhood_map(*folder, *archive, *mode,
+            nullptr, static_cast<std::uint8_t>(language));
         if (export_frame) {
             const auto frame = odh_host::compose_neighborhood_picker_frame(map,
                 "Neighborhood", "Cancel", static_cast<std::uint8_t>(language));
