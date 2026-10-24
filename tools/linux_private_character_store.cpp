@@ -101,16 +101,19 @@ void write_new_file(int directory_fd,const std::filesystem::path& path,
         if(errno!=EEXIST)io_error("cannot create temporary private character",path);
     }
     if(file.get()<0)throw std::runtime_error("cannot allocate temporary private character file");
+    bool published=false;
     try {
         write_all(file.get(),bytes,path);
         while(::fsync(file.get())!=0){if(errno==EINTR)continue;io_error("cannot flush private character",path);}
         if(::syscall(SYS_renameat2,directory_fd,temporary.c_str(),directory_fd,final_name.c_str(),RENAME_NOREPLACE)!=0)
             io_error("cannot publish private character without replacement",path);
         temporary.clear();
+        published=true;
         while(::fsync(directory_fd)!=0){if(errno==EINTR)continue;io_error("cannot flush private character directory",path.parent_path());}
     } catch(...) {
         const int saved=errno;
         if(!temporary.empty())(void)::unlinkat(directory_fd,temporary.c_str(),0);
+        if(published)(void)::unlinkat(directory_fd,final_name.c_str(),0);
         errno=saved;
         throw;
     }
@@ -164,7 +167,42 @@ CreatedPrivateCharacter create_linux_private_character(
     }
     if(guid==0)throw std::runtime_error("could not allocate an unused person GUID");
     if(generated.size()>kMaximumCharacterBytes)throw odh::FormatError("generated character exceeds private file size limit");
+    CreatedPrivateCharacter result{guid,path,odh::sha256(generated.data(),generated.size())};
     write_new_file(directory.get(),path,generated);
-    return {guid,path};
+    return result;
+}
+
+bool remove_linux_private_character_if_unchanged(const CreatedPrivateCharacter& created) {
+    const auto directory_path=created.path.parent_path();
+    if(directory_path.empty()||created.path.filename().empty())
+        throw std::invalid_argument("created private character path is invalid");
+    FileDescriptor directory(::open(directory_path.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
+    if(directory.get()<0){if(errno==ENOENT)return false;io_error("cannot open private character directory for rollback",directory_path);}
+    FileDescriptor lock(::openat(directory.get(),".create-character.lock",O_RDWR|O_CLOEXEC|O_NOFOLLOW));
+    if(lock.get()<0){if(errno==ENOENT)return false;io_error("cannot open private character rollback lock",directory_path);}
+    struct stat lock_status{};
+    if(::fstat(lock.get(),&lock_status)!=0)io_error("cannot inspect private character rollback lock",directory_path);
+    if(!S_ISREG(lock_status.st_mode)||lock_status.st_nlink!=1)
+        throw std::runtime_error("private character rollback lock is not a private regular file");
+    while(::flock(lock.get(),LOCK_EX)!=0){if(errno==EINTR)continue;io_error("cannot lock private character rollback",directory_path);}
+    const auto name=created.path.filename().string();
+    FileDescriptor file(::openat(directory.get(),name.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW));
+    if(file.get()<0){if(errno==ENOENT)return false;io_error("cannot open private character for rollback",created.path);}
+    struct stat info{};
+    if(::fstat(file.get(),&info)!=0)io_error("cannot inspect private character for rollback",created.path);
+    if(!S_ISREG(info.st_mode)||info.st_size<0||static_cast<std::uintmax_t>(info.st_size)>kMaximumCharacterBytes)
+        return false;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(info.st_size));
+    std::size_t offset=0;
+    while(offset<bytes.size()) {
+        const auto count=::read(file.get(),bytes.data()+offset,bytes.size()-offset);
+        if(count<0){if(errno==EINTR)continue;io_error("cannot read private character for rollback",created.path);}
+        if(count==0)return false;
+        offset+=static_cast<std::size_t>(count);
+    }
+    if(odh::sha256(bytes.data(),bytes.size())!=created.content_sha256)return false;
+    if(::unlinkat(directory.get(),name.c_str(),0)!=0){if(errno==ENOENT)return false;io_error("cannot remove private character during rollback",created.path);}
+    while(::fsync(directory.get())!=0){if(errno==EINTR)continue;io_error("cannot flush private character rollback",directory_path);}
+    return true;
 }
 } // namespace odh_host
