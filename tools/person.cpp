@@ -146,8 +146,8 @@ odh::RasterFrame make_loading_lot_frame(std::uint32_t width,std::uint32_t height
         for(auto row=top;row<bottom;++row)for(auto column=left;column<right;++column)
             frame.pixels[static_cast<std::size_t>(row)*width+static_cast<std::size_t>(column)]=color;
     };
-    const auto card_width=std::min<std::uint32_t>(width,288);
-    const auto card_height=std::min<std::uint32_t>(height,62);
+    const auto card_width=std::min<std::uint32_t>(width,480);
+    const auto card_height=std::min<std::uint32_t>(height,88);
     const auto card_x=static_cast<std::int32_t>((width-card_width)/2);
     const auto card_y=static_cast<std::int32_t>((height-card_height)/2);
     rectangle(card_x,card_y,static_cast<std::int32_t>(card_width),static_cast<std::int32_t>(card_height),
@@ -159,8 +159,13 @@ void present_loading_lot(odh_host::LinuxWindow& window,std::uint8_t language){
     auto frame=make_loading_lot_frame(window.width(),window.height());
     const auto message=loading_lot_message(language);
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
-    odh_host::TextOverlayStyle style;style.x=16;style.y=static_cast<std::int32_t>(frame.height/2)-20;
-    style.width=static_cast<std::int32_t>(frame.width)-32;style.height=40;style.font_size_px=15;
+    const auto card_width=std::min<std::uint32_t>(frame.width,480);
+    const auto card_height=std::min<std::uint32_t>(frame.height,88);
+    odh_host::TextOverlayStyle style;
+    style.x=static_cast<std::int32_t>((frame.width-card_width)/2+20);
+    style.y=static_cast<std::int32_t>((frame.height-card_height)/2+(card_height-36)/2);
+    style.width=static_cast<std::int32_t>(card_width-40);style.height=36;style.font_size_px=22;
+    style.padding=2;
     style.background={39,52,63,0};style.foreground={240,245,247,255};
     (void)odh_host::draw_text_overlay(frame,message,language,style);
 #endif

@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Atualização: carregamento X11 e fingerprint dos recursos (2026-10-23)
+
+A primeira retomada gráfica de House07 exibiu o cartão e levou aproximadamente
+75 segundos para mostrar a casa. O caminho `--plan-only` isolou 46,134 s na
+preparação e fingerprint de 132 recursos (cerca de 1,0 GiB). A build nativa
+agora usa SHA-256 do OpenSSL quando disponível, com blocos de leitura de 1 MiB;
+no modo sem OpenSSL, permanece o SHA-256 interno. A mesma verificação caiu para
+0,719 s e produziu o fingerprint idêntico
+`b4842d0534f9962992e4f1d977913c5b689eb7a74c0e5bda3761c66485bdc511`.
+
+A retomada X11 seguinte mostrou o lote cerca de 10 s após o cartão, restaurou o
+save no tick 81 e fechou sem erro no tick 90. “Loading lot...” foi centralizado
+no cartão. Build com OpenSSL passou os seis testes focados de SHA, manifesto,
+texto, entrada integrada, launcher e janela; o build sem OpenSSL passou os dois
+testes de hash/manifesto. A build completa e o CTest integral passaram 222/222.
+A build continua experimental, sem paridade geral com Simitone.
+
+Próximo: investigar se outras fases da casa ainda podem ser aceleradas, validar
+visualmente os demais modos e expansões e ampliar as ações jogáveis com save
+seguro. Dados comerciais permanecem externos e inalterados.
+
 ## Atualização: orçamento limitado para a família House05 (2026-10-23)
 
 O probe finito continua com o padrão histórico de 10.000 instruções. Para

@@ -24,6 +24,16 @@ void write(const std::filesystem::path& path, const std::string& contents) {
     output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     if (!output) throw std::runtime_error("fixture write failed");
 }
+std::string hex(const std::array<std::uint8_t,32>& digest) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (const auto byte : digest) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 15]);
+    }
+    return result;
+}
 }
 
 int main() {
@@ -42,6 +52,9 @@ int main() {
         const std::vector<std::filesystem::path> reverse{
             "GameData/Objects.far", "GameData/Global.far"};
         const auto first = odh_host::identify_session_resources(root, forward, 14, 0x7f);
+        check(hex(first.resource_fingerprint) ==
+              "ec2b5a89dfe733aa0957f5d96c5d0bf7159fc8915d214aba794c91f5c67a94f1",
+              "accelerated and built-in SHA-256 produce the same stable manifest fingerprint");
         const auto reordered = odh_host::identify_session_resources(root, reverse, 14, 0x7f);
         check(first.resource_fingerprint == reordered.resource_fingerprint,
               "manifest fingerprint ignores input enumeration order");
@@ -79,7 +92,7 @@ int main() {
             "unsupported language rejects before reading files");
         rejects([&] { (void)odh_host::identify_session_resources(root, forward, 1, 0,
             4); }, "manifest over byte budget rejects");
-        std::cout << "session resource manifest: 11 checks passed\n";
+        std::cout << "session resource manifest: 12 checks passed\n";
     } catch (...) {
         std::filesystem::remove_all(root);
         std::filesystem::remove(outside);

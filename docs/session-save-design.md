@@ -212,8 +212,8 @@ production atomic file path without commercial files or a display.
 ## Real-data X11 checkpoint (2026-10-23)
 
 Using the integrated Linux launcher, the original game data in mode 1 and
-House07 loaded as family 5 with residents 48 and 47. The 800x600 X11 lot window now shows a localized loading card before resource
-preparation. During this test it appeared within three seconds; the house,
+House07 loaded as family 5 with residents 48 and 47. The 800x600 X11 lot window shows a localized loading card before resource
+preparation. In the original smoke it appeared within three seconds; the house,
 furniture, both residents and HUD appeared after about 75 seconds. Pressing S
 wrote a 116895-byte experimental save at tick 81 to a temporary save folder,
 outside the game installation. Escape closed the first process with exit code 0.
@@ -227,13 +227,28 @@ window showed the house and both residents; simulation continued through tick
 card and the running lot were `/tmp/odh-loading-card.png` and
 `/tmp/odh-loading-later.png` during validation. The archive
 fingerprint matched the same 132 game resources, language and expansion mask
-before restore. Capture: `/tmp/odh-launcher-resumed.png`.
+before restore. Captures: `/tmp/odh-loading-card.png`,
+`/tmp/odh-loading-later.png`, `/tmp/odh-final-loading.png` and
+`/tmp/odh-final-lot.png`.
 
-This proves one real two-resident House07 save and restart through an X11 window
-on this Linux build. It does not prove long-session stability, every action or
-lot, all expansions, full game compatibility or original-game visual parity.
-The visible card makes the wait clear, but the roughly 75-second load still
-needs performance investigation.
+### Startup fingerprint speed checkpoint (2026-10-23)
+
+A bounded `--plan-only` launch took 46.134 seconds while fingerprinting 132
+resources totaling about 1.0 GiB. The native build now uses OpenSSL SHA-256 when
+CMake finds it; cross builds, builds without OpenSSL and the explicit
+`ODH_USE_OPENSSL_SHA256=OFF` option keep the built-in implementation. A repeated
+plan took 0.719 seconds and produced the identical fingerprint
+`b4842d0534f9962992e4f1d977913c5b689eb7a74c0e5bda3761c66485bdc511`. The X11
+resume then showed the lot about 10 seconds after the loading card, resumed from
+tick 81, and closed cleanly at tick 90. The “Loading lot...” text is now centered
+inside its card.
+
+The full native build and CTest suite passed 222/222 with OpenSSL enabled; the
+6 focused hash/UI/launcher tests also passed. The built-in hash-only build passed
+its 2/2 CTests. This proves faster verification on this installation with the
+same resource identity;
+it does not prove long-session stability, every action or lot, all expansions,
+full game compatibility or original-game visual parity.
 
 Remaining: validate live Sit/Stand and other player actions through X11, a
 long-running session, and expansion-specific data. Add profiles for
