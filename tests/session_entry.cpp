@@ -1,9 +1,21 @@
 #include "odh/session_entry.hpp"
 #include "odh/family_overlay.hpp"
+#include "odh/sha256.hpp"
+#ifdef __linux__
+#include "linux_family_overlay_store.hpp"
+#endif
 
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#ifdef __linux__
+#include <unistd.h>
+#endif
 
 namespace {
 void require(bool value, const char* reason) {
@@ -37,6 +49,128 @@ odh::SessionEntry resolve(const odh::LotLocations& lots, const odh::FamilyContex
                           const odh::DefinitionIndex& chars, unsigned mode=1,
                           std::uint16_t house=7, std::string path="Houses/House07.iff") {
     return odh::resolve_session_entry(mode,house,std::move(path),lots,fam,nbr,chars);
+}
+void le16(std::vector<std::uint8_t>& out, std::uint16_t value) {
+    out.push_back(static_cast<std::uint8_t>(value));
+    out.push_back(static_cast<std::uint8_t>(value >> 8));
+}
+void le32(std::vector<std::uint8_t>& out, std::uint32_t value) {
+    for (unsigned shift=0;shift<32;shift+=8)
+        out.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+void be16(std::vector<std::uint8_t>& out, std::uint16_t value) {
+    out.push_back(static_cast<std::uint8_t>(value >> 8));
+    out.push_back(static_cast<std::uint8_t>(value));
+}
+void be32(std::vector<std::uint8_t>& out, std::uint32_t value) {
+    for (int shift=24;shift>=0;shift-=8)
+        out.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+std::vector<std::uint8_t> iff(const std::vector<std::vector<std::uint8_t>>& chunks) {
+    std::vector<std::uint8_t> out(64,0);
+    constexpr char signature[]="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";
+    std::copy(signature,signature+sizeof(signature)-1,out.begin());
+    for (const auto& chunk:chunks) out.insert(out.end(),chunk.begin(),chunk.end());
+    return out;
+}
+std::vector<std::uint8_t> iff_chunk(const char* type, std::uint16_t id,
+                                   const std::vector<std::uint8_t>& payload) {
+    std::vector<std::uint8_t> out(type,type+4);
+    be32(out,static_cast<std::uint32_t>(76+payload.size()));
+    be16(out,id);be16(out,0);out.resize(out.size()+64,0);
+    out.insert(out.end(),payload.begin(),payload.end());
+    return out;
+}
+void write_bytes(const std::filesystem::path& path,const std::vector<std::uint8_t>& bytes) {
+    std::ofstream stream(path,std::ios::binary);
+    if (!stream) throw std::runtime_error("cannot create synthetic session IFF");
+    stream.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    if (!stream) throw std::runtime_error("cannot write synthetic session IFF");
+}
+void test_created_family_disk_reload() {
+    const auto root=std::filesystem::temp_directory_path()/(
+        "odh-created-family-session-"+
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code create_error;
+    if (!std::filesystem::create_directory(root,create_error) || create_error)
+        throw std::runtime_error("cannot create exclusive synthetic session directory");
+    struct Cleanup { std::filesystem::path path; ~Cleanup() {
+        std::error_code error;std::filesystem::remove_all(path,error);
+    }} cleanup{root};
+    if (!std::filesystem::create_directory(root/"Houses",create_error) || create_error ||
+        !std::filesystem::create_directory(root/"Characters",create_error) || create_error)
+        throw std::runtime_error("cannot create synthetic session subdirectories");
+
+    std::vector<std::uint8_t> locations;
+    le16(locations,0xfffd);le16(locations,1);locations.push_back(1);
+    const std::string lot="7,10,20";
+    locations.insert(locations.end(),lot.begin(),lot.end());
+    locations.push_back(0);locations.push_back(0);
+    std::vector<std::uint8_t> fami;
+    le32(fami,0);le32(fami,9);le32(fami,0x46414d49);
+    le32(fami,0);le32(fami,900);le32(fami,20000);le32(fami,0);
+    le32(fami,0);le32(fami,0);le32(fami,0);
+    odh::Nbrs source_neighbors{0,62,{},0};
+    const auto neighborhood=iff({iff_chunk("FAMI",201,fami),
+        iff_chunk("NBRS",1,odh::encode_nbrs(source_neighbors))});
+    write_bytes(root/"LotLocations.iff",iff({iff_chunk("STR#",1,locations)}));
+    const auto neighborhood_path=root/"Neighborhood.iff";
+    write_bytes(neighborhood_path,neighborhood);
+    std::vector<std::uint8_t> simi(12+32*2+34+6*4,0);
+    simi[4]=0x33;simi[8]='I';simi[9]='M';simi[10]='I';simi[11]='S';
+    write_bytes(root/"Houses/House07.iff",iff({iff_chunk("SIMI",1,simi)}));
+
+    constexpr std::uint32_t created_guid=0x0badcafe;
+    odh::Family vacant{};vacant.family_number=900;vacant.budget=20000;
+    const std::vector<odh::FamilyEntry> source_families{{201,vacant}};
+    odh::Family created{};created.version=9;created.unknown=24;
+    created.family_number=901;created.budget=20000;created.member_guids={created_guid};
+    odh::NeighborRecord member{};member.version=10;member.unknown3=9;
+    member.name="iffname";member.person_mode=9;
+    member.person_data=std::vector<std::int16_t>(256,0);
+    (*member.person_data)[61]=202;member.neighbor_id=1;member.guid=created_guid;
+    member.unknown_neg_one=-1;
+    const auto identity=odh::sha256(neighborhood.data(),neighborhood.size());
+    odh::FamilyOverlayCreation creation{202,"Created family",
+        odh::encode_simitone_create_family_fami(created),{member}};
+    auto overlay=odh::plan_family_creation_overlay(source_families,source_neighbors,
+        identity,nullptr,creation);
+    overlay=odh::plan_family_move_in_overlay(source_families,identity,&overlay,
+        202,7,5000);
+#ifdef __linux__
+    struct ConfigHome {
+        std::optional<std::string> previous;
+        explicit ConfigHome(const std::filesystem::path& path) {
+            if (const auto* value=std::getenv("XDG_CONFIG_HOME")) previous=value;
+            if (::setenv("XDG_CONFIG_HOME",path.c_str(),1)!=0)
+                throw std::runtime_error("cannot set temporary XDG_CONFIG_HOME");
+        }
+        ~ConfigHome() {
+            if (previous) (void)::setenv("XDG_CONFIG_HOME",previous->c_str(),1);
+            else (void)::unsetenv("XDG_CONFIG_HOME");
+        }
+    } config_home(root/"config");
+    const auto overlay_path=odh_host::linux_family_overlay_path(identity);
+    odh_host::write_linux_family_overlay_atomic(overlay_path,overlay);
+    const auto reopened=odh_host::read_linux_family_overlay_for_neighborhood(neighborhood_path);
+    require(reopened.has_value(),"created-family overlay is present after store reopen");
+    overlay=*reopened;
+#else
+    overlay=odh::decode_family_overlay(odh::encode_family_overlay(overlay));
+#endif
+
+    std::vector<std::uint8_t> objd(32,0);
+    objd[0]=138;objd[18]=2;
+    for (unsigned i=0;i<4;++i)objd[28+i]=static_cast<std::uint8_t>(created_guid>>(8*i));
+    write_bytes(root/"Characters/PlayerCreated.iff",iff({iff_chunk("OBJD",128,objd)}));
+
+    const auto loaded=odh::load_session_entry(root,1,7,1,&overlay);
+    require(loaded.family_chunk_id==202&&loaded.family_number==901&&
+            loaded.members.size()==1&&loaded.members[0].guid==created_guid&&
+            loaded.members[0].neighbor_id==1&&
+            loaded.members[0].character_asset=="PlayerCreated.iff",
+            "store reload replays saved created FAMI and NBRS before resolving its character IFF");
 }
 }
 
@@ -111,6 +245,7 @@ int main() {
                 created_entry.members[0].neighbor_id==13 &&
                 created_entry.members[0].character_asset=="PlayerCreated.iff",
                 "created household FAMI and NBRS replay together into a resolvable lot entry");
+        test_created_family_disk_reload();
 
         rejects([&]{(void)resolve(locations,families,neighbors,characters,6);},
                 "unsupported neighborhood mode rejected");
@@ -202,6 +337,7 @@ int main() {
         std::cout<<"PASS session entry preserves house, family and ordered Sim resource identities\n";
         std::cout<<"PASS unsupported, missing, empty, mismatched and ambiguous input rejected\n";
         std::cout<<"PASS restored household reconciliation reuses avatars, distinguishes absence and position, and ignores visitors/objects\n";
+        std::cout<<"PASS synthetic store reload replays saved created FAMI and NBRS with its character IFF\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; return 1;

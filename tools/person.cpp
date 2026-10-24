@@ -980,8 +980,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
 #ifdef __linux__
     if(activate_family&&neighborhood_path){
         const auto overlay=odh_host::read_linux_family_overlay_for_neighborhood(*neighborhood_path);
-        if(overlay)family_records=odh::apply_family_overlay(family_records,
-            overlay->neighborhood_identity,*overlay);
+        if(overlay){
+            family_records=odh::apply_family_overlay(family_records,
+                overlay->neighborhood_identity,*overlay);
+            if(!overlay->creations.empty())
+                *nbrs=odh::apply_neighbor_overlay(*nbrs,
+                    overlay->neighborhood_identity,*overlay);
+        }
     }
 #endif
     std::optional<odh::NeighborContext> neighbors;
