@@ -758,7 +758,25 @@ Linux existente. A compilação de `odh-person` e os testes
 
 Este é apenas um passo de interação visível. Não foi feita captura de uma
 partida com uma ação aberta; o painel não é o pie menu original nem o menu do
-Simitone, ainda não recebe seleção de ação pelo mouse e não prova paridade
-visual. O próximo passo é validar a lista aberta numa janela X11 isolada e
-ligar escolha por clique; depois reconstruir a apresentação usando a arte e o
-comportamento original do jogo.
+Simitone e não prova paridade visual. Naquele checkpoint, a escolha por mouse
+ainda não estava ligada; o avanço seguinte está registrado abaixo.
+
+### Escolha de ação pelo clique injetado — 2026-10-24
+
+O clique na lista agora identifica a linha visível, destaca a ação e a envia à
+fila do morador selecionado. O teste `house07_interaction_integration.py`
+usou a instalação original e House07: selecionou a cadeira salva 128, clicou
+na primeira linha, executou Sit 4097 com retorno `true` e depois Stand 4102
+com retorno `true`; a fila terminou vazia e `host_failed=false`.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_interaction_integration.py \
+  --binary build-household-session/odh-person \
+  --game-root '../referencias/The Sims' --window-input --window-stand --ticks 512
+```
+
+O harness injeta as coordenadas de clique pelo mesmo tratamento usado pela
+janela, mas executou sem DISPLAY e não mostrou a lista numa tela. Isto confirma
+que a linha escolhida chega à ação correta com recursos reais; ainda falta
+captura visual X11, escolha física/automatizada em janela e save/retomada após
+essa cadeia.

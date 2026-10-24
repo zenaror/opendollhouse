@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--include-installed-resources", action="store_true",
                         help="also load installed ExpansionPack and Downloads FAR/IFF files")
     parser.add_argument("--window-input", action="store_true",
-                        help="exercise the production click/pick/Space path with queued inputs and no display")
+                        help="exercise production object-picking and action-menu mouse selection with no display")
     parser.add_argument("--window-stand", action="store_true",
                         help="after window Sit, inject the player's U/Stand input at --stand-tick")
     parser.add_argument("--window-stand-expect-rejected", action="store_true",

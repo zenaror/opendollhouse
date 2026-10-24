@@ -3025,6 +3025,34 @@ struct PlacementCandidateProbe {
 #endif
     odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
     if(render_size){render_camera.width=(*render_size)[0];render_camera.height=(*render_size)[1];}
+    const auto handle_interaction_menu_click=[&](std::int32_t x,std::int32_t y){
+        if(!render_selection||!render_interactions||!render_interactions->table||render_interaction_enqueued)
+            return false;
+        auto* action_queue=actor_queue_for(active_household_actor);
+        if(!action_queue||action_queue->size()!=0||action_queue->active())return false;
+        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+            world.find(active_household_actor));
+        if(eligible.empty())return false;
+        auto selected=render_selected_interaction_row.value_or(eligible.front());
+        auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
+        if(selected_at==eligible.end())selected_at=eligible.begin();
+        const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
+        const auto max_rows=std::min<std::size_t>(8,render_camera.height>16?(render_camera.height-16)/22:0);
+        const auto width=std::min<std::uint32_t>(304,render_camera.width>16?render_camera.width-16:0);
+        if(max_rows==0||width<80||x<8||static_cast<std::uint32_t>(x)>=8+width||y<8)return false;
+        const auto first=selected_position>=max_rows?selected_position-max_rows+1:0;
+        const auto visible=std::min(eligible.size()-first,max_rows);
+        const auto menu_height=static_cast<std::int32_t>(visible*22);
+        if(y>=8+menu_height)return false;
+        const auto offset=y-8;
+        const auto local_row=static_cast<std::size_t>(offset/22);
+        if(offset%22<21&&local_row<visible){
+            render_selected_interaction_row=eligible[first+local_row];
+            render_interaction_requested=true;
+            request_selected_interaction();
+        }
+        return true;
+    };
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
     std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
     std::optional<std::uint16_t> presented_runtime_entity_id;
@@ -4448,9 +4476,9 @@ struct PlacementCandidateProbe {
         const auto x=static_cast<std::int32_t>(index%render_lot_evidence->pick_width);
         const auto y=static_cast<std::int32_t>(index/render_lot_evidence->pick_width);
         odh_host::WindowInput click;click.action=true;click.primary_click=std::array<std::int32_t,2>{x,y};
-        odh_host::WindowInput action;action.action=true;
+        odh_host::WindowInput menu_click;menu_click.primary_click=std::array<std::int32_t,2>{10,18};
         headless_window_inputs.push_back(click);
-        headless_window_inputs.push_back(action);
+        headless_window_inputs.push_back(menu_click);
     };
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
@@ -4687,7 +4715,9 @@ struct PlacementCandidateProbe {
                     if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
                 }
             }
-            if(input.primary_click&&render_lot&&render_lot_evidence){
+            const bool interaction_menu_click_consumed=input.primary_click&&
+                handle_interaction_menu_click((*input.primary_click)[0],(*input.primary_click)[1]);
+            if(input.primary_click&&!interaction_menu_click_consumed&&render_lot&&render_lot_evidence){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
                 std::optional<std::int16_t> picked_resident;
                 const auto& avatar_picks=render_lot_evidence->avatar_pick_ids;
