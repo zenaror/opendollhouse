@@ -3648,12 +3648,19 @@ struct PlacementCandidateProbe {
         const auto* actor=world.find(action.actor);
         const odh::RoutePoint goal{static_cast<std::int32_t>(action.x*16+8),
             static_cast<std::int32_t>(action.y*16+8)};
+        const odh::EntityPosition goal_position{goal.x,goal.y,action.level,
+            actor&&actor->position?actor->position->direction:std::uint8_t{0}};
+        const auto actor_room=actor&&actor->position&&render_lot?
+            render_lot->runtime_room_at(*actor->position):std::nullopt;
+        const auto goal_room=render_lot?render_lot->runtime_room_at(goal_position):std::nullopt;
         if(!actor||!actor->position||!(*resident)->route_grid||!(*resident)->route_grid->grid||
            !(*resident)->routing||!(*resident)->go_here||
            actor->position->level!=action.level||
            static_cast<unsigned>((*resident)->route_grid->level)+1U!=action.level||
-           !(*resident)->route_grid->grid->contains(goal)||!(*resident)->route_grid->grid->walkable(goal))
-            throw odh::FormatError("resident Go Here target is outside that resident's prepared room grid "
+           !actor_room||!goal_room||*actor_room!=(*resident)->route_grid->room_id||
+           (*actor_room==*goal_room&&(!(*resident)->route_grid->grid->contains(goal)||
+               !(*resident)->route_grid->grid->walkable(goal))))
+            throw odh::FormatError("resident Go Here target is outside the known route context "
                 "(route_reason="+(*resident)->route_reason+", room="+
                 ((*resident)->route_grid?std::to_string((*resident)->route_grid->room_id):"unavailable")+
                 ", floor="+((*resident)->route_grid?std::to_string((*resident)->route_grid->level):"unavailable")+
@@ -4757,11 +4764,16 @@ struct PlacementCandidateProbe {
             const odh::EntityPosition destination{static_cast<std::int32_t>(scheduled.x*16+8),
                 static_cast<std::int32_t>(scheduled.y*16+8),scheduled.level,0};
             const odh::RoutePoint goal{destination.x,destination.y};
+            const auto actor_room=actor&&actor->position&&render_lot?
+                render_lot->runtime_room_at(*actor->position):std::nullopt;
+            const auto destination_room=render_lot?render_lot->runtime_room_at(destination):std::nullopt;
             const auto* candidate=definition_index?definition_index->unique(0x7c4):nullptr;
             if(!actor||!actor->position||actor->position->level!=scheduled.level||
                !(*resident)->route_grid||!(*resident)->route_grid->grid||
-               !(*resident)->route_grid->grid->contains(goal)||!(*resident)->route_grid->grid->walkable(goal))
-                reject("resident Go Here destination no longer matches its actor and room grid");
+               !actor_room||!destination_room||*actor_room!=(*resident)->route_grid->room_id||
+               (*actor_room==*destination_room&&(!(*resident)->route_grid->grid->contains(goal)||
+                   !(*resident)->route_grid->grid->walkable(goal))))
+                reject("resident Go Here destination no longer matches its known route context");
             else if(!candidate)reject("saved Destination definition is missing or ambiguous");
             else if(saved_owner_ids_exhausted)reject("saved object code-owner identity space exhausted");
             else try{

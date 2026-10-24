@@ -23,6 +23,8 @@ def main():
         metavar=('X', 'Y'))
     parser.add_argument('--tick', type=int, default=1)
     parser.add_argument('--ticks', type=int, default=512)
+    parser.add_argument('--require-portal', action='store_true',
+        help='require this request to complete at least one saved room portal transition')
     args = parser.parse_args()
     if not 1 <= args.tick <= args.ticks <= 4096:
         parser.error('require 1 <= --tick <= --ticks <= 4096')
@@ -46,19 +48,24 @@ def main():
     session = member.get('go_here') if member else None
     route = member.get('routing') if member else None
     target = [args.destination_tile[0] * 16 + 8, args.destination_tile[1] * 16 + 8, 1]
+    crossed_portal = bool(route and route.get('portal_planned_calls', 0) > 0 and
+        route.get('portal_returns', 0) > 0 and route.get('portal_room_transitions', 0) > 0)
     if (result.returncode != 0 or report.get('host_failed') or not session or
         session.get('status') != 'returned_true' or session.get('result') is not True or
         session.get('marker_alive') is not False or session.get('code_owner') is None or
         session.get('marker_id') is None or session.get('target_position', [])[:3] != target or
         session.get('start_position', [])[:3] == target or member.get('position', [])[:3] != target or
-        not route or route.get('movement_callbacks', 0) <= 0):
+        not route or route.get('movement_callbacks', 0) <= 0 or
+        (args.require_portal and not crossed_portal)):
         raise AssertionError(json.dumps({'returncode': result.returncode,
             'host_failed': report.get('host_failed'), 'resident': member,
             'diagnostic': report.get('host_diagnostic')}, indent=2))
     print(json.dumps({'evidence': 'ODH_House07_resident_Go_Here_host_CLI',
         'primary_neighbor_id': primary_neighbor_id, 'resident_id': resident_id, 'request': session,
         'resident_position': member['position'], 'routing': route, 'ticks': report.get('ticks'),
-        'claim': 'Headless host request reached its target for this supplied House07 install; no GUI or original-game equivalence claim'}, indent=2))
+        'claim': 'Headless host request reached its target for this supplied House07 install' +
+            (' after saved room-portal transition' if args.require_portal else '') +
+            '; no GUI or original-game equivalence claim'}, indent=2))
 
 
 if __name__ == '__main__':

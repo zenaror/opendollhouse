@@ -458,8 +458,37 @@ from [392,440] to [408,440] in 16 movement callbacks. Both runs used 512 host
 ticks and independent temporary XDG directories. A queued resident request is
 now finalized as host-failed, tick-limited, window-closed, or interrupted and
 has its marker removed before the final report is emitted.
-Cross-room portals, stairs and floor Snap remain outside this resident-routing
-addition.
+At that checkpoint, cross-room portals, stairs and floor Snap remained outside
+this resident-routing addition.
+
+### Go Here entre cômodos para moradores adicionais — 2026-10-24
+
+O comando headless do morador adicional agora aceita um destino em outro cômodo
+quando o lote consegue identificar os dois cômodos. A validação da grade local
+continua obrigatória para destinos no mesmo cômodo; para atravessar um cômodo,
+o runtime usa o planejador Portal15 já ligado à VM daquele morador.
+`tests/house07_resident_go_here.py --require-portal` exige chamada, retorno e
+mudança de cômodo pelo portal, além de conferir o destino final e a remoção do
+marcador temporário.
+
+Na instalação comercial House07, os moradores 137 (vizinho principal 48) e 105
+(vizinho principal 47) partiram de suas posições salvas e chegaram ao tile
+(28,24), no cômodo 2, após 512 ticks do host. Cada execução contou uma chamada
+Portal15, um retorno, uma transição de cômodo e cinco atualizações da grade;
+ambas terminaram com Go Here retornando true e o marcador removido. O morador
+137 fez 48 passos de movimento reportados; o morador 105, 80. Os hashes de
+`House07.iff`, `Neighborhood.iff` e `LotZoning.iff` permaneceram iguais antes e
+depois das duas execuções. Isso valida o percurso entre dois cômodos no host
+ODH usando esse save. Não valida escadas, mudança de andar, GUI ou equivalência
+com o executável original; rotas com mais de uma passagem ainda precisam de
+testes próprios.
+
+```sh
+python3 tests/house07_resident_go_here.py \
+  --binary /path/to/odh-person \
+  --game-root '../referencias/The Sims' --resident-id 137 \
+  --destination-tile 28 24 --require-portal
+```
 
 ### Preparação da chamada EntryPoint26 para um assento — 2026-10-23
 
