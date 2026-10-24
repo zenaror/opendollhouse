@@ -1,5 +1,16 @@
 # Continuidade atual
 
+## Atualização: estrutura de dados do menu de ações (2026-10-24)
+
+Criei `make_pie_menu_model` para transformar rótulos de ações elegíveis em uma
+árvore de opções e submenus, usando `/` como separador, como faz o Simitone.
+Cada opção conserva a linha TTAB original; itens repetidos mantêm sua ordem, e
+rótulos ausentes ou vazios aparecem como `???`. `pie_menu_data_model` passou.
+
+Esta etapa não desenha o menu nem mudou o clique da janela: a lista atual ainda
+é ferramenta de diagnóstico. Próximo: ligar a árvore ao desenho e à seleção,
+começando por uma cadeira e pela geladeira da House07.
+
 ## Atualização: Have A Snack conclui em House07 sem janela (2026-10-24)
 
 `PushInteraction` agora carrega a ação exata do TTAB da Food no `CodeOwner`
