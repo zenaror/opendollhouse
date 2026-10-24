@@ -88,6 +88,13 @@ public:
     // allocation exceptions propagate. Both leave World unchanged.
     // Restores entity state, policy and counters; not a full simulation save.
     bool restore_snapshot(const WorldSnapshot&);
+    // Atomically publishes a validated snapshot into this stable World object.
+    // Existing Entity pointers are invalidated; VM memory callbacks bound to
+    // this World remain valid and observe the published state. Invalid values
+    // or regressing generation/spatial history return false; existing entity
+    // identities must be preserved and new IDs must use fresh generations.
+    // Allocation exceptions propagate without changing World.
+    bool publish_snapshot(const WorldSnapshot&);
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
     // Import a new typed entity atomically. All banks are copied after validation;
     // motives retain their signed values without the runtime setter's clamp.

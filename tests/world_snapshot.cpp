@@ -82,6 +82,65 @@ int main() {
         snapshot=source.snapshot();
         const auto before=restored.snapshot();
         require(!restored.restore_snapshot(snapshot) && same(before,restored.snapshot()),"nonempty destination unchanged");
+        odh::World published;
+        require(published.restore_snapshot(source.snapshot()),"publish fixture baseline");
+        auto bound_memory=published.vm_memory();
+        auto candidate_snapshot=snapshot;
+        const auto published_address=&published;
+        require(published.publish_snapshot(candidate_snapshot) && &published==published_address &&
+                same(candidate_snapshot,published.snapshot()),"candidate snapshot publishes without replacing World identity");
+        require(bound_memory.read(frame,0,0)==1,
+                "VM read callback bound before publication observes candidate state");
+        require(bound_memory.write(frame,0,2,222) && published.find(1)->attributes[2]==222,
+                "VM write callback bound before publication updates candidate state");
+        const auto published_before_reject=published.snapshot();
+        auto invalid_candidate=candidate_snapshot;
+        ++invalid_candidate.word_count;
+        require(!published.publish_snapshot(invalid_candidate) &&
+                same(published_before_reject,published.snapshot()),
+                "invalid candidate publication leaves populated World unchanged");
+        auto stale_candidate=odh::WorldSnapshot{};
+        stale_candidate.generation_sequence=published_before_reject.generation_sequence-1;
+        stale_candidate.spatial_revision=published_before_reject.spatial_revision;
+        require(!published.publish_snapshot(stale_candidate) &&
+                same(published_before_reject,published.snapshot()),
+                "older candidate generation history leaves populated World unchanged");
+        stale_candidate.generation_sequence=published_before_reject.generation_sequence;
+        stale_candidate.spatial_revision=published_before_reject.spatial_revision-1;
+        require(!published.publish_snapshot(stale_candidate) &&
+                same(published_before_reject,published.snapshot()),
+                "older candidate position history leaves populated World unchanged");
+        auto changed_identity=candidate_snapshot;
+        changed_identity.generation_sequence=published_before_reject.generation_sequence+1;
+        changed_identity.entities[0].generation=changed_identity.generation_sequence;
+        require(!published.publish_snapshot(changed_identity) &&
+                same(published_before_reject,published.snapshot()),
+                "existing entity cannot change identity during publication");
+        auto recycled_identity=candidate_snapshot;
+        recycled_identity.entities.push_back(odh::Entity{});
+        recycled_identity.entities.back().id=9;
+        recycled_identity.entities.back().kind=odh::EntityKind::object;
+        recycled_identity.entities.back().generation=1;
+        recycled_identity.spatial_revision++;
+        require(!published.publish_snapshot(recycled_identity) &&
+                same(published_before_reject,published.snapshot()),
+                "removed historical identity cannot return as a new entity");
+        odh::World publish_failures;
+        require(publish_failures.restore_snapshot(source.snapshot()),"publication allocation baseline");
+        const auto publication_baseline=publish_failures.snapshot();
+        bool publication_completed=false;
+        for(int allocation=0;allocation<200;++allocation) {
+            allocation_countdown=allocation;
+            bool threw=false;
+            try { publication_completed=publish_failures.publish_snapshot(candidate_snapshot); }
+            catch(const std::bad_alloc&) { threw=true; }
+            allocation_countdown=-1;
+            if(publication_completed) break;
+            require(threw && same(publication_baseline,publish_failures.snapshot()),
+                    "allocation failure leaves published World unchanged");
+        }
+        require(publication_completed && same(candidate_snapshot,publish_failures.snapshot()),
+                "all candidate publication allocations eventually succeed");
         odh::World reused_empty;
         require(reused_empty.create(10,odh::EntityKind::object) && reused_empty.remove(10),
                 "reused empty destination has prior identities");

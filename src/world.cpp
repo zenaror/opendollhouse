@@ -48,8 +48,14 @@ WorldSnapshot World::snapshot() const {
     return result;
 }
 bool World::restore_snapshot(const WorldSnapshot& snapshot) {
-    if(!entities_.empty() || words_!=0 || generation_sequence_!=0 || spatial_revision_!=0 ||
-       snapshot.entities.size()>limits_.entities ||
+    if(!entities_.empty() || words_!=0 || generation_sequence_!=0 || spatial_revision_!=0)
+        return false;
+    return publish_snapshot(snapshot);
+}
+bool World::publish_snapshot(const WorldSnapshot& snapshot) {
+    if(snapshot.generation_sequence<generation_sequence_ ||
+       snapshot.spatial_revision<spatial_revision_) return false;
+    if(snapshot.entities.size()>limits_.entities ||
        (snapshot.attribute_policy!=AttributePolicy::fixed &&
         snapshot.attribute_policy!=AttributePolicy::ts1_bounded)) return false;
     auto available=limits_.words;
@@ -73,6 +79,9 @@ bool World::restore_snapshot(const WorldSnapshot& snapshot) {
            (entity.saved_object_banks &&
             (limits_.bank_words<68 || entity.saved_object_banks->object_data[1]<0 ||
              entity.saved_object_banks->object_data[1]>7))) return false;
+        const auto current=entities_.find(entity.id);
+        if((current!=entities_.end() && current->second.generation!=entity.generation) ||
+           (current==entities_.end() && entity.generation<=generation_sequence_)) return false;
         for(const auto& [index,value]:entity.object_words)
             if(index<0 || index>=79 || derived(index)) return false;
         for(const auto& [index,value]:entity.definition_words)

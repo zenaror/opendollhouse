@@ -7,6 +7,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- `World::publish_snapshot` publica o estado validado de um lote candidato sem
+  substituir o objeto `World` observado pelas leituras da VM. Rejeição e falta
+  de memória preservam o estado anterior; isso não restaura VMs/controladores,
+  valida chegada ou liga a criação de moradores ausentes ao fluxo do jogo.
+
 - A entrada Linux lê as tabelas de menu necessárias de `UIText.iff` em uma
   única passagem e reutiliza os textos durante a escolha da vizinhança. Isso
   reduz trabalho repetido enquanto a tela de carregamento fica visível, sem
