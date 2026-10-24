@@ -79,11 +79,14 @@ cmake --build build -j 2
 ctest --test-dir build --output-on-failure
 ```
 
-`-DODH_X11=OFF` compila sem janela e não exige Pango. Com X11 ligado,
-`-DODH_LINUX_TEXT_RENDERER=OFF` permite uma janela sem menus e rótulos apenas
-para depuração; essa opção não valida uma build jogável. Nenhum conjunto de
-fontes comerciais ou de terceiros é copiado ao projeto. Comandos de janela e
-seus limites estão em
+`-DODH_X11=OFF` compila sem janela e não exige Pango. Com X11 ligado, PangoCairo
+é usado quando disponível; sem ele, a janela mantém rótulos com uma fonte
+bitmap incorporada. Essa alternativa translitera acentos latinos comuns e
+mostra `?` para caracteres de outros alfabetos, então não substitui o suporte
+multilíngue completo do PangoCairo. `-DODH_LINUX_TEXT_RENDERER=OFF` seleciona
+essa alternativa sem tentar localizar PangoCairo. Nenhum conjunto de fontes
+comerciais ou de terceiros é copiado ao projeto. Comandos de janela e seus
+limites estão em
 [live-view-validation.md](docs/live-view-validation.md).
 
 Os testes geram fixtures sintéticas na memória; não dependem dos dados comerciais.

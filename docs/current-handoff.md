@@ -1644,3 +1644,20 @@ não inventa interseções e recusa a auditoria de posicionamento; a grade de
 movimento também permanece `unsupported`. Isso prova o bloqueio seguro para
 esse caso sintético, não o comportamento do executável original. O CTest focal
 `avatar_candidate_cli` passou.
+
+## Texto de interface sem PangoCairo — 2026-10-23
+
+A configuração local `ODH_LINUX_TEXT_RENDERER=OFF` compilava os painéis sem
+qualquer desenho de texto; por isso seletores podiam mostrar só fundos e faixas.
+O CMake agora usa uma fonte bitmap incorporada quando PangoCairo está desligado
+ou ausente. A fonte cobre ASCII e translitera acentos latinos comuns; outros
+alfabetos aparecem como `?`, portanto Pango continua necessário para a interface
+multilíngue completa. Os nomes no seletor ficam transliterados nesse modo.
+
+A build Debug completa com fallback passou; 219 testes headless passaram. Os
+três testes que criam janelas X11 foram deixados de fora para não interagir com
+o desktop. O teste isolado valida pixels de texto, clipping, UTF-8 malformado e
+caracteres sem suporte. Uma prévia sintética foi inspecionada e as letras ficaram
+legíveis. Isso explica e corrige os rótulos ausentes nos painéis, mas ainda não
+confirma a imagem real da vizinhança ou a janela do jogo; validação visual em
+X11 permanece pendente.
