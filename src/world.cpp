@@ -506,6 +506,9 @@ std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope
     if (index == 67) return static_cast<std::int16_t>(entity->slots.size());
     if (index == 2) return entity->attachment ? entity->attachment->container : static_cast<std::int16_t>(0);
     if (index == 3) return entity->attachment ? static_cast<std::int16_t>(entity->attachment->slot) : entity->unattached_slot;
+    // Simitone's VMEntity.GetValue(Room) reports OUT_OF_WORLD (-5) until the
+    // entity has a position, regardless of the stored ObjectData[29] word.
+    if (index == 29 && !entity->position) return std::int16_t{-5};
     const auto field = entity->object_words.find(index);
     return field == entity->object_words.end() ? std::nullopt : std::optional<std::int16_t>(field->second);
 }

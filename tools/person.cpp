@@ -1210,7 +1210,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 // The private startup VM has only candidate World memory. Calls
                 // and expressions work; external primitives/globals/tuning/RNG
                 // are unavailable and fail closed instead of escaping rollback.
-                odh::Vm startup(shared.routines,candidate.vm_memory(),{}, {},{{static_cast<odh::CodeOwner>(id),data.routines}});
+                auto startup_memory=candidate.vm_memory();
+                const auto read_startup_word=startup_memory.read;
+                const auto write_startup_word=startup_memory.write;
+                startup_memory.write=[read_startup_word,write_startup_word](const odh::VmFrame& frame,
+                    std::uint8_t scope,std::int16_t index,std::int16_t value) {
+                    // Simitone SetValue(Flags) changes footprint registration,
+                    // avatar collision behavior, or thread state. This private
+                    // startup VM cannot reproduce those side effects safely.
+                    if((scope==3||scope==4)&&index==8) {
+                        const auto old=read_startup_word(frame,scope,index);
+                        if(!old||*old!=value)return false;
+                    }
+                    return write_startup_word(frame,scope,index,value);
+                };
+                odh::Vm startup(shared.routines,std::move(startup_memory),{}, {},{{static_cast<odh::CodeOwner>(id),data.routines}});
                 const auto started=odh::run_avatar_startup(startup,id,data.entry_points->entries[0].action,
                     data.entry_points->entries[8].action,10000);
                 if(!started.completed)throw odh::FormatError("missing household resident startup unsupported: "+startup.diagnostic());

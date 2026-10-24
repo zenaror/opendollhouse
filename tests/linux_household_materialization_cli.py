@@ -77,6 +77,9 @@ def make_missing(root, failure=None, clock=CLOCK):
     if failure in effects:
         init[1] = expression(42, 2, scope=3, yes=2)
         init.append(expression(*effects[failure], scope=3))
+    if failure == 'flags':
+        init[1] = expression(42, 2, scope=3, yes=2)
+        init.append(expression(8, -32512, scope=3))  # 0x8100: dynamic footprint + burning
     if failure == 'global_write': init = [expression(9, 123, scope=6)]
     if failure == 'primitive': init = [(0, 254, 255, bytes(8))]
     ep8 = [(2, 254, 255, struct.pack('<hhBBBB', 0, 2, 0, 3, 0, 7))]
@@ -136,7 +139,7 @@ def main():
         run(fresh + ['--headless-ticks', '1'], alternate_clock)
         failures = [('ep9', 'absent placement EP9'), ('ep5_actor', 'arrival semantics are unsupported'),
                     ('ep5_blocker', 'arrival semantics are unsupported'), ('global_write', 'startup unsupported'),
-                    ('primitive', 'startup unsupported'), ('child', 'supports adults only'),
+                    ('primitive', 'startup unsupported'), ('flags', 'startup unsupported'), ('child', 'supports adults only'),
                     ('mailbox', 'one positioned singleton mailbox'), ('ghost', 'household member activation failed'),
                     ('roomimpact', 'arrival semantics are unsupported'), ('lighting', 'arrival semantics are unsupported'),
                     ('window', 'arrival semantics are unsupported'), ('portal', 'arrival semantics are unsupported'),

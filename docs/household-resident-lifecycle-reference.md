@@ -48,26 +48,37 @@ a tentativa de chegada são etapas separadas. Salvar um FSOV do Simitone tampouc
 prova que ele atualize os formatos OBJM/OBJT do jogo original.
 
 No ODH, `stage_household_members` preserva um World candidato sem posição nem
-herança. `verify_household_members` acrescenta uma orquestração com callbacks:
-prepara, herda NBRS/FAMI, tenta as posições na ordem e chama a ativação mesmo se
-ninguém couber e o morador continuar fora do lote. Agora processa um morador por
-vez, de modo que a preparação do próximo veja o primeiro já ativado. Os testes
-sintéticos cobrem sucesso após tentativa rejeitada, busca inteira sem sucesso,
-ausência de caixa postal e a ordem de dois moradores. Os callbacks ainda são
-representações fornecidas pelo host: isso não executa os BHAVs ou recursos reais,
-nem reproduz SetPosition/EP9, permissões, reagendamento ou persistência. A API
-também não está ligada ao fluxo normal de `tools/person.cpp`; o runtime segue
-recusando moradores ausentes e não salva esses candidatos. A ordem entre
-moradores é a do vetor de entrada (o HashSet do Simitone não garante ordem
-estável); a posição da caixa é capturada antes das tentativas e deve permanecer
-parada enquanto os callbacks são executados.
+herança. `verify_household_members` processa um morador por vez: prepara, herda
+NBRS/FAMI, tenta as posições na ordem e ativa o Main empilhado mesmo se ninguém
+couber e o morador continuar fora do lote. A integração Linux em
+`tools/person.cpp` agora usa esse fluxo para membros adultos adicionais cujo
+recurso exato foi resolvido. Init e entrada 8 executam num World privado; Main é
+empilhado, mas não roda antes da chegada. O baseline da sessão é reconstruído a
+partir do World publicado antes de salvar e retomar a partida.
+
+O perfil falha fechado para crianças, membro principal ausente, recurso ou relógio
+indisponível, EP9 de colocação, colisão/flags não modelados e chamadas que escapem
+da memória privada. `World::read(Room)` devolve -5 para entidades sem posição,
+como no Simitone. Escritas que mudariam ObjectData[8] durante Init/entrada 8 são
+recusadas porque o Simitone também atualiza colisão, footprint ou estado do Sim
+nessa escrita. A chegada ainda não é equivalente ao carregamento completo do
+Simitone: ele executa EP2 em todos os objetos antes de `VerifyFamily`, enquanto
+esse caminho ODH não reproduz essa etapa. O perfil aceito precisa ser ampliado
+somente quando esses efeitos estiverem modelados.
+
+Os testes sintéticos cobrem o fluxo de sucesso e as recusas conhecidas. Uma
+auditoria somente leitura das casas selecionáveis House05 e House07 na instalação
+local confirmou que todos os GUIDs FAMI já têm uma entidade salva; portanto não
+há, nessas casas, um caso comercial real de morador ausente para exercitar. Essa
+auditoria não valida a criação contra recursos comerciais.
 
 O teste `household_startup` também prepara dois moradores ausentes no mesmo
 World candidato e executa Init e entrada 8 sintéticos com RNG próprio para cada
 um. Ele confirma que Main não é iniciado, que herança NBRS/FAMI continua sendo
 uma etapa separada e que a falha do segundo preparador rejeita o candidato
-inteiro. Isso valida a base isolada de startup, ainda sem ligá-la ao runtime
-normal nem aos recursos comerciais.
+inteiro. É uma prova isolada do helper; `linux_household_materialization_cli`
+também verifica a integração com recursos e fixtures sintéticos, sem usar dados
+comerciais.
 
 ## Busca da caixa postal e risco das tentativas
 
@@ -95,7 +106,7 @@ de RoomInfo e a auditoria de sobreposição disponíveis ainda deixam casos
 deve continuar bloqueada quando qualquer regra necessária for desconhecida; a
 lista geométrica não deve ser tratada como um resolvedor de chegada.
 
-## ODH: planejamento tipado de chegada, sem entrada de gameplay
+## ODH: planejamento tipado de chegada
 
 `preflight_staged_household_arrival` (`household_arrival.hpp/.cpp`) consulta um
 World candidato com avatar ainda sem posição. A consulta procura exatamente uma
@@ -112,21 +123,18 @@ API não recebe quantos andares existem: o gate de piso do avaliador deve rejeit
 um nível acima da casa. O avaliador fornecido pelo host deve ser somente leitura,
 inclusive para RNG e controllers.
 
-Essa infraestrutura não fornece um avaliador comercial, não executa EP9, não
-aplica posição, não agenda Main e não publica o candidato. `clear` registra
-apenas as evidências fornecidas pelo avaliador. O runtime normal continua
-recusando moradores ausentes; save/resume não foi habilitado. Integrar com
-segurança ainda exige antecipar a preparação de arquitetura hoje construída
-após os controllers, ligar o startup ao World privado e demonstrar os efeitos
-de chegada/EP9 no perfil aceito. O baseline de sessão também precisa ser
-reconstruído deterministicamente antes de salvar moradores novos.
+O helper de preflight isolado continua sem avaliador comercial e `clear` registra
+somente as evidências fornecidas pelo avaliador. A integração Linux usa um
+avaliador tipado com arquitetura preparada, piso, sala, footprint e bloqueios;
+EP9 de colocação é exigido ausente e as regras de colisão desconhecidas continuam
+recusadas. Isso não prova equivalência da chegada ao Simitone ou ao jogo original.
 
 `household_arrival_preflight` cobre 243 combinações sintéticas dos cinco gates,
 ordem de tentativas, caixas postais ausentes/ambíguas e os dois GUIDs, rejeição
 de alvo já posicionado, propagação de erro e preservação do World original com
 um morador primário salvo e um adicional staged. Isso complementa
-`household_startup`; não executa os BHAVs ou recursos comerciais e não prova
-chegada, permissões, persistência ou partida jogável.
+`household_startup`; não executa BHAVs ou recursos comerciais e não prova
+equivalência de chegada, permissões ou partida jogável.
 
 ## ODH: runtime de casa com moradores já salvos
 
@@ -139,7 +147,5 @@ de `[440,360,1,0]` para `[449,387,1,2]` em 31 callbacks de movimento; o morador
 antes e depois.
 
 Isso valida o runtime de House05 com seus três moradores já representados no
-World salvo. Não exercita criação de um membro FAMI ausente, chegada pela caixa
-postal, entrada EP9 ou gravação de uma nova família. O teste continua uma prova
-de runtime Linux com dados comerciais locais, não equivalência ao Simitone ou
-ao executável original.
+World salvo. Não exercita criação de um membro FAMI ausente nem equivale ao
+Simitone ou ao executável original.

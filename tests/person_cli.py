@@ -275,7 +275,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert not d['diagnostics_truncated'] and all(value==0 for value in d['diagnostics_dropped'].values())
  for index in [1,25,26,29,41,62]:
   setup(main=[(2,254,255,[index,0,0,0,0,2,3,7])]);r=run();d=json.loads(r.stdout)
-  assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
+  if index==29:
+   assert r.returncode==0 and d['status'] in ('returned_true','returned_false') and d['steps']==1
+  else:
+   assert r.returncode==3 and d['status']=='fault' and d['diagnostic']==f'unsupported read scope 3 index {index}'
  setup();r=run(['--flags','65535','--age','27']+action_args);d=json.loads(r.stdout)
  assert r.returncode==0 and d['flags_initial']==65535 and d['actor_state']['flags']==-1 and d['actor_state']['age']==27
  setup(main=[expr(0,1,0)]);r=run(['--ticks','1','--instruction-budget','12000']);d=json.loads(r.stdout)

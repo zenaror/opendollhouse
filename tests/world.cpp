@@ -240,6 +240,13 @@ int main() {
         require(vm.run(1)==odh::VmStatus::returned_true,"bound world reads live occupation");
         w.remove(2); vm.start(odh::routine_key(4096),f.context);
         require(vm.run(1)==odh::VmStatus::fault,"deleted entity never becomes implicit zero");
+        odh::World out_of_world_room;
+        require(out_of_world_room.create(7,odh::EntityKind::avatar) &&
+                    out_of_world_room.declare_object_word(7,29,-1) &&
+                    out_of_world_room.read(frame(7,7),3,29)==std::optional<std::int16_t>{-5} &&
+                    out_of_world_room.set_position(7,{16,16,1,0}) &&
+                    out_of_world_room.read(frame(7,7),3,29)==std::optional<std::int16_t>{-1},
+                "Room reads out-of-world sentinel before placement and stored room after placement");
         // Synthetic copy of the observed Doors.iff 4113 -> 4115 Route45 decision.
         odh::World door_world;
         require(door_world.create(40,odh::EntityKind::object,{2,0,0,0}),
