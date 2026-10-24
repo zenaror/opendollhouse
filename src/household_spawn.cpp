@@ -266,12 +266,15 @@ HouseholdVerificationResult verify_household_members(
                 throw FormatError("mailbox arrival requires a stateful position-attempt callback");
             for (const auto& candidate : candidates) {
                 ++attempts;
-                positioned = attempt_position(*result.candidate,
-                                              created.runtime_id, candidate);
+                const auto attempt = attempt_position(*result.candidate,
+                                                      created.runtime_id, candidate);
                 const auto* avatar = result.candidate->find(created.runtime_id);
                 if (!avatar || avatar->kind != EntityKind::avatar ||
                     !avatar->definition || avatar->definition->guid != created.guid)
                     throw FormatError("position attempt changed the staged household identity");
+                if (attempt == HouseholdPositionAttemptStatus::unsupported)
+                    throw FormatError("household arrival semantics are unsupported by this host");
+                positioned = attempt == HouseholdPositionAttemptStatus::placed;
                 if (positioned) {
                     if (!avatar->position || !(*avatar->position == candidate))
                         throw FormatError("successful position attempt did not place the staged avatar");

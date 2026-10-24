@@ -143,8 +143,10 @@ int main() {
                 check(avatar && !avatar->position && avatar->person_data[61] == 123);
                 check(world.set_person_data(id, 70,
                     static_cast<std::int16_t>(verify_attempts.size())));
-                if (verify_attempts.size() == 1) return false;
-                return world.set_position(id, candidate);
+                if (verify_attempts.size() == 1)
+                    return odh::HouseholdPositionAttemptStatus::blocked;
+                check(world.set_position(id, candidate));
+                return odh::HouseholdPositionAttemptStatus::placed;
             },
             [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
                 const auto* avatar = world.find(id);
@@ -178,7 +180,9 @@ int main() {
                 return true;
             }, odh::EntityPosition{32, 48, 1, 0}, 48, 48,
             [](odh::World& world, std::int16_t id, const odh::EntityPosition& position) {
-                return world.set_position(id, position);
+                if (!world.set_position(id, position))
+                    return odh::HouseholdPositionAttemptStatus::blocked;
+                return odh::HouseholdPositionAttemptStatus::placed;
             },
             [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
                 verification_order.push_back(guid == absent_guid ? "activate-first" : "activate-second");
@@ -217,7 +221,7 @@ int main() {
             }, odh::EntityPosition{32, 48, 1, 0}, 48, 48,
             [&](odh::World&, std::int16_t, const odh::EntityPosition&) {
                 existing_member_callbacks_called = true;
-                return false;
+                return odh::HouseholdPositionAttemptStatus::unsupported;
             },
             [&](odh::World&, std::int16_t, std::uint32_t, bool) {
                 existing_member_callbacks_called = true;
@@ -246,7 +250,7 @@ int main() {
             [&](odh::World& world, std::int16_t id, const odh::EntityPosition&) {
                 ++rejected_attempts;
                 check(world.set_person_data(id, 70, static_cast<std::int16_t>(rejected_attempts)));
-                return false;
+                return odh::HouseholdPositionAttemptStatus::blocked;
             },
             [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
                 const auto* avatar = world.find(id);
@@ -258,6 +262,32 @@ int main() {
               failed_search.new_members.size() == 1 &&
               !failed_search.new_members[0].positioned &&
               failed_search.new_members[0].position_attempts == 1444);
+
+        for (const std::size_t unsupported_at : {std::size_t{1}, std::size_t{2}}) {
+            std::size_t attempts = 0;
+            bool unsupported_activated = false;
+            const auto before_unsupported = source;
+            rejects([&] { odh::verify_household_members(source,
+                {{absent_guid, &nb}}, 123,
+                [](odh::World&, std::int16_t, std::uint32_t) { return true; },
+                odh::EntityPosition{32, 48, 1, 0}, 48, 48,
+                [&](odh::World& world, std::int16_t id, const odh::EntityPosition&) {
+                    ++attempts;
+                    check(world.set_person_data(id, 70, static_cast<std::int16_t>(attempts)));
+                    return attempts == unsupported_at
+                        ? odh::HouseholdPositionAttemptStatus::unsupported
+                        : odh::HouseholdPositionAttemptStatus::blocked;
+                },
+                [&](odh::World&, std::int16_t, std::uint32_t, bool) {
+                    unsupported_activated = true;
+                    return true;
+                }); });
+            check(attempts == unsupported_at && !unsupported_activated);
+            check(source.entities.size() == before_unsupported.entities.size() &&
+                  source.entities[1].person_data == before_unsupported.entities[1].person_data &&
+                  source.entities[1].position == before_unsupported.entities[1].position &&
+                  source.word_count == before_unsupported.word_count);
+        }
 
         rejects([&] { odh::materialize_household_members(source,
             {{absent_guid, &nb}, {absent_guid, &nb}}, 123,

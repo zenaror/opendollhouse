@@ -59,13 +59,14 @@ using HouseholdArrivalResolver = std::function<std::optional<EntityPosition>(
     const World&, std::int16_t, std::uint32_t)>;
 
 // Mirrors the TS1 VerifyFamily lifecycle while keeping the candidate World
-// private until every requested resident is prepared and activated. The
+// private until every requested resident is prepared and activated. A
 // position callback must perform one stateful SetPosition attempt, including
-// its validation and entry-point side effects; returning true requires that
-// the candidate avatar now has exactly that position. Returning false must
-// leave the avatar out of world, though other placement side effects may
-// remain for the next attempt, as they do in Simitone.
-using HouseholdPositionAttempt = std::function<bool(
+// its validation and entry-point side effects. `blocked` continues searching
+// and must leave the avatar out of world; `placed` requires the avatar to have
+// exactly the requested position; `unsupported` aborts the whole candidate
+// because the host cannot reproduce the required placement semantics.
+enum class HouseholdPositionAttemptStatus { blocked, placed, unsupported };
+using HouseholdPositionAttempt = std::function<HouseholdPositionAttemptStatus(
     World&, std::int16_t, const EntityPosition&)>;
 // Called after startup, NBRS/FAMI inheritance and optional arrival search.
 // Hosts use this to apply owner permissions and register/reschedule the Sim.
