@@ -201,6 +201,205 @@ int main() {
         malformed = bytes; malformed[88] = 1;
         rejects([&] { (void)odh::decode_family_overlay(malformed); }, "nonzero reserved field rejects");
 
+        odh::Family created_family;
+        created_family.version = 9; created_family.unknown = 24;
+        created_family.family_number = 39; created_family.budget = 20000;
+        created_family.member_guids = {0x10000001U, 0x10000002U};
+        odh::NeighborRecord first{};
+        first.version = 10; first.unknown3 = 9; first.name = "iffname";
+        first.mystery_zero = 0; first.person_mode = 9;
+        first.person_data = std::vector<std::int16_t>(256, 0);
+        (*first.person_data)[2] = 500; (*first.person_data)[61] = 0;
+        first.neighbor_id = 100; first.guid = created_family.member_guids[0];
+        first.unknown_neg_one = -1;
+        auto second = first; second.neighbor_id = 101;
+        second.guid = created_family.member_guids[1];
+        odh::FamilyOverlayCreation creation{0, "New family",
+            odh::encode_simitone_create_family_fami(created_family), {first, second}};
+        auto original_neighbor = first; original_neighbor.neighbor_id = 1;
+        original_neighbor.guid = 0x12345678U;
+        original_neighbor.unknown3 = 17; original_neighbor.name = "Ada";
+        original_neighbor.mystery_zero = 23; original_neighbor.unknown_neg_one = -7;
+        original_neighbor.relationships = {{1, 19, {5, -1, 0x12345678}}};
+        odh::Nbrs neighbors{55, 63, {{0, std::nullopt}, {1, original_neighbor}}, 0};
+        const auto neighbor_bytes = odh::encode_nbrs(neighbors);
+        const auto created = odh::plan_family_creation_overlay(
+            {resident, cas}, neighbors, source_id, nullptr, creation);
+        const auto v3 = odh::encode_family_overlay(created);
+        require(v3[4] == 3 && v3[44] == 2 && le32(v3, 40) == 1,
+                "creation uses tagged length-prefixed v3 with one creation");
+        const auto created_decoded = odh::decode_family_overlay(v3);
+        require(odh::encode_family_overlay(created_decoded) == v3 &&
+                created_decoded.creations[0].family_name == "New family",
+                "v3 canonical roundtrip preserves name and exact payloads");
+        const auto created_effective = odh::apply_family_overlay({resident, cas}, source_id, created_decoded);
+        require(created_effective.size() == 3 && created_effective[2].chunk_id == 0 &&
+                created_effective[2].family.family_number == 39 &&
+                created_effective[2].family.member_guids == created_family.member_guids,
+                "free FAMI zero appends an owned household without changing original order");
+        const auto appended = odh::apply_neighbor_overlay(neighbors, source_id, created_decoded);
+        auto original_prefix = appended; original_prefix.entries.resize(neighbors.entries.size());
+        require(odh::encode_nbrs(original_prefix) == neighbor_bytes && appended.entries.size() == 4 &&
+                appended.entries[2].record->person_data == first.person_data &&
+                appended.entries[2].record->relationships.empty() &&
+                appended.entries[2].record->unknown3 == first.unknown3 &&
+                appended.entries[2].record->mystery_zero == 0 &&
+                appended.entries[2].record->unknown_neg_one == -1 && neighbors.entries.size() == 2,
+                "neighbor replay preserves original bytes, placeholders, fields and source ownership");
+        auto tailed = neighbors; tailed.remaining_bytes = 19;
+        require(odh::apply_neighbor_overlay(tailed, source_id, created).remaining_bytes == 19,
+                "neighbor replay preserves unknown source tail extent without claiming its bytes");
+        const auto created_move = odh::plan_family_move_in_overlay(
+            {resident, cas}, source_id, &created, 0, 7, 5000);
+        const auto created_moved = odh::apply_family_overlay({resident, cas}, source_id,
+            odh::decode_family_overlay(odh::encode_family_overlay(created_move)));
+        require(created_moved.back().family.house_number == 7 && created_moved.back().family.budget == 15000,
+                "v3 applies created household before subsequent move-in assignment");
+        rejects([&] { (void)odh::apply_neighbor_overlay(neighbors, stale_source, created); },
+                "neighbor replay checks exact neighborhood identity");
+        auto bad_creation = creation;
+        const auto reject_creation = [&](const odh::FamilyOverlayCreation& value) {
+            rejects([&] { (void)odh::plan_family_creation_overlay(
+                {resident, cas}, neighbors, source_id, nullptr, value); }, "invalid created metadata rejects");
+        };
+        bad_creation.family_chunk_id = resident.chunk_id; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].neighbor_id = 1; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].neighbor_id = 0; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].neighbor_id = -1; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[1].neighbor_id = first.neighbor_id; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[1].guid = first.guid; reject_creation(bad_creation);
+        bad_creation = creation; std::swap(bad_creation.members[0], bad_creation.members[1]); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members.pop_back(); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.fami_payload[4] = 8; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.fami_payload.back() = 1; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.fami_payload.pop_back(); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.family_name.clear(); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.family_name.assign(257, 'x'); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.family_name = std::string("a\0b", 3); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].name.assign(257, 'x'); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].person_data->push_back(0); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].relationships = {{1, 19, {5}}}; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].version = 11; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].unknown3.reset(); reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].name = "Even"; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].unknown3 = 17; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].mystery_zero = 1; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].unknown_neg_one = 0; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].person_mode = 1; reject_creation(bad_creation);
+        bad_creation = creation; (*bad_creation.members[0].person_data)[61] = 39; reject_creation(bad_creation);
+        bad_creation = creation; (*bad_creation.members[0].person_data)[88] = 1; reject_creation(bad_creation);
+        bad_creation = creation; (*bad_creation.members[0].person_data)[255] = 1; reject_creation(bad_creation);
+        bad_creation = creation; bad_creation.members[0].person_data.reset(); reject_creation(bad_creation);
+        auto wrong_number = created_family;
+        wrong_number.family_number = resident.family.family_number;
+        bad_creation = creation;
+        bad_creation.fami_payload = odh::encode_simitone_create_family_fami(wrong_number);
+        reject_creation(bad_creation);
+        wrong_number.family_number = 40;
+        bad_creation.fami_payload = odh::encode_simitone_create_family_fami(wrong_number);
+        reject_creation(bad_creation);
+        wrong_number.family_number = -1;
+        bad_creation.fami_payload = odh::encode_simitone_create_family_fami(wrong_number);
+        reject_creation(bad_creation);
+        auto maximum_number = resident; maximum_number.family.family_number = 2147483647;
+        rejects([&] { (void)odh::apply_family_overlay({maximum_number}, source_id, created); },
+                "FamilyNumber increment overflow fails closed");
+        rejects([&] { (void)odh::apply_family_overlay({}, source_id, created); },
+                "empty source cannot define reference families.Max");
+        auto townie = resident; townie.family.family_number = -1;
+        auto from_townie = creation; auto zero_number = created_family; zero_number.family_number = 0;
+        from_townie.fami_payload = odh::encode_simitone_create_family_fami(zero_number);
+        require(odh::plan_family_creation_overlay({townie}, neighbors, source_id, nullptr,
+                from_townie).creations.size() == 1, "townie sentinel -1 produces first FamilyNumber zero");
+        bad_creation = creation; bad_creation.family_chunk_id = 65535;
+        bad_creation.members[0].neighbor_id = 32767;
+        for (auto& member : bad_creation.members) (*member.person_data)[61] = -1;
+        require(odh::plan_family_creation_overlay({resident, cas}, neighbors, source_id, nullptr,
+            bad_creation).creations[0].family_chunk_id == 65535,
+            "maximum FAMI and positive signed neighbor IDs remain representable");
+        auto next_creation = bad_creation; auto next_family = created_family;
+        next_family.family_number = 40;
+        next_family.member_guids = {0x20000001U, 0x20000002U};
+        next_creation.fami_payload = odh::encode_simitone_create_family_fami(next_family);
+        for (std::size_t i = 0; i < next_creation.members.size(); ++i) {
+            next_creation.members[i].guid = next_family.member_guids[i];
+            next_creation.members[i].neighbor_id = static_cast<std::int16_t>(200 + i);
+        }
+        require(odh::plan_family_creation_overlay({resident, cas}, neighbors, source_id, &created,
+                next_creation).creations.size() == 2, "subsequent creation increments prior FamilyNumber");
+        next_family.family_number = 39;
+        next_creation.fami_payload = odh::encode_simitone_create_family_fami(next_family);
+        rejects([&] { (void)odh::plan_family_creation_overlay({resident, cas}, neighbors,
+                source_id, &created, next_creation); }, "duplicate created FamilyNumber rejects");
+        auto full_neighbors = neighbors; full_neighbors.entries.resize(4096, {0, std::nullopt});
+        rejects([&] { (void)odh::apply_neighbor_overlay(full_neighbors, source_id, created); },
+                "appended members cannot exceed cumulative NBRS entry limit");
+        std::vector<odh::FamilyEntry> full_families;
+        for (std::uint16_t i = 1; i <= 4096; ++i) full_families.push_back(family(i, 0, 0, {}));
+        rejects([&] { (void)odh::apply_family_overlay(full_families, source_id, created); },
+                "appended household cannot exceed cumulative family runtime limit");
+        rejects([&] { (void)odh::plan_family_creation_overlay(
+            {resident, cas}, neighbors, source_id, &created, creation); }, "duplicate creation rejects");
+        auto guid_collision = creation; auto collision_family = created_family;
+        collision_family.member_guids[0] = resident.family.member_guids[0];
+        guid_collision.members[0].guid = collision_family.member_guids[0];
+        guid_collision.fami_payload = odh::encode_simitone_create_family_fami(collision_family);
+        reject_creation(guid_collision);
+        collision_family.member_guids[0] = original_neighbor.guid;
+        guid_collision.members[0].guid = original_neighbor.guid;
+        guid_collision.fami_payload = odh::encode_simitone_create_family_fami(collision_family);
+        reject_creation(guid_collision);
+        auto eight = creation; auto eight_family = created_family;
+        eight.members.clear(); eight_family.member_guids.clear();
+        for (int i = 0; i < 8; ++i) {
+            auto member = first; member.guid = static_cast<std::uint32_t>(1000 + i);
+            member.neighbor_id = static_cast<std::int16_t>(200 + i);
+            eight.members.push_back(member); eight_family.member_guids.push_back(member.guid);
+        }
+        eight.fami_payload = odh::encode_simitone_create_family_fami(eight_family);
+        require(odh::plan_family_creation_overlay({resident, cas}, odh::Nbrs{0, 73, {}, 0}, source_id, nullptr,
+                eight).creations.size() == 1, "eight-member household is accepted");
+        eight.members.push_back(first); eight_family.member_guids.push_back(first.guid);
+        eight.fami_payload = odh::encode_simitone_create_family_fami(eight_family); reject_creation(eight);
+        bad_creation = creation; bad_creation.members.clear(); reject_creation(bad_creation);
+        for (std::size_t n = 0; n < v3.size(); ++n) {
+            auto truncated = v3; truncated.resize(n);
+            rejects([&] { (void)odh::decode_family_overlay(truncated); }, "every truncated v3 prefix rejects");
+        }
+        auto corrupt_v3 = v3; corrupt_v3[44] = 99;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v3); }, "unknown v3 tag rejects");
+        corrupt_v3 = v3; corrupt_v3[46] = 0xff; corrupt_v3[47] = 0xff;
+        corrupt_v3[48] = 0xff; corrupt_v3[49] = 0xff;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v3); }, "overflowing v3 record extent rejects");
+        corrupt_v3 = v3; corrupt_v3.push_back(0);
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v3); }, "trailing v3 data rejects");
+        corrupt_v3 = v3; corrupt_v3.resize(4 * 1024 * 1024 + 1);
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v3); }, "v3 cumulative file bound rejects");
+        auto large_creation = creation;
+        large_creation.members.clear(); auto large_family = created_family;
+        large_family.member_guids.clear();
+        for (int i = 0; i < 8; ++i) {
+            auto member = first; member.guid = static_cast<std::uint32_t>(1000 + i);
+            member.neighbor_id = static_cast<std::int16_t>(200 + i);
+            large_creation.members.push_back(member); large_family.member_guids.push_back(member.guid);
+        }
+        large_creation.fami_payload = odh::encode_simitone_create_family_fami(large_family);
+        const auto large_bytes = odh::encode_family_overlay(
+            odh::FamilyOverlay{source_id, {}, {large_creation}});
+        require(large_bytes.size() > 4 * 1024 && large_bytes.size() < 64 * 1024 &&
+                odh::encode_family_overlay(odh::decode_family_overlay(large_bytes)) == large_bytes,
+                "eight-member exact NBRS profile roundtrips below record byte cap");
+        large_creation.members[0].relationships.push_back({1, 1024, {}});
+        rejects([&] { (void)odh::encode_family_overlay(
+            odh::FamilyOverlay{source_id, {}, {large_creation}}); },
+                "newborn profile rejects relationships in encoder");
+        corrupt_v3 = v3; corrupt_v3.resize(50 + 65537, 0);
+        corrupt_v3[46] = 1; corrupt_v3[47] = 0; corrupt_v3[48] = 1; corrupt_v3[49] = 0;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v3); },
+                "complete creation record one byte beyond cap rejects before parsing");
+        auto too_many = created; too_many.creations.resize(4097, creation);
+        rejects([&] { (void)odh::encode_family_overlay(too_many); }, "operation budget rejects before copying payloads");
+
         std::cout << "family_overlay: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/family.hpp"
+#include "odh/neighborhood.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -18,9 +19,22 @@ struct FamilyOverlayAssignment {
     FamilyOverlayAction action = FamilyOverlayAction::move_in;
 };
 
+// Persisted headless metadata only: this does not produce a private avatar IFF
+// or an executable player. Raw names contain 1..256 bytes, households 1..8.
+struct FamilyOverlayCreation {
+    std::uint16_t family_chunk_id = 0; // Any free chunk ID, including zero.
+    std::string family_name;
+    std::vector<std::uint8_t> fami_payload; // Exact Simitone CreateFamily profile.
+    // Exact AddNeighbor profile: v10/Unknown3=9/PersonMode=9, iffname,
+    // MysteryZero=0/UnknownNegOne=-1, no relationships; 256 person words with
+    // family chunk ID as signed16 in word 61 and zeros in words 88..255.
+    std::vector<NeighborRecord> members; // Ordered exactly as the FAMI roster.
+};
+
 struct FamilyOverlay {
     std::array<std::uint8_t, 32> neighborhood_identity{};
     std::vector<FamilyOverlayAssignment> assignments;
+    std::vector<FamilyOverlayCreation> creations{}; // Replayed before assignments.
 };
 
 // Identity covers the FAMI chunk ID, family number, original house, ordered
@@ -52,7 +66,8 @@ FamilyOverlay plan_family_move_out_overlay(
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 
-// Bounded v2 operation-log codec; v1 purchase-only saves remain readable. The
+// Bounded v3 tagged/length-prefixed codec for created-family metadata.
+// Assignment-only overlays retain v2 encoding; v1 saves remain readable. The
 // caller supplies SHA-256 of the exact source Neighborhood.iff so stale player
 // data can fail closed.
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay&);
@@ -65,5 +80,21 @@ std::vector<FamilyEntry> apply_family_overlay(
     const std::vector<FamilyEntry>& source,
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay& overlay);
+
+// Validates both immutable snapshots before appending metadata. Caller supplies
+// a free uint16 FAMI ID and positive, free int16 neighbor IDs. No avatar resource
+// or live runtime/session integration is supplied by this API.
+// FamilyNumber must be Max(source and preceding creations)+1; empty source and
+// signed32 overflow fail closed. FamilyNumber -1 remains the townie sentinel.
+FamilyOverlay plan_family_creation_overlay(
+    const std::vector<FamilyEntry>&, const Nbrs&,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay, const FamilyOverlayCreation&);
+
+// Owned copy preserves the original header, serialized order, placeholders,
+// fields and unknown tail extent, then appends the created records. Unknown
+// source tail bytes remain unpreserved and consequently unencodable.
+Nbrs apply_neighbor_overlay(const Nbrs&,
+    const std::array<std::uint8_t, 32>& neighborhood_identity, const FamilyOverlay&);
 
 } // namespace odh
