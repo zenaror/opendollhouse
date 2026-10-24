@@ -48,6 +48,14 @@ def make_household(root, secondary_posture=0, empty_hand_slot=False):
     (user/'Characters/User00001.iff').write_bytes(second)
 
 
+def move_characters_to_private(root, data_home):
+    private = data_home/'opendollhouse'/'Characters'
+    private.mkdir(parents=True)
+    for name in ('User00000.iff', 'User00001.iff'):
+        (root/'UserData'/'Characters'/name).replace(private/name)
+    return private
+
+
 def archive_sections(data):
     result=[];pos=28
     count=struct.unpack_from('<H',data,12)[0]
@@ -91,8 +99,10 @@ def main():
     binary=str(Path(sys.argv[1]).resolve())
     with tempfile.TemporaryDirectory(prefix='odh-household-cli-') as directory:
         base=Path(directory);root=base/'game';make_household(root)
+        data_home=base/'player-data';private_characters=move_characters_to_private(root,data_home)
         env=os.environ.copy()
-        for key in ('XDG_CONFIG_HOME','XDG_STATE_HOME','XDG_DATA_HOME'): env[key]=str(base/key)
+        for key in ('XDG_CONFIG_HOME','XDG_STATE_HOME'): env[key]=str(base/key)
+        env['XDG_DATA_HOME']=str(data_home)
         for key in ('DISPLAY','WAYLAND_DISPLAY'):env.pop(key,None)
         def run(options,success=True):
             result=subprocess.run([binary,'--game-root',str(root)]+options,capture_output=True,text=True,env=env,timeout=30)
@@ -108,6 +118,13 @@ def main():
             first=run(fresh+['--headless-ticks','1','--save-session-on-exit'])
             path=Path(first['saved_session_path']);saved=path.read_bytes()
             assert dict((i,b) for i,_,b in archive_sections(saved))[b'HOST'][8:10]==b'\x02\0'
+            roster=dict((i,b) for i,_,b in archive_sections(saved))[b'HHRD']
+            assets=[];offset=4
+            for _ in range(struct.unpack_from('<H',roster,2)[0]):
+                offset+=18
+                length=struct.unpack_from('<H',roster,offset)[0];offset+=2
+                assets.append(roster[offset:offset+length].decode());offset+=length+32
+            assert len(assets)==2 and all(asset.startswith('PlayerData/Characters/') for asset in assets),assets
             if primary==11:
                 scheduled=run(['--load-session',str(path),'--headless-ticks','3','--instruction-budget','25000',
                     '--headless-resident-interaction','2','9999','3'])
@@ -128,20 +145,31 @@ def main():
                 assert hashlib.sha256(path.read_bytes()).digest()==before,'rejected restore changed previous save'
             run(['--load-session',str(path),'--single-resident-session','--headless-ticks','1'],False)
         previous=path.read_bytes()
+        # A fresh process must refuse a roster whose player-owned IFF bytes changed.
+        changed_character=private_characters/'User00001.iff'
+        unchanged_bytes=changed_character.read_bytes()
+        changed_character.write_bytes(unchanged_bytes+iff([('JUNK',99,b'changed')])[64:])
+        changed_restore=run(['--load-session',str(path),'--headless-ticks','1'],False)
+        assert 'saved household roster differs from family, World or character resources' in changed_restore.stderr,changed_restore.stderr
+        assert path.read_bytes()==previous,'changed private character replaced the previous save'
+        changed_character.write_bytes(unchanged_bytes)
         # Unsupported state on the extra resident cannot replace a good save.
         seated_root=base/'seated-game';make_household(seated_root,secondary_posture=1)
+        seated_data=base/'seated-player-data';move_characters_to_private(seated_root,seated_data)
+        seated_env=dict(env,XDG_DATA_HOME=str(seated_data),XDG_STATE_HOME=str(base/'seated-state'))
         result=subprocess.run([binary,'--game-root',str(seated_root),'--mode','1','--house','7',
-            '--resident-id','11','--headless-ticks','1','--save-session-on-exit'],capture_output=True,text=True,env=env,timeout=30)
+            '--resident-id','11','--headless-ticks','1','--save-session-on-exit'],capture_output=True,text=True,env=seated_env,timeout=30)
         assert result.returncode==2 and 'household session cannot yet restore a seated or attached additional resident' in result.stderr,(result.returncode,result.stdout,result.stderr)
         assert path.read_bytes()==previous,'unsupported secondary posture replaced the previous save'
         # Stop after the production log confirms immutable loaded character bytes.
         # All mutations are confined to this synthetic installation.
         changed_root=base/'changed-game';make_household(changed_root)
+        changed_data=base/'changed-player-data';changed_private=move_characters_to_private(changed_root,changed_data)
         # Bounded inert chunks leave enough parsing work after the log marker for
         # the parent to stop the child reliably on fast Release builds.
-        primary_file=changed_root/'UserData/Characters/User00000.iff'
+        primary_file=changed_private/'User00000.iff'
         primary_file.write_bytes(primary_file.read_bytes()+iff([('JUNK',i,b'') for i in range(2000)])[64:])
-        changed_env=dict(env,ODH_STATE_DIR=str(base/'changed-state'))
+        changed_env=dict(env,ODH_STATE_DIR=str(base/'changed-state'),XDG_DATA_HOME=str(changed_data))
         child=subprocess.Popen([binary,'--game-root',str(changed_root),'--mode','1','--house','7',
             '--resident-id','11','--headless-ticks','6','--save-session-on-exit'],stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,text=True,env=changed_env)
@@ -149,7 +177,7 @@ def main():
         while child.poll() is None and time.monotonic()<deadline:
             if log.exists() and 'household character resources pinned' in log.read_text():
                 child.send_signal(signal.SIGSTOP)
-                target=changed_root/'UserData/Characters/User00001.iff'
+                target=changed_private/'User00001.iff'
                 data=bytearray(target.read_bytes());data[80]^=1;target.write_bytes(data)
                 child.send_signal(signal.SIGCONT)
                 break
@@ -160,6 +188,6 @@ def main():
         assert child.returncode==2 and 'household character resource changed since it was loaded' in stderr,(child.returncode,stdout,stderr)
         assert path.read_bytes()==previous,'changed loaded character replaced the previous save'
 
-    print('Synthetic integrated household save/fresh-process resume matches continuous execution for both primary selections; mismatched and partial rosters rejected')
+    print('Synthetic player-owned character IFFs survive household save/fresh-process resume; changed private IFF hashes, mismatched and partial rosters are rejected')
 
 if __name__=='__main__':main()
