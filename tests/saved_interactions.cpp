@@ -20,6 +20,9 @@ std::string test_bhav(unsigned opcode=2){std::string b;put(b,0x8002,2);put(b,1,2
     put(b,opcode,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     if(opcode==2){b.push_back(0);b.push_back(0);b.push_back(11);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(16);b.push_back(3);}
     else b.append(8,'\0');return b;}
+std::string object_type_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
+    put(b,32,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    put(b,guid,4);put(b,0,2);b.push_back(10);b.push_back(0);return b;}
 std::string call_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,callee,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));b.append(8,'\0');return b;}
 std::string write_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
@@ -172,7 +175,7 @@ int main(){try{
     check(closure_limit,"private action closure routine budget is enforced");
     data=iff(chunk("BHAV",4098,test_bhav()));write(path,data);
     odh::World world;check(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object,{0,0,1}),"probe world entities created");
-    check(world.define_type(2,123),"target identity bound");
+    check(world.define_type(2,123,456),"target identity bound");
     auto blocked=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(blocked.size()==1&&blocked[0].state==SavedTestFunctionResult::State::ineligible&&blocked[0].steps==1,"isolated read-only TestFunction false result");
     check(world.attach(2,0,1),"occupant inserted into object slot");
@@ -191,5 +194,9 @@ int main(){try{
     data=iff(chunk("BHAV",4098,test_bhav()));write(path,data);
     auto exhausted=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},0);
     check(exhausted[0].state==SavedTestFunctionResult::State::unsupported&&exhausted[0].diagnostic.find("budget")!=std::string::npos,"zero instruction budget is unsupported");
+    data=iff(chunk("BHAV",4098,object_type_test_bhav(456)));write(path,data);
+    const auto type_probe=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
+    check(type_probe.size()==1&&type_probe[0].state==SavedTestFunctionResult::State::eligible,
+        "read-only TestFunction recognizes an object's explicitly bound master type");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

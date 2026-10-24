@@ -2,6 +2,7 @@
 #include "odh/animation.hpp"
 #include "odh/definition_index.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/object_type.hpp"
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
@@ -277,7 +278,13 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         return value;
     };
     odh::RoutineOwners owners;owners.emplace(static_cast<odh::CodeOwner>(target),std::move(routines));
-    auto primitive=odh::entity_next_primitive(world,memory,{},multitile_groups);
+    auto entity_next=odh::entity_next_primitive(world,memory,{},multitile_groups);
+    auto object_type=odh::object_type_primitive(world);
+    odh::VmPrimitive primitive=[entity_next=std::move(entity_next),object_type=std::move(object_type)](
+        const odh::VmFrame& frame,const odh::Instruction& instruction,const auto& temps,const auto& dispatch) {
+        if(instruction.opcode==32)return object_type(frame,instruction,temps,dispatch);
+        return entity_next(frame,instruction,temps,dispatch);
+    };
     odh::Vm probe({},std::move(memory),limits,std::move(primitive),std::move(owners));
     std::uint64_t spent=0;
     for(const auto test:tests){

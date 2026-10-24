@@ -164,6 +164,17 @@ separadamente confirma as ramificações do mesmo TestFunction com estados
 construídos. Estas são evidências da VM ODH e de um cenário construído, não uma
 prova de comportamento do executável original.
 
+O avaliador isolado também reconhece agora o opcode 32 (`Test Object Type`),
+usando a identidade explícita do objeto e, quando disponível, do seu mestre.
+Isso corrige uma lacuna de avaliação: antes, o teste BHAV 4166 de `Beds.iff`
+aparecia como primitiva não suportada. No House07 comercial, o mesmo teste
+passou a retornar falso para o morador usado na tentativa; os demais testes da
+cama também retornaram falso e nenhuma ação foi enfileirada. A instrução
+estática de BHAV 4166 primeiro compara o tipo do próprio Sim com um GUID de
+personagem específico, então esse resultado é uma recusa normal para este Sim,
+não prova de uma ação de cama executada. Build completa e CTest passaram
+229/229; os três testes que exigem janela ficaram pulados pelo display isolado.
+
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
 No preview de lote salvo, Tab/Shift+Tab percorre as linhas elegíveis com perfil
@@ -215,10 +226,20 @@ para a decodificação estrutural:
 ```
 
 O PC normal após Route45 ainda requer interpretar corretamente RouteEntryFlags,
-executar Animation44 e avaliar Snap46. Ações adicionais, serviços e retorno
-sentar/levantar continuam em aberto.
-Prioridades, flags/modes TTAB, ações adicionais, serviços e retorno sentar/
-levantar continuam em aberto.
+executar Animation44 e avaliar Snap46. Ações adicionais, serviços e o retorno
+stand continuam em aberto.
+Prioridades, flags/modes TTAB, outras ações, cancelamento e o retorno ao ficar
+de pé continuam em aberto.
+
+Uma sessão comercial isolada posterior usou `--headless-resident-interaction
+137 128` na House07. A linha foi enfileirada (`action=4097`, retorno true) e,
+após 512 ticks, o morador 137 estava anexado ao SLOT 0 da cadeira 128, com a
+animação `a2o-idle-sit-3`. A execução usou diretórios XDG temporários e não
+gravou no save original. Uma sessão baseline com os mesmos dados e ticks teve
+os mesmos valores finais para todas as necessidades. Isso valida esse caso
+headless de sentar numa cadeira comercial; não demonstra mudança contínua de
+necessidade, a cadeia completa de roteamento da janela nem comportamento do
+executável original.
 
 ## Ação Go Here e destino temporário
 

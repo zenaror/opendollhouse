@@ -7,6 +7,18 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A avaliação isolada das ações agora reconhece `Test Object Type` (opcode
+  32), incluindo correspondência com a identidade de um objeto mestre quando
+  ela está explicitamente disponível. Em House07, isso removeu o diagnóstico
+  de primitiva não suportada do teste da cama; as ações continuaram recusadas
+  pelos próprios testes do jogo para o morador usado. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
+
+- A sessão comercial isolada da House07 enfileirou a ação de sentar na cadeira
+  128 e terminou com o morador sentado no SLOT 0. A comparação com a sessão
+  baseline manteve as necessidades iguais; isso ainda não prova mudança
+  contínua de necessidade nem a cadeia completa de roteamento da janela.
+
 - O runtime `odh-person` agora executa as formas imediata e contínua do BHAV
   `Set Motive Change` (opcode 29), com taxas por avatar, atualização por tick,
   estado no snapshot e limpeza ao concluir a interação. A evidência e o próximo gate estão em

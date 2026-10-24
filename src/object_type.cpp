@@ -3,7 +3,7 @@ namespace odh {
 namespace {
 std::int16_t signed_word(std::uint16_t v){return static_cast<std::int16_t>(v<32768?static_cast<std::int32_t>(v):static_cast<std::int32_t>(v)-65536);}
 }
-VmPrimitive object_type_primitive(World& world) {
+VmPrimitive object_type_primitive(const World& world) {
     return [&world](const VmFrame& frame,const Instruction& instruction,const auto& temps,const auto&)->PrimitiveOutcome {
         if(instruction.opcode!=32)return {};
         const auto& b=instruction.operands;
