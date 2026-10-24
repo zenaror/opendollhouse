@@ -12,6 +12,9 @@ validação indicados por versão.
   valores zerados. O `TS1 Budget` agora lê quantias TempXL completas, incluindo
   o limite de 32 bits. Ainda faltam as rotinas que escrevem TempXL e a criação
   de objetos. Veja [`current-handoff.md`](docs/current-handoff.md).
+- O leitor OBJD 136/138 também expõe `SlotID` e `NumAttributes` quando os campos
+  estão completos. Isso prepara a criação correta dos compartimentos e
+  atributos de objetos; ainda não cria instâncias no lote.
 
 - Clicar em um lote agora abre primeiro um cartão com nome, descrição e estado
   da família ou preço, usando textos localizados dos arquivos do jogo. Enter ou

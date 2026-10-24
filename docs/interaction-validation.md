@@ -21,9 +21,10 @@ CTest focado de orçamento, VM, retorno, descoberta da interação e rota passou
 
 O writer está deliberadamente ausente no host até existir persistência durável
 para alterações de FAMI; uma chamada que tente mudar o saldo falha em vez de
-perder a mudança ao salvar. O escopo 42 (`TempXL`, valor de 32 bits) também segue
-unsupported, pois essa memória ainda não existe na VM ODH. A comida não foi
-criada e a refeição não começou.
+perder a mudança ao salvar. A VM agora guarda os dois TempXL de 32 bits e
+`TS1 Budget` consegue ler a quantia completa deles. Ainda faltam as rotinas que
+preenchem esses valores neste caminho. A comida não foi criada e a refeição não
+começou.
 
 Este documento reúne checkpoints em ordem histórica. A descrição de 2026-10-13
 abaixo é apenas o estado inicial da fila; ela foi superada por integração

@@ -19,6 +19,16 @@ instâncias de objetos. O próximo bloqueio da ação de geladeira continua send
 `CreateObjectInstance` (opcode 42), incluindo inicialização e execução das
 rotinas do objeto; a persistência de objetos criados também falta.
 
+## Atualização: campos de construção lidos do OBJD (2026-10-24)
+
+O perfil OBJD 136/138 agora expõe `SlotID` quando o prefixo alcança 42 bytes e
+`NumAttributes` quando alcança 118 bytes. O parser mantém ambos como opcionais
+para definições truncadas e atualiza o limite de bytes realmente interpretado.
+Isso fornece entradas para o construtor de entidades, mas ainda não resolve a
+tabela SLOT, não aloca objeto nem inicia sua VM. `odh-person` recompilou e os
+testes `object_definition_metadata`, `object_definition_index` e
+`collision_geometry` passaram (3/3).
+
 ## Atualização: ação da geladeira já alcança o objeto (2026-10-24)
 
 O perfil de `GotoRelativePosition` foi ampliado para aceitar a forma exata

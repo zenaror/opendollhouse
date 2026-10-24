@@ -63,7 +63,8 @@ peça já trata o perfil `JustTest` usado por essa interação, lendo o saldo da
 família ativa. O probe agora passa pelo opcode25 e chega ao primeiro movimento:
 opcode27 `GotoRelativePosition`, que ainda não tem o destino/rota necessários
 nesse contexto. A ação continua incompleta. Modos que alteram o orçamento ainda
-exigem um gravador persistente; também falta representar `TempXL` de 32 bits.
+exigem um gravador persistente. A VM já representa os dois `TempXL` de 32 bits,
+mas ainda faltam outros handlers que os preenchem e consomem.
 O detalhe do orçamento não deve ser tratado como um simples botão da interface.
 
 ## Primeira reconstrução proposta

@@ -18,10 +18,14 @@ struct ObjectDefinition {
     // supported 136/138 layouts. Values are raw OBJD collision parameters.
     std::optional<std::uint16_t> tile_width;
     std::optional<std::uint16_t> footprint_mask;
+    // Runtime construction inputs. Exposed only when each complete field is present.
+    std::optional<std::uint16_t> slot_table_id;
+    std::optional<std::uint16_t> num_attributes;
 };
 
 // Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes),
-// plus optional collision fields when their complete payload extent is present.
+// plus optional runtime-construction and collision fields when their complete
+// payload extents are present.
 // Values are owned and raw, including unknown object types and signed sub-index. The flag
 // only means MasterID != 0 according to the pinned FreeSO metadata mapping.
 // header_extent is the highest inspected prefix extent, not full validation.
