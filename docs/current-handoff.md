@@ -1,5 +1,25 @@
 # Continuidade atual
 
+## Atualização: fluxo do menu circular de ações investigado (2026-10-24)
+
+A lista retangular usada nos testes é provisória. A inspeção do Simitone e do
+submódulo FreeSO correspondente encontrou o caminho do menu circular: clique no
+lote → escolha de objeto/chão → leitura das ações TTAB locais e globais →
+checagem das regras e BHAV de teste → rótulo padrão de TTAs ou nome dinâmico de
+`ChangeActionString` → categorias separadas por `/` → escolha envia ação,
+argumento e origem à VM. A aparência Simitone inclui fundo circular, botões e
+cabeça do Sim no centro. Isso é referência, não confirmação de fidelidade visual
+ao jogo original.
+
+O leitor ODH já extrai partes estruturais da TTAB, mas a tela House07 provada
+mostrou apenas uma ação e não cobre descoberta completa, nomes dinâmicos,
+categorias, idioma ou grupos de opções. O novo
+[guia do menu circular](pie-menu-reference.md) registra as fontes, limitações e
+um primeiro gate de reconstrução. Próximo: seguir a descoberta TTAB/TTAs no
+caminho real do ODH, identificar um objeto instalado com múltiplas ações e
+categorias e completar a checagem de texto no idioma selecionado antes de trocar
+a lista provisória por uma implementação do menu final.
+
 ## Atualização: Sit/Stand visíveis e retomada em processo novo (2026-10-24)
 
 `build/linux-checkpoint/odh-person` foi recompilada em Release; a build Debug

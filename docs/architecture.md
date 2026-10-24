@@ -30,6 +30,10 @@ O preview Linux aceita `--language 1..20` e mostra o rótulo da ação seleciona
 no título e em uma faixa desenhada dentro da cena. Isso é uma escolha temporária
 de execução para teste, não uma preferência persistida nem um seletor dentro do
 jogo; a interface jogável ainda precisa de opção própria.
+O painel de interação mostrado no protótipo também é provisório: a interface
+final deve recuperar o menu circular do The Sims 1, usando Simitone como guia
+técnico para ações, categorias e seleção. O caminho encontrado e o gate de
+paridade estão em [menu circular de ações](pie-menu-reference.md).
 
 Esclarecimento de escopo de 2026-10-22: “primeira build jogável” significa um
 candidato Linux que cubra o ciclo principal e os destinos/sistemas das sete
