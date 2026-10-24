@@ -416,6 +416,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // they do not emulate Xlib's native key/button translation.
     std::vector<odh_host::WindowInput> headless_window_inputs;
     std::size_t headless_window_input_index=0;
+    std::optional<std::array<std::int32_t,2>> headless_window_object_click_pixel;
+    bool headless_window_object_click_queued=false,headless_window_menu_click_queued=false;
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     struct HeadlessResidentGoHere {
         std::int16_t actor;std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;bool applied=false;
@@ -2599,6 +2601,7 @@ struct PlacementCandidateProbe {
     std::optional<SavedLotFrame> render_lot_evidence;
     std::optional<SavedObjectSelection> render_selection;
     std::optional<SavedGroundSelection> render_ground_selection;
+    std::optional<std::array<std::int32_t,2>> render_menu_anchor;
     std::int16_t active_household_actor=runtime_avatar_id;
     const auto selected_household_member=[&]() -> HouseholdRuntime* {
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
@@ -2721,6 +2724,7 @@ struct PlacementCandidateProbe {
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
+        render_menu_anchor.reset();
         render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
@@ -2978,9 +2982,42 @@ struct PlacementCandidateProbe {
         }
         return title;
     };
+    struct InteractionMenuLayout {
+        std::int32_t x=0,y=0,width=0;
+        std::size_t first=0,rows=0;
+    };
+    const auto interaction_menu_layout=[](std::uint32_t frame_width,std::uint32_t frame_height,
+        std::size_t eligible_count,std::size_t selected_position,std::array<std::int32_t,2> anchor)
+        ->std::optional<InteractionMenuLayout>{
+        if(frame_width<96||frame_height<40||eligible_count==0)return std::nullopt;
+        constexpr std::size_t row_height=22,max_visible_rows=8;
+        const auto anchor_x=std::clamp(anchor[0],0,static_cast<std::int32_t>(frame_width)-1);
+        const auto anchor_y=std::clamp(anchor[1],0,static_cast<std::int32_t>(frame_height)-1);
+        const auto room_right=static_cast<std::int32_t>(frame_width)-anchor_x-16;
+        const auto room_left=anchor_x-16;
+        const auto room_x=std::max(room_right,room_left);
+        const auto width=std::min<std::int32_t>(240,room_x);
+        if(width<80)return std::nullopt;
+        const bool place_right=room_right>=room_left;
+        const auto x=std::clamp(place_right?anchor_x+12:anchor_x-width-12,4,
+            static_cast<std::int32_t>(frame_width)-width-4);
+        const auto room_below=static_cast<std::int32_t>(frame_height)-anchor_y-16;
+        const auto room_above=anchor_y-16;
+        const bool place_below=room_below>=room_above;
+        const auto room_y=std::max(room_below,room_above);
+        const auto max_rows=std::min<std::size_t>(max_visible_rows,
+            room_y>0?static_cast<std::size_t>(room_y)/row_height:0);
+        if(max_rows==0)return std::nullopt;
+        const auto rows=std::min(eligible_count,max_rows);
+        const auto first=selected_position>=rows?selected_position-rows+1:0;
+        const auto height=static_cast<std::int32_t>(rows*row_height);
+        const auto y=std::clamp(place_below?anchor_y+12:anchor_y-12-height,4,
+            static_cast<std::int32_t>(frame_height)-height-4);
+        return InteractionMenuLayout{x,y,width,first,rows};
+    };
     const auto draw_interaction_menu=[&](odh::RasterFrame& image){
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
-        if(!render_selection||!render_interactions||!render_interactions->table)return;
+        if(!render_selection||!render_interactions||!render_interactions->table||render_interaction_enqueued)return;
         const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
             world.find(active_household_actor));
         if(eligible.empty())return;
@@ -2988,13 +3025,11 @@ struct PlacementCandidateProbe {
         auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
         if(selected_at==eligible.end()){selected_at=eligible.begin();selected=*selected_at;}
         const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
-        const auto max_rows=std::min<std::size_t>(8,image.height>16?(image.height-16)/22:0);
-        if(max_rows==0)return;
-        const auto first=selected_position>=max_rows?selected_position-max_rows+1:0;
-        const auto last=std::min(eligible.size(),first+max_rows);
-        const auto width=static_cast<std::int32_t>(std::min<std::uint32_t>(304,image.width>16?image.width-16:0));
-        if(width<80)return;
-        for(std::size_t position=first;position<last;++position){
+        const auto layout=interaction_menu_layout(image.width,image.height,eligible.size(),selected_position,
+            render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8}));
+        if(!layout)return;
+        for(std::size_t row_position=0;row_position<layout->rows;++row_position){
+            const auto position=layout->first+row_position;
             const auto row=eligible[position];
             const auto raw=row<render_interactions->row_labels.size()&&render_interactions->row_labels[row]
                 ?*render_interactions->row_labels[row]:std::string("Action");
@@ -3006,8 +3041,8 @@ struct PlacementCandidateProbe {
             const auto& label=raw;
 #endif
             odh_host::TextOverlayStyle style;
-            style.x=8;style.y=8+static_cast<std::int32_t>(position-first)*22;
-            style.width=width;style.height=21;style.font_size_px=13;style.padding=4;
+            style.x=layout->x;style.y=layout->y+static_cast<std::int32_t>(row_position)*22;
+            style.width=layout->width;style.height=21;style.font_size_px=13;style.padding=4;
             style.foreground={250,248,230,255};
             style.background=position==selected_position
                 ?std::array<std::uint8_t,4>{42,91,121,238}
@@ -3037,17 +3072,14 @@ struct PlacementCandidateProbe {
         auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
         if(selected_at==eligible.end())selected_at=eligible.begin();
         const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
-        const auto max_rows=std::min<std::size_t>(8,render_camera.height>16?(render_camera.height-16)/22:0);
-        const auto width=std::min<std::uint32_t>(304,render_camera.width>16?render_camera.width-16:0);
-        if(max_rows==0||width<80||x<8||static_cast<std::uint32_t>(x)>=8+width||y<8)return false;
-        const auto first=selected_position>=max_rows?selected_position-max_rows+1:0;
-        const auto visible=std::min(eligible.size()-first,max_rows);
-        const auto menu_height=static_cast<std::int32_t>(visible*22);
-        if(y>=8+menu_height)return false;
-        const auto offset=y-8;
+        const auto layout=interaction_menu_layout(render_camera.width,render_camera.height,eligible.size(),
+            selected_position,render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8}));
+        if(!layout||x<layout->x||x>=layout->x+layout->width||y<layout->y||
+           y>=layout->y+static_cast<std::int32_t>(layout->rows*22))return false;
+        const auto offset=y-layout->y;
         const auto local_row=static_cast<std::size_t>(offset/22);
-        if(offset%22<21&&local_row<visible){
-            render_selected_interaction_row=eligible[first+local_row];
+        if(offset%22<21&&local_row<layout->rows){
+            render_selected_interaction_row=eligible[layout->first+local_row];
             render_interaction_requested=true;
             request_selected_interaction();
         }
@@ -4466,19 +4498,34 @@ struct PlacementCandidateProbe {
     profile_mark("first-main-execution");
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
-        if(!headless_window_interaction||!headless_window_inputs.empty()||!render_lot||!render_lot_evidence)return;
-        const auto& picks=render_lot_evidence->object_pick_ids;
-        if(!render_lot_evidence->pick_width||picks.empty())
-            throw odh::FormatError("headless window interaction render has no object-pick pixels");
-        const auto pixel=std::find(picks.begin(),picks.end(),static_cast<std::uint16_t>(*headless_window_interaction));
-        if(pixel==picks.end())throw odh::FormatError("headless window interaction target is not visible in the captured lot frame");
-        const auto index=static_cast<std::size_t>(pixel-picks.begin());
-        const auto x=static_cast<std::int32_t>(index%render_lot_evidence->pick_width);
-        const auto y=static_cast<std::int32_t>(index/render_lot_evidence->pick_width);
-        odh_host::WindowInput click;click.action=true;click.primary_click=std::array<std::int32_t,2>{x,y};
-        odh_host::WindowInput menu_click;menu_click.primary_click=std::array<std::int32_t,2>{10,18};
+        if(!headless_window_interaction||headless_window_input_index<headless_window_inputs.size()||
+           !render_lot||!render_lot_evidence)return;
+        if(!headless_window_object_click_queued){
+            const auto& picks=render_lot_evidence->object_pick_ids;
+            if(!render_lot_evidence->pick_width||picks.empty())
+                throw odh::FormatError("headless window interaction render has no object-pick pixels");
+            const auto pixel=std::find(picks.begin(),picks.end(),static_cast<std::uint16_t>(*headless_window_interaction));
+            if(pixel==picks.end())throw odh::FormatError("headless window interaction target is not visible in the captured lot frame");
+            const auto index=static_cast<std::size_t>(pixel-picks.begin());
+            const auto x=static_cast<std::int32_t>(index%render_lot_evidence->pick_width);
+            const auto y=static_cast<std::int32_t>(index/render_lot_evidence->pick_width);
+            headless_window_object_click_pixel=std::array<std::int32_t,2>{x,y};
+            odh_host::WindowInput click;click.action=true;click.primary_click=std::array<std::int32_t,2>{x,y};
+            headless_window_inputs.push_back(click);
+            headless_window_object_click_queued=true;
+            return;
+        }
+        if(headless_window_menu_click_queued||!render_selection||!render_interactions)return;
+        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+            world.find(active_household_actor));
+        if(eligible.empty())throw odh::FormatError("headless window interaction target has no eligible visible action");
+        const auto layout=interaction_menu_layout(render_camera.width,render_camera.height,eligible.size(),0,
+            render_menu_anchor.value_or(headless_window_object_click_pixel.value_or(std::array<std::int32_t,2>{8,8})));
+        if(!layout)throw odh::FormatError("headless window interaction menu has no visible row");
+        odh_host::WindowInput click;
+        click.primary_click=std::array<std::int32_t,2>{layout->x+4,layout->y+10};
         headless_window_inputs.push_back(click);
-        headless_window_inputs.push_back(menu_click);
+        headless_window_menu_click_queued=true;
     };
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
@@ -4760,6 +4807,7 @@ struct PlacementCandidateProbe {
                     render_ground_selection.reset();
                     if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
                     prepare_selected_object(std::move(object));
+                    if(render_selection)render_menu_anchor=std::array<std::int32_t,2>{click_x,click_y};
                     const bool any_interaction_active=queue.size()!=0||queue.active()||
                         std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
                             return member->controllers&&(member->controllers->interactions().size()!=0||
@@ -6642,7 +6690,11 @@ struct PlacementCandidateProbe {
             <<",\"lot_composited\":"<<(v.lot_composited?"true":"false")
             <<",\"lot_objects_included\":"<<(v.lot_objects_included?"true":"false")
             <<",\"object_selection\":{\"clicks\":"<<render_selection_clicks<<",\"tick\":"<<render_selection_tick
-            <<",\"id\":"<<(render_selection?std::to_string(render_selection->id):"null")
+            <<",\"headless_object_click_pixel\":";
+        if(headless_window_object_click_pixel)
+            std::cout<<'['<<(*headless_window_object_click_pixel)[0]<<','<<(*headless_window_object_click_pixel)[1]<<']';
+        else std::cout<<"null";
+        std::cout<<",\"id\":"<<(render_selection?std::to_string(render_selection->id):"null")
             <<",\"guid\":"<<(render_selection?std::to_string(render_selection->guid):"null")
             <<",\"generation\":"<<(render_selection?std::to_string(render_selection->generation):"null")
             <<",\"tree_table_id\":"<<(render_selection?std::to_string(render_selection->tree_table_id):"null")

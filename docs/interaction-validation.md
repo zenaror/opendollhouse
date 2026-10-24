@@ -777,6 +777,24 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_interaction_integration.py \
 
 O harness injeta as coordenadas de clique pelo mesmo tratamento usado pela
 janela, mas executou sem DISPLAY e não mostrou a lista numa tela. Isto confirma
-que a linha escolhida chega à ação correta com recursos reais; ainda falta
-captura visual X11, escolha física/automatizada em janela e save/retomada após
-essa cadeia.
+que a linha escolhida chega à ação correta com recursos reais. A captura X11 e
+o clique numa janela são evidência separada, registrada no checkpoint seguinte;
+save/retomada após essa cadeia continuam pendentes.
+
+### Captura X11 e clique na lista — 2026-10-24
+
+Com os arquivos de piso e parede da instalação base carregados, a janela
+House07 abriu em Xvfb (320x240). A captura mostrou o rótulo localizado `Sit`
+ao lado da cadeira salva 128, em `(110,123)`; o HUD permaneceu visível. Um
+clique X11 em `(114,133)` fechou a lista e enfileirou Sit 4097. No relatório de
+encerramento, depois de 103 ticks, `host_failed=false`, a fila ainda estava
+ativa, o Sim estava anexado à cadeira e tocava `a2o-sit-behind`. A janela foi
+fechada antes do retorno final da ação; a conclusão `true` continua provada
+somente pelo gate headless acima. Xvfb, Xephyr e `odh-person` foram
+confirmados encerrados.
+
+A captura temporária foi mantida fora do Git para não incluir arte comercial:
+`/tmp/odh-ui-visual-5e7446e/menu-x11-full.png`. O painel está perto do clique e
+não cobre o HUD nesse caso; ele continua provisório e não reproduz o pie menu
+ou a arte original. Ainda faltam fechar a ação numa sessão X11, testar outros
+objetos/idiomas e salvar/retomar após a sequência.
