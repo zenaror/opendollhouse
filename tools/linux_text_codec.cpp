@@ -56,4 +56,35 @@ std::string legacy_text_to_utf8(std::string_view bytes,std::uint8_t language,std
     }
     return output;
 }
+
+std::string utf8_to_legacy_text(std::string_view text,std::uint8_t language,std::size_t output_limit) {
+    if(text.size()>output_limit)throw std::length_error("source text exceeds configured byte limit");
+    if(text.find('\0')!=std::string_view::npos)throw std::invalid_argument("user text contains an embedded NUL");
+    iconv_t converter=iconv_open(encoding(language),"UTF-8");
+    if(converter==reinterpret_cast<iconv_t>(-1))throw std::runtime_error("iconv cannot open the requested legacy encoding");
+    struct Close { iconv_t value; ~Close(){iconv_close(value);} } close{converter};
+
+    std::string output;
+    output.reserve(text.size());
+    const char* source=text.data();
+    std::size_t remaining=text.size();
+    while(remaining) {
+        char buffer[4096];char* destination=buffer;std::size_t available=sizeof(buffer);
+        char* mutable_source=const_cast<char*>(source);
+        errno=0;
+        const auto converted=iconv(converter,&mutable_source,&remaining,&destination,&available);
+        source=mutable_source;
+        append(output,buffer,sizeof(buffer)-available,output_limit);
+        if(converted!=static_cast<std::size_t>(-1))continue;
+        if(errno==E2BIG)continue;
+        if(errno==EILSEQ||errno==EINVAL)
+            throw std::invalid_argument("user text is invalid UTF-8 or cannot be represented in the selected game language");
+        throw std::runtime_error("iconv failed while encoding user text");
+    }
+    char buffer[32];char* destination=buffer;std::size_t available=sizeof(buffer);
+    if(iconv(converter,nullptr,nullptr,&destination,&available)==static_cast<std::size_t>(-1))
+        throw std::runtime_error("iconv could not finish encoding user text");
+    append(output,buffer,sizeof(buffer)-available,output_limit);
+    return output;
+}
 } // namespace odh_host

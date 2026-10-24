@@ -15,6 +15,8 @@ int main(){try{
     check(odh_host::legacy_text_to_utf8(std::string("\xe0\xa1\xc1\xcb\xc2\xd8\xb4",7),19)=="เกมหยุด","Thai CP874");
     check(odh_host::legacy_text_to_utf8(std::string("\xc0\xcf\xbd\xc3\x20\xc1\xa4\xc1\xf6",9),20)=="일시 정지","Korean CP949");
     check(odh_host::legacy_text_to_utf8(std::string(1,'\xa3'),16)=="Ł","Polish CP1250");
+    check(odh_host::utf8_to_legacy_text("Olá",14)==std::string("Ol\xe1",3),"Portuguese UTF-8 input encodes to CP1252");
+    check(odh_host::utf8_to_legacy_text("ポーズ",15)==std::string("\x83\x7c\x81\x5b\x83\x59",6),"Japanese UTF-8 input encodes to CP932");
     check(odh_host::legacy_text_to_utf8(std::string(1,'\xd7'),12)=="׳","Hebrew CP1255 lookup (localized game mapping remains unverified)");
     check(odh_host::legacy_text_to_utf8(std::string(1,'\xc0'),13)=="А","Russian CP1251");
     check(odh_host::legacy_text_to_utf8(std::string(1,'\xa3'),0)=="£","US alias and Western code page");
@@ -23,5 +25,13 @@ int main(){try{
     check(rejected,"unknown language is rejected");
     rejected=false;try{(void)odh_host::legacy_text_to_utf8("abcd",14,3);}catch(const std::length_error&){rejected=true;}
     check(rejected,"output budget is enforced");
+    rejected=false;try{(void)odh_host::utf8_to_legacy_text("猫",14);}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"unrepresentable characters are rejected rather than lost");
+    rejected=false;try{(void)odh_host::utf8_to_legacy_text(std::string("\xc3",1),14);}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"incomplete UTF-8 is rejected");
+    rejected=false;try{(void)odh_host::utf8_to_legacy_text(std::string("a\0b",3),14);}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"embedded NUL is rejected");
+    rejected=false;try{(void)odh_host::utf8_to_legacy_text("Olá",14,2);}catch(const std::length_error&){rejected=true;}
+    check(rejected,"encoded output budget is enforced");
     std::cout<<"linux text codec: 13 checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"linux text codec: "<<error.what()<<'\n';return 1;}}
