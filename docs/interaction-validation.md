@@ -175,6 +175,20 @@ personagem específico, então esse resultado é uma recusa normal para este Sim
 não prova de uma ação de cama executada. Build completa e CTest passaram
 229/229; os três testes que exigem janela ficaram pulados pelo display isolado.
 
+Desde 2026-10-24, quando um TestFunction retorna falso, o avaliador registra a
+última instrução executada (PC e opcode) no diagnóstico. Um teste sintético
+confirma esse registro. Em uma nova execução headless do House07, morador 137,
+cama 117, todos os cinco testes da cama ainda retornaram falso; agora o motivo
+localizado foi: BHAV 4107 no PC 0/opcode 2, BHAV 4109 no PC 0/opcode 2, BHAV
+4141 no PC 2/opcode 2, BHAV 4145 no PC 0/opcode 2 e BHAV 4166 no PC 0/opcode
+32. A ação não foi enfileirada e o roteador não planejou nem executou uma
+passagem entre quartos. Os SHA-256 de `UserData/Houses/House07.iff`,
+`UserData/Neighborhood.iff` e `UserData/LotZoning.iff` permaneceram idênticos
+antes e depois. Um build Debug limpo em `/tmp` passou `saved_interaction_discovery`
+e `linux_household_session_resume_cli` (2/2). Isto localiza a recusa no perfil
+de avaliação ODH antes do roteamento; não demonstra a semântica do executável
+original nem uma interação de cama funcional.
+
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
 No preview de lote salvo, Tab/Shift+Tab percorre as linhas elegíveis com perfil

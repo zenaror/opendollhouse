@@ -181,6 +181,8 @@ int main(){try{
     check(world.define_type(2,123,456),"target identity bound");
     auto blocked=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(blocked.size()==1&&blocked[0].state==SavedTestFunctionResult::State::ineligible&&blocked[0].steps==1,"isolated read-only TestFunction false result");
+    check(blocked[0].diagnostic.find("BHAV PC 0 opcode 2")!=std::string::npos,
+        "false TestFunction records its final bounded instruction");
     check(world.attach(2,0,1),"occupant inserted into object slot");
     auto eligible=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(eligible[0].state==SavedTestFunctionResult::State::eligible,"read-only probe sees live slot occupant");

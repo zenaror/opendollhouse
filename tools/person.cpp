@@ -2677,7 +2677,7 @@ struct PlacementCandidateProbe {
             for(const auto& test:render_test_results){
                 render_interaction_diagnostic+="; BHAV"+std::to_string(test.routine)+" ";
                 if(test.state==SavedTestFunctionResult::State::ineligible)
-                    render_interaction_diagnostic+="returned false";
+                    render_interaction_diagnostic+=(test.diagnostic.empty()?std::string("returned false"):test.diagnostic);
                 else if(test.state==SavedTestFunctionResult::State::unsupported)
                     render_interaction_diagnostic+="unsupported: "+test.diagnostic;
                 else render_interaction_diagnostic+="eligible but row permission or action profile rejected it";

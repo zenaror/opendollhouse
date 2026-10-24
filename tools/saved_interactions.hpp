@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <string>
 
 // TTAB/TTAs discovery is static. The separate evaluator below reports only an
 // isolated ODH VM TestFunction result; neither operation exposes a pie menu or
@@ -322,10 +324,17 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         const auto budget=std::min(per_test_budget,total_budget-spent);
         const auto generation_actor=actor->generation,generation_object=object->generation;
         const auto started=probe.start(key,{caller,target,target,static_cast<odh::CodeOwner>(target)},arguments);
-        const auto status=started==odh::VmStatus::running?probe.run(budget):started;
+        std::optional<odh::VmTrace> last_trace;
+        const auto status=started==odh::VmStatus::running?probe.run(budget,[&](const odh::VmTrace& trace){
+            last_trace=trace;
+        }):started;
         item.steps=probe.steps();spent+=item.steps;
         if(status==odh::VmStatus::returned_true)item.state=SavedTestFunctionResult::State::eligible;
-        else if(status==odh::VmStatus::returned_false)item.state=SavedTestFunctionResult::State::ineligible;
+        else if(status==odh::VmStatus::returned_false){
+            item.state=SavedTestFunctionResult::State::ineligible;
+            if(last_trace)item.diagnostic="returned false at BHAV PC "+std::to_string(last_trace->pc)+
+                " opcode "+std::to_string(last_trace->instruction.opcode);
+        }
         else item.diagnostic=probe.diagnostic().empty()?std::string("TestFunction did not return within the supported profile"):probe.diagnostic();
         const auto* live_actor=world.find(caller);const auto* live_object=world.find(target);
         if(!live_actor||!live_object||live_actor->generation!=generation_actor||live_object->generation!=generation_object){
