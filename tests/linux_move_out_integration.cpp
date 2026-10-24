@@ -195,11 +195,13 @@ Window new_map(Display* display, const std::set<Window>& before, pid_t expected_
     Window selected = 0;
     await([&] {
         std::vector<Window> matches;
-        for (auto window : windows(display, DefaultRootWindow(display)))
-            if (!before.count(window) && title(display, window) ==
-                    "OpenDollhouse | Neighborhood | Esc: Cancel" &&
+        for (auto window : windows(display, DefaultRootWindow(display))) {
+            const auto window_title = title(display, window);
+            if (!before.count(window) &&
+                    window_title.rfind("OpenDollhouse | Neighborhood |", 0) == 0 &&
                     window_pid(display, window) == static_cast<unsigned long>(expected_pid))
                 matches.push_back(window);
+        }
         require(matches.size() <= 1, "ambiguous new odh-person windows; use an isolated X display");
         if (!matches.empty()) selected = matches.front();
         return selected != 0;
