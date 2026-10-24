@@ -40,6 +40,8 @@ struct Probe {
             require(world.create(id, odh::EntityKind::avatar, {30,67,0,0}),
                     "create fixture avatar with Room and PersonData words");
             require(world.declare_object_word(id, 29, room), "set fixture avatar Room");
+            require(world.set_position(id, {16,16,1,0}),
+                    "place fixture avatar so Room reads the saved room value");
             require(world.set_person_data(id, 66, private_flag), "set fixture PersonData[66]");
         }
         auto routines = odh::RoutineSet{{key, destination_shoo_filter()}};
