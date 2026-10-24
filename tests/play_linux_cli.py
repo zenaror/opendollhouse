@@ -62,6 +62,8 @@ print(pathlib.Path({str(root / 'session.json')!r}).read_text())
         fake_executable(binary_dir / "odh-person", f"""
 import json, pathlib, sys
 pathlib.Path({str(root / 'person-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
+with pathlib.Path({str(root / 'person-launches.jsonl')!r}).open("a") as launches:
+    launches.write(json.dumps(sys.argv[1:]) + "\\n")
 """)
 
         planned = run(binary_dir, game, "--plan-only")
@@ -90,6 +92,26 @@ pathlib.Path({str(root / 'person-args.json')!r}).write_text(json.dumps(sys.argv[
         assert launched.returncode == 0, launched.stderr
         assert json.loads((root / "person-args.json").read_text()) == json.loads(
             run(binary_dir, game, "--resident-id", "47", "--plan-only").stdout)["command"][1:]
+
+        # Closing a lot returns to the neighborhood; Escape there exits cleanly.
+        (root / "picker-count.txt").write_text("0")
+        fake_executable(binary_dir / "odh-neighborhood-window", f"""
+import json, pathlib
+count_path = pathlib.Path({str(root / 'picker-count.txt')!r})
+count = int(count_path.read_text()) + 1
+count_path.write_text(str(count))
+response = {str(root / 'map.json')!r} if count <= 2 else {str(root / 'cancel.json')!r}
+print(pathlib.Path(response).read_text())
+""")
+        (root / "person-launches.jsonl").write_text("")
+        returned = run(binary_dir, game)
+        assert returned.returncode == 0, returned.stderr
+        stages = [json.loads(line) for line in returned.stdout.splitlines()]
+        assert [stage["status"] for stage in stages] == [
+            "starting_lot_preview", "starting_lot_preview", "cancelled"]
+        assert [stage["house"] for stage in stages[:2]] == [7, 7]
+        assert int((root / "picker-count.txt").read_text()) == 3
+        assert len((root / "person-launches.jsonl").read_text().splitlines()) == 2
 
         # Replace the fake picker response to exercise the cancel path.
         person_args_before_cancel = (root / "person-args.json").read_text()

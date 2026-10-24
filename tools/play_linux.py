@@ -131,48 +131,53 @@ def main():
             if not executable.is_file():
                 raise LaunchError(f"required OpenDollhouse program is missing: {executable}")
         userdata = require_file(game / "UserData/Neighborhood.iff").parent
+        graphics = None
         if args.house is None:
             graphics = require_file(game / "UIGraphics/UIGraphics.far")
-            selected = run_json([
-                str(binary_dir / "odh-neighborhood-window"),
-                "--user-data", str(userdata), "--ui-graphics", str(graphics),
-                "--mode", str(args.mode)], "neighborhood picker")
-            if selected.get("status") == "cancelled":
-                print(json.dumps({"status": "cancelled", "stage": "neighborhood"}))
+        while True:
+            if args.house is None:
+                selected = run_json([
+                    str(binary_dir / "odh-neighborhood-window"),
+                    "--user-data", str(userdata), "--ui-graphics", str(graphics),
+                    "--mode", str(args.mode)], "neighborhood picker")
+                if selected.get("status") == "cancelled":
+                    print(json.dumps({"status": "cancelled", "stage": "neighborhood"}))
+                    return 0
+                if selected.get("status") != "selected" or selected.get("mode") != args.mode:
+                    raise LaunchError("neighborhood picker did not return a selected house for this mode")
+                house = selected.get("selected_house")
+            else:
+                house = args.house
+            if not isinstance(house, int) or not 1 <= house <= 98:
+                raise LaunchError("selected house is outside 1..98")
+            session = run_json([
+                str(binary_dir / "odh-session-entry"), "--user-data", str(userdata),
+                "--mode", str(args.mode), "--house", str(house),
+                "--language", str(args.language)], "selected household validation")
+            if (session.get("evidence") != "session_entry_resolved_only" or
+                    session.get("house_number") != house or session.get("mode") != args.mode):
+                raise LaunchError("selected household validation returned an unexpected lot")
+            command, resident = build_person_command(args, game, house, session)
+            if args.plan_only:
+                print(json.dumps({"status": "ready", "house": house,
+                    "family_chunk_id": session["family_chunk_id"],
+                    "resident_guid": resident["guid"],
+                    "resident_neighbor_id": resident["neighbor_id"],
+                    "resident_asset": resident["character_asset"],
+                    "resident_count": len(session["members"]), "interactive": False,
+                    "command": command}, indent=2))
                 return 0
-            if selected.get("status") != "selected" or selected.get("mode") != args.mode:
-                raise LaunchError("neighborhood picker did not return a selected house for this mode")
-            house = selected.get("selected_house")
-        else:
-            house = args.house
-        if not isinstance(house, int) or not 1 <= house <= 98:
-            raise LaunchError("selected house is outside 1..98")
-        session = run_json([
-            str(binary_dir / "odh-session-entry"), "--user-data", str(userdata),
-            "--mode", str(args.mode), "--house", str(house),
-            "--language", str(args.language)], "selected household validation")
-        if (session.get("evidence") != "session_entry_resolved_only" or
-                session.get("house_number") != house or session.get("mode") != args.mode):
-            raise LaunchError("selected household validation returned an unexpected lot")
-        command, resident = build_person_command(args, game, house, session)
-        if args.plan_only:
-            print(json.dumps({"status": "ready", "house": house,
+            print(json.dumps({"status": "starting_lot_preview", "house": house,
                 "family_chunk_id": session["family_chunk_id"],
                 "resident_guid": resident["guid"],
                 "resident_neighbor_id": resident["neighbor_id"],
-                "resident_asset": resident["character_asset"],
-                "resident_count": len(session["members"]), "interactive": False,
-                "command": command}, indent=2))
-            return 0
-        print(json.dumps({"status": "starting_lot_preview", "house": house,
-            "family_chunk_id": session["family_chunk_id"],
-            "resident_guid": resident["guid"],
-            "resident_neighbor_id": resident["neighbor_id"],
-            "resident_count": len(session["members"]),
-            "limitations": ["map and lot use separate windows", "only the selected resident Main runs",
-                            "the session is not saved when the window closes",
-                            "family editing and return-to-neighborhood are not implemented"]}), flush=True)
-        return subprocess.run(command, check=False).returncode
+                "resident_count": len(session["members"]),
+                "limitations": ["map and lot use separate windows", "only the selected resident Main runs",
+                                "the session is not saved when the window closes",
+                                "family editing is not implemented"]}), flush=True)
+            result = subprocess.run(command, check=False).returncode
+            if args.house is not None or result != 0:
+                return result
     except (OSError, LaunchError, KeyError, TypeError) as error:
         print(f"odh-play-linux: {error}", file=sys.stderr)
         return 2

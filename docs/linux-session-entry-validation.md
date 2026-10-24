@@ -5,7 +5,9 @@
 `odh-person --game-root DIR --mode N` agora tem um caminho integrado de entrada.
 Sem `--house`, prepara e mostra o seletor da vizinhança; ao escolher uma casa,
 carrega a família, abre a escolha do morador na mesma janela e passa essa janela
-Linux para o runtime do lote. Com `--house N`, pula o seletor do mapa.
+Linux para o runtime do lote. Quando o preview do lote fecha normalmente, o
+seletor da vizinhança abre novamente; Escape no mapa encerra o launcher. Com
+`--house N`, pula o seletor do mapa e encerra depois que o lote fecha.
 `--resident-id N` escolhe o morador pela identificação usada na vizinhança sem
 mostrar a tela. Sem essa opção, use Tab para percorrer e Enter para continuar;
 Escape cancela a entrada. Com a sobreposição de texto opcional, a lista informa
@@ -37,8 +39,9 @@ porque o carregador de vizinhança não o suporta.
 ## Verificações feitas
 
 - Build Debug completa e build de `odh-person` com `-DODH_X11=OFF`.
-- CTest completo: 179/179 passaram; `linux_window_backend` foi pulado por falta
-  de servidor X11 acessível. Os sete gates focados da entrada também passaram.
+- No checkpoint anterior, CTest completo: 179/179 passaram; o backend de janela
+  foi pulado porque aquela sessão não tinha X11 acessível. Os sete gates focados
+  da entrada também passaram.
 - Build `odh-person` passou com X11 habilitado e com `-DODH_X11=OFF`; no build
   sem X11, `--plan-only` continua resolvendo os dados sem abrir janela.
 - `--plan-only` com House07, na instalação original e na Legacy Collection,
@@ -59,18 +62,18 @@ porque o carregador de vizinhança não o suporta.
   deixa a configuração do usuário intacta.
 - `git diff --check` passou.
 
-A seleção interativa ainda não recebeu smoke visual: `DISPLAY=:0` não aceita
-conexão nesta sessão. Os testes acima cobrem configuração e entrada sem janela,
-não a captura de teclas na tela de primeira execução.
+Na validação X11 de 2026-10-24, PangoCairo 1.52.1 foi habilitado no build e os
+testes `linux_text_renderer`, `linux_game_entry_cli`, `play_linux_cli`,
+`neighborhood_window_cli` e `person_cli` passaram (5/5). Capturas sem automação
+de mouse mostram a vizinhança modo 1 e House07 com conteúdo visível. O teste de
+ciclo do launcher usa processos sintéticos e confirmou duas entradas em lotes,
+duas reaberturas do fluxo e saída limpa ao cancelar no mapa.
 
 ## Limite desta evidência
 
-O teste `linux_window_backend` foi pulado: `DISPLAY=:0` não aceita a consulta
-X11 e não há Xvfb disponível nesta sessão. Por isso, ainda não foi confirmado
-visualmente que a escolha do mapa redimensiona a mesma janela e entra no lote.
-O plano headless comprova resolução de dados e montagem dos argumentos, não
-renderização, controles, ações ao vivo, salvamento, retorno à vizinhança ou
-equivalência jogável. A seleção de morador tem cobertura lógica sem display;
-interação gráfica dessa tela e continuidade jogável ainda precisam de smoke
-visual. Esta etapa não edita nem exclui famílias, não salva progresso e não
-implementa retorno à vizinhança.
+As capturas X11 comprovam apresentação de modo 1 e House07 em janelas 800x600
+num desktop 1600x1200, mas não validam todos os modos, menus, comandos ao vivo,
+edição de famílias ou equivalência jogável. O teste sintético confirma o retorno
+do fluxo do launcher quando o processo do lote termina normalmente; não comprova
+que a família ou o progresso sejam salvos. Esta etapa não edita nem exclui
+famílias e não salva progresso ao fechar o lote.
