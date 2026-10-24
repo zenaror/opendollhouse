@@ -15,6 +15,7 @@ struct PreparedNeighborhoodMap {
     odh::RasterFrame frame;
     std::vector<odh::NeighborhoodMarker> markers;
     unsigned marker_scale = 1;
+    unsigned mode = 1;
     std::vector<odh::FamilyEntry> source_families;
     std::vector<odh::FamilyEntry> effective_families;
     std::vector<std::string> missing_layers;
@@ -25,10 +26,11 @@ struct MoveInFamilySelection {
     std::array<std::uint8_t, 32> family_identity{};
 };
 
-enum class NeighborhoodPickerAction { lot, create_family };
+enum class NeighborhoodPickerAction { lot, create_family, switch_mode };
 struct NeighborhoodPickerResult {
     NeighborhoodPickerAction action = NeighborhoodPickerAction::lot;
     std::uint16_t house_number = 0;
+    unsigned mode = 0;
 };
 
 enum class OccupiedLotChoice { enter, move_out, cancel };
@@ -65,6 +67,17 @@ std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_create(
     const std::string& localized_title = "Neighborhood",
     const std::string& localized_cancel = "Cancel",
     std::uint8_t language = 1);
+
+// Main neighborhood screen actions: select a lot, switch to another supported
+// neighborhood map, or optionally open CAS. Mode buttons match the TS1 maps
+// exposed by Simitone; mode 6 is intentionally absent.
+std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_actions(
+    LinuxWindow& window, const PreparedNeighborhoodMap& map,
+    const std::string& localized_title, const std::string& localized_cancel,
+    std::uint8_t language, bool allow_create_family);
+
+// Returns the selected map mode for a click on one of the map tabs, or zero.
+unsigned neighborhood_mode_button_at(std::int32_t x, std::int32_t y) noexcept;
 
 // Choose whether to enter an occupied lot or move its current family out.
 // Move-out is disabled when the saved family history cannot calculate a

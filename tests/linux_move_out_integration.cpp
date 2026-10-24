@@ -305,12 +305,12 @@ int main(int argc, char** argv) {
             wait_exact_title(display, window, "OpenDollhouse | Create family");
             key(display, window, XK_Escape);
             wait_exact_title(display, window,
-                "OpenDollhouse | Neighborhood | C: Create family | Esc: Cancel");
+                "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
             key(display, window, XK_c);
             wait_exact_title(display, window, "OpenDollhouse | Create family");
             key(display, window, XK_Escape);
             wait_exact_title(display, window,
-                "OpenDollhouse | Neighborhood | C: Create family | Esc: Cancel");
+                "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
             marker(display, window, 200, true); marker(display, window, 600, true);
             click(display, window, 200);
             wait_title(display, window, "House 7 | Enter: enter | E: move out");

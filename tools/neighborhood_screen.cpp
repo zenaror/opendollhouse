@@ -23,6 +23,14 @@
 namespace odh_host {
 namespace {
 constexpr std::array<std::uint8_t, 4> kNeighborhoodMatte{32, 36, 44, 255};
+constexpr std::array<unsigned, 6> kPickerModes{1, 2, 3, 4, 5, 7};
+constexpr std::array<const char*, 6> kPickerModeNames{
+    "Neighborhood", "Downtown", "Vacation Island", "Old Town", "Studio Town", "Magic Town"};
+constexpr std::int32_t kModeTabTop = 508;
+constexpr std::int32_t kModeTabHeight = 40;
+constexpr std::int32_t kModeTabLeft = 16;
+constexpr std::int32_t kModeTabWidth = 126;
+constexpr std::int32_t kModeTabGap = 2;
 
 bool neighborhood_mask_color(const std::array<std::uint8_t, 4>& pixel) {
     return (pixel[0] == 0xff && pixel[1] == 0x00 && pixel[2] == 0xff) ||
@@ -138,7 +146,7 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
     });
 
     return {odh::draw_neighborhood_map(*image, markers, config->marker_scale),
-            std::move(markers), config->marker_scale, std::move(source_families),
+            std::move(markers), config->marker_scale, mode, std::move(source_families),
             std::move(entries), std::move(missing_layers)};
 }
 
@@ -283,25 +291,82 @@ std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_create(
         LinuxWindow& window,const PreparedNeighborhoodMap& map,
         const std::string& localized_title,const std::string& localized_cancel,
         std::uint8_t language) {
+    return show_neighborhood_picker_with_actions(window, map, localized_title,
+        localized_cancel, language, true);
+}
+
+unsigned neighborhood_mode_button_at(std::int32_t x, std::int32_t y) noexcept {
+    if (y < kModeTabTop || y >= kModeTabTop + kModeTabHeight || x < kModeTabLeft)
+        return 0;
+    const auto stride = kModeTabWidth + kModeTabGap;
+    const auto index = (x - kModeTabLeft) / stride;
+    if (index < 0 || index >= static_cast<std::int32_t>(kPickerModes.size())) return 0;
+    const auto offset = (x - kModeTabLeft) % stride;
+    if (offset >= kModeTabWidth) return 0;
+    return kPickerModes[static_cast<std::size_t>(index)];
+}
+
+std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_actions(
+        LinuxWindow& window,const PreparedNeighborhoodMap& map,
+        const std::string& localized_title,const std::string& localized_cancel,
+        std::uint8_t language, bool allow_create_family) {
     if(window.width()!=800||window.height()!=600)
         throw odh::FormatError("neighborhood picker requires an 800x600 window");
-    window.set_title("OpenDollhouse | "+localized_title+" | C: Create family | Esc: "+localized_cancel);
+    if (!odh::neighborhood_mode_supported(map.mode))
+        throw odh::FormatError("neighborhood picker received an unsupported mode");
+    const auto mode_name = [&](unsigned mode) {
+        const auto found = std::find(kPickerModes.begin(), kPickerModes.end(), mode);
+        return found == kPickerModes.end() ? std::string("Unknown") :
+            std::string(kPickerModeNames[static_cast<std::size_t>(found - kPickerModes.begin())]);
+    };
+    window.set_title("OpenDollhouse | "+localized_title+" | "+mode_name(map.mode)+
+        (allow_create_family ? " | C: Create family" : "")+" | Esc: "+localized_cancel);
     auto frame=compose_neighborhood_picker_frame(map,localized_title,localized_cancel,language);
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    for (std::size_t i = 0; i < kPickerModes.size(); ++i) {
+        const auto x = kModeTabLeft + static_cast<std::int32_t>(i) *
+            (kModeTabWidth + kModeTabGap);
+        const auto mode = kPickerModes[i];
+        const std::array<std::uint8_t, 4> color = mode == map.mode ?
+            std::array<std::uint8_t, 4>{47, 93, 138, 255} :
+            std::array<std::uint8_t, 4>{22, 25, 32, 255};
+        for (std::int32_t y = kModeTabTop; y < kModeTabTop + kModeTabHeight; ++y)
+            for (std::int32_t dx = 0; dx < kModeTabWidth; ++dx)
+                frame.pixels[static_cast<std::size_t>(y) * frame.width +
+                    static_cast<std::size_t>(x + dx)] = color;
+        TextOverlayStyle mode_style;
+        mode_style.x = x + 2; mode_style.y = kModeTabTop + 5;
+        mode_style.width = kModeTabWidth - 4; mode_style.height = 30;
+        mode_style.font_size_px = 13; mode_style.padding = 3;
+        mode_style.foreground = {245, 245, 245, 255};
+        mode_style.background = {0, 0, 0, 0};
+        draw_text_overlay(frame, std::to_string(mode) + " " + kPickerModeNames[i],
+            language, mode_style);
+    }
     TextOverlayStyle style;style.x=20;style.y=558;style.width=760;style.height=28;
     style.font_size_px=15;style.padding=5;style.foreground={245,245,245,255};
     style.background={22,25,32,230};
-    draw_text_overlay(frame,"C: Create a family",language,style);
+    draw_text_overlay(frame, allow_create_family ?
+        "Click a map tab to switch areas | C: Create a family" :
+        "Click a map tab to switch areas", language, style);
 #endif
     window.present(frame);
     for(;;) {
-        const auto input=window.poll(true);
+        const auto input=window.poll(allow_create_family);
         if(input.quit)return std::nullopt;
-        if(input.create_family)return NeighborhoodPickerResult{NeighborhoodPickerAction::create_family,0};
+        if(allow_create_family && input.create_family)
+            return NeighborhoodPickerResult{NeighborhoodPickerAction::create_family,0,0};
         if(input.primary_click) {
+            const auto selected_mode = neighborhood_mode_button_at(
+                (*input.primary_click)[0], (*input.primary_click)[1]);
+            if (selected_mode) {
+                if (selected_mode != map.mode)
+                    return NeighborhoodPickerResult{NeighborhoodPickerAction::switch_mode,0,selected_mode};
+                continue;
+            }
             const auto selected=odh::pick_neighborhood_lot(map.markers,map.marker_scale,
                 (*input.primary_click)[0],(*input.primary_click)[1]);
-            if(selected)return NeighborhoodPickerResult{NeighborhoodPickerAction::lot,*selected};
+            if(selected)return NeighborhoodPickerResult{NeighborhoodPickerAction::lot,*selected,0};
         }
         if(input.redraw)window.present(frame);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));

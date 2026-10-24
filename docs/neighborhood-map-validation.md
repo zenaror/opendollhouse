@@ -66,8 +66,8 @@ ou display; modos fora de 1..7 falham. Argumentos ausentes/duplicados falham.
 Um clique válido fecha a janela e produz JSON `evidence=map_selection_only`,
 `status=selected`, `selected_house=N`; Esc ou fechar a janela produz
 `status=cancelled`, `selected_house=null`. A seleção não inicia uma sessão de
-lote. Ainda não há números/texto de lotes, hover, navegação por teclado, escolha
-de modo na janela, idioma persistido, logs integrados ou gestão de famílias.
+lote. Ainda não há números/texto de lotes, hover, navegação por teclado entre
+mapas, idioma persistido, logs integrados ou gestão completa de famílias.
 
 ## Validação
 
@@ -88,6 +88,31 @@ de modo na janela, idioma persistido, logs integrados ou gestão de famílias.
 - CTest Debug completo: 224 testes configurados, 221 aprovados e três testes
   de janela pulados por falta de acesso ao display (`linux_window_backend`,
   `linux_neighborhood_screen_actions`, `linux_move_out_integration`).
+
+### Troca entre mapas na janela — 2026-10-24
+
+- A tela da vizinhança agora mostra abas clicáveis para os modos 1, 2, 3, 4, 5 e
+  7, seguindo a lista de mapas TS1 que o Simitone oferece. O modo atual fica
+  destacado. A seleção recompõe o mapa a partir do `LotLocations.iff` e do
+  `UIGraphics.far` externos; não depende de reiniciar com outro `--mode`.
+- Com a instalação original externa, uma sessão X11 isolada começou no modo 1,
+  clicou em sequência nos modos 2, 3, 4, 5, 7 e retornou ao modo 1. Cada troca
+  foi confirmada pelo título da mesma janela: Downtown, Vacation Island, Old
+  Town, Studio Town, Magic Town e Neighborhood. Nenhum lote foi aberto e os
+  dados comerciais permaneceram somente leitura.
+- `linux_neighborhood_screen_actions` agora cobre o hit-test das abas e uma
+  troca de mapa com clique X11 sintético. Os gates `neighborhood_picker`,
+  `neighborhood_resources`, `linux_neighborhood_screen_actions`,
+  `linux_move_out_integration`, `linux_game_entry_cli`, `play_linux_cli`,
+  `neighborhood_window_cli`, `neighborhood_cli` e `person_cli` passaram 9/9
+  sob Xvfb.
+- Capturas 800×600 estão em `reports/linux-neighborhood-mode-switch-41938bd/`.
+  Elas mostram o mapa original e as abas, mas também deixam claro que este
+  acabamento ainda é provisório e não corresponde visualmente ao Simitone.
+  Os nomes das abas ainda não seguem o idioma escolhido.
+- A troca muda qual mapa e quais casas são apresentados; não executa viagem,
+  estadia, atividade de expansão ou retorno residencial. Isso continua fora da
+  evidência deste milestone e dos gates de paridade funcional.
 
 ### Reteste depois da instalação do Pango — 2026-10-23
 

@@ -7,6 +7,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A tela de vizinhança agora permite alternar entre os mapas disponíveis do
+  jogo. Em uma validação Linux, todos os seis mapas apareceram na mesma janela;
+  escolher um mapa ainda não inicia a viagem nem prova os lotes e atividades de
+  cada expansão. Consulte [`neighborhood-map-validation.md`](docs/neighborhood-map-validation.md).
+
 - O renderer do host interativo agora lê appearances CMX e meshes SKN com suas
   texturas BMP soltas em `GameData/Skins`. Um SKN comercial do jogo foi
   decodificado, ligado ao rig adulto e rasterizado pela cena CPU. O teste usou

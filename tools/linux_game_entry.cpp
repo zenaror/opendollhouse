@@ -772,22 +772,26 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         if (map && !options.house) {
           for (;;) {
-            std::optional<odh_host::NeighborhoodPickerResult> selected;
 #ifdef ODH_HAVE_LINUX_CAS_SCREEN
-            selected = odh_host::show_neighborhood_picker_with_create(*window, *map,
-                neighborhood_title, neighborhood_cancel,
-                static_cast<std::uint8_t>(options.language));
+            constexpr bool allow_create_family = true;
 #else
-            const auto lot = odh_host::show_neighborhood_picker(*window, *map,
-                neighborhood_title, neighborhood_cancel,
-                static_cast<std::uint8_t>(options.language));
-            if (lot) selected = odh_host::NeighborhoodPickerResult{
-                odh_host::NeighborhoodPickerAction::lot, *lot};
+            constexpr bool allow_create_family = false;
 #endif
+            const auto selected = odh_host::show_neighborhood_picker_with_actions(*window, *map,
+                neighborhood_title, neighborhood_cancel,
+                static_cast<std::uint8_t>(options.language), allow_create_family);
             if (!selected) {
                 std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\",\"cancellation_reason\":\""
                           << odh_host::window_quit_reason_name(window->quit_reason()) << "\"}\n";
                 return 0;
+            }
+            if (selected->action == odh_host::NeighborhoodPickerAction::switch_mode) {
+                if (!odh::neighborhood_mode_supported(selected->mode))
+                    throw odh::FormatError("neighborhood map switch requested an unsupported mode");
+                options.mode = selected->mode;
+                map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                    family_overlay ? &*family_overlay : nullptr);
+                continue;
             }
 #ifdef ODH_HAVE_LINUX_CAS_SCREEN
             if (selected->action == odh_host::NeighborhoodPickerAction::create_family) {

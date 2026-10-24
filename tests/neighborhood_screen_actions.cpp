@@ -7,6 +7,7 @@
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -24,6 +25,22 @@ void key(Display* display, unsigned long window, KeySym symbol, int type) {
     const long mask = type == KeyPress ? KeyPressMask : KeyReleaseMask;
     if (!event.xkey.keycode || !XSendEvent(display, window, False, mask, &event))
         throw std::runtime_error("could not send synthetic key to neighborhood window");
+    XSync(display, False);
+}
+
+void click(Display* display, unsigned long window, int x, int y, int type) {
+    XEvent event{};
+    event.xbutton.type = type;
+    event.xbutton.display = display;
+    event.xbutton.window = window;
+    event.xbutton.root = DefaultRootWindow(display);
+    event.xbutton.same_screen = True;
+    event.xbutton.button = Button1;
+    event.xbutton.x = x;
+    event.xbutton.y = y;
+    const long mask = type == ButtonPress ? ButtonPressMask : ButtonReleaseMask;
+    if (!XSendEvent(display, window, False, mask, &event))
+        throw std::runtime_error("could not send synthetic mouse click to neighborhood window");
     XSync(display, False);
 }
 
@@ -57,6 +74,32 @@ void run_with_keys_after_showing(unsigned long window, std::vector<KeySym> symbo
     if (sender_error) std::rethrow_exception(sender_error);
 }
 
+template <typename Action>
+void run_with_click_after_showing(unsigned long window, int x, int y, Action&& action) {
+    std::exception_ptr sender_error;
+    std::thread sender([window, x, y, &sender_error] {
+        try {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::unique_ptr<Display, decltype(&XCloseDisplay)> display(
+                XOpenDisplay(nullptr), &XCloseDisplay);
+            if (!display) throw std::runtime_error("cannot open synthetic X11 mouse sender");
+            click(display.get(), window, x, y, ButtonPress);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            click(display.get(), window, x, y, ButtonRelease);
+        } catch (...) {
+            sender_error = std::current_exception();
+        }
+    });
+    try {
+        action();
+    } catch (...) {
+        sender.join();
+        throw;
+    }
+    sender.join();
+    if (sender_error) std::rethrow_exception(sender_error);
+}
+
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -75,6 +118,32 @@ int main() {
         }
         XCloseDisplay(availability);
         odh_host::LinuxWindow window(800, 600, "OpenDollhouse neighborhood action test");
+        require(odh_host::neighborhood_mode_button_at(24, 520) == 1,
+                "first neighborhood tab must select map mode 1");
+        require(odh_host::neighborhood_mode_button_at(16 + 3 * 128 + 8, 520) == 4,
+                "fourth neighborhood tab must select map mode 4");
+        require(odh_host::neighborhood_mode_button_at(16 + 126, 520) == 0,
+                "gap between neighborhood tabs must not select a map");
+        require(odh_host::neighborhood_mode_button_at(24, 507) == 0,
+                "click above neighborhood tabs must not select a map");
+
+        odh_host::PreparedNeighborhoodMap map;
+        map.frame.width = 800;
+        map.frame.height = 600;
+        map.frame.pixels.assign(800 * 600, {32, 36, 44, 255});
+        map.frame.depth.assign(800 * 600, std::numeric_limits<float>::infinity());
+        map.mode = 1;
+        odh_host::NeighborhoodPickerResult picker_result{};
+        run_with_click_after_showing(window.native_id(), 16 + 3 * 128 + 8, 520, [&] {
+            const auto selected = odh_host::show_neighborhood_picker_with_actions(
+                window, map, "Neighborhood", "Cancel", 1, false);
+            require(selected.has_value(), "map mode click must return a selection");
+            picker_result = *selected;
+        });
+        require(picker_result.action == odh_host::NeighborhoodPickerAction::switch_mode &&
+                picker_result.mode == 4,
+                "clicking the Old Town map tab must request mode 4");
+
         odh::Family family;
         family.family_number = 42;
         family.house_number = 5;
