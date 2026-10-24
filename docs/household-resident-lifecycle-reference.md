@@ -80,3 +80,32 @@ de RoomInfo e a auditoria de sobreposição disponíveis ainda deixam casos
 `unsupported`, especialmente BHAVs de entry 5 e efeitos de entry 9. A chegada
 deve continuar bloqueada quando qualquer regra necessária for desconhecida; a
 lista geométrica não deve ser tratada como um resolvedor de chegada.
+
+## ODH: planejamento tipado de chegada, sem entrada de gameplay
+
+`preflight_staged_household_arrival` (`household_arrival.hpp/.cpp`) consulta um
+World candidato com avatar ainda sem posição. A consulta procura exatamente uma
+caixa postal posicionada e não anexada, pelos GUIDs acima; múltiplas caixas são
+recusadas conservadoramente. Ela percorre a ordem de `household_spawn_candidates`
+e exige os quatro gates de `AvatarCandidatePreflight` mais um gate separado de
+semântica `PositionChange`/entry 9. Todos começam `unsupported`. Um bloqueio
+conhecido permite tentar o próximo candidato; um desconhecido sem bloqueio
+conhecido interrompe a busca, porque ignorá-lo não provaria a primeira chegada
+válida. O avaliador fornecido pelo host deve ser somente leitura, inclusive para
+RNG e controllers.
+
+Essa infraestrutura não fornece um avaliador comercial, não executa EP9, não
+aplica posição, não agenda Main e não publica o candidato. `clear` registra
+apenas as evidências fornecidas pelo avaliador. O runtime normal continua
+recusando moradores ausentes; save/resume não foi habilitado. Integrar com
+segurança ainda exige antecipar a preparação de arquitetura hoje construída
+após os controllers, ligar o startup ao World privado e demonstrar os efeitos
+de chegada/EP9 no perfil aceito. O baseline de sessão também precisa ser
+reconstruído deterministicamente antes de salvar moradores novos.
+
+`household_arrival_preflight` cobre 243 combinações sintéticas dos cinco gates,
+ordem de tentativas, caixas postais ausentes/ambíguas e os dois GUIDs, rejeição
+de alvo já posicionado, propagação de erro e preservação do World original com
+um morador primário salvo e um adicional staged. Isso complementa
+`household_startup`; não executa os BHAVs ou recursos comerciais e não prova
+chegada, permissões, persistência ou partida jogável.
