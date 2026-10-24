@@ -46,11 +46,13 @@ void click(Display* display, unsigned long window, int x, int y, int type) {
 
 template <typename Action>
 void run_with_keys_after_showing(unsigned long window, std::vector<KeySym> symbols,
-                                 Action&& action) {
+                                 Action&& action,
+                                 std::chrono::milliseconds initial_delay =
+                                     std::chrono::milliseconds(100)) {
     std::exception_ptr sender_error;
-    std::thread sender([window, symbols = std::move(symbols), &sender_error] {
+    std::thread sender([window, symbols = std::move(symbols), &sender_error, initial_delay] {
         try {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(initial_delay);
             std::unique_ptr<Display, decltype(&XCloseDisplay)> display(
                 XOpenDisplay(nullptr), &XCloseDisplay);
             if (!display) throw std::runtime_error("cannot open synthetic X11 sender");
@@ -75,11 +77,13 @@ void run_with_keys_after_showing(unsigned long window, std::vector<KeySym> symbo
 }
 
 template <typename Action>
-void run_with_click_after_showing(unsigned long window, int x, int y, Action&& action) {
+void run_with_click_after_showing(unsigned long window, int x, int y, Action&& action,
+                                  std::chrono::milliseconds initial_delay =
+                                      std::chrono::milliseconds(100)) {
     std::exception_ptr sender_error;
-    std::thread sender([window, x, y, &sender_error] {
+    std::thread sender([window, x, y, &sender_error, initial_delay] {
         try {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(initial_delay);
             std::unique_ptr<Display, decltype(&XCloseDisplay)> display(
                 XOpenDisplay(nullptr), &XCloseDisplay);
             if (!display) throw std::runtime_error("cannot open synthetic X11 mouse sender");
@@ -105,8 +109,11 @@ void require(bool condition, const char* message) {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        std::filesystem::path ui_graphics;
+        if (argc == 3 && std::string(argv[1]) == "--ui-graphics") ui_graphics = argv[2];
+        else if (argc != 1) throw std::runtime_error("usage: neighborhood screen actions [--ui-graphics FAR]");
         if (!std::getenv("DISPLAY")) {
             std::cout << "X11 display unavailable: skipped\n";
             return 77;
@@ -221,28 +228,63 @@ int main() {
                 "E must not enable an unverified move-out");
 
         std::optional<odh_host::MoveInFamilySelection> family_selection;
+        odh_host::LinuxWindow family_picker_window(800, 600,
+            "OpenDollhouse family picker action test");
         odh::Family poor_family;
         poor_family.family_number = 43;
         poor_family.house_number = 0;
         poor_family.budget = 100;
         poor_family.member_guids = {0x22345678};
         const std::vector<odh::FamilyEntry> poor_families{{18, poor_family}};
-        run_with_keys_after_showing(window.native_id(), {XK_Escape}, [&] {
-            family_selection = odh_host::show_move_in_family_picker(window, poor_families,
+        run_with_keys_after_showing(family_picker_window.native_id(), {XK_Escape}, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window, poor_families,
                 5, 1000, 14, "Selecionar Esta Família", "SELECIONAR FAMÍLIA",
-                "Desculpe!", "Muito cara. Você não consegue pagar.", "Cancelar");
-        });
+                "Desculpe!", "Muito cara. Você não consegue pagar.", "Cancelar", ui_graphics);
+        }, std::chrono::milliseconds(1000));
         require(!family_selection,
                 "Escape must close the localized no-affordable-family screen");
+        odh::Family affordable_family;
+        affordable_family.family_number = 44;
+        affordable_family.house_number = 0;
+        affordable_family.budget = 20000;
+        affordable_family.value_in_arch = 3000;
+        affordable_family.family_friends = 7;
+        affordable_family.member_guids = {0x32345678, 0x42345678};
+        const odh::FamilyEntry affordable_entry{19, affordable_family, "Família Teste"};
+        const std::vector<odh::FamilyEntry> affordable_families{affordable_entry};
+        run_with_click_after_showing(family_picker_window.native_id(), 550, 560, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window,
+                affordable_families, 5, 1000, 14, "Selecionar Esta Família",
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+        }, std::chrono::milliseconds(300));
+        require(family_selection.has_value(),
+                "original-style family action button must return a selection");
+        require(family_selection->family_chunk_id == affordable_entry.chunk_id &&
+                family_selection->family_identity == odh::family_overlay_identity(affordable_entry),
+                "original-style family action button must select the affordable family identity");
+        run_with_click_after_showing(family_picker_window.native_id(), 365, 560, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window,
+                affordable_families, 5, 1000, 14, "Selecionar Esta Família",
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+        }, std::chrono::milliseconds(300));
+        require(!family_selection, "family picker cancel button must return without selection");
+        run_with_click_after_showing(family_picker_window.native_id(), 250, 130, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window,
+                affordable_families, 5, 1000, 14, "Selecionar Esta Família",
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+        }, std::chrono::milliseconds(300));
+        require(family_selection && family_selection->family_chunk_id == affordable_entry.chunk_id,
+                "clicking an original-style family row must select that family");
         const std::vector<odh::FamilyEntry> no_families;
-        run_with_keys_after_showing(window.native_id(), {XK_Escape}, [&] {
-            family_selection = odh_host::show_move_in_family_picker(window, no_families,
-                5, 1000, 14);
-        });
+        run_with_keys_after_showing(family_picker_window.native_id(), {XK_Escape}, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window, no_families,
+                5, 1000, 14, "Move In Family", "SELECT A FAMILY", "Sorry",
+                "You can't afford this house.", "Cancel", ui_graphics);
+        }, std::chrono::milliseconds(1000));
         require(!family_selection,
                 "Escape must close the no-family-available screen");
 
-        std::cout << "Neighborhood move-out and confirmation keyboard paths passed\n";
+        std::cout << "Neighborhood action and family-picker input paths passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

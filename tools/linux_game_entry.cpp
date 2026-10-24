@@ -795,6 +795,8 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string no_family_title = "Sorry";
         std::string no_family_message = "You can't afford it.";
         std::string family_picker_cancel = "Cancel";
+        std::string family_picker_net_worth = "Net Worth";
+        std::string family_picker_friends = "Family Friends";
         std::string neighborhood_title = "Neighborhood";
         std::string neighborhood_cancel = "Cancel";
         if (!options.plan_only && !options.headless_ticks) {
@@ -833,6 +835,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                 static_cast<std::uint8_t>(options.language), "You can't afford it.");
             family_picker_cancel = ui_strings.get(128, 5,
                 static_cast<std::uint8_t>(options.language), "Cancel");
+            family_picker_net_worth = ui_strings.get(128, 10,
+                static_cast<std::uint8_t>(options.language), "Net Worth");
+            family_picker_friends = ui_strings.get(128, 11,
+                static_cast<std::uint8_t>(options.language), "Family Friends");
             neighborhood_title = ui_strings.get(145, 1,
                 static_cast<std::uint8_t>(options.language), "Neighborhood");
             neighborhood_cancel = ui_strings.get(128, 5,
@@ -1049,10 +1055,16 @@ int odh_linux_game_entry(int argc, char** argv) {
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
                     map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
                     static_cast<std::uint8_t>(options.language), family_picker_action,
-                    family_picker_title, no_family_title, no_family_message, family_picker_cancel);
+                    family_picker_title, no_family_title, no_family_message, family_picker_cancel,
+                    graphics, family_picker_net_worth, family_picker_friends);
                 if (!family_choice) {
-                    std::cout << "{\"status\":\"cancelled\",\"stage\":\"family\"}\n";
-                    return 0;
+                    const auto reason = window->quit_reason();
+                    if (reason == odh_host::WindowQuitReason::window_manager_close ||
+                        reason == odh_host::WindowQuitReason::window_destroyed) {
+                        std::cout << "{\"status\":\"cancelled\",\"stage\":\"family\",\"cancellation_reason\":\"window_close\"}\n";
+                        return 0;
+                    }
+                    continue;
                 }
                 const auto chosen_family = std::find_if(map->effective_families.begin(),
                     map->effective_families.end(), [&](const auto& entry) {

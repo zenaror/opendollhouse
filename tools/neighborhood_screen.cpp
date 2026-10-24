@@ -553,7 +553,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         const std::string& localized_action, const std::string& localized_title,
         const std::string& localized_no_family_title,
         const std::string& localized_no_family_message,
-        const std::string& localized_cancel) {
+        const std::string& localized_cancel,
+        const std::filesystem::path& ui_graphics,
+        const std::string& localized_net_worth,
+        const std::string& localized_family_friends) {
     if (!house_number || house_number > 98 || purchase_price < 0 || language < 1 || language > 20)
         throw odh::FormatError("family picker received an invalid move-in request");
     std::vector<const odh::FamilyEntry*> choices;
@@ -569,56 +572,101 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             entry.family.budget >= purchase_price)
             choices.push_back(&entry);
     }
+    std::optional<odh::BitmapImage> picker_background;
+    std::optional<odh::BitmapImage> family_row_background;
+    if (!ui_graphics.empty()) {
+        try {
+            with_far_entry(ui_graphics.string(), R"(Nbhd\PickBkg.bmp)",
+                [&](const auto& view) { picker_background = odh::read_bmp(view); });
+            if (!picker_background || picker_background->width != 800 ||
+                picker_background->height != 600 ||
+                picker_background->pixels.size() != 800U * 600U)
+                throw odh::FormatError("original family-picker background has an unsupported size");
+        } catch (const FarEntryNotFound&) {
+            std::clog << "OpenDollhouse: original family-picker background is missing; using plain fallback\n";
+        }
+        try {
+            with_far_entry(ui_graphics.string(), R"(Nbhd\FamilyPickItemBkg.bmp)",
+                [&](const auto& view) { family_row_background = odh::read_bmp(view); });
+            if (!family_row_background || family_row_background->width != 690 ||
+                family_row_background->height != 204 ||
+                family_row_background->pixels.size() != 690U * 204U)
+                throw odh::FormatError("original family-picker row background has an unsupported size");
+        } catch (const FarEntryNotFound&) {
+            std::clog << "OpenDollhouse: original family-picker row background is missing; using plain rows\n";
+        }
+    }
     if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
     std::size_t selected = 0;
-    constexpr std::size_t row_height = 36, row_start = 160;
-    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 224) / row_height);
+    constexpr std::size_t row_height = 68, row_start = 100;
+    const std::size_t page_size = std::max<std::size_t>(1, (window.height() - 232) / row_height);
     const auto render = [&]() {
         odh::RasterFrame frame{};
         frame.width = window.width(); frame.height = window.height();
-        frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
-                            std::array<std::uint8_t,4>{35, 39, 48, 255});
+        if (picker_background) frame.pixels = picker_background->pixels;
+        else frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                                 std::array<std::uint8_t,4>{35, 39, 48, 255});
         frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
         for (std::size_t row = 0; row < page_size; ++row) {
             const auto index = (selected / page_size) * page_size + row;
             if (index >= choices.size()) break;
-            const auto color = index == selected ? std::array<std::uint8_t,4>{47,93,138,255} :
-                std::array<std::uint8_t,4>{52,57,68,255};
             const auto y0 = row_start + row * row_height;
-            for (std::size_t y = y0; y < y0 + 32; ++y)
-                for (std::size_t x = 24; x + 24 < frame.width; ++x)
-                    frame.pixels[y * frame.width + x] = color;
+            if (family_row_background) {
+                const std::size_t state_y = index == selected ? 136 : 0;
+                for (std::size_t y = 0; y < row_height; ++y)
+                    for (std::size_t x = 0; x < family_row_background->width; ++x)
+                        frame.pixels[(y0 + y) * frame.width + 30 + x] =
+                            family_row_background->pixels[(state_y + y) *
+                                family_row_background->width + x];
+            } else {
+                const auto color = index == selected ? std::array<std::uint8_t,4>{26,47,91,255} :
+                    std::array<std::uint8_t,4>{7,14,49,255};
+                for (std::size_t y = y0 + 8; y < y0 + row_height - 8; ++y)
+                    for (std::size_t x = 32; x < frame.width - 32; ++x)
+                        frame.pixels[y * frame.width + x] = color;
+            }
         }
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
         TextOverlayStyle style;
         style.x = 24; style.width = static_cast<std::int32_t>(frame.width) - 48;
-        style.height = 32; style.font_size_px = 17; style.padding = 7;
-        style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
-        style.y = 24;
+        style.height = 30; style.font_size_px = 16; style.padding = 2;
+        style.foreground = {245,245,245,255}; style.background = {0,0,0,0};
+        style.x = 30; style.width = 690; style.y = 20;
         draw_text_overlay(frame, choices.empty() && has_unhoused_family ?
                           localized_no_family_title : localized_title, language, style);
-        style.y = 56;
-        draw_text_overlay(frame, choices.empty() ?
-            (has_unhoused_family ? localized_no_family_message :
-                "No unhoused family with enough money is available") : localized_action,
-            language, style);
-        style.y = 88;
-        draw_text_overlay(frame, choices.empty() ? "Esc: " + localized_cancel :
-            "Enter or click to continue, Esc to cancel", language, style);
-        style.y = 120;
-        draw_text_overlay(frame, "House " + std::to_string(house_number) + " costs " +
-            std::to_string(purchase_price) + " simoleons", language, style);
+        if (choices.empty()) {
+            style.y = 56;
+            draw_text_overlay(frame, localized_no_family_message, language, style);
+        } else {
+            style.font_size_px = 12; style.height = 22; style.y = 66;
+            style.x = 554; style.width = 86;
+            draw_text_overlay(frame, localized_net_worth, language, style);
+            // The translated family-friends caption is longer than the icon
+            // column on the original background, so use a smaller font to
+            // keep the whole label visible in every supported language.
+            style.font_size_px = 9; style.x = 620; style.width = 102;
+            draw_text_overlay(frame, localized_family_friends, language, style);
+        }
+        style.font_size_px = 16; style.height = 30;
         for (std::size_t row = 0; row < page_size; ++row) {
             const auto index = (selected / page_size) * page_size + row;
             if (index >= choices.size()) break;
             const auto& family_entry = *choices[index];
             const auto& family = family_entry.family;
-            const auto label = std::string(index == selected ? "> " : "  ") +
-                family_display_label(family_entry) + " | " +
-                std::to_string(family.member_guids.size()) + " residents | budget " +
-                std::to_string(family.budget);
-            style.y = static_cast<std::int32_t>(row_start + row * row_height);
-            draw_text_overlay(frame, label, language, style);
+            const auto y = static_cast<std::int32_t>(row_start + row * row_height + 18);
+            style.y = y; style.x = 48; style.width = 490;
+            draw_text_overlay(frame, family_display_label(family_entry), language, style);
+            const auto net_worth = static_cast<std::int64_t>(family.value_in_arch) + family.budget;
+            style.x = 554; style.width = 86;
+            draw_text_overlay(frame, "§" + std::to_string(net_worth), language, style);
+            style.x = 644; style.width = 78;
+            draw_text_overlay(frame, std::to_string(family.family_friends), language, style);
+        }
+        style.font_size_px = 12; style.x = 326; style.y = 544; style.width = 86; style.height = 30;
+        draw_text_overlay(frame, localized_cancel, language, style);
+        if (!choices.empty()) {
+            style.font_size_px = 11; style.x = 510; style.width = 156;
+            draw_text_overlay(frame, localized_action, language, style);
         }
 #else
         (void)language;
@@ -639,7 +687,11 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     render();
     for (;;) {
         const auto input = window.poll();
-        if (input.quit) return std::nullopt;
+        if (input.quit) {
+            if (input.quit_reason == WindowQuitReason::escape_key)
+                window.clear_escape_quit_reason();
+            return std::nullopt;
+        }
         if (choices.empty()) {
             if (input.action || input.primary_click) return std::nullopt;
         } else {
@@ -650,7 +702,16 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             }
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
             if (input.primary_click) {
+                const auto x = (*input.primary_click)[0];
                 const auto y = (*input.primary_click)[1];
+                if (y >= 530 && y < 592 && x >= 318 && x < 414)
+                    return std::nullopt;
+                if (y >= 530 && y < 592 && x >= 506 && x < 670) {
+                    if (choices.empty()) return std::nullopt;
+                    const auto& entry = *choices[selected];
+                    return MoveInFamilySelection{entry.chunk_id,
+                        odh::family_overlay_identity(entry)};
+                }
                 const std::size_t row_end = row_start + page_size * row_height;
                 if (y >= static_cast<std::int32_t>(row_start) && y < static_cast<std::int32_t>(row_end)) {
                     const auto row = static_cast<std::size_t>(y - static_cast<std::int32_t>(row_start)) / row_height;

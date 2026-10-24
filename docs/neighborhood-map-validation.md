@@ -95,6 +95,28 @@ as escolhas já existentes de entrada ou mudança.
   controles provisórios. A descrição pode estar vazia nos dados do lote; os
   fluxos de famílias, viagem e atividades de expansão continuam incompletos.
 
+### Seletor de família para mudar de casa — 2026-10-24
+
+- O seletor usa em tempo de execução o fundo `Nbhd\\PickBkg.bmp` e as três
+  aparências de linha de `Nbhd\\FamilyPickItemBkg.bmp`, ambos lidos de
+  `UIGraphics.far`. Os dados continuam fora do checkout e só são lidos.
+- As linhas mostram o nome localizado em `FAMs`, o valor da família e o número
+  de amizades. Os cabeçalhos vêm de `UIText.iff`. A linha selecionada usa o
+  estado destacado do recurso original; Cancelar, selecionar uma linha ou
+  apertar Enter segue para o mesmo controle de escolha.
+- House 1, idioma 14, foi aberta no Xvfb com a instalação externa. A tela
+  mostrou três famílias (Cortês, Valente e Navarro) no fundo azul original,
+  com os nomes das colunas visíveis em português. Clicar em Cancelar voltou ao
+  mapa; um segundo Escape encerrou com `stage=neighborhood`. As capturas
+  `house-01-family-picker-pt14.png` e
+  `house-01-map-after-family-cancel-pt14.png` foram registradas em
+  `reports/linux-lot-details-panel-20261024/`. O perfil XDG temporário e o
+  display virtual foram encerrados ao fim.
+- Os testes sintéticos verificam Escape, botão de cancelar, botão de escolher e
+  clique numa família. Eles não verificam retratos, edição de nomes nem criação
+  e exclusão completa de famílias. O seletor ainda não tem paridade integral com
+  o original/Simitone.
+
 ## Validação
 
 ### Investigação da tela “Loading” — 2026-10-24

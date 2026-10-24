@@ -14,6 +14,11 @@ validação indicados por versão.
   leitura. O cartão é provisório e ainda não reproduz a aparência nem todas as
   ações do painel do The Sims 1/Simitone. Veja
   [`neighborhood-map-validation.md`](docs/neighborhood-map-validation.md).
+- A seleção de família para mudar de casa agora usa o fundo e as linhas
+  originais `Nbhd\\PickBkg.bmp` e `FamilyPickItemBkg.bmp` da instalação. As
+  linhas mostram nome, valor e amigos com os textos do idioma escolhido; a
+  arte é carregada localmente e não entra no Git. Retratos e outros controles
+  ainda faltam.
 
 - A tela de vizinhança agora permite alternar entre os mapas disponíveis do
   jogo. Em uma validação Linux, todos os seis mapas apareceram na mesma janela;

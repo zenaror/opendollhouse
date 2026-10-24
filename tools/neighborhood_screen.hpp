@@ -102,7 +102,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     const std::string& localized_title = "SELECT A FAMILY",
     const std::string& localized_no_family_title = "Sorry",
     const std::string& localized_no_family_message = "You can't afford it.",
-    const std::string& localized_cancel = "Cancel");
+    const std::string& localized_cancel = "Cancel",
+    const std::filesystem::path& ui_graphics = {},
+    const std::string& localized_net_worth = "Net Worth",
+    const std::string& localized_family_friends = "Family Friends");
 
 // Final confirmation shown before a player-state write; closing cancels it.
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
