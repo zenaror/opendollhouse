@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O adaptador Linux de criação de personagem converte as escolhas de roupa,
+  aparência, pele, idade, gênero e personalidade do CAS TS1 para STR# 200 e os
+  88 valores de vizinho usados pela gravação privada. O teste usa valores
+  aleatórios fixos; isso valida o mapeamento consultado no Simitone, não uma
+  tela CAS já conectada nem fidelidade ao jogo original.
+
 - A avaliação isolada das ações agora reconhece `Test Object Type` (opcode
   32), incluindo correspondência com a identidade de um objeto mestre quando
   ela está explicitamente disponível. Em House07, isso removeu o diagnóstico
