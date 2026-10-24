@@ -114,7 +114,9 @@ still enter their house.
   against generated synthetic neighborhoods: it refused to archive a source
   family, archived a created family after confirmation, reopened the saved
   overlay, and verified the map refresh. No archive write was made to the real
-  installation.
+  installation. The localized captions and click areas for Cancel/Archive/
+  Move In and No/Yes now align with the three button wells in the original
+  `Nbhd\PickBkg.bmp`; both screen tests passed after this adjustment.
 - `linux_family_overlay_store` verifies stale compare-and-write requests leave
   the current save unchanged, and matching snapshots publish successfully.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to

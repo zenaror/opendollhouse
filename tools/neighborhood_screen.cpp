@@ -35,6 +35,13 @@ constexpr std::int32_t kModeTabHeight = 40;
 constexpr std::int32_t kModeTabLeft = 16;
 constexpr std::int32_t kModeTabWidth = 126;
 constexpr std::int32_t kModeTabGap = 2;
+// These hit areas follow the three empty button wells in Nbhd\PickBkg.bmp.
+constexpr std::int32_t kFamilyPickerButtonTop = 530;
+constexpr std::int32_t kFamilyPickerButtonBottom = 592;
+constexpr std::int32_t kFamilyPickerCancelLeft = 320;
+constexpr std::int32_t kFamilyPickerArchiveLeft = 414;
+constexpr std::int32_t kFamilyPickerMoveInLeft = 506;
+constexpr std::int32_t kFamilyPickerButtonRight = 670;
 
 bool neighborhood_mask_color(const std::array<std::uint8_t, 4>& pixel) {
     return (pixel[0] == 0xff && pixel[1] == 0x00 && pixel[2] == 0xff) ||
@@ -673,14 +680,20 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             style.x = 644; style.width = 78;
             draw_text_overlay(frame, std::to_string(family.family_friends), language, style);
         }
-        style.font_size_px = 12; style.x = 218; style.y = 544; style.width = 110; style.height = 30;
+        // Keep the localized captions inside the original background's three
+        // bottom controls instead of drifting over the decorative frame.
+        style.font_size_px = 12; style.x = kFamilyPickerCancelLeft;
+        style.y = 544; style.width = kFamilyPickerArchiveLeft - kFamilyPickerCancelLeft;
+        style.height = 30;
         draw_text_overlay(frame, localized_cancel, language, style);
         if (!choices.empty() && can_archive(*choices[selected])) {
-            style.font_size_px = 11; style.x = 350; style.width = 132;
+            style.font_size_px = 10; style.x = kFamilyPickerArchiveLeft;
+            style.width = kFamilyPickerMoveInLeft - kFamilyPickerArchiveLeft;
             draw_text_overlay(frame, localized_archive, language, style);
         }
         if (!choices.empty() && can_move_in(*choices[selected])) {
-            style.font_size_px = 11; style.x = 510; style.width = 156;
+            style.font_size_px = 11; style.x = kFamilyPickerMoveInLeft;
+            style.width = kFamilyPickerButtonRight - kFamilyPickerMoveInLeft;
             draw_text_overlay(frame, localized_action, language, style);
         }
 #else
@@ -719,15 +732,18 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             if (input.primary_click) {
                 const auto x = (*input.primary_click)[0];
                 const auto y = (*input.primary_click)[1];
-                if (y >= 530 && y < 592 && x >= 210 && x < 332)
+                if (y >= kFamilyPickerButtonTop && y < kFamilyPickerButtonBottom &&
+                    x >= kFamilyPickerCancelLeft && x < kFamilyPickerArchiveLeft)
                     return std::nullopt;
-                if (y >= 530 && y < 592 && x >= 340 && x < 490 &&
+                if (y >= kFamilyPickerButtonTop && y < kFamilyPickerButtonBottom &&
+                    x >= kFamilyPickerArchiveLeft && x < kFamilyPickerMoveInLeft &&
                     !choices.empty() && can_archive(*choices[selected])) {
                     const auto& entry = *choices[selected];
                     return MoveInFamilySelection{entry.chunk_id,
                         odh::family_overlay_identity(entry), MoveInFamilySelection::Action::archive};
                 }
-                if (y >= 530 && y < 592 && x >= 500 && x < 680 &&
+                if (y >= kFamilyPickerButtonTop && y < kFamilyPickerButtonBottom &&
+                    x >= kFamilyPickerMoveInLeft && x < kFamilyPickerButtonRight &&
                     !choices.empty() && can_move_in(*choices[selected])) {
                     const auto& entry = *choices[selected];
                     return MoveInFamilySelection{entry.chunk_id,
@@ -795,10 +811,14 @@ bool show_family_archive_confirmation(LinuxWindow& window, const odh::FamilyEntr
     draw_text_overlay(frame, localized_question, language, style);
     style.y = 310; style.height = 34;
     draw_text_overlay(frame, family_display_label(family), language, style);
-    style.font_size_px = 13; style.height = 34; style.y = 432;
-    style.x = 306; style.width = 120;
+    // The supplied PickBkg background has its controls along the bottom edge.
+    // Use the middle well for No and the right well for Yes.
+    style.font_size_px = 12; style.height = 30; style.y = 544;
+    style.x = kFamilyPickerArchiveLeft;
+    style.width = kFamilyPickerMoveInLeft - kFamilyPickerArchiveLeft;
     draw_text_overlay(frame, localized_no, language, style);
-    style.x = 500; style.width = 150;
+    style.x = kFamilyPickerMoveInLeft;
+    style.width = kFamilyPickerButtonRight - kFamilyPickerMoveInLeft;
     draw_text_overlay(frame, localized_yes, language, style);
 #else
     (void)language;
@@ -819,8 +839,10 @@ bool show_family_archive_confirmation(LinuxWindow& window, const odh::FamilyEntr
         if (input.primary_click) {
             const auto x = (*input.primary_click)[0];
             const auto y = (*input.primary_click)[1];
-            if (y >= 420 && y < 480 && x >= 290 && x < 445) return false;
-            if (y >= 420 && y < 480 && x >= 480 && x < 660) return true;
+            if (y >= kFamilyPickerButtonTop && y < kFamilyPickerButtonBottom &&
+                x >= kFamilyPickerArchiveLeft && x < kFamilyPickerMoveInLeft) return false;
+            if (y >= kFamilyPickerButtonTop && y < kFamilyPickerButtonBottom &&
+                x >= kFamilyPickerMoveInLeft && x < kFamilyPickerButtonRight) return true;
         } else if (input.confirm || input.action) {
             return true;
         }

@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
         require(family_selection->family_chunk_id == affordable_entry.chunk_id &&
                 family_selection->family_identity == odh::family_overlay_identity(affordable_entry),
                 "original-style family action button must select the affordable family identity");
-        run_with_click_after_showing(family_picker_window.native_id(), 265, 560, [&] {
+        run_with_click_after_showing(family_picker_window.native_id(), 360, 560, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window,
                 affordable_families, 5, 1000, 14, "Selecionar Esta Família",
                 "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar", ui_graphics);
@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
         require(family_selection && family_selection->family_chunk_id == affordable_entry.chunk_id &&
                 family_selection->action == odh_host::MoveInFamilySelection::Action::archive,
                 "delete button returns a logical archive action for a player-created family");
-        run_with_click_after_showing(family_picker_window.native_id(), 560, 450, [&] {
+        run_with_click_after_showing(family_picker_window.native_id(), 580, 560, [&] {
             const auto confirmed = odh_host::show_family_archive_confirmation(
                 family_picker_window, affordable_entry, 14, "Excluir Família?",
                 "Tem certeza que deseja excluir esta família?", "Sim", "Não", ui_graphics);
@@ -329,7 +329,7 @@ int main(int argc, char** argv) {
         }, std::chrono::milliseconds(300));
         require(family_selection.has_value(),
                 "archive confirmation yes button accepts the selected family");
-        run_with_click_after_showing(family_picker_window.native_id(), 360, 450, [&] {
+        run_with_click_after_showing(family_picker_window.native_id(), 460, 560, [&] {
             const auto confirmed = odh_host::show_family_archive_confirmation(
                 family_picker_window, affordable_entry, 14, "Excluir Família?",
                 "Tem certeza que deseja excluir esta família?", "Sim", "Não", ui_graphics);
