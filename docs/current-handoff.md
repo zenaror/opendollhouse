@@ -1,25 +1,34 @@
 # Continuidade atual
 
-## Atualização: clique real em Sit na House07 pelo Xvfb (2026-10-24)
+## Atualização: Sit/Stand visíveis e retomada em processo novo (2026-10-24)
 
-A build `build-household-session/odh-person` abriu a House07 em uma janela X11
-de 800×600, com os dois moradores e o HUD. Um clique real no pixel `(338,291)`
-selecionou a cadeira salva 128 (GUID `0x26BFBB29`, TTAB 128); a lista mostrou
-`Sit`. Clicar na linha enfileirou a ação BHAV 4097. Ao fechar o teste no tick
-120, o morador estava anexado à cadeira e reproduzia `a2o-sit-behind`, mas a
-fila ainda estava ativa e o retorno da ação era nulo. Isso confirma seleção e
-início pelo X11, não a conclusão visual da ação. Capturas comerciais ficaram
-fora do Git em `/tmp/odh-x11-retry/`.
+`build/linux-checkpoint/odh-person` foi recompilada em Release; a build Debug
+`build-household-session` foi preservada. No launcher integrado, a House07
+abriu numa janela X11 de 800×600 com a casa, os dois moradores e o HUD. O
+relógio de inicialização não foi usado como sinal de prontidão: a interação só
+começou quando a imagem da casa estava visível.
 
-Separadamente, o harness de integração com a instalação base completou Sit
-4097 e Stand 4102: ambas retornaram `true`, a fila ficou vazia e o host não
-falhou. O processo alcançou o limite explícito de 512 ticks (exit 3) depois
-que as ações terminaram. É evidência headless, sem conclusão visual ou
-paridade com o original. O servidor Xvfb e os processos do jogo foram
-encerrados após a captura.
+O clique `(338,291)` selecionou a cadeira salva 128 (GUID `0x26BFBB29`, TTAB
+128), e a lista mostrou `Sit`. O clique da linha enfileirou BHAV 4097 e a
+janela confirmou `interaction returned_true`. Um evento `U` enviado diretamente
+à janela enfileirou Stand 4102; ambos retornaram `true`. No tick 556, Main
+estava `waiting`, `host_failed=false`, a fila vazia, postura 0 e sem attachment.
+Capturas mostram o estado sentado e depois em pé.
 
-Pendente: deixar Sit concluir e verificar Stand/save/retomada numa sessão
-visível; a janela real ainda não confirmou o retorno da ação.
+A tecla S gravou o save experimental no tick 552, com 118130 bytes, fora da
+instalação do jogo. Um segundo processo carregou esse arquivo, informou
+`session_loaded=true`, retomou do tick 552 e avançou até 590; o Sim permaneceu
+em pé, sem attachment, com fila vazia e `host_failed=false`. SHA-256 do save:
+`8839a693e8890ef1ee6ea6849a4c9dd6676b4258887363c0e627edcb1059e947`.
+Relatórios, save e capturas permanecem fora do Git em `/tmp/odh-x11-release2/`.
+
+Isto confirma um fluxo interativo completo para uma cadeira da House07 e
+retomada em outra execução. O painel ainda é provisório, e a evidência não
+estabelece paridade visual, outros objetos/idiomas ou compatibilidade geral.
+Xvfb e os processos do jogo foram encerrados.
+O alvo Release `odh-person` compilou, e os CTests focados
+`linux_window_backend`, `saved_interaction_discovery` e `person_cli` passaram
+3/3 sob Xvfb.
 
 ## Atualização: carregamento X11 e fingerprint dos recursos (2026-10-23)
 

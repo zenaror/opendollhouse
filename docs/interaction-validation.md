@@ -815,4 +815,32 @@ Capturas mantidas fora do checkout e sem inclusão no Git:
 terminou; o recibo no encerramento confirma que a ação ainda estava em curso.
 Na mesma rodada, o gate headless com entrada de janela completou Sit 4097 e
 Stand 4102, ambos com retorno `true`, fila vazia e sem falha do host. A janela
-X11 real ainda precisa mostrar a ação concluída e validar Stand e save/retomada.
+X11 real ainda precisava confirmar a conclusão; o teste posterior que fechou
+essa lacuna está registrado na seção seguinte.
+
+### Sit/Stand X11 e retomada visual — 2026-10-24
+
+A build Release `build/linux-checkpoint/odh-person` abriu a House07 em Xvfb,
+800×600. Depois de a captura mostrar o lote (não só o cartão “Loading lot...”)
+o clique `(338,291)` selecionou a cadeira 128 e mostrou `Sit`. Clicar na linha
+enfileirou BHAV 4097; a janela mudou o título para
+`interaction returned_true BHAV4097`. O ator estava sentado e o overlay
+`Stand up` apareceu. Enviando a tecla `U` diretamente à janela, Stand BHAV
+4102 foi enfileirado e retornou `true`. O recibo final: tick 556, fila vazia,
+`host_failed=false`, postura 0 e sem attachment.
+
+Depois de Stand, `S` salvou o household no tick 552 em
+`/tmp/odh-x11-release2/data/opendollhouse/saves/mode-1-house-7-family-5.odhs`
+(118130 bytes). Um segundo processo carregou esse arquivo numa janela X11;
+`session_loaded=true`, `resumed_tick=552`, encerrou no tick 590 com postura 0,
+sem attachment, fila vazia e sem falha do host. A captura do lote restaurado é
+`/tmp/odh-x11-release2/reload-visible.png`. O save e os recursos comerciais
+continuam fora do Git.
+
+Capturas complementares fora do checkout: `sit-menu.png`, `seated.png` e
+`after-stand.png` no mesmo diretório temporário. Esta prova cobre somente a
+cadeira 128, House07 e o idioma de código 1. A lista ainda não é o pie menu do
+The Sims nem a interface final do Simitone; outros objetos, vários idiomas e
+paridade visual continuam pendentes. No build Release, os CTests focados
+`linux_window_backend`, `saved_interaction_discovery` e `person_cli` passaram
+3/3 sob Xvfb.
