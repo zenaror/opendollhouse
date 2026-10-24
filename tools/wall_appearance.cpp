@@ -34,6 +34,19 @@
 
 namespace {
 struct SlotResource { std::string archive,entry; std::uint16_t chunk_id,type,index; };
+std::vector<odh::ArchitectureResourceSource> architecture_sources(
+    const std::vector<std::string>& paths) {
+ std::vector<odh::ArchitectureResourceSource> result;
+ result.reserve(paths.size());
+ for(const auto& path:paths){
+  auto extension=std::filesystem::path(path).extension().string();
+  for(auto& c:extension)if(c>='A'&&c<='Z')c=static_cast<char>(c-'A'+'a');
+  if(extension==".far")result.push_back({path,odh::ArchitectureResourceSourceKind::far1_archive});
+  else if(extension==".flr"||extension==".wll")result.push_back({path,odh::ArchitectureResourceSourceKind::loose_file});
+  else throw odh::FormatError("architecture resource requires an explicit .flr, .wll or .far file");
+ }
+ return result;
+}
 std::uint16_t parse_u16(const char* value,const char* label) {
  int parsed=0;const auto* end=value+std::char_traits<char>::length(value);
  const auto result=std::from_chars(value,end,parsed);
@@ -411,7 +424,7 @@ void emit_route_grid_diagnostic(
 }
 
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--load-stage-probe --global-resource ARCHIVE ENTRY [--load-stage-probe-seed UINT64]] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource FLR|WLL|FAR] [--route-edges] [--portal-probe] [--entry-point-probe] [--load-stage-probe --global-resource ARCHIVE ENTRY [--load-stage-probe-seed UINT64]] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
  const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false,entry_point_probe=false,load_stage_probe=false;
  std::optional<std::pair<std::string,std::string>> load_global_resource;
  std::optional<std::uint64_t> load_stage_seed;
@@ -496,8 +509,7 @@ int main(int argc,char** argv){try{
   std::optional<odh::ResolvedArchitectureAliases> aliases;
   odh::GeometricRoomMap rooms;
   if(!architecture_resources.empty()){
-   std::vector<odh::ArchitectureResourceSource> catalog_sources;
-   for(const auto& path:architecture_resources)catalog_sources.push_back({path,odh::ArchitectureResourceSourceKind::loose_file});
+   const auto catalog_sources=architecture_sources(architecture_resources);
    const auto catalog=odh::discover_architecture_resources(catalog_sources);
    const odh::ArchitectureMap empty;
    const auto* floor_map=selected_architecture_map(architecture,"FLRm");
@@ -700,6 +712,26 @@ int main(int argc,char** argv){try{
   try{
    if(!load_global_resource)throw odh::FormatError("--load-stage-probe requires --global-resource ARCHIVE ENTRY");
    auto prepared=prepare_saved_load_entry_points(*world,*index,load_global_resource->first,load_global_resource->second);
+   std::optional<odh::GeometricRoomMap> load_room_map;
+   const char* room_score_map_state=architecture_resources.empty()?"not_configured":"resource_aliases_unresolved";
+   if(!architecture_resources.empty()){
+    const auto catalog=odh::discover_architecture_resources(architecture_sources(architecture_resources));
+    const odh::ArchitectureMap empty;
+    const auto* floor_map=selected_architecture_map(architecture,"FLRm");
+    const auto* wall_map=selected_architecture_map(architecture,"WALm");
+    const auto aliases=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,
+        wall_map?*wall_map:empty,catalog.floors(),catalog.walls());
+    const auto prepared_architecture=odh::prepare_saved_architecture(architecture.architecture,aliases.aliases);
+    if(prepared_architecture.floor_identity_unambiguous()){
+     auto candidate_rooms=odh::generate_prepared_room_map(prepared_architecture);
+     if(candidate_rooms.light_base_rooms_resolved){
+      load_room_map=std::move(candidate_rooms);
+      room_score_map_state=(prepared_architecture.floor_aliases_resolved()&&prepared_architecture.wall_aliases_resolved())
+          ?"resolved":"resolved_using_simitone_lookup_fallbacks";
+     }
+     else room_score_map_state="prepared_room_map_unresolved";
+    }
+   }
    const odh::BconTuning tuning(std::move(prepared.tuning));
    const auto simi=saved_lot_simi(house);
    const odh::Ts1BootstrapGlobals bootstrap;
@@ -730,15 +762,20 @@ int main(int argc,char** argv){try{
    };
    const auto result=odh::stage_saved_load_entry_points(world->world->snapshot(),prepared.entity_order,
        prepared.code_owners,prepared.ghost_images,prepared.temporary_registers,prepared.globals,prepared.owners,
-       1000000,{},std::move(supplemental_memory),load_probe_random_primitive,sound_resolver);
+       1000000,{},std::move(supplemental_memory),load_probe_random_primitive,sound_resolver,
+       load_room_map?&*load_room_map:nullptr);
    std::cout<<",\"state\":"<<json_bytes(result.snapshot?"complete":"stopped")
     <<",\"entities\":"<<prepared.entity_order.size()<<",\"completed_entities\":"<<result.completed_entities.size()
     <<",\"code_owner_banks\":"<<prepared.owners.size()<<",\"instructions\":"<<result.instructions
     <<",\"load_probe_random_seed_initial\":"<<load_probe_seed
     <<",\"load_probe_random_seed_final\":"<<load_probe_random.seed()
     <<",\"load_probe_random_seed_is_saved_state\":false"
+    <<",\"room_score_map\":"<<json_bytes(room_score_map_state)
+    <<",\"room_score_updates\":"<<result.room_scores.size()
+    <<",\"discarded_room_score_refreshes\":"<<result.discarded_room_score_refreshes
     <<",\"deferred_sound_events\":"<<result.deferred_sound_events.size()
     <<",\"unresolved_sound_events\":"<<result.unresolved_sound_events
+    <<",\"cancelled_sound_events\":"<<result.cancelled_sound_events
     <<",\"discarded_sound_events\":"<<result.discarded_sound_events
     <<",\"missing_root_actions\":[";
    for(std::size_t i=0;i<result.missing_root_actions.size();++i){
@@ -748,6 +785,8 @@ int main(int argc,char** argv){try{
    }
    std::cout<<']'
     <<",\"failed_entity\":"<<result.failed_entity<<",\"failed_action\":"<<result.failed_action
+    <<",\"failed_routine\":"<<result.failed_routine<<",\"failed_pc\":"<<result.failed_pc
+    <<",\"failed_opcode\":"<<result.failed_opcode
     <<",\"vm_status\":"<<json_bytes(odh::vm_status_name(result.vm_status))
     <<",\"reason\":"<<json_bytes(result.reason)<<'}';
   }catch(const std::exception& error){

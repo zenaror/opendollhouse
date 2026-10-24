@@ -1,4 +1,5 @@
 #include "odh/staged_load_entry_points.hpp"
+#include "odh/entity_next.hpp"
 #include <algorithm>
 #include <set>
 
@@ -12,16 +13,21 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const RoutineSet& globals, const RoutineOwners& owners,
     std::uint64_t instruction_budget, WorldLimits world_limits,
     VmMemory supplemental_memory, VmPrimitive supplemental_primitive,
-    SoundResolver sound_resolver) {
+    SoundResolver sound_resolver, const GeometricRoomMap* room_map) {
     StagedLoadEntryPointResult result;
     std::vector<SoundRequest> pending_sound_events;
     std::size_t unresolved_sound_events=0;
+    std::size_t cancelled_sound_events=0;
+    std::map<std::uint16_t,std::int16_t> pending_room_scores;
+    std::size_t pending_room_score_refreshes=0;
     auto reject = [&](std::string reason, std::int16_t entity = 0,
                       std::uint16_t action = 0, VmStatus status = VmStatus::ready) {
         result.snapshot.reset();
         result.discarded_sound_events=pending_sound_events.size();
         pending_sound_events.clear();
         result.unresolved_sound_events=unresolved_sound_events;
+        result.discarded_room_score_refreshes=pending_room_score_refreshes;
+        pending_room_scores.clear();
         result.failed_entity = entity;
         result.failed_action = action;
         result.vm_status = status;
@@ -81,12 +87,17 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     // Profile only the Load-time services whose behavior is established by
     // the pinned Simitone restore path. The observed client initializes the
     // registry with InitVMConfig(false), so opcodes 1 and 10 have no handler
-    // and advance through true. Refresh(Caller, graphic) only invalidates a
-    // render cache, which this unpublished World candidate does not own;
-    // other Refresh variants and unknown operations still fail closed.
+    // and advance through true. Generic EntryPoint dispatch supplies a null
+    // StackObject, so NotifyOutOfIdle (49) has no thread to interrupt and
+    // returns true. Refresh(Caller, graphic) only invalidates a
+    // render cache, which this unpublished World candidate does not own.
+    // Area-contribution refresh uses the resolved room map and live RoomImpact
+    // values. Other Refresh variants and unknown operations still fail closed.
     const VmPrimitive load_profile_primitive = [](const VmFrame&, const Instruction& instruction,
         const std::array<std::int16_t,20>&, const VmDispatch&) {
         if(instruction.opcode==1||instruction.opcode==10)
+            return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
+        if(instruction.opcode==49)
             return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
         if(instruction.opcode==7&&instruction.operands[0]==0&&instruction.operands[1]==0&&
            instruction.operands[2]==0&&instruction.operands[3]==0)
@@ -100,12 +111,56 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
                 if(status=="skipped_no_backend")pending_sound_events.push_back(request);
                 else if(status=="missing_resource"||status=="missing_owner")++unresolved_sound_events;
             });
-        return VmPrimitive{[load_profile_primitive,supplemental_primitive,sound_handler](
+        const auto entity_next_handler=entity_next_primitive(world);
+        return VmPrimitive{[load_profile_primitive,supplemental_primitive,sound_handler,
+                            entity_next_handler,room_map,&pending_room_scores,
+                            &pending_room_score_refreshes,&pending_sound_events,
+                            &cancelled_sound_events,&world](
             const VmFrame& frame,const Instruction& instruction,const std::array<std::int16_t,20>& temps,
             const VmDispatch& dispatch) {
             if(instruction.opcode==8&&supplemental_primitive)
                 return supplemental_primitive(frame,instruction,temps,dispatch);
             if(instruction.opcode==23)return sound_handler(frame,instruction,temps,dispatch);
+            if(instruction.opcode==48){
+                const auto source=instruction.operands[0]==1?frame.context.stack_object:frame.context.caller;
+                const auto first=pending_sound_events.size();
+                pending_sound_events.erase(std::remove_if(pending_sound_events.begin(),pending_sound_events.end(),
+                    [source](const SoundRequest& request){return request.source==source;}),pending_sound_events.end());
+                cancelled_sound_events+=first-pending_sound_events.size();
+                return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
+            }
+            if(instruction.opcode==31&&(instruction.operands[4]&127U)==4U)
+                return entity_next_handler(frame,instruction,temps,dispatch);
+            if(instruction.opcode==7&&instruction.operands[2]==2&&instruction.operands[3]==0){
+                if(instruction.operands[0]>1||instruction.operands[1]!=0)
+                    return PrimitiveOutcome{PrimitiveDisposition::unsupported,"Refresh area target is invalid"};
+                if(!room_map)
+                    return PrimitiveOutcome{PrimitiveDisposition::unsupported,"Refresh area requires a resolved room map"};
+                const auto target=instruction.operands[0]==0?frame.context.caller:frame.context.stack_object;
+                const auto* target_entity=world.find(target);
+                if(!target_entity)
+                    return PrimitiveOutcome{PrimitiveDisposition::unsupported,"Refresh area target entity is absent"};
+                if(!target_entity->position)
+                    return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
+                const auto snapshot=world.snapshot();
+                std::vector<RoomScoreContribution> contributions;
+                contributions.reserve(snapshot.entities.size());
+                for(const auto& entity:snapshot.entities){
+                    if(!entity.position)continue;
+                    const auto impact=entity.object_words.find(7);
+                    contributions.push_back({entity.position->x,entity.position->y,entity.position->level,
+                        impact==entity.object_words.end()?std::int16_t{0}:impact->second});
+                }
+                const auto update=calculate_room_score(*room_map,contributions,
+                    target_entity->position->x,target_entity->position->y,target_entity->position->level);
+                if(!update)
+                    return PrimitiveOutcome{PrimitiveDisposition::unsupported,"Refresh area room score inputs are unresolved"};
+                if(update->updated){
+                    pending_room_scores[update->light_base_room]=update->score;
+                    ++pending_room_score_refreshes;
+                }
+                return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
+            }
             return load_profile_primitive(frame,instruction,temps,dispatch);
         }};
     };
@@ -143,6 +198,8 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
         const auto remaining = instruction_budget - result.instructions;
         VmStatus status;
         std::string diagnostic;
+        std::optional<VmTrace> last_instruction;
+        const auto trace=[&last_instruction](const VmTrace& event){last_instruction=event;};
         if (ghost_images.at(id)) {
             World sandbox(world_limits, source.attribute_policy);
             if (!sandbox.restore_snapshot(candidate.snapshot()))
@@ -152,26 +209,34 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             const VmContext context{id, id, 0, owner->second};
             const auto started = sandbox_vm.start(routine_key(action), context, {0, 0, 0, 0});
             if (started == VmStatus::running) sandbox_vm.temps() = temporary_registers.at(id);
-            status = started == VmStatus::running ? sandbox_vm.run(remaining) : started;
+            status = started == VmStatus::running ? sandbox_vm.run(remaining,trace) : started;
             result.instructions += sandbox_vm.steps();
             diagnostic = sandbox_vm.diagnostic();
         } else {
             const VmContext context{id, id, 0, owner->second};
             const auto started = vm.start(routine_key(action), context, {0, 0, 0, 0});
             if (started == VmStatus::running) vm.temps() = temporary_registers.at(id);
-            status = started == VmStatus::running ? vm.run(remaining) : started;
+            status = started == VmStatus::running ? vm.run(remaining,trace) : started;
             result.instructions += vm.steps();
             diagnostic = vm.diagnostic();
         }
-        if (status != VmStatus::returned_true && status != VmStatus::returned_false)
+        if (status != VmStatus::returned_true && status != VmStatus::returned_false){
+            if(last_instruction){
+                result.failed_routine=last_instruction->key.id;
+                result.failed_pc=last_instruction->pc;
+                result.failed_opcode=last_instruction->instruction.opcode;
+            }
             return reject("Load action did not complete synchronously: " + diagnostic,
                           id, action, status);
+        }
         result.completed_entities.push_back(id);
     }
 
     result.snapshot = candidate.snapshot();
     result.deferred_sound_events=std::move(pending_sound_events);
     result.unresolved_sound_events=unresolved_sound_events;
+    result.cancelled_sound_events=cancelled_sound_events;
+    result.room_scores=std::move(pending_room_scores);
     result.reason = "all Load actions completed synchronously in the unpublished candidate";
     return result;
 }

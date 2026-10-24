@@ -73,6 +73,37 @@ int main() {
         require(odh::encode_world_snapshot(source) == source_bytes,
                 "staging leaves the source snapshot byte-for-byte unchanged");
 
+        auto score_source=source;
+        for(auto& entity:score_source.entities){
+            entity.position=odh::EntityPosition{0,0,1,0};
+            entity.object_words[7]=entity.id==1?18:0;
+        }
+        score_source.word_count+=2;
+        odh::GeometricRoomMap score_map;
+        score_map.width=1;score_map.height=1;
+        score_map.floor_resources_resolved=true;score_map.light_base_rooms_resolved=true;
+        score_map.levels[0]={1U|(1U<<16)};score_map.levels[1]={1U|(1U<<16)};
+        score_map.rooms={{0,0,0,{},false,false,{},0},{1,0,12,{0,0,1,1},false,false,{},1}};
+        auto score_owners=owners;
+        score_owners[101][key(4096)]=routine({
+            {7,254,255,{0,0,2,0,0,0,0,0}},assign(23,74)
+        });
+        odh::VmMemory no_memory;
+        odh::VmPrimitive no_primitive;
+        odh::SoundResolver no_sound;
+        result=odh::stage_saved_load_entry_points(score_source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,score_owners,8,{},no_memory,no_primitive,no_sound,&score_map);
+        require(result.snapshot.has_value()&&result.room_scores.at(1)==8,
+                "Load Refresh area contribution stages the Simitone room score");
+
+        auto score_failure_owners=score_owners;
+        score_failure_owners[202][key(4096)]=routine({{999,254,255,{}}});
+        result=odh::stage_saved_load_entry_points(score_source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,score_failure_owners,8,{},no_memory,no_primitive,no_sound,&score_map);
+        require(!result.snapshot.has_value()&&result.room_scores.empty()&&
+                result.discarded_room_score_refreshes==1,
+                "a later Load failure discards staged room-score updates");
+
         auto missing_root_source = source;
         missing_root_source.entities[0].entry_points->at(2).action = 4107;
         auto missing_root_owners = owners;
@@ -118,6 +149,20 @@ int main() {
         require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==72,
                 "Simitone's unregistered opcode 1 placeholder follows its true branch in saved Load");
         missing_primitive_owners[101][key(4096)]=routine({
+            {49,1,253,{0,0,0,0,0,0,0,0}},assign(23,75)
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,missing_primitive_owners,8);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==75,
+                "Load NotifyOutOfIdle returns true when generic EntryPoint dispatch has no StackObject");
+        missing_primitive_owners[101][key(4096)]=routine({
+            {31,1,253,{1,16,0,0,132,10,0,0}},assign(23,76)
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,missing_primitive_owners,8);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==76,
+                "Load SetToNext exact-definition search uses the unpublished candidate World");
+        missing_primitive_owners[101][key(4096)]=routine({
             {7,1,253,{0,0,0,0,0,0,0,0}},assign(23,73)
         });
         result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
@@ -151,6 +196,17 @@ int main() {
                 result.deferred_sound_events[0].source==1&&result.unresolved_sound_events==0,
                 "successful Load defers its resolved PlaySound request without playing audio");
 
+        auto cancel_sound_owners=sound_owners;
+        cancel_sound_owners[101][key(4096)]=routine({
+            {23,1,253,{5,0,68,172,0,0,0,0}},
+            {48,254,255,{0,0,0,0,0,0,0,0}}
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,cancel_sound_owners,8,{}, {},{},sound_resolver);
+        require(result.snapshot.has_value()&&result.deferred_sound_events.empty()&&
+                result.cancelled_sound_events==1,
+                "StopAllSounds removes the caller's earlier deferred sound request");
+
         auto sound_failure_owners=sound_owners;
         sound_failure_owners[202][key(4096)]=routine({{999,254,255,{}}});
         result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
@@ -165,8 +221,9 @@ int main() {
         result = odh::stage_saved_load_entry_points(source, {1, 2}, entity_owners, non_ghost, zero_temps,
                                                    globals, failing_owners, 8);
         require(!result.snapshot && result.failed_entity == 2 && result.failed_action == 4096 &&
-                result.vm_status == odh::VmStatus::fault,
-                "a later unsupported action rejects the whole batch");
+                result.vm_status == odh::VmStatus::fault && result.failed_routine==4096 &&
+                result.failed_pc==0 && result.failed_opcode==999,
+                "a later unsupported action rejects the whole batch and reports its exact instruction");
         require(odh::encode_world_snapshot(source) == source_bytes,
                 "a rejected batch exposes no partial changes to its source");
 

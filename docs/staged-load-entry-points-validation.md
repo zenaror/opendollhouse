@@ -70,37 +70,48 @@ Para o perfil de primitivas, o registro do cliente Simitone observado chama
 opcode 10 também não tem handler. A VM encaminha ambos pelo ramo verdadeiro.
 Opcode 7 Refresh(Caller, graphic) só invalida cache gráfico, ausente no World
 transacional não publicado, então esse caso específico retorna verdadeiro.
+O opcode 7 Refresh de pontuação do cômodo agora usa um cálculo separado baseado
+no mapa preparado: soma o impacto dos objetos apoiados nos cômodos ligados,
+normaliza pela área, aplica o desconto de interior/exterior e limita o resultado
+a -100..100. O cálculo só é aceito quando o mapa e a identidade dos recursos
+estão resolvidos. Opcode 49 NotifyOutOfIdle não tem thread para interromper
+neste contexto de preparação e retorna verdadeiro, como o caminho observado
+quando não há thread ativa. Opcode 31 SetToNext funciona no modo exato por GUID
+usando a primitiva já existente; os outros modos seguem sem cobertura. Opcode 48
+StopAllSounds cancela pedidos de som anteriores do mesmo dono na cópia candidata.
 Outros casos de Refresh e operações ainda não implementadas seguem falhando.
 
-Na repetição do probe comercial com todas as 90 FARs e 20 definições de
-personagem da Complete Collection disponíveis, House05 passou do pedido de som
-do aquário: 106 entidades completaram e a validação parou na entidade 111,
-ação 4110, opcode 7 (Refresh de pontuação do cômodo). O pedido de som foi
-resolvido, mas descartado porque o lote ainda falhou depois; nenhum áudio foi
-reproduzido. House07 segue parando na entidade 109, ação 4110, no mesmo serviço de
-pontuação. A contagem de ações em House05 mudou de 68 para 106 porque agora o
-probe recebeu o conjunto completo de definições. Nenhum dos lotes completou.
+Na instalação Complete Collection consultada em 2026-10-24, o probe recebeu
+90 definições FAR, 20 definições de personagem IFF e recursos de arquitetura
+(10 `.flr`, 13 `.wll` e 20 FARs oficiais, sem a pasta Downloads). Para os recursos
+de arquitetura sem alias direto, o mapa preparado usa os fallbacks de lookup
+observados no Simitone; a precedência exata da instalação não foi provada.
+House05 (245 entidades) e House07 (182 entidades) completaram a preparação de
+todas as ações Load nas sementes de diagnóstico 1, 2 e 42:
 
-Na instalação Complete Collection consultada em 2026-10-24, com semente 1,
-House07 preparou 182 entidades, completou 108 ações e parou na entidade 109,
-ação 4110 (`Sinks.iff`), opcode 7 Refresh de pontuação do cômodo. Esse serviço
-chama `RefreshRoomScore` no Simitone e ainda não tem destino no World candidato.
-House05 preparou 245 entidades, completou 106 ações e parou na entidade 111,
-ação 4110. O pedido PlaySound do aquário foi resolvido e enfileirado, mas
-descartado junto ao lote porque a ação seguinte ainda não pode ser concluída.
-Nenhum áudio foi reproduzido. Os dados comerciais foram somente lidos e a etapa
-continua desconectada do loader do jogo.
+| Lote | Semente | Ações concluídas | Instruções | Sons enfileirados | Pontuações de cômodo |
+|---|---:|---:|---:|---:|---:|
+| House05 | 1 | 245/245 | 1515 | 2 | 3 |
+| House05 | 2 | 245/245 | 1585 | 2 | 3 |
+| House05 | 42 | 245/245 | 1578 | 2 | 3 |
+| House07 | 1 | 182/182 | 964 | 1 | 3 |
+| House07 | 2 | 182/182 | 1036 | 1 | 3 |
+| House07 | 42 | 182/182 | 998 | 1 | 3 |
 
-As sementes 1, 2 e 42 foram testadas: o número de instruções muda conforme as
-decisões aleatórias, mas cada lote alcança o mesmo primeiro serviço ainda
-ausente. Isso é um teste de progresso do probe, não uma comparação de saída
-aleatória com o original nem uma validação de lote jogável.
+Isso prova apenas que esses dois lotes atravessam a etapa candidata de Load
+com os recursos selecionados. Não prova que o jogo original escolhe os mesmos
+arquivos, nem que os valores aleatórios ou o comportamento são equivalentes.
+O World continua privado e não publicado, os sons não foram tocados e o
+preparador ainda não está ligado ao loader Linux; portanto, ainda não é uma
+partida jogável.
 
 Após a instalação de PangoCairo 1.52.1 no ambiente, `linux_text_renderer` e
 `staged_load_entry_points` passaram. Isso valida a biblioteca de texto e a etapa
 sintética; não substitui os testes de janela, que continuam indisponíveis sem
 Xvfb neste ambiente.
 
+`tests/room_score.cpp` cobre a fórmula de pontuação, cômodos conectados,
+interior/exterior, limites e rejeição de mapas/entradas sem identidade resolvida.
 `tests/staged_load_entry_points.cpp` usa apenas BHAVs sintéticos. Verifica
 ordem de execução, isolamento entre donos, retorno falso síncrono, escrita na
 cópia, descarte de escrita GhostImage, rejeição de tabela/ordem incompleta,
@@ -108,6 +119,7 @@ ação sem dono, falha numa ação posterior, orçamento agregado e preservaçã
 byte a byte do snapshot de origem e leitura de registradores salvos. Também
 testa a leitura suplementar de tuning, o fallback do perfil de primitivas para
 opcodes sem handler, a passagem do estado RNG explícito ao opcode 8 e o
-enfileiramento/descarte de pedidos de som em lotes sintéticos. Não valida a
+enfileiramento, cancelamento e descarte de pedidos de som em lotes sintéticos,
+além de NotifyOutOfIdle e SetToNext no modo exato. Não valida a
 cadeia comercial de Windows 4105/4104, a reprodução de áudio, todos os serviços
 de cômodo, o loader Linux ou equivalência com o executável original.

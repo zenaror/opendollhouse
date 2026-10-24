@@ -2,6 +2,7 @@
 
 #include "odh/world.hpp"
 #include "odh/sound.hpp"
+#include "odh/room_score.hpp"
 #include <array>
 #include <map>
 #include <optional>
@@ -17,12 +18,19 @@ struct StagedLoadEntryPointResult {
     std::uint64_t instructions = 0;
     std::int16_t failed_entity = 0;
     std::uint16_t failed_action = 0;
+    std::uint16_t failed_routine = 0;
+    std::uint16_t failed_pc = 0;
+    std::uint16_t failed_opcode = 0;
     VmStatus vm_status = VmStatus::ready;
     std::string reason;
     // Resolved sound events remain pending until the full batch is accepted.
     std::vector<SoundRequest> deferred_sound_events;
     std::size_t unresolved_sound_events = 0;
     std::size_t discarded_sound_events = 0;
+    std::size_t cancelled_sound_events = 0;
+    // Room scores are staged with the candidate and published only on success.
+    std::map<std::uint16_t, std::int16_t> room_scores;
+    std::size_t discarded_room_score_refreshes = 0;
 };
 
 // Runs Load (EntryPoint 2) in the supplied entity order against a private World
@@ -41,6 +49,6 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const RoutineSet& globals, const RoutineOwners& owners,
     std::uint64_t instruction_budget, WorldLimits world_limits = {},
     VmMemory supplemental_memory = {}, VmPrimitive supplemental_primitive = {},
-    SoundResolver sound_resolver = {});
+    SoundResolver sound_resolver = {}, const GeometricRoomMap* room_map = nullptr);
 
 } // namespace odh
