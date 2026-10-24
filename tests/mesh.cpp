@@ -13,6 +13,8 @@ auto mesh(const std::string& b,odh::MeshLimits limits={}){
     std::istringstream stream(b);return odh::read_bmf(odh::View(stream,b.size()),limits);}
 auto appearances(const std::string& b,odh::MeshLimits limits={}){
     std::istringstream stream(b);return odh::read_bcf_appearances(odh::View(stream,b.size()),limits);}
+auto cmx_appearances(const std::string& b,odh::MeshLimits limits={}){
+    std::istringstream stream(b);return odh::read_cmx_appearances(odh::View(stream,b.size()),limits);}
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const odh::FormatError&){failed=true;}
     require(failed,"invalid or truncated mesh/appearance rejected");}
 struct BmfFixture {
@@ -38,6 +40,9 @@ BcfFixture bcf(){BcfFixture f{};auto& b=f.bytes;put(b,0);f.count=b.size();put(b,
         if(a==0)f.first_bindings=b.size();else f.second_bindings=b.size();
         put(b,1);text(b,"ROOT");text(b,"body");put(b,0x80000000U+a);put(b,7+a);}
     f.animation=b.size();put(b,0);return f;
+}
+std::string cmx(){
+    return "// Character File.\nversion 300\n0\n1\nb123mafat\n1\n0\n1\nPELVIS\nxskin-b123mafat-body\n0\n0\n0\n";
 }
 }
 int main(){try{
@@ -105,5 +110,22 @@ int main(){try{
     std::string empty_app;put(empty_app,0);put(empty_app,1);text(empty_app,"");put(empty_app,0);put(empty_app,0);put(empty_app,0);put(empty_app,0);
     zero.appearances=1;
     require(appearances(empty_app,zero).appearances[0].bindings.empty(),"empty appearance and binding list accepted");
+    const auto cmx_bytes=cmx();
+    const auto cmx_collection=cmx_appearances(cmx_bytes);
+    require(cmx_collection.appearances.size()==1 && cmx_collection.appearances[0].name=="b123mafat" &&
+        cmx_collection.appearances[0].type==1 && cmx_collection.appearances[0].bindings.size()==1 &&
+        cmx_collection.appearances[0].bindings[0].bone=="PELVIS" &&
+        cmx_collection.appearances[0].bindings[0].mesh_name=="xskin-b123mafat-body" &&
+        cmx_collection.remaining_bytes==0,"text CMX appearance and bindings decoded");
+    auto cmx_bom=std::string("\xEF\xBB\xBF")+cmx_bytes;
+    require(cmx_appearances(cmx_bom).appearances.size()==1,"UTF-8 BOM before CMX comment accepted");
+    // A final line break is optional in the Simitone text reader.
+    for(std::size_t cut=0;cut+1<cmx_bytes.size();++cut)rejects([&]{cmx_appearances(cmx_bytes.substr(0,cut));});
+    rejects([&]{cmx_appearances("version 300\n1\n");});
+    rejects([&]{cmx_appearances("version 300\n0\n-1\n");});
+    rejects([&]{cmx_appearances(cmx_bytes+"unexpected\n");});
+    odh::MeshLimits cmx_limits;cmx_limits.appearances=0;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
+    cmx_limits={};cmx_limits.appearance_bindings=0;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
+    cmx_limits={};cmx_limits.text_bytes=cmx_bytes.size()-1;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
     std::cout<<checks<<" mesh resource checks passed (synthetic fixtures only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Mesh test failed: "<<e.what()<<'\n';return 1;}}

@@ -7,6 +7,14 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O catálogo CAS Linux agora lê nomes de aparência CMX e texturas BMP/TGA
+  soltas ou dentro de FAR, incluindo roupas das pastas de expansão. Caminhos
+  Windows dentro dos FAR são convertidos corretamente em nomes de arquivo no
+  Linux. A leitura real da instalação encontrou 272 CMX soltos, 90 arquivos
+  FAR e 5.045 nomes de texturas; isso confirma o inventário de metadados, não
+  a prévia visual nem o uso das escolhas na tela CAS. Veja
+  [`linux-cas-catalog-validation.md`](docs/linux-cas-catalog-validation.md).
+
 - O adaptador Linux de criação de personagem converte as escolhas de roupa,
   aparência, pele, idade, gênero e personalidade do CAS TS1 para STR# 200 e os
   88 valores de vizinho usados pela gravação privada. O teste usa valores

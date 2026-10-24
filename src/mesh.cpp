@@ -1,6 +1,9 @@
 #include "odh/mesh.hpp"
 #include "read_cursor.hpp"
 
+#include <charconv>
+#include <sstream>
+
 namespace odh {
 namespace {
 template<class T>
@@ -25,6 +28,73 @@ void transform(detail::Cursor& c,MeshVertex& vertex) {
     for(auto& bits:vertex.position_bits)bits=c.u32();
     for(auto& bits:vertex.normal_bits)bits=c.u32();
 }
+
+class CmxCursor {
+public:
+    explicit CmxCursor(const std::string& input) {
+        std::istringstream lines(input);
+        std::string line;
+        while (std::getline(lines,line)) {
+            if (!line.empty() && line.back()=='\r') line.pop_back();
+            lines_.push_back(std::move(line));
+        }
+        if (!lines_.empty() && lines_[0].size()>=3 &&
+            static_cast<unsigned char>(lines_[0][0])==0xEF &&
+            static_cast<unsigned char>(lines_[0][1])==0xBB &&
+            static_cast<unsigned char>(lines_[0][2])==0xBF)
+            lines_[0].erase(0,3);
+        while (line_ < lines_.size() && lines_[line_].rfind("version ",0)!=0) ++line_;
+        if (line_ == lines_.size()) throw FormatError("CMX version declaration is missing");
+        ++line_;
+    }
+
+    std::string text() {
+        if (line_ >= lines_.size()) throw FormatError("truncated CMX text field");
+        return lines_[line_++];
+    }
+
+    std::int32_t i32() {
+        const auto value = number();
+        std::int32_t parsed=0;
+        const auto result=std::from_chars(value.data(),value.data()+value.size(),parsed);
+        if (result.ec!=std::errc{}||result.ptr!=value.data()+value.size())
+            throw FormatError("invalid CMX signed number");
+        return parsed;
+    }
+
+    std::uint32_t u32() {
+        const auto value = number();
+        std::uint32_t parsed=0;
+        const auto result=std::from_chars(value.data(),value.data()+value.size(),parsed);
+        if (result.ec!=std::errc{}||result.ptr!=value.data()+value.size())
+            throw FormatError("invalid CMX unsigned number");
+        return parsed;
+    }
+
+    void require_end() {
+        if (token_ < tokens_.size()) throw FormatError("unexpected CMX numeric data after animation section");
+        for (;line_<lines_.size();++line_)
+            if (lines_[line_].find_first_not_of(" \t")!=std::string::npos)
+                throw FormatError("unexpected CMX text after animation section");
+    }
+
+private:
+    std::string number() {
+        while (token_ >= tokens_.size()) {
+            if (line_ >= lines_.size()) throw FormatError("truncated CMX numeric field");
+            std::istringstream row(lines_[line_++]);
+            tokens_.clear(); token_=0;
+            std::string value;
+            while (row>>value) tokens_.push_back(std::move(value));
+            if (tokens_.empty()) throw FormatError("empty CMX numeric line");
+        }
+        return tokens_[token_++];
+    }
+
+    std::vector<std::string> lines_;
+    std::vector<std::string> tokens_;
+    std::size_t line_=0,token_=0;
+};
 }
 
 Mesh read_bmf(const View& view,MeshLimits limits) {
@@ -85,6 +155,51 @@ AppearanceCollection read_bcf_appearances(const View& view,MeshLimits limits) {
     }
     if(c.i32()!=0)throw FormatError("BCF animation section outside appearance-only profile");
     result.remaining_bytes=c.remaining();
+    return result;
+}
+
+AppearanceCollection read_cmx_appearances(const View& view,MeshLimits limits) {
+    if (view.size()>limits.text_bytes || view.size()>std::string{}.max_size())
+        throw FormatError("CMX exceeds configured text limit");
+    std::string bytes(static_cast<std::size_t>(view.size()),'\0');
+    if (!bytes.empty()) view.read(0,bytes.data(),bytes.size());
+    CmxCursor cursor(bytes);
+    if (cursor.i32()!=0) throw FormatError("CMX skeleton section outside CAS appearance-only profile");
+    const auto count=cursor.i32();
+    if (count<0 || static_cast<std::uint32_t>(count)>limits.appearances)
+        throw FormatError("CMX appearance count exceeds configured budget");
+    AppearanceCollection result;
+    result.appearances.reserve(static_cast<std::size_t>(count));
+    std::uint32_t binding_budget=limits.appearance_bindings;
+    std::size_t text_budget=limits.text_bytes;
+    auto take_text=[&]() {
+        auto value=cursor.text();
+        if (value.size()>text_budget) throw FormatError("CMX text exceeds cumulative byte budget");
+        text_budget-=value.size();
+        return value;
+    };
+    for (std::int32_t i=0;i<count;++i) {
+        Appearance appearance{};
+        appearance.name=take_text();
+        appearance.type=cursor.i32();
+        appearance.zero=cursor.i32();
+        const auto bindings=cursor.u32();
+        if (bindings>binding_budget) throw FormatError("CMX binding count exceeds configured budget");
+        binding_budget-=bindings;
+        appearance.bindings.reserve(bindings);
+        for (std::uint32_t j=0;j<bindings;++j) {
+            AppearanceBinding binding{};
+            binding.bone=take_text();
+            binding.mesh_name=take_text();
+            binding.censor_flags=cursor.i32();
+            binding.zero=cursor.i32();
+            appearance.bindings.push_back(std::move(binding));
+        }
+        result.appearances.push_back(std::move(appearance));
+    }
+    if (cursor.i32()!=0) throw FormatError("CMX animation section outside CAS appearance-only profile");
+    cursor.require_end();
+    result.remaining_bytes=0;
     return result;
 }
 }

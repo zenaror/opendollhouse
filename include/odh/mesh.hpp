@@ -47,4 +47,7 @@ Mesh read_bmf(const View&,MeshLimits limits={});
 // Text and binding limits are cumulative across the collection. No text SKN
 // or mixed-section BCF inference is attempted.
 AppearanceCollection read_bcf_appearances(const View&,MeshLimits limits={});
+// Text CMX profile used for TS1 clothing appearances with no skeleton or
+// animation payload. Nonzero sections are rejected rather than guessed.
+AppearanceCollection read_cmx_appearances(const View&,MeshLimits limits={});
 }
