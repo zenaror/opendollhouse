@@ -1505,5 +1505,7 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/hit_note_cli.py $<TARGET_FILE:odh-hit-note>)
     add_test(NAME person_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/person_cli.py $<TARGET_FILE:odh-person>)
+    add_test(NAME avatar_candidate_cli COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/avatar_candidate_cli.py $<TARGET_FILE:odh-person>)
   endif()
 endif()
