@@ -1,5 +1,27 @@
 # Continuidade atual
 
+## Atualização: geladeira real revela o próximo limite da VM (2026-10-24)
+
+Um probe controlado do objeto 112 da House07 (GUID `1734088879`) confirmou a
+descoberta em `Objects.far:Fridges.iff`, TTAB128, com nove linhas de texto
+localizadas. Entre os nomes estão `Have A Snack`, `Have A Meal`, `Serve Meal` e
+`Cast.../Enchant`; o último confirma que um rótulo pode carregar a separação de
+categoria usada pelo menu circular. No estado residencial deste probe, só
+`Have A Snack` ficou elegível. Três testes de ação ainda pedem a rotina
+semiglobal 363, quatro linhas de depuração retornaram falso e a ação de magia
+parou por leitura global não suportada. As nove linhas não são nove escolhas
+válidas para este morador.
+
+O probe de 800×600 selecionou `Have A Snack` e a VM falhou no primeiro passo:
+opcode25. A revisão Simitone registra esse opcode como `VMTS1Budget`, que lê e
+pode atualizar o orçamento da família. Os operandos observados foram
+`[3,26,0,0,1,0,3,0]`; o perfil usa `JustTest`, mas ODH ainda não implementa a
+rotina nem o estado de orçamento associado à família. Nenhum efeito da ação
+aconteceu. O próximo trabalho é modelar e persistir o orçamento TS1 da família,
+implementar esse primitivo de modo testado e repetir o mesmo probe para expor o
+próximo limite real. O registro detalhado está em
+[pie-menu-reference.md](pie-menu-reference.md).
+
 ## Atualização: fluxo do menu circular de ações investigado (2026-10-24)
 
 A lista retangular usada nos testes é provisória. A inspeção do Simitone e do

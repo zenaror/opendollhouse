@@ -46,6 +46,24 @@ comprovado de House07 ainda apresenta uma lista de depuração com uma ação (S
 sem categorias, ações dinâmicas ou comparação de vários idiomas. Portanto, ler
 TTAB não significa que o ODH já decide corretamente quais ações aparecem.
 
+Uma inspeção controlada posterior identificou a geladeira 112 da House07
+(GUID `1734088879`), ligada a `Objects.far:Fridges.iff`, TTAB128. A tabela tem
+nove linhas localizadas, incluindo `Have A Snack`, `Have A Meal`, `Serve Meal`
+e `Cast.../Enchant`. Com o morador e estado salvos usados neste teste, apenas
+`Have A Snack` passou pela checagem atual; três testes ainda precisam de rotina
+semiglobal 363, quatro ações de depuração retornaram falso e a ação de magia
+precisa de leitura global não suportada. Isso mostra que uma tabela grande não
+significa que todas as opções devem aparecer ao mesmo tempo.
+
+Ao escolher `Have A Snack`, a VM do ODH falhou no primeiro passo da ação,
+opcode 25. No caminho TS1 do Simitone, esse número é `VMTS1Budget`, que consulta
+o orçamento da família. A falha foi observada num probe controlado com quadro de
+800×600; não é uma ação concluída nem uma validação de UI na janela. A próxima
+peça de runtime precisa representar o orçamento ativo da família e aplicar o
+comportamento TS1 documentado, preservando as alterações entre salvamento e
+retomada. O detalhe do orçamento não deve ser tratado como um simples botão da
+interface.
+
 ## Primeira reconstrução proposta
 
 - Separar a descoberta de ações da tela: cada opção deve carregar texto já
@@ -62,6 +80,11 @@ TTAB não significa que o ODH já decide corretamente quais ações aparecem.
   pelos recursos, e a ação escolhida chegando à interação já validada na VM.
   Depois comparar o mesmo objeto e idioma com o Simitone e com a edição original
   instalada. Um menu de teste com rótulos inventados não passa esse gate.
+- Antes de usar a geladeira como gate de interação, implementar e validar o
+  `VMTS1Budget` necessário para a ação `Have A Snack` e completar os donos de
+  código ausentes das outras ações suportáveis. Reavaliar cada linha a partir
+  das regras e do estado da família; nunca exibir ações apenas porque aparecem
+  na TTAB.
 
 ## Fontes consultadas
 
