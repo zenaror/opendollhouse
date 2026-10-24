@@ -189,6 +189,43 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     mark_spatial_change();
     return true;
 }
+bool World::create_runtime_object(std::int16_t id, std::uint32_t guid,
+    EntityLayout layout, const std::vector<EntryPoint>& entry_points) {
+    constexpr std::size_t runtime_object_words = 75; // 0..78 except derived 2,3,11,67.
+    if (id <= 0 || guid == 0 || entities_.count(id) ||
+        generation_sequence_ == std::numeric_limits<std::uint64_t>::max() ||
+        layout.person_data != 0 || layout.motives != 0 ||
+        layout.attributes > limits_.bank_words || layout.attributes > 32768 ||
+        layout.slots > limits_.bank_words || layout.slots > 32767 ||
+        runtime_object_words > limits_.bank_words || entry_points.size() > 256 ||
+        entry_points.size() > limits_.bank_words / 2) return false;
+
+    auto available = limits_.words - words_;
+    for (const auto count : {layout.attributes, layout.slots, runtime_object_words,
+                             2 * entry_points.size()}) {
+        if (count > available) return false;
+        available -= count;
+    }
+
+    auto candidate = snapshot();
+    Entity entity{};
+    entity.id = id;
+    entity.kind = EntityKind::object;
+    entity.attributes.resize(layout.attributes, 0);
+    entity.slots.resize(layout.slots, 0);
+    entity.generation = generation_sequence_ + 1;
+    entity.definition = EntityType{guid, std::nullopt};
+    entity.entry_points = entry_points;
+    for (std::int16_t word = 0; word <= 78; ++word) {
+        if (!derived(word)) entity.object_words.emplace(word, 0);
+    }
+    candidate.entities.push_back(std::move(entity));
+    candidate.word_count = words_ + (limits_.words - words_ - available);
+    candidate.generation_sequence = generation_sequence_ + 1;
+    if (candidate.spatial_revision != std::numeric_limits<std::uint64_t>::max())
+        ++candidate.spatial_revision;
+    return publish_snapshot(candidate);
+}
 bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t guid,
     const std::vector<std::int16_t>& attributes,
     const std::vector<std::int16_t>& person_data,

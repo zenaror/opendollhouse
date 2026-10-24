@@ -112,6 +112,12 @@ public:
     // Allocation exceptions propagate without changing World.
     bool publish_snapshot(const WorldSnapshot&);
     bool create(std::int16_t id, EntityKind kind, EntityLayout layout = {});
+    // Atomically publishes an ordinary object with zero-filled runtime banks,
+    // a known GUID and an owned entry-point table. Resource ownership and BHAV
+    // execution remain the caller's responsibility. Invalid requests leave
+    // the World unchanged; allocation exceptions propagate without publishing.
+    bool create_runtime_object(std::int16_t id, std::uint32_t guid,
+        EntityLayout layout, const std::vector<EntryPoint>& entry_points);
     // Import a new typed entity atomically. All banks are copied after validation;
     // motives retain their signed values without the runtime setter's clamp.
     // Raw ObjectData/extras consume 73 words in addition to 64 ordinary runtime

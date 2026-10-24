@@ -1,4 +1,5 @@
 #include "odh/object_construction.hpp"
+#include "odh/world.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -70,6 +71,43 @@ int main() {
         check(no_slots.status == odh::ObjectConstructionStatus::ready &&
                   no_slots.layout.containment_slots == 0,
               "objects without containment slots remain constructible");
+
+        odh::World world;
+        check(world.create(1, odh::EntityKind::avatar),
+              "existing World accepts an empty avatar before object construction");
+        const auto before = world.snapshot();
+        check(world.create_runtime_object(4, 0xf301e375,
+                  {profile.layout.attributes, 0, profile.layout.containment_slots, 0},
+                  {{0, 4100}, {0, 4177}}),
+              "runtime object publishes with its definition and entry points");
+        const auto* food = world.find(4);
+        check(food && food->definition && food->definition->guid == 0xf301e375 &&
+                  food->attributes.size() == 16 && food->slots.size() == 2 &&
+                  food->object_words.size() == 75 && food->entry_points &&
+                  food->entry_points->size() == 2 && world.word_count() == 97,
+              "runtime banks are initialized and owned by the World");
+        const odh::VmFrame object_frame{odh::routine_key(4100), 0, {1, 4, 4}, {}, {}};
+        check(world.read(object_frame, 4, 0) == std::optional<std::int16_t>{0} &&
+                  world.read(object_frame, 16, 0) == std::optional<std::int16_t>{0} &&
+                  world.read(object_frame, 35, 0) == std::optional<std::int16_t>{4100},
+              "new object exposes zeroed attributes/slots and its copied entry point");
+        const auto live = world.snapshot();
+        check(!world.create_runtime_object(4, 0xf301e375, {}, {}) &&
+                  world.snapshot().entities.size() == live.entities.size() &&
+                  world.snapshot().word_count == live.word_count,
+              "duplicate identity fails without publishing partial state");
+        odh::World tight({2, 32, 128, 16, 16});
+        check(tight.create(1, odh::EntityKind::avatar),
+              "tight World fixture starts with one existing entity");
+        const auto tight_before = tight.snapshot();
+        check(!tight.create_runtime_object(4, 0xf301e375,
+                  {profile.layout.attributes, 0, profile.layout.containment_slots, 0},
+                  {{0, 4100}, {0, 4177}}) &&
+                  tight.snapshot().entities.size() == 1 &&
+                  tight.snapshot().generation_sequence == tight_before.generation_sequence &&
+                  tight.snapshot().word_count == tight_before.word_count &&
+                  tight.snapshot().spatial_revision == tight_before.spatial_revision,
+              "word budget failure leaves the World unchanged");
         std::cout << checks << " object construction profile checks passed (synthetic fixtures only)\n";
         return 0;
     } catch (const std::exception& error) {

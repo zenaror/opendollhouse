@@ -5,8 +5,11 @@
 O novo `object_construction_profile` deriva o tamanho dos bancos de atributos e
 de compartimentos de um objeto comum. Ele conta somente registros SLOT do tipo
 0, recusa definições multitile e não tenta completar campos OBJD ausentes.
-Limites configuráveis impedem bancos excessivos. Isso ainda não cria entidade,
-resolve o dono do código, inicializa objeto ou agenda sua VM.
+Limites configuráveis impedem bancos excessivos. O `World` também ganhou
+`create_runtime_object`, que publica de uma vez um objeto com seus bancos
+zerados, GUID e entry points; falta de orçamento, ID repetido ou outro dado
+inválido não deixa entidade parcial. A interface não resolve o dono do código,
+não roda BHAVs e não agenda a VM do objeto.
 
 O teste unitário usa tabelas SLOT sintéticas. Um probe separado, somente de
 leitura, resolveu `Objects.far!Food.iff`, OBJD16808 e a SLOT selecionada pelo
@@ -14,10 +17,11 @@ leitura, resolveu `Objects.far!Food.iff`, OBJD16808 e a SLOT selecionada pelo
 compartimento de contenção. O perfil retornou `ready`. Essa leitura confirma
 somente os tamanhos de alocação; não prova a criação ou a ação de comer.
 
-Build `odh-object-construction-tests` e `odh-object-definition-tests` passou;
-CTest focal `object_construction_profile` e `object_definition_metadata`
-passou 2/2. Próximo: preparar criação transacional no World, associando recursos
-de forma explícita e deixando o objeto intacto se faltar qualquer dependência.
+Build `odh-object-construction-tests` e `odh-world-tests` passou; CTest focal
+`object_construction_profile` e `world` passou 2/2. O teste verifica objeto
+tipado e bancos legíveis pelo World, falha por ID repetido e por orçamento sem
+alteração no estado anterior. Próximo: ligar a criação a recursos OBJf/BHAV
+resolvidos sem ambiguidade e ao ciclo de Init0/EP8/Main1 do scheduler.
 
 ## Atualização: valores TempXL de 32 bits na VM (2026-10-24)
 
