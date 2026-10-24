@@ -716,5 +716,31 @@ Os eventos foram simulados sem DISPLAY. Isso valida picking e despacho de
 entrada, mas não uma janela X11 visível, clique físico, salvamento ou uma
 sessão completa.
 
+### Reexecução no checkout atual com a instalação base — 2026-10-24
+
+No commit `20aa8d0`, o mesmo caminho completou Sit, Stand e Go Here usando a
+instalação `../referencias/The Sims` (sem depender da Legacy Collection). O
+harness encerrou com código 0. O processo do jogo reportou o limite solicitado
+de 900 ticks (`process_exit=3`, Main em `waiting`); isso não foi falha da VM.
+Sit 4097, Stand 4102 e Go Here 4096 retornaram `true`, a rota usou 32 passos,
+a fila terminou vazia e `host_failed=false`. O destino pedido `(20,20,1)` não
+estava visível; o picking escolheu a célula livre alcançável `(22,26,1)`.
+
+Reprodução com logs e estado XDG isolados:
+
+```sh
+ODH_RUN_DIR="$(mktemp -d /tmp/odh-house07-flow.XXXXXX)"
+XDG_STATE_HOME="$ODH_RUN_DIR/state" XDG_DATA_HOME="$ODH_RUN_DIR/data" \
+  PYTHONDONTWRITEBYTECODE=1 python3 tests/house07_interaction_integration.py \
+  --binary build-household-session/odh-person \
+  --game-root '../referencias/The Sims' --window-input --window-stand \
+  --go-here-after-stand 20 20 1 600 --ticks 900
+```
+
+É uma execução controlada com recursos comerciais lidos da instalação e
+eventos de janela simulados pelo harness, sem DISPLAY ou clique físico. Não
+salvou nem retomou uma sessão; o caminho visual interativo e a partida completa
+continuam pendentes.
+
 
 O fluxo integrado agora também pode voltar à vizinhança com **M** e retomar o lote carregado sem avançar o relógio nem recarregar o World. A prova headless Sit→mapa→mesmo lote→Stand está em [neighborhood-return-validation.md](neighborhood-return-validation.md); trocar para outro lote continua indisponível.
