@@ -1,5 +1,7 @@
 #include "odh/household_spawn.hpp"
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace {
 unsigned checks = 0;
@@ -125,6 +127,137 @@ int main() {
         const std::optional<odh::EntityPosition> expected_sibling_position{{176, 224, 1, 4}};
         check(sibling_saw_first_arrival && sequential.runtime_ids.at(sibling_guid) == 3 &&
               sequential.candidate->find(3)->position == expected_sibling_position);
+
+        std::vector<odh::EntityPosition> verify_attempts;
+        bool verify_prepared = false, verify_activated = false;
+        const auto verified = odh::verify_household_members(source,
+            {{absent_guid, &nb}}, 123,
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid) {
+                const auto* avatar = world.find(id);
+                verify_prepared = guid == absent_guid && avatar && !avatar->position;
+                return verify_prepared;
+            }, odh::EntityPosition{32, 48, 1, 0}, 48, 48,
+            [&](odh::World& world, std::int16_t id, const odh::EntityPosition& candidate) {
+                verify_attempts.push_back(candidate);
+                const auto* avatar = world.find(id);
+                check(avatar && !avatar->position && avatar->person_data[61] == 123);
+                check(world.set_person_data(id, 70,
+                    static_cast<std::int16_t>(verify_attempts.size())));
+                if (verify_attempts.size() == 1) return false;
+                return world.set_position(id, candidate);
+            },
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
+                const auto* avatar = world.find(id);
+                verify_activated = guid == absent_guid && positioned && avatar &&
+                    avatar->position == std::optional<odh::EntityPosition>{verify_attempts.back()} &&
+                    avatar->person_data[31] == 42 && avatar->person_data[61] == 123 &&
+                    avatar->person_data[70] == 2;
+                return verify_activated;
+            });
+        check(verify_prepared && verify_activated && verify_attempts.size() == 2 &&
+              verify_attempts[0] == (odh::EntityPosition{32, 48, 1, 0}) &&
+              verify_attempts[1] == (odh::EntityPosition{32, 48, 1, 2}));
+        check(verified.new_members.size() == 1 && verified.new_members[0].positioned &&
+              verified.new_members[0].position_attempts == 2 &&
+              verified.candidate->find(verified.new_members[0].runtime_id)->position ==
+                  std::optional<odh::EntityPosition>{verify_attempts.back()});
+
+        constexpr std::uint32_t verified_sibling_guid = 0xeeee;
+        const auto verified_sibling_neighbor = neighbor(verified_sibling_guid, 43);
+        std::vector<std::string> verification_order;
+        const auto sequential_verification = odh::verify_household_members(source,
+            {{absent_guid, &nb}, {verified_sibling_guid, &verified_sibling_neighbor}}, 123,
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid) {
+                verification_order.push_back(guid == absent_guid ? "prepare-first" : "prepare-second");
+                if (guid == verified_sibling_guid) {
+                    const auto* first = world.find(2);
+                    check(id == 3);
+                    check(first && first->person_data[71] == 1);
+                    check(first && first->position.has_value());
+                }
+                return true;
+            }, odh::EntityPosition{32, 48, 1, 0}, 48, 48,
+            [](odh::World& world, std::int16_t id, const odh::EntityPosition& position) {
+                return world.set_position(id, position);
+            },
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
+                verification_order.push_back(guid == absent_guid ? "activate-first" : "activate-second");
+                check(positioned);
+                if (guid == absent_guid) return world.set_person_data(id, 71, 1);
+                const auto* first = world.find(2);
+                return first && first->person_data[71] == 1;
+            });
+        check((verification_order == std::vector<std::string>{
+                  "prepare-first", "activate-first", "prepare-second", "activate-second"}));
+        check(sequential_verification.runtime_ids.at(absent_guid) == 2 &&
+              sequential_verification.runtime_ids.at(verified_sibling_guid) == 3 &&
+              sequential_verification.new_members.size() == 2);
+
+        bool no_mailbox_activated = false;
+        const auto no_mailbox = odh::verify_household_members(source,
+            {{absent_guid, &nb}}, 123,
+            [](odh::World&, std::int16_t, std::uint32_t) { return true; },
+            std::nullopt, 48, 48, {},
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
+                const auto* avatar = world.find(id);
+                no_mailbox_activated = guid == absent_guid && !positioned && avatar &&
+                    !avatar->position && avatar->person_data[61] == 123;
+                return no_mailbox_activated;
+            });
+        check(no_mailbox_activated && no_mailbox.new_members.size() == 1 &&
+              !no_mailbox.new_members[0].positioned &&
+              no_mailbox.new_members[0].position_attempts == 0);
+
+        bool existing_member_callbacks_called = false;
+        const auto existing_member = odh::verify_household_members(source,
+            {{old_guid, nullptr}}, 123,
+            [&](odh::World&, std::int16_t, std::uint32_t) {
+                existing_member_callbacks_called = true;
+                return false;
+            }, odh::EntityPosition{32, 48, 1, 0}, 48, 48,
+            [&](odh::World&, std::int16_t, const odh::EntityPosition&) {
+                existing_member_callbacks_called = true;
+                return false;
+            },
+            [&](odh::World&, std::int16_t, std::uint32_t, bool) {
+                existing_member_callbacks_called = true;
+                return false;
+            });
+        check(!existing_member_callbacks_called && existing_member.new_members.empty() &&
+              existing_member.runtime_ids.at(old_guid) == 5);
+
+        const auto before_activation_failure = source;
+        rejects([&] { odh::verify_household_members(source,
+            {{absent_guid, &nb}}, 123,
+            [](odh::World&, std::int16_t, std::uint32_t) { return true; },
+            std::nullopt, 48, 48, {},
+            [](odh::World&, std::int16_t, std::uint32_t, bool) { return false; }); });
+        check(source.entities.size() == before_activation_failure.entities.size() &&
+              source.entities[1].person_data == before_activation_failure.entities[1].person_data &&
+              source.entities[1].position == before_activation_failure.entities[1].position &&
+              source.word_count == before_activation_failure.word_count);
+
+        std::size_t rejected_attempts = 0;
+        bool failed_search_activated = false;
+        const auto failed_search = odh::verify_household_members(source,
+            {{absent_guid, &nb}}, 123,
+            [](odh::World&, std::int16_t, std::uint32_t) { return true; },
+            odh::EntityPosition{32, 48, 1, 0}, 48, 48,
+            [&](odh::World& world, std::int16_t id, const odh::EntityPosition&) {
+                ++rejected_attempts;
+                check(world.set_person_data(id, 70, static_cast<std::int16_t>(rejected_attempts)));
+                return false;
+            },
+            [&](odh::World& world, std::int16_t id, std::uint32_t guid, bool positioned) {
+                const auto* avatar = world.find(id);
+                failed_search_activated = guid == absent_guid && !positioned && avatar &&
+                    !avatar->position && avatar->person_data[70] == 1444;
+                return failed_search_activated;
+            });
+        check(rejected_attempts == 1444 && failed_search_activated &&
+              failed_search.new_members.size() == 1 &&
+              !failed_search.new_members[0].positioned &&
+              failed_search.new_members[0].position_attempts == 1444);
 
         rejects([&] { odh::materialize_household_members(source,
             {{absent_guid, &nb}, {absent_guid, &nb}}, 123,

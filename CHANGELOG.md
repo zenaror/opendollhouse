@@ -25,6 +25,11 @@ validação indicados por versão.
   confirma que as escritas ficam no terreno temporário, mas não valida chegada,
   saves nem uma partida real.
 
+- Um orquestrador de teste agora percorre, para cada morador FAMI ausente, a
+  preparação, herança, busca ordenada na caixa postal e ativação antes de
+  começar o próximo. Os callbacks deixam explícitos os efeitos que o host ainda
+  precisa implementar; o fluxo normal do jogo continua sem essa integração.
+
 ### Alterado
 
 - Ao escolher uma casa vazia quando há famílias sem casa, mas nenhuma tem saldo

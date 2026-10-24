@@ -48,12 +48,19 @@ a tentativa de chegada são etapas separadas. Salvar um FSOV do Simitone tampouc
 prova que ele atualize os formatos OBJM/OBJT do jogo original.
 
 No ODH, `stage_household_members` preserva um World candidato sem posição nem
-herança. O teste `household_startup` liga esse staging sintético a Init/entry8 e
-depois à herança, mas ainda não cobre o Main empilhado, os recursos BHAV reais,
-`FindLocationFor`, permissões, reagendamento ou persistência. A integração deve
-manter o candidato isolado até todas as etapas necessárias passarem e não salvar
-residentes novos até haver reconstrução determinística desse estado no próximo
-carregamento.
+herança. `verify_household_members` acrescenta uma orquestração com callbacks:
+prepara, herda NBRS/FAMI, tenta as posições na ordem e chama a ativação mesmo se
+ninguém couber e o morador continuar fora do lote. Agora processa um morador por
+vez, de modo que a preparação do próximo veja o primeiro já ativado. Os testes
+sintéticos cobrem sucesso após tentativa rejeitada, busca inteira sem sucesso,
+ausência de caixa postal e a ordem de dois moradores. Os callbacks ainda são
+representações fornecidas pelo host: isso não executa os BHAVs ou recursos reais,
+nem reproduz SetPosition/EP9, permissões, reagendamento ou persistência. A API
+também não está ligada ao fluxo normal de `tools/person.cpp`; o runtime segue
+recusando moradores ausentes e não salva esses candidatos. A ordem entre
+moradores é a do vetor de entrada (o HashSet do Simitone não garante ordem
+estável); a posição da caixa é capturada antes das tentativas e deve permanecer
+parada enquanto os callbacks são executados.
 
 ## Busca da caixa postal e risco das tentativas
 

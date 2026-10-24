@@ -2,6 +2,9 @@
 
 #include "odh/formats.hpp"
 
+#include <algorithm>
+#include <set>
+
 namespace odh {
 namespace {
 bool inside(std::int32_t x, std::int32_t y,
@@ -186,5 +189,106 @@ HouseholdSpawnResult materialize_household_members(
         throw FormatError("household arrival resolver is required");
     return materialize_household_members_impl(source, household, family_chunk_id,
                                               prepare_avatar, &resolve_arrival, false, limits);
+}
+
+HouseholdVerificationResult verify_household_members(
+    const WorldSnapshot& source,
+    const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar,
+    std::optional<EntityPosition> mailbox,
+    std::uint16_t lot_width, std::uint16_t lot_height,
+    const HouseholdPositionAttempt& attempt_position,
+    const HouseholdMemberActivation& activate_member,
+    WorldLimits limits) {
+    if (!activate_member)
+        throw FormatError("household member activation callback is required");
+    if (!lot_width || !lot_height)
+        throw FormatError("household verification lot bounds are invalid");
+
+    HouseholdVerificationResult result;
+    if (household.empty()) throw FormatError("selected household has no members");
+
+    // Validate the whole request before invoking host callbacks. Then process
+    // each missing member as VerifyFamily does: create/start one avatar,
+    // inherit its records, search for arrival, and activate it before moving
+    // to the next member. This lets later startup see earlier residents.
+    World validation_world(limits, source.attribute_policy);
+    if (!validation_world.restore_snapshot(source))
+        throw FormatError("source WorldSnapshot cannot be restored into candidate World");
+    std::set<std::uint32_t> existing;
+    auto cursor = std::int16_t{0};
+    while (const auto id = validation_world.next_entity(cursor, EntityKind::avatar)) {
+        cursor = *id;
+        const auto* avatar = validation_world.find(*id);
+        if (!avatar || !avatar->definition || avatar->definition->guid == 0 ||
+            !existing.insert(avatar->definition->guid).second)
+            throw FormatError("candidate World contains avatar with invalid or duplicate GUID");
+    }
+    std::set<std::uint32_t> seen;
+    for (const auto& member : household) {
+        if (member.guid == 0 || !seen.insert(member.guid).second)
+            throw FormatError("selected household contains invalid or duplicate GUID");
+        if (!existing.count(member.guid) &&
+            (!member.neighbor || member.neighbor->guid != member.guid))
+            throw FormatError("missing household avatar has no matching valid neighbor record");
+    }
+
+    result.new_members.reserve(household.size());
+    const auto candidates = mailbox ? household_spawn_candidates(
+        *mailbox, lot_width, lot_height) : std::vector<EntityPosition>{};
+
+    auto current = source;
+    for (const auto& request : household) {
+        auto staged = stage_household_members(current, {request}, family_chunk_id,
+                                              prepare_avatar, limits);
+        current = staged.candidate->snapshot();
+        result.candidate = std::move(staged.candidate);
+        if (staged.new_members.empty()) {
+            const auto found = staged.runtime_ids.find(request.guid);
+            if (found == staged.runtime_ids.end())
+                throw FormatError("existing household member lost its runtime ID");
+            result.runtime_ids.emplace(request.guid, found->second);
+            continue;
+        }
+        const auto created = staged.new_members.front();
+        result.runtime_ids.emplace(created.guid, created.runtime_id);
+
+        // Simitone creates and initializes the avatar out of world, inherits
+        // NBRS, then assigns the FAMI chunk before attempting mailbox arrival.
+        inherit_staged_household_member(*result.candidate, created.runtime_id,
+                                        *request.neighbor, family_chunk_id);
+
+        bool positioned = false;
+        std::size_t attempts = 0;
+        if (mailbox) {
+            if (!attempt_position)
+                throw FormatError("mailbox arrival requires a stateful position-attempt callback");
+            for (const auto& candidate : candidates) {
+                ++attempts;
+                positioned = attempt_position(*result.candidate,
+                                              created.runtime_id, candidate);
+                const auto* avatar = result.candidate->find(created.runtime_id);
+                if (!avatar || avatar->kind != EntityKind::avatar ||
+                    !avatar->definition || avatar->definition->guid != created.guid)
+                    throw FormatError("position attempt changed the staged household identity");
+                if (positioned) {
+                    if (!avatar->position || !(*avatar->position == candidate))
+                        throw FormatError("successful position attempt did not place the staged avatar");
+                    break;
+                }
+                if (avatar->position)
+                    throw FormatError("failed position attempt left the staged avatar positioned");
+            }
+        }
+
+        if (!activate_member(*result.candidate, created.runtime_id,
+                             created.guid, positioned))
+            throw FormatError("household member activation failed");
+        result.new_members.push_back({created.guid, created.runtime_id,
+                                      positioned, attempts});
+        current = result.candidate->snapshot();
+    }
+    return result;
 }
 } // namespace odh

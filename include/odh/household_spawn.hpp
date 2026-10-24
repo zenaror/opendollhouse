@@ -57,6 +57,46 @@ void inherit_staged_household_member(
     std::uint16_t family_chunk_id);
 using HouseholdArrivalResolver = std::function<std::optional<EntityPosition>(
     const World&, std::int16_t, std::uint32_t)>;
+
+// Mirrors the TS1 VerifyFamily lifecycle while keeping the candidate World
+// private until every requested resident is prepared and activated. The
+// position callback must perform one stateful SetPosition attempt, including
+// its validation and entry-point side effects; returning true requires that
+// the candidate avatar now has exactly that position. Returning false must
+// leave the avatar out of world, though other placement side effects may
+// remain for the next attempt, as they do in Simitone.
+using HouseholdPositionAttempt = std::function<bool(
+    World&, std::int16_t, const EntityPosition&)>;
+// Called after startup, NBRS/FAMI inheritance and optional arrival search.
+// Hosts use this to apply owner permissions and register/reschedule the Sim.
+using HouseholdMemberActivation = std::function<bool(
+    World&, std::int16_t, std::uint32_t, bool)>;
+struct VerifiedHouseholdMember {
+    std::uint32_t guid;
+    std::int16_t runtime_id;
+    bool positioned;
+    std::size_t position_attempts;
+};
+struct HouseholdVerificationResult {
+    std::unique_ptr<World> candidate;
+    std::map<std::uint32_t, std::int16_t> runtime_ids;
+    std::vector<VerifiedHouseholdMember> new_members;
+};
+
+// Processes missing members in the order supplied by household. The mailbox
+// position is captured once for the search; callers must not move it from an
+// attempt callback during this operation.
+HouseholdVerificationResult verify_household_members(
+    const WorldSnapshot& source,
+    const std::vector<HouseholdSpawnRequest>& household,
+    std::uint16_t family_chunk_id,
+    const HouseholdAvatarPreparer& prepare_avatar,
+    std::optional<EntityPosition> mailbox,
+    std::uint16_t lot_width, std::uint16_t lot_height,
+    const HouseholdPositionAttempt& attempt_position,
+    const HouseholdMemberActivation& activate_member,
+    WorldLimits limits = {});
+
 HouseholdSpawnResult stage_household_members(
     const WorldSnapshot& source,
     const std::vector<HouseholdSpawnRequest>& household,
