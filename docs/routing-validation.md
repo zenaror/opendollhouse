@@ -441,8 +441,11 @@ Each additional household resident now has a separately bound `Routing`
 controller and `HouseholdGoHereSession`, while sharing the restored `World`
 and global SLOT table. Route callbacks resolve the caller and obstacle snapshot
 for that resident. `--headless-resident-go-here ID X Y LEVEL TICK` schedules a
-request into that resident's VM and accepts only a destination in its prepared
-same-room grid. The household route grids share an aggregate budget of 262,144
+request into that resident's VM. Its route grid must match the resident's
+current room and floor. A destination in the same room and on the same floor
+must be inside that grid; cross-room or cross-floor destinations go to the
+saved portal planner when the lot recognizes their context and has a usable
+passage. The household route grids share an aggregate budget of 262,144
 cells; a resident that would exceed it remains without a prepared route grid.
 The synthetic `odh-routing-tests` fixture verifies separate VMs, owners,
 markers and interleaved route ticks. It does not invoke `person.cpp` with a
@@ -459,7 +462,8 @@ ticks and independent temporary XDG directories. A queued resident request is
 now finalized as host-failed, tick-limited, window-closed, or interrupted and
 has its marker removed before the final report is emitted.
 At that checkpoint, cross-room portals, stairs and floor Snap remained outside
-this resident-routing addition.
+this resident-routing addition; later checkpoints below extend cross-room
+requests and allow cross-floor targets to reach the portal planner.
 
 ### Go Here entre cômodos para moradores adicionais — 2026-10-24
 
@@ -482,6 +486,32 @@ depois das duas execuções. Isso valida o percurso entre dois cômodos no host
 ODH usando esse save. Não valida escadas, mudança de andar, GUI ou equivalência
 com o executável original; rotas com mais de uma passagem ainda precisam de
 testes próprios.
+
+### Gate de andar do Go Here para moradores adicionais — 2026-10-24
+
+O agendador headless não exige mais que o destino esteja no mesmo andar do
+morador. Ele ainda confere se a grade preparada corresponde ao andar e cômodo
+atuais do morador, se os dois andares estão entre 1 e 2 e se o lote reconhece o
+cômodo de destino. Um destino no mesmo cômodo e andar continua sujeito à grade
+local; nos outros casos, a tentativa segue para o planejador de passagens
+salvas, se o lote reconhecer o contexto e houver uma passagem utilizável.
+
+Após a mudança, a build Debug limpa passou nos 463 checks de
+`odh-routing-tests` e no CTest `routing`. O teste House03 com avatar sintético
+atravessou uma escada salva até `[328,344,2]`; o teste de morador adicional
+House07 atravessou uma porta para outro cômodo. Uma tentativa exploratória
+separada usou o morador adicional 16 da House05, com o vizinho 34 como
+principal, e pediu o tile (20,21) no andar 2. O comando não rejeitou o pedido
+por diferença de andar, mas o planejador retornou
+`room portal graph route no_path`; o morador ficou no andar 1. A BHAV de
+destino retornou true apesar de `route_status=failed`. Portanto, essa tentativa
+só comprova que o novo gate deixou o pedido chegar ao planejador; ela não
+comprova travessia por escada. Ainda falta um lote salvo com família ativa e
+passagem entre andares validada para o mesmo morador adicional.
+
+Os três testes foram executados sem interface gráfica. Nenhuma tela virtual foi
+iniciada; não houve alteração intencional dos arquivos comerciais. Esses
+resultados são testes do host ODH, não validação contra o executável original.
 
 ```sh
 python3 tests/house07_resident_go_here.py \

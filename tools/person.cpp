@@ -3655,10 +3655,12 @@ struct PlacementCandidateProbe {
         const auto goal_room=render_lot?render_lot->runtime_room_at(goal_position):std::nullopt;
         if(!actor||!actor->position||!(*resident)->route_grid||!(*resident)->route_grid->grid||
            !(*resident)->routing||!(*resident)->go_here||
-           actor->position->level!=action.level||
-           static_cast<unsigned>((*resident)->route_grid->level)+1U!=action.level||
+           actor->position->level<1||actor->position->level>2||
+           action.level<1||action.level>2||
+           static_cast<unsigned>((*resident)->route_grid->level)+1U!=actor->position->level||
            !actor_room||!goal_room||*actor_room!=(*resident)->route_grid->room_id||
-           (*actor_room==*goal_room&&(!(*resident)->route_grid->grid->contains(goal)||
+           (actor->position->level==action.level&&*actor_room==*goal_room&&
+               (!(*resident)->route_grid->grid->contains(goal)||
                !(*resident)->route_grid->grid->walkable(goal))))
             throw odh::FormatError("resident Go Here target is outside the known route context "
                 "(route_reason="+(*resident)->route_reason+", room="+
@@ -4768,10 +4770,13 @@ struct PlacementCandidateProbe {
                 render_lot->runtime_room_at(*actor->position):std::nullopt;
             const auto destination_room=render_lot?render_lot->runtime_room_at(destination):std::nullopt;
             const auto* candidate=definition_index?definition_index->unique(0x7c4):nullptr;
-            if(!actor||!actor->position||actor->position->level!=scheduled.level||
+            if(!actor||!actor->position||actor->position->level<1||actor->position->level>2||
+               scheduled.level<1||scheduled.level>2||
                !(*resident)->route_grid||!(*resident)->route_grid->grid||
+               static_cast<unsigned>((*resident)->route_grid->level)+1U!=actor->position->level||
                !actor_room||!destination_room||*actor_room!=(*resident)->route_grid->room_id||
-               (*actor_room==*destination_room&&(!(*resident)->route_grid->grid->contains(goal)||
+               (actor->position->level==scheduled.level&&*actor_room==*destination_room&&
+                   (!(*resident)->route_grid->grid->contains(goal)||
                    !(*resident)->route_grid->grid->walkable(goal))))
                 reject("resident Go Here destination no longer matches its known route context");
             else if(!candidate)reject("saved Destination definition is missing or ambiguous");
