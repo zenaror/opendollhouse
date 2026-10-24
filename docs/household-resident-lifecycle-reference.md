@@ -62,6 +62,13 @@ moradores é a do vetor de entrada (o HashSet do Simitone não garante ordem
 estável); a posição da caixa é capturada antes das tentativas e deve permanecer
 parada enquanto os callbacks são executados.
 
+O teste `household_startup` também prepara dois moradores ausentes no mesmo
+World candidato e executa Init e entrada 8 sintéticos com RNG próprio para cada
+um. Ele confirma que Main não é iniciado, que herança NBRS/FAMI continua sendo
+uma etapa separada e que a falha do segundo preparador rejeita o candidato
+inteiro. Isso valida a base isolada de startup, ainda sem ligá-la ao runtime
+normal nem aos recursos comerciais.
+
 ## Busca da caixa postal e risco das tentativas
 
 `VMFindLocationFor.cs:113-170` define uma ordem determinística: tenta primeiro a
