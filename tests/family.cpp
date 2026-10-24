@@ -29,6 +29,10 @@ std::string encoded(const odh::Family& value, const odh::FamiLimits& limits={}) 
     const auto bytes=odh::encode_fami(value,limits);
     return std::string(bytes.begin(),bytes.end());
 }
+std::string encoded_simitone(const odh::Family& value, const odh::FamiLimits& limits={}) {
+    const auto bytes=odh::encode_simitone_create_family_fami(value,limits);
+    return std::string(bytes.begin(),bytes.end());
+}
 }
 int main() {
  try {
@@ -40,6 +44,41 @@ int main() {
     require(f.member_guids==std::vector<std::uint32_t>({0xffffffffU,0xfffffffeU})&&f.remaining_bytes==0,"high GUIDs remain unsigned");
     {odh::Family created{};created.version=9;created.budget=20000;created.family_number=1;created.unknown=24;created.member_guids={0x12345678};
      const auto result=read(encoded(created));require(result.version==9&&result.house_number==0&&result.budget==20000&&result.family_number==1&&result.unknown==24&&result.member_guids==created.member_guids,"new synthetic family encodes structurally");}
+    {
+        odh::Family created{};created.version=9;created.budget=20000;created.family_number=1;
+        created.unknown=24;created.member_guids={0x12345678,0x87654321};
+        const auto bytes=encoded_simitone(created);
+        require(bytes.size()==64&&bytes.substr(bytes.size()-16)==std::string(16,'\0'),
+                "Simitone CreateFamily profile appends exactly four zero dwords");
+        const auto decoded=read(bytes);
+        require(decoded.version==9&&decoded.house_number==0&&decoded.family_number==created.family_number&&
+                decoded.budget==created.budget&&decoded.value_in_arch==0&&decoded.unknown==24&&
+                decoded.member_guids==created.member_guids&&decoded.remaining_bytes==16,
+                "Simitone CreateFamily profile structurally decodes without inventing tail semantics");
+        auto supplied_values=created;supplied_values.family_number=-7;supplied_values.budget=-1234;
+        const auto preserved=read(encoded_simitone(supplied_values));
+        require(preserved.family_number==-7&&preserved.budget==-1234,
+                "Simitone profile serializes supplied family number and budget without inventing values");
+        auto bad_profile=created;bad_profile.remaining_bytes=1;
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily rejects unpreserved input tail");
+        bad_profile=created;bad_profile.version=8;
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily rejects unexpected version");
+        bad_profile=created;bad_profile.house_number=1;
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily rejects nonzero house");
+        bad_profile=created;bad_profile.value_in_arch=1;
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily rejects nonzero architecture value");
+        bad_profile=created;bad_profile.unknown=23;
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily rejects unexpected unknown field");
+        bad_profile=created;bad_profile.member_guids.clear();
+        rejects([&]{encoded_simitone(bad_profile);},"Simitone CreateFamily requires at least one member");
+        require(encoded(created)!=bytes,"tail-free default encoder remains distinct from Simitone profile");
+        auto constrained=odh::FamiLimits{};constrained.payload_bytes=64;
+        require(encoded_simitone(created,constrained)==bytes,"Simitone CreateFamily accepts exact payload limit");
+        constrained.payload_bytes=63;
+        rejects([&]{encoded_simitone(created,constrained);},"Simitone CreateFamily counts its 16-byte tail against payload limit");
+        constrained={};constrained.members=1;
+        rejects([&]{encoded_simitone(created,constrained);},"Simitone CreateFamily observes member limit");
+    }
     require(encoded(f)==raw,"FAMI exact structural byte roundtrip including signed extrema");
     require(encoded(read(payload(0)))==payload(0),"empty FAMI encodes");
     require(encoded(read(payload(256)))==payload(256),"maximum default member count encodes");

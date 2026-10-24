@@ -53,6 +53,24 @@ std::vector<std::uint8_t> encode_fami(const Family& family, const FamiLimits& li
     for(const auto guid:family.member_guids)put(guid);
     return out;
 }
+std::vector<std::uint8_t> encode_simitone_create_family_fami(
+    const Family& family, const FamiLimits& limits) {
+    if (family.remaining_bytes != 0)
+        throw FormatError("cannot encode Simitone CreateFamily FAMI with unpreserved tail");
+    if (family.version != 9 || family.house_number != 0 || family.value_in_arch != 0 ||
+        family.unknown != 24 || family.member_guids.empty())
+        throw FormatError("FAMI does not match the observed Simitone CreateFamily profile");
+    constexpr std::uint64_t profile_tail_bytes = 16;
+    if (limits.payload_bytes < profile_tail_bytes ||
+        family.member_guids.size() > (limits.payload_bytes-profile_tail_bytes)/4 ||
+        family.member_guids.size() > (std::vector<std::uint8_t>().max_size()-56)/4)
+        throw FormatError("Simitone CreateFamily FAMI exceeds configured payload limit");
+    auto out=encode_fami(family, FamiLimits{
+        limits.payload_bytes-profile_tail_bytes, limits.members});
+    // The reference generator writes four zero Int32 values after the GUIDs.
+    out.insert(out.end(), profile_tail_bytes, 0);
+    return out;
+}
 FamilyContext::FamilyContext(const std::vector<FamilyEntry>& source) {
     if (source.size() > 4096) throw FormatError("family runtime exceeds bounded 4096 entries");
     std::size_t members=65536;

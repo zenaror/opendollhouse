@@ -21,6 +21,12 @@ Family read_fami(const View&, const FamiLimits& = {});
 // Encodes only a complete, tail-free payload. Unknown tails are not preserved
 // by Family and must be rejected rather than silently discarded.
 std::vector<std::uint8_t> encode_fami(const Family&, const FamiLimits& = {});
+// Explicit Simitone CreateFamily reference profile: appends four zero dwords
+// after the member GUIDs. This documents that reference's output only; it does
+// not establish that the same profile is valid for the original TS1 executable.
+// The supplied FamilyNumber and budget are serialized as given, without defaults.
+std::vector<std::uint8_t> encode_simitone_create_family_fami(
+    const Family&, const FamiLimits& = {});
 struct FamilyEntry {
     std::uint16_t chunk_id;
     Family family;
