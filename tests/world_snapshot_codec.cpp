@@ -78,7 +78,7 @@ int main() {
         rejects([&] { (void)odh::decode_world_snapshot(invalid_policy); },
                 "unknown attribute policy is rejected");
         auto unsupported_version = encoded;
-        unsupported_version[0] = 2;
+        unsupported_version[0] = 99;
         rejects([&] { (void)odh::decode_world_snapshot(unsupported_version); },
                 "unsupported World section version is rejected");
         for (std::size_t size = 0; size < encoded.size(); ++size) {
@@ -101,6 +101,26 @@ int main() {
         const auto minimal = odh::encode_world_snapshot(one_entity.snapshot());
         require(odh::encode_world_snapshot(odh::decode_world_snapshot(minimal)) == minimal,
                 "minimum-size entity snapshot is accepted");
+        auto legacy_v1=minimal;
+        legacy_v1[0]=1;legacy_v1.pop_back(); // v1 has no motive-controller presence byte.
+        const auto legacy_world=odh::decode_world_snapshot(legacy_v1);
+        require(legacy_world.entities.size()==1&&legacy_world.entities[0].motive_changes.empty(),
+                "version 1 snapshots remain readable without continuous motive state");
+
+        odh::World motive_world;
+        require(motive_world.create(1,odh::EntityKind::avatar,{0,0,0,16})&&
+                motive_world.set_motive(1,7,40)&&motive_world.tick_motive_changes()&&
+                motive_world.set_motive_change(1,7,900,100)&&motive_world.tick_motive_changes(),
+                "continuous motive controller fixture");
+        const auto motive_bytes=odh::encode_world_snapshot(motive_world.snapshot());
+        const auto motive_snapshot=odh::decode_world_snapshot(motive_bytes);
+        require(motive_snapshot.entities[0].motives[7]==40&&
+                motive_snapshot.entities[0].motive_changes.size()==16&&
+                motive_snapshot.entities[0].motive_changes[7].per_hour_change==900&&
+                motive_snapshot.entities[0].motive_changes[7].fractional==0.5&&
+                !motive_snapshot.entities[0].motive_changes[7].ticked&&
+                odh::encode_world_snapshot(motive_snapshot)==motive_bytes,
+                "version 2 stores fractional carry and resets transient Ticked on restore");
         auto unsorted = snapshot;
         std::swap(unsorted.entities[0], unsorted.entities[1]);
         rejects([&] { (void)odh::encode_world_snapshot(unsorted); },

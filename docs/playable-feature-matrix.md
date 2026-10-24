@@ -85,9 +85,11 @@ completos da build em [linux-playable-scope.md](linux-playable-scope.md).
 ### Atualização de necessidades — 2026-10-24
 
 A pontuação de sala já alimenta o decaimento TS1 no runtime. O opcode 29
-`Set Motive Change` agora está ligado para sua variante imediata `Once`, com
-limites e escala positiva de energia. Essa variante passou 17 verificações
-sintéticas e o teste `person_cli`; nenhuma ação comercial foi ainda identificada
-como usuária desse caminho. A tabela continuará parcial até uma ação real
-alterar a necessidade no lote. Mudanças contínuas continuam pendentes porque
-exigem controlador por avatar e persistência.
+`Set Motive Change` agora cobre as formas imediata e contínua, com estado por
+avatar, frações persistidas no snapshot e suspensão correspondente da decay
+natural. Foram aprovadas 28 verificações do opcode; `interaction_queue`,
+`world_snapshot_codec` e `person_cli` também passaram. A leitura estrutural de
+`Beds.iff` confirmou instruções comerciais contínuas, mas a ação de cama ainda
+não foi executada dentro de uma sessão de lote Linux. Portanto essa evidência
+não estabelece que as interações comerciais já alterem necessidades de ponta a
+ponta.

@@ -25,10 +25,13 @@ std::int16_t read_i16(const std::array<std::uint8_t,8>& bytes,std::size_t offset
 }
 }
 
-PrimitiveOutcome ts1_motive_change_once(World& world,const VmMemory& memory,
-                                        const VmFrame& frame,const Instruction& instruction) {
+PrimitiveOutcome ts1_motive_change(World& world,const VmMemory& memory,
+                                  const VmFrame& frame,const Instruction& instruction) {
     if(instruction.opcode!=29)return unsupported("Set Motive Change helper received another opcode");
 
+    const auto* actor=world.find(frame.context.caller);
+    if(!actor||actor->kind!=EntityKind::avatar)
+        return unsupported("Set Motive Change caller is not an avatar");
     const auto delta_owner=instruction.operands[0];
     const auto max_owner=instruction.operands[1];
     const auto motive=instruction.operands[2];
@@ -38,13 +41,12 @@ PrimitiveOutcome ts1_motive_change_once(World& world,const VmMemory& memory,
 
     constexpr std::uint8_t clear_all=1U;
     constexpr std::uint8_t once=2U;
+    if((flags&clear_all)!=0){
+        if(!world.clear_motive_changes(frame.context.caller))
+            return unsupported("Set Motive Change could not clear caller records");
+        return {PrimitiveDisposition::goto_true,{}};
+    }
     if((flags&~(clear_all|once))!=0)return unsupported("Set Motive Change has unknown flag bits");
-
-    // No continuous motive-change records are installed by this runtime yet.
-    // Therefore ClearAll has the reference result and leaves no hidden state.
-    if((flags&clear_all)!=0)return {PrimitiveDisposition::goto_true,{}};
-    if((flags&once)==0)
-        return unsupported("continuous Set Motive Change needs a ticked per-avatar controller");
     if(motive>15)return unsupported("Set Motive Change motive index is outside the 16-word bank");
     if(!memory.read)return unsupported("Set Motive Change variable reader is unavailable");
 
@@ -52,9 +54,7 @@ PrimitiveOutcome ts1_motive_change_once(World& world,const VmMemory& memory,
     const auto maximum=memory.read(frame,static_cast<std::uint8_t>(max_owner),max_data);
     if(!delta||!maximum)return unsupported("Set Motive Change input variable is unavailable");
 
-    const auto* actor=world.find(frame.context.caller);
-    if(!actor||actor->kind!=EntityKind::avatar||
-       static_cast<std::size_t>(motive)>=actor->motives.size())
+    if(static_cast<std::size_t>(motive)>=actor->motives.size())
         return unsupported("Set Motive Change caller has no matching motive bank");
 
     auto rate=static_cast<std::int32_t>(*delta);
@@ -62,6 +62,11 @@ PrimitiveOutcome ts1_motive_change_once(World& world,const VmMemory& memory,
     if(motive==5&&rate>0)rate*=22;
     const auto scaled_rate=wrap_i16(rate);
     const auto limit=*maximum; // TS1 GetLimit is 100, so ScaleMax is identity.
+    if((flags&once)==0){
+        if(!world.set_motive_change(frame.context.caller,motive,scaled_rate,limit))
+            return unsupported("Set Motive Change could not install caller record");
+        return {PrimitiveDisposition::goto_true,{}};
+    }
     const auto current=actor->motives[static_cast<std::size_t>(motive)];
 
     if((scaled_rate>0&&current>limit)||(scaled_rate<0&&current<limit))
@@ -79,7 +84,7 @@ PrimitiveOutcome ts1_motive_change_once(World& world,const VmMemory& memory,
 VmPrimitive ts1_motive_change_primitive(World& world,VmMemory memory) {
     return [&world,memory=std::move(memory)](const VmFrame& frame,const Instruction& instruction,
         const std::array<std::int16_t,20>&,const VmDispatch&) {
-        return ts1_motive_change_once(world,memory,frame,instruction);
+        return ts1_motive_change(world,memory,frame,instruction);
     };
 }
 

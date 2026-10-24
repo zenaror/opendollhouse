@@ -7,10 +7,9 @@ validação indicados por versão.
 
 ### Adicionado
 
-- O runtime `odh-person` agora executa a variante imediata (`Once`) do BHAV
-  `Set Motive Change` (opcode 29), incluindo escala TS1 de energia positiva e
-  limites direcionais. Mudanças contínuas ainda são recusadas até haver estado
-  por Sim e persistência. A evidência e o próximo gate estão em
+- O runtime `odh-person` agora executa as formas imediata e contínua do BHAV
+  `Set Motive Change` (opcode 29), com taxas por avatar, atualização por tick,
+  estado no snapshot e limpeza ao concluir a interação. A evidência e o próximo gate estão em
   [`motive-change-validation.md`](docs/motive-change-validation.md).
 
 - Foi criado um preparador transacional para a entrada Load (EP2). As ações

@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 1;
+constexpr std::uint16_t codec_version = 2;
 constexpr std::size_t minimum_header_size = 31;
 
 class Writer {
@@ -35,6 +35,13 @@ public:
         std::uint32_t bits = 0;
         std::memcpy(&bits, &value, sizeof(bits));
         u32(bits);
+    }
+    void f64(double value) {
+        if (!std::numeric_limits<double>::is_iec559 || sizeof(double) != sizeof(std::uint64_t))
+            throw FormatError("World snapshot double format is unsupported on this platform");
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        u64(bits);
     }
     void count(std::size_t value) {
         if (value > std::numeric_limits<std::uint32_t>::max())
@@ -121,6 +128,14 @@ public:
         std::memcpy(&value, &bits, sizeof(value));
         return value;
     }
+    double f64() {
+        if (!std::numeric_limits<double>::is_iec559 || sizeof(double) != sizeof(std::uint64_t))
+            throw FormatError("World snapshot double format is unsupported on this platform");
+        const auto bits=u64();
+        double value=0;
+        std::memcpy(&value,&bits,sizeof(value));
+        return value;
+    }
     std::size_t remaining() const { return bytes_.size() - offset_; }
     bool done() const { return offset_ == bytes_.size(); }
 private:
@@ -202,9 +217,15 @@ void write_entity(Writer& writer, const Entity& entity) {
     writer.boolean(entity.kill_timeout.has_value());
     if (entity.kill_timeout) writer.i32(*entity.kill_timeout);
     writer.f32(entity.radian_direction);
+    writer.boolean(entity.motive_changes.size()==16);
+    if(entity.motive_changes.size()==16)for(const auto& change:entity.motive_changes){
+        writer.i16(change.per_hour_change);
+        writer.i16(change.maximum);
+        writer.f64(change.fractional);
+    }
 }
 
-Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits) {
+Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::uint16_t version) {
     Entity entity{};
     entity.id = reader.i16();
     const auto kind = reader.u8();
@@ -268,6 +289,16 @@ Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits) {
     entity.ui_ghost = reader.boolean();
     if (reader.boolean()) entity.kill_timeout = reader.i32();
     entity.radian_direction = reader.f32();
+    if(version>=2&&reader.boolean()){
+        entity.motive_changes.resize(16);
+        for(auto& change:entity.motive_changes){
+            change.per_hour_change=reader.i16();
+            change.maximum=reader.i16();
+            change.fractional=reader.f64();
+            // Simitone does not serialize VMMotiveChange.Ticked.
+            change.ticked=false;
+        }
+    }
     return entity;
 }
 
@@ -304,7 +335,8 @@ WorldSnapshot decode_world_snapshot(
     if (bytes.size() < minimum_header_size)
         throw FormatError("World snapshot header is truncated");
     Reader reader(bytes);
-    if (reader.u16() != codec_version) throw FormatError("unsupported World snapshot version");
+    const auto version=reader.u16();
+    if(version!=1&&version!=codec_version)throw FormatError("unsupported World snapshot version");
     WorldSnapshot snapshot;
     const auto policy = reader.u8();
     if (policy > static_cast<std::uint8_t>(AttributePolicy::ts1_bounded))
@@ -316,7 +348,7 @@ WorldSnapshot decode_world_snapshot(
     const auto count = reader.count(limits.world.entities, 49);
     snapshot.entities.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i)
-        snapshot.entities.push_back(read_entity(reader, limits));
+        snapshot.entities.push_back(read_entity(reader, limits,version));
     if (!reader.done()) throw FormatError("World snapshot has unclaimed bytes");
     validate_snapshot(snapshot, limits.world);
     return snapshot;

@@ -52,54 +52,84 @@ int main() {
         odh::World world;
         add_actor(world);
         require(world.set_motive(1,6,90),"set comfort before one-shot gain");
-        auto result=odh::ts1_motive_change_once(world,memory_with(20,100),frame(),instruction(6,2));
+        auto result=odh::ts1_motive_change(world,memory_with(20,100),frame(),instruction(6,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[6]==100,
                 "one-shot motive gain clamps at its supplied maximum");
 
         require(world.set_motive(1,8,-90),"set hygiene before one-shot loss");
-        result=odh::ts1_motive_change_once(world,memory_with(-20,-100),frame(),instruction(8,2));
+        result=odh::ts1_motive_change(world,memory_with(-20,-100),frame(),instruction(8,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[8]==-100,
                 "one-shot motive loss clamps at its supplied minimum");
 
         require(world.set_motive(1,5,0),"set energy before scaled gain");
-        result=odh::ts1_motive_change_once(world,memory_with(1,100),frame(),instruction(5,2));
+        result=odh::ts1_motive_change(world,memory_with(1,100),frame(),instruction(5,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[5]==22,
                 "positive TS1 energy change uses the reference integer scale 22");
 
-        result=odh::ts1_motive_change_once(world,memory_with(-7,-100),frame(),instruction(6,2));
+        result=odh::ts1_motive_change(world,memory_with(-7,-100),frame(),instruction(6,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[6]==93,
                 "one-shot changes below the maximum apply their signed delta");
 
-        result=odh::ts1_motive_change_once(world,memory_with(1,100),frame(),instruction(6,0));
-        require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
-                "continuous motive changes stay explicitly unsupported");
-        result=odh::ts1_motive_change_once(world,{},frame(),instruction(6,1));
+        result=odh::ts1_motive_change(world,{},frame(),instruction(6,1));
         require(result.disposition==odh::PrimitiveDisposition::goto_true,
-                "ClearAll succeeds when this runtime has no continuous change records");
-        result=odh::ts1_motive_change_once(world,memory_with(1,100),frame(),instruction(6,4));
+                "ClearAll succeeds without reading unused variable inputs");
+        result=odh::ts1_motive_change(world,memory_with(1,100),frame(),instruction(6,4));
         require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
                 "unknown operand flags fail without changing the motive");
-        result=odh::ts1_motive_change_once(world,memory_with(1,100),frame(),instruction(16,2));
+        result=odh::ts1_motive_change(world,memory_with(1,100),frame(),instruction(16,2));
         require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
                 "motive index outside the bank fails without changing state");
-        result=odh::ts1_motive_change_once(world,{},frame(),instruction(6,2));
+        result=odh::ts1_motive_change(world,{},frame(),instruction(6,2));
         require(result.disposition==odh::PrimitiveDisposition::unsupported&&world.find(1)->motives[6]==93,
                 "missing input variables fail without changing state");
 
         require(world.set_motive(1,6,100),"set comfort at ordinary cap");
-        result=odh::ts1_motive_change_once(world,memory_with(5,90),frame(),instruction(6,2));
+        result=odh::ts1_motive_change(world,memory_with(5,90),frame(),instruction(6,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[6]==100,
                 "already-above-maximum motive is preserved without a clamp");
-        result=odh::ts1_motive_change_once(world,memory_with(-5,-90),frame(),instruction(8,2));
+        result=odh::ts1_motive_change(world,memory_with(-5,-90),frame(),instruction(8,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[8]==-100,
                 "already-below-minimum motive is preserved without a clamp");
 
         require(world.set_motive(1,6,100),"reset comfort before signed overflow case");
-        result=odh::ts1_motive_change_once(world,memory_with(32767,32767),frame(),instruction(6,2));
+        result=odh::ts1_motive_change(world,memory_with(32767,32767),frame(),instruction(6,2));
         require(result.disposition==odh::PrimitiveDisposition::goto_true&&world.find(1)->motives[6]==-100,
                 "short compound addition wraps before the reference limit check");
 
-        std::cout<<"TS1 Set Motive Change once: "<<checks<<" checks passed.\n";
+        odh::World continuous;
+        add_actor(continuous);
+        require(continuous.set_motive(1,6,40),"initialize comfort before continuous gain");
+        result=odh::ts1_motive_change(continuous,memory_with(1800,50),frame(),instruction(6,0));
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&!continuous.has_motive_change(1,6),
+                "first pre-tick SetMotiveChange is ignored by Simitone ordering");
+        require(continuous.tick_motive_changes(),"avatar tick opens continuous controller gate");
+        result=odh::ts1_motive_change(continuous,memory_with(1800,50),frame(),instruction(6,0));
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&continuous.has_motive_change(1,6),
+                "continuous form installs its rate on the caller avatar");
+        require(continuous.tick_motive_changes()&&continuous.find(1)->motives[6]==41,
+                "continuous rate accumulates once per TS1 five-second tick");
+        require(!continuous.has_motive_change(1,7),"unrelated motive remains inactive");
+        result=odh::ts1_motive_change(continuous,{},frame(),instruction(6,255));
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&!continuous.has_motive_change(1,6),
+                "ClearAll wins over unused operands and unknown flag bits");
+
+        require(continuous.tick_motive_changes(),"re-arm after ClearAll");
+        require(continuous.set_motive(1,6,99),"set value near continuous maximum");
+        result=odh::ts1_motive_change(continuous,memory_with(3600,100),frame(),instruction(6,0));
+        require(result.disposition==odh::PrimitiveDisposition::goto_true,"install faster continuous rate");
+        require(continuous.tick_motive_changes()&&continuous.find(1)->motives[6]==100&&continuous.has_motive_change(1,6),
+                "continuous rate clamps at maximum but remains active");
+
+        result=odh::ts1_motive_change(continuous,memory_with(1,100),frame(),instruction(5,0));
+        const auto energy_state=continuous.snapshot();
+        require(result.disposition==odh::PrimitiveDisposition::goto_true&&
+                energy_state.entities[0].motive_changes[5].per_hour_change==22,
+                "continuous positive TS1 energy rate uses the reference scale 22");
+
+        require(continuous.clear_motive_changes(1)&&!continuous.has_motive_change(1,5)&&
+                !continuous.has_motive_change(1,6),
+                "host interaction cleanup clears all active rates");
+        std::cout<<"TS1 Set Motive Change: "<<checks<<" checks passed.\n";
         return 0;
     } catch(const std::exception& error) {
         std::cerr<<error.what()<<'\n';

@@ -14,7 +14,7 @@ struct Fixture {
  Fixture(unsigned allow=1,std::size_t capacity=2,bool flags=true):queue(world,1,capacity),
  vm({{key(4096),bhav({idle(allow,1),set(2,99)})}},world.vm_memory(),{},queue.primitive(),
     {{22,{{key(4096),bhav({set(0,22)})},{key(4097),bhav({set(1,33,255)})}}}}) {
-  world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
+  world.create(1,odh::EntityKind::avatar,{0,0,0,16});world.create(2,odh::EntityKind::object);
   if(flags)world.declare_object_word(1,8,16);
   require(queue.bind(vm),"bind registered avatar");vm.start(key(4096),{1,1,1,0},{0});
  }
@@ -72,10 +72,13 @@ int main(int argc,char** argv){try {
   require(mover_queue.size()==0&&blocker_queue.size()==0&&world.find(2)->object_words.at(25)==7,
           "per-avatar completion is isolated while World changes remain shared");
  }
- {Fixture f;require(f.enqueue()&&f.enqueue(4097)&&!f.enqueue(),"FIFO capacity includes active front");
+ {Fixture f;require(f.world.tick_motive_changes()&&f.world.set_motive_change(1,6,1800,100)&&
+                     f.world.has_motive_change(1,6),"fixture has an active TS1 motive change");
+  require(f.enqueue()&&f.enqueue(4097)&&!f.enqueue(),"FIFO capacity includes active front");
   require(f.vm.run(10)==odh::VmStatus::yielded&&f.vm.temps()[0]==22,"owner22 action executes over preserved owner0 Main");
   require(f.vm.stack().size()==1&&f.vm.stack()[0].pc==0&&f.vm.stack()[0].arguments[0]==-1,"decrement before push and unchanged Main pc after return");
-  require(f.queue.observe()&&!f.queue.active()&&f.queue.size()==1&&f.queue.completion()->result,"observe removes completed front synchronously");
+  require(f.queue.observe()&&!f.queue.active()&&f.queue.size()==1&&f.queue.completion()->result&&
+          !f.world.has_motive_change(1,6),"interaction completion removes the action's motive change");
   require(f.vm.run(10)==odh::VmStatus::yielded&&f.vm.temps()[2]==0,"same tick cannot resume Main");
   require(f.queue.tick(0)&&f.vm.status()==odh::VmStatus::yielded,"tick zero does not consume next-tick boundary");
   require(f.queue.tick(1)&&f.vm.run(10)==odh::VmStatus::yielded&&f.vm.temps()[1]==33,"next tick reexecutes AllowPush and invokes FIFO second action");

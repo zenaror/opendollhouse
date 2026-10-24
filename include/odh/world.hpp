@@ -27,6 +27,13 @@ struct SavedObjectBanks {
     std::array<std::int16_t,68> object_data;
     std::array<std::int16_t,5> extras;
 };
+struct MotiveChangeState {
+    std::int16_t per_hour_change=0;
+    std::int16_t maximum=32767;
+    double fractional=0.0;
+    // Runtime-only ordering bit. Like Simitone, it is reset on session restore.
+    bool ticked=false;
+};
 struct Entity {
     std::int16_t id;
     EntityKind kind;
@@ -55,6 +62,9 @@ struct Entity {
     // VMAvatar.RadianDirection is continuous during turns; EntityPosition only
     // exposes the derived eight-notch direction used by saved-object adapters.
     float radian_direction = 0.0f;
+    // Present only for avatars with a complete 16-word motive bank. This is
+    // runtime state, separate from the imported saved motive values.
+    std::vector<MotiveChangeState> motive_changes;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
@@ -135,6 +145,14 @@ public:
     // without changing entity state or word accounting.
     bool replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values);
     bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
+    // TS1 continuous SetMotiveChange state belongs to the Caller avatar.
+    // The setter returns true when the request is valid, including the first
+    // pre-tick request that Simitone deliberately ignores.
+    bool set_motive_change(std::int16_t id,std::int16_t motive,
+                           std::int16_t per_hour_change,std::int16_t maximum);
+    bool clear_motive_changes(std::int16_t id);
+    bool tick_motive_changes();
+    bool has_motive_change(std::int16_t id,std::int16_t motive) const;
     bool declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value);
     bool set_static_footprint(std::int16_t id, bool is_static);
     bool set_ui_ghost(std::int16_t id, bool is_ghost);

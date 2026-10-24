@@ -1,19 +1,22 @@
 # Mudança imediata de necessidade por BHAV — 2026-10-24
 
-O runtime Linux agora reconhece o BHAV opcode 29 (`Set Motive Change`) na
-variante `Once`. Ele lê delta e limite pelos escopos fornecidos pelo próprio
-BHAV, aplica a escala TS1 de energia positiva (`180 / (24 - 16) = 22`) e a
-conversão curta com wrap signed-16 do código C#. Segue as verificações
-direcionais do Simitone: um Sim já além do limite não é
-reparado/clampado; uma mudança que cruza o limite termina exatamente nele.
-O setter do World mantém os limites TS1 `[-100, 100]` e preserva valores
-importados acima de 100.
+O runtime Linux reconhece o BHAV opcode 29 (`Set Motive Change`) nas formas
+imediata (`Once`) e contínua. Ambas leem delta e limite pelos escopos definidos
+no BHAV e aplicam a escala TS1 de energia positiva (`180 / (24 - 16) = 22`).
+A forma imediata mantém o wrap signed-16 e os limites direcionais do Simitone:
+um Sim já além do limite não é corrigido; uma mudança que cruza o limite para
+exatamente nele.
 
-`ClearAll` retorna sucesso porque este runtime ainda não cria registros de
-mudança contínua. A variante contínua retorna `unsupported` explicitamente:
-ela depende de um controlador por Sim que acumule frações a cada passo e
-participe do save/retomada. Flags desconhecidas, índices fora do banco, escopos
-sem valor e caller sem banco de Sim também são recusados sem escrever motivo.
+Cada avatar guarda até 16 registros contínuos. A taxa por hora avança a cada
+tick TS1 de cinco segundos, acumula frações e continua ativa mesmo ao atingir
+o máximo. A decay natural é suspensa para necessidades com taxa ativa, exceto
+Energy, como no Simitone. `ClearAll` apaga as taxas e as interações concluídas
+também limpam as alterações do avatar.
+
+Os registros e suas frações entram no snapshot versionado do World. O campo
+transitório `Ticked` não é salvo, como no marshalling do Simitone; snapshots
+v1 continuam sendo lidos como avatares sem alterações contínuas. Os bancos
+originais de saves continuam separados do estado de execução.
 
 ## Referência e validação
 
@@ -23,14 +26,16 @@ Referência de código: Simitone/FreeSO pinado em `docs/references.md`,
 `Model/VMMotiveChange.cs` (escala de delta/limite). Os recursos comerciais não
 são alterados.
 
-O teste `motive_change` executa 17 verificações sintéticas: ganho e perda com
-limite, mudança abaixo do limite, escala de energia, valor já além do limite,
-`ClearAll`, variante contínua ainda não suportada e recusas de flag, índice e
-entrada. `person_cli` também passou depois de ligar o opcode ao host
-`odh-person`. Isso valida o código ODH nesses casos sintéticos; não prova que
-uma ação de objeto comercial específica já percorra o opcode, nem paridade com
-o executável original.
+O teste `motive_change` executa 28 verificações sintéticas, incluindo instalação
+contínua, escala, limites, primeira atualização, `ClearAll` e substituição. Os
+testes `interaction_queue`, `world_snapshot_codec` e `person_cli` também passaram.
+Uma leitura estrutural de `GameData/Objects/Objects.far!Beds.iff`, BHAV 4153,
+encontrou instruções reais de alteração contínua para Comfort e Energy. O código
+de ODH já executa essa classe de instrução, mas a rotina comercial completa ainda
+não foi executada em uma sessão de lote Linux.
 
-Próximo passo: localizar um objeto/ação TS1 que use opcode 29 `Once` e executar
-essa ação com os próprios recursos comerciais em uma sessão Linux. Depois,
-implementar a forma contínua com estado por avatar e persistência validada.
+Isso valida contratos isolados e persistência de estado do ODH; não prova
+paridade com o executável original nem que uma ação comercial completa funcione.
+Próximo passo: executar uma ação real de cama ou outro objeto no lote com os
+recursos comerciais, registrar a mudança observada e investigar o teste de
+janela em um ambiente Xvfb isolado.

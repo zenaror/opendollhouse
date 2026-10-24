@@ -68,6 +68,8 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
            entity.person_data.size()>limits_.bank_words || entity.person_data.size()>32768 ||
            entity.slots.size()>limits_.bank_words || entity.slots.size()>32767 ||
            entity.motives.size()>limits_.bank_words || entity.motives.size()>16 ||
+           (!entity.motive_changes.empty() &&
+            (entity.kind!=EntityKind::avatar || entity.motives.size()<16 || entity.motive_changes.size()!=16)) ||
            entity.definition_words.size()>limits_.bank_words ||
            (entity.kind!=EntityKind::avatar &&
             (!entity.person_data.empty() || !entity.motives.empty() || entity.kill_timeout)) ||
@@ -86,6 +88,8 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
             if(index<0 || index>=79 || derived(index)) return false;
         for(const auto& [index,value]:entity.definition_words)
             if(index<0 || index>255) return false;
+        for(const auto& change:entity.motive_changes)
+            if(!std::isfinite(change.fractional))return false;
         if(entity.saved_object_banks) {
             if(!entity.definition) return false;
             for(std::int16_t index=0;index<68;++index)
@@ -163,7 +167,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
         std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),
-        {},{},{},std::int16_t{-1},true,false,std::nullopt});
+        {},{},{},std::int16_t{-1},true,false,std::nullopt,0.0f,{}});
     if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     words_ += count;
     mark_spatial_change();
@@ -197,7 +201,7 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     Entity candidate{id,kind,attributes,person_data,std::vector<std::int16_t>(slots),{},
         {},{},generation,EntityType{guid,master_guid},motives,{},{},
         SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1},
-        true,false,std::nullopt};
+        true,false,std::nullopt,0.0f,{}};
     for (std::int16_t index=0;index<68;++index)
         if (!derived(index)) candidate.object_words.emplace(index,object_data[static_cast<std::size_t>(index)]);
     entities_.emplace(id,std::move(candidate));
@@ -324,6 +328,74 @@ bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) 
     // Motives do not change room geometry or route obstacles.
     if(old!=updated)old=updated;
     return true;
+}
+namespace {
+std::int16_t wrap_motive_word(std::int32_t value) {
+    const auto bits=static_cast<std::uint16_t>(static_cast<std::uint32_t>(value));
+    const auto signed_value=bits<0x8000U?static_cast<std::int32_t>(bits):
+        static_cast<std::int32_t>(bits)-0x10000;
+    return static_cast<std::int16_t>(signed_value);
+}
+std::int16_t wrap_motive_double(double value) {
+    const auto integral=std::fmod(std::trunc(value),65536.0);
+    const auto normalized=integral<0.0?integral+65536.0:integral;
+    return wrap_motive_word(static_cast<std::int32_t>(normalized));
+}
+}
+bool World::set_motive_change(std::int16_t id,std::int16_t motive,
+                              std::int16_t per_hour_change,std::int16_t maximum) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end()||found->second.kind!=EntityKind::avatar||
+       !valid_index(motive,16)||found->second.motives.size()<16)return false;
+    auto& changes=found->second.motive_changes;
+    if(changes.empty())changes.resize(16);
+    if(changes.size()!=16)return false;
+    auto& change=changes[static_cast<std::size_t>(motive)];
+    if(change.ticked){
+        change.per_hour_change=per_hour_change;
+        change.maximum=maximum;
+        change.ticked=false;
+    }
+    return true;
+}
+bool World::clear_motive_changes(std::int16_t id) {
+    const auto found=entities_.find(id);
+    if(found==entities_.end()||found->second.kind!=EntityKind::avatar)return false;
+    for(auto& change:found->second.motive_changes){
+        change.per_hour_change=0;
+        change.maximum=INT16_MAX;
+    }
+    return true;
+}
+bool World::tick_motive_changes() {
+    for(auto& [id,entity]:entities_){
+        if(entity.kind!=EntityKind::avatar||entity.motives.size()<16)continue;
+        if(entity.motive_changes.empty())entity.motive_changes.resize(16);
+        if(entity.motive_changes.size()!=16)return false;
+        for(std::size_t index=0;index<entity.motive_changes.size();++index){
+            auto& change=entity.motive_changes[index];
+            change.ticked=true;
+            if(change.per_hour_change==0)continue;
+            const auto rate=(static_cast<double>(change.per_hour_change)/60.0)/30.0;
+            change.fractional+=rate;
+            if(std::abs(change.fractional)<1.0)continue;
+            auto& current=entity.motives[index];
+            if((rate>0.0&&current>change.maximum)||(rate<0.0&&current<change.maximum))continue;
+            const auto delta=wrap_motive_double(change.fractional);
+            change.fractional=std::fmod(change.fractional,1.0);
+            auto next=wrap_motive_word(static_cast<std::int32_t>(current)+delta);
+            if((rate>0.0&&next>change.maximum)||(rate<0.0&&next<change.maximum))
+                next=change.maximum;
+            if(!set_motive(id,static_cast<std::int16_t>(index),next))return false;
+        }
+    }
+    return true;
+}
+bool World::has_motive_change(std::int16_t id,std::int16_t motive) const {
+    const auto found=entities_.find(id);
+    return found!=entities_.end()&&found->second.kind==EntityKind::avatar&&
+        valid_index(motive,found->second.motive_changes.size())&&
+        found->second.motive_changes[static_cast<std::size_t>(motive)].per_hour_change!=0;
 }
 bool World::declare_definition_word(std::int16_t id, std::int16_t index, std::int16_t value) {
     const auto found = entities_.find(id);

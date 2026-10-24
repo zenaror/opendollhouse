@@ -153,3 +153,22 @@ carregaram e selecionaram por clique direcionado apenas à janela do aplicativo:
 Não houve captura do desktop nem cópia/alteração de recursos comerciais. Esses
 casos confirmam leitura, renderização em janela e seleção; não estabelecem
 comparação visual integral com o original, simulação ou funcionamento dos ports.
+
+### Reteste após Pango no monitor local — 2026-10-24
+
+- Build completa: `cmake --build build/linux-checkpoint -j2` concluiu.
+- CTest completo: 229/229 sem falhas; 226 passaram e três testes GUI foram
+  marcados como pulados porque o CTest configura `DISPLAY=:65535`.
+- Exportamos novamente os mapas reais dos modos 1–5 e 7. Todos geraram quadros
+  800×600 sem camadas ausentes; os marcadores mostram 10, 10, 9, 41, 10 e 9
+  lotes, respectivamente. O modo 1 também mostrou dois lotes associados a
+  famílias. Os textos do quadro foram desenhados com Pango.
+- No monitor real `DISPLAY=:0`, os três testes GUI foram executados diretamente,
+  mas não passaram: o teste da janela não recebeu Space; o teste de ações recebeu
+  Cancel em vez de E; e a integração de mudança de família falhou ao conferir o
+  marcador ocupado após reabrir o mapa. A tela do mapa inicial chegou a ser aberta
+  e o teste conseguiu avançar até a confirmação/cancelamento na primeira sessão.
+  Isso ainda não identifica se a diferença está na entrega de eventos do desktop,
+  no teste ou na janela; não conta como validação interativa bem-sucedida.
+- Captura/exportação do mapa confirma o quadro desenhado, mas não confirma que a
+  janela visível responda corretamente ao teclado e ao mouse.

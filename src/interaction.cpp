@@ -198,6 +198,9 @@ bool InteractionQueue::observe() {
         diagnostic_="interaction completion identity mismatch";return false;
     }
     if(clock_==std::numeric_limits<std::uint32_t>::max()){diagnostic_="interaction resume exceeds uint32 clock";return false;}
+    if(!world_.clear_motive_changes(actor_id_)){
+        diagnostic_="interaction completion could not clear avatar motive changes";return false;
+    }
     completion_=InteractionCompletion{active_->uid,result->ticket,clock_,result->result};
     queue_.pop_front();active_.reset();idle_start_=clock_;
     resume_tick_=clock_+1;diagnostic_.clear();return true;

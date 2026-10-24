@@ -4201,6 +4201,59 @@ struct PlacementCandidateProbe {
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
         state!=odh::VmStatus::returned_false&&state!=odh::VmStatus::fault;};
+    const auto update_simulation_motives=[&]{
+        if(!simulation_clock)return;
+        const auto& time=simulation_clock->snapshot();
+        const auto motive_contributions=odh::room_score_contributions(world);
+        for(auto& entry:simulation_motives){
+            const auto* actor=world.find(entry.first);
+            odh::Ts1MotiveInputs in;
+            if(!actor || actor->person_data.size()<=6 || actor->motives.size()<16 || !actor->object_words.count(34)){
+                simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;continue;
+            }
+            if(!vm_room_map){
+                simulation_motive_status[entry.first]="unsupported_room_map_unavailable";++simulation_skipped_updates;continue;
+            }
+            if(!actor->position){
+                simulation_motive_status[entry.first]="unsupported_avatar_position";++simulation_skipped_updates;continue;
+            }
+            const auto room_score=odh::calculate_room_score(*vm_room_map,motive_contributions,
+                actor->position->x,actor->position->y,actor->position->level);
+            if(!room_score){
+                simulation_motive_status[entry.first]="unsupported_room_score_unresolved";++simulation_skipped_updates;continue;
+            }
+            if(!world.set_motive(entry.first,13,room_score->score))
+                throw odh::FormatError("simulation room-score write failed");
+            in.active_personality=actor->person_data[3];in.outgoing_personality=actor->person_data[6];
+            in.sleep_state=actor->motives[11];in.room_score=room_score->score;in.hidden=actor->object_words.at(34)>0;
+            for(std::size_t i=0;i<odh::ts1_need_count;++i){
+                const auto motive=static_cast<std::int16_t>(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i)));
+                in.needs[i]=actor->motives[static_cast<std::size_t>(motive)];
+                in.active_changes[i]=world.has_motive_change(entry.first,motive);
+            }
+            const auto result=entry.second.update(time.hour,time.minute,in);
+            simulation_motive_status[entry.first]=result.status==odh::Ts1MotiveStatus::updated?"updated":
+                result.status==odh::Ts1MotiveStatus::unchanged?"unchanged":"unsupported_input_profile";
+            if(result.status==odh::Ts1MotiveStatus::unsupported){++simulation_skipped_updates;continue;}
+            if(result.status==odh::Ts1MotiveStatus::updated){
+                for(std::size_t i=0;i<odh::ts1_need_count;++i)
+                    if(!world.set_motive(entry.first,static_cast<std::int16_t>(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))),result.needs[i]))
+                        throw odh::FormatError("simulation motive write failed");
+                if(!world.set_motive(entry.first,11,result.sleep_state)||!world.set_motive(entry.first,3,result.mood))
+                    throw odh::FormatError("simulation sleep/mood write failed");
+            }
+        }
+#ifdef ODH_HAVE_X11
+        if(render_window_host && (ticks==1 || ticks%30==0)){
+            std::string title="OpenDollhouse | "+std::to_string(time.hour)+":"+(time.minute<10?"0":"")+std::to_string(time.minute);
+            if(const auto* actor=world.find(active_household_actor);actor&&actor->motives.size()>=16)
+                title+=" | Hunger "+std::to_string(actor->motives[7])+" Comfort "+std::to_string(actor->motives[6])+
+                    " Hygiene "+std::to_string(actor->motives[8])+" Bladder "+std::to_string(actor->motives[9])+
+                    " Energy "+std::to_string(actor->motives[5])+" Fun "+std::to_string(actor->motives[15])+" Social "+std::to_string(actor->motives[14]);
+            render_window_host->set_title(title+" | P pause, S save, Escape close");
+        }
+#endif
+    };
     bool window_paused=false,window_closed=false;
     std::optional<odh_host::NeighborhoodTransitionRequest> neighborhood_transition;
     auto window_deadline=std::chrono::steady_clock::now();
@@ -4550,56 +4603,6 @@ struct PlacementCandidateProbe {
         ++ticks;
         if(simulation_clock){
             if(!simulation_clock->tick(true))throw odh::FormatError("simulation clock exhausted");
-            const auto& time=simulation_clock->snapshot();
-            const auto motive_contributions=odh::room_score_contributions(world);
-            for(auto& entry:simulation_motives){
-                const auto* actor=world.find(entry.first);
-                odh::Ts1MotiveInputs in;
-                if(!actor || actor->person_data.size()<=6 || actor->motives.size()<16 || !actor->object_words.count(34)){
-                    simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;continue;
-                }
-                if(!vm_room_map){
-                    simulation_motive_status[entry.first]="unsupported_room_map_unavailable";++simulation_skipped_updates;continue;
-                }
-                if(!actor->position){
-                    simulation_motive_status[entry.first]="unsupported_avatar_position";++simulation_skipped_updates;continue;
-                }
-                const auto room_score=odh::calculate_room_score(*vm_room_map,motive_contributions,
-                    actor->position->x,actor->position->y,actor->position->level);
-                if(!room_score){
-                    simulation_motive_status[entry.first]="unsupported_room_score_unresolved";++simulation_skipped_updates;continue;
-                }
-                if(!world.set_motive(entry.first,13,room_score->score))
-                    throw odh::FormatError("simulation room-score write failed");
-                in.active_personality=actor->person_data[3];in.outgoing_personality=actor->person_data[6];
-                in.sleep_state=actor->motives[11];in.room_score=room_score->score;in.hidden=actor->object_words.at(34)>0;
-                // This host has no supported SetMotiveChange controller. The supported
-                // profile therefore has no active per-motive changes; custom controllers
-                // must supply those flags before they can join this decay profile.
-                for(std::size_t i=0;i<odh::ts1_need_count;++i)
-                    in.needs[i]=actor->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))];
-                const auto result=entry.second.update(time.hour,time.minute,in);
-                simulation_motive_status[entry.first]=result.status==odh::Ts1MotiveStatus::updated?"updated":
-                    result.status==odh::Ts1MotiveStatus::unchanged?"unchanged":"unsupported_input_profile";
-                if(result.status==odh::Ts1MotiveStatus::unsupported){++simulation_skipped_updates;continue;}
-                if(result.status==odh::Ts1MotiveStatus::updated){
-                    for(std::size_t i=0;i<odh::ts1_need_count;++i)
-                        if(!world.set_motive(entry.first,static_cast<std::int16_t>(odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))),result.needs[i]))
-                            throw odh::FormatError("simulation motive write failed");
-                    if(!world.set_motive(entry.first,11,result.sleep_state)||!world.set_motive(entry.first,3,result.mood))
-                        throw odh::FormatError("simulation sleep/mood write failed");
-                }
-            }
-#ifdef ODH_HAVE_X11
-            if(render_window_host && (ticks==1 || ticks%30==0)){
-                std::string title="OpenDollhouse | "+std::to_string(time.hour)+":"+(time.minute<10?"0":"")+std::to_string(time.minute);
-                if(const auto* actor=world.find(active_household_actor);actor&&actor->motives.size()>=16)
-                    title+=" | Hunger "+std::to_string(actor->motives[7])+" Comfort "+std::to_string(actor->motives[6])+
-                        " Hygiene "+std::to_string(actor->motives[8])+" Bladder "+std::to_string(actor->motives[9])+
-                        " Energy "+std::to_string(actor->motives[5])+" Fun "+std::to_string(actor->motives[15])+" Social "+std::to_string(actor->motives[14]);
-                render_window_host->set_title(title+" | P pause, S save, Escape close");
-            }
-#endif
         }
         if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
             headless_interaction_applied=true;
@@ -4853,6 +4856,10 @@ struct PlacementCandidateProbe {
             break;
         }
         execute(true);
+        if(!host_failed){
+            if(!world.tick_motive_changes())throw odh::FormatError("continuous motive change tick failed");
+            update_simulation_motives();
+        }
         for(auto& member:household_runtime)
             if(member->go_here)member->go_here->observe(host_failed,host_diagnostic);
         if(go_here_status=="queued"){
