@@ -84,6 +84,16 @@ int main() {
         require(tuning.read(22, query(65))->value == 223 && !tuning.read(22, query(65))->semiglobal_fallback,
                 "loaded semiglobal lookup");
         require(!tuning.read(99, query(64)), "unknown semiglobal owner unsupported");
+        odh::TuningOwner shared_first, shared_second;
+        const auto shared_tables=odh::TuningTables{{8193,bcon({314})}};
+        odh::set_semiglobal_tuning(shared_first,shared_tables);
+        odh::set_semiglobal_tuning(shared_second,shared_tables);
+        odh::TuningResources shared_resources;
+        shared_resources.owners.emplace(41,std::move(shared_first));
+        shared_resources.owners.emplace(42,std::move(shared_second));
+        const odh::BconTuning shared_tuning(std::move(shared_resources));
+        require(shared_tuning.read(41,query(65))->value==314&&shared_tuning.read(42,query(65))->value==314,
+                "shared semiglobal BCON is bound to every resource owner");
         auto mutable_data = resources();
         odh::BconTuning snapshot(mutable_data);
         mutable_data.owners[11].private_tables[4096].constants[0] = 999;

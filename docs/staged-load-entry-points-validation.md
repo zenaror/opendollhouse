@@ -105,13 +105,18 @@ O World continua privado e não publicado, os sons não foram tocados e o
 preparador ainda não está ligado ao loader Linux; portanto, ainda não é uma
 partida jogável.
 
-Após a instalação de PangoCairo 1.52.1 no ambiente, `linux_text_renderer` e
-`staged_load_entry_points` passaram. Isso valida a biblioteca de texto e a etapa
-sintética; não substitui os testes de janela, que continuam indisponíveis sem
-Xvfb neste ambiente.
+Após a instalação de PangoCairo 1.52.1 no ambiente, a build limpa completa
+passou e o CTest passou 228/228 em `/tmp/odh-pango-final`. Os testes
+`linux_window_backend`, `linux_neighborhood_screen_actions` e
+`linux_move_out_integration` foram pulados porque Xvfb não está instalado.
+Isso valida a build Linux e os testes automatizados disponíveis, mas não uma
+captura da janela nem uma sessão jogável.
 
 `tests/room_score.cpp` cobre a fórmula de pontuação, cômodos conectados,
 interior/exterior, limites e rejeição de mapas/entradas sem identidade resolvida.
+`tests/tuning.cpp` também cobre dois donos distintos que compartilham o mesmo
+semiglobal: ambos precisam receber suas tabelas BCON, ainda que as rotinas desse
+recurso tenham sido carregadas uma única vez.
 `tests/staged_load_entry_points.cpp` usa apenas BHAVs sintéticos. Verifica
 ordem de execução, isolamento entre donos, retorno falso síncrono, escrita na
 cópia, descarte de escrita GhostImage, rejeição de tabela/ordem incompleta,

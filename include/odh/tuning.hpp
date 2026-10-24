@@ -10,6 +10,9 @@ struct TuningOwner {
     TuningTables private_tables, semiglobal_tables;
     TuningSemiState semiglobal_state = TuningSemiState::unknown;
 };
+// Attach a resolved semiglobal bank to one code owner. Each owner keeps its
+// own copy even when several resources share the same semiglobal asset.
+void set_semiglobal_tuning(TuningOwner&, TuningTables);
 struct TuningResources {
     TuningTables globals;
     std::map<CodeOwner, TuningOwner> owners;

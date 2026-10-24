@@ -40,7 +40,11 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
     result.tuning.globals = load_saved_tuning_tables(global_archive, global_entry);
     std::map<std::uint32_t, SavedEntryPointResource> resources;
     std::map<std::pair<std::string, std::string>, odh::CodeOwner> owner_ids;
-    std::map<std::string, SavedSemiglobalCodeBank> semiglobals;
+    struct SavedSemiglobalResources {
+        SavedSemiglobalCodeBank code;
+        odh::TuningTables tuning;
+    };
+    std::map<std::string, SavedSemiglobalResources> semiglobals;
     odh::CodeOwner next_owner = 1;
     constexpr std::size_t owner_limit = 63; // VM default limit is 64 including owner zero.
 
@@ -124,17 +128,18 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
             auto semiglobal = semiglobals.find(name);
             if (semiglobal == semiglobals.end()) {
                 try {
-                    semiglobal = semiglobals.emplace(name,
-                        load_saved_semiglobal_code_bank(global_archive, name + ".iff")).first;
-                    auto& tuning_owner=result.tuning.owners.at(owner->second);
-                    tuning_owner.semiglobal_tables=load_saved_tuning_tables(global_archive,name+".iff");
-                    tuning_owner.semiglobal_state=odh::TuningSemiState::loaded;
+                    SavedSemiglobalResources loaded;
+                    loaded.code=load_saved_semiglobal_code_bank(global_archive,name+".iff");
+                    loaded.tuning=load_saved_tuning_tables(global_archive,name+".iff");
+                    semiglobal=semiglobals.emplace(name,std::move(loaded)).first;
                 } catch (const std::exception& error) {
                     throw odh::FormatError("Load action " + std::to_string(action) + " for object " +
                         std::to_string(id) + " links missing semiglobal " + name + ": " + error.what());
                 }
             }
-            for (const auto& [key, routine] : semiglobal->second.routines)
+            odh::set_semiglobal_tuning(result.tuning.owners.at(owner->second),
+                semiglobal->second.tuning);
+            for (const auto& [key, routine] : semiglobal->second.code.routines)
                 bank.try_emplace(key, routine);
         }
     }

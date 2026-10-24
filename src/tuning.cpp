@@ -3,6 +3,11 @@
 #include <utility>
 
 namespace odh {
+void set_semiglobal_tuning(TuningOwner& owner, TuningTables tables) {
+    owner.semiglobal_tables = std::move(tables);
+    owner.semiglobal_state = TuningSemiState::loaded;
+}
+
 namespace {
 void count_tables(const TuningTables& tables, const TuningLimits& limits,
                   std::size_t& table_count, std::size_t& constant_count) {
