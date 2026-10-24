@@ -225,6 +225,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_scene_renderer PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 option(ODH_X11 "Build the Linux X11 window used by the playable UI" ON)
+option(ODH_RUN_X11_TESTS "Run tests that open X11 windows; requires a dedicated isolated display" OFF)
 option(ODH_SDL_AUDIO "Build optional Linux PCM output using the SDL2 runtime" ON)
 option(ODH_LINUX_TEXT_RENDERER "Use PangoCairo for Linux window text when available" ON)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -1253,6 +1254,16 @@ if(BUILD_TESTING)
         $<TARGET_FILE:odh-person>)
       set_tests_properties(linux_move_out_integration PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 45 RUN_SERIAL TRUE)
+    endif()
+    if(NOT ODH_RUN_X11_TESTS)
+      # These tests create windows. Do not let a normal CTest run inherit the
+      # user's desktop display; XOpenDisplay will fail and CTest records SKIP.
+      set_tests_properties(linux_window_backend linux_neighborhood_screen_actions
+        PROPERTIES ENVIRONMENT "DISPLAY=:65535")
+      if(TEST linux_move_out_integration)
+        set_tests_properties(linux_move_out_integration PROPERTIES
+          ENVIRONMENT "DISPLAY=:65535")
+      endif()
     endif()
   endif()
   add_executable(odh-projection-tests tests/projection.cpp)

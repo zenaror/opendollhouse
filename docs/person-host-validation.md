@@ -39,6 +39,14 @@ relógio, descarte por contagem/bytes e fault real após truncamento. `person_cl
 continua verificando os resultados dos probes finitos. Esses gates dispensam
 display; input e apresentação X11 são um gate separado.
 
+Os três testes que abrem janelas (`linux_window_backend`,
+`linux_neighborhood_screen_actions` e `linux_move_out_integration`) ficam
+desabilitados por padrão no CTest. Isso impede que `ctest` herde o `DISPLAY`
+normal do usuário e abra janelas no desktop. Para habilitá-los, reconfigure
+com `-DODH_RUN_X11_TESTS=ON` somente quando `DISPLAY` apontar para um servidor
+virtual isolado; não use a sessão gráfica normal. Sem a opção, CTest registra
+esses gates como skipped e executa o restante normalmente.
+
 Validação Debug em build nova `/tmp/odh-session-build` (GCC13.3,
 `ODH_X11=ON`, `BUILD_TESTING=ON`): build completa sem warnings, quatro gates
 focados (`person_session`, `linux_session_log`, `person_animation_cli`,
