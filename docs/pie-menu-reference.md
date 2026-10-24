@@ -59,10 +59,12 @@ Ao escolher `Have A Snack`, a VM do ODH falhou no primeiro passo da ação,
 opcode 25. No caminho TS1 do Simitone, esse número é `VMTS1Budget`, que consulta
 o orçamento da família. A falha foi observada num probe controlado com quadro de
 800×600; não é uma ação concluída nem uma validação de UI na janela. A próxima
-peça de runtime precisa representar o orçamento ativo da família e aplicar o
-comportamento TS1 documentado, preservando as alterações entre salvamento e
-retomada. O detalhe do orçamento não deve ser tratado como um simples botão da
-interface.
+peça já trata o perfil `JustTest` usado por essa interação, lendo o saldo da
+família ativa. O probe agora passa pelo opcode25 e chega ao primeiro movimento:
+opcode27 `GotoRelativePosition`, que ainda não tem o destino/rota necessários
+nesse contexto. A ação continua incompleta. Modos que alteram o orçamento ainda
+exigem um gravador persistente; também falta representar `TempXL` de 32 bits.
+O detalhe do orçamento não deve ser tratado como um simples botão da interface.
 
 ## Primeira reconstrução proposta
 
@@ -80,11 +82,11 @@ interface.
   pelos recursos, e a ação escolhida chegando à interação já validada na VM.
   Depois comparar o mesmo objeto e idioma com o Simitone e com a edição original
   instalada. Um menu de teste com rótulos inventados não passa esse gate.
-- Antes de usar a geladeira como gate de interação, implementar e validar o
-  `VMTS1Budget` necessário para a ação `Have A Snack` e completar os donos de
-  código ausentes das outras ações suportáveis. Reavaliar cada linha a partir
-  das regras e do estado da família; nunca exibir ações apenas porque aparecem
-  na TTAB.
+- Antes de usar a geladeira como gate de interação, completar o destino e a rota
+  de `GotoRelativePosition` da ação `Have A Snack`, ligar um gravador persistente
+  para mudanças de orçamento e completar os donos de código ausentes das outras
+  ações suportáveis. Reavaliar cada linha com regras e estado da família; nunca
+  exibir ações apenas porque aparecem na TTAB.
 
 ## Fontes consultadas
 

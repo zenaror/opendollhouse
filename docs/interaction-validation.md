@@ -1,5 +1,28 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## TS1 Budget — primeiro perfil de orçamento familiar
+
+Opcode25 no runtime TS1 do Simitone é `VMTS1Budget` (no TSO, o mesmo número
+significa TransferFunds; não confundir os perfis). A referência lê o valor
+indicado pelo owner/escopo, usa orçamento da família ativa ou zero se não houver
+família, retorna false quando o saldo anterior é negativo e, sem `JustTest`,
+grava `saldo - valor`; a flag `Subtract` inverte o sinal. O tipo da despesa e o
+tipo de transferência não alteram esse handler TS1.
+
+`src/ts1_budget.cpp` implementa esse contrato com leituras de palavra já
+disponíveis no `VmMemory`, inclusive Tuning, argumentos, locals e temps. O host
+Linux fornece o saldo FAMI efetivo da família ativa. Para `Have A Snack` de
+House07, os operandos `[3,26,0,0,1,0,3,0]` usam `JustTest`; o probe passou por
+essa instrução e avançou até `GotoRelativePosition` opcode27. CTests focados
+`ts1_budget`, `vm`, `vm_interaction_return` e `saved_interaction_discovery`
+passaram 4/4.
+
+O writer está deliberadamente ausente no host até existir persistência durável
+para alterações de FAMI; uma chamada que tente mudar o saldo falha em vez de
+perder a mudança ao salvar. O escopo 42 (`TempXL`, valor de 32 bits) também segue
+unsupported, pois essa memória ainda não existe na VM ODH. Esse checkpoint não
+prova que a refeição começou ou terminou.
+
 Este documento reúne checkpoints em ordem histórica. A descrição de 2026-10-13
 abaixo é apenas o estado inicial da fila; ela foi superada por integração
 posterior do Main com ações de objetos no host Linux e pelo teste House07

@@ -12,15 +12,22 @@ semiglobal 363, quatro linhas de depuração retornaram falso e a ação de magi
 parou por leitura global não suportada. As nove linhas não são nove escolhas
 válidas para este morador.
 
-O probe de 800×600 selecionou `Have A Snack` e a VM falhou no primeiro passo:
-opcode25. A revisão Simitone registra esse opcode como `VMTS1Budget`, que lê e
-pode atualizar o orçamento da família. Os operandos observados foram
-`[3,26,0,0,1,0,3,0]`; o perfil usa `JustTest`, mas ODH ainda não implementa a
-rotina nem o estado de orçamento associado à família. Nenhum efeito da ação
-aconteceu. O próximo trabalho é modelar e persistir o orçamento TS1 da família,
-implementar esse primitivo de modo testado e repetir o mesmo probe para expor o
-próximo limite real. O registro detalhado está em
+O probe de 800×600 selecionou `Have A Snack`. ODH agora implementa o trecho
+`JustTest` de opcode25 `VMTS1Budget` e lê o saldo FAMI da família ativa. Os
+operandos observados foram `[3,26,0,0,1,0,3,0]`; o teste unitário também cobre
+leitura por escopo local, saldo negativo, ausência de família e a operação que
+grava. Como ainda não há gravador persistente no host, modos que alteram o saldo
+falham de propósito. O novo probe passou pelo opcode25, seguiu BHAV4103→4120→4142
+e parou em opcode27 `GotoRelativePosition`, pois o controlador de rota atual não
+aceita o destino desta interação. A ação não concluiu e o avatar não se moveu.
+O detalhe está em
 [pie-menu-reference.md](pie-menu-reference.md).
+
+Build Release de `odh-person` e `odh-ts1-budget-tests` passaram. CTest focado:
+`ts1_budget`, `vm`, `vm_interaction_return` e `saved_interaction_discovery`
+passaram 4/4. O próximo passo é investigar o destino relativo e a rota da
+geladeira, mantendo persistência do orçamento como pendência antes de habilitar
+qualquer modo que altere o saldo.
 
 ## Atualização: fluxo do menu circular de ações investigado (2026-10-24)
 
