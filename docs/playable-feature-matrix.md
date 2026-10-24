@@ -81,3 +81,13 @@ As descrições dos mapas e limites da prévia estão em
 de família e mundo em [family-restore-validation.md](family-restore-validation.md)
 e [saved-world-validation.md](saved-world-validation.md); os requisitos
 completos da build em [linux-playable-scope.md](linux-playable-scope.md).
+
+### Atualização de necessidades — 2026-10-24
+
+A pontuação de sala já alimenta o decaimento TS1 no runtime. O opcode 29
+`Set Motive Change` agora está ligado para sua variante imediata `Once`, com
+limites e escala positiva de energia. Essa variante passou 17 verificações
+sintéticas e o teste `person_cli`; nenhuma ação comercial foi ainda identificada
+como usuária desse caminho. A tabela continuará parcial até uma ação real
+alterar a necessidade no lote. Mudanças contínuas continuam pendentes porque
+exigem controlador por avatar e persistência.

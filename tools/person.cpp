@@ -10,6 +10,7 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/room_score.hpp"
+#include "odh/motive_change.hpp"
 #include "odh/avatar_body.hpp"
 #include "odh/avatar_startup.hpp"
 #include "odh/neighbor_context.hpp"
@@ -1969,8 +1970,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
             "routing runtime unavailable: "+route_runtime_reason};
     };
+    const auto motive_change_handler=odh::ts1_motive_change_primitive(world,memory);
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==0)return sleep_handler(f,i,t,d);
+        if(i.opcode==29)return motive_change_handler(f,i,t,d);
         if(i.opcode==7){
             const auto refresh_type=static_cast<std::uint16_t>(i.operands[2])|
                 (static_cast<std::uint16_t>(i.operands[3])<<8);
