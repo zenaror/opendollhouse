@@ -30,6 +30,11 @@ std::uint8_t reference_slot_entry_flags(
     RoutePoint object_position,std::uint8_t object_direction,RoutePoint candidate_position,
     std::uint8_t slot_direction_flags);
 struct ReferenceSlotCircleCandidate { RoutePoint position; std::uint8_t entry_flags; };
+struct ReferenceSlotPointCandidate { RoutePoint position; std::uint8_t facing; };
+// Exact-position support is restricted to the four verified House07
+// Medicine Cabinet SLOT records; offsets are rotated in fixed point.
+ReferenceSlotPointCandidate enumerate_reference_slot_point_candidate(
+    const SlotTable&,std::size_t type3_index,RoutePoint object_position,std::uint8_t object_direction);
 // ODH's bounded exact-radius profiles for verified House07 and Door SLOTs.
 // Eight positions are returned, including those rejected by the SLOT mask.
 std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candidates(

@@ -116,6 +116,39 @@ struct SavedAppearanceResources::Impl {
             if(out.parts.size()>=16)throw odh::FormatError("saved appearance cumulative part budget exceeded");
             out.parts.push_back({host.entry,host.name,mesh_entries[i],textures.select(texture+".bmp").name,hand});}
     }
+    void accessory(SceneConfig& out,const odh::ObjmSavedAccessory& accessory) {
+        bounded_name(accessory.name.bytes);
+        // The OBJM reader documents Binding as usually blank, and the TS1
+        // activator restores only each accessory's Name. Do not guess what a
+        // non-empty binding means.
+        if(!accessory.binding.bytes.empty())
+            throw odh::FormatError("saved appearance accessory binding unsupported");
+        auto name=accessory.name.bytes;
+        constexpr std::string_view suffix=".apr";
+        if(name.size()<=suffix.size()||fold(name.substr(name.size()-suffix.size()))!=suffix)
+            throw odh::FormatError("saved appearance accessory requires an .apr name");
+        name.resize(name.size()-suffix.size());
+        const auto host=named(appearances,name);
+        auto collection=odh::read_bcf_appearances(animations.view(animations.select(host.entry)));
+        const odh::Appearance* selected=nullptr;
+        for(const auto& candidate:collection.appearances)if(fold(candidate.name)==fold(host.name)){
+            if(selected)throw odh::FormatError("saved appearance accessory name is ambiguous");
+            selected=&candidate;
+        }
+        if(!selected||selected->bindings.empty()||selected->bindings.size()>16)
+            throw odh::FormatError("saved appearance accessory binding count unsupported");
+        for(const auto& binding:selected->bindings){
+            bounded_name(binding.mesh_name);
+            const auto mesh_entry=animations.select(binding.mesh_name+".bmf").name;
+            const auto decoded=odh::read_bmf(animations.view(animations.select(mesh_entry)));
+            if(fold(decoded.skin_name)!=fold(binding.mesh_name))
+                throw odh::FormatError("saved appearance accessory BMF skin mismatch");
+            if(out.parts.size()>=16)
+                throw odh::FormatError("saved appearance cumulative 16-part limit exceeded");
+            const auto texture=textures.select(decoded.texture_name+".bmp").name;
+            out.parts.push_back({host.entry,host.name,mesh_entry,texture,{}});
+        }
+    }
     void hands(SceneConfig& out,const std::array<AppearanceResource,6>& variants) {
         for(std::size_t i=0;i<variants.size();++i) {
             const bool right=(i%2)==1;
@@ -133,10 +166,12 @@ struct SavedAppearanceResources::Impl {
         throw odh::FormatError("saved animation indexed header missing");
     }
     SavedAppearance body_head_animation(const odh::ObjmPersonState& person) {
-        if(person.accessory_count!=0||!person.accessories.empty())throw odh::FormatError("saved appearance accessories unsupported");
+        if(person.accessory_count<0||static_cast<std::size_t>(person.accessory_count)!=person.accessories.size()||person.accessories.size()>16)
+            throw odh::FormatError("saved appearance accessory count outside supported profile");
         if(!person.carry_animation.bytes.empty())throw odh::FormatError("saved appearance carry animation unsupported");
         SavedAppearance out;out.scene=config;
         part(out.scene,person.body.bytes,person.body_texture.bytes);part(out.scene,person.head.bytes,person.head_texture.bytes);
+        for(const auto& item:person.accessories)accessory(out.scene,item);
         out.current=animation(person.animation.bytes);out.base=animation(person.base_animation.bytes);
         if(out.current&&out.current->weight_milli!=1000)throw odh::FormatError("saved appearance current animation blending unsupported");
         return out;
@@ -162,6 +197,14 @@ SceneConfig SavedAppearanceResources::resolve_body(const odh::AvatarBodyStrings&
     impl_->part(out,head.appearance,head.texture_map);
     impl_->hands(out,variants);
     return out;
+}
+void SavedAppearanceResources::append_accessories(SceneConfig& scene,const std::vector<std::string>& names) {
+    if(!impl_)throw odh::FormatError("saved appearance resolver used after move");
+    if(names.size()>16)throw odh::FormatError("runtime avatar accessory count exceeds 16-name limit");
+    for(const auto& name:names){
+        odh::ObjmSavedAccessory item{};item.name.bytes=name;
+        impl_->accessory(scene,item);
+    }
 }
 SavedAppearance SavedAppearanceResources::resolve_gestures(const odh::ObjmPersonState& person,const odh::AvatarBodyStrings& body) {
     if(!impl_)throw odh::FormatError("saved appearance resolver used after move");

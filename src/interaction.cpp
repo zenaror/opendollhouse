@@ -51,14 +51,16 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
     }
     if(state.active){
         if(state.actions.empty()||state.active->uid!=state.actions.front().uid||
-           !valid_ticket(state.active->ticket)||state.wait||state.resume_tick||state.idle_start)return false;
+           !valid_ticket(state.active->ticket)||state.resume_tick||
+           (state.wait?!action_frame:state.idle_start!=0))return false;
         if(vm.interaction_return){
             if(action_frame||vm.interaction_return->ticket!=state.active->ticket||
                vm.interaction_return->code_owner!=state.actions.front().call.context.code_owner)return false;
         }else if(!action_frame&&vm.status!=VmStatus::fault)return false;
     }
     if(state.wait){
-        if(state.active||state.resume_tick||!valid_ticket(state.wait->ticket)||
+        if((state.resume_tick)||!valid_ticket(state.wait->ticket)||
+           (state.active&&!action_frame)||
            state.wait->deadline<=state.clock||state.wait->deadline>max_clock||
            vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=state.wait->ticket||
            vm.pending->context.caller!=actor_id_||vm.pending->instruction.instruction.opcode!=17||vm.stack.empty())return false;
@@ -152,12 +154,38 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     Guard guard(executing_);
     fresh_=false;
     if(!validate())return unsupported(diagnostic_);
-    if(frame.context.caller!=actor_id_ || active_ || wait_)
-        return unsupported("IdleForInput requires Main caller with no active interaction or idle wait");
+    if(frame.context.caller!=actor_id_)
+        return unsupported("IdleForInput Caller is not this avatar");
     const auto index=word(i.operands[0]|(static_cast<std::uint64_t>(i.operands[1])<<8));
     const auto allow=static_cast<unsigned>(i.operands[2]|(static_cast<unsigned>(i.operands[3])<<8));
     if(index<0 || static_cast<std::size_t>(index)>=frame.arguments.size() || allow>1)
         return unsupported("IdleForInput argument/AllowPush outside explicit profile");
+    const bool action_tree=active_&&!queue_.empty()&&
+        frame.context.caller==queue_.front().call.context.caller&&
+        frame.context.callee==queue_.front().call.context.callee&&
+        frame.context.stack_object==queue_.front().call.context.stack_object&&
+        frame.context.code_owner==queue_.front().call.context.code_owner;
+    if(action_tree){
+        if(wait_||resume_tick_)
+            return unsupported("action-tree IdleForInput has no matching active interaction");
+        // TS1's action-tree wrapper waits in the current interaction. AllowPush
+        // can hand control back to the main thread and is a separate profile.
+        if(allow!=0)return unsupported("action-tree IdleForInput AllowPush is outside this profile");
+        const auto elapsed=idle_start_!=0&&idle_start_<clock_?clock_-idle_start_:1;
+        const auto remaining=word(static_cast<std::uint16_t>(frame.arguments[static_cast<std::size_t>(index)])-elapsed);
+        const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
+        const bool thread_interrupted=thread_interrupt_&&thread_interrupt_();
+        if(interrupted_||thread_interrupted||remaining<0){
+            interrupted_=false;idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
+        }
+        const auto delay=static_cast<std::uint64_t>(remaining)+1;
+        if(delay>std::numeric_limits<std::uint32_t>::max()-clock_)
+            return unsupported("action-tree IdleForInput deadline exceeds uint32 clock");
+        wait_=Wait{dispatch.ticket,clock_+delay};idle_start_=clock_;
+        return {PrimitiveDisposition::wait,{},output};
+    }
+    if(frame.return_mode!=VmCallReturnMode::ordinary||active_||wait_)
+        return unsupported("Main IdleForInput has an active interaction or idle wait");
     const auto elapsed=idle_start_!=0&&idle_start_<clock_?clock_-idle_start_:1;
     const auto remaining=word(static_cast<std::uint16_t>(frame.arguments[static_cast<std::size_t>(index)])-elapsed);
     const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
@@ -216,7 +244,7 @@ bool InteractionQueue::tick(std::uint64_t now) {
         if(!completion_ || !vm_->resume_interaction(completion_->ticket))return false;
         resume_tick_.reset();
     }
-    if(wait_ && (now>=wait_->deadline || (!queue_.empty()) || interrupted_)) {
+    if(wait_ && (now>=wait_->deadline || (!active_&&!queue_.empty()) || interrupted_)) {
         const auto ticket=wait_->ticket;
         if(!vm_->retry_pending(ticket)) {diagnostic_="idle wait ticket stale";return false;}
         wait_.reset();

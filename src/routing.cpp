@@ -48,6 +48,37 @@ bool supported_ranged_slot_profile(const SlotRecord& slot) {
         slot.height==0&&slot.facing==-2&&slot.resolution==16;
     return door_range||house07_global_range||in_front_relative;
 }
+bool supported_point_offset_slot_profile(const SlotRecord& slot) {
+    const auto y=slot.offset_bits[1];
+    const bool house07_offset=y==0xC1800000U||y==0xC0400000U||
+        y==0xC1500000U||y==0xC0C00000U;
+    return slot.type==3&&slot.flags==0&&slot.offset_bits[0]==0&&
+        house07_offset&&slot.offset_bits[2]==0&&slot.standing==1&&
+        slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.proximity==std::optional<std::array<std::int32_t,3>>{{16,16,16}}&&
+        slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0x3E400000&&
+        slot.height==0&&slot.facing==4&&slot.resolution==16;
+}
+std::int32_t point_offset_y(const SlotRecord& slot) {
+    switch(slot.offset_bits[1]) {
+        case 0xC1800000U:return -16;
+        case 0xC0400000U:return -3;
+        case 0xC1500000U:return -13;
+        case 0xC0C00000U:return -6;
+        default:throw std::invalid_argument("unverified House07 point SLOT offset");
+    }
+}
+std::int32_t round_q16_even(std::int64_t value) {
+    constexpr std::int64_t scale=65536;
+    const bool negative=value<0;
+    const auto magnitude=negative?static_cast<std::uint64_t>(-(value+1))+1U:
+                                 static_cast<std::uint64_t>(value);
+    auto whole=magnitude/static_cast<std::uint64_t>(scale);
+    const auto remainder=magnitude%static_cast<std::uint64_t>(scale);
+    if(remainder>32768U||(remainder==32768U&&(whole&1U)))++whole;
+    const auto signed_value=static_cast<std::int64_t>(whole);
+    return static_cast<std::int32_t>(negative?-signed_value:signed_value);
+}
 bool supported_child_shy_sitting_fallback_profile(const SlotTable& table,std::size_t type3_index,
     const SlotRecord& slot) {
     return table.version==10&&type3_index==10&&slot.type==3&&slot.flags==0x8055&&
@@ -184,6 +215,25 @@ std::vector<ReferenceSlotCircleCandidate> enumerate_reference_slot_circle_candid
             static_cast<std::uint8_t>(slot->flags))});
     }
     return candidates;
+}
+ReferenceSlotPointCandidate enumerate_reference_slot_point_candidate(
+    const SlotTable& table,std::size_t type3_index,RoutePoint object_position,
+    std::uint8_t object_direction) {
+    const auto* slot=slot_of_type(table,3,type3_index);
+    if(table.version!=10||!slot||!supported_point_offset_slot_profile(*slot)||object_direction>=8)
+        throw std::invalid_argument("reference SLOT point requires a verified House07 Medicine Cabinet profile");
+    constexpr std::array<std::int32_t,8> cosine{{65536,46341,0,-46341,-65536,-46341,0,46341}};
+    constexpr std::array<std::int32_t,8> sine{{0,46341,65536,46341,0,-46341,-65536,-46341}};
+    const auto y_offset=point_offset_y(*slot);
+    const auto dx=round_q16_even(-static_cast<std::int64_t>(y_offset)*sine[object_direction]);
+    const auto dy=round_q16_even(static_cast<std::int64_t>(y_offset)*cosine[object_direction]);
+    const auto x=static_cast<std::int64_t>(object_position.x)+dx;
+    const auto y=static_cast<std::int64_t>(object_position.y)+dy;
+    if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max()||
+       y<std::numeric_limits<std::int32_t>::min()||y>std::numeric_limits<std::int32_t>::max())
+        throw std::length_error("reference SLOT point exceeds int32");
+    return {{static_cast<std::int32_t>(x),static_cast<std::int32_t>(y)},
+            static_cast<std::uint8_t>((object_direction+static_cast<std::uint8_t>(*slot->facing))&7U)};
 }
 PreRankedSlotRoute find_pre_ranked_slot_route(const RouteGrid& grid,RoutePoint start,
     const std::vector<PreRankedSlotGoal>& goals,RouteLimits limits) {
@@ -376,11 +426,13 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         supported_child_shy_sitting_fallback_profile(*selected_slots,slot_index,*slot);
     const bool ranged_slot=slot&&selected_slots->version==10&&
         (supported_ranged_slot_profile(*slot)||child_shy_sitting_fallback);
+    const bool point_offset_slot=slot&&selected_slots->version==10&&
+        supported_point_offset_slot_profile(*slot);
     if(!goto_relative||in_front_goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
         if(selected_slots->version!=10 ||
-           (!supported_circle_slot_profile(*slot)&&!ranged_slot))
+           (!supported_circle_slot_profile(*slot)&&!ranged_slot&&!point_offset_slot))
             return unsupported("SLOT runtime profile not implemented");
         if(slot->sitting!=0&&!child_shy_sitting_fallback)
             return unsupported("sitting-weighted SLOT profile requires an exact supported fallback path");
@@ -390,6 +442,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return unsupported("child-shy sitting SLOT requires a nearby-chair preflight");
         if(ranged_slot&&!goal_validator_)
             return unsupported("ranged SLOT requires a host room/clearance validator");
+        if(point_offset_slot&&!goal_validator_)
+            return unsupported("point-offset SLOT requires a host room/clearance validator");
         if((slot->flags&0x0800U)!=0&&!goal_validator_)
             return unsupported("IgnoreRooms SLOT requires a host validator for the active single-room grid");
     }
@@ -481,6 +535,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     };
     RoutePath path{RouteStatus::invalid_input,{},0,0};
     std::optional<PreRankedSlotGoal> selected;
+    std::optional<ReferenceSlotPointCandidate> point_candidate;
     std::vector<PreRankedSlotGoal> fallback_goals;
     std::string invalid_route_input_diagnostic;
     std::size_t route_goal_count=0;
@@ -497,7 +552,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
         } else path=find_route(grid_,start,{goal},limits_);
-    } else if((ranged_slot&&ranged_slot_goals_)||(!ranged_slot&&ranked_goals_)) {
+    } else if(!point_offset_slot&&((ranged_slot&&ranged_slot_goals_)||(!ranged_slot&&ranked_goals_))) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
@@ -546,7 +601,20 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
                 if(n!=*result.selected)fallback_goals.push_back(accepted[n]);
         }
         path=std::move(result.path);
-    }else {
+    } else if(point_offset_slot) {
+        point_candidate=enumerate_reference_slot_point_candidate(*selected_slots,slot_index,
+            {target->position->x,target->position->y},target->position->direction);
+        const auto goal=point_candidate->position;
+        if(!grid_.contains(goal))
+            return {PrimitiveDisposition::goto_false,"point-offset SLOT lies outside the active route grid"};
+        if(!allow_goal(goal))
+            return {PrimitiveDisposition::goto_false,"point-offset SLOT rejected by host room/clearance validator"};
+        route_goal_count=1;
+        if(start==goal) {
+            if(!grid_.walkable(start))path={RouteStatus::no_path,{},0,0};
+            else path={RouteStatus::found,{start},0,0};
+        } else path=find_route(grid_,start,{goal},limits_);
+    } else {
         std::vector<RoutePoint> goals;
         bool direction_compatible_candidate=false;
         for(const auto& candidate:enumerate_reference_slot_circle_candidates(*selected_slots,slot_index,
@@ -589,7 +657,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const std::int16_t entry_flags=(goto_relative&&!in_front_goto_relative)?0:static_cast<std::int16_t>(selected?selected->entry_flags:reference_slot_entry_flags(
         {target->position->x,target->position->y},target->position->direction,goal,
         static_cast<std::uint8_t>(slot->flags)));
-    if((!goto_relative||in_front_goto_relative) && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
+    if((!goto_relative||in_front_goto_relative) && !point_offset_slot && entry_flags==0) {diagnostic_="selected route goal no longer matches SLOT direction mask";
         return {PrimitiveDisposition::goto_false,{}};}
     // The TS1 direction operand is a relative facing offset from the target:
     // 0 keeps its direction and 4 faces the opposite way. Other values remain
@@ -597,7 +665,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const auto arrival_facing=(goto_relative&&!in_front_goto_relative)?
         (i.operands[3]==255?actor->position->direction:
          static_cast<std::uint8_t>((target->position->direction+i.operands[3])&7U)):
-        (selected?selected->facing:heading(goal,{target->position->x,target->position->y}));
+        (point_candidate?point_candidate->facing:
+         (selected?selected->facing:heading(goal,{target->position->x,target->position->y})));
     RouteFrameContext frame_context;
     if(path.points.size()==1) frame_context.state=RouteFrameState::turn_only;
     if(nested_request) suspended_jobs_.push_back(std::move(*job_));

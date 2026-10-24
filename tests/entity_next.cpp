@@ -78,7 +78,28 @@ void same_tile_query(){
     auto unsupported=next(10,0,137);
     r=dispatch(p,frame(10),unsupported);
     require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),
-        "adjacent-tile mode remains unsupported");
+        "adjacent-local mode rejects an unavailable anchor local");
+}
+void adjacent_local_query(){
+    odh::World w;add(w,10);add(w,21);add(w,22);add(w,23);add(w,24);
+    require(w.set_position(10,{160,160,1,0})&&w.set_position(21,{168,152,1,0})&&
+        w.set_position(22,{176,168,1,0})&&w.set_position(23,{168,176,1,0})&&
+        w.set_position(24,{152,168,1,0}),"place adjacent-local query fixture");
+    const auto p=odh::entity_next_primitive(w);
+    auto instruction=next(10,0,137);instruction.operands[6]=0;
+    auto f=frame(0);f.locals[0]=10;
+    auto r=dispatch(p,f,instruction);
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==21,"mode9 finds the first entity north of its local anchor");
+    f=frame(21);f.locals[0]=10;r=dispatch(p,f,instruction);
+    require(r.disposition==odh::PrimitiveDisposition::goto_true&&r.stack_object_write&&
+        r.stack_object_write->value==22,"mode9 continues clockwise after the current adjacent entity");
+    f=frame(24);f.locals[0]=10;r=dispatch(p,f,instruction);
+    require(r.disposition==odh::PrimitiveDisposition::goto_false&&no_output(r),
+        "mode9 stops after the final west direction without wrapping");
+    instruction.operands[6]=5;f=frame(0);r=dispatch(p,f,instruction);
+    require(r.disposition==odh::PrimitiveDisposition::unsupported&&no_output(r),
+        "mode9 rejects an out-of-range frame local selector");
 }
 void multitile_query(){
     odh::World w;add(w,2);add(w,5);add(w,7);add(w,10);
@@ -287,5 +308,5 @@ void kinds(){
         "ID reused as untyped avatar immediately participates");
 }
 }
-int main(){try{live_query();same_tile_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+int main(){try{live_query();same_tile_query();adjacent_local_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}

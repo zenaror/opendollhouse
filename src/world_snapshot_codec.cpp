@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 2;
+constexpr std::uint16_t codec_version = 3;
 constexpr std::size_t minimum_header_size = 31;
 
 class Writer {
@@ -47,6 +47,10 @@ public:
         if (value > std::numeric_limits<std::uint32_t>::max())
             throw FormatError("World snapshot count exceeds the file format");
         u32(static_cast<std::uint32_t>(value));
+    }
+    void text(const std::string& value) {
+        count(value.size());
+        for(const unsigned char byte:value)push(byte);
     }
     void raw(const std::vector<std::uint8_t>& bytes) {
         if (bytes.size() > limit_ - data_.size())
@@ -119,6 +123,12 @@ public:
             value > remaining() / minimum_bytes_per_item))
             throw FormatError("World snapshot count exceeds limit or remaining data");
         return value;
+    }
+    std::string text(std::size_t maximum) {
+        const auto length=count(maximum,1);
+        std::string result;result.reserve(length);
+        for(std::uint32_t i=0;i<length;++i)result.push_back(static_cast<char>(u8()));
+        return result;
     }
     float f32() {
         if (!std::numeric_limits<float>::is_iec559 || sizeof(float) != sizeof(std::uint32_t))
@@ -223,6 +233,8 @@ void write_entity(Writer& writer, const Entity& entity) {
         writer.i16(change.maximum);
         writer.f64(change.fractional);
     }
+    writer.count(entity.bound_appearances.size());
+    for(const auto& name:entity.bound_appearances)writer.text(name);
 }
 
 Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::uint16_t version) {
@@ -299,6 +311,12 @@ Entity read_entity(Reader& reader, const WorldSnapshotCodecLimits& limits,std::u
             change.ticked=false;
         }
     }
+    if(version>=3){
+        const auto appearances=reader.count(limits.world.bound_appearance_names,4);
+        entity.bound_appearances.reserve(appearances);
+        for(std::uint32_t i=0;i<appearances;++i)
+            entity.bound_appearances.push_back(reader.text(256));
+    }
     return entity;
 }
 
@@ -336,7 +354,7 @@ WorldSnapshot decode_world_snapshot(
         throw FormatError("World snapshot header is truncated");
     Reader reader(bytes);
     const auto version=reader.u16();
-    if(version!=1&&version!=codec_version)throw FormatError("unsupported World snapshot version");
+    if(version<1||version>codec_version)throw FormatError("unsupported World snapshot version");
     WorldSnapshot snapshot;
     const auto policy = reader.u8();
     if (policy > static_cast<std::uint8_t>(AttributePolicy::ts1_bounded))

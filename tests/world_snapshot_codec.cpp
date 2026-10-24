@@ -33,7 +33,9 @@ odh::WorldSnapshot fixture() {
             world.define_entry_points(1, {{12,65535},{0,4}}) &&
             world.define_entry_points(2, {}) &&
             world.declare_definition_word(1, 255, -7) &&
-            world.declare_object_word(3, 78, -8),
+            world.declare_object_word(3, 78, -8) &&
+            world.add_bound_appearance(1,"suit-toothbrush.apr") &&
+            world.add_bound_appearance(1,"suit-toothpaste.apr"),
             "fixture definitions");
     odh::VmFrame frame{odh::routine_key(4096),0,{1,1,1},{},{}};
     require(world.write(frame,0,4,-55) && world.write(frame,3,0,999) &&
@@ -58,6 +60,8 @@ int main() {
         require(odh::encode_world_snapshot(decoded) == encoded,
                 "every World snapshot field round-trips byte-for-byte");
         odh::World restored;
+        require(decoded.entities[0].bound_appearances==std::vector<std::string>{"suit-toothbrush.apr","suit-toothpaste.apr"},
+                "version 3 stores sorted avatar accessory names");
         require(restored.restore_snapshot(decoded), "decoded snapshot restores into a fresh World");
         require(odh::encode_world_snapshot(restored.snapshot()) == encoded,
                 "restored World retains the complete encoded state");
@@ -101,7 +105,12 @@ int main() {
         const auto minimal = odh::encode_world_snapshot(one_entity.snapshot());
         require(odh::encode_world_snapshot(odh::decode_world_snapshot(minimal)) == minimal,
                 "minimum-size entity snapshot is accepted");
-        auto legacy_v1=minimal;
+        auto legacy_v2=minimal;
+        legacy_v2[0]=2;legacy_v2.resize(legacy_v2.size()-4); // v2 has no accessory vector.
+        const auto legacy_v2_world=odh::decode_world_snapshot(legacy_v2);
+        require(legacy_v2_world.entities.size()==1&&legacy_v2_world.entities[0].bound_appearances.empty(),
+                "version 2 snapshots remain readable without avatar accessories");
+        auto legacy_v1=legacy_v2;
         legacy_v1[0]=1;legacy_v1.pop_back(); // v1 has no motive-controller presence byte.
         const auto legacy_world=odh::decode_world_snapshot(legacy_v1);
         require(legacy_world.entities.size()==1&&legacy_world.entities[0].motive_changes.empty(),

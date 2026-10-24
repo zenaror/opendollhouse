@@ -3,6 +3,7 @@
 #include "odh/vm.hpp"
 #include "odh/entry_points.hpp"
 #include <array>
+#include <string>
 
 namespace odh {
 enum class EntityKind { object, avatar };
@@ -65,11 +66,16 @@ struct Entity {
     // Present only for avatars with a complete 16-word motive bank. This is
     // runtime state, separate from the imported saved motive values.
     std::vector<MotiveChangeState> motive_changes;
+    // Runtime avatar accessories restored by OBJM and changed by Simantics.
+    // Names are flat `.apr` asset identifiers, never paths.
+    std::vector<std::string> bound_appearances;
 };
 struct WorldLimits {
     std::size_t entities = 4096;
     std::size_t words = 65536;
     std::size_t bank_words = 4096;
+    std::size_t bound_appearance_names = 16;
+    std::size_t bound_appearance_name_bytes = 4096;
 };
 // Owned values only; no VM callbacks, resource pointers, queues or clocks.
 struct WorldSnapshot {
@@ -133,6 +139,10 @@ public:
     // entity on the tile after the cursor reaches the end. Supports positive lot coordinates,
     // levels 1-2; callers must reject outside-lot positions before dispatch.
     std::optional<std::int16_t> next_entity_on_same_tile(std::int16_t current) const;
+    // TS1 SetToNext mode 9: inspect adjacent tiles in north/east/south/west
+    // order after the current cursor direction, anchored at the selected local.
+    std::optional<std::int16_t> next_entity_adjacent_to_local(std::int16_t anchor,
+                                                               std::int16_t current) const;
     bool define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid={});
     // Bind an immutable owned table to a typed entity; identical repeats succeed.
     // Each condition/action pair consumes two words. Empty tables are valid.
@@ -145,6 +155,8 @@ public:
     // without changing entity state or word accounting.
     bool replace_person_data(std::int16_t id, const std::vector<std::int16_t>& values);
     bool set_motive(std::int16_t id, std::int16_t index, std::int16_t value);
+    bool add_bound_appearance(std::int16_t avatar,const std::string& name);
+    bool remove_bound_appearance(std::int16_t avatar,const std::string& name);
     // TS1 continuous SetMotiveChange state belongs to the Caller avatar.
     // The setter returns true when the request is valid, including the first
     // pre-tick request that Simitone deliberately ignores.

@@ -51,8 +51,35 @@ adult-aware1.cmx.bcf e xskill-A2O-aware1.cfp. Com 121 frames, a posição é
 `a2o-standing-loop;-10;1000;75;1000;1;1;1` resolve ross-standing-loop.cmx.bcf,
 60 frames e posição4,5; fica preservada, com `base_executed=false`. O novo
 activator FreeSO não restaura BaseAnimation nesse caminho. O ODH ainda precisa
-investigar sua composição no original. Animação carry, acessórios e peso atual
-diferente de1 são recusados explicitamente, sem descartar campos silenciosamente.
+investigar sua composição no original. Animação carry e peso atual diferente de1
+são recusados explicitamente, sem descartar campos silenciosamente.
+
+## Acessórios salvos
+
+O renderer agora aceita os acessórios OBJM cujo vínculo está vazio. O leitor
+OBJM do Simitone comenta que esse vínculo costuma estar vazio, e o activator
+TS1 transfere o nome do acessório para o avatar. O nome precisa terminar em
+`.apr`; o ODH encontra esse nome dentro
+de um BCF de aparência, expande cada vínculo em BMF, confere a textura BMP e
+acrescenta a malha ligada ao osso indicado. Vínculos preenchidos, recursos
+ambíguos ou ausentes e excesso do limite de 16 peças continuam sendo recusados.
+
+`odh-saved-appearance-tests` passou 171 verificações com uma escova sintética.
+Separadamente, os arquivos comerciais de `Animation.far` foram lidos pelo
+`odh-mesh`: `suit-toothbrush.apr` resolve para uma malha `R_HAND` e o esqueleto
+adulto. Uma captura headless real de House07, no armário154, durante a ação4102
+Brush Teeth, executou até o clip `a2o-medcab-nocounter-brush-loop2`, frame140.4.
+Com `--render-hide-lot-objects --render-size 640 480`, o Sim aparece sem os
+móveis cobrindo sua mão; a captura ainda não permite identificar com segurança
+a escova como objeto separado.
+
+O replay até o tick1600 terminou `returned_true`, sem diagnóstico, e esvaziou a
+fila de interação. Em duas execuções idênticas do mesmo lote, a necessidade de
+higiene terminou em96 com Brush Teeth e95 sem a ação; as outras seis necessidades
+coincidiram. Isso confirma um efeito observado neste host, sem afirmar paridade
+completa do sistema de necessidades. O retorno de processo3 é o limite explícito
+`--ticks`, não uma falha do VM. A opção `--render-hide-lot-objects` existe só
+para captura diagnóstica; ela não muda o World ou os objetos salvos.
 
 ## World, renderer e composição
 

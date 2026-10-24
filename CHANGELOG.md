@@ -29,6 +29,14 @@ validação indicados por versão.
   estado no snapshot e limpeza ao concluir a interação. A evidência e o próximo gate estão em
   [`motive-change-validation.md`](docs/motive-change-validation.md).
 
+- O runtime agora cobre perfis adicionais usados por interações de objetos:
+  aplicar/remover acessórios do Sim, esperar dentro da ação, selecionar entidades
+  adjacentes e aproximar-se de posições verificadas do armário. Em House07, a
+  ação comercial `Brush Teeth` terminou e a higiene ficou um ponto acima da
+  execução sem interação no mesmo tick. Isso valida um caminho específico, não
+  compatibilidade ampla. Veja
+  [`saved-avatar-render-validation.md`](docs/saved-avatar-render-validation.md).
+
 - Foi criado um preparador transacional para a entrada Load (EP2). As ações
   rodam na ordem informada dentro de uma cópia do lote; retorno verdadeiro ou
   falso síncrono é aceito, enquanto esperas, falhas, falta de dono e estouro

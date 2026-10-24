@@ -72,6 +72,29 @@ int main(int argc,char** argv){try {
   require(mover_queue.size()==0&&blocker_queue.size()==0&&world.find(2)->object_words.at(25)==7,
           "per-avatar completion is isolated while World changes remain shared");
  }
+ { // A TS1 action-tree wrapper can idle while the FIFO front remains active.
+  odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,16);odh::InteractionQueue queue(world,1);
+  const auto action_idle=idle(0,1);
+  odh::Vm vm({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},queue.primitive(),
+      {{22,{{key(4096),bhav({action_idle,set(1,42)})}}}});
+  require(queue.bind(vm),"action-tree queue binds");
+  vm.start(key(4096),{1,1,1,0},{0});
+  require(queue.enqueue(key(4096),{1,2,2,22},{4}),"action-tree IdleForInput fixture starts");
+  require(queue.tick(1)&&vm.run(30)==odh::VmStatus::waiting&&queue.active()&&queue.waiting()&&
+          vm.stack().back().arguments[0]==3,"action-tree IdleForInput waits without completing the active interaction");
+  const auto action_wait_state=queue.snapshot();odh::InteractionQueue restored(world,1);
+  require(restored.bind(vm)&&restored.restore_snapshot(action_wait_state),
+          "active action-tree wait snapshot restores with its independent pending ticket");
+  for(std::uint64_t tick=2;tick<5;++tick)
+      require(queue.tick(tick)&&vm.status()==odh::VmStatus::waiting&&vm.run(30)==odh::VmStatus::waiting,
+              "action-tree idle deadline does not wake early just because its FIFO front is active");
+  require(queue.tick(5)&&!queue.waiting()&&vm.run(30)==odh::VmStatus::yielded&&
+          vm.temps()[1]==42,"action-tree IdleForInput resumes at its countdown deadline and finishes the action");
+  require(queue.observe()&&queue.completion()&&queue.completion()->result&&
+          !queue.active()&&queue.tick(6)&&vm.run(30)==odh::VmStatus::returned_true,
+          "Main resumes on the following tick after action-tree idle and successful completion");
+ }
  {Fixture f;require(f.world.tick_motive_changes()&&f.world.set_motive_change(1,6,1800,100)&&
                      f.world.has_motive_change(1,6),"fixture has an active TS1 motive change");
   require(f.enqueue()&&f.enqueue(4097)&&!f.enqueue(),"FIFO capacity includes active front");

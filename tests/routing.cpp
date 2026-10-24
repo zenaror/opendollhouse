@@ -54,6 +54,26 @@ void reference_slot_lattice_tests() {
     catch(const std::invalid_argument&) { invalid=true; }
     require(invalid,"max-zero fallback to min rejects a non-ranged profile");
 }
+void reference_slot_point_tests() {
+    odh::SlotRecord point{};point.type=3;point.offset_bits={0,0xC1800000U,0};
+    point.standing=1;point.sitting=0;point.ground=0;point.flags=0;point.snap_target_slot=-1;
+    point.proximity=std::array<std::int32_t,3>{16,16,16};point.max_size=0;point.unknown_i10=0;
+    point.gradient_bits=0x3E400000;point.height=0;point.facing=4;point.resolution=16;
+    const odh::SlotTable table{0,10,{point},0};
+    const auto north=odh::enumerate_reference_slot_point_candidate(table,0,{100,100},0);
+    require(north.position==odh::RoutePoint{100,84}&&north.facing==4,
+            "House07 fixed SLOT offset preserves its authored point and facing");
+    const auto east=odh::enumerate_reference_slot_point_candidate(table,0,{100,100},2);
+    require(east.position==odh::RoutePoint{116,100}&&east.facing==6,
+            "House07 fixed SLOT offset rotates one quarter turn deterministically");
+    const auto diagonal=odh::enumerate_reference_slot_point_candidate(table,0,{100,100},1);
+    require(diagonal.position==odh::RoutePoint{111,89}&&diagonal.facing==5,
+            "House07 fixed SLOT offset rounds diagonal coordinates to the nearest even integer");
+    bool rejected=false;auto malformed=table;malformed.records[0].offset_bits[1]=0xC1400000U;
+    try {(void)odh::enumerate_reference_slot_point_candidate(malformed,0,{100,100},0);}
+    catch(const std::invalid_argument&) {rejected=true;}
+    require(rejected,"point-offset interpreter rejects offsets outside the four verified House07 values");
+}
 void reference_slot_direction_tests() {
     constexpr std::uint8_t all=0xFF;
     require(odh::reference_slot_entry_flags({160,160},0,{176,160},all)==0x04,
@@ -817,6 +837,7 @@ void child_shy_sitting_preflight_tests() {
 int main() {
     try {
         reference_slot_lattice_tests();
+        reference_slot_point_tests();
         reference_slot_direction_tests();
         reference_slot_circle_tests();
         pre_ranked_goal_tests();
@@ -1712,6 +1733,26 @@ int main() {
          require(f.vm.status()==odh::VmStatus::returned_false && !f.routing.active(),"no path is false without movement");}
         {Fixture f;odh::Vm other(routines(),f.world.vm_memory(),{},f.routing.primitive());other.start(odh::routine_key(4096),{1,2,2});
          require(other.run(1)==odh::VmStatus::fault && !f.routing.active(),"controller refuses foreign VM identity");}
+        {odh::World world;odh::RouteGrid grid{64,64};
+         odh::SlotRecord point{};point.type=3;point.flags=0;point.offset_bits={0,0xC1800000U,0};
+         point.standing=1;point.sitting=0;point.ground=0;point.snap_target_slot=-1;
+         point.proximity=std::array<std::int32_t,3>{16,16,16};point.max_size=0;point.unknown_i10=0;
+         point.gradient_bits=0x3E400000;point.height=0;point.facing=4;point.resolution=16;
+         odh::SlotTable cabinet{10,10,std::vector<odh::SlotRecord>(1,point),0};
+         std::size_t ranked_provider_calls=0;
+         odh::Routing routing{world,grid,cabinet,[&](const auto&,auto,const auto&,const auto&) {
+             ++ranked_provider_calls;return std::vector<odh::PreRankedSlotGoal>{};}};
+         routing.set_route_goal_validator([](const odh::VmFrame&,odh::RoutePoint goal){return goal==odh::RoutePoint{28,4};});
+         odh::Vm vm{routines(2,0,0),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,20,1,0});world.set_position(2,{28,20,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active()&&ranked_provider_calls==0,
+                 "exact point SLOT takes precedence over a generic ranked-goal provider");
+         for(std::uint64_t tick=1;tick<=64&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&world.find(1)->position->x==28&&
+                 world.find(1)->position->y==4&&ranked_provider_calls==0,
+                 "exact point SLOT reaches its verified transformed target without consulting ranked goals");}
         {odh::World world;odh::RouteGrid grid{32,32,1024,{380,440}};auto slots=slot();
          const odh::RoutePoint start{403,445};
          for(std::size_t n=0;n<grid.cells();++n)grid.block(grid.point(n));

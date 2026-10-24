@@ -91,6 +91,11 @@ int main() {
         const auto state = fixture();
         const auto encoded = odh::encode_entity_thread_controllers_snapshot(state);
         same(state, odh::decode_entity_thread_controllers_snapshot(encoded));
+        auto action_wait = state;
+        action_wait.interactions.idle_start = action_wait.interactions.clock;
+        action_wait.interactions.wait = odh::InteractionWaitSnapshot{7, 9};
+        const auto action_wait_bytes = odh::encode_entity_thread_controllers_snapshot(action_wait);
+        same(action_wait, odh::decode_entity_thread_controllers_snapshot(action_wait_bytes));
         for (std::size_t size = 0; size < encoded.size(); ++size) {
             auto truncated = encoded;
             truncated.resize(size);

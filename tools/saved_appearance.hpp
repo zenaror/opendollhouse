@@ -32,6 +32,8 @@ public:
     // appearance[,label=texture]; all eight appearances are required. Reuses
     // the same resource ambiguity, naming and cumulative 16-part limits.
     SceneConfig resolve_body(const odh::AvatarBodyStrings&);
+    // Add runtime BoundAppearances names using the same strict OBJM accessory resolver.
+    void append_accessories(SceneConfig&, const std::vector<std::string>& names);
     // All six BodySTR 17..22 variants are required and tagged for SceneState.
     // Raw saved hand fields are not interpreted or changed by this opt-in path.
     SavedAppearance resolve_gestures(const odh::ObjmPersonState&, const odh::AvatarBodyStrings&);

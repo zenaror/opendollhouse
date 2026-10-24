@@ -10,7 +10,7 @@ void check(bool ok){++checks;if(!ok)throw std::runtime_error("saved appearance a
 template<class F> void rejects(F f){bool caught=false;try{f();}catch(const odh::FormatError&){caught=true;}check(caught);}
 void word(std::string& b,std::uint32_t n){for(int i=0;i<4;++i)b.push_back(static_cast<char>((n>>(i*8))&255));}
 void text(std::string& b,const std::string& s){b.push_back(static_cast<char>(s.size()));b+=s;}
-std::string appearance(const std::string& name,const std::vector<std::string>& meshes){std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,static_cast<std::uint32_t>(meshes.size()));for(const auto& m:meshes){text(b,"ROOT");text(b,m);word(b,0);word(b,0);}word(b,0);return b;}
+std::string appearance(const std::string& name,const std::vector<std::string>& meshes,const std::string& bone="ROOT"){std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,static_cast<std::uint32_t>(meshes.size()));for(const auto& m:meshes){text(b,bone);text(b,m);word(b,0);word(b,0);}word(b,0);return b;}
 std::string mesh(const std::string& name,const std::string& tex){std::string b;text(b,name);text(b,tex);for(int i=0;i<6;++i)word(b,0);return b;}
 std::string clip(){std::string b;word(b,0);word(b,0);word(b,1);text(b,"clip");text(b,"pose");for(int i=0;i<5;++i)word(b,0);word(b,1);text(b,"ROOT");word(b,10);for(int i=0;i<7;++i)word(b,0);return b;}
 using Entry=std::pair<std::string,std::string>;
@@ -25,7 +25,9 @@ int main(){try{
  for(const auto* s:{"clip;1;2;3;4;0;0","clip;1;2;3;4;0;0;0;0","clip;1;2;1001;4;0;0;0","clip;1;2;-1;4;0;0;0","clip;1;2;3;1001;0;0;0","clip;1;2;3;4;2;0;0","clip;1;2;3;4;01;0;0","clip;1;x;3;4;0;0;0","clip;1;2;3;4;0;0;","other;1;2;3;4;0;0;0","clip;2147483648;2;3;4;0;0;0"})rejects([&]{saved_animation_appearance(s,h);});
  auto empty=h;empty.motions.clear();rejects([&]{saved_animation_appearance("clip;1;2;3;4;0;0;0",empty);});
  Temp dir;const auto a=dir.path/"animations.far",t=dir.path/"textures.far";
- std::vector<Entry> entries={{"rig.bcf","rig"},{"unexpected-host.bcf",appearance("body",{"mesh0","mesh1","mesh2"})},{"head-host.bcf",appearance("head",{"headmesh"})},{"hand-host.bcf",appearance("hand",{"handmesh"})},{"mesh0.bmf",mesh("mesh0","unmatched")},{"mesh1.bmf",mesh("mesh1","skinlgt")},{"mesh2.bmf",mesh("mesh2","x")},{"headmesh.bmf",mesh("headmesh","x")},{"handmesh.bmf",mesh("handmesh","x")}};
+ std::vector<Entry> entries={{"rig.bcf","rig"},{"unexpected-host.bcf",appearance("body",{"mesh0","mesh1","mesh2"})},{"head-host.bcf",appearance("head",{"headmesh"})},{"hand-host.bcf",appearance("hand",{"handmesh"})},{"mesh0.bmf",mesh("mesh0","unmatched")},{"mesh1.bmf",mesh("mesh1","skinlgt")},{"mesh2.bmf",mesh("mesh2","x")},{"headmesh.bmf",mesh("headmesh","x")},{"handmesh.bmf",mesh("handmesh","x")},
+ {"accessory-toothbrush.cmx.bcf",appearance("suit-toothbrush",{"toothbrush"},"R_HAND")},
+ {"toothbrush.bmf",mesh("toothbrush","x")}};
  // The rig is caller-selected; scanner skips its nonzero skeleton count.
  entries[0].second=std::string(4,'\0');entries[0].second[0]=1;
  far(a,entries);far(t,{{"unmatched.bmp",""},{"skinlgt.bmp",""},{"override.bmp",""},{"skinmed.bmp",""},{"x.bmp",""}});
@@ -39,7 +41,19 @@ int main(){try{
  p.body_texture.bytes="";result=no_match.resolve(p);check(result.scene.parts[0].texture_entry=="unmatched.bmp");
  for(const auto* map:{"missing-equals","=override","BODY=","BODY=override;ignored","BODY=override=second"}){p.body_texture.bytes=map;rejects([&]{no_match.resolve(p);});}
  p.body_texture.bytes="BODY=missing";rejects([&]{no_match.resolve(p);});p.body_texture.bytes="BODY=override";
- p.carry_animation.bytes="clip;1;2;3;4;0;0;0";rejects([&]{no_match.resolve(p);});p.carry_animation.bytes="";p.accessory_count=1;rejects([&]{no_match.resolve(p);});p.accessory_count=0;
+ p.carry_animation.bytes="clip;1;2;3;4;0;0;0";rejects([&]{no_match.resolve(p);});p.carry_animation.bytes="";
+ odh::ObjmSavedAccessory toothbrush{};toothbrush.name.bytes="suit-toothbrush.apr";
+ p.accessory_count=1;p.accessories={toothbrush};
+ auto with_accessory=no_match.resolve(p);check(with_accessory.scene.parts.size()==7);
+ check(with_accessory.scene.parts[4].appearance_name=="suit-toothbrush"&&
+       with_accessory.scene.parts[4].bmf_entry=="toothbrush.bmf"&&
+       with_accessory.scene.parts[4].texture_entry=="x.bmp"&&!with_accessory.scene.parts[4].hand);
+ auto malformed_accessory=toothbrush;malformed_accessory.name.bytes="suit-toothbrush";
+ p.accessories={malformed_accessory};rejects([&]{no_match.resolve(p);});
+ malformed_accessory=toothbrush;malformed_accessory.binding.bytes="unknown";
+ p.accessories={malformed_accessory};rejects([&]{no_match.resolve(p);});
+ p.accessories={toothbrush};p.accessory_count=2;rejects([&]{no_match.resolve(p);});
+ p.accessories.clear();p.accessory_count=0;
  p.body.bytes="notthere";rejects([&]{no_match.resolve(p);});p.body.bytes="body";
  // BodySTR variants replace only the visual hand source; saved raw fields and
  // current/base animation evidence survive the opt-in resolution unchanged.
@@ -64,6 +78,12 @@ int main(){try{
  auto constructed=body;constructed.body="BODY,BODY=skinmed";constructed.head="head,HEAD-HEAD=override";
  const auto body_before=constructed.body,head_before=constructed.head;const auto hands_before=constructed.hands;
  auto direct=gestures.resolve_body(constructed);check(direct.parts.size()==10);
+ auto live_scene=gestures.resolve_body(constructed);
+ gestures.append_accessories(live_scene,{"suit-toothbrush.apr"});
+ check(live_scene.parts.size()==11&&live_scene.parts.back().appearance_name=="suit-toothbrush"&&
+       live_scene.parts.back().bmf_entry=="toothbrush.bmf");
+ rejects([&]{gestures.append_accessories(live_scene,{"unknown-accessory.apr"});});
+ rejects([&]{gestures.append_accessories(live_scene,std::vector<std::string>(17,"suit-toothbrush.apr"));});
  check(direct.animation_far==a.string()&&direct.textures_far==t.string()&&direct.skeleton_entry=="rig.bcf"&&direct.skeleton_name=="adult");
  check(direct.object_far.empty()&&direct.object_entry.empty()&&direct.object_id==0);
  check(direct.parts[0].appearance_entry=="unexpected-host.bcf"&&direct.parts[1].texture_entry=="skinmed.bmp"&&direct.parts[2].texture_entry=="unmatched.bmp"&&direct.parts[3].texture_entry=="override.bmp");

@@ -13,6 +13,13 @@ bool valid_position(EntityPosition position) {
     return position.x>=0 && position.y>=0 && position.x<=32767 && position.y<=32767 &&
            position.level>=1 && position.direction<=7;
 }
+bool valid_appearance_name(const std::string& name) {
+    if(name.size()<5||name.size()>256||name.substr(name.size()-4)!=".apr")return false;
+    for(const unsigned char c:name){
+        if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_'||c=='.'))return false;
+    }
+    return true;
+}
 std::uint8_t direction_notch(float radians) {
     constexpr double pi = 3.141592653589793238462643383279502884;
     const auto notch = static_cast<double>(radians) / (pi / 4.0);
@@ -59,6 +66,7 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
        (snapshot.attribute_policy!=AttributePolicy::fixed &&
         snapshot.attribute_policy!=AttributePolicy::ts1_bounded)) return false;
     auto available=limits_.words;
+    std::size_t appearance_name_bytes=0;
     // Bound all banks before copying. ObjectData follows its fixed index range,
     // as declare_object_word does, rather than the variable bank_words limit.
     for(const auto& entity:snapshot.entities) {
@@ -68,6 +76,8 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
            entity.person_data.size()>limits_.bank_words || entity.person_data.size()>32768 ||
            entity.slots.size()>limits_.bank_words || entity.slots.size()>32767 ||
            entity.motives.size()>limits_.bank_words || entity.motives.size()>16 ||
+           entity.bound_appearances.size()>limits_.bound_appearance_names ||
+           (!entity.bound_appearances.empty()&&entity.kind!=EntityKind::avatar) ||
            (!entity.motive_changes.empty() &&
             (entity.kind!=EntityKind::avatar || entity.motives.size()<16 || entity.motive_changes.size()!=16)) ||
            entity.definition_words.size()>limits_.bank_words ||
@@ -90,6 +100,12 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
             if(index<0 || index>255) return false;
         for(const auto& change:entity.motive_changes)
             if(!std::isfinite(change.fractional))return false;
+        if(!std::is_sorted(entity.bound_appearances.begin(),entity.bound_appearances.end())||
+           std::adjacent_find(entity.bound_appearances.begin(),entity.bound_appearances.end())!=entity.bound_appearances.end())return false;
+        for(const auto& name:entity.bound_appearances){
+            if(!valid_appearance_name(name)||name.size()>limits_.bound_appearance_name_bytes-appearance_name_bytes)return false;
+            appearance_name_bytes+=name.size();
+        }
         if(entity.saved_object_banks) {
             if(!entity.definition) return false;
             for(std::int16_t index=0;index<68;++index)
@@ -167,7 +183,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
     entities_.emplace(id, Entity{id,kind,std::vector<std::int16_t>(layout.attributes),
         std::vector<std::int16_t>(layout.person_data),std::vector<std::int16_t>(layout.slots),{},
         std::nullopt,std::nullopt,++generation_sequence_,{},std::vector<std::int16_t>(layout.motives),
-        {},{},{},std::int16_t{-1},true,false,std::nullopt,0.0f,{}});
+        {},{},{},std::int16_t{-1},true,false,std::nullopt,0.0f,{}, {}});
     if (kind == EntityKind::avatar) entities_.at(id).kill_timeout = -1;
     words_ += count;
     mark_spatial_change();
@@ -201,7 +217,7 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     Entity candidate{id,kind,attributes,person_data,std::vector<std::int16_t>(slots),{},
         {},{},generation,EntityType{guid,master_guid},motives,{},{},
         SavedObjectBanks{object_data,extras},object_data[2]==0 ? object_data[3] : std::int16_t{-1},
-        true,false,std::nullopt,0.0f,{}};
+        true,false,std::nullopt,0.0f,{}, {}};
     for (std::int16_t index=0;index<68;++index)
         if (!derived(index)) candidate.object_words.emplace(index,object_data[static_cast<std::size_t>(index)]);
     entities_.emplace(id,std::move(candidate));
@@ -265,6 +281,36 @@ std::optional<std::int16_t> World::next_entity_on_same_tile(std::int16_t current
     if(after)return after;
     return anchor_present?first:std::nullopt;
 }
+std::optional<std::int16_t> World::next_entity_adjacent_to_local(std::int16_t anchor_id,
+                                                                  std::int16_t current) const {
+    const auto* anchor=find(anchor_id);
+    if(!anchor||anchor->ui_ghost||!anchor->position||anchor->position->level<1||
+       anchor->position->level>2)return {};
+    const auto tile=[](std::int32_t coordinate){
+        return coordinate>=0?coordinate/16:-static_cast<std::int32_t>(
+            (-static_cast<std::int64_t>(coordinate)+15)/16);
+    };
+    const auto anchor_x=tile(anchor->position->x),anchor_y=tile(anchor->position->y);
+    int previous=-1;
+    if(const auto* pointer=find(current);pointer&&!pointer->ui_ghost&&pointer->position){
+        const auto dx=tile(pointer->position->x)-anchor_x;
+        const auto dy=tile(pointer->position->y)-anchor_y;
+        previous=dx==0?(dy<0?0:2):(dx<0?3:1);
+    }
+    if(previous==3)return {};
+    constexpr std::array<std::array<std::int32_t,2>,4> steps{{
+        {{0,-1}},{{1,0}},{{0,1}},{{-1,0}}
+    }};
+    for(int direction=previous+1;direction<4;++direction){
+        const auto x=anchor_x+steps[static_cast<std::size_t>(direction)][0];
+        const auto y=anchor_y+steps[static_cast<std::size_t>(direction)][1];
+        for(const auto& [id,entity]:entities_){
+            if(entity.ui_ghost||!entity.position||entity.position->level!=anchor->position->level)continue;
+            if(tile(entity.position->x)==x&&tile(entity.position->y)==y)return id;
+        }
+    }
+    return {};
+}
 bool World::define_type(std::int16_t id,std::uint32_t guid,std::optional<std::uint32_t> master_guid) {
     const auto found=entities_.find(id);if(found==entities_.end())return false;
     auto& type=found->second.definition;
@@ -316,6 +362,25 @@ bool World::replace_person_data(std::int16_t id, const std::vector<std::int16_t>
     bank.swap(replacement);
     words_ = retained_words + replacement_size;
     mark_spatial_change();
+    return true;
+}
+bool World::add_bound_appearance(std::int16_t avatar,const std::string& name) {
+    const auto found=entities_.find(avatar);
+    if(found==entities_.end()||found->second.kind!=EntityKind::avatar||!valid_appearance_name(name))return false;
+    auto& names=found->second.bound_appearances;
+    const auto at=std::lower_bound(names.begin(),names.end(),name);
+    if(at!=names.end()&&*at==name)return true;
+    std::size_t bytes=name.size();
+    for(const auto& existing:names)bytes+=existing.size();
+    if(names.size()>=limits_.bound_appearance_names||bytes>limits_.bound_appearance_name_bytes)return false;
+    names.insert(at,name);return true;
+}
+bool World::remove_bound_appearance(std::int16_t avatar,const std::string& name) {
+    const auto found=entities_.find(avatar);
+    if(found==entities_.end()||found->second.kind!=EntityKind::avatar||!valid_appearance_name(name))return false;
+    auto& names=found->second.bound_appearances;
+    const auto at=std::lower_bound(names.begin(),names.end(),name);
+    if(at!=names.end()&&*at==name)names.erase(at);
     return true;
 }
 bool World::set_motive(std::int16_t id, std::int16_t index, std::int16_t value) {

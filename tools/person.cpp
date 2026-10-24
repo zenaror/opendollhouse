@@ -37,6 +37,8 @@
 #include "odh/sound.hpp"
 #include "odh/look_towards.hpp"
 #include "odh/distance_to.hpp"
+#include "odh/direction_to.hpp"
+#include "odh/change_suit.hpp"
 #include "odh/slot_scoring.hpp"
 #include "odh/world_room_info.hpp"
 #include "odh/saved_attempt_walk_obstacles.hpp"
@@ -287,6 +289,15 @@ std::map<std::uint16_t,odh::SoundEvent> load_sounds(const Resource& resource) {
     });
     return result;
 }
+odh::TuningTables load_saved_action_tuning(const odh::DefinitionCandidate& candidate){
+    odh::TuningTables result;
+    const Resource resource{candidate.source,candidate.asset,candidate.asset.empty()};
+    with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
+        if(chunk.type=="BCON"&&!result.emplace(chunk.id,odh::read_bcon(chunk.payload)).second)
+            throw odh::FormatError("ambiguous BCON ID in selected action resource");
+    });});
+    return result;
+}
 std::map<std::uint16_t,odh::StringTable> load_strings(const Resource& resource,const std::vector<std::uint16_t>& ids){
     std::map<std::uint16_t,odh::StringTable> result;
     with_resource(resource,[&](const auto& view){odh::iff_chunks(view,[&](const auto& chunk){
@@ -441,6 +452,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::uint8_t game_language=1;bool game_language_set=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
     std::optional<std::array<std::uint32_t,2>> render_size;
+    bool render_hide_lot_objects=false;
     std::optional<std::string> render_floors,render_walls;
     SavedLotView render_lot_view;
     bool render_level_set=false,render_wall_mode_set=false;
@@ -491,6 +503,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 odh::ArchitectureResourceSourceKind::far1_archive:odh::ArchitectureResourceSourceKind::loose_file});
         }
         else if(option=="--render-frame"&&!render_output&&n+1<argc){render_output=argv[++n];}
+        else if(option=="--render-hide-lot-objects"&&!render_hide_lot_objects){render_hide_lot_objects=true;}
         else if(option=="--render-size"&&!render_size&&n+2<argc){
             const auto width=selector(argv[++n]),height=selector(argv[++n]);
             if(width<160||width>1024||height<120||height>1024||
@@ -744,6 +757,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-neighborhood-house requires --headless-window-neighborhood-tick");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
     const bool render_requested=render_output||render_size||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_selector&&!headless_main);
+    if(render_hide_lot_objects&&(!render_output||!render_floors||!saved_world_main))
+        throw odh::FormatError("--render-hide-lot-objects requires a saved-world frame capture");
     if(render_size&&!render_output&&!render_window)
         throw odh::FormatError("--render-size requires --render-frame or --render-window");
     if(!avatar||!semi||!globals||ticks_limit>4096||(age&&*age>32767)||(lot_id&&(*lot_id==0||*lot_id>32767))||(zoning_path&&!lot_path)||(initialize&&(routine||age||flags))||(activate_family&&((!initialize&&!saved_world_main)||!lot_path||!neighborhood_path))||
@@ -769,7 +784,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_selector||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
 #ifndef ODH_HAVE_X11
@@ -1514,6 +1529,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        !world.set_person_data(runtime_avatar_id,58,static_cast<std::int16_t>(*age)))
         throw odh::FormatError("age fixture construction failed");
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
+    std::map<odh::CodeOwner,odh::TuningTables> saved_action_tuning;
     odh::TuningResources tuning_resources;
     tuning_resources.globals=std::move(shared.tuning);
     auto second_main_tuning=headless_second_main?std::optional<odh::TuningOwner>{
@@ -1542,6 +1558,20 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 global_reads.push_back({index,*value,clock?GlobalSource::clock:family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});
             return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
+        const auto supplemental=saved_action_tuning.find(frame.context.code_owner);
+        if(supplemental!=saved_action_tuning.end()){
+            const auto address=odh::BconTuning::address(index);
+            if(address.scope==odh::RoutineScope::private_object){
+                const auto table=supplemental->second.find(address.table);
+                if(table==supplemental->second.end()||address.index>=table->second.constants.size())return {};
+                const auto raw=table->second.constants[address.index];
+                const auto signed_value=raw<0x8000?static_cast<std::int16_t>(raw):
+                    static_cast<std::int16_t>(static_cast<std::int32_t>(raw)-0x10000);
+                odh::TuningValue value{signed_value,address,frame.context.code_owner,false};
+                if(diagnostics.retain(Diagnostic::tuning_reads,tuning_reads.size(),20000))tuning_reads.push_back(value);
+                return signed_value;
+            }
+        }
         const auto value=tuning.read(frame.context.code_owner,index);
         if(!value)return {};
         if(diagnostics.retain(Diagnostic::tuning_reads,tuning_reads.size(),20000))tuning_reads.push_back(*value);
@@ -1806,6 +1836,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
     const auto distance_to_handler=odh::get_distance_to_primitive(world);
+    const auto direction_to_handler=odh::get_direction_to_primitive(world,memory);
     const auto object_type_handler=odh::object_type_primitive(world);
     const auto notify_handler=odh::notify_idle_primitive(world,
         [&](std::int16_t id){return entity_scheduler.interrupt(id);});
@@ -1971,7 +2002,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             "routing runtime unavailable: "+route_runtime_reason};
     };
     const auto motive_change_handler=odh::ts1_motive_change_primitive(world,memory);
+    std::map<odh::CodeOwner,Resource> saved_action_resources;
+    std::map<odh::CodeOwner,odh::StringTable> saved_action_string304;
+    std::set<odh::CodeOwner> saved_action_string304_attempted;
+    const auto change_suit_handler=odh::ts1_change_suit_or_accessory(world,
+        [&](odh::CodeOwner owner,std::uint16_t index)->std::optional<std::string>{
+            auto table=saved_action_string304.find(owner);
+            if(table==saved_action_string304.end()){
+                if(!saved_action_string304_attempted.insert(owner).second)return std::nullopt;
+                const auto resource=saved_action_resources.find(owner);
+                if(resource==saved_action_resources.end())return std::nullopt;
+                try{
+                    auto strings=load_strings(resource->second,{304});
+                    const auto found=strings.find(304);
+                    if(found==strings.end()||found->second.state!=odh::StringTableState::decoded)return std::nullopt;
+                    table=saved_action_string304.emplace(owner,std::move(found->second)).first;
+                }catch(const std::exception&){return std::nullopt;}
+            }
+            const auto* entry=odh::string_in_language(table->second,game_language,index);
+            return entry?std::optional<std::string>{entry->value}:std::nullopt;
+        });
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==6)return change_suit_handler(f,i,t,d);
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==29)return motive_change_handler(f,i,t,d);
         if(i.opcode==7){
@@ -1990,7 +2042,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==8)return random_handler(f,i,t,d);
         if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
         if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8||
-                           (i.operands[4]&127)==12))return entity_handler(f,i,t,d);
+                           (i.operands[4]&127)==9||(i.operands[4]&127)==12))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if(i.opcode==32)return object_type_handler(f,i,t,d);
         if(i.opcode==49)return notify_handler(f,i,t,d);
@@ -2000,6 +2052,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==23)return sound_handler(f,i,t,d);
         if(i.opcode==22)return look_towards_handler(f,i,t,d);
         if(i.opcode==11)return distance_to_handler(f,i,t,d);
+        if(i.opcode==12)return direction_to_handler(f,i,t,d);
         if(i.opcode==27||i.opcode==45)return routing_handler(f,i,t,d);
         if(i.opcode==46)return snap_handler(f,i,t,d);
         return odh::PrimitiveOutcome{};
@@ -2628,10 +2681,13 @@ struct PlacementCandidateProbe {
                 render_interaction_status="unsupported";render_interaction_diagnostic="saved object code-owner identity space exhausted";return;
             }
             odh::RoutineSet routines;
+            odh::TuningTables action_tuning;
             const auto key=odh::routine_key(row.action);
             try{
-                if(key.scope==odh::RoutineScope::private_object)
+                if(key.scope==odh::RoutineScope::private_object){
                     routines=load_saved_action_routines(*candidate,row.action);
+                    action_tuning=load_saved_action_tuning(*candidate);
+                }
                 else if(key.scope==odh::RoutineScope::semiglobal&&linked_bank&&
                         linked_bank->routines.count(key)){
                     routines=load_saved_private_routines(*candidate);
@@ -2649,6 +2705,8 @@ struct PlacementCandidateProbe {
             if(!actor_vm->install_owner(code_owner,std::move(routines))){
                 render_interaction_status="unsupported";render_interaction_diagnostic="selected resident VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
             }
+            saved_action_resources.emplace(code_owner,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
+            if(!action_tuning.empty())saved_action_tuning.emplace(code_owner,std::move(action_tuning));
             if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
             else ++next_saved_code_owner;
             owner=owner_map->emplace(owner_key,code_owner).first;
@@ -2658,6 +2716,7 @@ struct PlacementCandidateProbe {
            !target->definition||target->definition->guid!=selected.guid){
             render_interaction_status="unsupported";render_interaction_diagnostic="live actor/target identity changed while loading action owner";return;
         }
+        saved_action_resources.emplace(owner->second,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
         const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
         if(!actor_queue->enqueue(odh::routine_key(row.action),context)){
             render_interaction_status="rejected";render_interaction_diagnostic=actor_queue->diagnostic();return;
@@ -2759,6 +2818,7 @@ struct PlacementCandidateProbe {
                     }
                 }
                 if(owner!=owner_map->end()){
+                    saved_action_resources.emplace(owner->second,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
                     const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
                     if(!stand_selection_is_current(selected))
                         fail_stand("Stand actor/target identity or attachment changed while loading its function");
@@ -2867,7 +2927,9 @@ struct PlacementCandidateProbe {
         }
         render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
                                                                        *render_skeleton_entry,*render_skeleton_name);
-        const auto scene_config=render_appearances->resolve_body(*body_state->body);
+        auto scene_config=render_appearances->resolve_body(*body_state->body);
+        if(const auto* live_avatar=world.find(runtime_avatar_id))
+            render_appearances->append_accessories(scene_config,live_avatar->bound_appearances);
         const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
             auto decoded=animation_catalog->decode(selected);
             const auto* planes=&decoded->planes;
@@ -3998,8 +4060,24 @@ struct PlacementCandidateProbe {
 #endif
     };
     std::optional<odh_host::StatusHud> captured_status_hud;
+    std::vector<std::string> rendered_bound_appearances;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
+        if(render_appearances&&body_state&&body_state->body){
+            const auto* live_avatar=world.find(runtime_avatar_id);
+            const auto current=live_avatar?live_avatar->bound_appearances:std::vector<std::string>{};
+            if(current!=rendered_bound_appearances){
+                auto scene_config=render_appearances->resolve_body(*body_state->body);
+                render_appearances->append_accessories(scene_config,current);
+                const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
+                    auto decoded=animation_catalog->decode(selected);
+                    const auto* planes=&decoded->planes;
+                    return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
+                };
+                render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+                rendered_bound_appearances=current;
+            }
+        }
         if(!render_window&&render_tick&&ticks-resumed_tick!=*render_tick)return;
         const auto sample=playback->sample();if(!sample)return;
         const auto* sample_actor=world.find(sample->actor);
@@ -4062,7 +4140,8 @@ struct PlacementCandidateProbe {
         }
         if(render_lot){
             auto lot=render_lot->render(render_camera,avatar_layers,
-                render_window||headless_window_interaction.has_value()||track_actor_pixels);
+                render_window||headless_window_interaction.has_value()||track_actor_pixels,
+                !render_hide_lot_objects);
             frame.image=std::move(lot.image);render_lot_evidence=std::move(lot);
         }
         std::uint64_t actor_composited_pixels=0;
@@ -4113,7 +4192,7 @@ struct PlacementCandidateProbe {
             sample->actor_generation,sample->vm_generation,usage.cfp_samples,render_renderer->vertices(),
             render_renderer->triangles(),render_renderer->texture_bytes(),frame.image.tested_samples,frame.image.shaded_samples,
             actor_raster_pixels,actor_composited_pixels,
-            render_lot!=nullptr,render_lot!=nullptr};
+            render_lot!=nullptr,render_lot!=nullptr&&!render_hide_lot_objects};
     };
     const auto total_steps=[&]{
         auto steps=startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);

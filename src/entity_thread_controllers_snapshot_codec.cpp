@@ -292,10 +292,10 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
     const auto valid_ticket = [](std::uint64_t ticket) { return ticket != 0; };
     if (interactions.active && (interactions.actions.empty() ||
         interactions.active->uid != interactions.actions.front().uid ||
-        !valid_ticket(interactions.active->ticket) || interactions.wait ||
-        interactions.resume_tick || interactions.idle_start))
+        !valid_ticket(interactions.active->ticket) || interactions.resume_tick ||
+        (!interactions.wait && interactions.idle_start)))
         throw FormatError("invalid active interaction state");
-    if (interactions.wait && (interactions.active || interactions.resume_tick ||
+    if (interactions.wait && (interactions.resume_tick ||
         !valid_ticket(interactions.wait->ticket) || interactions.wait->deadline <= interactions.clock ||
         interactions.wait->deadline > maximum_clock))
         throw FormatError("invalid interaction wait state");
