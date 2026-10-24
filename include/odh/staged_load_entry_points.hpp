@@ -12,6 +12,7 @@ namespace odh {
 struct StagedLoadEntryPointResult {
     std::optional<WorldSnapshot> snapshot;
     std::vector<std::int16_t> completed_entities;
+    std::vector<std::pair<std::int16_t, std::uint16_t>> missing_root_actions;
     std::uint64_t instructions = 0;
     std::int16_t failed_entity = 0;
     std::uint16_t failed_action = 0;

@@ -76,7 +76,7 @@ inline SavedSemiglobalCodeBank load_saved_semiglobal_code_bank(
     const auto filename=std::filesystem::path(entry).filename().string();
     if(filename!=entry||filename.size()<5||filename.substr(filename.size()-4)!=".iff")
         throw odh::FormatError("semiglobal entry must be a flat .iff resource name");
-    SavedSemiglobalCodeBank result{archive,entry,filename.substr(0,filename.size()-4),{}};
+    SavedSemiglobalCodeBank result{archive,entry,filename.substr(0,filename.size()-4),{},{}};
     std::size_t instructions=0;
     with_far_entry(archive,entry,[&](const odh::View& view){
         odh::Limits limits;limits.iff_chunks=4096;

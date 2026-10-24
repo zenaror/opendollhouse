@@ -1,4 +1,5 @@
 #include "saved_wall_appearance.hpp"
+#include "saved_load_preparation.hpp"
 #include "saved_architecture_resources.hpp"
 #include "saved_tail_json.hpp"
 #include "odh/wall_route_state.hpp"
@@ -18,6 +19,7 @@
 #include "odh/formats.hpp"
 #include "odh/saved_floor_placement.hpp"
 #include "odh/prepared_architecture.hpp"
+#include "odh/staged_load_entry_points.hpp"
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -407,8 +409,9 @@ void emit_route_grid_diagnostic(
 }
 
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
- const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false,entry_point_probe=false;
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--load-stage-probe --global-resource ARCHIVE ENTRY] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
+ const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false,entry_point_probe=false,load_stage_probe=false;
+ std::optional<std::pair<std::string,std::string>> load_global_resource;
  std::optional<std::pair<std::int16_t,std::int16_t>> route_grid_diagnostic;
  std::optional<SlotResource> slot_resource;
  const auto parse_id=[](const char* value){
@@ -425,6 +428,10 @@ int main(int argc,char** argv){try{
   else if(option=="--route-edges"&&!route_edges)route_edges=true;
   else if(option=="--portal-probe"&&!portal_probe)portal_probe=true;
   else if(option=="--entry-point-probe"&&!entry_point_probe)entry_point_probe=true;
+  else if(option=="--load-stage-probe"&&!load_stage_probe)load_stage_probe=true;
+  else if(option=="--global-resource"&&!load_global_resource&&n+2<argc){
+   const auto archive=argv[++n];const auto entry=argv[++n];load_global_resource=std::make_pair(archive,entry);
+  }
   else if(option=="--route-grid-diagnostic"&&!route_grid_diagnostic&&n+2<argc){
    const auto actor_id=parse_id(argv[++n]);const auto target_id=parse_id(argv[++n]);
    route_grid_diagnostic=std::make_pair(actor_id,target_id);portal_probe=true;
@@ -678,6 +685,30 @@ int main(int argc,char** argv){try{
    emit_entry(15);std::cout<<',';emit_entry(26);std::cout<<'}';
   }
   std::cout<<"]}";
+ }
+ if(load_stage_probe){
+  std::cout<<",\"saved_load_stage_probe\":{\"evidence\":\"commercial_resource_vm_probe_unpublished_candidate\",\"game_exe_used\":false,\"world_published\":false";
+  try{
+   if(!load_global_resource)throw odh::FormatError("--load-stage-probe requires --global-resource ARCHIVE ENTRY");
+   auto prepared=prepare_saved_load_entry_points(*world,*index,load_global_resource->first,load_global_resource->second);
+   const auto result=odh::stage_saved_load_entry_points(world->world->snapshot(),prepared.entity_order,
+       prepared.code_owners,prepared.ghost_images,prepared.temporary_registers,prepared.globals,prepared.owners,1000000);
+   std::cout<<",\"state\":"<<json_bytes(result.snapshot?"complete":"stopped")
+    <<",\"entities\":"<<prepared.entity_order.size()<<",\"completed_entities\":"<<result.completed_entities.size()
+    <<",\"code_owner_banks\":"<<prepared.owners.size()<<",\"instructions\":"<<result.instructions
+    <<",\"missing_root_actions\":[";
+   for(std::size_t i=0;i<result.missing_root_actions.size();++i){
+    if(i)std::cout<<',';
+    std::cout<<"{\"entity_id\":"<<result.missing_root_actions[i].first
+     <<",\"action\":"<<result.missing_root_actions[i].second<<'}';
+   }
+   std::cout<<']'
+    <<",\"failed_entity\":"<<result.failed_entity<<",\"failed_action\":"<<result.failed_action
+    <<",\"vm_status\":"<<json_bytes(odh::vm_status_name(result.vm_status))
+    <<",\"reason\":"<<json_bytes(result.reason)<<'}';
+  }catch(const std::exception& error){
+   std::cout<<",\"state\":\"preparation_failed\",\"reason\":"<<json_bytes(error.what())<<'}';
+  }
  }
  std::cout<<"}\n";return 0;
 }catch(const std::exception& e){std::cerr<<"wall appearance error: "<<e.what()<<'\n';return 2;}}

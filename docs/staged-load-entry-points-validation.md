@@ -45,6 +45,30 @@ ObjectData[23], seguida de outras gravações em ObjectData do mesmo objeto.
 associada. Isso identifica um caminho candidato para teste, mas não demonstra
 execução comercial de Load nem o significado completo dos campos gravados.
 
+### Probe limitado com os dados comerciais
+
+`odh-wall-appearance HOUSE --load-stage-probe --global-resource ARCHIVE ENTRY`
+prepara uma cópia do World salvo, resolve cada definição pelo recurso exato
+selecionado e executa as ações Load em ordem crescente de ID, com limite de
+1.000.000 de instruções. O JSON marca que nenhum executável foi usado e que o
+World não foi publicado. Uma ação principal ausente é registrada em
+`missing_root_actions` e retorna falso, como em
+`VMEntity.ExecuteGenericEntryPoint` do Simitone; uma chamada privada interna
+ausente ainda interrompe a preparação.
+
+Na instalação Complete Collection consultada em 2026-10-24, o probe preparou
+182 entidades de House07 e 245 de House05. House07 completou 3 ações e parou na
+entidade 4, ação 4157, após 5 instruções: primitiva 10 não suportada. House05
+completou 4 ações e parou na entidade 6, ação 4109, após 5 instruções: leitura
+de escopo 26, índice 16516 não suportada. Esses pontos marcam o próximo trabalho
+de interpretação; nenhum dos lotes completou a restauração e a etapa continua
+desconectada do loader do jogo. Os arquivos comerciais foram somente lidos.
+
+Após a instalação de PangoCairo 1.52.1 no ambiente, `linux_text_renderer` e
+`staged_load_entry_points` passaram. Isso valida a biblioteca de texto e a etapa
+sintética; não substitui os testes de janela, que continuam indisponíveis sem
+Xvfb neste ambiente.
+
 `tests/staged_load_entry_points.cpp` usa apenas BHAVs sintéticos. Verifica
 ordem de execução, isolamento entre donos, retorno falso síncrono, escrita na
 cópia, descarte de escrita GhostImage, rejeição de tabela/ordem incompleta,

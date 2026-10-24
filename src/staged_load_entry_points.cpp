@@ -56,6 +56,16 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
         const auto owner = code_owners.find(id);
         if (owner == code_owners.end() || owner->second == 0 || !owners.count(owner->second))
             return reject("executable Load action has no exact resource CodeOwner", id, action);
+        const auto root_key = routine_key(action);
+        const auto& root_bank = root_key.scope == RoutineScope::global
+            ? globals : owners.at(owner->second);
+        if (!root_bank.count(root_key)) {
+            // Simitone's generic immediate EntryPoint dispatch returns false
+            // when GetRoutineWithOwner cannot resolve the root action.
+            result.missing_root_actions.emplace_back(id, action);
+            result.completed_entities.push_back(id);
+            continue;
+        }
         if (result.instructions >= instruction_budget)
             return reject("aggregate instruction budget exhausted", id, action,
                           VmStatus::budget_exhausted);

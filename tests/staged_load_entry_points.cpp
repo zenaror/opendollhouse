@@ -65,6 +65,19 @@ int main() {
         require(odh::encode_world_snapshot(source) == source_bytes,
                 "staging leaves the source snapshot byte-for-byte unchanged");
 
+        auto missing_root_source = source;
+        missing_root_source.entities[0].entry_points->at(2).action = 4107;
+        auto missing_root_owners = owners;
+        missing_root_owners[101].erase(key(4096));
+        result = odh::stage_saved_load_entry_points(missing_root_source, {1, 2}, entity_owners,
+            non_ghost, zero_temps, globals, missing_root_owners, 8);
+        require(result.snapshot.has_value() && result.missing_root_actions ==
+                std::vector<std::pair<std::int16_t, std::uint16_t>>({{1, 4107}}),
+                "a missing immediate Load root returns false and does not abort the batch");
+        require(result.snapshot->entities[0].object_words.at(23) == -1 &&
+                result.snapshot->entities[1].object_words.at(23) == 22,
+                "missing-root false return preserves the object and continues later Load actions");
+
         auto failing_owners = owners;
         failing_owners[101][key(4096)] = routine({assign(23, 33)});
         failing_owners[202][key(4096)] = routine({{999, 254, 255, {}}});
