@@ -11,17 +11,26 @@ zerados, GUID e entry points; falta de orçamento, ID repetido ou outro dado
 inválido não deixa entidade parcial. A interface não resolve o dono do código,
 não roda BHAVs e não agenda a VM do objeto.
 
-O teste unitário usa tabelas SLOT sintéticas. Um probe separado, somente de
-leitura, resolveu `Objects.far!Food.iff`, OBJD16808 e a SLOT selecionada pelo
-`OBJD.SlotID` real: GUID `0xF301E375`, SlotID 128, 16 atributos e um
-compartimento de contenção. O perfil retornou `ready`. Essa leitura confirma
-somente os tamanhos de alocação; não prova a criação ou a ação de comer.
+O leitor `read_object_runtime_resources` agora reúne OBJD, OBJf, SLOT, BHAVs
+privados e o vínculo GLOB somente do mesmo IFF escolhido. Exige identidade
+OBJD consistente, tabelas únicas e limites para número/tamanho de BHAVs; não
+busca substitutos em outros arquivos. `materialize_runtime_object` liga esse
+pacote à criação atômica do World. O leitor não carrega código global ou
+semiglobal, não cria VM e não executa rotinas.
 
-Build `odh-object-construction-tests` e `odh-world-tests` passou; CTest focal
-`object_construction_profile` e `world` passou 2/2. O teste verifica objeto
-tipado e bancos legíveis pelo World, falha por ID repetido e por orçamento sem
-alteração no estado anterior. Próximo: ligar a criação a recursos OBJf/BHAV
-resolvidos sem ambiguidade e ao ciclo de Init0/EP8/Main1 do scheduler.
+Um probe de leitura nos dados reais de `Objects.far!Food.iff`, OBJD16808,
+encontrou GUID `0xF301E375`, SlotID 128, 16 atributos, um compartimento,
+31 entry points e 131 BHAVs privados; GLOB está ausente. Os entry points 0 e 1
+apontam para 4100 (Init) e 4177 (Main), enquanto o 8 é zero. O probe usou esse
+pacote para materializar Food num World de teste e confirmou os bancos; não
+executou BHAV nem a ação de comer.
+
+Build `odh-object-runtime-resources-tests`, `odh-object-construction-tests`,
+`odh-world-tests` e `odh-person` passou. CTest focal `object_runtime_resources`,
+`object_construction_profile`, `world` e `person_cli` passou 4/4. Próximo:
+integrar o opcode42 ao scheduler em ponto seguro, criar a VM de Food com o dono
+privado vinculado ao objeto, rodar Init0 e os entry points não nulos, atualizar
+StackObject e deixar Main1 agendado. Para Food, EP8 é zero e deve ser pulado.
 
 ## Atualização: valores TempXL de 32 bits na VM (2026-10-24)
 
