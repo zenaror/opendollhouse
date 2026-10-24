@@ -25,6 +25,10 @@ odh::Family read(const std::string& s,const odh::FamiLimits& limits={}) {
 odh::FamilyEntry entry(std::uint16_t id,std::int32_t house,std::uint32_t guid=0xffffffffU) {
     auto f=read(payload(0));f.house_number=house;f.member_guids={guid};return {id,std::move(f)};
 }
+std::string encoded(const odh::Family& value, const odh::FamiLimits& limits={}) {
+    const auto bytes=odh::encode_fami(value,limits);
+    return std::string(bytes.begin(),bytes.end());
+}
 }
 int main() {
  try {
@@ -34,6 +38,14 @@ int main() {
     require(f.budget==std::numeric_limits<std::int32_t>::min()&&f.value_in_arch==std::numeric_limits<std::int32_t>::max(),"signed extrema retained");
     require(f.family_friends==-2023406815&&f.unknown==0x12345678,"signed friends and raw unknown retained");
     require(f.member_guids==std::vector<std::uint32_t>({0xffffffffU,0xfffffffeU})&&f.remaining_bytes==0,"high GUIDs remain unsigned");
+    {odh::Family created{};created.version=9;created.budget=20000;created.family_number=1;created.unknown=24;created.member_guids={0x12345678};
+     const auto result=read(encoded(created));require(result.version==9&&result.house_number==0&&result.budget==20000&&result.family_number==1&&result.unknown==24&&result.member_guids==created.member_guids,"new synthetic family encodes structurally");}
+    require(encoded(f)==raw,"FAMI exact structural byte roundtrip including signed extrema");
+    require(encoded(read(payload(0)))==payload(0),"empty FAMI encodes");
+    require(encoded(read(payload(256)))==payload(256),"maximum default member count encodes");
+    for(auto version:{0U,8U,9U,0xffffffffU}){auto candidate=f;candidate.version=version;require(read(encoded(candidate)).version==version,"FAMI raw version preserved");}
+    {auto candidate=f;candidate.remaining_bytes=1;rejects([&]{encoded(candidate);},"FAMI unpreserved tail rejects");}
+    {auto l=odh::FamiLimits{};l.members=1;rejects([&]{encoded(f,l);},"FAMI encode member limit");l={};l.payload_bytes=raw.size()-1;rejects([&]{encoded(f,l);},"FAMI encode payload limit");l.payload_bytes=39;rejects([&]{encoded(read(payload(0)),l);},"FAMI prefix limit");}
     for (auto version:{0U,8U,9U,0xffffffffU}) {
         auto s=raw;patch(s,4,version);require(read(s).version==version,"version metadata has no invented whitelist");
     }

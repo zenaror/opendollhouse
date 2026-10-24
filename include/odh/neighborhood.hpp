@@ -43,4 +43,7 @@ struct Nbrs {
 // SRBN containers 62/63 (native surveyed), 73 (fixed FreeSO writer); records 4/10.
 // Unknown layouts, negative counts and duplicate relation keys fail explicitly.
 Nbrs read_nbrs(const View&, const NbrsLimits& = {});
+// Tail-free supported profiles only; rejects inconsistent optional fields and
+// any unknown tail whose bytes were not retained by the structural reader.
+std::vector<std::uint8_t> encode_nbrs(const Nbrs&, const NbrsLimits& = {});
 } // namespace odh

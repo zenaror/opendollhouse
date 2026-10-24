@@ -32,6 +32,10 @@ std::string record(std::int32_t version=10,std::int32_t mode=5,const std::string
 odh::Nbrs read(const std::string& s,const odh::NbrsLimits& limits={}) {
     std::istringstream input(s,std::ios::binary);return odh::read_nbrs(odh::View(input,s.size()),limits);
 }
+std::string encoded(const odh::Nbrs& value, const odh::NbrsLimits& limits={}) {
+    const auto bytes=odh::encode_nbrs(value,limits);
+    return std::string(bytes.begin(),bytes.end());
+}
 void prefixes(const std::string& s) {
     for(std::size_t n=0;n<s.size();++n)rejects([&]{read(s.substr(0,n));},"every record prefix must reject");
 }
@@ -103,6 +107,36 @@ int main() {
     require(read(exact+"tail").remaining_bytes==4,"unknown tail extent preserved");
     {std::istringstream input("prefix"+exact+"tail");odh::View v(input,6+exact.size()+4);require(odh::read_nbrs(v.subview(6,exact.size())).remaining_bytes==0,"bounded subview");rejects([&]{odh::read_nbrs(v.subview(6,exact.size()-1));},"outside byte unavailable");}
     {std::istringstream input(exact.substr(0,exact.size()-1));odh::View v(input,exact.size());rejects([&]{odh::read_nbrs(v);},"physical stream truncation");}
+    {odh::Nbrs created{};created.version=73;odh::NeighborRecord sim{};sim.version=10;sim.unknown3=9;sim.name="Ada";sim.person_mode=9;sim.person_data=std::vector<std::int16_t>(256);sim.person_data->at(58)=27;sim.person_data->at(61)=1;sim.neighbor_id=1;sim.guid=0x12345678;sim.unknown_neg_one=-1;created.entries.push_back({0,std::nullopt});created.entries.push_back({1,sim});
+     const auto result=read(encoded(created));require(result.entries.size()==2&&!result.entries[0].record&&result.entries[1].record->name=="Ada"&&result.entries[1].record->person_data->at(58)==27&&result.entries[1].record->person_data->at(61)==1&&result.entries[1].record->guid==sim.guid,"new synthetic neighbor and placeholder encode structurally");}
+    require(encoded(read(ordered))==ordered,"mixed serialized placeholder order roundtrips exactly");
+    require(encoded(read(placeholders))==placeholders,"all placeholders roundtrip");
+    for(auto version:{62U,63U,73U})require(encoded(read(header(0,version)))==header(0,version),"empty supported containers roundtrip");
+    for(auto version:{4,10})for(auto mode:{-1,0,1,5,9})for(const auto& name:{std::string(),std::string("Odd"),std::string("\x80\xff",2)}){
+        const auto bytes=header()+record(version,mode,name);require(encoded(read(bytes))==bytes,"NBRS all profiles and raw names byte-roundtrip");
+    }
+    {auto n=read(exact+"tail");rejects([&]{encoded(n);},"NBRS unpreserved tail rejects");}
+    {auto n=read(exact);n.version=64;rejects([&]{encoded(n);},"NBRS unsupported encoding version");}
+    {auto n=read(exact);n.entries[0].marker=0;rejects([&]{encoded(n);},"placeholder cannot discard record");n.entries[0].marker=2;rejects([&]{encoded(n);},"unsupported encoding marker");n.entries[0].marker=1;n.entries[0].record.reset();rejects([&]{encoded(n);},"active marker requires record");}
+    for(int field=0;field<10;++field){
+        auto n=read(exact);auto& r=*n.entries[0].record;
+        switch(field){
+        case 0:r.version=5;break;case 1:r.unknown3=9;break;
+        case 2:r.name.push_back('\0');break;case 3:r.name_padding.reset();break;
+        case 4:r.person_data.reset();break;case 5:r.person_data->pop_back();break;
+        case 6:r.person_mode=0;break;case 7:r.relationships[0].key_count=2;break;
+        case 8:r.relationships[1].key=r.relationships[0].key;break;
+        case 9:r.name="Odd";break;
+        }
+        rejects([&]{encoded(n);},"inconsistent encoding field rejects without discarding data");
+    }
+    {auto n=read(header()+record());n.entries[0].record->unknown3.reset();rejects([&]{encoded(n);},"v10 requires preserved extension");}
+    require(encoded(read(exact),limits)==exact,"encoder accepts exact resource budgets");
+    for(int which=0;which<7;++which){
+        auto l=limits;switch(which){case 0:--l.payload_bytes;break;case 1:--l.decoded_bytes;break;case 2:--l.entries;break;case 3:--l.name_bytes;break;case 4:--l.total_name_bytes;break;case 5:--l.relationships;break;case 6:--l.relationship_values;break;}
+        rejects([&]{encoded(read(exact),l);},"encoder one below every resource budget rejects");
+    }
+    {auto n=read(twice);auto l=odh::NbrsLimits{};l.total_name_bytes=3;rejects([&]{encoded(n,l);},"encoder cumulative names budget");l={};l.decoded_bytes=347;rejects([&]{encoded(n,l);},"encoder cumulative decoded budget");l={};l.relationships=3;rejects([&]{encoded(n,l);},"encoder cumulative relationships budget");l={};l.relationship_values=5;rejects([&]{encoded(n,l);},"encoder cumulative values budget");}
     std::cout<<checks<<" neighborhood checks passed\n";
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

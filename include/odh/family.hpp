@@ -18,6 +18,9 @@ struct Family {
 // Fixed IMAF prefix and signed member count. Versions remain structural metadata.
 // The reference's optional 3/4-word tail is deliberately not required or decoded.
 Family read_fami(const View&, const FamiLimits& = {});
+// Encodes only a complete, tail-free payload. Unknown tails are not preserved
+// by Family and must be rejected rather than silently discarded.
+std::vector<std::uint8_t> encode_fami(const Family&, const FamiLimits& = {});
 struct FamilyEntry {
     std::uint16_t chunk_id;
     Family family;

@@ -32,6 +32,27 @@ Family read_fami(const View& view, const FamiLimits& limits) {
     f.remaining_bytes=view.size()-40-4*static_cast<std::uint64_t>(members);
     return f;
 }
+std::vector<std::uint8_t> encode_fami(const Family& family, const FamiLimits& limits) {
+    if (family.remaining_bytes != 0)
+        throw FormatError("cannot encode FAMI with unpreserved tail");
+    if (family.member_guids.size() > limits.members || family.member_guids.size() > 0x7fffffffU ||
+        limits.payload_bytes < 40 || family.member_guids.size() > (limits.payload_bytes-40)/4)
+        throw FormatError("FAMI encoding exceeds configured limit");
+    if (family.member_guids.size() > (std::vector<std::uint8_t>().max_size()-40)/4)
+        throw FormatError("FAMI encoding cannot fit in memory");
+    std::vector<std::uint8_t> out;
+    out.reserve(40+4*family.member_guids.size());
+    const auto put=[&](std::uint32_t value) {
+        for(unsigned i=0;i<4;++i)out.push_back(static_cast<std::uint8_t>(value>>(8*i)));
+    };
+    put(family.reserved);put(family.version);put(0x46414d49U);
+    put(static_cast<std::uint32_t>(family.house_number));put(static_cast<std::uint32_t>(family.family_number));
+    put(static_cast<std::uint32_t>(family.budget));put(static_cast<std::uint32_t>(family.value_in_arch));
+    put(static_cast<std::uint32_t>(family.family_friends));put(static_cast<std::uint32_t>(family.unknown));
+    put(static_cast<std::uint32_t>(family.member_guids.size()));
+    for(const auto guid:family.member_guids)put(guid);
+    return out;
+}
 FamilyContext::FamilyContext(const std::vector<FamilyEntry>& source) {
     if (source.size() > 4096) throw FormatError("family runtime exceeds bounded 4096 entries");
     std::size_t members=65536;
