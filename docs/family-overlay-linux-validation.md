@@ -34,8 +34,12 @@ The core can also logically archive an unhoused family created by the player.
 The version 4 record hides its family and neighbor entries but retains the
 creation metadata and private character files, reserving their IDs and GUIDs
 for recovery. It refuses original families, families with move history, and
-duplicate archives. This is storage/replay support only; the Linux UI does not
-yet offer a delete or archive action.
+duplicate archives. The vacant-lot family picker now shows the localized
+`Delete Family` action for eligible player-created families and asks for
+confirmation before saving. It rereads the neighborhood and overlay, checks
+family identity, then uses compare-and-write. Original families never receive
+the action, and character files are retained. The action is a logical archive,
+not physical deletion.
 
 When the player selects an occupied lot, the Linux neighborhood window offers
 Enter/click to open it and `E` to move the family out only when the refund is
@@ -48,11 +52,13 @@ still enter their house.
 ## Verified
 
 - Build completo no Linux com `cmake --build build-household-session -j2` e
-  suíte `ctest --test-dir build-household-session --output-on-failure -j2`:
-  234 testes passaram, nenhum falhou e 3 testes dependentes de tela foram
-  pulados porque não havia display disponível. `family_overlay`, incluindo
-  os novos casos da versão 4, passou. Isso valida o código e os fixtures; não
-  demonstra a ação de arquivar na interface nem uma sessão real do jogo.
+  suíte `xvfb-run -a ctest --test-dir build-household-session
+  --output-on-failure -j1`: 237/237 passaram, incluindo `linux_window_backend`,
+  `linux_neighborhood_screen_actions` e `linux_move_out_integration`. A
+  execução paralela anterior teve uma falha transitória de leitura de pixels;
+  o teste passou isolado e a repetição serial completa passou. Isso valida
+  código e fixtures, não compatibilidade com hardware ou execução no jogo
+  original.
 
 - A referência do Simitone distingue compra e despejo: `SetFamilyForHouse(...,
   buy: true)` define a casa e desconta `SIMI.PurchaseValue`; `TS1GameScreen.EvictLot`
@@ -101,6 +107,14 @@ still enter their house.
   also roundtrips version 4 family archives, hides only player-created
   neighborhood entries, retains source NBRS bytes, and rejects original,
   already archived, moved, or identity-mismatched families.
+- `linux_neighborhood_screen_actions` now drives family-row selection, the
+  `Delete Family` action, and both answers in the archive confirmation through
+  synthetic X11 input. A direct run under `xvfb-run` passed with the original
+  `UIGraphics.far` supplied read-only. The move-out integration also passed
+  against generated synthetic neighborhoods: it refused to archive a source
+  family, archived a created family after confirmation, reopened the saved
+  overlay, and verified the map refresh. No archive write was made to the real
+  installation.
 - `linux_family_overlay_store` verifies stale compare-and-write requests leave
   the current save unchanged, and matching snapshots publish successfully.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to

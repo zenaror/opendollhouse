@@ -797,6 +797,9 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string family_picker_cancel = "Cancel";
         std::string family_picker_net_worth = "Net Worth";
         std::string family_picker_friends = "Family Friends";
+        std::string family_picker_archive = "Delete Family";
+        std::string family_archive_title = "Delete Family?";
+        std::string family_archive_question = "Are you sure you want to delete the \"%s\" family?";
         std::string neighborhood_title = "Neighborhood";
         std::string neighborhood_cancel = "Cancel";
         if (!options.plan_only && !options.headless_ticks) {
@@ -839,6 +842,13 @@ int odh_linux_game_entry(int argc, char** argv) {
                 static_cast<std::uint8_t>(options.language), "Net Worth");
             family_picker_friends = ui_strings.get(128, 11,
                 static_cast<std::uint8_t>(options.language), "Family Friends");
+            family_picker_archive = ui_strings.get(128, 4,
+                static_cast<std::uint8_t>(options.language), "Delete Family");
+            family_archive_title = ui_strings.get(128, 6,
+                static_cast<std::uint8_t>(options.language), "Delete Family?");
+            family_archive_question = ui_strings.get(128, 7,
+                static_cast<std::uint8_t>(options.language),
+                "Are you sure you want to delete the \"%s\" family?");
             neighborhood_title = ui_strings.get(145, 1,
                 static_cast<std::uint8_t>(options.language), "Neighborhood");
             neighborhood_cancel = ui_strings.get(128, 5,
@@ -1052,11 +1062,36 @@ int odh_linux_game_entry(int argc, char** argv) {
             }
             if (!marker->occupied) {
                 const auto purchase_price = selected_lot_price;
+                std::vector<std::uint16_t> archivable_family_ids;
+                if (family_overlay) {
+                    for (const auto& creation : family_overlay->creations) {
+                        const bool already_archived = std::any_of(
+                            family_overlay->archives.begin(), family_overlay->archives.end(),
+                            [&](const auto& archive) {
+                                return archive.family_chunk_id == creation.family_chunk_id;
+                            });
+                        const bool has_move_history = std::any_of(
+                            family_overlay->assignments.begin(), family_overlay->assignments.end(),
+                            [&](const auto& assignment) {
+                                return assignment.family_chunk_id == creation.family_chunk_id;
+                            });
+                        const auto visible = std::find_if(map->effective_families.begin(),
+                            map->effective_families.end(), [&](const auto& entry) {
+                                return entry.chunk_id == creation.family_chunk_id;
+                            });
+                        if (!already_archived && !has_move_history &&
+                            visible != map->effective_families.end() &&
+                            (static_cast<std::uint32_t>(visible->family.house_number) & 0xffffU) == 0 &&
+                            !visible->family.member_guids.empty())
+                            archivable_family_ids.push_back(creation.family_chunk_id);
+                    }
+                }
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
                     map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
                     static_cast<std::uint8_t>(options.language), family_picker_action,
                     family_picker_title, no_family_title, no_family_message, family_picker_cancel,
-                    graphics, family_picker_net_worth, family_picker_friends);
+                    graphics, family_picker_net_worth, family_picker_friends,
+                    family_picker_archive, archivable_family_ids);
                 if (!family_choice) {
                     const auto reason = window->quit_reason();
                     if (reason == odh_host::WindowQuitReason::window_manager_close ||
@@ -1073,6 +1108,61 @@ int odh_linux_game_entry(int argc, char** argv) {
                 if (chosen_family == map->effective_families.end() ||
                     odh::family_overlay_identity(*chosen_family) != family_choice->family_identity)
                     throw odh::FormatError("selected family changed before move-in confirmation");
+                if (family_choice->action == odh_host::MoveInFamilySelection::Action::archive) {
+                    const auto family_name = chosen_family->display_name.empty() ?
+                        ui_string_catalog->get(134, 22,
+                            static_cast<std::uint8_t>(options.language), "No Name") :
+                        chosen_family->display_name;
+                    const auto archive_question = format_game_ui_string(
+                        family_archive_question, {family_name});
+                    if (!odh_host::show_family_archive_confirmation(*window, *chosen_family,
+                            static_cast<std::uint8_t>(options.language), family_archive_title,
+                            archive_question, confirm_yes, confirm_no, graphics)) {
+                        window->clear_escape_quit_reason();
+                        continue;
+                    }
+
+                    const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+                        userdata / "Neighborhood.iff");
+                    const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
+                        options.mode, latest_overlay ? &*latest_overlay : nullptr,
+                        static_cast<std::uint8_t>(options.language));
+                    const auto neighborhood_identity = odh_host::linux_neighborhood_identity(
+                        userdata / "Neighborhood.iff");
+                    const auto latest_family = std::find_if(latest_map.effective_families.begin(),
+                        latest_map.effective_families.end(), [&](const auto& entry) {
+                            return entry.chunk_id == family_choice->family_chunk_id;
+                        });
+                    if (latest_family == latest_map.effective_families.end() ||
+                        odh::family_overlay_identity(*latest_family) != family_choice->family_identity ||
+                        (static_cast<std::uint32_t>(latest_family->family.house_number) & 0xffffU) != 0)
+                        throw odh::FormatError("selected family changed before archive was saved");
+                    std::optional<odh::Nbrs> latest_neighbors;
+                    with_iff_file(userdata / "Neighborhood.iff", [&](const auto& view) {
+                        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+                            if (chunk.type != "NBRS" || chunk.id != 1) return;
+                            if (latest_neighbors)
+                                throw odh::FormatError("ambiguous NBRS1 neighbor table");
+                            latest_neighbors = odh::read_nbrs(chunk.payload);
+                        });
+                    });
+                    if (!latest_neighbors)
+                        throw odh::FormatError("Neighborhood.iff has no readable NBRS1 table");
+                    const auto next_overlay = odh::plan_family_archive_overlay(
+                        latest_map.source_families, *latest_neighbors,
+                        neighborhood_identity, latest_overlay ? &*latest_overlay : nullptr,
+                        family_choice->family_chunk_id);
+                    odh_host::compare_exchange_linux_family_overlay_atomic(
+                        odh_host::linux_family_overlay_path(neighborhood_identity),
+                        latest_overlay, next_overlay);
+                    family_overlay = next_overlay;
+                    map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                        &*family_overlay, static_cast<std::uint8_t>(options.language));
+                    if (std::any_of(map->effective_families.begin(), map->effective_families.end(),
+                        [&](const auto& entry) { return entry.chunk_id == family_choice->family_chunk_id; }))
+                        throw odh::FormatError("archived family remained visible after map refresh");
+                    continue;
+                }
                 if (!odh_host::show_move_in_confirmation(*window, *chosen_family,
                         static_cast<std::uint16_t>(house), purchase_price,
                         static_cast<std::uint8_t>(options.language), move_in_title,

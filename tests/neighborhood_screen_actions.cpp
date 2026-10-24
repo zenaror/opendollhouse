@@ -3,6 +3,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
+#include <array>
 #include <cstdlib>
 #include <chrono>
 #include <exception>
@@ -90,6 +91,37 @@ void run_with_click_after_showing(unsigned long window, int x, int y, Action&& a
             click(display.get(), window, x, y, ButtonPress);
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             click(display.get(), window, x, y, ButtonRelease);
+        } catch (...) {
+            sender_error = std::current_exception();
+        }
+    });
+    try {
+        action();
+    } catch (...) {
+        sender.join();
+        throw;
+    }
+    sender.join();
+    if (sender_error) std::rethrow_exception(sender_error);
+}
+
+template <typename Action>
+void run_with_clicks_after_showing(unsigned long window,
+        std::vector<std::array<int,2>> points, Action&& action,
+        std::chrono::milliseconds initial_delay = std::chrono::milliseconds(100)) {
+    std::exception_ptr sender_error;
+    std::thread sender([window, points = std::move(points), &sender_error, initial_delay] {
+        try {
+            std::this_thread::sleep_for(initial_delay);
+            std::unique_ptr<Display, decltype(&XCloseDisplay)> display(
+                XOpenDisplay(nullptr), &XCloseDisplay);
+            if (!display) throw std::runtime_error("cannot open synthetic X11 mouse sender");
+            for (const auto& point : points) {
+                click(display.get(), window, point[0], point[1], ButtonPress);
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                click(display.get(), window, point[0], point[1], ButtonRelease);
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            }
         } catch (...) {
             sender_error = std::current_exception();
         }
@@ -255,26 +287,59 @@ int main(int argc, char** argv) {
         run_with_click_after_showing(family_picker_window.native_id(), 550, 560, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window,
                 affordable_families, 5, 1000, 14, "Selecionar Esta Família",
-                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar", ui_graphics);
         }, std::chrono::milliseconds(300));
         require(family_selection.has_value(),
                 "original-style family action button must return a selection");
         require(family_selection->family_chunk_id == affordable_entry.chunk_id &&
                 family_selection->family_identity == odh::family_overlay_identity(affordable_entry),
                 "original-style family action button must select the affordable family identity");
-        run_with_click_after_showing(family_picker_window.native_id(), 365, 560, [&] {
+        run_with_click_after_showing(family_picker_window.native_id(), 265, 560, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window,
                 affordable_families, 5, 1000, 14, "Selecionar Esta Família",
-                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar", ui_graphics);
         }, std::chrono::milliseconds(300));
         require(!family_selection, "family picker cancel button must return without selection");
-        run_with_click_after_showing(family_picker_window.native_id(), 250, 130, [&] {
+        run_with_clicks_after_showing(family_picker_window.native_id(), {{250, 130}, {550, 560}}, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window,
                 affordable_families, 5, 1000, 14, "Selecionar Esta Família",
-                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar");
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar", ui_graphics);
         }, std::chrono::milliseconds(300));
         require(family_selection && family_selection->family_chunk_id == affordable_entry.chunk_id,
-                "clicking an original-style family row must select that family");
+                "clicking an original-style family row and move-in button must select that family");
+        require(family_selection->action == odh_host::MoveInFamilySelection::Action::move_in,
+                "move-in button returns a move-in action");
+        run_with_click_after_showing(family_picker_window.native_id(), 420, 560, [&] {
+            family_selection = odh_host::show_move_in_family_picker(family_picker_window,
+                affordable_families, 5, 1000, 14, "Selecionar Esta Família",
+                "SELECIONAR FAMÍLIA", "Desculpe!", "Muito cara.", "Cancelar", ui_graphics,
+                "Patrimônio", "Amigos", "Excluir Família", {affordable_entry.chunk_id});
+        }, std::chrono::milliseconds(300));
+        require(family_selection && family_selection->family_chunk_id == affordable_entry.chunk_id &&
+                family_selection->action == odh_host::MoveInFamilySelection::Action::archive,
+                "delete button returns a logical archive action for a player-created family");
+        run_with_click_after_showing(family_picker_window.native_id(), 560, 450, [&] {
+            const auto confirmed = odh_host::show_family_archive_confirmation(
+                family_picker_window, affordable_entry, 14, "Excluir Família?",
+                "Tem certeza que deseja excluir esta família?", "Sim", "Não", ui_graphics);
+            family_selection = confirmed ? std::optional<odh_host::MoveInFamilySelection>{
+                odh_host::MoveInFamilySelection{affordable_entry.chunk_id,
+                    odh::family_overlay_identity(affordable_entry),
+                    odh_host::MoveInFamilySelection::Action::archive}} : std::nullopt;
+        }, std::chrono::milliseconds(300));
+        require(family_selection.has_value(),
+                "archive confirmation yes button accepts the selected family");
+        run_with_click_after_showing(family_picker_window.native_id(), 360, 450, [&] {
+            const auto confirmed = odh_host::show_family_archive_confirmation(
+                family_picker_window, affordable_entry, 14, "Excluir Família?",
+                "Tem certeza que deseja excluir esta família?", "Sim", "Não", ui_graphics);
+            family_selection = confirmed ? std::optional<odh_host::MoveInFamilySelection>{
+                odh_host::MoveInFamilySelection{affordable_entry.chunk_id,
+                    odh::family_overlay_identity(affordable_entry),
+                    odh_host::MoveInFamilySelection::Action::archive}} : std::nullopt;
+        }, std::chrono::milliseconds(300));
+        require(!family_selection,
+                "archive confirmation no button cancels without a family selection");
         const std::vector<odh::FamilyEntry> no_families;
         run_with_keys_after_showing(family_picker_window.native_id(), {XK_Escape}, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window, no_families,

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace odh_host {
 
@@ -24,6 +25,7 @@ struct PreparedNeighborhoodMap {
 struct MoveInFamilySelection {
     std::uint16_t family_chunk_id = 0;
     std::array<std::uint8_t, 32> family_identity{};
+    enum class Action { move_in, archive } action = Action::move_in;
 };
 
 enum class NeighborhoodPickerAction { lot, create_family, switch_mode };
@@ -105,7 +107,17 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     const std::string& localized_cancel = "Cancel",
     const std::filesystem::path& ui_graphics = {},
     const std::string& localized_net_worth = "Net Worth",
-    const std::string& localized_family_friends = "Family Friends");
+    const std::string& localized_family_friends = "Family Friends",
+    const std::string& localized_archive = "Delete Family",
+    const std::vector<std::uint16_t>& archivable_family_ids = {});
+
+// Confirm archiving a player-created, unhoused family. The creation metadata
+// and private character files are retained for recovery.
+bool show_family_archive_confirmation(LinuxWindow& window,
+    const odh::FamilyEntry& family, std::uint8_t language,
+    const std::string& localized_title, const std::string& localized_question,
+    const std::string& localized_yes, const std::string& localized_no,
+    const std::filesystem::path& ui_graphics = {});
 
 // Final confirmation shown before a player-state write; closing cancels it.
 bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,

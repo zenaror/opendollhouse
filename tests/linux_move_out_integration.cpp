@@ -1,5 +1,7 @@
 // Synthetic odh-person UI -> persistent overlay -> refreshed map integration.
 #include "linux_family_overlay_store.hpp"
+#include "odh/family_overlay.hpp"
+#include "odh/neighborhood.hpp"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -91,8 +93,17 @@ std::vector<odh::FamilyEntry> make_game(const fs::path& root) {
         // is needed: this test always cancels at the occupied-lot choice.
         write(root / "UserData/Houses" / ("House0" + std::to_string(house) + ".iff"), iff());
     }
+    const odh::Nbrs source_neighbors{0, 73, {}, 0};
+    append(neighborhood, chunk("NBRS", 1, odh::encode_nbrs(source_neighbors)));
     write(root / "UserData/Neighborhood.iff", iff(neighborhood));
     write(root / "UserData/LotLocations.iff", iff(chunk("STR#", 1, locations)));
+
+    Bytes simi; integer(simi, 0); integer(simi, 0x38); append(simi, "IMIS");
+    simi.resize(76, 0); integer(simi, 0, 2);
+    for (const auto value : {0U, 0U, 0U, 0U, 0U, 1000U, 0U, 0U}) integer(simi, value);
+    simi.resize(simi.size() + 12, 0);
+    for (unsigned day = 0; day < 6; ++day) integer(simi, 0);
+    write(root / "UserData/Houses/House07.iff", iff(chunk("SIMI", 1, simi)));
 
     // Uncompressed 24-bit black 800x600 BMPs for both layers used by mode 1.
     Bytes bitmap; append(bitmap, "BM"); integer(bitmap, 54 + 800 * 600 * 3);
@@ -135,7 +146,7 @@ struct Child {
         std::ifstream input(log);
         std::cerr << "odh-person output: " << input.rdbuf() << '\n';
     }
-    void expect_cancelled() {
+    void expect_cancelled(const std::string& stage = "occupied-lot-choice") {
         int status = 0;
         const auto deadline = Clock::now() + std::chrono::seconds(5);
         pid_t result;
@@ -148,7 +159,7 @@ struct Child {
         const auto bytes = read(log);
         const std::string output(bytes.begin(), bytes.end());
         require(WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
-            output.find("\"stage\":\"occupied-lot-choice\"") != std::string::npos,
+            output.find("\"stage\":\"" + stage + "\"") != std::string::npos,
             "expected cancellation before lot runtime; output: " + output);
     }
 };
@@ -225,14 +236,15 @@ void key(Display* display, Window window, KeySym symbol) {
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
     }
 }
-void click(Display* display, Window window, int x) {
+void click_at(Display* display, Window window, int x, int y) {
     XEvent event{}; event.xbutton.type = ButtonPress; event.xbutton.display = display;
     event.xbutton.window = window; event.xbutton.root = DefaultRootWindow(display);
     event.xbutton.same_screen = True; event.xbutton.button = Button1;
-    event.xbutton.x = x; event.xbutton.y = 200;
+    event.xbutton.x = x; event.xbutton.y = y;
     require(XSendEvent(display, window, False, ButtonPressMask, &event), "cannot send lot click");
     XSync(display, False);
 }
+void click(Display* display, Window window, int x) { click_at(display, window, x, 200); }
 unsigned long channel(unsigned value, unsigned long mask) {
     if (!mask) return 0;
     unsigned shift = 0;
@@ -348,7 +360,70 @@ int main(int argc, char** argv) {
         require(read(overlay_path) == saved_bytes, "reopening and cancelling must preserve overlay bytes");
         require(read(neighborhood) == source, "source neighborhood must remain unchanged");
         require(!fs::exists(temp.path / "XDG_DATA_HOME/opendollhouse/saves"), "must cancel before simulation saves");
-        std::cout << "Synthetic Linux move-out: map -> E -> Enter -> saved overlay -> refreshed map -> House08; reopen persisted map passed\n";
+
+        const odh::Nbrs source_neighbors{0, 73, {}, 0};
+        const auto move_out_overlay = odh_host::read_linux_family_overlay(overlay_path);
+        require(move_out_overlay.has_value(), "move-out overlay must remain available for family creation");
+        std::vector<std::int16_t> person_data(88, 0);
+        person_data[2] = 500;
+        const auto creation = odh::make_simitone_family_creation(families, source_neighbors,
+            identity, &*move_out_overlay, "Player Family",
+            {{0x76543210U, person_data}}, 20000);
+        const auto with_player_family = odh::plan_family_creation_overlay(families,
+            source_neighbors, identity, &*move_out_overlay, creation);
+        odh_host::compare_exchange_linux_family_overlay_atomic(
+            overlay_path, move_out_overlay, with_player_family);
+        const auto family_added_bytes = read(overlay_path);
+        before = windows(display, DefaultRootWindow(display));
+        {
+            Child app(argv[1], game, temp.path / "archive.log");
+            const auto window = new_map(display, before, app.pid);
+            click(display, window, 200);
+            wait_title(display, window, "Enter: OK | Esc: Cancel");
+            key(display, window, XK_Return);
+            wait_title(display, window, "choose family for House 7");
+
+            // The first row is a source family. Clicking the delete control
+            // must leave the picker open because that family is not player-created.
+            click_at(display, window, 420, 560);
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            require(title(display, window).find("choose family for House 7") != std::string::npos,
+                "source family must not be deletable from the picker");
+            key(display, window, XK_Tab);
+            click_at(display, window, 420, 560);
+            wait_exact_title(display, window, "OpenDollhouse | confirm family archive");
+            require(read(overlay_path) == family_added_bytes,
+                "archive confirmation must not write before Enter");
+            key(display, window, XK_Return);
+            wait_exact_title(display, window,
+                "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
+
+            const auto archived_overlay = odh_host::read_linux_family_overlay(overlay_path);
+            require(archived_overlay && archived_overlay->archives.size() == 1 &&
+                    archived_overlay->creations.size() == 1 &&
+                    archived_overlay->archives[0].family_chunk_id == creation.family_chunk_id,
+                "confirmed UI action must persist the version 4 archive for the chosen created family");
+            const auto visible_families = odh::apply_family_overlay(
+                families, identity, *archived_overlay);
+            require(std::none_of(visible_families.begin(), visible_families.end(),
+                    [&](const auto& entry) { return entry.chunk_id == creation.family_chunk_id; }) &&
+                    std::any_of(visible_families.begin(), visible_families.end(),
+                    [&](const auto& entry) { return entry.chunk_id == 207; }),
+                "map replay must hide the archived player family while retaining original families");
+            const auto visible_neighbors = odh::apply_neighbor_overlay(
+                source_neighbors, identity, *archived_overlay);
+            require(std::none_of(visible_neighbors.entries.begin(), visible_neighbors.entries.end(),
+                    [&](const auto& entry) {
+                        return entry.record && entry.record->guid == 0x76543210U;
+                    }), "neighbor replay must hide archived player members");
+            marker(display, window, 200, false); marker(display, window, 600, true);
+            key(display, window, XK_Escape);
+            app.expect_cancelled("neighborhood");
+        }
+        require(read(neighborhood) == source, "archive flow must keep Neighborhood.iff unchanged");
+        require(!fs::exists(temp.path / "XDG_DATA_HOME/opendollhouse/saves"),
+            "archive flow must cancel before simulation saves");
+        std::cout << "Synthetic Linux integration: move-out persisted and reopened; family picker refused source deletion, archived a created family after confirmation, and refreshed the map\n";
         XCloseDisplay(display); return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n'; XCloseDisplay(display); return 1;

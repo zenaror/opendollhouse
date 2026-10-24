@@ -556,7 +556,9 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         const std::string& localized_cancel,
         const std::filesystem::path& ui_graphics,
         const std::string& localized_net_worth,
-        const std::string& localized_family_friends) {
+        const std::string& localized_family_friends,
+        const std::string& localized_archive,
+        const std::vector<std::uint16_t>& archivable_family_ids) {
     if (!house_number || house_number > 98 || purchase_price < 0 || language < 1 || language > 20)
         throw odh::FormatError("family picker received an invalid move-in request");
     std::vector<const odh::FamilyEntry*> choices;
@@ -568,10 +570,16 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     for (const auto& entry : families) {
         const auto current_house = static_cast<std::uint16_t>(
             static_cast<std::uint32_t>(entry.family.house_number) & 0xffffU);
-        if (current_house == 0 && !entry.family.member_guids.empty() &&
-            entry.family.budget >= purchase_price)
+        if (current_house == 0 && !entry.family.member_guids.empty())
             choices.push_back(&entry);
     }
+    const auto can_move_in = [&](const odh::FamilyEntry& entry) {
+        return entry.family.budget >= purchase_price;
+    };
+    const auto can_archive = [&](const odh::FamilyEntry& entry) {
+        return std::find(archivable_family_ids.begin(), archivable_family_ids.end(),
+            entry.chunk_id) != archivable_family_ids.end();
+    };
     std::optional<odh::BitmapImage> picker_background;
     std::optional<odh::BitmapImage> family_row_background;
     if (!ui_graphics.empty()) {
@@ -634,7 +642,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         style.x = 30; style.width = 690; style.y = 20;
         draw_text_overlay(frame, choices.empty() && has_unhoused_family ?
                           localized_no_family_title : localized_title, language, style);
-        if (choices.empty()) {
+        const bool any_affordable = std::any_of(choices.begin(), choices.end(), [&](const auto* entry) {
+            return can_move_in(*entry);
+        });
+        if (choices.empty() || !any_affordable) {
             style.y = 56;
             draw_text_overlay(frame, localized_no_family_message, language, style);
         } else {
@@ -662,9 +673,13 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             style.x = 644; style.width = 78;
             draw_text_overlay(frame, std::to_string(family.family_friends), language, style);
         }
-        style.font_size_px = 12; style.x = 326; style.y = 544; style.width = 86; style.height = 30;
+        style.font_size_px = 12; style.x = 218; style.y = 544; style.width = 110; style.height = 30;
         draw_text_overlay(frame, localized_cancel, language, style);
-        if (!choices.empty()) {
+        if (!choices.empty() && can_archive(*choices[selected])) {
+            style.font_size_px = 11; style.x = 350; style.width = 132;
+            draw_text_overlay(frame, localized_archive, language, style);
+        }
+        if (!choices.empty() && can_move_in(*choices[selected])) {
             style.font_size_px = 11; style.x = 510; style.width = 156;
             draw_text_overlay(frame, localized_action, language, style);
         }
@@ -675,12 +690,12 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         (void)localized_no_family_title;
         (void)localized_no_family_message;
         (void)localized_cancel;
+        (void)localized_archive;
 #endif
         const std::string title = choices.empty() ?
             "OpenDollhouse | no family can afford House " + std::to_string(house_number) + " | Esc: cancel" :
             "OpenDollhouse | choose family for House " + std::to_string(house_number) +
-                " | budget after: " + std::to_string(choices[selected]->family.budget - purchase_price) +
-                " | Tab: next, Enter: continue, Esc: cancel";
+            " | Tab: next, Enter: continue, Esc: cancel";
         window.set_title(title);
         window.present(frame);
     };
@@ -704,32 +719,112 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
             if (input.primary_click) {
                 const auto x = (*input.primary_click)[0];
                 const auto y = (*input.primary_click)[1];
-                if (y >= 530 && y < 592 && x >= 318 && x < 414)
+                if (y >= 530 && y < 592 && x >= 210 && x < 332)
                     return std::nullopt;
-                if (y >= 530 && y < 592 && x >= 506 && x < 670) {
-                    if (choices.empty()) return std::nullopt;
+                if (y >= 530 && y < 592 && x >= 340 && x < 490 &&
+                    !choices.empty() && can_archive(*choices[selected])) {
                     const auto& entry = *choices[selected];
                     return MoveInFamilySelection{entry.chunk_id,
-                        odh::family_overlay_identity(entry)};
+                        odh::family_overlay_identity(entry), MoveInFamilySelection::Action::archive};
+                }
+                if (y >= 530 && y < 592 && x >= 500 && x < 680 &&
+                    !choices.empty() && can_move_in(*choices[selected])) {
+                    const auto& entry = *choices[selected];
+                    return MoveInFamilySelection{entry.chunk_id,
+                        odh::family_overlay_identity(entry), MoveInFamilySelection::Action::move_in};
                 }
                 const std::size_t row_end = row_start + page_size * row_height;
                 if (y >= static_cast<std::int32_t>(row_start) && y < static_cast<std::int32_t>(row_end)) {
                     const auto row = static_cast<std::size_t>(y - static_cast<std::int32_t>(row_start)) / row_height;
                     const auto index = (selected / page_size) * page_size + row;
                     if (index < choices.size()) {
-                        const auto& entry = *choices[index];
-                        return MoveInFamilySelection{entry.chunk_id,
-                            odh::family_overlay_identity(entry)};
+                        selected = index;
+                        render();
                     }
                 }
             }
 #endif
             if (input.action && !input.primary_click) {
                 const auto& entry = *choices[selected];
-                return MoveInFamilySelection{entry.chunk_id, odh::family_overlay_identity(entry)};
+                if (can_move_in(entry))
+                    return MoveInFamilySelection{entry.chunk_id,
+                        odh::family_overlay_identity(entry), MoveInFamilySelection::Action::move_in};
             }
         }
         if (input.redraw) render();
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+bool show_family_archive_confirmation(LinuxWindow& window, const odh::FamilyEntry& family,
+        std::uint8_t language, const std::string& localized_title,
+        const std::string& localized_question, const std::string& localized_yes,
+        const std::string& localized_no, const std::filesystem::path& ui_graphics) {
+    if (language < 1 || language > 20 ||
+        (static_cast<std::uint32_t>(family.family.house_number) & 0xffffU) != 0 ||
+        family.family.member_guids.empty())
+        throw odh::FormatError("family archive confirmation received invalid family data");
+    if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
+    odh::RasterFrame frame{};
+    frame.width = window.width(); frame.height = window.height();
+    if (!ui_graphics.empty()) {
+        try {
+            with_far_entry(ui_graphics.string(), R"(Nbhd\PickBkg.bmp)",
+                [&](const auto& view) {
+                    const auto background = odh::read_bmp(view);
+                    if (background.width != frame.width || background.height != frame.height)
+                        throw odh::FormatError("original family-picker background has an unsupported size");
+                    frame.pixels = background.pixels;
+                });
+        } catch (const FarEntryNotFound&) {
+            std::clog << "OpenDollhouse: original family-picker background is missing; using plain fallback\n";
+        }
+    }
+    if (frame.pixels.size() != static_cast<std::size_t>(frame.width) * frame.height)
+        frame.pixels.assign(static_cast<std::size_t>(frame.width) * frame.height,
+                            std::array<std::uint8_t,4>{35, 39, 48, 255});
+    frame.depth.assign(frame.pixels.size(), std::numeric_limits<float>::infinity());
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;
+    style.x = 48; style.width = 704; style.height = 38;
+    style.font_size_px = 18; style.padding = 6;
+    style.foreground = {245,245,245,255}; style.background = {22,25,32,220};
+    style.y = 168;
+    draw_text_overlay(frame, localized_title, language, style);
+    style.y = 226; style.height = 64;
+    draw_text_overlay(frame, localized_question, language, style);
+    style.y = 310; style.height = 34;
+    draw_text_overlay(frame, family_display_label(family), language, style);
+    style.font_size_px = 13; style.height = 34; style.y = 432;
+    style.x = 306; style.width = 120;
+    draw_text_overlay(frame, localized_no, language, style);
+    style.x = 500; style.width = 150;
+    draw_text_overlay(frame, localized_yes, language, style);
+#else
+    (void)language;
+    (void)localized_title;
+    (void)localized_question;
+    (void)localized_yes;
+    (void)localized_no;
+#endif
+    window.set_title("OpenDollhouse | confirm family archive");
+    window.present(frame);
+    for (;;) {
+        const auto input = window.poll();
+        if (input.quit) {
+            if (input.quit_reason == WindowQuitReason::escape_key)
+                window.clear_escape_quit_reason();
+            return false;
+        }
+        if (input.primary_click) {
+            const auto x = (*input.primary_click)[0];
+            const auto y = (*input.primary_click)[1];
+            if (y >= 420 && y < 480 && x >= 290 && x < 445) return false;
+            if (y >= 420 && y < 480 && x >= 480 && x < 660) return true;
+        } else if (input.confirm || input.action) {
+            return true;
+        }
+        if (input.redraw) window.present(frame);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
