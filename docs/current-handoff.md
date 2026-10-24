@@ -1,5 +1,32 @@
 # Continuidade atual
 
+## Atualização: janela real e imagens de menu localizadas (2026-10-24)
+
+Em Xvfb, `odh-person --render-window` desenhou a casa House07, o avatar e o HUD
+de diagnóstico. Um clique na geladeira exibiu `Have A Snack`; escolher essa
+opção moveu o avatar até a geladeira. O título da janela permaneceu normal e
+não mostrou falha. Essa captura visual não confirmou o retorno final da ação;
+`returned_true` segue sustentado pelo teste headless separado. O comando precisou
+receber os `.flr` e `.wll` locais como `--architecture-resource`; sem eles,
+BHAV4103 registrou `prepared_architecture_unavailable`. O Xvfb terminou após
+cada execução e não há processo virtual persistente. Evidência local ignorada
+pelo Git: `reports/pie-menu-window/evidence.json` e duas capturas com hashes.
+
+Uma revisão independente mapeou os recursos que o menu original pode usar.
+`SMCtrlMgrRes.h/.RT` liga IDs 28 e 29 a `Shared\Sys\PieButt.bmp` (17×17) e
+`PieBack.bmp` (195×195); `Res_CPanel.h/.RT` liga ID800 a
+`cpanel\pieFace1.bmp` (201×201). `odh-bitmap` leu os três BMPs em
+`UIGraphics.far` sem exportar pixels. SHA256 do FAR:
+`109d8234cf5d65a1af82593d85b4e62c62302fde574a67b8b8f66c3462b14239`.
+Isso identifica candidatos locais; a função e a composição ainda precisam de
+comparação com o jogo original. O Simitone desenha seu fundo/botões
+proceduralmente, conforme auditoria da revisão fixa `4906db3` e do submódulo
+`f86bbd3`.
+
+Próximo: confirmar os três IDs na interface original, carregar os recursos
+locais sem copiá-los para o Git e comparar escala/posição. Ainda falta uma ação
+elegível categorizada da House07 para testar abrir e voltar de submenu.
+
 ## Atualização: menu radial de ações ligado ao clique (2026-10-24)
 
 O modelo `PieMenuItem` agora também calcula posições radiais e alimenta a tela

@@ -10,6 +10,13 @@ The Sims 1 com nomes e regras dos dados instalados pelo jogador. O Simitone é a
 referência técnica; ainda é preciso comparar a aparência com a instalação
 original.
 
+Uma revisão separada do Simitone encontrou que seu fundo e seus botões são
+desenhados proceduralmente. Na instalação local original, os arquivos de tabela
+de recursos apontam para imagens próprias do menu; elas existem no `UIGraphics.far`
+selecionado. Isso oferece uma rota para reproduzir a apresentação com dados do
+jogador, sem colocar imagens comerciais no código ou no Git. O ODH ainda não
+carrega essas imagens na janela.
+
 ## Caminho observado no Simitone
 
 1. Um clique no lote procura o objeto sob o cursor. Se não houver objeto, o
@@ -78,15 +85,49 @@ renderização/UI durante o movimento, nem todas as opções da geladeira, outro
 objetos ou paridade completa com o jogo/Simitone. A criação auxiliar de uma
 posição diferente continua explicitamente fora do perfil desta execução.
 
+## Recursos visuais originais identificados
+
+Os arquivos de texto de recurso locais ligam estes IDs às imagens do menu:
+
+| ID | Símbolo | Caminho na tabela | Entrada real do FAR | Dimensões / formato |
+|---:|---|---|---|---|
+| 28 | `kSMSystemPieButton` | `shared/sys/PieButt.bmp` | `Shared\Sys\PieButt.bmp` | 17×17, BMP 24-bit |
+| 29 | `kSMSystemPieBackground` | `shared/sys/PieBack.bmp` | `Shared\Sys\PieBack.bmp` | 195×195, BMP 24-bit |
+| 800 | `kPieFaceBkg` | `CPanel/PieFace1.bmp` | `cpanel\pieFace1.bmp` | 201×201, BMP 24-bit |
+
+As associações vieram de `SMCtrlMgrRes.h/.RT` e `Res_CPanel.h/.RT`; as
+dimensões foram lidas pelo decodificador BMP do ODH sem exportar os pixels. O
+SHA256 de `UIGraphics.far` é
+`109d8234cf5d65a1af82593d85b4e62c62302fde574a67b8b8f66c3462b14239`;
+`SMCtrlMgrRes.RT` é `045e57e3c502cf4e7f76606c754b95422dbf6d6b6b0784202783f8ed4da3d81b`
+e `Res_CPanel.RT` é
+`413c56a8d216461c537fef69e3e9a21753b9be3664e71e9844d697c3b085e034`. A imagem
+de rosto central e o uso de cada recurso ainda precisam ser comparados com uma
+captura do jogo original antes de definir sua composição.
+
+## Captura da janela ODH
+
+Uma janela X11 isolada com os dados House07 abriu a casa e o HUD de diagnóstico.
+Clique real pela janela na geladeira mostrou `Have A Snack`; clicar na opção
+fez o avatar se mover até a geladeira e o programa permaneceu sem falha. O
+resultado final da interação não foi confirmado nesse percurso visual; a
+conclusão `returned_true` continua provada apenas pelo teste headless separado.
+O comando de captura precisou receber os arquivos locais `.flr` e `.wll` como
+`--architecture-resource`; sem eles, a preparação de rota falhou em
+`prepared_architecture_unavailable`. As duas capturas e seus hashes ficam em
+`reports/pie-menu-window/`, fora do Git. O Xvfb foi encerrado após cada execução.
+
 ## Primeira reconstrução proposta
 
 - Separar a descoberta de ações da tela: cada opção deve carregar texto já
   resolvido, ação, argumento, origem local/global e categoria. A interface
   apenas mostra as opções recebidas e devolve a opção escolhida.
-- Testar a navegação de categorias em uma ação real elegível; depois comparar
-  os botões e o espaço usados na janela com o menu do Simitone e o jogo original.
-  Só usar arte dos recursos do jogo depois de confirmar origem, formato e
-  licença para esse uso local.
+- Confirmar pela execução original que os três IDs acima são o fundo, o botão e
+  o centro do menu de lote nesta edição. Depois implementar carregamento local
+  dessas imagens e comparar alinhamento/escala com o original.
+- Testar a navegação de categorias em uma ação real elegível e comparar o mesmo
+  objeto/idioma com o Simitone e o original. O menu visual de House07 ainda tem
+  uma ação elegível, então não prova categorias ou voltar.
 - Manter o texto ligado ao idioma selecionado e testar rótulos compridos,
   categorias vazias, menus com 1, 2, 4, 5, 8 e mais de 8 opções, e cliques perto
   das bordas. A expansão visual não pode esconder a última opção fora da tela.
