@@ -15,9 +15,9 @@ Simitone confirma essa leitura do opcode e da posição; o ODH ainda não cria o
 objeto nem grava a refeição. Nenhum display virtual foi iniciado para o probe.
 
 Build Release `odh-person` e `odh-routing-tests` passaram; CTest focado em
-rotas, orçamento e fluxo de interação passou 4/4. Próxima investigação: localizar
-e identificar o recurso desse GUID e mapear o que a criação exige no World e na
-persistência antes de implementar uma factory segura.
+rotas, orçamento e fluxo de interação passou 4/4. A definição já foi localizada;
+agora é preciso integrar inicialização e agendamento de objetos, e então definir
+como preservar essas novas entidades ao salvar.
 
 ### O que a criação exige
 
