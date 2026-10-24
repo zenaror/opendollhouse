@@ -1,5 +1,24 @@
 # Continuidade atual
 
+## Atualização: perfil estrutural para construção de objetos (2026-10-24)
+
+O novo `object_construction_profile` deriva o tamanho dos bancos de atributos e
+de compartimentos de um objeto comum. Ele conta somente registros SLOT do tipo
+0, recusa definições multitile e não tenta completar campos OBJD ausentes.
+Limites configuráveis impedem bancos excessivos. Isso ainda não cria entidade,
+resolve o dono do código, inicializa objeto ou agenda sua VM.
+
+O teste unitário usa tabelas SLOT sintéticas. Um probe separado, somente de
+leitura, resolveu `Objects.far!Food.iff`, OBJD16808 e a SLOT selecionada pelo
+`OBJD.SlotID` real: GUID `0xF301E375`, SlotID 128, 16 atributos e um
+compartimento de contenção. O perfil retornou `ready`. Essa leitura confirma
+somente os tamanhos de alocação; não prova a criação ou a ação de comer.
+
+Build `odh-object-construction-tests` e `odh-object-definition-tests` passou;
+CTest focal `object_construction_profile` e `object_definition_metadata`
+passou 2/2. Próximo: preparar criação transacional no World, associando recursos
+de forma explícita e deixando o objeto intacto se faltar qualquer dependência.
+
 ## Atualização: valores TempXL de 32 bits na VM (2026-10-24)
 
 A VM agora mantém os dois valores TempXL assinados de 32 bits que o Simitone
