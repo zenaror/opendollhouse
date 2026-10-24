@@ -31,6 +31,13 @@ struct FamilyOverlayCreation {
     std::vector<NeighborRecord> members; // Ordered exactly as the FAMI roster.
 };
 
+struct FamilyCreationMember {
+    std::uint32_t guid;
+    // The CAS supplies the 88 base words produced from appearance/personality.
+    // The helper adds Simitone's family-ID word and zero extension to 256.
+    std::vector<std::int16_t> person_data;
+};
+
 struct FamilyOverlay {
     std::array<std::uint8_t, 32> neighborhood_identity{};
     std::vector<FamilyOverlayAssignment> assignments;
@@ -90,6 +97,15 @@ FamilyOverlay plan_family_creation_overlay(
     const std::vector<FamilyEntry>&, const Nbrs&,
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, const FamilyOverlayCreation&);
+
+// Builds the observed Simitone CreateFamily/AddNeighbor sidecar from ordered
+// CAS members. IDs are allocated against the current neighborhood snapshots;
+// this does not create avatar IFF files or modify Neighborhood.iff.
+FamilyOverlayCreation make_simitone_family_creation(
+    const std::vector<FamilyEntry>& source_families, const Nbrs& source_neighbors,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay, const std::string& family_name,
+    const std::vector<FamilyCreationMember>& members, std::int32_t initial_budget = 20000);
 
 // Owned copy preserves the original header, serialized order, placeholders,
 // fields and unknown tail extent, then appends the created records. Unknown

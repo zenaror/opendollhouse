@@ -66,7 +66,7 @@ endif()
 
 add_library(odh_family src/family.cpp)
 target_link_libraries(odh_family PUBLIC odh_formats)
-add_library(odh_family_overlay src/family_overlay.cpp)
+add_library(odh_family_overlay src/family_overlay.cpp src/family_creation.cpp)
 target_link_libraries(odh_family_overlay PUBLIC odh_family odh_session_resource_identity)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_family_overlay PRIVATE -Wall -Wextra -Wpedantic -Wconversion)

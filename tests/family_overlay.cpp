@@ -247,6 +247,29 @@ int main() {
                 appended.entries[2].record->mystery_zero == 0 &&
                 appended.entries[2].record->unknown_neg_one == -1 && neighbors.entries.size() == 2,
                 "neighbor replay preserves original bytes, placeholders, fields and source ownership");
+        std::vector<std::int16_t> cas_person_data(88,0);
+        cas_person_data[2]=500;cas_person_data[3]=500;cas_person_data[5]=500;
+        const auto built_creation=odh::make_simitone_family_creation(
+            {resident,cas},neighbors,source_id,&created,"Next family",
+            {{0x10000003U,cas_person_data}});
+        require(built_creation.family_chunk_id==1&&built_creation.members.size()==1&&
+                built_creation.members[0].neighbor_id==2&&built_creation.members[0].guid==0x10000003U,
+                "CAS family builder allocates free FAMI and neighbor IDs across source and overlay");
+        require(built_creation.members[0].person_data->size()==256&&
+                (*built_creation.members[0].person_data)[2]==500&&
+                (*built_creation.members[0].person_data)[61]==1&&
+                std::all_of(built_creation.members[0].person_data->begin()+88,
+                    built_creation.members[0].person_data->end(),[](std::int16_t v){return v==0;}),
+                "CAS family builder preserves 88 inputs and applies the observed family word/zero extension");
+        const auto appended_creation=odh::plan_family_creation_overlay(
+            {resident,cas},neighbors,source_id,&created,built_creation);
+        const auto appended_families=odh::apply_family_overlay({resident,cas},source_id,appended_creation);
+        require(appended_families.size()==4&&appended_families.back().family.family_number==40&&
+                appended_families.back().display_name=="Next family",
+                "CAS family builder adds the next family to the current player overlay");
+        auto invalid_person_data=cas_person_data;invalid_person_data.pop_back();
+        rejects([&]{(void)odh::make_simitone_family_creation({resident,cas},neighbors,source_id,
+            &created,"bad",{{0x10000004U,invalid_person_data}});},"CAS family builder rejects incomplete person data");
         auto tailed = neighbors; tailed.remaining_bytes = 19;
         require(odh::apply_neighbor_overlay(tailed, source_id, created).remaining_bytes == 19,
                 "neighbor replay preserves unknown source tail extent without claiming its bytes");
