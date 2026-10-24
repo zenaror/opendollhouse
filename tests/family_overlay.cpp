@@ -247,6 +247,42 @@ int main() {
                 appended.entries[2].record->mystery_zero == 0 &&
                 appended.entries[2].record->unknown_neg_one == -1 && neighbors.entries.size() == 2,
                 "neighbor replay preserves original bytes, placeholders, fields and source ownership");
+
+        const auto archived = odh::plan_family_archive_overlay(
+            {resident, cas}, neighbors, source_id, &created, 0);
+        const auto v4 = odh::encode_family_overlay(archived);
+        require(v4[4] == 4 && le32(v4, 40) == 2,
+                "logical family archive uses v4 with its creation and archive records");
+        const auto archived_decoded = odh::decode_family_overlay(v4);
+        require(odh::encode_family_overlay(archived_decoded) == v4 &&
+                archived_decoded.creations.size() == 1 && archived_decoded.archives.size() == 1,
+                "v4 roundtrip retains the family payload and archive tombstone");
+        const auto archived_families = odh::apply_family_overlay(
+            {resident, cas}, source_id, archived_decoded);
+        const auto archived_neighbors = odh::apply_neighbor_overlay(
+            neighbors, source_id, archived_decoded);
+        require(archived_families.size() == 2 && archived_families[0].chunk_id == resident.chunk_id &&
+                archived_families[1].chunk_id == cas.chunk_id &&
+                archived_neighbors.entries.size() == neighbors.entries.size() &&
+                odh::encode_nbrs(archived_neighbors) == neighbor_bytes &&
+                odh::encode_nbrs(neighbors) == neighbor_bytes,
+                "archive hides only player-created family records and leaves source NBRS unchanged");
+        rejects([&] { (void)odh::plan_family_archive_overlay(
+                    {resident, cas}, neighbors, source_id, &archived, 0); },
+                "already archived family cannot be archived again");
+        rejects([&] { (void)odh::plan_family_archive_overlay(
+                    {resident, cas}, neighbors, source_id, &created, resident.chunk_id); },
+                "original commercial family cannot be archived");
+        const auto created_with_history = odh::plan_family_move_in_overlay(
+            {resident, cas}, source_id, &created, 0, 7, 5000);
+        rejects([&] { (void)odh::plan_family_archive_overlay(
+                    {resident, cas}, neighbors, source_id, &created_with_history, 0); },
+                "family with move history cannot be archived");
+        auto forged_archive = archived;
+        forged_archive.archives[0].family_identity[0] ^= 1;
+        rejects([&] { (void)odh::encode_family_overlay(forged_archive); },
+                "archive identity must match the retained creation record");
+
         std::vector<std::int16_t> cas_person_data(88,0);
         cas_person_data[2]=500;cas_person_data[3]=500;cas_person_data[5]=500;
         const auto built_creation=odh::make_simitone_family_creation(

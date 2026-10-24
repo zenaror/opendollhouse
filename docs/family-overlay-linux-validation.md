@@ -30,6 +30,13 @@ move-in to another house. A household that was first moved in by the player
 cannot be evicted again: the current Simitone source review does not establish
 how `ValueInArch` changes after purchase, so a second refund would be a guess.
 
+The core can also logically archive an unhoused family created by the player.
+The version 4 record hides its family and neighbor entries but retains the
+creation metadata and private character files, reserving their IDs and GUIDs
+for recovery. It refuses original families, families with move history, and
+duplicate archives. This is storage/replay support only; the Linux UI does not
+yet offer a delete or archive action.
+
 When the player selects an occupied lot, the Linux neighborhood window offers
 Enter/click to open it and `E` to move the family out only when the refund is
 supported by the original family data. The confirmation screen shows the
@@ -39,6 +46,13 @@ map, and returns to lot selection. Families without a verified refund can
 still enter their house.
 
 ## Verified
+
+- Build completo no Linux com `cmake --build build-household-session -j2` e
+  suíte `ctest --test-dir build-household-session --output-on-failure -j2`:
+  234 testes passaram, nenhum falhou e 3 testes dependentes de tela foram
+  pulados porque não havia display disponível. `family_overlay`, incluindo
+  os novos casos da versão 4, passou. Isso valida o código e os fixtures; não
+  demonstra a ação de arquivar na interface nem uma sessão real do jogo.
 
 - A referência do Simitone distingue compra e despejo: `SetFamilyForHouse(...,
   buy: true)` define a casa e desconta `SIMI.PurchaseValue`; `TS1GameScreen.EvictLot`
@@ -83,7 +97,10 @@ still enter their house.
   lots, already housed families, stale identities, and unaffordable purchases.
 - `family_overlay` replays move-out and rehome operations, checks exact budget
   refunds, clears `ValueInArch`, rejects new-family refunds, negative values,
-  overflow, and stale source data, and reads version 1 saves as move-ins.
+  overflow, and stale source data, and reads version 1 saves as move-ins. It
+  also roundtrips version 4 family archives, hides only player-created
+  neighborhood entries, retains source NBRS bytes, and rejects original,
+  already archived, moved, or identity-mismatched families.
 - `linux_family_overlay_store` verifies stale compare-and-write requests leave
   the current save unchanged, and matching snapshots publish successfully.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to

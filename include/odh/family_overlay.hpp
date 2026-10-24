@@ -31,6 +31,14 @@ struct FamilyOverlayCreation {
     std::vector<NeighborRecord> members; // Ordered exactly as the FAMI roster.
 };
 
+// Logical removal of an unhoused player-created family. Its creation record
+// remains in the overlay to reserve IDs and GUIDs; private character files are
+// retained so this operation never deletes unrelated or commercial files.
+struct FamilyOverlayArchive {
+    std::uint16_t family_chunk_id = 0;
+    std::array<std::uint8_t, 32> family_identity{};
+};
+
 struct FamilyCreationMember {
     std::uint32_t guid;
     // The CAS supplies the 88 base words produced from appearance/personality.
@@ -42,6 +50,7 @@ struct FamilyOverlay {
     std::array<std::uint8_t, 32> neighborhood_identity{};
     std::vector<FamilyOverlayAssignment> assignments;
     std::vector<FamilyOverlayCreation> creations{}; // Replayed before assignments.
+    std::vector<FamilyOverlayArchive> archives{}; // Applied after assignments.
 };
 
 // Identity covers the FAMI chunk ID, family number, original house, ordered
@@ -97,6 +106,13 @@ FamilyOverlay plan_family_creation_overlay(
     const std::vector<FamilyEntry>&, const Nbrs&,
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, const FamilyOverlayCreation&);
+
+// Hides an unhoused player-created family and its neighborhood records while
+// retaining the creation payload and private characters for recovery.
+FamilyOverlay plan_family_archive_overlay(
+    const std::vector<FamilyEntry>&, const Nbrs&,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 
 // Builds the observed Simitone CreateFamily/AddNeighbor sidecar from ordered
 // CAS members. IDs are allocated against the current neighborhood snapshots;
