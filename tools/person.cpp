@@ -14,6 +14,9 @@
 #include "odh/ts1_budget.hpp"
 #include "odh/avatar_body.hpp"
 #include "odh/avatar_startup.hpp"
+#include "odh/object_startup.hpp"
+#include "odh/create_object_instance.hpp"
+#include "odh/object_runtime_resources.hpp"
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
 #include "odh/relationship.hpp"
@@ -100,6 +103,7 @@
 #include <fstream>
 #include <chrono>
 #include <cstdlib>
+#include <deque>
 #include <thread>
 #include <sstream>
 #include <string_view>
@@ -1723,6 +1727,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         member->controllers=std::make_unique<odh::EntityThreadControllers>(world,member->id,
             [&]{++rng_requests;random.next(1);});
     odh::EntityVmScheduler entity_scheduler(64);
+    struct PendingCreateObject {
+        odh::Vm* vm = nullptr;
+        std::uint64_t ticket = 0;
+        odh::CreateObjectInstanceRequest request;
+        std::int16_t stack_object = 0;
+    };
+    struct RuntimeObjectThread {
+        std::unique_ptr<odh::Vm> vm;
+        std::unique_ptr<odh::Sleep> sleep;
+    };
+    std::deque<PendingCreateObject> pending_create_objects;
+    std::map<std::int16_t,std::unique_ptr<RuntimeObjectThread>> runtime_object_threads;
+    std::string last_create_object_diagnostic;
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
@@ -2148,6 +2165,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return entry?std::optional<std::string>{entry->value}:std::nullopt;
         });
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        if(i.opcode==42){
+            if(!d.origin||!d.ticket||pending_create_objects.size()>=64)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "CreateObjectInstance queue is missing a VM ticket or is full"};
+            try{
+                pending_create_objects.push_back({const_cast<odh::Vm*>(d.origin),d.ticket,
+                    odh::decode_create_object_instance(i),f.context.stack_object});
+            }catch(const std::exception& error){
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    std::string("CreateObjectInstance request could not be queued: ")+error.what()};
+            }
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+        }
         if(i.opcode==6)return change_suit_handler(f,i,t,d);
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==29)return motive_change_handler(f,i,t,d);
@@ -4438,7 +4468,110 @@ struct PlacementCandidateProbe {
     const auto total_steps=[&]{
         auto steps=startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);
         for(const auto& member:household_runtime)steps+=member->vm->steps();
+        for(const auto& [id,runtime]:runtime_object_threads){(void)id;steps+=runtime->vm->steps();}
         return steps-resumed_household_steps;
+    };
+    const auto process_pending_create_objects=[&]{
+        while(!pending_create_objects.empty()){
+            auto pending=std::move(pending_create_objects.front());
+            pending_create_objects.pop_front();
+            if(!pending.vm||pending.vm->status()!=odh::VmStatus::waiting||!pending.vm->pending()||
+               pending.vm->pending()->ticket!=pending.ticket)continue;
+
+            std::optional<std::int16_t> created_id;
+            std::optional<odh::CodeOwner> resource_owner;
+            bool scheduler_added=false;
+            try{
+                if(!definition_index)throw odh::FormatError("object definition index is unavailable");
+                const auto* candidate=definition_index->unique(pending.request.guid);
+                if(!candidate)throw odh::FormatError("CreateObjectInstance GUID is missing or ambiguous");
+                if(candidate->definition.master_id!=0)
+                    throw odh::FormatError("CreateObjectInstance multitile definitions are outside the current profile");
+                if(saved_owner_ids_exhausted)
+                    throw odh::FormatError("runtime object code-owner identity space exhausted");
+
+                const Resource object_resource{candidate->source,candidate->asset,candidate->asset.empty()};
+                std::optional<odh::ObjectRuntimeResources> object_resources;
+                with_resource(object_resource,[&](const auto& view){
+                    object_resources=odh::read_object_runtime_resources(view,*candidate);
+                });
+                if(!object_resources)throw odh::FormatError("object runtime resources were not loaded");
+                if(object_resources->semiglobal_name)
+                    throw odh::FormatError("object GLOB-linked runtime banks are outside the current startup profile");
+                auto private_tuning=load_saved_action_tuning(*candidate);
+
+                std::int32_t candidate_id=1;
+                while(candidate_id<=32767&&world.find(static_cast<std::int16_t>(candidate_id)))++candidate_id;
+                if(candidate_id>32767)throw odh::FormatError("runtime object ID range exhausted");
+                const auto object_id=static_cast<std::int16_t>(candidate_id);
+                const auto materialized=odh::create_object_instance_in_slot0(
+                    world,object_id,pending.stack_object,pending.request,*object_resources);
+                if(materialized.status!=odh::CreateObjectInstanceStatus::created||!materialized.object_id)
+                    throw odh::FormatError("CreateObjectInstance placement was rejected by the World");
+                created_id=*materialized.object_id;
+
+                const auto owner=next_saved_code_owner;
+                resource_owner=owner;
+                if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                else ++next_saved_code_owner;
+                saved_action_resources.emplace(owner,object_resource);
+                saved_action_tuning.emplace(owner,std::move(private_tuning));
+
+                const auto entry_points=object_resources->entry_points;
+                auto runtime=std::make_unique<RuntimeObjectThread>();
+                runtime->sleep=std::make_unique<odh::Sleep>(world,[&]{++rng_requests;random.next(1);});
+                const auto object_sleep=runtime->sleep->primitive();
+                const odh::VmPrimitive object_primitive=[&,object_sleep](const auto& frame,
+                    const auto& instruction,const auto& temp,const auto& dispatch){
+                    if(instruction.opcode==0)return object_sleep(frame,instruction,temp,dispatch);
+                    if(instruction.opcode==17)
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                            "runtime object interaction queues are not implemented"};
+                    return person_primitive(frame,instruction,temp,dispatch);
+                };
+                odh::RoutineOwners object_owners{{owner,std::move(object_resources->private_routines)}};
+                runtime->vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,
+                    odh::VmLimits{},object_primitive,std::move(object_owners));
+                if(!runtime->sleep->bind(*runtime->vm))
+                    throw odh::FormatError("runtime object sleep controller could not bind");
+                const auto startup=odh::run_object_startup(*runtime->vm,object_id,owner,entry_points,10000,
+                    [&](const std::string& phase,const odh::VmTrace& record){
+                        trace_in("object_"+phase)(record);
+                    });
+                startup_steps+=startup.steps;
+                if(!startup.completed)
+                    throw odh::FormatError(startup.diagnostic.empty()?
+                        "runtime object startup did not complete":startup.diagnostic);
+
+                const auto main=entry_points.entries.size()>1?entry_points.entries[1].action:0;
+                if(main>255){
+                    const odh::VmContext context{object_id,object_id,0,owner};
+                    runtime->vm->start(odh::routine_key(main),context,{0,0,0,0});
+                    if(runtime->vm->status()==odh::VmStatus::fault)
+                        throw odh::FormatError(runtime->vm->diagnostic());
+                    if(!runtime->sleep->join_at(ticks))
+                        throw odh::FormatError("runtime object sleep clock could not join the current tick");
+                    auto* bound=runtime.get();
+                    runtime_object_threads.emplace(object_id,std::move(runtime));
+                    if(!entity_scheduler.add(object_id,*bound->vm,
+                        [bound](std::uint64_t now){return bound->sleep->tick(now);}, {},
+                        [bound]{return bound->sleep->interrupt();}))
+                        throw odh::FormatError("runtime object Main could not join the entity scheduler");
+                    scheduler_added=true;
+                }
+
+                if(!pending.vm->complete(pending.ticket,true,{},odh::VmStackObjectWrite{object_id}))
+                    throw odh::FormatError("CreateObjectInstance parent wait became stale before completion");
+                last_create_object_diagnostic="created object "+std::to_string(object_id)+
+                    " for GUID "+std::to_string(pending.request.guid);
+            }catch(const std::exception& error){
+                if(scheduler_added&&created_id)entity_scheduler.remove(*created_id);
+                if(created_id){runtime_object_threads.erase(*created_id);world.remove(*created_id);}
+                if(resource_owner){saved_action_resources.erase(*resource_owner);saved_action_tuning.erase(*resource_owner);}
+                last_create_object_diagnostic=error.what();
+                (void)pending.vm->complete(pending.ticket,false);
+            }
+        }
     };
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
@@ -4455,6 +4588,7 @@ struct PlacementCandidateProbe {
                 host_failed=true;
                 host_diagnostic=entity_scheduler.diagnostic();
             }
+            if(!host_failed)process_pending_create_objects();
             return;
         }
         const auto run_initial=[&](odh::Vm& target,odh::EntityThreadControllers& controllers,
@@ -4483,6 +4617,7 @@ struct PlacementCandidateProbe {
             std::make_tuple(member->vm.get(),member->controllers.get(),"household_main"));
         for(const auto& item:initial)
             if(!run_initial(*std::get<0>(item.second),*std::get<1>(item.second),std::get<2>(item.second)))return;
+        if(!host_failed)process_pending_create_objects();
     };
     profile_mark("host-runtime-ready");
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -5871,7 +6006,26 @@ struct PlacementCandidateProbe {
     }
     std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
-        <<",\"second_main\":";
+        <<",\"create_object_instance\":{\"pending_requests\":"<<pending_create_objects.size()
+        <<",\"last_diagnostic\":"<<json_bytes(last_create_object_diagnostic)<<",\"runtime_objects\":[";
+    bool first_runtime_object=true;
+    for(const auto& [id,runtime]:runtime_object_threads){
+        if(!first_runtime_object)std::cout<<',';
+        first_runtime_object=false;
+        const auto* entity=world.find(id);
+        std::cout<<"{\"id\":"<<id<<",\"guid\":";
+        if(entity&&entity->definition)std::cout<<entity->definition->guid;else std::cout<<"null";
+        std::cout<<",\"status\":"<<json_bytes(odh::vm_status_name(runtime->vm->status()))
+            <<",\"main_steps\":"<<runtime->vm->steps()<<",\"position\":";
+        if(entity&&entity->position)std::cout<<'['<<entity->position->x<<','<<entity->position->y<<','
+            <<entity->position->level<<','<<unsigned(entity->position->direction)<<']';
+        else std::cout<<"null";
+        std::cout<<",\"attachment\":";
+        if(entity&&entity->attachment)std::cout<<'['<<entity->attachment->container<<','<<entity->attachment->slot<<']';
+        else std::cout<<"null";
+        std::cout<<'}';
+    }
+    std::cout<<"]},\"second_main\":";
     if(second_main_vm){
         const auto* second_entity=world.find(static_cast<std::int16_t>(headless_second_main->avatar.id));
         std::cout<<"{\"entity_id\":"<<headless_second_main->avatar.id<<",\"guid\":";

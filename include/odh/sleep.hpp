@@ -34,6 +34,9 @@ public:
     bool restore_snapshot(const SleepSnapshot&);
     VmPrimitive primitive();
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
+    // Start this controller on an already-running World clock. This is only
+    // valid before the controller has processed any state or tick.
+    bool join_at(std::uint64_t current_tick);
     bool tick(std::uint64_t);
     bool interrupt();
     // Release an active wait for normal, budgeted VM dispatch after Notify.

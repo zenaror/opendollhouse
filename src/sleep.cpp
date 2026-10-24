@@ -69,6 +69,15 @@ bool Sleep::bind(Vm& vm) {
     if(executing_ || (vm_ && vm_!=&vm)) return false;
     vm_=&vm;return true;
 }
+bool Sleep::join_at(std::uint64_t current_tick) {
+    if(executing_ || !vm_ || !fresh_ || actor_ || job_ || last_tick_ || current_tick>max_clock)
+        return false;
+    last_tick_=current_tick;
+    clock_=current_tick;
+    fresh_=false;
+    diagnostic_.clear();
+    return true;
+}
 VmPrimitive Sleep::primitive() {
     return [this](const auto& frame,const auto& instruction,const auto&,const VmDispatch& dispatch) {
         return request(frame,instruction,dispatch);

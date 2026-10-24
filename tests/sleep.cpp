@@ -120,6 +120,15 @@ int main() {
                  "first tick must zero/one; uint32 and uint64 overflow proposals preserve clock");
          require(f.sleep.tick(0) && !f.sleep.tick(std::numeric_limits<std::uint64_t>::max()) && f.sleep.tick(1),
                  "rejected overflow tick never prevents valid consecutive progression");}
+        {odh::World world;world.create(1,odh::EntityKind::object);odh::Sleep sleep(world);
+         odh::Vm vm(program(),{}, {},sleep.primitive());sleep.bind(vm);
+         require(sleep.join_at(40) && sleep.clock()==40 && sleep.tick(41) && sleep.clock()==41,
+                 "new controller can join an already-running world clock and advance contiguously");
+         require(!sleep.join_at(41) && !sleep.tick(43) && sleep.clock()==41,
+                 "clock join is one-time and still rejects a later tick gap");}
+        {odh::World world;odh::Sleep sleep(world);
+         require(!sleep.join_at(40) && sleep.clock()==0,
+                 "clock join requires a bound controller");}
         {odh::World world;world.create(1,odh::EntityKind::object);int rng=0;bool tick_guard=false,interrupt_guard=false,
                  bind_guard=false,request_guard=false,vm_guard=false;
          odh::Sleep* controller=nullptr;odh::Vm* machine=nullptr;
