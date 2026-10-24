@@ -51,14 +51,19 @@ No ODH, `stage_household_members` preserva um World candidato sem posição nem
 herança. `verify_household_members` processa um morador por vez: prepara, herda
 NBRS/FAMI, tenta as posições na ordem e ativa o Main empilhado mesmo se ninguém
 couber e o morador continuar fora do lote. A integração Linux em
-`tools/person.cpp` agora usa esse fluxo para membros adultos adicionais cujo
-recurso exato foi resolvido. Init e entrada 8 executam num World privado; Main é
-empilhado, mas não roda antes da chegada. O baseline da sessão é reconstruído a
-partir do World publicado antes de salvar e retomar a partida.
+`tools/person.cpp` agora usa esse fluxo para moradores adultos cujo recurso
+exato foi resolvido, inclusive o avatar escolhido pelo jogador quando ainda não
+está no OBJM/OBJT da casa. Nesse caso, o launcher conserva o GUID selecionado e
+só o resolve depois que o avatar único da família ativa estiver preparado e
+posicionado. Um GUID já salvo continua exigindo correspondência exata com o
+avatar serializado e com o recurso de personagem selecionado. Init e entrada 8
+executam num World privado; Main é empilhado, mas não roda antes da chegada. O
+baseline da sessão é reconstruído a partir do World publicado antes de salvar e
+retomar a partida.
 
-O perfil falha fechado para crianças, membro principal ausente, recurso ou relógio
-indisponível, EP9 de colocação, colisão/flags não modelados e chamadas que escapem
-da memória privada. `World::read(Room)` devolve -5 para entidades sem posição,
+O perfil falha fechado para crianças, recurso ou relógio indisponível, EP9 de
+colocação, colisão/flags não modelados e chamadas que escapem da memória privada.
+`World::read(Room)` devolve -5 para entidades sem posição,
 como no Simitone. Escritas que mudariam ObjectData[8] durante Init/entrada 8 são
 recusadas porque o Simitone também atualiza colisão, footprint ou estado do Sim
 nessa escrita. A chegada ainda não é equivalente ao carregamento completo do
@@ -66,11 +71,14 @@ Simitone: ele executa EP2 em todos os objetos antes de `VerifyFamily`, enquanto
 esse caminho ODH não reproduz essa etapa. O perfil aceito precisa ser ampliado
 somente quando esses efeitos estiverem modelados.
 
-Os testes sintéticos cobrem o fluxo de sucesso e as recusas conhecidas. Uma
-auditoria somente leitura das casas selecionáveis House05 e House07 na instalação
-local confirmou que todos os GUIDs FAMI já têm uma entidade salva; portanto não
-há, nessas casas, um caso comercial real de morador ausente para exercitar. Essa
-auditoria não valida a criação contra recursos comerciais.
+Os testes sintéticos cobrem o fluxo de sucesso e as recusas conhecidas,
+incluindo a escolha de um adulto ausente do OBJM original e sua resolução como
+avatar ativo depois da chegada. A fixture ainda contém outro morador salvo e uma
+caixa postal; não prova entrada numa casa totalmente vazia nem a imagem da janela.
+Uma auditoria somente leitura das casas selecionáveis House05 e House07 na
+instalação local confirmou que todos os GUIDs FAMI já têm uma entidade salva;
+portanto não há, nessas casas, um caso comercial real de morador ausente para
+exercitar. Essa auditoria não valida a criação contra recursos comerciais.
 
 O teste `household_startup` também prepara dois moradores ausentes no mesmo
 World candidato e executa Init e entrada 8 sintéticos com RNG próprio para cada

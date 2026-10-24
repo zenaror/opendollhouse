@@ -115,7 +115,7 @@ def main():
                                     capture_output=True, text=True, env=env, timeout=30)
             if error:
                 assert result.returncode == 2 and error in result.stderr, (result.returncode, result.stdout, result.stderr)
-                return
+                return result.stderr
             assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
             report = json.loads(result.stdout)
             assert not report['host_failed'], report
@@ -127,6 +127,21 @@ def main():
             return report
 
         first = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'])
+        # Select the second household member, who is absent from the original
+        # lot. The launcher must materialize that GUID before resolving the
+        # player's avatar selector; the serialized first resident remains a
+        # household peer.
+        selected_missing = ['--mode', '1', '--house', '7', '--resident-id', '12', '--language', '1']
+        result = subprocess.run([binary, '--game-root', str(root)] + selected_missing +
+                                ['--headless-ticks', '1'], capture_output=True, text=True,
+                                env=env, timeout=30)
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+        selected_report = json.loads(result.stdout)
+        assert not selected_report['host_failed'], selected_report
+        assert selected_report['avatar']['guid'] == GUIDS[1] and selected_report['avatar']['owner'] == 3, selected_report
+        selected_member = next(member for member in selected_report['family_world_reconciliation']['members']
+                               if member['guid'] == GUIDS[1])
+        assert selected_member['presence'] == 'present_with_position' and selected_member['object_id'] == 3, selected_member
         path = Path(first['saved_session_path'])
         resumed = run(['--load-session', str(path), '--headless-ticks', '5', '--save-session-on-exit'])
         assert resumed['session_loaded'] and resumed['resumed_tick'] == 1 and resumed['ticks'] == 6, resumed
@@ -146,7 +161,9 @@ def main():
                     ('clock', 'supported SIMI clock')]
         for failure, diagnostic in failures:
             rejected = base / failure; make_missing(rejected, failure)
-            run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'], rejected, diagnostic)
+            rejected_stderr = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'], rejected, diagnostic)
+            if failure == 'flags':
+                assert 'Flags write rejected: old=256 new=-32512 changed_mask=32768' in rejected_stderr, rejected_stderr
             assert path.read_bytes() == previous, failure + ' changed prior archive'
         for source, fingerprint in originals.items():
             assert hashlib.sha256(source.read_bytes()).digest() == fingerprint, 'runtime modified source installation'

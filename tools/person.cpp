@@ -1089,11 +1089,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto matches=std::count_if(restored_records.begin(),restored_records.end(),[&](const auto& record){
                 return record.saved.guid==*render_saved_guid&&record.tail.person&&record.serialized_object_type==2;
             });
-            if(matches!=1)throw odh::FormatError("saved resident GUID does not identify exactly one avatar in selected lot");
-            const auto selected=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){
-                return record.saved.guid==*render_saved_guid&&record.tail.person&&record.serialized_object_type==2;
-            });
-            render_saved_id=selected->saved.object_id;
+            if(matches>1)throw odh::FormatError("saved resident GUID identifies more than one avatar in selected lot");
+            // A newly-created household member is not present in the house file
+            // yet. Keep its GUID as the selection key and resolve it after the
+            // household arrival path has prepared the restored World.
+            if(matches==1){
+                const auto selected=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){
+                    return record.saved.guid==*render_saved_guid&&record.tail.person&&record.serialized_object_type==2;
+                });
+                render_saved_id=selected->saved.object_id;
+            }
         }
         if(render_saved_id){
             const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
@@ -1236,21 +1241,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 auto startup_memory=candidate.vm_memory();
                 const auto read_startup_word=startup_memory.read;
                 const auto write_startup_word=startup_memory.write;
-                startup_memory.write=[read_startup_word,write_startup_word](const odh::VmFrame& frame,
+                std::optional<std::string> rejected_flags_write;
+                startup_memory.write=[read_startup_word,write_startup_word,&rejected_flags_write](const odh::VmFrame& frame,
                     std::uint8_t scope,std::int16_t index,std::int16_t value) {
                     // Simitone SetValue(Flags) changes footprint registration,
                     // avatar collision behavior, or thread state. This private
                     // startup VM cannot reproduce those side effects safely.
                     if((scope==3||scope==4)&&index==8) {
                         const auto old=read_startup_word(frame,scope,index);
-                        if(!old||*old!=value)return false;
+                        if(!old||*old!=value){
+                            rejected_flags_write="Flags write rejected: old="+(old?std::to_string(*old):std::string("unknown"))+
+                                " new="+std::to_string(value)+" changed_mask="+
+                                (old?std::to_string(static_cast<std::uint16_t>(*old)^static_cast<std::uint16_t>(value)):std::string("unknown"));
+                            return false;
+                        }
                     }
                     return write_startup_word(frame,scope,index,value);
                 };
                 odh::Vm startup(shared.routines,std::move(startup_memory),{}, {},{{static_cast<odh::CodeOwner>(id),data.routines}});
                 const auto started=odh::run_avatar_startup(startup,id,data.entry_points->entries[0].action,
                     data.entry_points->entries[8].action,10000);
-                if(!started.completed)throw odh::FormatError("missing household resident startup unsupported: "+startup.diagnostic());
+                if(!started.completed)throw odh::FormatError("missing household resident startup unsupported: "+startup.diagnostic()+
+                    (rejected_flags_write?"; "+*rejected_flags_write:std::string{}));
                 startup.start(odh::routine_key(main),{id,id,0,static_cast<odh::CodeOwner>(id)},std::vector<std::int16_t>(4));
                 if(startup.status()==odh::VmStatus::fault)throw odh::FormatError("missing household resident Main could not be stacked");
                 materialized_main_states.emplace(id,startup.snapshot());
@@ -1282,6 +1294,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 throw odh::FormatError("verified household arrival candidate could not be published");
             random=candidate_random;
         }
+    }
+    if(render_saved_guid){
+        if(*render_saved_guid!=person.binding->guid)
+            throw odh::FormatError("selected resident GUID differs from the loaded person resource");
+        const bool serialized_selection=std::any_of(restored_world->records.begin(),restored_world->records.end(),
+            [&](const auto& record){return record.saved.guid==*render_saved_guid&&record.tail.person&&
+                record.serialized_object_type==2&&render_saved_id==record.saved.object_id;});
+        if(!serialized_selection&&(!active_family||!odh::FamilyContext::contains(*active_family,*render_saved_guid)))
+            throw odh::FormatError("selected resident GUID is not the active household person");
+        const odh::Entity* selected=nullptr;
+        for(const auto& entity:restored_world->world->snapshot().entities){
+            if(entity.kind!=odh::EntityKind::avatar||!entity.definition||
+               entity.definition->guid!=*render_saved_guid)continue;
+            if(selected)throw odh::FormatError("selected household GUID identifies more than one live avatar");
+            selected=restored_world->world->find(entity.id);
+        }
+        if(!selected||!selected->position)
+            throw odh::FormatError("selected household resident is not positioned in the prepared World");
+        if(render_saved_id&&*render_saved_id!=static_cast<std::uint16_t>(selected->id))
+            throw odh::FormatError("selected saved resident differs from the active household avatar");
+        render_saved_id=static_cast<std::uint16_t>(selected->id);
+        runtime_avatar_id=selected->id;
     }
     std::optional<odh::WorldSnapshot> session_baseline;
     if(session_context&&saved_world_main&&restored_world)session_baseline=restored_world->world->snapshot();
@@ -2926,25 +2960,40 @@ struct PlacementCandidateProbe {
     if(render_size){render_camera.width=(*render_size)[0];render_camera.height=(*render_size)[1];}
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
     std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
+    std::optional<std::uint16_t> presented_runtime_entity_id;
+    std::optional<std::uint32_t> presented_avatar_guid;
     if(render_saved_id){
         const odh::SavedObjectPrefix* saved=nullptr;
+        const odh::Entity* live_selected=nullptr;
         if(saved_world_main){
             const auto found=std::find_if(restored_world->records.begin(),restored_world->records.end(),
                 [&](const auto& record){return record.saved.object_id==*render_saved_id;});
             if(found!=restored_world->records.end())saved=&found->saved;
+            live_selected=world.find(static_cast<std::int16_t>(*render_saved_id));
+            if(!saved&&(!live_selected||live_selected->kind!=odh::EntityKind::avatar||!live_selected->definition||
+               live_selected->definition->guid!=render_saved_guid.value_or(person.binding->guid)||!live_selected->position))
+                throw odh::FormatError("selected household avatar is neither serialized nor positioned in the prepared World");
         }else{
             const auto found=std::find_if(saved_prefixes->begin(),saved_prefixes->end(),
                 [&](const auto& value){return value.object_id==*render_saved_id;});
             if(found!=saved_prefixes->end())saved=&*found;
         }
-        if(!saved)throw odh::FormatError("render saved avatar ID absent from selected house");
-        const auto* type=objt->entry_for_type(saved->type_id);
-        if(saved->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
-            throw odh::FormatError("render saved avatar identity does not match the selected person resource");
-        const auto& p=saved->prefix;
+        if(!saved&&!saved_world_main)throw odh::FormatError("render saved avatar ID absent from selected house");
+        if(saved){
+            const auto* type=objt->entry_for_type(saved->type_id);
+            if(saved->guid!=person.binding->guid||!type||!type->metadata||type->metadata->objd_type!=2)
+                throw odh::FormatError("render saved avatar identity does not match the selected person resource");
+        }
+        const auto& p=saved?saved->prefix:odh::ObjmPrefix{};
         if(saved_world_main){
             const auto* entity=world.find(runtime_avatar_id);
             if(!entity||!entity->position)throw odh::FormatError("render saved avatar has no live restored World position");
+            if(entity->position){
+                render_position={static_cast<float>(entity->position->x)/16.0f,
+                    static_cast<float>(entity->position->y)/16.0f,
+                    static_cast<float>(entity->position->level-1)*2.95f};
+                render_direction=entity->position->direction;
+            }
         }else{
             if((p.x==-16&&p.y==-16)||p.x<0||p.y<0||p.x>32767||p.y>32767||(p.level!=1&&p.level!=2)||p.object_data[1]<0||p.object_data[1]>7)
                 throw odh::FormatError("render saved avatar has no supported lot position");
@@ -2952,7 +3001,9 @@ struct PlacementCandidateProbe {
             render_direction=static_cast<std::uint8_t>(p.object_data[1]);
         }
         render_camera.center_tile={render_position[0],render_position[1],render_position[2]+0.75f};
-        presented_saved_id=*render_saved_id;presented_saved_guid=saved->guid;
+        presented_runtime_entity_id=*render_saved_id;
+        presented_avatar_guid=saved?saved->guid:live_selected->definition->guid;
+        if(saved){presented_saved_id=*render_saved_id;presented_saved_guid=saved->guid;}
     }
     if(render_requested){
         if(!body_state||!body_state->body||!playback||!animation_catalog)
@@ -6467,9 +6518,11 @@ struct PlacementCandidateProbe {
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample")<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")
             <<",\"window_clock\":"<<(render_window?json_bytes("preview_25Hz_unvalidated"):"null")
-            <<",\"runtime_position_present\":"<<(saved_world_main?"true":"false")<<",\"presentation_position_source\":"<<json_bytes(saved_world_main?"restored_World_entity_position":presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
+            <<",\"runtime_position_present\":"<<(saved_world_main?"true":"false")<<",\"presentation_position_source\":"<<json_bytes(saved_world_main?(presented_runtime_entity_id&&!presented_saved_id?"prepared_World_avatar":"restored_World_entity_position"):presented_saved_id?"saved_ObjM_projection":"diagnostic_anchor")
             <<",\"presentation_saved_object_id\":"<<(presented_saved_id?std::to_string(*presented_saved_id):"null")
             <<",\"presentation_saved_guid\":"<<(presented_saved_guid?std::to_string(*presented_saved_guid):"null")
+            <<",\"presentation_runtime_entity_id\":"<<(presented_runtime_entity_id?std::to_string(*presented_runtime_entity_id):"null")
+            <<",\"presentation_avatar_guid\":"<<(presented_avatar_guid?std::to_string(*presented_avatar_guid):"null")
             <<",\"presentation_position\":["<<render_position[0]<<','<<render_position[1]<<','<<render_position[2]<<"],\"presentation_direction\":"<<unsigned(render_direction)
             <<",\"camera_center_tile\":["<<render_camera.center_tile[0]<<','<<render_camera.center_tile[1]<<','<<render_camera.center_tile[2]<<"],\"tick\":"<<v.tick<<",\"actor\":"<<v.actor<<",\"actor_generation\":"<<v.actor_generation
             <<",\"vm_generation\":"<<v.vm_generation<<",\"clip\":"<<json_bytes(v.clip)<<",\"frame\":"<<v.frame
