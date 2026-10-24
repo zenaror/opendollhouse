@@ -113,3 +113,19 @@ de alvo já posicionado, propagação de erro e preservação do World original 
 um morador primário salvo e um adicional staged. Isso complementa
 `household_startup`; não executa os BHAVs ou recursos comerciais e não prova
 chegada, permissões, persistência ou partida jogável.
+
+## ODH: runtime de casa com moradores já salvos
+
+Em 2026-10-24, `tests/house05_household_budget_cli.py` foi executado contra a
+instalação externa `referencias/The Sims`, em modo somente leitura, com 32 ticks
+e orçamento de 50.000 instruções. O teste passou: 948 passos, estado `waiting`,
+sem falha do host nem esgotamento do orçamento. O morador adicional 16 avançou
+de `[440,360,1,0]` para `[449,387,1,2]` em 31 callbacks de movimento; o morador
+18 permaneceu em `[440,408,1,3]`. Os hashes de 132 arquivos do jogo foram iguais
+antes e depois.
+
+Isso valida o runtime de House05 com seus três moradores já representados no
+World salvo. Não exercita criação de um membro FAMI ausente, chegada pela caixa
+postal, entrada EP9 ou gravação de uma nova família. O teste continua uma prova
+de runtime Linux com dados comerciais locais, não equivalência ao Simitone ou
+ao executável original.
