@@ -22,14 +22,17 @@ pela ação como parte da mesma interação.
 Na execução com os dados House07 da instalação selecionada, a geladeira112
 enfileirou `Have A Snack`, o avatar105 foi até (377,456), e a fila terminou com
 resultado `returned_true`, sem falha do host. O código Food4175 cria o objeto
-auxiliar GUID `0x7F907075` fora do lote, testa seus atributos, e remove os objetos
-auxiliares e Food quando os ramos reais do BHAV assim determinam. O alvo de
+auxiliar GUID `0x7F907075` fora do lote e testa seus atributos. Breakpoints no
+handler RemoveObjectInstance confirmaram: PC9 remove o clone181 com Caller105 e
+StackObject181; PC5 remove o objeto temporário Food180 com Caller105 e
+StackObject180. O relatório CLI conserva só o último diagnóstico, por isso
+esconde a primeira remoção. O alvo de
 remoção espera todas as filas de moradores, avatar principal e segundo avatar
 soltarem sua identidade; auto remoção não deixa um ticket apontando para uma VM
 destruída. O saldo da família agora muda apenas na cópia em memória do ODH e é
 salvo/restaurado em HOST v3/v4; HOST v1/v2 continua legível.
 
-CTest focal passou 9/9 após essas alterações (fila, snapshot, CLI, família,
+CTest focal passou 10/10 após essas alterações (fila, snapshot, CLI, família,
 sessão, criação de objeto). A execução de House07 percorreu 1.024 ticks, terminou
 a interação e deixou a Main esperando outra ação; o código de saída 3 indica que
 o limite do teste foi alcançado durante essa espera. Esta prova cobre uma interação headless,
