@@ -19,6 +19,11 @@ validação indicados por versão.
   baseline manteve as necessidades iguais; isso ainda não prova mudança
   contínua de necessidade nem a cadeia completa de roteamento da janela.
 
+- O replay headless dos caminhos de clique, Space e levantar na janela passou
+  na House07: o morador sentou e levantou pela entrada 27; a captura apresentou
+  a cena e o personagem. Entradas artificiais não validam teclas físicas no
+  monitor X11.
+
 - O runtime `odh-person` agora executa as formas imediata e contínua do BHAV
   `Set Motive Change` (opcode 29), com taxas por avatar, atualização por tick,
   estado no snapshot e limpeza ao concluir a interação. A evidência e o próximo gate estão em

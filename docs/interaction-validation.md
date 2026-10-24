@@ -241,6 +241,22 @@ headless de sentar numa cadeira comercial; não demonstra mudança contínua de
 necessidade, a cadeia completa de roteamento da janela nem comportamento do
 executável original.
 
+O harness também reproduziu o clique/pick/Space e o pedido de levantar pela
+janela, usando entradas artificiais sem abrir display:
+
+```sh
+python3 tests/house07_interaction_integration.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '../referencias/The Sims' \
+  --window-input --window-stand --ticks 512 --stand-tick 270
+```
+
+O harness passou: a ação 4097 foi enfileirada e concluída; no tick 270, a
+entrada 27 executou a ação 4102 e deixou o morador de pé, fora do SLOT. A
+captura headless de 320×240 mostrou a cena e o morador. Isso valida os caminhos
+de seleção, entrada simulada, sentar/levantar e renderização dessa amostra; não
+valida teclas físicas na janela X11, cujo teste separado continua falhando.
+
 ## Ação Go Here e destino temporário
 
 `Destination.iff` das instalações The Sims e Legacy Collection declara o
