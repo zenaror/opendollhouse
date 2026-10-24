@@ -10,9 +10,8 @@ bool inside(std::int32_t x, std::int32_t y,
            x / 16 < width && y / 16 < height;
 }
 void append(std::vector<EntityPosition>& result, std::int32_t x, std::int32_t y,
-            std::int16_t level, std::uint8_t direction,
-            std::uint16_t width, std::uint16_t height) {
-    if (inside(x, y, width, height)) result.push_back({x, y, level, direction});
+            std::int16_t level, std::uint8_t direction) {
+    result.push_back({x, y, level, direction});
 }
 }
 
@@ -29,8 +28,7 @@ std::vector<EntityPosition> household_spawn_candidates(
     std::vector<EntityPosition> result;
     result.reserve(1444);
     for (std::uint8_t direction = 0; direction < 8; direction += 2)
-        append(result, mailbox.x, mailbox.y, mailbox.level, direction,
-               lot_width, lot_height);
+        append(result, mailbox.x, mailbox.y, mailbox.level, direction);
 
     const auto tile_x = mailbox.x / 16;
     const auto tile_y = mailbox.y / 16;
@@ -39,16 +37,14 @@ std::vector<EntityPosition> household_spawn_candidates(
             for (std::uint8_t direction = 0; direction < 8; ++direction) {
                 const auto y = tile_y + ((direction % 2) * 2 - 1) * ring;
                 append(result, (tile_x + x) * 16 + 8, y * 16 + 8,
-                       mailbox.level, static_cast<std::uint8_t>((direction / 2) * 2),
-                       lot_width, lot_height);
+                       mailbox.level, static_cast<std::uint8_t>((direction / 2) * 2));
             }
         }
         for (std::int32_t y = 1 - ring; y < ring; ++y) {
             for (std::uint8_t direction = 0; direction < 8; ++direction) {
                 const auto x = tile_x + ((direction % 2) * 2 - 1) * ring;
                 append(result, x * 16 + 8, (tile_y + y) * 16 + 8,
-                       mailbox.level, static_cast<std::uint8_t>((direction / 2) * 2),
-                       lot_width, lot_height);
+                       mailbox.level, static_cast<std::uint8_t>((direction / 2) * 2));
             }
         }
     }

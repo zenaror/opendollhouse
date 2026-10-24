@@ -39,6 +39,13 @@ HouseholdArrivalPreflight preflight_staged_household_arrival(
     const auto candidates = household_spawn_candidates(*mailbox->position, lot_width, lot_height);
     for (const auto& candidate : candidates) {
         ++result.attempts;
+        // Simitone still calls SetPosition for horizontally out-of-bounds
+        // candidates; PositionValid rejects those before the checks below.
+        // Preserve the attempt order without asking the read-only assessor to
+        // claim evidence for a position the known lot bounds already block.
+        // The lot's story count is not an input here; the floor gate owns that.
+        if (candidate.x < 0 || candidate.y < 0 || candidate.level < 1 ||
+            candidate.x / 16 >= lot_width || candidate.y / 16 >= lot_height) continue;
         const auto assessment = assess(world, avatar_id, candidate);
         const auto cell = evaluate_avatar_candidate_preflight(assessment.cell);
         if (cell.status == AvatarCandidatePreflightStatus::blocked ||

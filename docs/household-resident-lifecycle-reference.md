@@ -61,10 +61,10 @@ carregamento.
 posição exata da caixa postal com quatro direções; depois percorre os anéis
 quadrados de raio 1 a 9, mantendo o nível da caixa. São 361 posições distintas
 no máximo, com quatro tentativas por posição (1.444 chamadas). O helper ODH
-`household_spawn_candidates` espelha essa ordem geométrica em
-`src/household_spawn.cpp`, e `tests/household_spawn.cpp` verifica a ordem inicial,
-a quantidade, os limites do lote e a seleção do primeiro candidato aceito.
-Esse teste cobre a lista de tentativas, não se uma posição é válida no jogo.
+`household_spawn_candidates` espelha a lista completa, inclusive tentativas fora
+dos limites do lote. `tests/household_spawn.cpp` verifica a ordem inicial e a
+ordem na borda, além da seleção do primeiro candidato aceito. Esse teste cobre
+a lista de tentativas, não se uma posição é válida no jogo.
 
 No Simitone, cada tentativa chama `SetPosition`; ela não é uma consulta sem
 efeitos. `VMMultitileGroup.ChangePosition` remove registros antes de validar e,
@@ -91,8 +91,12 @@ e exige os quatro gates de `AvatarCandidatePreflight` mais um gate separado de
 semântica `PositionChange`/entry 9. Todos começam `unsupported`. Um bloqueio
 conhecido permite tentar o próximo candidato; um desconhecido sem bloqueio
 conhecido interrompe a busca, porque ignorá-lo não provaria a primeira chegada
-válida. O avaliador fornecido pelo host deve ser somente leitura, inclusive para
-RNG e controllers.
+válida. Tentativas fora dos limites horizontais continuam contando na ordem,
+mas são classificadas como bloqueadas antes do avaliador; o Simitone as envia a
+`SetPosition`, cujo `PositionValid` rejeita coordenadas x/y fora do lote. Esta
+API não recebe quantos andares existem: o gate de piso do avaliador deve rejeitar
+um nível acima da casa. O avaliador fornecido pelo host deve ser somente leitura,
+inclusive para RNG e controllers.
 
 Essa infraestrutura não fornece um avaliador comercial, não executa EP9, não
 aplica posição, não agenda Main e não publica o candidato. `clear` registra

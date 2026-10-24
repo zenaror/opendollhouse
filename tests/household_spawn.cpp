@@ -43,8 +43,13 @@ int main() {
                     "candidate stays inside the lot and has a cardinal facing");
 
         const auto edge = odh::household_spawn_candidates({8, 8, 1, 0}, 2, 2);
-        require(edge.size() < candidates.size(), "lot bounds filter outside positions");
-        require(edge.size() >= 4, "valid mailbox keeps its four facing attempts");
+        require(edge.size() == 1444,
+                "edge mailbox preserves all source attempts, including out-of-bounds positions");
+        require(edge[4] == odh::EntityPosition{-8,-8,1,0} &&
+                edge[5] == odh::EntityPosition{-8,24,1,0},
+                "out-of-bounds ring attempts retain source order");
+        require(edge.back() == odh::EntityPosition{152,136,1,6},
+                "edge mailbox retains the full ninth ring");
 
         std::size_t attempts = 0;
         const auto accepted_position = candidates[40];

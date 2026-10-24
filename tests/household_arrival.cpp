@@ -1,7 +1,9 @@
 #include "odh/household_arrival.hpp"
 #include "odh/formats.hpp"
+#include <algorithm>
 #include <array>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 
 namespace {
@@ -121,6 +123,59 @@ int main() {
             [](const auto&, auto, const auto&) { return clear(); });
         require(result.status == Status::unsupported && !result.position && result.attempts == 0,
                 "missing mailbox fails closed");
+        make_mailbox(*staged.candidate, 1, 0xef121974U);
+        require(staged.candidate->set_position(1, {8,8,1,0}), "move mailbox to lot edge");
+        const auto edge_candidates = odh::household_spawn_candidates({8,8,1,0}, 24, 24);
+        const auto first_in_bounds = std::find_if(edge_candidates.begin() + 4, edge_candidates.end(),
+            [](const auto& candidate) {
+                return candidate.x >= 0 && candidate.y >= 0 &&
+                    candidate.x / 16 < 24 && candidate.y / 16 < 24;
+            });
+        require(first_in_bounds != edge_candidates.end(), "edge mailbox has later in-bounds arrival");
+        unsigned bounded_assessments = 0;
+        result = odh::preflight_staged_household_arrival(*staged.candidate, id, 24, 24,
+            [&](const auto&, auto, const auto&) {
+                ++bounded_assessments;
+                auto assessment = clear();
+                if (bounded_assessments <= 4) assessment.cell.floor = Gate::blocked;
+                return assessment;
+            });
+        const auto attempts_to_first_in_bounds = static_cast<std::size_t>(
+            std::distance(edge_candidates.begin(), first_in_bounds)) + 1;
+        require(result.status == Status::clear && result.position == *first_in_bounds &&
+                result.attempts == attempts_to_first_in_bounds && bounded_assessments == 5,
+                "out-of-bounds candidates count in order but bypass the placement assessor");
+        require(staged.candidate->remove(1), "remove positioned edge mailbox");
+        require(staged.candidate->create(1, odh::EntityKind::object) &&
+                staged.candidate->define_type(1, 0xef121974U),
+                "create unpositioned mailbox fixture");
+        bounded_assessments = 0;
+        result = odh::preflight_staged_household_arrival(*staged.candidate, id, 24, 24,
+            [&](const auto&, auto, const auto&) {
+                ++bounded_assessments;
+                return clear();
+            });
+        require(result.status == Status::unsupported && result.attempts == 0 &&
+                bounded_assessments == 0,
+                "recognized mailbox without a position fails closed");
+        require(staged.candidate->remove(1), "remove unpositioned mailbox fixture");
+        make_mailbox(*staged.candidate, 1, 0xef121974U);
+        odh::EntityLayout container_layout;
+        container_layout.slots = 1;
+        require(staged.candidate->create(77, odh::EntityKind::object, container_layout) &&
+                staged.candidate->define_type(77, 0xcccc) &&
+                staged.candidate->set_position(77, {184,184,1,0}) &&
+                staged.candidate->attach(77, 0, 1),
+                "attach mailbox fixture");
+        bounded_assessments = 0;
+        result = odh::preflight_staged_household_arrival(*staged.candidate, id, 24, 24,
+            [&](const auto&, auto, const auto&) {
+                ++bounded_assessments;
+                return clear();
+            });
+        require(result.status == Status::unsupported && result.attempts == 0 &&
+                bounded_assessments == 0,
+                "recognized attached mailbox fails closed");
         std::cout << "PASS household arrival infrastructure: 243 gate combinations; " << checks << " checks\n";
         return 0;
     } catch (const std::exception& error) {
