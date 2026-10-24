@@ -15,12 +15,20 @@ bool contains(const NeighborhoodMarker& marker, int r, std::int32_t x, std::int3
 std::optional<NeighborhoodMapConfig> neighborhood_map_config(unsigned mode) {
     if(!neighborhood_mode_supported(mode)) return std::nullopt;
     switch(mode) {
-        case 1: return NeighborhoodMapConfig{"Nbhd\\NScreen.BMP",1};
-        case 2: return NeighborhoodMapConfig{"Downtown\\DScreen.bmp",1};
-        case 3: return NeighborhoodMapConfig{"VIsland\\visland.bmp",1};
-        case 4: return NeighborhoodMapConfig{"Community\\NScreen_unleashed.bmp",2};
-        case 5: return NeighborhoodMapConfig{"Studiotown\\DScreen.bmp",1};
-        case 7: return NeighborhoodMapConfig{"Magicland\\DScreen.bmp",1};
+        case 1: return NeighborhoodMapConfig{"Nbhd\\NScreen.BMP",1,
+            {{"Nbhd\\DiffN1-N2_8.bmp",0,0}}};
+        case 2: return NeighborhoodMapConfig{"Downtown\\DScreen.bmp",1,
+            {{"Downtown\\dscreen00.bmp",0,0}}};
+        case 3: return NeighborhoodMapConfig{"VIsland\\visland.bmp",1,
+            {{"VIsland\\visland_waves001.bmp",0,0},
+             {"VIsland\\visland_port.bmp",0,0},
+             {"VIsland\\visland_trees.bmp",0,0}}};
+        case 4: return NeighborhoodMapConfig{"Community\\NScreen_unleashed.bmp",2,
+            {{"Community\\NScreen_unleashed_waves001.bmp",0,0}}};
+        case 5: return NeighborhoodMapConfig{"Studiotown\\DScreen.bmp",1,
+            {{"Studiotown\\DScreen_top_layer.bmp",0,0}}};
+        case 7: return NeighborhoodMapConfig{"Magicland\\DScreen.bmp",1,
+            {{"Magicland\\DScreen_waves1.bmp",0,62}}};
     }
     throw FormatError("invalid neighborhood mode");
 }

@@ -1,8 +1,20 @@
 #pragma once
 #include "odh/lot_locations.hpp"
 #include "odh/raster.hpp"
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
 namespace odh {
-struct NeighborhoodMapConfig { std::string resource; unsigned marker_scale = 1; };
+struct NeighborhoodMapLayer {
+    std::string resource;
+    std::int32_t x = 0, y = 0;
+};
+struct NeighborhoodMapConfig {
+    std::string resource;
+    unsigned marker_scale = 1;
+    std::vector<NeighborhoodMapLayer> first_frame_layers;
+};
 // Exact FAR spelling. Mode 6 deliberately has no configured map.
 std::optional<NeighborhoodMapConfig> neighborhood_map_config(unsigned mode);
 struct NeighborhoodMarker {

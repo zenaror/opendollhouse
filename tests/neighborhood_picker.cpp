@@ -10,10 +10,26 @@ int main() {
     try {
         const std::vector<std::string> resources={"Nbhd\\NScreen.BMP","Downtown\\DScreen.bmp",
             "VIsland\\visland.bmp","Community\\NScreen_unleashed.bmp","Studiotown\\DScreen.bmp","","Magicland\\DScreen.bmp"};
+        const std::vector<std::vector<odh::NeighborhoodMapLayer>> layers={
+            {{"Nbhd\\DiffN1-N2_8.bmp",0,0}},
+            {{"Downtown\\dscreen00.bmp",0,0}},
+            {{"VIsland\\visland_waves001.bmp",0,0},{"VIsland\\visland_port.bmp",0,0},
+             {"VIsland\\visland_trees.bmp",0,0}},
+            {{"Community\\NScreen_unleashed_waves001.bmp",0,0}},
+            {{"Studiotown\\DScreen_top_layer.bmp",0,0}},
+            {},
+            {{"Magicland\\DScreen_waves1.bmp",0,62}}
+        };
         for(unsigned mode=1;mode<=7;++mode) {
             const auto config=odh::neighborhood_map_config(mode);
             require(bool(config)==(mode!=6));if(!config) continue;
             require(config->resource==resources[mode-1]);require(config->marker_scale==(mode==4?2u:1u));
+            require(config->first_frame_layers.size()==layers[mode-1].size());
+            for(std::size_t i=0;i<config->first_frame_layers.size();++i) {
+                require(config->first_frame_layers[i].resource==layers[mode-1][i].resource);
+                require(config->first_frame_layers[i].x==layers[mode-1][i].x);
+                require(config->first_frame_layers[i].y==layers[mode-1][i].y);
+            }
             const int r=static_cast<int>(config->marker_scale*6);
             const std::vector<odh::NeighborhoodMarker> markers={{{7,100,100},true,false},{{8,300,300},true,true},{{9,500,400},false,true}};
             for(const auto& offset:std::vector<std::array<int,2>>{{0,0},{-r,-r},{r,r}})

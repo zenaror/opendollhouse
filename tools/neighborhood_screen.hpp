@@ -17,6 +17,7 @@ struct PreparedNeighborhoodMap {
     unsigned marker_scale = 1;
     std::vector<odh::FamilyEntry> source_families;
     std::vector<odh::FamilyEntry> effective_families;
+    std::vector<std::string> missing_layers;
 };
 
 struct MoveInFamilySelection {

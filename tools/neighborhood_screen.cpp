@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <thread>
@@ -21,6 +22,49 @@
 
 namespace odh_host {
 namespace {
+constexpr std::array<std::uint8_t, 4> kNeighborhoodMatte{32, 36, 44, 255};
+
+bool neighborhood_mask_color(const std::array<std::uint8_t, 4>& pixel) {
+    return (pixel[0] == 0xff && pixel[1] == 0x00 && pixel[2] == 0xff) ||
+           (pixel[0] == 0xfe && pixel[1] == 0x02 && pixel[2] == 0xfe) ||
+           (pixel[0] == 0xff && pixel[1] == 0x01 && pixel[2] == 0xff);
+}
+
+void apply_neighborhood_layers(odh::BitmapImage& base,
+        const std::vector<odh::NeighborhoodMapLayer>& layers, const std::string& archive,
+        std::vector<std::string>& missing_layers) {
+    for (auto& pixel : base.pixels)
+        if (neighborhood_mask_color(pixel)) pixel = kNeighborhoodMatte;
+
+    for (const auto& layer : layers) {
+        std::optional<odh::BitmapImage> image;
+        try {
+            with_far_entry(archive, layer.resource, [&](const auto& view) {
+                image = odh::read_bmp(view);
+            });
+        } catch (const FarEntryNotFound&) {
+            // Decorative layers are optional in base-game-only installations.
+            missing_layers.push_back(layer.resource);
+            continue;
+        }
+        if (!image || image->pixels.size() !=
+                static_cast<std::size_t>(image->width) * image->height)
+            throw odh::FormatError("neighborhood layer has inconsistent pixel data");
+        for (std::uint32_t y = 0; y < image->height; ++y) {
+            const auto target_y = static_cast<std::int64_t>(layer.y) + y;
+            if (target_y < 0 || target_y >= base.height) continue;
+            for (std::uint32_t x = 0; x < image->width; ++x) {
+                const auto target_x = static_cast<std::int64_t>(layer.x) + x;
+                if (target_x < 0 || target_x >= base.width) continue;
+                const auto& pixel = image->pixels[static_cast<std::size_t>(y) * image->width + x];
+                if (!neighborhood_mask_color(pixel))
+                    base.pixels[static_cast<std::size_t>(target_y) * base.width +
+                                static_cast<std::size_t>(target_x)] = pixel;
+            }
+        }
+    }
+}
+
 std::array<std::uint8_t, 32> neighborhood_identity(const odh::View& view) {
     odh::Sha256 hash;
     std::array<std::uint8_t, 64 * 1024> block{};
@@ -45,6 +89,12 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
     std::optional<odh::BitmapImage> image;
     with_far_entry(ui_graphics.string(), config->resource,
         [&](const auto& view) { image = odh::read_bmp(view); });
+    if (!image) throw odh::FormatError("neighborhood map resource was not decoded");
+    std::vector<std::string> missing_layers;
+    apply_neighborhood_layers(*image, config->first_frame_layers, ui_graphics.string(),
+                              missing_layers);
+    for (const auto& resource : missing_layers)
+        std::clog << "OpenDollhouse: neighborhood map layer is missing: " << resource << '\n';
 
     std::optional<odh::LotLocations> locations;
     with_iff_file((user_data / "LotLocations.iff").string(), [&](const auto& view) {
@@ -84,7 +134,7 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
 
     return {odh::draw_neighborhood_map(*image, markers, config->marker_scale),
             std::move(markers), config->marker_scale, std::move(source_families),
-            std::move(entries)};
+            std::move(entries), std::move(missing_layers)};
 }
 
 std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,

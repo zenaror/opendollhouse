@@ -26,15 +26,23 @@ portável `odh_neighborhood_picker` define configuração, renderização CPU e
 hit-test; janela, eventos X11, filesystem e leitura de arquivos ficam no host.
 Não há dependência do executável original nem extração de assets para o checkout.
 
-| Modo | Entrada FAR exata | Escala do marcador |
-| --- | --- | ---: |
-| 1 | `Nbhd\NScreen.BMP` | 1 |
-| 2 | `Downtown\DScreen.bmp` | 1 |
-| 3 | `VIsland\visland.bmp` | 1 |
-| 4 | `Community\NScreen_unleashed.bmp` | 2 |
-| 5 | `Studiotown\DScreen.bmp` | 1 |
-| 6 | Sem mapa: `unsupported` | — |
-| 7 | `Magicland\DScreen.bmp` | 1 |
+| Modo | Fundo FAR exato | Primeira camada estática | Escala do marcador |
+| --- | --- | --- | ---: |
+| 1 | `Nbhd\NScreen.BMP` | `Nbhd\DiffN1-N2_8.bmp` em (0,0) | 1 |
+| 2 | `Downtown\DScreen.bmp` | `Downtown\dscreen00.bmp` em (0,0) | 1 |
+| 3 | `VIsland\visland.bmp` | `visland_waves001.bmp`, `visland_port.bmp`, `visland_trees.bmp`, em (0,0) | 1 |
+| 4 | `Community\NScreen_unleashed.bmp` | `NScreen_unleashed_waves001.bmp` em (0,0) | 2 |
+| 5 | `Studiotown\DScreen.bmp` | `DScreen_top_layer.bmp` em (0,0) | 1 |
+| 6 | Sem mapa: `unsupported` | — | — |
+| 7 | `Magicland\DScreen.bmp` | `DScreen_waves1.bmp` em (0,62) | 1 |
+
+As camadas vêm da configuração do Simitone em `UINeighbourhoodSelectionPanel.cs`
+na revisão acima. O Simitone marca como transparente três cores de UI:
+`#FF00FF`, `#FE02FE` e `#FF01FF` (`UIGraphicsProvider.cs`). O leitor BMP
+genérico do ODH continua retornando pixels opacos; ao montar mapas, o host troca
+essas cores do fundo por um matte escuro e ignora essas cores nas camadas. Cada
+camada usa o primeiro quadro listado; animação, transição cruzada, som e zoom
+continuam fora do escopo deste recorte.
 
 A referência estática é o array `Neighborhoods` e `PopulateScreen` de
 `Client/Simitone/Simitone.Client/UI/Panels/UINeighbourhoodSelectionPanel.cs`,
@@ -63,20 +71,50 @@ de modo na janela, idioma persistido, logs integrados ou gestão de famílias.
 
 ## Validação
 
+### Reteste depois da instalação do Pango — 2026-10-23
+
+- `cmake --build build/linux-checkpoint -j2` concluiu e reconstruiu `odh-person`
+  com o suporte Pango/Cairo instalado.
+- `env -u DISPLAY ctest --test-dir build/linux-checkpoint --output-on-failure`
+  passou 222/222. Os testes 120, 121 e 122 foram pulados porque esta execução
+  foi feita sem display; isso não valida a janela interativa.
+- Os seis modos disponíveis foram exportados de novo usando os arquivos
+  externos do jogo, em modo somente leitura. Todos produziram 800×600, e o
+  resumo informou `missing_layers: []` para cada modo.
+- O teste CLI também confirma que camada decorativa ausente aparece tanto no
+  JSON do exportador quanto no log, em vez de desaparecer sem aviso.
+- A janela interativa ainda não foi confirmada: na sessão gráfica, ela recebe
+  repetidos Esc e cancela o seletor. A captura direcionada à janela mostrou
+  apenas “Loading”. Não atribuir esses eventos ao teclado físico sem investigar.
+
 - `neighborhood_picker`: 110 checks sintéticos; mapeamento/recurso e tamanho nos
   seis modos, centros/bordas/fora da borda, FAMI/sem FAMI/arquivo ausente,
   sobreposição, viewport, extremos int32, escala/modo/imagem inválidos, cores,
   clipping, preservação da imagem e arrays exigidos pelo backend.
-- `neighborhood_window_cli`: 25 checks sintéticos sem janela; argumentos
+- `neighborhood_window_cli`: 40 checks sintéticos sem janela; argumentos
   inválidos, modo 6 sem recursos/display e recurso ausente nos seis modos.
 - A exportação headless usa FAR/IFF/BMP sintéticos; verifica tamanho PPM, fundo,
   marcador e resumo JSON sem conectar ao X11.
+- Em 2026-10-23, exportamos os seis quadros reais com `odh-neighborhood-window
+  --export-frame` e os arquivos comerciais externos, sem abrir o X11. Downtown,
+  Vacation Island, Unleashed Community, Studio Town e Magic Town mostraram fundo
+  e lotes; os primeiros quadros e camadas de cada modo foram aplicados. O export
+  não substitui a validação da janela interativa.
+- A captura anterior preservava exatamente os pixels magenta dos BMPs fonte de
+  Vacation Island e Magic Town. Depois da máscara e das camadas, nenhum dos seis
+  quadros exportados contém as três cores-chave; isso é evidência de composição
+  offline, não comparação integral com o jogo original.
 - Build Debug completa e CTest: 168/168 passaram. No sandbox o teste
   `linux_window_backend` foi pulado porque o display não estava acessível;
   executado separadamente com acesso ao display, passou 1/1.
 - Regressões focadas: LotLocations, catálogo CLI, FAMI, NBRS e BMP passaram.
 - Teste separado do backend com display acessível: janela própria 128×96,
   comparação exata dos 12.288 pixels RGB e eventos direcionados à janela passou.
+- A regressão sintética do exportador verifica as três cores-chave, a substituição
+  por matte, uma camada colorida sobre a base e o caso de camada decorativa
+  ausente, sem conectar ao X11. Também verifica ordem waves→port→trees em
+  Vacation Island, transparência de uma camada superior, offset y=62 em Magic
+  Town e diagnóstico de camada ausente tanto no modo base quanto no modo mágico.
 
 Os testes GUI exigem acesso ao display X11; no sandbox, `linux_window_backend`
 é pulado explicitamente quando o display é inacessível. Não interpretar esse

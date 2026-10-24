@@ -7,6 +7,17 @@
 #include <fstream>
 #include <iostream>
 
+namespace {
+void write_json_string(std::ostream& output, const std::string& value) {
+    output << '\"';
+    for (const char ch : value) {
+        if (ch == '\\' || ch == '\"') output << '\\';
+        output << ch;
+    }
+    output << '\"';
+}
+}
+
 int main(int argc, char** argv) {
     try {
         std::optional<std::string> folder, archive;
@@ -64,7 +75,12 @@ int main(int argc, char** argv) {
                       << *mode << ",\"width\":" << frame.width << ",\"height\":"
                       << frame.height << ",\"lots\":" << map.markers.size()
                       << ",\"house_files\":" << existing << ",\"families\":"
-                      << occupied << "}\n";
+                      << occupied << ",\"missing_layers\":[";
+            for (std::size_t i = 0; i < map.missing_layers.size(); ++i) {
+                if (i) std::cout << ',';
+                write_json_string(std::cout, map.missing_layers[i]);
+            }
+            std::cout << "]}\n";
             return 0;
         }
         odh_host::LinuxWindow window(800, 600, "OpenDollhouse map picker");
