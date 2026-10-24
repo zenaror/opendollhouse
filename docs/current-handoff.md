@@ -1,5 +1,19 @@
 # Continuidade atual
 
+## Atualização: leitura dos pedidos CreateObjectInstance (2026-10-24)
+
+Adicionei um leitor tipado dos oito operandos do opcode42 e nomes para as dez
+posições e oito opções descritas pelo Simitone. O teste usa os operandos reais
+da ação Have A Snack (`[117,227,1,243,4,1,0,0]`) e confirma GUID
+`0xF301E375`, compartimento 0 e `NoDuplicate`. Também verifica os bits das
+opções, preserva posições desconhecidas e rejeita outro opcode.
+
+Reconfigurei `build/linux-checkpoint` para reconhecer o novo alvo. Build do
+teste passou; CTest `create_object_instance` e `object_runtime_resources`
+passou 2/2; `git diff --check` passou. Isso só lê os operandos: ainda não cria
+Food, não espera pelo scheduler, nem integra Have A Snack. Próximo: ligar o
+pedido ao retorno adiado do scheduler e ao ciclo real de criação e Init0.
+
 ## Atualização: Init0 da comida termina com os recursos reais (2026-10-24)
 
 Montei um probe separado para executar Food Init0 com `Objects.far!Food.iff`
