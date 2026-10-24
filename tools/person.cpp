@@ -4716,6 +4716,9 @@ struct PlacementCandidateProbe {
                 }
             }
             if(scheduled_actor_valid){
+            // Keep diagnostics attributed to the selected household resident
+            // even when the target or its TestFunctions reject the action.
+            render_interaction_actor_id=active_household_actor;
             const auto* target=world.find(headless_interaction->id);
             const auto* candidate=target&&target->definition&&definition_index?
                 definition_index->unique(target->definition->guid):nullptr;

@@ -114,6 +114,7 @@ def main():
                 interaction=scheduled['interaction_runtime']
                 assert interaction['scheduled_tick']==4 and interaction['scheduled_target']==9999
                 assert interaction['trigger']=='headless_schedule' and not interaction['enqueued']
+                assert interaction['actor']['id']==2, interaction
                 assert interaction['diagnostic']=='scheduled target is not a defined live object'
             resumed=run(['--load-session',str(path),'--headless-ticks','5','--save-session-on-exit'])
             assert resumed['session_loaded'] and resumed['resumed_tick']==1 and resumed['ticks']==6,resumed
