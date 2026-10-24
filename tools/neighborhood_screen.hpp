@@ -25,6 +25,12 @@ struct MoveInFamilySelection {
     std::array<std::uint8_t, 32> family_identity{};
 };
 
+enum class NeighborhoodPickerAction { lot, create_family };
+struct NeighborhoodPickerResult {
+    NeighborhoodPickerAction action = NeighborhoodPickerAction::lot;
+    std::uint16_t house_number = 0;
+};
+
 enum class OccupiedLotChoice { enter, move_out, cancel };
 
 PreparedNeighborhoodMap prepare_neighborhood_map(
@@ -47,6 +53,14 @@ std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
 // Show the real neighborhood map in an existing 800x600 window.
 // Returns a house number on selection, or nullopt when the user cancels.
 std::optional<std::uint16_t> show_neighborhood_picker(
+    LinuxWindow& window, const PreparedNeighborhoodMap& map,
+    const std::string& localized_title = "Neighborhood",
+    const std::string& localized_cancel = "Cancel",
+    std::uint8_t language = 1);
+
+// Neighborhood picker variant used by the game entry flow. C opens CAS;
+// Escape or window close cancels; a clicked lot returns its house number.
+std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_create(
     LinuxWindow& window, const PreparedNeighborhoodMap& map,
     const std::string& localized_title = "Neighborhood",
     const std::string& localized_cancel = "Cancel",

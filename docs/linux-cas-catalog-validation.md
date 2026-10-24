@@ -58,8 +58,9 @@ permaneceram iguais:
 
 ## Limites e próximo passo
 
-O catálogo só resolve nomes de assets. Ele não decodifica nem mostra as
-texturas e ainda não fornece os itens à janela CAS. BCF não é usado para
-descobrir as roupas nesta etapa. O próximo marco é ligar estas escolhas à
-tela de criação, gravar a família no perfil privado e testar a entrada no
-lote com save e retomada em processo novo.
+O catálogo fornece as opções à tela CAS e a gravação privada já foi testada
+com uma família fictícia. Ele ainda não decodifica nem mostra a textura da
+aparência selecionada num retrato; a tela exibe os nomes dos assets. BCF não é
+usado para descobrir roupas. O próximo marco é selecionar a família criada,
+entrar num lote vago e validar save e retomada em outro processo. Veja também
+[`linux-cas-screen-validation.md`](linux-cas-screen-validation.md).

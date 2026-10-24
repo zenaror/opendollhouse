@@ -15,11 +15,13 @@ validação indicados por versão.
   a prévia visual nem o uso das escolhas na tela CAS. Veja
   [`linux-cas-catalog-validation.md`](docs/linux-cas-catalog-validation.md).
 
-- O adaptador Linux de criação de personagem converte as escolhas de roupa,
-  aparência, pele, idade, gênero e personalidade do CAS TS1 para STR# 200 e os
-  88 valores de vizinho usados pela gravação privada. O teste usa valores
-  aleatórios fixos; isso valida o mapeamento consultado no Simitone, não uma
-  tela CAS já conectada nem fidelidade ao jogo original.
+- A vizinhança Linux agora abre o criador de famílias com nome, moradores,
+  idade, gênero, pele, roupas, cabeça e personalidade. Salvar cria os arquivos
+  dos personagens apenas na pasta privada do jogador e registra a família no
+  mapa auxiliar. Um teste visual com a instalação real criou uma família e um
+  Sim em um perfil temporário, voltou ao mapa e deixou os arquivos de referência
+  intocados. Ainda falta escolher o lote, entrar com a família e validar save e
+  retomada; editar e excluir famílias também não estão disponíveis.
 
 - A avaliação isolada das ações agora reconhece `Test Object Type` (opcode
   32), incluindo correspondência com a identidade de um objeto mestre quando

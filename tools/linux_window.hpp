@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace odh_host {
 
@@ -27,14 +28,33 @@ constexpr WindowQuitReason record_window_quit_reason(
 }
 
 struct WindowInput {
-    bool quit = false, action = false, pause = false, interrupt = false, stand = false;
+    bool quit = false, action = false, confirm = false, pause = false, interrupt = false, stand = false;
     bool neighborhood = false, save = false, move_out = false, redraw = false;
+    bool create_family = false;
     int rotation = 0, zoom = 0, interaction_selection_delta = 0;
     // Last Button1 press drained by this poll, in drawable pixels. Keyboard
     // action does not fabricate a pointer position; coordinates may be outside.
     std::optional<std::array<std::int32_t,2>> primary_click;
     WindowQuitReason quit_reason = WindowQuitReason::none;
+    // Committed printable text only, at most 4096 UTF-8 bytes per poll.
+    // Text consumers should handle these separately from gameplay bindings.
+    std::string text_input_utf8;
+    bool text_backspace = false;
 };
+
+// X11 letter key symbols share their ASCII values; no Xlib types are exposed.
+constexpr bool window_create_family_shortcut(unsigned long key, bool held) noexcept {
+    return !held && (key == 'c' || key == 'C');
+}
+
+// X11 Return and keypad Enter confirm a form; Space remains printable text.
+constexpr bool window_confirm_key(unsigned long key, bool held) noexcept {
+    return !held && (key == 0xff0dUL || key == 0xff8dUL);
+}
+
+// Validates a whole input-method commit before appending; malformed UTF-8,
+// control characters, and commits exceeding the per-poll budget are dropped.
+bool append_window_text_utf8(WindowInput& input, std::string_view committed);
 
 // Optional host-only X11 backend; Xlib types never enter the ODH core API.
 class LinuxWindow {

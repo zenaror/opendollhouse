@@ -7,6 +7,7 @@
 #include <X11/keysym.h>
 
 #include <cstdlib>
+#include <clocale>
 #include <chrono>
 #include <limits>
 #include <thread>
@@ -82,9 +83,38 @@ ImagePtr create_image(Display* display, Visual* visual, int depth,
 
 } // namespace
 
+bool append_window_text_utf8(WindowInput& input, std::string_view committed) {
+    constexpr std::size_t limit = 4096;
+    if (input.text_input_utf8.size() > limit ||
+        committed.size() > limit - input.text_input_utf8.size()) return false;
+    for (std::size_t i = 0; i < committed.size();) {
+        const auto first = static_cast<unsigned char>(committed[i++]);
+        std::uint32_t code = first;
+        unsigned trailing = 0;
+        std::uint32_t minimum = 0;
+        if (first >= 0xc2 && first <= 0xdf) { trailing = 1; code &= 0x1f; minimum = 0x80; }
+        else if (first >= 0xe0 && first <= 0xef) { trailing = 2; code &= 0x0f; minimum = 0x800; }
+        else if (first >= 0xf0 && first <= 0xf4) { trailing = 3; code &= 0x07; minimum = 0x10000; }
+        else if (first >= 0x80) return false;
+        if (trailing > committed.size() - i) return false;
+        for (unsigned n = 0; n < trailing; ++n) {
+            const auto next = static_cast<unsigned char>(committed[i++]);
+            if ((next & 0xc0) != 0x80) return false;
+            code = (code << 6) | (next & 0x3f);
+        }
+        if (code < minimum || code > 0x10ffff ||
+            (code >= 0xd800 && code <= 0xdfff) || code < 0x20 ||
+            (code >= 0x7f && code <= 0x9f)) return false;
+    }
+    input.text_input_utf8.append(committed);
+    return true;
+}
+
 struct LinuxWindow::Impl {
     Display* display = nullptr;
     Window window = 0;
+    XIM input_method = nullptr;
+    XIC input_context = nullptr;
     GC gc = nullptr;
     XImage* image = nullptr;
     Atom delete_message = 0, protocols = 0;
@@ -97,6 +127,8 @@ struct LinuxWindow::Impl {
     ~Impl() {
         if (image) XDestroyImage(image);
         if (display) {
+            if (input_context) XDestroyIC(input_context);
+            if (input_method) XCloseIM(input_method);
             if (gc) XFreeGC(display, gc);
             // Closing this private connection destroys its remaining windows.
             // Avoid a separate destroy request racing an already queued
@@ -155,6 +187,27 @@ LinuxWindow::LinuxWindow(std::uint32_t width, std::uint32_t height, const std::s
     if (!p.gc) throw odh::FormatError("X11: cannot create graphics context");
     XSelectInput(p.display, p.window, KeyPressMask | KeyReleaseMask | ButtonPressMask |
                  FocusChangeMask | StructureNotifyMask | ExposureMask);
+    // XIM interprets the process C character locale. Select the user's locale
+    // once before opening the first input method; fallback remains ASCII.
+    static const bool locale_initialized = [] {
+        return std::setlocale(LC_CTYPE, "") != nullptr;
+    }();
+    if (locale_initialized && XSupportsLocale()) {
+        XSetLocaleModifiers("");
+        p.input_method = XOpenIM(p.display, nullptr, nullptr, nullptr);
+        if (p.input_method) {
+            p.input_context = XCreateIC(p.input_method,
+                XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+                XNClientWindow, p.window, XNFocusWindow, p.window, nullptr);
+            if (p.input_context) {
+                long filter_events = 0;
+                XGetICValues(p.input_context, XNFilterEvents, &filter_events, nullptr);
+                XSelectInput(p.display, p.window, KeyPressMask | KeyReleaseMask |
+                    ButtonPressMask | FocusChangeMask | StructureNotifyMask |
+                    ExposureMask | filter_events);
+            }
+        }
+    }
     XSizeHints hints{};
     hints.flags = PMinSize | PMaxSize;
     hints.min_width = hints.max_width = static_cast<int>(width);
@@ -268,7 +321,12 @@ WindowInput LinuxWindow::poll() {
         XEvent event{};
         XNextEvent(p.display, &event);
         if (event.xany.window != p.window) continue;
-        if (event.type == FocusOut) p.key_down.fill(false);
+        if (event.type == FocusOut) {
+            p.key_down.fill(false);
+            if (p.input_context) XUnsetICFocus(p.input_context);
+        }
+        if (event.type == FocusIn && p.input_context) XSetICFocus(p.input_context);
+        if (p.input_context && XFilterEvent(&event, p.window)) continue;
         if (event.type == DestroyNotify) {
             p.alive = false;
             p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_destroyed);
@@ -304,6 +362,31 @@ WindowInput LinuxWindow::poll() {
         if (event.xkey.keycode < p.key_down.size()) p.key_down[event.xkey.keycode] = true;
         KeySym key = XLookupKeysym(&event.xkey, (event.xkey.state & ShiftMask) ? 1 : 0);
         if (key == NoSymbol) key = XLookupKeysym(&event.xkey, 0);
+        if (window_create_family_shortcut(key, held)) result.create_family = true;
+        if (key == XK_BackSpace) result.text_backspace = true;
+        if (!(event.xkey.state & (ControlMask | Mod1Mask | Mod4Mask))) {
+            // A fixed buffer bounds both XIM commits and per-poll storage.
+            std::array<char,4096> committed{};
+            KeySym text_key = NoSymbol;
+            int length = 0;
+            bool has_text = false;
+            if (p.input_context) {
+                Status status = XLookupNone;
+                length = Xutf8LookupString(p.input_context, &event.xkey, committed.data(),
+                    static_cast<int>(committed.size()), &text_key, &status);
+                has_text = status == XLookupChars || status == XLookupBoth;
+            } else {
+                length = XLookupString(&event.xkey, committed.data(),
+                    static_cast<int>(committed.size()), &text_key, nullptr);
+                has_text = length > 0;
+                for (int n = 0; n < length; ++n)
+                    if (static_cast<unsigned char>(committed[static_cast<std::size_t>(n)]) >= 0x80)
+                        has_text = false;
+            }
+            if (has_text && length > 0 && static_cast<std::size_t>(length) <= committed.size())
+                append_window_text_utf8(result,
+                    std::string_view(committed.data(), static_cast<std::size_t>(length)));
+        }
         switch (key) {
         case XK_Escape: p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::escape_key); break;
         case XK_BackSpace: if (!held) result.interrupt = true; break;
@@ -311,7 +394,10 @@ WindowInput LinuxWindow::poll() {
         case XK_m: case XK_M: if (!held) result.neighborhood = true; break;
         case XK_s: case XK_S: if (!held) result.save = true; break;
         case XK_e: case XK_E: if (!held) result.move_out = true; break;
-        case XK_space: case XK_Return: case XK_KP_Enter: if (!held) result.action = true; break;
+        case XK_space: if (!held) result.action = true; break;
+        case XK_Return: case XK_KP_Enter:
+            if (!held) { result.action = true; result.confirm = true; }
+            break;
         case XK_Tab: result.interaction_selection_delta += (event.xkey.state & ShiftMask) ? -1 : 1; break;
         case XK_ISO_Left_Tab: --result.interaction_selection_delta; break;
         case XK_p: case XK_P: if (!held) result.pause = true; break;

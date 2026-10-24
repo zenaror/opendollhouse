@@ -3,6 +3,11 @@
 #include "neighborhood_screen.hpp"
 #include "linux_text_renderer.hpp"
 #include "linux_ui_strings.hpp"
+#ifdef ODH_HAVE_LINUX_CAS_SCREEN
+#include "linux_cas_screen.hpp"
+#include "linux_simitone_cas_member.hpp"
+#include "linux_private_family.hpp"
+#endif
 #endif
 #include "resource.hpp"
 
@@ -767,15 +772,60 @@ int odh_linux_game_entry(int argc, char** argv) {
 #ifdef ODH_HAVE_X11
         if (map && !options.house) {
           for (;;) {
-            const auto selected = odh_host::show_neighborhood_picker(*window, *map,
+            std::optional<odh_host::NeighborhoodPickerResult> selected;
+#ifdef ODH_HAVE_LINUX_CAS_SCREEN
+            selected = odh_host::show_neighborhood_picker_with_create(*window, *map,
                 neighborhood_title, neighborhood_cancel,
                 static_cast<std::uint8_t>(options.language));
+#else
+            const auto lot = odh_host::show_neighborhood_picker(*window, *map,
+                neighborhood_title, neighborhood_cancel,
+                static_cast<std::uint8_t>(options.language));
+            if (lot) selected = odh_host::NeighborhoodPickerResult{
+                odh_host::NeighborhoodPickerAction::lot, *lot};
+#endif
             if (!selected) {
                 std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\",\"cancellation_reason\":\""
                           << odh_host::window_quit_reason_name(window->quit_reason()) << "\"}\n";
                 return 0;
             }
-            house = *selected;
+#ifdef ODH_HAVE_LINUX_CAS_SCREEN
+            if (selected->action == odh_host::NeighborhoodPickerAction::create_family) {
+                const auto draft = odh_host::show_linux_cas_family_creator(*window,
+                    odh_host::scan_linux_cas_catalog(game),
+                    static_cast<std::uint8_t>(options.language));
+                if (!draft) continue;
+                if (player_character_directory.empty())
+                    throw odh::FormatError("player data directory is unavailable for CAS characters");
+                const auto objects_far = require_file(game,
+                    game / "GameData/Objects/Objects.far");
+                std::vector<std::uint8_t> template_person;
+                with_far_entry(objects_far.string(), R"(People\TemplatePerson.iff)",
+                    [&](const odh::View& view) {
+                        constexpr std::uint64_t maximum_template_size = 16u * 1024u * 1024u;
+                        if (view.size() > maximum_template_size)
+                            throw odh::FormatError("TemplatePerson.iff exceeds the 16 MiB CAS limit");
+                        template_person.resize(static_cast<std::size_t>(view.size()));
+                        if (!template_person.empty())
+                            view.read(0, template_person.data(), template_person.size());
+                    });
+                std::vector<odh_host::LinuxPrivateFamilyMemberDraft> members;
+                members.reserve(draft->members.size());
+                for (const auto& member : draft->members)
+                    members.push_back(odh_host::make_simitone_cas_member(member));
+                const auto neighborhood = userdata / "Neighborhood.iff";
+                const auto identity = odh_host::linux_neighborhood_identity(neighborhood);
+                (void)odh_host::create_linux_private_family(template_person,
+                    userdata / "Characters", player_character_directory, neighborhood,
+                    odh_host::linux_family_overlay_path(identity), draft->family_name_utf8,
+                    members);
+                family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(neighborhood);
+                map = odh_host::prepare_neighborhood_map(userdata, *graphics_resource,
+                    options.mode, family_overlay ? &*family_overlay : nullptr);
+                continue;
+            }
+#endif
+            house = selected->house_number;
             const auto marker = std::find_if(map->markers.begin(), map->markers.end(),
                 [&](const auto& value) { return value.location.house == house; });
             if (marker == map->markers.end())

@@ -279,6 +279,35 @@ std::optional<std::uint16_t> show_neighborhood_picker(
     }
 }
 
+std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_create(
+        LinuxWindow& window,const PreparedNeighborhoodMap& map,
+        const std::string& localized_title,const std::string& localized_cancel,
+        std::uint8_t language) {
+    if(window.width()!=800||window.height()!=600)
+        throw odh::FormatError("neighborhood picker requires an 800x600 window");
+    window.set_title("OpenDollhouse | "+localized_title+" | C: Create family | Esc: "+localized_cancel);
+    auto frame=compose_neighborhood_picker_frame(map,localized_title,localized_cancel,language);
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    TextOverlayStyle style;style.x=20;style.y=558;style.width=760;style.height=28;
+    style.font_size_px=15;style.padding=5;style.foreground={245,245,245,255};
+    style.background={22,25,32,230};
+    draw_text_overlay(frame,"C: Create a family",language,style);
+#endif
+    window.present(frame);
+    for(;;) {
+        const auto input=window.poll();
+        if(input.quit)return std::nullopt;
+        if(input.create_family)return NeighborhoodPickerResult{NeighborhoodPickerAction::create_family,0};
+        if(input.primary_click) {
+            const auto selected=odh::pick_neighborhood_lot(map.markers,map.marker_scale,
+                (*input.primary_click)[0],(*input.primary_click)[1]);
+            if(selected)return NeighborhoodPickerResult{NeighborhoodPickerAction::lot,*selected};
+        }
+        if(input.redraw)window.present(frame);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
 OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
         const odh::FamilyEntry& family, std::uint16_t house_number,
         bool move_out_supported, std::uint8_t language) {

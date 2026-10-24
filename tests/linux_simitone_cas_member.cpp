@@ -43,18 +43,19 @@ int main() {
         });
         need(draft.name_utf8 == "Ana" && draft.biography_utf8 == "Criativa" && draft.language == 14,
             "CAS text and language were not preserved for the private writer");
-        need(draft.body_strings.size() == 22, "CAS produced an unexpected body-string replacement count");
+        need(draft.body_strings.size() == 12, "CAS produced an unexpected body-string replacement count");
         auto body = [&](std::uint16_t index) -> const std::string& {
             for (const auto& entry : draft.body_strings) if (entry.index == index) return entry.bytes;
             throw std::runtime_error("expected body-string replacement is missing");
         };
         need(body(0) == "adult" && body(1) == "b001mafat,BODY=b001mafatmed_01" &&
              body(2) == "c001ma,HEAD-HEAD=c001mamed_01", "CAS body and head choices were not carried over");
-        need(body(15) == "nffat_01,BODY=nffatmed_01" &&
-             body(16) == "nffat_01,BODY=uffatmedlguard_01" &&
-             body(27) == "fffat_01,BODY=fffatmed_01", "adult female clothes did not follow Simitone's TS1 mapping");
+        need(body(12) == "female" && body(13) == "27" && body(14) == "med",
+            "adult gender, age, or skin choices were not carried over");
         need(body(17) == "HfLO,HAND=huaobear1" && body(22) == "HfRC,HAND=huaobear1",
             "CAS hand choices were not converted");
+        for (const auto& replacement : draft.body_strings)
+            need(replacement.index < 27, "CAS wrote outside the original TemplatePerson string table");
         need(draft.person_data.size() == 88 && draft.person_data[2] == 1000 &&
              draft.person_data[3] == 500 && draft.person_data[5] == 400 &&
              draft.person_data[6] == 300 && draft.person_data[7] == 300,
@@ -82,8 +83,7 @@ int main() {
             need(value < upper, "child fixture random value exceeds requested range");
             return value;
         });
-        need(body(0) == "child" && body(15) == "nuchd_01,BODY=nuchddrk_01" &&
-             body(16) == "nuchd_01,BODY=umfatdrkundies_01" && body(30) == "ADDED" &&
+        need(body(0) == "child" && body(12) == "male" && body(13) == "9" && body(14) == "drk" &&
              draft.person_data[58] == 9 && draft.person_data[60] == 2 && draft.person_data[65] == 0,
             "child CAS choices were not converted according to the TS1 profile");
 

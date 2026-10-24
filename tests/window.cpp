@@ -21,8 +21,42 @@ int main(int argc,char** argv){try{
                 (reasons[i]==WindowQuitReason::none?incoming:reasons[i]))
                 throw std::runtime_error("first quit reason was overwritten");
     }
+    if(odh_host::WindowInput{}.create_family ||
+       !odh_host::window_create_family_shortcut(XK_c,false) ||
+       !odh_host::window_create_family_shortcut(XK_C,false) ||
+       odh_host::window_create_family_shortcut(XK_c,true) ||
+       odh_host::window_create_family_shortcut(XK_C,true) ||
+       odh_host::window_create_family_shortcut(XK_x,false))
+        throw std::runtime_error("create family shortcut mapping differs");
+    if(odh_host::WindowInput{}.confirm ||
+       !odh_host::window_confirm_key(XK_Return,false) ||
+       !odh_host::window_confirm_key(XK_KP_Enter,false) ||
+       odh_host::window_confirm_key(XK_Return,true) ||
+       odh_host::window_confirm_key(XK_space,false))
+        throw std::runtime_error("form confirmation key mapping differs");
+    odh_host::WindowInput text;
+    if(text.text_backspace || !text.text_input_utf8.empty())
+        throw std::runtime_error("fresh text input differs");
+    if(!odh_host::append_window_text_utf8(text,"Rafael ") ||
+       !odh_host::append_window_text_utf8(text,u8"João 日本 😀") ||
+       text.text_input_utf8!=u8"Rafael João 日本 😀")
+        throw std::runtime_error("printable Unicode commit differs");
+    const auto original_text=text.text_input_utf8;
+    const std::string invalid_text[]{std::string("a\0b",3),"\n","\t","\x7f",
+        "\xc2\x85","\xc0\xaf","\xed\xa0\x80","\xf4\x90\x80\x80",
+        "\xe2\x82","\x80","\xe2" "ab"};
+    for(const auto& value:invalid_text)
+        if(odh_host::append_window_text_utf8(text,value)||text.text_input_utf8!=original_text)
+            throw std::runtime_error("invalid/control commit accepted or partially appended");
+    odh_host::WindowInput bounded;
+    if(!odh_host::append_window_text_utf8(bounded,std::string(4095,'a')) ||
+       odh_host::append_window_text_utf8(bounded,u8"é") ||
+       bounded.text_input_utf8.size()!=4095 ||
+       !odh_host::append_window_text_utf8(bounded,"b") ||
+       odh_host::append_window_text_utf8(bounded,"c") || bounded.text_input_utf8.size()!=4096)
+        throw std::runtime_error("UTF-8 commit budget differs");
     if(argc==2&&std::string(argv[1])=="--input-only"){
-        std::cout<<"Window quit diagnostics: defaults, 4 names, and 16 first-cause combinations passed without X11.\n";return 0;
+        std::cout<<"Window input: quit diagnostics and bounded printable UTF-8 commits passed without X11.\n";return 0;
     }
     if(!std::getenv("DISPLAY")){std::cout<<"X11 display unavailable: skipped\n";return 77;}
     Display* availability=XOpenDisplay(nullptr);if(!availability){std::cout<<"X11 DISPLAY inaccessible: skipped\n";return 77;}XCloseDisplay(availability);
@@ -74,8 +108,8 @@ int main(int argc,char** argv){try{
     key(XK_Tab);input=window.poll();if(input.interaction_selection_delta!=1||input.action)throw std::runtime_error("Tab interaction selection mapping failed");
     key(XK_Tab,KeyPress,ShiftMask);input=window.poll();if(input.interaction_selection_delta!=-1||input.action)throw std::runtime_error("Shift+Tab interaction selection mapping failed");
     key(XK_space);if(window.poll().action)throw std::runtime_error("held action repeated");key(XK_space,KeyRelease);window.poll();key(XK_space);if(!window.poll().action)throw std::runtime_error("released action not rearmed");
-    key(XK_BackSpace);input=window.poll();if(!input.interrupt||input.action||input.quit)throw std::runtime_error("Backspace interrupt mapping failed");
-    key(XK_BackSpace);if(window.poll().interrupt)throw std::runtime_error("held interrupt repeated");
+    key(XK_BackSpace);input=window.poll();if(!input.interrupt||!input.text_backspace||!input.text_input_utf8.empty()||input.action||input.quit)throw std::runtime_error("Backspace interrupt/text mapping failed");
+    key(XK_BackSpace);input=window.poll();if(input.interrupt||!input.text_backspace)throw std::runtime_error("held interrupt/text repeat differs");
     key(XK_BackSpace,KeyRelease);window.poll();key(XK_BackSpace);if(!window.poll().interrupt)throw std::runtime_error("released interrupt not rearmed");
     key(XK_u);input=window.poll();if(!input.stand||input.action||input.quit)throw std::runtime_error("U Stand mapping failed");
     key(XK_u);if(window.poll().stand)throw std::runtime_error("held Stand repeated");
@@ -89,7 +123,18 @@ int main(int argc,char** argv){try{
     key(XK_p);input=window.poll();if(!input.pause||input.action)throw std::runtime_error("pause mapping failed");
     key(XK_p);if(window.poll().pause)throw std::runtime_error("held pause repeated");
     key(XK_Left);key(XK_Up);input=window.poll();if(input.rotation!=-1||input.zoom!=1)throw std::runtime_error("camera mapping failed");
-    key(XK_a);input=window.poll();if(input.action||input.pause||input.quit||input.rotation||input.zoom)throw std::runtime_error("unknown key mapped");
+    key(XK_a);input=window.poll();if(input.action||input.pause||input.quit||input.rotation||input.zoom||input.text_input_utf8!="a")throw std::runtime_error("printable A input differs");
+    key(XK_a,KeyRelease);window.poll();key(XK_a,KeyPress,ShiftMask);
+    if(window.poll().text_input_utf8!="A")throw std::runtime_error("Shift printable input differs");
+    key(XK_a,KeyRelease);window.poll();key(XK_a,KeyPress,ControlMask);
+    if(!window.poll().text_input_utf8.empty())throw std::runtime_error("Control shortcut produced text");
+    key(XK_a,KeyRelease);window.poll();key(XK_a,KeyPress,Mod1Mask);
+    if(!window.poll().text_input_utf8.empty())throw std::runtime_error("Alt shortcut produced text");
+    key(XK_c);input=window.poll();
+    if(!input.create_family||input.text_input_utf8!="c")throw std::runtime_error("C create-family shortcut differs");
+    key(XK_c);if(window.poll().create_family)throw std::runtime_error("held C shortcut repeated");
+    key(XK_c,KeyRelease);window.poll();key(XK_c);
+    if(!window.poll().create_family)throw std::runtime_error("released C shortcut not rearmed");
     auto click=[&](unsigned button,int x,int y){XEvent event{};event.xbutton.type=ButtonPress;event.xbutton.display=sender.get();event.xbutton.window=window.native_id();event.xbutton.root=DefaultRootWindow(sender.get());event.xbutton.same_screen=True;event.xbutton.button=button;event.xbutton.x=x;event.xbutton.y=y;if(!XSendEvent(sender.get(),window.native_id(),False,ButtonPressMask,&event))throw std::runtime_error("own-window click injection failed");XSync(sender.get(),False);window.readback();};
     click(Button1,17,23);input=window.poll();if(!input.action||!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{17,23})throw std::runtime_error("click coordinates lost");
     if(window.poll().primary_click)throw std::runtime_error("click repeated without event");

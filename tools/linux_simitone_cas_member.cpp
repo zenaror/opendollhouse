@@ -65,10 +65,6 @@ LinuxPrivateFamilyMemberDraft make_simitone_cas_member(
     result.biography_utf8 = input.biography_utf8;
     result.language = input.language;
 
-    const char gender = input.female ? 'f' : 'm';
-    const std::string sim_code = std::string(1, gender) +
-        (input.child ? "c" : "a") + input.body_type;
-    const std::string universal = input.child ? "uchd" : std::string(1, gender) + input.body_type;
     auto& strings = result.body_strings;
     append(strings, 0, input.child ? "child" : "adult");
     append(strings, 1, input.body_appearance + ",BODY=" + input.body_texture);
@@ -76,18 +72,6 @@ LinuxPrivateFamilyMemberDraft make_simitone_cas_member(
     append(strings, 12, input.female ? "female" : "male");
     append(strings, 13, input.child ? "9" : "27");
     append(strings, 14, input.skin);
-    append(strings, 15, "n" + universal + "_01,BODY=n" + universal + input.skin + "_01");
-    append(strings, 16, "n" + universal + "_01,BODY=u" + gender + input.body_type + input.skin +
-        (input.child ? "undies" : "lguard") + "_01");
-    append(strings, 27, input.female ? "ff" + input.body_type + "_01,BODY=ff" +
-        input.body_type + input.skin + "_01" : ",BODY=f" + sim_code + input.skin + "_01");
-    append(strings, 28, input.female ? "HfLO,HAND=gfao_bear1" : "HmLO,HAND=gmao_yeti");
-    append(strings, 29, input.female ? "HfRO,HAND=gfao_bear1" : "HmRO,HAND=gmao_yeti");
-    append(strings, 30, input.child ? "ADDED" : "f100" + sim_code + "_original,BODY=f100" + sim_code + input.skin + "_original");
-    append(strings, 31, "s100" + sim_code + "_original,BODY=s100" + sim_code + input.skin + "_original");
-    append(strings, 32, "l100" + sim_code + "_original,BODY=l100" + sim_code + input.skin + "_original");
-    append(strings, 33, "w100" + sim_code + "_original,BODY=w100" + sim_code + input.skin + "_original");
-    append(strings, 34, input.child ? "ADDED" : "h533" + sim_code + "_zoot,BODY=h533" + sim_code + input.skin + "_zoot");
     const std::string hand = input.child ? "u" : (input.female ? "f" : "m");
     append(strings, 17, "H" + hand + "LO,HAND=huao" + input.handgroup_texture);
     append(strings, 18, "H" + hand + "RO,HAND=huao" + input.handgroup_texture);
