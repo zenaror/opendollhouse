@@ -89,14 +89,20 @@ observados no Simitone; a precedência exata da instalação não foi provada.
 House05 (245 entidades) e House07 (182 entidades) completaram a preparação de
 todas as ações Load nas sementes de diagnóstico 1, 2 e 42:
 
-| Lote | Semente | Ações concluídas | Instruções | Sons enfileirados | Pontuações de cômodo |
-|---|---:|---:|---:|---:|---:|
-| House05 | 1 | 245/245 | 1515 | 2 | 3 |
-| House05 | 2 | 245/245 | 1585 | 2 | 3 |
-| House05 | 42 | 245/245 | 1578 | 2 | 3 |
-| House07 | 1 | 182/182 | 964 | 1 | 3 |
-| House07 | 2 | 182/182 | 1036 | 1 | 3 |
-| House07 | 42 | 182/182 | 998 | 1 | 3 |
+| Lote | Semente | Ações concluídas | Donos de código | Instruções | Sons enfileirados | Pontuações de cômodo |
+|---|---:|---:|---:|---:|---:|---:|
+| House05 | 1 | 245/245 | 33 | 1515 | 2 | 3 |
+| House05 | 2 | 245/245 | 33 | 1585 | 2 | 3 |
+| House05 | 42 | 245/245 | 33 | 1578 | 2 | 3 |
+| House07 | 1 | 182/182 | 32 | 964 | 1 | 3 |
+| House07 | 2 | 182/182 | 32 | 1036 | 1 | 3 |
+| House07 | 42 | 182/182 | 32 | 998 | 1 | 3 |
+
+O preparador atribui o `CodeOwner` pelo GUID exato do objeto. No Simitone,
+`VMEntity.GetRoutineWithOwner` usa o próprio `Object` como dono e o restore de
+threads resolve o dono pelo GUID da entrada OBJT (`VMTS1ActivatorNew.cs:224-230`).
+O cache de código semiglobal evita reler o mesmo arquivo, mas cada objeto mantém
+sua associação própria de tabelas BCON.
 
 Isso prova apenas que esses dois lotes atravessam a etapa candidata de Load
 com os recursos selecionados. Não prova que o jogo original escolhe os mesmos

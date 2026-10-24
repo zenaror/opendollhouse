@@ -39,7 +39,10 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
     result.globals = load_saved_global_code_bank(global_archive, global_entry).routines;
     result.tuning.globals = load_saved_tuning_tables(global_archive, global_entry);
     std::map<std::uint32_t, SavedEntryPointResource> resources;
-    std::map<std::pair<std::string, std::string>, odh::CodeOwner> owner_ids;
+    // Simitone's VMEntity resolves CodeOwner from the exact GameObject/OBJD
+    // GUID. Two definitions can share an IFF asset while having different GLOB
+    // links, so file identity alone must not merge their owners.
+    std::map<std::uint32_t, odh::CodeOwner> owner_ids;
     struct SavedSemiglobalResources {
         SavedSemiglobalCodeBank code;
         odh::TuningTables tuning;
@@ -87,7 +90,7 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
             ? resource->second.table.entries[2].action : std::uint16_t{0};
         if (action <= 255) continue;
 
-        const auto identity = std::make_pair(candidate->source, candidate->asset);
+        const auto identity = candidate->definition.guid;
         auto owner = owner_ids.find(identity);
         if (owner == owner_ids.end()) {
             if (owner_ids.size() >= owner_limit)
