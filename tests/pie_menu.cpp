@@ -32,4 +32,13 @@ int main() {
     assert(shared_path[0].label == "Food" && shared_path[0].interaction_row == 2);
     assert(shared_path[0].children.size() == 1);
     assert(shared_path[0].children[0].label == "Serve" && shared_path[0].children[0].interaction_row == 3);
+
+    const auto layout = odh::layout_pie_menu(320, 240, {160, 120}, 4, true);
+    assert(layout && layout->items.size() == 4 && layout->back_button);
+    for (const auto& item : layout->items) {
+        assert(item.x >= 0 && item.y >= 0);
+        assert(item.x + item.width <= 320 && item.y + item.height <= 240);
+        assert(!item.contains(layout->back_button->x + 1, layout->back_button->y + 1));
+    }
+    assert(!odh::layout_pie_menu(96, 80, {48, 40}, 1, false));
 }

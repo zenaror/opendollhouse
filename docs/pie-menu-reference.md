@@ -2,13 +2,13 @@
 
 ## Direção visual
 
-A lista retangular que hoje aparece durante os testes é provisória. A interface
-final deve recuperar o menu circular de ações reconhecível do The Sims 1,
-montado com os nomes e regras dos dados instalados pelo jogador. O Simitone é a
-referência técnica para descobrir as ações e organizar o menu; este projeto terá
-sua própria implementação e ainda precisa comparar a aparência com a instalação
-original. Não há evidência aqui para afirmar que a aparência atual do Simitone é
-uma cópia exata da interface original.
+O ODH agora organiza e mostra as ações elegíveis em botões ao redor do objeto
+clicado, com categorias e retorno ao nível anterior. Essa primeira versão usa
+retângulos e texto genéricos; moldura, fundo, cabeça do Sim e outros detalhes da
+arte final ainda faltam. A meta continua sendo recuperar o menu circular do
+The Sims 1 com nomes e regras dos dados instalados pelo jogador. O Simitone é a
+referência técnica; ainda é preciso comparar a aparência com a instalação
+original.
 
 ## Caminho observado no Simitone
 
@@ -41,10 +41,19 @@ uma cópia exata da interface original.
 ## Limite atual do ODH
 
 O leitor ODH de TTAB já preserva índice do rótulo, flags e rotinas de ação/teste,
-inclusive tabelas comprimidas da versão 9. Isso é leitura estrutural. O fluxo
-comprovado de House07 ainda apresenta uma lista de depuração com uma ação (Sit),
-sem categorias, ações dinâmicas ou comparação de vários idiomas. Portanto, ler
-TTAB não significa que o ODH já decide corretamente quais ações aparecem.
+inclusive tabelas comprimidas da versão 9. `make_pie_menu_model` cria categorias
+por `/`, conserva a linha TTAB e o idioma do rótulo, e `layout_pie_menu` coloca
+as escolhas ao redor do ponto selecionado. A janela aceita clique, Tab e
+Space/Enter; Backspace e o botão central voltam um nível. Isso é uma primeira
+fatia de gameplay, não a arte final nem a elegibilidade completa.
+
+No fluxo de House07 com `--window-input`, o clique na cadeira128 abriu a opção
+`Sit`, executou a ação até `returned_true` e deixou o avatar105 anexado ao
+slot0. O teste usa eventos de janela sem display; o Main continua esperando
+quando o limite de 512 ticks termina. A geladeira112 conclui `Have A Snack` pelo
+teste headless de interação direta, mas não estava visível no enquadramento
+inicial do teste de clique. Ainda falta provar em um objeto real o clique em
+categoria e o retorno, e capturar/comparar a apresentação visual em uma janela.
 
 Uma inspeção controlada posterior identificou a geladeira 112 da House07
 (GUID `1734088879`), ligada a `Objects.far:Fridges.iff`, TTAB128. A tabela tem
@@ -74,9 +83,10 @@ posição diferente continua explicitamente fora do perfil desta execução.
 - Separar a descoberta de ações da tela: cada opção deve carregar texto já
   resolvido, ação, argumento, origem local/global e categoria. A interface
   apenas mostra as opções recebidas e devolve a opção escolhida.
-- Montar primeiro categorias e seleção navegáveis com mouse/teclado; depois
-  desenhar o menu circular usando recursos de UI do jogo quando sua origem,
-  formato e licença de uso local estiverem confirmados.
+- Testar a navegação de categorias em uma ação real elegível; depois comparar
+  os botões e o espaço usados na janela com o menu do Simitone e o jogo original.
+  Só usar arte dos recursos do jogo depois de confirmar origem, formato e
+  licença para esse uso local.
 - Manter o texto ligado ao idioma selecionado e testar rótulos compridos,
   categorias vazias, menus com 1, 2, 4, 5, 8 e mais de 8 opções, e cliques perto
   das bordas. A expansão visual não pode esconder a última opção fora da tela.

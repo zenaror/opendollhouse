@@ -1,15 +1,26 @@
 # Continuidade atual
 
-## Atualização: estrutura de dados do menu de ações (2026-10-24)
+## Atualização: menu radial de ações ligado ao clique (2026-10-24)
 
-Criei `make_pie_menu_model` para transformar rótulos de ações elegíveis em uma
-árvore de opções e submenus, usando `/` como separador, como faz o Simitone.
-Cada opção conserva a linha TTAB original; itens repetidos mantêm sua ordem, e
-rótulos ausentes ou vazios aparecem como `???`. `pie_menu_data_model` passou.
+O modelo `PieMenuItem` agora também calcula posições radiais e alimenta a tela
+do lote. Ao clicar em um objeto, o menu mostra suas ações elegíveis ao redor do
+ponto selecionado; categorias abrem submenus, o botão central volta um nível,
+Tab troca a opção, Space/Enter escolhe e Backspace volta. Cada ação mantém a
+linha TTAB original e o idioma do rótulo. `pie_menu_data_model` testa a árvore,
+opções repetidas, nomes ausentes e limites das posições.
 
-Esta etapa não desenha o menu nem mudou o clique da janela: a lista atual ainda
-é ferramenta de diagnóstico. Próximo: ligar a árvore ao desenho e à seleção,
-começando por uma cadeira e pela geladeira da House07.
+O fluxo `--window-input` real da House07 selecionou a cadeira128, executou
+`Sit`, terminou `returned_true` e deixou o avatar105 anexado ao slot0 da cadeira,
+sem falha do host. O processo termina no limite de 512 ticks enquanto Main
+espera outra ação. O teste usa eventos de janela sem abrir display; confirma
+clique e ação, mas ainda não é comparação visual em X11 nem prova de paridade.
+O teste separado Have A Snack headless também passou seus seis checks na
+geladeira112. CTest focal passou 11/11 e `git diff --check` passou.
+
+Este é um primeiro menu de gameplay, ainda simples e sem a arte final do jogo.
+HUD, molduras e outras partes da tela do lote continuam de diagnóstico. Próximo:
+comparar a tela real com Simitone e o jogo original e tratar objetos com ações
+categorizadas, idioma e opções que excedem o espaço visível.
 
 ## Atualização: Have A Snack conclui em House07 sem janela (2026-10-24)
 

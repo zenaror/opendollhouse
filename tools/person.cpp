@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include "odh/pie_menu.hpp"
 #include "odh/entity_scheduler.hpp"
 #include "odh/entity_thread_controllers.hpp"
 #include "odh/sleep.hpp"
@@ -422,7 +423,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::vector<odh_host::WindowInput> headless_window_inputs;
     std::size_t headless_window_input_index=0;
     std::optional<std::array<std::int32_t,2>> headless_window_object_click_pixel;
-    bool headless_window_object_click_queued=false,headless_window_menu_click_queued=false;
+    bool headless_window_object_click_queued=false;
+    std::size_t headless_window_menu_click_count=0;
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     struct HeadlessResidentGoHere {
         std::int16_t actor;std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;bool applied=false;
@@ -2932,6 +2934,8 @@ struct PlacementCandidateProbe {
     };
     std::optional<SavedObjectInteractions> render_interactions;
     std::optional<std::size_t> render_selected_interaction_row;
+    std::vector<std::size_t> render_pie_menu_path;
+    std::size_t render_pie_menu_selected=0;
     std::vector<SavedTestFunctionResult> render_test_results;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
     bool render_interaction_requested=false,render_interaction_enqueued=false,saved_owner_ids_exhausted=false;
@@ -3036,6 +3040,7 @@ struct PlacementCandidateProbe {
         render_selection=std::move(selection);
         render_menu_anchor.reset();
         render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
+        render_pie_menu_path.clear();render_pie_menu_selected=0;
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
         if(!candidate)return;
@@ -3292,73 +3297,103 @@ struct PlacementCandidateProbe {
         }
         return title;
     };
-    struct InteractionMenuLayout {
-        std::int32_t x=0,y=0,width=0;
-        std::size_t first=0,rows=0;
+    const auto current_interaction_pie_menu=[&]{
+        std::vector<odh::PieMenuChoice> choices;
+        if(!render_selection||!render_interactions||!render_interactions->table)
+            return std::vector<odh::PieMenuItem>{};
+        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+            world.find(active_household_actor));
+        choices.reserve(eligible.size());
+        for(const auto row:eligible){
+            std::optional<std::string> label;
+            if(row<render_interactions->row_labels.size())label=render_interactions->row_labels[row];
+            const auto language=row<render_interactions->row_label_languages.size()
+                ?render_interactions->row_label_languages[row]:game_language;
+            choices.push_back({row,std::move(label),language});
+        }
+        return odh::make_pie_menu_model(choices);
     };
-    const auto interaction_menu_layout=[](std::uint32_t frame_width,std::uint32_t frame_height,
-        std::size_t eligible_count,std::size_t selected_position,std::array<std::int32_t,2> anchor)
-        ->std::optional<InteractionMenuLayout>{
-        if(frame_width<96||frame_height<40||eligible_count==0)return std::nullopt;
-        constexpr std::size_t row_height=22,max_visible_rows=8;
-        const auto anchor_x=std::clamp(anchor[0],0,static_cast<std::int32_t>(frame_width)-1);
-        const auto anchor_y=std::clamp(anchor[1],0,static_cast<std::int32_t>(frame_height)-1);
-        const auto room_right=static_cast<std::int32_t>(frame_width)-anchor_x-16;
-        const auto room_left=anchor_x-16;
-        const auto room_x=std::max(room_right,room_left);
-        const auto width=std::min<std::int32_t>(240,room_x);
-        if(width<80)return std::nullopt;
-        const bool place_right=room_right>=room_left;
-        const auto x=std::clamp(place_right?anchor_x+12:anchor_x-width-12,4,
-            static_cast<std::int32_t>(frame_width)-width-4);
-        const auto room_below=static_cast<std::int32_t>(frame_height)-anchor_y-16;
-        const auto room_above=anchor_y-16;
-        const bool place_below=room_below>=room_above;
-        const auto room_y=std::max(room_below,room_above);
-        const auto max_rows=std::min<std::size_t>(max_visible_rows,
-            room_y>0?static_cast<std::size_t>(room_y)/row_height:0);
-        if(max_rows==0)return std::nullopt;
-        const auto rows=std::min(eligible_count,max_rows);
-        const auto first=selected_position>=rows?selected_position-rows+1:0;
-        const auto height=static_cast<std::int32_t>(rows*row_height);
-        const auto y=std::clamp(place_below?anchor_y+12:anchor_y-12-height,4,
-            static_cast<std::int32_t>(frame_height)-height-4);
-        return InteractionMenuLayout{x,y,width,first,rows};
+    const auto active_pie_menu_items=[&](const std::vector<odh::PieMenuItem>& root)
+        ->const std::vector<odh::PieMenuItem>*{
+        auto* current=&root;
+        std::size_t valid=0;
+        for(;valid<render_pie_menu_path.size();++valid){
+            const auto index=render_pie_menu_path[valid];
+            if(index>=current->size()||(*current)[index].children.empty())break;
+            current=&(*current)[index].children;
+        }
+        if(valid<render_pie_menu_path.size()){
+            render_pie_menu_path.resize(valid);render_pie_menu_selected=0;
+        }
+        if(render_pie_menu_selected>=current->size())render_pie_menu_selected=0;
+        return current;
+    };
+    const auto pie_menu_item_label=[](const odh::PieMenuItem& item,bool indicate_category){
+        auto label=item.label;
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+        label=odh_host::legacy_text_to_utf8(label,item.label_language,2048);
+#endif
+        if(indicate_category)label+="...";
+        return label;
+    };
+    const auto activate_pie_menu_selection=[&]{
+        auto model=current_interaction_pie_menu();
+        const auto* items=active_pie_menu_items(model);
+        if(!items||items->empty())return std::string("no eligible actions");
+        const auto item=(*items)[render_pie_menu_selected];
+        if(item.interaction_row){
+            render_selected_interaction_row=*item.interaction_row;
+            render_interaction_requested=true;
+            request_selected_interaction();
+            return std::string("interaction ")+render_interaction_status;
+        }
+        if(!item.children.empty()){
+            render_pie_menu_path.push_back(render_pie_menu_selected);
+            render_pie_menu_selected=0;
+            return std::string("opened ")+item.label;
+        }
+        return std::string("empty menu item");
     };
     const auto draw_interaction_menu=[&](odh::RasterFrame& image){
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
         if(!render_selection||!render_interactions||!render_interactions->table||render_interaction_enqueued)return;
-        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            world.find(active_household_actor));
-        if(eligible.empty())return;
-        auto selected=render_selected_interaction_row.value_or(eligible.front());
-        auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
-        if(selected_at==eligible.end()){selected_at=eligible.begin();selected=*selected_at;}
-        const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
-        const auto layout=interaction_menu_layout(image.width,image.height,eligible.size(),selected_position,
-            render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8}));
+        const auto model=current_interaction_pie_menu();
+        const auto* items=active_pie_menu_items(model);
+        if(!items||items->empty())return;
+        const auto anchor=render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8});
+        const auto layout=odh::layout_pie_menu(image.width,image.height,anchor,items->size(),
+            !render_pie_menu_path.empty());
         if(!layout)return;
-        for(std::size_t row_position=0;row_position<layout->rows;++row_position){
-            const auto position=layout->first+row_position;
-            const auto row=eligible[position];
-            const auto raw=row<render_interactions->row_labels.size()&&render_interactions->row_labels[row]
-                ?*render_interactions->row_labels[row]:std::string("Action");
-            const auto language=row<render_interactions->row_label_languages.size()
-                ?render_interactions->row_label_languages[row]:game_language;
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-            const auto label=odh_host::legacy_text_to_utf8(raw,language,2048);
-#else
-            const auto& label=raw;
-#endif
+        for(std::size_t index=0;index<items->size();++index){
+            const auto& item=(*items)[index];
+            const bool category=!item.interaction_row&&!item.children.empty();
+            const auto label=pie_menu_item_label(item,category);
+            const auto& rect=layout->items[index];
             odh_host::TextOverlayStyle style;
-            style.x=layout->x;style.y=layout->y+static_cast<std::int32_t>(row_position)*22;
-            style.width=layout->width;style.height=21;style.font_size_px=13;style.padding=4;
+            style.x=rect.x;style.y=rect.y;style.width=rect.width;style.height=rect.height;
+            style.font_size_px=13;style.padding=4;
             style.foreground={250,248,230,255};
-            style.background=position==selected_position
+            style.background=index==render_pie_menu_selected
                 ?std::array<std::uint8_t,4>{42,91,121,238}
-                :std::array<std::uint8_t,4>{24,27,31,218};
+                :category?std::array<std::uint8_t,4>{44,57,50,236}
+                         :std::array<std::uint8_t,4>{24,27,31,218};
             (void)odh_host::draw_text_overlay(image,
-                (position==selected_position?"> ":"  ")+label,language,style);
+                (index==render_pie_menu_selected?"> ":"  ")+label,item.label_language,style);
+        }
+        if(layout->back_button){
+            const odh::PieMenuItem* parent=nullptr;
+            const std::vector<odh::PieMenuItem>* siblings=&model;
+            for(const auto index:render_pie_menu_path){
+                if(index>=siblings->size())break;
+                parent=&(*siblings)[index];siblings=&parent->children;
+            }
+            const auto label=parent?pie_menu_item_label(*parent,false):std::string("Back");
+            odh_host::TextOverlayStyle style;
+            style.x=layout->back_button->x;style.y=layout->back_button->y;
+            style.width=layout->back_button->width;style.height=layout->back_button->height;
+            style.font_size_px=12;style.padding=4;style.foreground={250,248,230,255};
+            style.background={93,68,39,242};
+            (void)odh_host::draw_text_overlay(image,"< "+label, parent?parent->label_language:game_language,style);
         }
 #else
         (void)image;
@@ -3375,25 +3410,30 @@ struct PlacementCandidateProbe {
             return false;
         auto* action_queue=actor_queue_for(active_household_actor);
         if(!action_queue||action_queue->size()!=0||action_queue->active())return false;
-        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            world.find(active_household_actor));
-        if(eligible.empty())return false;
-        auto selected=render_selected_interaction_row.value_or(eligible.front());
-        auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
-        if(selected_at==eligible.end())selected_at=eligible.begin();
-        const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
-        const auto layout=interaction_menu_layout(render_camera.width,render_camera.height,eligible.size(),
-            selected_position,render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8}));
-        if(!layout||x<layout->x||x>=layout->x+layout->width||y<layout->y||
-           y>=layout->y+static_cast<std::int32_t>(layout->rows*22))return false;
-        const auto offset=y-layout->y;
-        const auto local_row=static_cast<std::size_t>(offset/22);
-        if(offset%22<21&&local_row<layout->rows){
-            render_selected_interaction_row=eligible[layout->first+local_row];
-            render_interaction_requested=true;
-            request_selected_interaction();
+        const auto model=current_interaction_pie_menu();
+        const auto* items=active_pie_menu_items(model);
+        if(!items||items->empty())return false;
+        const auto layout=odh::layout_pie_menu(render_camera.width,render_camera.height,
+            render_menu_anchor.value_or(std::array<std::int32_t,2>{8,8}),items->size(),
+            !render_pie_menu_path.empty());
+        if(!layout)return false;
+        if(layout->back_button&&layout->back_button->contains(x,y)){
+            render_pie_menu_path.pop_back();render_pie_menu_selected=0;
+            return true;
         }
-        return true;
+        for(std::size_t index=0;index<layout->items.size();++index){
+            if(!layout->items[index].contains(x,y))continue;
+            render_pie_menu_selected=index;
+            const auto& item=(*items)[index];
+            if(item.interaction_row){
+                render_selected_interaction_row=*item.interaction_row;
+                render_interaction_requested=true;request_selected_interaction();
+            }else if(!item.children.empty()){
+                render_pie_menu_path.push_back(index);render_pie_menu_selected=0;
+            }
+            return true;
+        }
+        return false;
     };
     std::array<float,3> render_position{0,0,0};std::uint8_t render_direction=0;
     std::optional<std::uint16_t> presented_saved_id;std::optional<std::uint32_t> presented_saved_guid;
@@ -4968,7 +5008,7 @@ struct PlacementCandidateProbe {
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
         if(!headless_window_interaction||headless_window_input_index<headless_window_inputs.size()||
-           !render_lot||!render_lot_evidence)return;
+           !render_lot||!render_lot_evidence||render_interaction_enqueued)return;
         if(!headless_window_object_click_queued){
             const auto& picks=render_lot_evidence->object_pick_ids;
             if(!render_lot_evidence->pick_width||picks.empty())
@@ -4984,17 +5024,21 @@ struct PlacementCandidateProbe {
             headless_window_object_click_queued=true;
             return;
         }
-        if(headless_window_menu_click_queued||!render_selection||!render_interactions)return;
-        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            world.find(active_household_actor));
-        if(eligible.empty())throw odh::FormatError("headless window interaction target has no eligible visible action");
-        const auto layout=interaction_menu_layout(render_camera.width,render_camera.height,eligible.size(),0,
-            render_menu_anchor.value_or(headless_window_object_click_pixel.value_or(std::array<std::int32_t,2>{8,8})));
-        if(!layout)throw odh::FormatError("headless window interaction menu has no visible row");
+        if(!render_selection||!render_interactions)return;
+        if(headless_window_menu_click_count>=32)
+            throw odh::FormatError("headless pie-menu interaction exceeded 32 selections");
+        const auto model=current_interaction_pie_menu();
+        const auto* items=active_pie_menu_items(model);
+        if(!items||items->empty())throw odh::FormatError("headless pie menu has no eligible visible action");
+        const auto layout=odh::layout_pie_menu(render_camera.width,render_camera.height,
+            render_menu_anchor.value_or(headless_window_object_click_pixel.value_or(std::array<std::int32_t,2>{8,8})),
+            items->size(),!render_pie_menu_path.empty());
+        if(!layout)throw odh::FormatError("headless pie menu has no visible choice");
         odh_host::WindowInput click;
-        click.primary_click=std::array<std::int32_t,2>{layout->x+4,layout->y+10};
+        const auto& item=layout->items[render_pie_menu_selected];
+        click.primary_click=std::array<std::int32_t,2>{item.x+item.width/2,item.y+item.height/2};
         headless_window_inputs.push_back(click);
-        headless_window_menu_click_queued=true;
+        ++headless_window_menu_click_count;
     };
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
@@ -5220,7 +5264,9 @@ struct PlacementCandidateProbe {
 #endif
             }
             if(input.interrupt){
-                if(auto* member=selected_household_member();member&&member->go_here&&
+                if(!render_pie_menu_path.empty()){
+                    render_pie_menu_path.pop_back();render_pie_menu_selected=0;
+                }else if(auto* member=selected_household_member();member&&member->go_here&&
                    member->go_here->status()=="queued"){
                     member->go_here_cancel_pending=true;
                     if(render_window_host)render_window_host->set_title("OpenDollhouse: cancellation requested for resident "+
@@ -5309,10 +5355,17 @@ struct PlacementCandidateProbe {
                     }
                     render_test_results=evaluate_interaction_tests(*candidate,active_household_actor,
                         render_selection->id,tests,linked_bank?&linked_bank->routines:nullptr);
-                    const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-                        world.find(active_household_actor),linked_bank?&linked_bank->routines:nullptr);
-                    render_selected_interaction_row=cycle_eligible_saved_interaction_row(eligible,
-                        render_selected_interaction_row,input.interaction_selection_delta);
+                    const auto model=current_interaction_pie_menu();
+                    const auto* items=active_pie_menu_items(model);
+                    if(items&&!items->empty()){
+                        const auto count=static_cast<std::int64_t>(items->size());
+                        auto next=(static_cast<std::int64_t>(render_pie_menu_selected)+
+                            input.interaction_selection_delta)%count;
+                        if(next<0)next+=count;
+                        render_pie_menu_selected=static_cast<std::size_t>(next);
+                        const auto& item=(*items)[render_pie_menu_selected];
+                        if(item.interaction_row)render_selected_interaction_row=*item.interaction_row;
+                    }
                 }else render_test_results.clear();
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
@@ -5339,9 +5392,7 @@ struct PlacementCandidateProbe {
                         if(!go_here_diagnostic.empty())title+=" | "+go_here_diagnostic;
                     }
                 }else{
-                    render_interaction_requested=true;
-                    request_selected_interaction();
-                    title+="interaction "+render_interaction_status;
+                    title+=activate_pie_menu_selection();
                     if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                     if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 }
