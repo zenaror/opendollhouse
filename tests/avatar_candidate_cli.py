@@ -47,6 +47,11 @@ def routine(rows):
     return struct.pack("<HHBBHHH", 0x8002, len(rows), 0, 4, 0, 0, 0) + b"".join(
         struct.pack("<HBB", op, yes, no) + operands for op, yes, no, operands in rows)
 
+def objf(actions):
+    entries = list(actions) + [0] * (33 - len(actions))
+    return (struct.pack("<II4sI", 0, 1, b"fJBO", len(entries)) +
+            b"".join(struct.pack("<HH", 0, action) for action in entries))
+
 def ep5_bhav(guid):
     return routine([
         (32, 1, 255, struct.pack("<I H B B", guid, 0, 10, 0)),
@@ -110,7 +115,7 @@ def make_lot(path, later=False, blocker_attribute16=0, early_stop=False):
                ("WALm", 1, material_map(1, "paint.wll", 43))]
     path.write_bytes(iff(chunks))
 
-def write_resources(root, later, early_stop):
+def write_resources(root, later, early_stop, incomplete_blocker=False):
     actor = root / "actor.iff"
     actor_chunks = [("OBJD", 128, objd(ACTOR_GUID, 2, 4108)),
                     ("GLOB", 128, b"\x0dFixturePerson\xa3"),
@@ -124,9 +129,18 @@ def write_resources(root, later, early_stop):
     far(global_file, [("Global.iff", iff([("STR#", 150, strings(["", "walk"])), ("STR#", 158, strings(["", "swim"]))]))])
     definitions = root / "definitions.far"
     block_ep5 = 4097 if later else 0
-    first = objd(BLOCKER_GUID, 4, 0, 273 if early_stop else 0)
+    first = bytearray(objd(BLOCKER_GUID, 4, 0, 273 if early_stop else 0))
+    blocker_chunks = [("OBJD", 128, first)]
+    if incomplete_blocker:
+        # Keep EntryPoints in OBJf so the saved object remains loadable while
+        # its OBJD stops after LevelOffset, before collision metadata.
+        struct.pack_into("<H", first, 44, 1)  # UsesFnTable
+        first = bytes(first[:114])
+        blocker_chunks = [("OBJD", 128, first), ("OBJf", 128, objf([0] * 33))]
+    else:
+        first = bytes(first)
     second = objd(LATER_GUID, 4, block_ep5, 0)
-    far(definitions, [("blocker.iff", iff([("OBJD", 128, first)])),
+    far(definitions, [("blocker.iff", iff(blocker_chunks)),
                       ("later.iff", iff([("OBJD", 129, second)])),
                       ("actor.iff", iff([("OBJD", 128, objd(ACTOR_GUID, 2, 4108)), ("BHAV", 4108, ep5_bhav(BLOCKER_GUID))]))])
     floors = root / "floors.iff"
@@ -138,10 +152,12 @@ def write_resources(root, later, early_stop):
     tile.write_bytes(iff([("PALT", 7, palette), ("SPR2", 513, sprite)]))
     return actor, semiglobal, global_file, definitions, floors, tile
 
-def run_case(root, blocker_attribute16, later=False, early_stop=False):
+def run_case(root, blocker_attribute16, later=False, early_stop=False,
+             incomplete_blocker=False):
     lot = root / "House07.iff"
     make_lot(lot, later=later, blocker_attribute16=blocker_attribute16, early_stop=early_stop)
-    actor, semi, glob, definitions, floors, tile = write_resources(root, later, early_stop)
+    actor, semi, glob, definitions, floors, tile = write_resources(
+        root, later, early_stop, incomplete_blocker)
     cmd = [BINARY, "--avatar-file", str(actor), "128", "--semiglobal", str(semi), "FixturePerson.iff",
            "--global", str(glob), "Global.iff", "--lot", str(lot), "7", "--headless-main",
            "--render-saved-avatar", "1", "--render-floors", str(floors),
@@ -181,7 +197,17 @@ def main():
         assert {item["owner_id"] for item in stop_probe["intersections"]} == {2, 3}, stop_probe
         assert (audit["status"] == "blocked" and audit["final_blocker_id"] == 2 and
                 audit["early_stop_known"] is True and audit["pair_classifications"] == 1), audit
-    print("synthetic saved-lot CLI: EP5 true/false and EP26 early stop passed")
+        incomplete = run_case(root, blocker_attribute16=1, incomplete_blocker=True)
+        incomplete_probe = incomplete["placement_candidate_probe"]
+        assert incomplete_probe["room_info_status"] == "unsupported", incomplete_probe
+        assert incomplete_probe["room_info_reason"] == "inventory_incomplete", incomplete_probe
+        assert incomplete_probe["intersections"] == [], incomplete_probe
+        incomplete_audit = incomplete_probe["entity_overlap_policy_audit"]
+        assert (incomplete_audit["status"] == "unsupported" and
+                incomplete_audit["reason"] == "room_info_incomplete" and
+                incomplete_audit["pair_classifications"] == 0), incomplete_audit
+        assert incomplete_probe["architecture_walkability_audit"]["status"] == "unsupported", incomplete_probe
+    print("synthetic saved-lot CLI: EP5 true/false, EP26 early stop, and incomplete collision inventory passed")
 
 
 if __name__ == "__main__":

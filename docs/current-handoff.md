@@ -1633,3 +1633,14 @@ janela local: build Debug completo e CTest 160/160 sem falhas;
 acessível. `person_cli.py` passou. Reexecuções dos probes House07 mantêm o
 resultado: Portal25 falha antes de mover com entrada de rota inválida, enquanto
 Portal26 retorna false após 16 movimentos locais; nenhum dos dois cruza salas.
+
+## Inventário de colisão incompleto na restauração — 2026-10-23
+
+O teste integrado `avatar_candidate_cli.py` agora inclui um objeto cuja OBJD
+mantém o prefixo e `LevelOffset`, mas termina antes dos campos de colisão.
+EntryPoints permanecem disponíveis em OBJf, permitindo restaurar o lote e
+chegar ao probe. O ODH marca RoomInfo como `unsupported/inventory_incomplete`,
+não inventa interseções e recusa a auditoria de posicionamento; a grade de
+movimento também permanece `unsupported`. Isso prova o bloqueio seguro para
+esse caso sintético, não o comportamento do executável original. O CTest focal
+`avatar_candidate_cli` passou.
