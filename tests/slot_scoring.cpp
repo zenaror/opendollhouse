@@ -167,6 +167,30 @@ void door_range_generation() {
     catch(const std::invalid_argument&){rejected=true;}
     require(rejected&&random.seed()==before,"unsupported facing profile is rejected without consuming route RNG");
 }
+void bed_north_circle_generation() {
+    const odh::EntityPosition caller{0,64,1,0},target{64,64,1,0};
+    constexpr std::array<odh::RoutePoint,8> headings={{{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}}};
+    for(const auto flags:{0x01U,0x10U}) {
+        const auto bed=table(flags);
+        const auto direction=static_cast<std::uint8_t>(flags==0x01U?0:2);
+        const auto candidates=odh::enumerate_reference_slot_circle_candidates(bed,0,{64,64},direction);
+        const auto allowed=std::count_if(candidates.begin(),candidates.end(),
+            [](const auto& candidate){return candidate.entry_flags!=0;});
+        require(allowed>0,"Beds.iff radius-16 SLOT exposes its authored sector");
+        odh::RandomState random(7);
+        auto oriented_target=target;oriented_target.direction=direction;
+        const auto goals=odh::rank_reference_range_slot(bed,0,caller,oriented_target,random);
+        require(goals.size()==allowed,"bed circle ranks all sector destinations");
+        for(const auto& goal:goals) {
+            const odh::RoutePoint delta{(target.x>goal.position.x)-(target.x<goal.position.x),
+                (target.y>goal.position.y)-(target.y<goal.position.y)};
+            const auto expected=std::find(headings.begin(),headings.end(),delta);
+            require(goal.entry_flags==flags&&expected!=headings.end()&&
+                    goal.facing==static_cast<std::uint8_t>(expected-headings.begin()),
+                "bed destination stays in its authored sector and faces the bed");
+        }
+    }
+}
 void in_front_relative_generation() {
     odh::SlotRecord relative{};
     relative.type=3;relative.flags=0x01;relative.offset_bits={0,0,0};
@@ -387,6 +411,6 @@ void invalid_inputs() {
 }
 }
 int main() {
-    try { formulas(); branches(); door_range(); door_range_generation(); in_front_relative_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
+    try { formulas(); branches(); door_range(); door_range_generation(); bed_north_circle_generation(); in_front_relative_generation(); house07_global_range(); child_shy_sitting_fallback(); invalid_inputs(); std::cout<<"slot scoring: "<<checks<<" checks passed\n"; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

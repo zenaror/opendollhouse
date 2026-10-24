@@ -2040,7 +2040,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
         if(i.opcode==8)return random_handler(f,i,t,d);
-        if(i.opcode==1&&lot_handler)return lot_handler(f,i,t,d);
+        if(i.opcode==1&&i.operands[0]==15){
+            // Simitone's TS1 GenericCall treats MyRoutingFootprintEqualsTemp0
+            // as a successful no-op; its source still marks the state change
+            // as unresolved. Preserve that reference behavior without
+            // pretending to update the route footprint.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
+        if(i.opcode==1&&i.operands[0]==28&&lot_handler)return lot_handler(f,i,t,d);
         if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8||
                            (i.operands[4]&127)==9||(i.operands[4]&127)==12))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
@@ -2271,6 +2278,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("simulation clock differs from restored host tick");
     if(simulation_clock)for(const auto& member:household_runtime)simulation_motives.try_emplace(member->id);
     const auto resumed_tick=ticks;
+    std::optional<std::uint64_t> scheduled_interaction_tick;
+    if(headless_interaction){
+        if(restoring_session&&headless_interaction->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("resumed interaction tick overflows the session clock");
+        scheduled_interaction_tick=headless_interaction->tick+(restoring_session?resumed_tick:0);
+    }
     std::optional<std::uint64_t> scheduled_stand_tick;
     if(headless_stand){
         if(session_restore&&headless_stand->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
@@ -2585,7 +2598,8 @@ struct PlacementCandidateProbe {
         std::vector<std::vector<std::int16_t>> groups;
         if(restored_world){groups.reserve(restored_world->multitile_groups.size());
             for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
-        return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},linked_semiglobal,groups);
+        return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
+            linked_semiglobal,groups,relationships);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
@@ -4683,7 +4697,7 @@ struct PlacementCandidateProbe {
         if(simulation_clock){
             if(!simulation_clock->tick(true))throw odh::FormatError("simulation clock exhausted");
         }
-        if(headless_interaction&&!headless_interaction_applied&&ticks==headless_interaction->tick){
+        if(headless_interaction&&!headless_interaction_applied&&ticks==scheduled_interaction_tick){
             headless_interaction_applied=true;
             render_interaction_requested=true;
             bool scheduled_actor_valid=true;
@@ -5723,7 +5737,7 @@ struct PlacementCandidateProbe {
             (household_actor&&household_actor->playback?household_actor->playback->progress():std::nullopt);
         std::cout<<"{\"trigger\":"<<json_bytes(headless_interaction?(headless_stand?"headless_sit_schedule":"headless_schedule"):
             headless_window_interaction?"headless_window_input":"window_input")
-            <<",\"scheduled_tick\":"<<(headless_interaction?std::to_string(headless_interaction->tick):"null")
+            <<",\"scheduled_tick\":"<<(scheduled_interaction_tick?std::to_string(*scheduled_interaction_tick):"null")
             <<",\"scheduled_target\":"<<(headless_interaction?std::to_string(headless_interaction->id):"null")
             <<",\"enqueued\":"<<(render_interaction_enqueued?"true":"false")
             <<",\"status\":"<<json_bytes(render_interaction_status)

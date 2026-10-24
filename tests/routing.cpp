@@ -1606,7 +1606,7 @@ int main() {
                  actor->radian_direction==actor_before.radian_direction&&
                  actor->person_data[37]==actor_before.person_data[37]&&
                  actor->static_footprint==actor_before.static_footprint&&
-                 f.vm.diagnostic()=="pre-ranked SLOT goal provider returned no candidates",
+                 f.vm.diagnostic().find("pre-ranked SLOT goal provider returned no candidates")==0,
                  "empty ranked provider fails clearly without changing the actor state");}
         {Fixture f([](const auto&,auto,const auto&,const auto&) {
              return std::vector<odh::PreRankedSlotGoal>{{{44,12},2,7},{{12,12},64,2}};

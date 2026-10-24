@@ -17,6 +17,14 @@ bool child_shy_slot_record(const SlotRecord* slot) {
         slot->gradient_bits==0x3E400000 && slot->height==0 && slot->facing==-2 &&
         slot->resolution==16;
 }
+bool bed_north_circle_slot_record(const SlotRecord* slot) {
+    return slot&&slot->type==3&&(slot->flags==0x01||slot->flags==0x10)&&
+        slot->offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
+        slot->proximity==std::optional<std::array<std::int32_t,3>>{{16,16,16}}&&
+        slot->standing==1&&slot->sitting==0&&slot->ground==0&&slot->snap_target_slot==-1&&
+        slot->max_size==0&&slot->unknown_i10==0&&slot->gradient_bits==0x3E400000&&
+        slot->height==0&&slot->facing==-2&&slot->resolution==16;
+}
 bool in_front_relative_slot_record(const SlotRecord* slot) {
     // VMGotoRelativePosition builds this transient SLOT for InFrontOf/Facing.
     // SLOTItem defaults MaxSize=100, Gradient=0, Standing=1, Sitting=0,
@@ -91,7 +99,8 @@ ReferenceSlotScores score_reference_slot_candidates(
         (*slot->proximity)[1] <= 4096;
     const bool circle=common &&
         slot->facing == -2 && slot->resolution == 16 &&
-        (slot->flags & ~(random_scoring | equal_proximity)) == 0x55 &&
+        ((slot->flags & ~(random_scoring | equal_proximity)) == 0x55 ||
+         bed_north_circle_slot_record(slot)) &&
         (*slot->proximity)[0] == (*slot->proximity)[1] &&
         (*slot->proximity)[0] == (*slot->proximity)[2];
     const auto door_flags=slot?(slot->flags & ~(random_scoring | equal_proximity)):0U;
@@ -194,6 +203,28 @@ std::vector<PreRankedSlotGoal> rank_reference_range_slot(
        slot->resolution==8&&slot->standing==1&&slot->sitting==0&&slot->ground==0&&
        slot->snap_target_slot==-1&&slot->max_size==0&&slot->unknown_i10==0&&
        slot->gradient_bits==0&&slot->height==0;
+    const bool bed_north_circle=table.version==10&&bed_north_circle_slot_record(slot);
+    if(bed_north_circle){
+        const RoutePoint center{target.x,target.y};
+        const auto candidates=enumerate_reference_slot_circle_candidates(
+            table,type3_index,center,target.direction);
+        constexpr std::array<RoutePoint,8> headings={{{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}}};
+        std::vector<ReferenceSlotScoreInput> inputs;inputs.reserve(candidates.size());
+        for(const auto& candidate:candidates){
+            if(candidate.entry_flags==0)continue;
+            if(candidate_in_room&&!candidate_in_room(candidate.position))continue;
+            const auto dx=(target.x>candidate.position.x)-(target.x<candidate.position.x);
+            const auto dy=(target.y>candidate.position.y)-(target.y<candidate.position.y);
+            std::uint8_t facing=0;
+            for(std::uint8_t n=0;n<headings.size();++n)
+                if(headings[n]==RoutePoint{dx,dy}){facing=n;break;}
+            const bool valid=!candidate_position_valid||candidate_position_valid(candidate.position);
+            inputs.push_back({{candidate.position,candidate.entry_flags,facing},16,
+                valid?ReferenceSlotVerification::eligible:ReferenceSlotVerification::rejected_after_score});
+        }
+        return score_reference_slot_candidates(table,type3_index,center,{caller.x,caller.y},inputs,random)
+            .ranked_goals;
+    }
     if(!door_range&&!house07_global_range&&!shy_child_fallback&&!relative_front)
         throw std::invalid_argument("ranged SLOT generation requires a source-verified profile");
     const RoutePoint center{target.x,target.y};

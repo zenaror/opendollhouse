@@ -3,6 +3,7 @@
 #include "odh/definition_index.hpp"
 #include "odh/entity_next.hpp"
 #include "odh/object_type.hpp"
+#include "odh/relationship.hpp"
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
@@ -189,8 +190,9 @@ struct SavedTestFunctionResult {
 };
 
 // Current manual host action profile supports ordinary private actions, the
-// TS1 AllowVisitors flag, and a matching successful ODH TestFunction. All
-// other TTAB permission bits remain unsupported.
+// TS1 AllowVisitors permission, AutoFirstSelect's menu-default hint, and a
+// matching successful ODH TestFunction. Other TTAB permission bits remain
+// unsupported.
 inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
     const odh::Entity* actor,const odh::RoutineSet* linked_semiglobal=nullptr) {
@@ -200,6 +202,7 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
     // PersonType, GreetStatus, and Gender (pet bits). Missing state is unknown.
     if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=65)return result;
     constexpr std::uint32_t allow_visitors=0x00000001U;
+    constexpr std::uint32_t auto_first_select=0x00000100U;
     constexpr std::int16_t person_type=32,greet_status=34,gender=65;
     const auto is_visitor=actor->person_data[person_type]==1&&actor->person_data[greet_status]<2;
     const auto gender_flags=static_cast<std::uint16_t>(actor->person_data[gender]);
@@ -212,7 +215,8 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
         const bool action_owner_supported=action_key.scope==odh::RoutineScope::private_object||
             (action_key.scope==odh::RoutineScope::semiglobal&&linked_semiglobal&&
              linked_semiglobal->count(action_key));
-        if((row.flags&~allow_visitors)!=0||(is_visitor&&(row.flags&allow_visitors)==0)||
+        if((row.flags&~(allow_visitors|auto_first_select))!=0||
+           (is_visitor&&(row.flags&allow_visitors)==0)||
            tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
            !action_owner_supported)continue;
         result.push_back(n);
@@ -249,7 +253,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     std::uint64_t total_budget=4096,std::uint64_t per_test_budget=128,
     const std::vector<std::int16_t>& arguments={0},
     const odh::RoutineSet* linked_semiglobal=nullptr,
-    const std::vector<std::vector<std::int16_t>>& multitile_groups={}) {
+    const std::vector<std::vector<std::int16_t>>& multitile_groups={},
+    const odh::RelationshipState* relationship_state=nullptr) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -278,11 +283,30 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         return value;
     };
     odh::RoutineOwners owners;owners.emplace(static_cast<odh::CodeOwner>(target),std::move(routines));
+    std::optional<odh::RelationshipState> relationship_probe;
+    if(relationship_state){
+        const auto snapshot=relationship_state->snapshot();
+        relationship_probe.emplace(snapshot.limits);
+        if(!relationship_probe->restore_snapshot(snapshot))
+            throw odh::FormatError("could not isolate relationship data for read-only TestFunction evaluation");
+    }
+    auto relationship=relationship_probe?relationship_probe->primitive(world,memory):odh::VmPrimitive{};
     auto entity_next=odh::entity_next_primitive(world,memory,{},multitile_groups);
     auto object_type=odh::object_type_primitive(world);
-    odh::VmPrimitive primitive=[entity_next=std::move(entity_next),object_type=std::move(object_type)](
+    odh::VmPrimitive primitive=[entity_next=std::move(entity_next),object_type=std::move(object_type),
+        relationship=std::move(relationship)](
         const odh::VmFrame& frame,const odh::Instruction& instruction,const auto& temps,const auto& dispatch) {
         if(instruction.opcode==32)return object_type(frame,instruction,temps,dispatch);
+        if(instruction.opcode==24||instruction.opcode==26){
+            const auto& operands=instruction.operands;
+            const auto set_mode=instruction.opcode==24?operands[0]:
+                static_cast<std::uint8_t>(((operands[2]>>2)&1)|((operands[2]>>4)&2));
+            if(set_mode!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "TestFunction relationship writes are not supported by the read-only probe"};
+            if(!relationship)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "relationship context unavailable to read-only TestFunction probe"};
+            return relationship(frame,instruction,temps,dispatch);
+        }
         return entity_next(frame,instruction,temps,dispatch);
     };
     odh::Vm probe({},std::move(memory),limits,std::move(primitive),std::move(owners));

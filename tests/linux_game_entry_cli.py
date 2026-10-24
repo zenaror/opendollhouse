@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     budget_without_ticks = subprocess.run(
         [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
          "--instruction-budget", "25000"], capture_output=True, text=True, env=env)
-    check(budget_without_ticks.returncode == 2 and "requires a new bounded whole-household run" in budget_without_ticks.stderr,
+    check(budget_without_ticks.returncode == 2 and "requires a bounded whole-household run with --headless-ticks" in budget_without_ticks.stderr,
           "larger diagnostic instruction budgets require explicit headless ticks")
     budget_single_resident = subprocess.run(
         [binary, "--game-root", str(root), "--mode", "1", "--house", "7",

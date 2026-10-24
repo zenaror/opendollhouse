@@ -14,11 +14,20 @@ std::uint8_t heading(RoutePoint from,RoutePoint to) {
     return 0;
 }
 PrimitiveOutcome unsupported(const std::string& why) {return {PrimitiveDisposition::unsupported,why};}
+bool supported_bed_north_circle_slot_profile(const SlotRecord& slot) {
+    return (slot.flags==0x01||slot.flags==0x10)&&slot.facing==-2&&
+        slot.proximity==std::optional<std::array<std::int32_t,3>>{{16,16,16}}&&
+        slot.offset_bits==std::array<std::uint32_t,3>{0,0,0}&&
+        slot.standing==1&&slot.sitting==0&&slot.ground==0&&slot.snap_target_slot==-1&&
+        slot.max_size==0&&slot.unknown_i10==0&&slot.gradient_bits==0x3E400000&&
+        slot.height==0&&slot.resolution==16;
+}
 bool supported_circle_slot_profile(const SlotRecord& slot) {
     const bool house07=slot.flags==0x55&&slot.facing==-2;
+    const bool bed_north=supported_bed_north_circle_slot_profile(slot);
     const bool door_north=slot.flags==0x0801&&slot.facing==-3;
     const bool door_south=slot.flags==0x0810&&slot.facing==-3;
-    return (house07||door_north||door_south) &&
+    return (house07||bed_north||door_north||door_south) &&
         slot.offset_bits==std::array<std::uint32_t,3>{0,0,0} &&
         slot.standing==1 && slot.sitting==0 && slot.ground==0 &&
         slot.snap_target_slot==-1 && slot.max_size==0 && slot.unknown_i10==0 &&
@@ -426,14 +435,26 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         supported_child_shy_sitting_fallback_profile(*selected_slots,slot_index,*slot);
     const bool ranged_slot=slot&&selected_slots->version==10&&
         (supported_ranged_slot_profile(*slot)||child_shy_sitting_fallback);
+    const bool bed_circle_slot=slot&&selected_slots->version==10&&
+        supported_bed_north_circle_slot_profile(*slot);
     const bool point_offset_slot=slot&&selected_slots->version==10&&
         supported_point_offset_slot_profile(*slot);
     if(!goto_relative||in_front_goto_relative) {
         if(!slot) return {PrimitiveDisposition::goto_false,{}};
         // Door range routing has separate explicit scoring and host validation.
         if(selected_slots->version!=10 ||
-           (!supported_circle_slot_profile(*slot)&&!ranged_slot&&!point_offset_slot))
-            return unsupported("SLOT runtime profile not implemented");
+           (!supported_circle_slot_profile(*slot)&&!ranged_slot&&!point_offset_slot)) {
+            const auto proximity=slot->proximity?
+                std::to_string((*slot->proximity)[0])+","+
+                std::to_string((*slot->proximity)[1])+","+
+                std::to_string((*slot->proximity)[2]):"none";
+            return unsupported("SLOT runtime profile not implemented (version="+
+                std::to_string(selected_slots->version)+", index="+std::to_string(slot_index)+
+                ", flags="+std::to_string(slot->flags)+", facing="+
+                (slot->facing?std::to_string(*slot->facing):"none")+", standing="+
+                std::to_string(slot->standing)+", sitting="+std::to_string(slot->sitting)+
+                ", proximity="+proximity+")");
+        }
         if(slot->sitting!=0&&!child_shy_sitting_fallback)
             return unsupported("sitting-weighted SLOT profile requires an exact supported fallback path");
         if(ranged_slot&&!ranged_slot_goals_)
@@ -442,6 +463,10 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return unsupported("child-shy sitting SLOT requires a nearby-chair preflight");
         if(ranged_slot&&!goal_validator_)
             return unsupported("ranged SLOT requires a host room/clearance validator");
+        if(bed_circle_slot&&!ranged_slot_goals_)
+            return unsupported("bed circle SLOT requires an explicit scoring provider");
+        if(bed_circle_slot&&!goal_validator_)
+            return unsupported("bed circle SLOT requires a host room/clearance validator");
         if(point_offset_slot&&!goal_validator_)
             return unsupported("point-offset SLOT requires a host room/clearance validator");
         if((slot->flags&0x0800U)!=0&&!goal_validator_)
@@ -552,14 +577,15 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             if(!grid_.walkable(start)) path={RouteStatus::no_path,{},0,0};
             else path={RouteStatus::found,{start},0,0};
         } else path=find_route(grid_,start,{goal},limits_);
-    } else if(!point_offset_slot&&((ranged_slot&&ranged_slot_goals_)||(!ranged_slot&&ranked_goals_))) {
+    } else if(!point_offset_slot&&(((ranged_slot||bed_circle_slot)&&ranged_slot_goals_)||
+                                   (!ranged_slot&&!bed_circle_slot&&ranked_goals_))) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
         const auto actor_position=*actor->position,target_position=*target->position;
         const auto actor_radian_direction=actor->radian_direction;
         const auto candidates=[&] {
             struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(executing_);
-            const auto& provider=ranged_slot?ranged_slot_goals_:ranked_goals_;
+            const auto& provider=(ranged_slot||bed_circle_slot)?ranged_slot_goals_:ranked_goals_;
             return provider(*selected_slots,slot_index,actor_position,target_position);
         }();
         actor=world_.find(actor_id);target=world_.find(target_id);
@@ -584,7 +610,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(!grid_.walkable(start))
             invalid_route_input_diagnostic="pre-ranked SLOT route start is outside the walkable grid";
         else if(candidates.empty())
-            invalid_route_input_diagnostic="pre-ranked SLOT goal provider returned no candidates";
+            invalid_route_input_diagnostic="pre-ranked SLOT goal provider returned no candidates (actor="+
+                std::to_string(actor_position.x)+","+std::to_string(actor_position.y)+
+                "; target="+std::to_string(target_position.x)+","+
+                std::to_string(target_position.y)+", direction="+
+                std::to_string(target_position.direction)+", SLOT flags="+
+                std::to_string(slot->flags)+")";
         else if(accepted.empty())
             invalid_route_input_diagnostic="host rejected every pre-ranked SLOT goal as outside the walkable grid";
         else for(const auto& goal:accepted)if(!grid_.contains(goal.position)||

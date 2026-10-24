@@ -93,6 +93,9 @@ int main(){try{
     const auto* actor=actor_world.find(1);
     check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
         "zero-flag private action accepts resident with matching eligible TestFunction");
+    auto auto_first_select=no_labels;auto_first_select.table->interactions[0].flags=0x100;
+    check(first_eligible_saved_interaction(auto_first_select,eligible_row,actor)==0,
+        "AutoFirstSelect remains available to manual input as the default menu row");
     auto semiglobal_action=no_labels;
     semiglobal_action.table->interactions[0].action=8213;
     odh::RoutineSet linked_actions{{odh::routine_key(8213),odh::Bhav{0x8002,{}, {},odh::Bhav::Metadata{0,4,4,0}}}};

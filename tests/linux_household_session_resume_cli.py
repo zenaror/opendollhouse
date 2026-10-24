@@ -108,6 +108,13 @@ def main():
             first=run(fresh+['--headless-ticks','1','--save-session-on-exit'])
             path=Path(first['saved_session_path']);saved=path.read_bytes()
             assert dict((i,b) for i,_,b in archive_sections(saved))[b'HOST'][8:10]==b'\x02\0'
+            if primary==11:
+                scheduled=run(['--load-session',str(path),'--headless-ticks','3','--instruction-budget','25000',
+                    '--headless-resident-interaction','2','9999','3'])
+                interaction=scheduled['interaction_runtime']
+                assert interaction['scheduled_tick']==4 and interaction['scheduled_target']==9999
+                assert interaction['trigger']=='headless_schedule' and not interaction['enqueued']
+                assert interaction['diagnostic']=='scheduled target is not a defined live object'
             resumed=run(['--load-session',str(path),'--headless-ticks','5','--save-session-on-exit'])
             assert resumed['session_loaded'] and resumed['resumed_tick']==1 and resumed['ticks']==6,resumed
             assert resumed['avatar']['owner']==primary-10,resumed['avatar']
