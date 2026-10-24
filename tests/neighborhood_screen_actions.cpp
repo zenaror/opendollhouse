@@ -87,6 +87,8 @@ int main() {
         run_with_keys_after_showing(window.native_id(), {XK_e}, [&] {
             choice = odh_host::show_occupied_lot_choice(window, entry, 5, true, 1);
         });
+        std::cerr << "synthetic E returned occupied-lot choice "
+                  << static_cast<int>(choice) << " (move_out=1, enter=0, cancel=2)\n";
         require(choice == odh_host::OccupiedLotChoice::move_out,
                 "E must select move-out when the refund has been verified");
 

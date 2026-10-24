@@ -1235,34 +1235,93 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 if(!candidate.define_entry_points(id,data.entry_points->entries)||
                    !candidate.declare_definition_word(id,9,2)||!candidate.declare_object_word(id,29,-1))return false;
                 data.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
-                // The private startup VM has only candidate World memory. Calls
-                // and expressions work; external primitives/globals/tuning/RNG
-                // are unavailable and fail closed instead of escaping rollback.
+                // Startup runs against candidate World memory, exact BCON/global
+                // reads, and only the zone-query and random-number primitives.
+                // Other primitive effects and global writes remain unsupported.
                 auto startup_memory=candidate.vm_memory();
                 const auto read_startup_word=startup_memory.read;
                 const auto write_startup_word=startup_memory.write;
+                odh::TuningResources startup_tuning_resources;
+                startup_tuning_resources.globals=shared.tuning;
+                startup_tuning_resources.owners.emplace(id,odh::TuningOwner{
+                    data.tuning,semi_data.tuning,odh::TuningSemiState::loaded});
+                const odh::BconTuning startup_tuning(std::move(startup_tuning_resources));
+                startup_memory.read=[read_startup_word,&startup_tuning,&construction_clock,&lot,
+                    &bootstrap_globals,&family_global](const odh::VmFrame& frame,
+                    std::uint8_t scope,std::int16_t index)->std::optional<std::int16_t> {
+                    if(scope==26){
+                        const auto value=startup_tuning.read(frame.context.code_owner,index);
+                        return value?std::optional<std::int16_t>{value->value}:std::nullopt;
+                    }
+                    if(scope==6){
+                        const auto clock=construction_clock.global(index);
+                        const auto runtime=bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
+                        const auto family_value=index==9?family_global:std::nullopt;
+                        if(clock)return clock;
+                        if(family_value)return family_value;
+                        if(runtime)return runtime;
+                        return lot?lot->read(index):std::nullopt;
+                    }
+                    return read_startup_word(frame,scope,index);
+                };
                 std::optional<std::string> rejected_flags_write;
-                startup_memory.write=[read_startup_word,write_startup_word,&rejected_flags_write](const odh::VmFrame& frame,
+                startup_memory.write=[read_startup_word,write_startup_word,&rejected_flags_write,&candidate,id](const odh::VmFrame& frame,
                     std::uint8_t scope,std::int16_t index,std::int16_t value) {
-                    // Simitone SetValue(Flags) changes footprint registration,
-                    // avatar collision behavior, or thread state. This private
-                    // startup VM cannot reproduce those side effects safely.
                     if((scope==3||scope==4)&&index==8) {
                         const auto old=read_startup_word(frame,scope,index);
-                        if(!old||*old!=value){
-                            rejected_flags_write="Flags write rejected: old="+(old?std::to_string(*old):std::string("unknown"))+
-                                " new="+std::to_string(value)+" changed_mask="+
-                                (old?std::to_string(static_cast<std::uint16_t>(*old)^static_cast<std::uint16_t>(value)):std::string("unknown"));
+                        if(!old){
+                            rejected_flags_write="Flags write rejected: old=unknown new="+std::to_string(value)+" changed_mask=unknown";
                             return false;
+                        }
+                        const auto changed_mask=static_cast<std::uint16_t>(*old)^static_cast<std::uint16_t>(value);
+                        constexpr std::uint16_t can_walk=0x0008;
+                        constexpr std::uint16_t dynamic_footprint=0x8000;
+                        constexpr std::uint16_t supported_flags=can_walk|dynamic_footprint;
+                        // Simitone SetValue(Flags) also changes registered
+                        // footprint, AvatarSolid, and sometimes the live thread.
+                        // CanWalk is a plain stored bit; the out-of-world avatar
+                        // can also change dynamic-footprint class before it has a
+                        // registered position. Other bits fail closed here.
+                        if(changed_mask&&(scope!=3||frame.context.caller!=id||
+                           (changed_mask&static_cast<std::uint16_t>(~supported_flags))!=0)){
+                            rejected_flags_write="Flags write rejected: old="+std::to_string(*old)+
+                                " new="+std::to_string(value)+" changed_mask="+std::to_string(changed_mask);
+                            return false;
+                        }
+                        if(changed_mask&dynamic_footprint){
+                            const bool is_static=(static_cast<std::uint16_t>(value)&dynamic_footprint)==0;
+                            if(!candidate.set_static_footprint(id,is_static))return false;
                         }
                     }
                     return write_startup_word(frame,scope,index,value);
                 };
-                odh::Vm startup(shared.routines,std::move(startup_memory),{}, {},{{static_cast<odh::CodeOwner>(id),data.routines}});
+                const auto startup_lot_primitive=lot?lot->primitive():odh::VmPrimitive{};
+                const auto startup_random_primitive=odh::random_primitive(candidate_random,startup_memory);
+                const odh::VmPrimitive startup_primitive=[startup_lot_primitive,startup_random_primitive](
+                    const odh::VmFrame& frame,const odh::Instruction& instruction,
+                    const std::array<std::int16_t,20>& temps,const odh::VmDispatch& dispatch){
+                    if(instruction.opcode==1&&instruction.operands[0]==28)
+                        return startup_lot_primitive?startup_lot_primitive(frame,instruction,temps,dispatch):odh::PrimitiveOutcome{};
+                    if(instruction.opcode==8)return startup_random_primitive(frame,instruction,temps,dispatch);
+                    return odh::PrimitiveOutcome{};
+                };
+                odh::Vm startup(shared.routines,std::move(startup_memory),{},startup_primitive,
+                    {{static_cast<odh::CodeOwner>(id),data.routines}});
+                std::optional<std::string> startup_primitive_trace;
                 const auto started=odh::run_avatar_startup(startup,id,data.entry_points->entries[0].action,
-                    data.entry_points->entries[8].action,10000);
+                    data.entry_points->entries[8].action,10000,[&startup_primitive_trace](const auto& phase,const odh::VmTrace& record){
+                        if(record.instruction.opcode<256&&record.instruction.opcode!=0&&record.instruction.opcode!=2){
+                            std::ostringstream detail;
+                            detail<<phase<<" BHAV "<<record.key.id<<" node "<<record.pc<<" primitive "
+                                <<record.instruction.opcode<<" operands";
+                            for(const auto byte:record.instruction.operands)
+                                detail<<' '<<static_cast<unsigned>(byte);
+                            startup_primitive_trace=detail.str();
+                        }
+                    });
                 if(!started.completed)throw odh::FormatError("missing household resident startup unsupported: "+startup.diagnostic()+
-                    (rejected_flags_write?"; "+*rejected_flags_write:std::string{}));
+                    (rejected_flags_write?"; "+*rejected_flags_write:std::string{})+
+                    (startup_primitive_trace?"; "+*startup_primitive_trace:std::string{}));
                 startup.start(odh::routine_key(main),{id,id,0,static_cast<odh::CodeOwner>(id)},std::vector<std::int16_t>(4));
                 if(startup.status()==odh::VmStatus::fault)throw odh::FormatError("missing household resident Main could not be stacked");
                 materialized_main_states.emplace(id,startup.snapshot());
@@ -5739,6 +5798,8 @@ struct PlacementCandidateProbe {
                 <<",\"file\":"<<json_bytes(member.resource.archive)<<",\"routine\":"<<member.main
                 <<",\"status\":"<<json_bytes(odh::vm_status_name(member.vm->status()))
                 <<",\"diagnostic\":"<<json_bytes(member.vm->diagnostic())<<",\"steps\":"<<member.vm->steps()
+                <<",\"flags\":"<<(entity&&entity->object_words.count(8)?std::to_string(entity->object_words.at(8)):"null")
+                <<",\"static_footprint\":"<<(entity?(entity->static_footprint?"true":"false"):"null")
                 <<",\"start_position\":";position_json(member.start);
             std::cout<<",\"position\":";position_json(entity?entity->position:std::nullopt);
             std::cout<<",\"routing\":{\"reason\":"<<json_bytes(member.route_reason)

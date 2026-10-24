@@ -75,7 +75,23 @@ int main() {
         ghost.reject({152,152,1,0},Status::unsupported);
         Fixture dynamic;
         require(dynamic.world.set_static_footprint(2,false),"dynamic fixture");
-        dynamic.reject({152,152,1,0},Status::unsupported);
+        require(attempt_household_runtime_arrival(dynamic.world,2,{152,152,1,0},dynamic.definitions,dynamic.architecture)==Status::placed,
+            "dynamic-footprint avatar could not arrive");
+        const auto dynamic_rooms=odh::generate_prepared_room_map(dynamic.architecture);
+        const odh::RuntimeRoomResolver dynamic_room_for=[&dynamic_rooms](odh::EntityPosition p){
+            return odh::geometric_room_at_runtime(dynamic_rooms,p.x,p.y,p.level);
+        };
+        const auto dynamic_room=dynamic_room_for({152,152,1,0});
+        const auto dynamic_obstacles=dynamic_room?odh::snapshot_world_room_info(dynamic.world,dynamic.definitions,
+            dynamic_room_for,[&dynamic](std::int16_t actor,std::uint64_t generation)->std::optional<std::int32_t>{
+                const auto* entity=dynamic.world.find(actor);
+                return entity&&entity->generation==generation?entity->kill_timeout:std::nullopt;
+            },*dynamic_room):odh::RoomInfoObstacleSnapshot{};
+        require(dynamic_room&&dynamic_obstacles.status==odh::RoomInfoObstacleIndexStatus::complete&&
+            std::any_of(dynamic_obstacles.obstacles.begin(),dynamic_obstacles.obstacles.end(),[](const auto& obstacle){
+                return obstacle.owner_id==2&&obstacle.collection==odh::RoomInfoObstacleCollection::dynamic_list;
+            }),"dynamic-footprint avatar was not registered in the dynamic obstacle list");
+        dynamic.reject({168,168,1,0},Status::unsupported);
         Fixture holding;
         require(holding.world.create(3,odh::EntityKind::object)&&holding.world.attach(2,0,3),"held object fixture");
         holding.reject({152,152,1,0},Status::unsupported);

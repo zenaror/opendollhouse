@@ -77,9 +77,15 @@ def make_missing(root, failure=None, clock=CLOCK):
     if failure in effects:
         init[1] = expression(42, 2, scope=3, yes=2)
         init.append(expression(*effects[failure], scope=3))
-    if failure == 'flags':
+    if failure in ('dynamic_footprint', 'burning'):
         init[1] = expression(42, 2, scope=3, yes=2)
-        init.append(expression(8, -32512, scope=3))  # 0x8100: dynamic footprint + burning
+        # Init first enables CanWalk (0x0008), then dynamic footprint
+        # (0x8000). Burning (0x0200) remains outside the supported profile.
+        init.append(expression(8, 264, scope=3, yes=3))
+        if failure == 'burning':
+            init.append(expression(8, -31992, scope=3))  # 0x8308
+        elif failure == 'dynamic_footprint':
+            init.append(expression(8, -32504, scope=3))  # 0x8108
     if failure == 'global_write': init = [expression(9, 123, scope=6)]
     if failure == 'primitive': init = [(0, 254, 255, bytes(8))]
     ep8 = [(2, 254, 255, struct.pack('<hhBBBB', 0, 2, 0, 3, 0, 7))]
@@ -142,6 +148,10 @@ def main():
         selected_member = next(member for member in selected_report['family_world_reconciliation']['members']
                                if member['guid'] == GUIDS[1])
         assert selected_member['presence'] == 'present_with_position' and selected_member['object_id'] == 3, selected_member
+        dynamic_lot = base / 'dynamic-footprint'; make_missing(dynamic_lot, 'dynamic_footprint')
+        dynamic_report = run(fresh + ['--headless-ticks', '1'], dynamic_lot)
+        dynamic_member = dynamic_report['household_main']['additional_residents'][0]
+        assert dynamic_member['flags'] == -32504 and not dynamic_member['static_footprint'], dynamic_member
         path = Path(first['saved_session_path'])
         resumed = run(['--load-session', str(path), '--headless-ticks', '5', '--save-session-on-exit'])
         assert resumed['session_loaded'] and resumed['resumed_tick'] == 1 and resumed['ticks'] == 6, resumed
@@ -154,7 +164,7 @@ def main():
         run(fresh + ['--headless-ticks', '1'], alternate_clock)
         failures = [('ep9', 'absent placement EP9'), ('ep5_actor', 'arrival semantics are unsupported'),
                     ('ep5_blocker', 'arrival semantics are unsupported'), ('global_write', 'startup unsupported'),
-                    ('primitive', 'startup unsupported'), ('flags', 'startup unsupported'), ('child', 'supports adults only'),
+                    ('primitive', 'startup unsupported'), ('burning', 'startup unsupported'), ('child', 'supports adults only'),
                     ('mailbox', 'one positioned singleton mailbox'), ('ghost', 'household member activation failed'),
                     ('roomimpact', 'arrival semantics are unsupported'), ('lighting', 'arrival semantics are unsupported'),
                     ('window', 'arrival semantics are unsupported'), ('portal', 'arrival semantics are unsupported'),
@@ -162,12 +172,12 @@ def main():
         for failure, diagnostic in failures:
             rejected = base / failure; make_missing(rejected, failure)
             rejected_stderr = run(fresh + ['--headless-ticks', '1', '--save-session-on-exit'], rejected, diagnostic)
-            if failure == 'flags':
-                assert 'Flags write rejected: old=256 new=-32512 changed_mask=32768' in rejected_stderr, rejected_stderr
+            if failure == 'burning':
+                assert 'Flags write rejected: old=264 new=-31992 changed_mask=33280' in rejected_stderr, rejected_stderr
             assert path.read_bytes() == previous, failure + ' changed prior archive'
         for source, fingerprint in originals.items():
             assert hashlib.sha256(source.read_bytes()).digest() == fingerprint, 'runtime modified source installation'
-    print('Synthetic missing household adult: Init/EP8/Main/body/NBRS/birth/arrival, independent runtime and fresh-process resume; 13 fail-closed cases')
+    print('Synthetic missing household adult: Init/EP8/Main/body/NBRS/birth/arrival, dynamic-footprint flag and fresh-process resume; 14 fail-closed cases')
 
 
 if __name__ == '__main__': main()

@@ -6,6 +6,7 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -92,16 +94,23 @@ std::vector<odh::FamilyEntry> make_game(const fs::path& root) {
     write(root / "UserData/Neighborhood.iff", iff(neighborhood));
     write(root / "UserData/LotLocations.iff", iff(chunk("STR#", 1, locations)));
 
-    // Uncompressed 24-bit black 800x600 BMP inside one exact FAR1 entry.
+    // Uncompressed 24-bit black 800x600 BMPs for both layers used by mode 1.
     Bytes bitmap; append(bitmap, "BM"); integer(bitmap, 54 + 800 * 600 * 3);
     integer(bitmap, 0); integer(bitmap, 54); integer(bitmap, 40);
     integer(bitmap, 800); integer(bitmap, 600); integer(bitmap, 1, 2); integer(bitmap, 24, 2);
     bitmap.resize(54 + 800 * 600 * 3);
-    const std::string name = "Nbhd\\NScreen.BMP";
+    const std::string base_name = "Nbhd\\NScreen.BMP";
+    const std::string layer_name = "Nbhd\\DiffN1-N2_8.bmp";
     Bytes archive; append(archive, "FAR!byAZ"); integer(archive, 1);
-    integer(archive, static_cast<std::uint32_t>(16 + bitmap.size())); append(archive, bitmap);
-    integer(archive, 1); integer(archive, bitmap.size()); integer(archive, bitmap.size());
-    integer(archive, 16); integer(archive, name.size()); append(archive, name);
+    integer(archive, static_cast<std::uint32_t>(16 + bitmap.size() * 2));
+    append(archive, bitmap); append(archive, bitmap);
+    integer(archive, 2);
+    for (const auto& [name, offset] : std::array<std::pair<std::string, std::uint32_t>, 2>{
+             std::pair{base_name, std::uint32_t{16}},
+             std::pair{layer_name, static_cast<std::uint32_t>(16 + bitmap.size())}}) {
+        integer(archive, bitmap.size()); integer(archive, bitmap.size());
+        integer(archive, offset); integer(archive, name.size()); append(archive, name);
+    }
     write(root / "UIGraphics/UIGraphics.far", archive);
     return families;
 }
@@ -226,15 +235,39 @@ unsigned long channel(unsigned value, unsigned long mask) {
     return ((value * mask + 127) / 255) << shift;
 }
 void marker(Display* display, Window window, int x, bool occupied) {
-    await([&] {
+    unsigned long last_pixel = 0, last_expected = 0;
+    unsigned long red_mask = 0, green_mask = 0, blue_mask = 0;
+    int map_state = -1, width = 0, height = 0;
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    while (Clock::now() < deadline) {
+        XWindowAttributes attributes{};
+        if (XGetWindowAttributes(display, window, &attributes)) {
+            map_state = attributes.map_state;
+            width = attributes.width;
+            height = attributes.height;
+        }
         XImage* image = XGetImage(display, window, x, 200, 1, 1, AllPlanes, ZPixmap);
-        if (!image) return false;
-        const unsigned long expected = occupied ?
+        if (image) {
+            red_mask = image->red_mask;
+            green_mask = image->green_mask;
+            blue_mask = image->blue_mask;
+            last_pixel = XGetPixel(image, 0, 0);
+            last_expected = occupied ?
             channel(245, image->red_mask) | channel(185, image->green_mask) | channel(30, image->blue_mask) :
             channel(40, image->red_mask) | channel(220, image->green_mask) | channel(120, image->blue_mask);
-        const bool match = XGetPixel(image, 0, 0) == expected;
-        XDestroyImage(image); return match;
-    }, occupied ? "occupied map marker" : "vacant map marker after move-out");
+            XDestroyImage(image);
+            if (last_pixel == last_expected) return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    throw std::runtime_error(std::string("timed out: ") +
+        (occupied ? "occupied map marker" : "vacant map marker after move-out") +
+        "; pixel=" + std::to_string(last_pixel) +
+        ", expected=" + std::to_string(last_expected) +
+        ", masks=" + std::to_string(red_mask) + "/" + std::to_string(green_mask) +
+        "/" + std::to_string(blue_mask) + ", window=" + std::to_string(width) + "x" +
+        std::to_string(height) + ", map_state=" + std::to_string(map_state) +
+        ", title='" + title(display, window) + "'");
 }
 }
 

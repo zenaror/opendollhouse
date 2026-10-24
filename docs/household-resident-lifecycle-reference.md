@@ -64,17 +64,31 @@ retomar a partida.
 O perfil falha fechado para crianças, recurso ou relógio indisponível, EP9 de
 colocação, colisão/flags não modelados e chamadas que escapem da memória privada.
 `World::read(Room)` devolve -5 para entidades sem posição,
-como no Simitone. Escritas que mudariam ObjectData[8] durante Init/entrada 8 são
-recusadas porque o Simitone também atualiza colisão, footprint ou estado do Sim
-nessa escrita. A chegada ainda não é equivalente ao carregamento completo do
-Simitone: ele executa EP2 em todos os objetos antes de `VerifyFamily`, enquanto
-esse caminho ODH não reproduz essa etapa. O perfil aceito precisa ser ampliado
-somente quando esses efeitos estiverem modelados.
+como no Simitone. Durante Init/entrada 8, a integração aceita `CanWalk` e somente
+a troca isolada de `FSODynamicFootprint` no próprio avatar ainda fora do lote,
+atualizando `static_footprint` antes da chegada. Também consulta as tabelas BCON
+do código ativo e os valores globais disponíveis do relógio, família, lote e
+bootstrap. A chamada genérica TS1 de zoneamento do lote e o gerador aleatório
+determinístico usam os leitores já existentes sobre o candidato temporário; se
+qualquer etapa posterior falhar, esses sorteios não mudam a partida. Outras
+mudanças em ObjectData[8] continuam recusadas porque podem exigir registrar uma
+pegada posicionada, recalcular a colisão/AvatarSolid ou alterar a thread; por
+exemplo, mudar `Burning` reinicia a thread do avatar no Simitone.
 
-Os testes sintéticos cobrem o fluxo de sucesso e as recusas conhecidas,
-incluindo a escolha de um adulto ausente do OBJM original e sua resolução como
-avatar ativo depois da chegada. A fixture ainda contém outro morador salvo e uma
-caixa postal; não prova entrada numa casa totalmente vazia nem a imagem da janela.
+A chegada ainda não é equivalente ao carregamento completo do Simitone: ele
+executa EP2 em todos os objetos antes de `VerifyFamily`, enquanto esse caminho
+ODH não reproduz essa etapa. O perfil aceito precisa ser ampliado somente quando
+esses efeitos estiverem modelados.
+
+Os testes sintéticos cobrem o fluxo de sucesso, a sincronização da pegada dinâmica
+e as recusas conhecidas, incluindo a escolha de um adulto ausente do OBJM original
+e sua resolução como avatar ativo depois da chegada. A fixture ainda contém outro
+morador salvo e uma caixa postal; não prova entrada numa casa totalmente vazia.
+O teste visual com os dados comerciais avançou pelo Init real, incluindo a
+consulta de zoneamento e o sorteio, mas parou quando a janela tentou localizar
+`b010fafit_01` no catálogo BCF. O arquivo original existe como
+`GameData/Skins/B010FAFit_01.cmx`; o renderer atual ainda não carrega aparências
+CMX/SKN da pasta Skins, então não há evidência de renderização comercial completa.
 Uma auditoria somente leitura das casas selecionáveis House05 e House07 na
 instalação local confirmou que todos os GUIDs FAMI já têm uma entidade salva;
 portanto não há, nessas casas, um caso comercial real de morador ausente para

@@ -21,7 +21,7 @@ inline odh::HouseholdPositionAttemptStatus attempt_household_runtime_arrival(
     const auto* avatar = world.find(id);
     if (!avatar || avatar->kind != odh::EntityKind::avatar || !avatar->definition ||
         avatar->position || avatar->attachment || avatar->ui_ghost ||
-        avatar->kill_timeout != std::optional<std::int32_t>{-1} || !avatar->static_footprint ||
+        avatar->kill_timeout != std::optional<std::int32_t>{-1} ||
         std::any_of(avatar->slots.begin(), avatar->slots.end(), [](auto value) { return value != 0; }) ||
         !avatar->entry_points || avatar->entry_points->size() <= 15 ||
         (*avatar->entry_points)[9].action != 0 || (*avatar->entry_points)[15].action != 0 ||
