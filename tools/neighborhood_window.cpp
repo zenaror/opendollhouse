@@ -90,6 +90,8 @@ int main(int argc, char** argv) {
                   << "\",\"selected_house\":";
         if (selected) std::cout << *selected;
         else std::cout << "null";
+        if (!selected) std::cout << ",\"cancellation_reason\":\""
+            << odh_host::window_quit_reason_name(window.quit_reason()) << '\"';
         std::cout << "}\n";
     } catch (const std::exception& error) {
         std::cerr << "odh-neighborhood-window: " << error.what() << '\n';

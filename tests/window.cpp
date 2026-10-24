@@ -6,7 +6,24 @@
 #include <limits>
 #include <stdexcept>
 #include <memory>
-int main(){try{
+int main(int argc,char** argv){try{
+    using odh_host::WindowQuitReason;
+    const WindowQuitReason reasons[]{WindowQuitReason::none,WindowQuitReason::escape_key,
+        WindowQuitReason::window_manager_close,WindowQuitReason::window_destroyed};
+    const char* names[]{"none","escape_key","window_manager_close","window_destroyed"};
+    if(odh_host::WindowInput{}.quit||odh_host::WindowInput{}.quit_reason!=WindowQuitReason::none)
+        throw std::runtime_error("fresh input reports a quit");
+    for(unsigned i=0;i<4;++i){
+        if(std::string(odh_host::window_quit_reason_name(reasons[i]))!=names[i])
+            throw std::runtime_error("quit diagnostic name differs");
+        for(const auto incoming:reasons)
+            if(odh_host::record_window_quit_reason(reasons[i],incoming)!=
+                (reasons[i]==WindowQuitReason::none?incoming:reasons[i]))
+                throw std::runtime_error("first quit reason was overwritten");
+    }
+    if(argc==2&&std::string(argv[1])=="--input-only"){
+        std::cout<<"Window quit diagnostics: defaults, 4 names, and 16 first-cause combinations passed without X11.\n";return 0;
+    }
     if(!std::getenv("DISPLAY")){std::cout<<"X11 display unavailable: skipped\n";return 77;}
     Display* availability=XOpenDisplay(nullptr);if(!availability){std::cout<<"X11 DISPLAY inaccessible: skipped\n";return 77;}XCloseDisplay(availability);
     odh_host::LinuxWindow window(128,96,"OpenDollhouse own-window backend test");
@@ -79,6 +96,35 @@ int main(){try{
     click(Button3,1,2);input=window.poll();if(input.action||input.primary_click)throw std::runtime_error("non-primary click mapped");
     click(Button1,-2,98);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{-2,98})throw std::runtime_error("outside click coordinates clamped");
     click(Button1,2,3);click(Button1,127,95);input=window.poll();if(!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{127,95})throw std::runtime_error("last drained primary click not retained");
-    key(XK_Escape);if(!window.poll().quit)throw std::runtime_error("quit mapping failed");
+    key(XK_Escape);input=window.poll();
+    if(!input.quit||input.quit_reason!=WindowQuitReason::escape_key||window.quit_reason()!=input.quit_reason)
+        throw std::runtime_error("Escape quit reason mapping failed");
+    input=window.poll();
+    if(!input.quit||input.quit_reason!=WindowQuitReason::escape_key)
+        throw std::runtime_error("quit reason did not persist across polls");
+    {
+        odh_host::LinuxWindow closing(16,16,"OpenDollhouse own-window close diagnostic test");
+        XEvent event{};event.xclient.type=ClientMessage;event.xclient.window=closing.native_id();
+        event.xclient.message_type=XInternAtom(sender.get(),"WM_PROTOCOLS",False);
+        event.xclient.format=32;event.xclient.data.l[0]=static_cast<long>(XInternAtom(sender.get(),"WM_DELETE_WINDOW",False));
+        if(!XSendEvent(sender.get(),closing.native_id(),False,NoEventMask,&event))
+            throw std::runtime_error("own-window close injection failed");
+        XSync(sender.get(),False);(void)closing.readback();input=closing.poll();
+        if(!input.quit||input.quit_reason!=WindowQuitReason::window_manager_close||closing.quit_reason()!=input.quit_reason)
+            throw std::runtime_error("window manager close reason mapping failed");
+        // Real destruction can follow a close request; retain the first cause.
+        XDestroyWindow(sender.get(),closing.native_id());XSync(sender.get(),False);
+        input=closing.poll();
+        if(!input.quit||input.quit_reason!=WindowQuitReason::window_manager_close)
+            throw std::runtime_error("destruction overwrote window manager close reason");
+    }
+    {
+        odh_host::LinuxWindow destroyed(16,16,"OpenDollhouse own-window destruction diagnostic test");
+        (void)destroyed.poll();(void)destroyed.readback(); // Drain initial exposes before destruction.
+        XDestroyWindow(sender.get(),destroyed.native_id());XSync(sender.get(),False);
+        input=destroyed.poll();
+        if(!input.quit||input.quit_reason!=WindowQuitReason::window_destroyed||destroyed.quit_reason()!=input.quit_reason)
+            throw std::runtime_error("destroyed window reason mapping failed");
+    }
     std::cout<<"Own native X11 window: all12288RGB pixels equal; frame validation, Backspace interrupt, and keyboard mappings passed (synthetic app-directed events).\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

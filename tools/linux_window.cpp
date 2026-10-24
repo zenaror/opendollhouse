@@ -91,7 +91,8 @@ struct LinuxWindow::Impl {
     std::uint32_t width = 0, height = 0;
     Channel red, green, blue;
     std::array<bool,256> key_down{};
-    bool alive = false, quit = false;
+    bool alive = false;
+    WindowQuitReason quit_reason = WindowQuitReason::none;
 
     ~Impl() {
         if (image) XDestroyImage(image);
@@ -268,10 +269,14 @@ WindowInput LinuxWindow::poll() {
         XNextEvent(p.display, &event);
         if (event.xany.window != p.window) continue;
         if (event.type == FocusOut) p.key_down.fill(false);
-        if (event.type == DestroyNotify) { p.alive = false; p.quit = true; }
+        if (event.type == DestroyNotify) {
+            p.alive = false;
+            p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_destroyed);
+        }
         if (event.type == ClientMessage && event.xclient.message_type == p.protocols &&
             event.xclient.format == 32 &&
-            static_cast<Atom>(event.xclient.data.l[0]) == p.delete_message) p.quit = true;
+            static_cast<Atom>(event.xclient.data.l[0]) == p.delete_message)
+            p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::window_manager_close);
         if (event.type == ButtonPress && event.xbutton.button == Button1) {
             result.action = true;
             result.primary_click=std::array<std::int32_t,2>{event.xbutton.x,event.xbutton.y};
@@ -300,7 +305,7 @@ WindowInput LinuxWindow::poll() {
         KeySym key = XLookupKeysym(&event.xkey, (event.xkey.state & ShiftMask) ? 1 : 0);
         if (key == NoSymbol) key = XLookupKeysym(&event.xkey, 0);
         switch (key) {
-        case XK_Escape: p.quit = true; break;
+        case XK_Escape: p.quit_reason = record_window_quit_reason(p.quit_reason, WindowQuitReason::escape_key); break;
         case XK_BackSpace: if (!held) result.interrupt = true; break;
         case XK_u: case XK_U: if (!held) result.stand = true; break;
         case XK_m: case XK_M: if (!held) result.neighborhood = true; break;
@@ -317,9 +322,14 @@ WindowInput LinuxWindow::poll() {
         default: break;
         }
     }
-    result.quit = p.quit;
+    result.quit_reason = p.quit_reason;
+    result.quit = p.quit_reason != WindowQuitReason::none;
     XFlush(p.display);
     return result;
+}
+
+WindowQuitReason LinuxWindow::quit_reason() const noexcept {
+    return impl_->quit_reason;
 }
 
 void LinuxWindow::set_title(const std::string& title) {

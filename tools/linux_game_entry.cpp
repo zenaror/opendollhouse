@@ -760,7 +760,8 @@ int odh_linux_game_entry(int argc, char** argv) {
                 neighborhood_title, neighborhood_cancel,
                 static_cast<std::uint8_t>(options.language));
             if (!selected) {
-                std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\"}\n";
+                std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\",\"cancellation_reason\":\""
+                          << odh_host::window_quit_reason_name(window->quit_reason()) << "\"}\n";
                 return 0;
             }
             house = *selected;
