@@ -14,8 +14,17 @@ Uma revisão separada do Simitone encontrou que seu fundo e seus botões são
 desenhados proceduralmente. Na instalação local original, os arquivos de tabela
 de recursos apontam para imagens próprias do menu; elas existem no `UIGraphics.far`
 selecionado. Isso oferece uma rota para reproduzir a apresentação com dados do
-jogador, sem colocar imagens comerciais no código ou no Git. O ODH ainda não
-carrega essas imagens na janela.
+jogador, sem colocar imagens comerciais no código ou no Git. A janela de teste
+agora carrega `PieBack.bmp` e `PieButt.bmp` diretamente do `UIGraphics.far` do
+jogador. O fundo usa magenta como transparência, e o botão aparece junto do
+rótulo. A captura `house07-fridge-menu-assets.png` em
+`reports/pie-menu-window/` registra esse primeiro uso visual.
+
+Isso ainda não é a interface final: os rótulos usam caixas genéricas, o HUD é
+de diagnóstico e a posição/composição ainda não foi comparada com a instalação
+original em execução. `PieFace1.bmp` foi encontrado na tabela, mas seus pixels
+locais são uniformemente magenta; por isso não é desenhado nem tratado como arte
+visível confirmada.
 
 ## Caminho observado no Simitone
 

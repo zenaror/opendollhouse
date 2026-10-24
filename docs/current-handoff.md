@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Atualização: primeira composição com arte original local (2026-10-24)
+
+A janela interativa agora recebe `UIGraphics.far` do diretório do jogo e lê
+`Shared\\Sys\\PieBack.bmp` e `PieButt.bmp` com limites de tamanho. Um blit
+portátil aplica magenta como transparente sem tocar na profundidade nem nos
+IDs usados para selecionar objetos. O fundo aparece atrás do menu e cada ação
+mostra o botão original ao lado do texto. Nenhum pixel comercial foi adicionado
+ao código ou ao Git.
+
+Na captura Xvfb `reports/pie-menu-window/house07-fridge-menu-assets.png`, a
+House07 abriu, o clique na geladeira mostrou `Have A Snack`, o fundo e o botão
+foram desenhados e as áreas magenta deixaram o cenário aparecer. O HUD e as
+caixas do texto continuam genéricos; essa imagem é evidência de integração, não
+paridade com a interface original. CTest focal passou `pie_menu_data_model`,
+`ui_bitmap_color_key_blit` e `linux_game_entry_cli` (o teste CLI usa recursos
+sintéticos). O Xvfb foi encerrado pelo `xvfb-run`.
+
+Próximo: comparar a composição com o jogo original em execução e substituir as
+caixas de texto/HUD genéricas por componentes e regras da interface original.
+Ainda falta uma opção categorizada real na House07 para validar submenus.
+
 ## Atualização: janela real e imagens de menu localizadas (2026-10-24)
 
 Em Xvfb, `odh-person --render-window` desenhou a casa House07, o avatar e o HUD

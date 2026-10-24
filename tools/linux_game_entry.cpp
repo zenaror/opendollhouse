@@ -677,6 +677,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         append(args, {"--render-window", "--render-size", "800", "600",
             "--render-animation-far", animation_far.string(),
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
+    if (!options.headless_ticks && neighborhood_graphics)
+        append(args, {"--ui-graphics", neighborhood_graphics->string()});
     if (options.status_frame)
         append(args, {"--render-frame", options.status_frame->string(), "--render-tick", std::to_string(*options.status_tick),
             "--render-animation-far", animation_far.string(), "--render-textures", textures_far.string(),

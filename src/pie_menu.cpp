@@ -76,6 +76,7 @@ std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
         frame_h - radius - button_height - 4);
 
     PieMenuLayout result;
+    result.center = {center_x, center_y};
     result.items.reserve(item_count);
     const auto direction_count = item_count > 4 ? std::size_t{8} :
         item_count > 2 ? std::size_t{4} : std::size_t{2};

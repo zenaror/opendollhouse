@@ -35,6 +35,7 @@ int main() {
 
     const auto layout = odh::layout_pie_menu(320, 240, {160, 120}, 4, true);
     assert(layout && layout->items.size() == 4 && layout->back_button);
+    assert(layout->center[0] == 160 && layout->center[1] == 120);
     for (const auto& item : layout->items) {
         assert(item.x >= 0 && item.y >= 0);
         assert(item.x + item.width <= 320 && item.y + item.height <= 240);

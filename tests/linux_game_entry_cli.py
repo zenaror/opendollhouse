@@ -133,6 +133,16 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "plan fingerprints every installed expansion archive and sets the matching flags")
     check("--language" in result["command"] and "15" in result["command"],
           "selected language reaches runtime arguments")
+    graphics_resource = next((path for path in identity["files"]
+                              if path.endswith("/UIGraphics.far")), None)
+    if graphics_resource:
+        ui_index = result["command"].index("--ui-graphics")
+        check(Path(result["command"][ui_index + 1]).resolve() ==
+              (root / "UIGraphics" / "UIGraphics.far").resolve(),
+              "interactive Linux runtime receives the selected installation's UI archive")
+    else:
+        check("--ui-graphics" not in result["command"],
+              "headless/non-X11 plans do not pass a window-only UI archive")
     check(result["command"].count("--object-definitions") == 10 and
           result["command"].count("--animation-source") == 10 and
           result["command"].count("--object-definition-file") == 2 and

@@ -1,5 +1,6 @@
 #include "odh/interaction.hpp"
 #include "odh/pie_menu.hpp"
+#include "odh/ui_bitmap.hpp"
 #include "odh/entity_scheduler.hpp"
 #include "odh/entity_thread_controllers.hpp"
 #include "odh/sleep.hpp"
@@ -461,6 +462,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     bool render_window=false,saved_world_main=false,headless_main=false;
     std::uint8_t game_language=1;bool game_language_set=false;
     std::optional<std::string> render_output,render_animation_far,render_textures_far,render_skeleton_entry,render_skeleton_name;
+    std::optional<std::string> ui_graphics_far;
     std::optional<std::array<std::uint32_t,2>> render_size;
     bool render_hide_lot_objects=false;
     std::optional<std::string> render_floors,render_walls;
@@ -582,6 +584,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             placement_candidate=odh::EntityPosition{x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)};
         }
         else if(option=="--render-window"&&!render_window){render_window=true;}
+        else if(option=="--ui-graphics"&&!ui_graphics_far&&n+1<argc){
+            ui_graphics_far=argv[++n];
+            if(ui_graphics_far->empty())throw odh::FormatError("UI graphics archive path is empty");
+        }
         else if(option=="--render-floors"&&!render_floors&&n+1<argc){render_floors=argv[++n];}
         else if(option=="--render-walls"&&!render_walls&&n+1<argc){render_walls=argv[++n];}
         else if(option=="--render-level"&&!render_level_set&&n+1<argc){
@@ -765,6 +771,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-neighborhood-tick requires a headless Main lot and a tick below the limit");
     if(headless_window_neighborhood_house&&!headless_window_neighborhood_tick)
         throw odh::FormatError("--headless-window-neighborhood-house requires --headless-window-neighborhood-tick");
+    if(ui_graphics_far&&!render_window)
+        throw odh::FormatError("--ui-graphics requires --render-window");
     const bool render_saved_selector=render_saved_id.has_value()||render_saved_guid.has_value();
     const bool render_requested=render_output||render_size||render_animation_far||render_textures_far||render_skeleton_entry||render_skeleton_name||render_tick||render_window||(render_saved_selector&&!headless_main);
     if(render_hide_lot_objects&&(!render_output||!render_floors||!saved_world_main))
@@ -797,6 +805,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
+    std::optional<odh::BitmapImage> pie_menu_background,pie_menu_button;
+    if(ui_graphics_far){
+        odh::Limits far_limits;far_limits.far_entries=16384;far_limits.far_name_length=512;
+        far_limits.far_name_bytes=1024*1024;
+        odh::BitmapLimits bitmap_limits;bitmap_limits.width=256;bitmap_limits.height=256;
+        bitmap_limits.pixels=65536;bitmap_limits.rle_bytes=1024*1024;
+        with_far_entry(*ui_graphics_far,"Shared\\Sys\\PieBack.bmp",[&](const auto& view){
+            pie_menu_background=odh::read_bmp(view,bitmap_limits);
+        },far_limits);
+        with_far_entry(*ui_graphics_far,"Shared\\Sys\\PieButt.bmp",[&](const auto& view){
+            pie_menu_button=odh::read_bmp(view,bitmap_limits);
+        },far_limits);
+        if(!pie_menu_background||!pie_menu_button)
+            throw odh::FormatError("UI graphics archive did not provide both pie menu images");
+    }
 #ifndef ODH_HAVE_X11
     if(render_window)throw odh::FormatError("X11 window support is not built; configure ODH_X11 and X11 development files");
     if(headless_window_interaction)throw odh::FormatError("--headless-window-interaction requires an X11-enabled build, but does not require a running display");
@@ -3364,13 +3387,23 @@ struct PlacementCandidateProbe {
         const auto layout=odh::layout_pie_menu(image.width,image.height,anchor,items->size(),
             !render_pie_menu_path.empty());
         if(!layout)return;
+        constexpr std::array<std::uint8_t,3> pie_color_key{255,0,255};
+        if(pie_menu_background){
+            const auto x=layout->center[0]-static_cast<std::int32_t>(pie_menu_background->width/2);
+            const auto y=layout->center[1]-static_cast<std::int32_t>(pie_menu_background->height/2);
+            (void)odh::blit_color_keyed_bitmap(image,*pie_menu_background,x,y,pie_color_key);
+        }
         for(std::size_t index=0;index<items->size();++index){
             const auto& item=(*items)[index];
             const bool category=!item.interaction_row&&!item.children.empty();
             const auto label=pie_menu_item_label(item,category);
             const auto& rect=layout->items[index];
+            const auto icon_x=rect.x+3;
+            const auto icon_y=rect.y+(rect.height-17)/2;
+            if(pie_menu_button)
+                (void)odh::blit_color_keyed_bitmap(image,*pie_menu_button,icon_x,icon_y,pie_color_key);
             odh_host::TextOverlayStyle style;
-            style.x=rect.x;style.y=rect.y;style.width=rect.width;style.height=rect.height;
+            style.x=icon_x+19;style.y=rect.y;style.width=std::max(1,rect.width-22);style.height=rect.height;
             style.font_size_px=13;style.padding=4;
             style.foreground={250,248,230,255};
             style.background=index==render_pie_menu_selected

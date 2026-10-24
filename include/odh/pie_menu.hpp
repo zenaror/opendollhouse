@@ -37,6 +37,7 @@ struct PieMenuRect {
 };
 
 struct PieMenuLayout {
+    std::array<std::int32_t, 2> center{0, 0};
     std::vector<PieMenuRect> items;
     std::optional<PieMenuRect> back_button;
 };
