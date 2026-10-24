@@ -68,6 +68,12 @@ int main() {
             std::cout << "X11 display unavailable: skipped\n";
             return 77;
         }
+        Display* availability = XOpenDisplay(nullptr);
+        if (!availability) {
+            std::cout << "X11 DISPLAY inaccessible: skipped\n";
+            return 77;
+        }
+        XCloseDisplay(availability);
         odh_host::LinuxWindow window(800, 600, "OpenDollhouse neighborhood action test");
         odh::Family family;
         family.family_number = 42;
