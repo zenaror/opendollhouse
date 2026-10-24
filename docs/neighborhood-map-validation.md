@@ -13,6 +13,14 @@ cmake --build /tmp/odh-neighborhood-build -j4
   --ui-graphics '/caminho/The Sims/UIGraphics/UIGraphics.far' --mode 1
 ```
 
+Para conferir o quadro antes de abrir qualquer janela, acrescente
+`--export-frame /tmp/neighborhood.ppm`. O programa salva o mesmo fundo e os
+mesmos marcadores que seriam enviados à janela e imprime um resumo JSON; essa
+opção não conecta ao X11. Abra o PPM em um visualizador comum. Também é possível
+informar `--language 1..20` para compor os rótulos no idioma escolhido. A
+exportação verifica o preparo do quadro, não a apresentação pelo sistema de
+janelas.
+
 O executável só é construído quando X11 está habilitado e disponível. A API
 portável `odh_neighborhood_picker` define configuração, renderização CPU e
 hit-test; janela, eventos X11, filesystem e leitura de arquivos ficam no host.
@@ -59,8 +67,10 @@ de modo na janela, idioma persistido, logs integrados ou gestão de famílias.
   seis modos, centros/bordas/fora da borda, FAMI/sem FAMI/arquivo ausente,
   sobreposição, viewport, extremos int32, escala/modo/imagem inválidos, cores,
   clipping, preservação da imagem e arrays exigidos pelo backend.
-- `neighborhood_window_cli`: 17 checks sintéticos sem janela; argumentos
+- `neighborhood_window_cli`: 25 checks sintéticos sem janela; argumentos
   inválidos, modo 6 sem recursos/display e recurso ausente nos seis modos.
+- A exportação headless usa FAR/IFF/BMP sintéticos; verifica tamanho PPM, fundo,
+  marcador e resumo JSON sem conectar ao X11.
 - Build Debug completa e CTest: 168/168 passaram. No sandbox o teste
   `linux_window_backend` foi pulado porque o display não estava acessível;
   executado separadamente com acesso ao display, passou 1/1.

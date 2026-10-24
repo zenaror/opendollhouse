@@ -174,14 +174,13 @@ std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
     }
 }
 
-std::optional<std::uint16_t> show_neighborhood_picker(
-        LinuxWindow& window, const PreparedNeighborhoodMap& map,
+odh::RasterFrame compose_neighborhood_picker_frame(
+        const PreparedNeighborhoodMap& map,
         const std::string& localized_title,
         const std::string& localized_cancel,
         std::uint8_t language) {
-    if (window.width() != 800 || window.height() != 600)
-        throw odh::FormatError("neighborhood picker requires an 800x600 window");
-    window.set_title("OpenDollhouse | " + localized_title + " | Esc: " + localized_cancel);
+    if (map.frame.width != 800 || map.frame.height != 600 || language < 1 || language > 20)
+        throw odh::FormatError("neighborhood frame requires 800x600 pixels and a supported language");
     auto frame = map.frame;
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
     TextOverlayStyle title_style;
@@ -193,7 +192,24 @@ std::optional<std::uint16_t> show_neighborhood_picker(
     cancel_style.x = 800 - 12 - 180; cancel_style.y = 600 - 8 - 28;
     cancel_style.width = 180; cancel_style.font_size_px = 14;
     draw_text_overlay(frame, "Esc: " + localized_cancel, language, cancel_style);
+#else
+    (void)localized_title;
+    (void)localized_cancel;
+    (void)language;
 #endif
+    return frame;
+}
+
+std::optional<std::uint16_t> show_neighborhood_picker(
+        LinuxWindow& window, const PreparedNeighborhoodMap& map,
+        const std::string& localized_title,
+        const std::string& localized_cancel,
+        std::uint8_t language) {
+    if (window.width() != 800 || window.height() != 600)
+        throw odh::FormatError("neighborhood picker requires an 800x600 window");
+    window.set_title("OpenDollhouse | " + localized_title + " | Esc: " + localized_cancel);
+    const auto frame = compose_neighborhood_picker_frame(map, localized_title,
+        localized_cancel, language);
     window.present(frame);
     for (;;) {
         const auto input = window.poll();

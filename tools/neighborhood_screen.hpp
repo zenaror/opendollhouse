@@ -31,6 +31,13 @@ PreparedNeighborhoodMap prepare_neighborhood_map(
     const std::filesystem::path& ui_graphics, unsigned mode,
     const odh::FamilyOverlay* saved_overlay = nullptr);
 
+// Build the exact 800x600 neighborhood frame without opening an X11 window.
+odh::RasterFrame compose_neighborhood_picker_frame(
+    const PreparedNeighborhoodMap& map,
+    const std::string& localized_title = "Neighborhood",
+    const std::string& localized_cancel = "Cancel",
+    std::uint8_t language = 1);
+
 // First-run choice for one of the 20 language codes present in The Sims 1 PC.
 // Returns nullopt when the player cancels or closes the window.
 std::optional<std::uint8_t> show_language_picker(LinuxWindow& window,
