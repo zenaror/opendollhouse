@@ -1152,6 +1152,36 @@ int main() {
                  dx==0&&dy==-16&&avatar->position->direction==4,
                  "InFrontOf/Facing walks to a north-front lattice goal and turns toward the object");}
         {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> no_failure_trees{0,0,0,254,0,0,2,0};
+         odh::Vm vm{goto_relative(no_failure_trees),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,24,1,0});world.set_position(2,{20,24,1,0});
+         odh::RandomState random(7);
+         routing.set_ranged_slot_goal_provider([&](const auto& table,std::size_t index,
+             const auto& caller,const auto& target) {
+             return odh::rank_reference_range_slot(table,index,caller,target,random);
+         });
+         routing.set_route_goal_validator([&](const auto&,odh::RoutePoint p) {
+             return grid.contains(p)&&grid.walkable(p);
+         });
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+         auto status=vm.run(8);
+         for(std::size_t run=0;run<4&&status==odh::VmStatus::yielded;++run)status=vm.run(8);
+         require(status==odh::VmStatus::waiting&&routing.active(),
+                 "InFrontOf/Facing accepts the commercial NoFailureTrees flag");
+         for(std::uint64_t tick=1;tick<=32&&routing.active();++tick)routing.tick(tick);
+         require(vm.status()==odh::VmStatus::returned_true&&!routing.active(),
+                 "NoFailureTrees keeps the supported relative route geometry and completes normally");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
+         const std::array<std::uint8_t,8> unknown_flags{0,0,0,254,0,0,4,0};
+         odh::Vm vm{goto_relative(unknown_flags),world.vm_memory(),{},routing.primitive()};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,24,1,0});world.set_position(2,{20,24,1,0});routing.bind(vm);
+         vm.start(odh::routine_key(4096),{1,2,2});
+         require(vm.run(2)==odh::VmStatus::fault&&!routing.active()&&
+                 vm.diagnostic().find("outside the synthetic route profiles")!=std::string::npos,
+                 "InFrontOf/Facing still rejects unreviewed routing flags");}
+        {odh::World world;odh::RouteGrid grid{32,32};auto globals=slot();odh::Routing routing{world,grid,globals};
          const std::array<std::uint8_t,8> go_here{10,0,254,255,10,0,5,0};
          odh::Vm vm{goto_relative(go_here),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});

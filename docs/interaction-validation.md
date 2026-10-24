@@ -13,15 +13,17 @@ tipo de transferência não alteram esse handler TS1.
 disponíveis no `VmMemory`, inclusive Tuning, argumentos, locals e temps. O host
 Linux fornece o saldo FAMI efetivo da família ativa. Para `Have A Snack` de
 House07, os operandos `[3,26,0,0,1,0,3,0]` usam `JustTest`; o probe passou por
-essa instrução e avançou até `GotoRelativePosition` opcode27. CTests focados
-`ts1_budget`, `vm`, `vm_interaction_return` e `saved_interaction_discovery`
-passaram 4/4.
+essa instrução. A rota `InFrontOf/Facing` aceita também a flag
+`NoFailureTrees=0x02` usada pela ação. No probe House07, o Sim caminhou até a
+geladeira e parou em opcode42 `CreateObjectInstance`, ainda não implementado.
+CTest focado de orçamento, VM, retorno, descoberta da interação e rota passou
+4/4.
 
 O writer está deliberadamente ausente no host até existir persistência durável
 para alterações de FAMI; uma chamada que tente mudar o saldo falha em vez de
 perder a mudança ao salvar. O escopo 42 (`TempXL`, valor de 32 bits) também segue
-unsupported, pois essa memória ainda não existe na VM ODH. Esse checkpoint não
-prova que a refeição começou ou terminou.
+unsupported, pois essa memória ainda não existe na VM ODH. A comida não foi
+criada e a refeição não começou.
 
 Este documento reúne checkpoints em ordem histórica. A descrição de 2026-10-13
 abaixo é apenas o estado inicial da fila; ela foi superada por integração

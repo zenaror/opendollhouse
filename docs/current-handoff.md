@@ -1,5 +1,24 @@
 # Continuidade atual
 
+## Atualização: ação da geladeira já alcança o objeto (2026-10-24)
+
+O perfil de `GotoRelativePosition` foi ampliado para aceitar a forma exata
+`InFrontOf/Facing` com `NoFailureTrees` (flag `0x02`). Flags desconhecidas
+continuam recusadas. Dois testes de rota cobrem a aceitação dessa flag e a
+recusa da flag `0x04`.
+
+No probe headless com dados reais de House07, objeto112, o Sim caminhou 32
+passos de `[392,440]` até `[360,456]`. Depois a ação parou em opcode42,
+`CreateObjectInstance`, rotina4121. Os operandos `[117,227,1,243,4,1,0,0]`
+pedem criar o GUID `0xF301E375` no slot0 da geladeira, sem duplicatas. O
+Simitone confirma essa leitura do opcode e da posição; o ODH ainda não cria o
+objeto nem grava a refeição. Nenhum display virtual foi iniciado para o probe.
+
+Build Release `odh-person` e `odh-routing-tests` passaram; CTest focado em
+rotas, orçamento e fluxo de interação passou 4/4. Próxima investigação: localizar
+e identificar o recurso desse GUID e mapear o que a criação exige no World e na
+persistência antes de implementar uma factory segura.
+
 ## Atualização: geladeira real revela o próximo limite da VM (2026-10-24)
 
 Um probe controlado do objeto 112 da House07 (GUID `1734088879`) confirmou a
@@ -18,15 +37,15 @@ operandos observados foram `[3,26,0,0,1,0,3,0]`; o teste unitário também cobre
 leitura por escopo local, saldo negativo, ausência de família e a operação que
 grava. Como ainda não há gravador persistente no host, modos que alteram o saldo
 falham de propósito. O novo probe passou pelo opcode25, seguiu BHAV4103→4120→4142
-e parou em opcode27 `GotoRelativePosition`, pois o controlador de rota atual não
-aceita o destino desta interação. A ação não concluiu e o avatar não se moveu.
+e parou inicialmente em opcode27 `GotoRelativePosition`. Esse limite foi
+resolvido no checkpoint acima: o avatar agora chega à geladeira, mas a ação
+ainda não conclui porque opcode42 ainda não é suportado.
 O detalhe está em
 [pie-menu-reference.md](pie-menu-reference.md).
 
 Build Release de `odh-person` e `odh-ts1-budget-tests` passaram. CTest focado:
 `ts1_budget`, `vm`, `vm_interaction_return` e `saved_interaction_discovery`
-passaram 4/4. O próximo passo é investigar o destino relativo e a rota da
-geladeira, mantendo persistência do orçamento como pendência antes de habilitar
+passaram 4/4. A persistência do orçamento segue pendente antes de habilitar
 qualquer modo que altere o saldo.
 
 ## Atualização: fluxo do menu circular de ações investigado (2026-10-24)

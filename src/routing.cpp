@@ -382,10 +382,12 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     const bool bounded_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==2&&i.operands[7]==0;
-    // The real sit function (BHAV 8215) uses Location=InFrontOf (0),
-    // Direction=Facing (-2), no route count, and default flags.
-    const bool in_front_goto_relative=goto_relative&&
-        i.operands==std::array<std::uint8_t,8>{0,0,0,254,0,0,0,0};
+    // Relative interaction routes use Location=InFrontOf (0), Direction=Facing
+    // (-2), and no route count. Some commercial actions set NoFailureTrees
+    // (flag 0x02); that changes failure-tree handling, not the route geometry.
+    const bool in_front_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
+        i.operands[2]==0&&i.operands[3]==254&&i.operands[4]==0&&i.operands[5]==0&&
+        (i.operands[6]==0||i.operands[6]==2)&&i.operands[7]==0;
     const bool stair_goto_relative_shape=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==0&&i.operands[7]==0;
