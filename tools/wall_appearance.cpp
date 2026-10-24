@@ -419,7 +419,7 @@ int main(int argc,char** argv){try{
   return static_cast<std::int16_t>(parsed);
  };
  for(int n=2;n<argc;++n){const std::string option=argv[n];
-  if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){if(sources.size()>=16)throw odh::FormatError("definition source count exceeds limit");sources.push_back({argv[++n],option=="--object-definition-file"});}
+  if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){if(sources.size()>=128)throw odh::FormatError("definition source count exceeds limit");sources.push_back({argv[++n],option=="--object-definition-file"});}
   else if(option=="--neighborhood"&&!neighborhood&&n+1<argc)neighborhood=argv[++n];
   else if(option=="--architecture-resource"&&n+1<argc){if(architecture_resources.size()>=256)throw odh::FormatError("architecture resource source count exceeds limit");architecture_resources.push_back(argv[++n]);}
   else if(option=="--route-edges"&&!route_edges)route_edges=true;
@@ -674,7 +674,7 @@ int main(int argc,char** argv){try{
     <<",\"uses_function_table\":"<<decoded.functions.uses_function_table<<",\"entry_source\":"
     <<json_bytes(decoded.table.source==odh::EntryPointSource::objf?"OBJf":"OBJD")
     <<",\"entry_version\":"<<decoded.table.version<<",\"entry_count\":"<<decoded.table.entries.size()<<',';
-   emit_entry(1);std::cout<<',';emit_entry(5);std::cout<<',';emit_entry(11);std::cout<<',';
+   emit_entry(1);std::cout<<',';emit_entry(2);std::cout<<',';emit_entry(5);std::cout<<',';emit_entry(11);std::cout<<',';
    emit_entry(15);std::cout<<',';emit_entry(26);std::cout<<'}';
   }
   std::cout<<"]}";
