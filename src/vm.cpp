@@ -587,14 +587,17 @@ bool Vm::update_pending(std::uint64_t ticket, VmFrameWrite output) {
     *destination = output.value;
     return true;
 }
-bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> output) {
+bool Vm::complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> output,
+                  std::optional<VmStackObjectWrite> stack_object_output) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter completion");
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;
+    std::int16_t* frame_destination = nullptr;
     if (output) {
-        auto* destination = frame_output(stack_.back(), *output);
-        if (!destination) return false;
-        *destination = output->value;
+        frame_destination = frame_output(stack_.back(), *output);
+        if (!frame_destination) return false;
     }
+    if (frame_destination) *frame_destination = output->value;
+    if (stack_object_output) stack_.back().context.stack_object = stack_object_output->value;
     pending_.reset();
     status_ = VmStatus::running;
     try { branch(result); }

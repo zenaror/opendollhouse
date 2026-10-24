@@ -172,6 +172,20 @@ int main() {
             require(wait_write.complete(wait_write.pending()->ticket,true) && wait_write.run(1)==odh::VmStatus::returned_true,
                     "following branch observes value published by WAIT");
         }
+        odh::Vm object_result({{key,routine({{44,1,254,{}},{44,254,255,{}}})}}, {}, {},
+            [](const auto&,const auto&,const auto&,const auto&) {
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+            });
+        object_result.start(key,{11,22,3});
+        const auto object_wait_status=object_result.run(100);
+        require(object_wait_status==odh::VmStatus::waiting,"object creation request suspends caller");
+        const auto object_ticket=object_result.pending()->ticket;
+        require(!object_result.complete(object_ticket+1,true,{},odh::VmStackObjectWrite{42}) &&
+                object_result.stack().back().context.stack_object==3 && object_result.pending()->ticket==object_ticket,
+                "stale completion cannot publish a new stack object");
+        require(object_result.complete(object_ticket,true,{},odh::VmStackObjectWrite{42}) &&
+                object_result.stack().back().context.stack_object==42 && object_result.stack().back().pc==1,
+                "deferred completion publishes new StackObject and follows true branch");
         std::cout<<checks<<" service checks passed (synthetic fixtures only)\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Service test failed: "<<e.what()<<'\n';return 1;}
 }

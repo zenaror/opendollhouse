@@ -1,5 +1,20 @@
 # Continuidade atual
 
+## Atualização: conclusão de espera pode devolver novo StackObject (2026-10-24)
+
+`Vm::complete` agora aceita, além do resultado e da saída opcional de argumento
+ou local, uma atualização opcional do `StackObject`. A atualização só é aplicada
+quando o ticket da espera corresponde; a VM então segue o desvio original da
+instrução sem executá-la outra vez. Saídas inválidas do frame continuam sendo
+rejeitadas sem consumir a espera. O teste sintético `services` cobre ticket
+antigo e retorno válido de um novo ID.
+
+Build `odh-service-tests` e CTest focal `services` passaram. Isso prepara o
+retorno de `CreateObjectInstance` após o scheduler chegar a um ponto seguro,
+mas opcode42 ainda não cria objetos e a ação Have A Snack ainda não foi
+integrada. Próximo: testar a VM separada de Food com CodeOwner privado e rodar
+Init0 isoladamente.
+
 ## Atualização: perfil estrutural para construção de objetos (2026-10-24)
 
 O novo `object_construction_profile` deriva o tamanho dos bancos de atributos e

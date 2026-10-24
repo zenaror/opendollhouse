@@ -208,7 +208,8 @@ public:
     // Accept one matching service completion. Stale/duplicate tickets do nothing.
     // An invalid frame output rejects the entire completion without consuming its ticket.
     // Completion follows the saved instruction's branch; it does not dispatch again.
-    bool complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> write = {});
+    bool complete(std::uint64_t ticket, bool result, std::optional<VmFrameWrite> write = {},
+                  std::optional<VmStackObjectWrite> stack_object_write = {});
     // Publish a matching wait's frame output without branching, dispatching, or
     // consuming its ticket. Invalid/stale updates leave the entire VM unchanged.
     bool update_pending(std::uint64_t ticket, VmFrameWrite write);
