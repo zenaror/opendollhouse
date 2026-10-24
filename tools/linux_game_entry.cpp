@@ -544,7 +544,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     if (options.headless_ticks)
         append(args, {"--ticks", std::to_string(*options.headless_ticks)});
     else
-        append(args, {"--render-window", "--render-animation-far", animation_far.string(),
+        append(args, {"--render-window", "--render-size", "800", "600",
+            "--render-animation-far", animation_far.string(),
             "--render-textures", textures_far.string(), "--render-skeleton", "adult-skeleton.cmx.bcf", "adult"});
     if (options.status_frame)
         append(args, {"--render-frame", options.status_frame->string(), "--render-tick", std::to_string(*options.status_tick),
@@ -987,7 +988,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                 session_context.resident_guid = resident->guid;
                 session_context.resident_neighbor_id = resident->neighbor_id;
 #ifdef ODH_HAVE_X11
-                if (window) window->resize(320, 240);
+                if (window) window->resize(800, 600);
                 odh_host::NeighborhoodResumeCallback neighborhood_resume;
                 if (map) {
                     const auto active_house = static_cast<std::uint16_t>(house);
@@ -995,10 +996,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                         window->resize(800, 600);
                         try {
                             const auto selected = odh_host::show_neighborhood_resume_picker(*window, *map, active_house);
-                            window->resize(320, 240);
+                            window->resize(800, 600);
                             return selected;
                         } catch (...) {
-                            window->resize(320, 240);
+                            window->resize(800, 600);
                             throw;
                         }
                     };

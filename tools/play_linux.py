@@ -92,7 +92,7 @@ def build_person_command(args, game, house, session):
     command += ["--animation-source", str(animation_far)]
     for archive in shared_archives:
         command += ["--animation-source", str(archive.resolve())]
-    command += ["--saved-world-main", "--render-window",
+    command += ["--saved-world-main", "--render-window", "--render-size", "800", "600",
         "--render-saved-guid", str(resident_guid),
         "--render-animation-far", str(animation_far),
         "--render-textures", str(textures_far),

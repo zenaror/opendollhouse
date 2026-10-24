@@ -56,6 +56,13 @@ para os detalhes e limites do teste. Os eventos foram enviados diretamente à
 janela; não houve movimento do cursor físico. A compilação sem X11 também foi
 verificada e a opção retorna diagnóstico claro de backend ausente.
 
+`--render-size WIDTH HEIGHT` define o tamanho do quadro e da janela, com limites
+de 160..1024 por 120..1024 e até 1.048.576 pixels. O padrão continua 320x240,
+inclusive nas capturas headless. O launcher Linux solicita 800x600, igual à
+janela da vizinhança. Isso usa 6,25 vezes mais pixels que o padrão, mas fica
+abaixo do limite já imposto ao viewport. O tamanho maior não altera coordenadas,
+estado do World ou escala dos assets; o picking usa o mesmo quadro ampliado.
+
 ## Execução com dados originais
 
 Usou os arquivos externos preservados em `../referencias/The Sims`:

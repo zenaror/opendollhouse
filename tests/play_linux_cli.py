@@ -76,6 +76,8 @@ pathlib.Path({str(root / 'person-args.json')!r}).write_text(json.dumps(sys.argv[
         assert "--render-saved-avatar" not in command
         assert command.count("--object-definition-file") == 2
         assert "--saved-world-main" in command and "--render-window" in command
+        size_index = command.index("--render-size")
+        assert command[size_index + 1:size_index + 3] == ["800", "600"]
         assert command.count("--architecture-resource") == 2
 
         other = run(binary_dir, game, "--resident-id", "47", "--plan-only")

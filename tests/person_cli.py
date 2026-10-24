@@ -49,6 +49,10 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert 'log saved to' in r.stderr,repr(r.stderr)
  setup();r=run(['--render-window'])
  assert r.returncode==2 and not r.stdout and 'render-window' in r.stderr
+ setup();r=run(['--render-size','0','240'])
+ assert r.returncode==2 and not r.stdout and 'render size outside bounded viewport' in r.stderr
+ setup();r=run(['--render-size','1024','1024'])
+ assert r.returncode==2 and not r.stdout and '--render-size requires' in r.stderr
  setup();r=run(['--saved-world-main'])
  assert r.returncode==2 and not r.stdout and 'saved-world-main' in r.stderr
  setup();r=run(['--headless-stack-object','10'])
