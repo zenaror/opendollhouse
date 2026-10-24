@@ -23,16 +23,21 @@ persistência antes de implementar uma factory segura.
 
 Uma busca estática nas definições de `Objects.far`, `ExpansionShared.far` e
 `ExpansionPack1..7.far` encontrou uma definição para esse GUID em
-`Objects.far!Food.iff`, OBJD16808, tipo4, versão138, sem partes multitile. No
-Simitone fixado em `docs/references.md`, `VMCreateObjectInstance` resolve a
+`Objects.far!Food.iff`, OBJD16808, tipo4, versão138, sem partes multitile,
+`TreeTableID=137` e `UsesFnTable=1`. A tabela OBJf associa Init (entry0) à
+rotina4100, Main (entry1) à4177 e entry8 a zero. As rotinas locais 4100 e4177
+chamam, respectivamente, 4112 e4178; essa cadeia foi lida estaticamente, não
+executada.
+
+No Simitone fixado em `docs/references.md`, `VMCreateObjectInstance` resolve a
 definição, constrói o objeto e `VMMultitileGroup.Init` executa os entry points
-de inicialização0 e8 e agenda o Main1. Depois o opcode coloca o objeto no
-slot0 do StackObject. Portanto, apenas alocar uma entidade e anexá-la à
-geladeira não é uma implementação suficiente. O próximo passo é criar um
-serviço limitado de objetos do World com definição, slots, inicialização e
-agendamento de VM: hoje o scheduler de `tools/person.cpp` registra os Sims da
-família, não objetos comuns. Depois, integrar a persistência de novos objetos
-ao formato de sessão/salvamento antes de alegar save completo.
+Init0 e8 e agenda Main1. Depois o opcode coloca o objeto no slot0 do StackObject.
+Portanto, apenas alocar uma entidade e anexá-la à geladeira não é suficiente.
+O próximo passo é criar um serviço limitado de objetos do World com definição,
+slots, execução de Init e agendamento de VM: hoje o scheduler de
+`tools/person.cpp` registra os Sims da família, não objetos comuns. Depois,
+integrar a persistência de novos objetos ao formato de sessão/salvamento antes
+de alegar save completo.
 
 ## Atualização: geladeira real revela o próximo limite da VM (2026-10-24)
 
