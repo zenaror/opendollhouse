@@ -133,7 +133,7 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
 }
 VmSnapshot Vm::snapshot() const {
     if (executing_) throw std::logic_error("VM callbacks must not capture running state");
-    return {stack_, temps_, status_, diagnostic_, steps_, pending_, suspended_pending_,
+    return {stack_, temps_, temp_xl_, status_, diagnostic_, steps_, pending_, suspended_pending_,
             interaction_return_, external_frame_return_, ticket_sequence_, run_generation_};
 }
 bool Vm::restore_snapshot(const VmSnapshot& state) {
@@ -142,6 +142,7 @@ bool Vm::restore_snapshot(const VmSnapshot& state) {
         ticket_sequence_ || pending_ || !suspended_pending_.empty() || interaction_return_ ||
         external_frame_return_ || !diagnostic_.empty() ||
         std::any_of(temps_.begin(), temps_.end(), [](auto value) { return value != 0; })) return false;
+    if (std::any_of(temp_xl_.begin(), temp_xl_.end(), [](auto value) { return value != 0; })) return false;
     if (state.stack.size() > limits_.stack_depth ||
         state.suspended_pending.size() > state.stack.size()) return false;
     const auto owner_valid = [&](CodeOwner owner) {
@@ -262,6 +263,7 @@ bool Vm::restore_snapshot(const VmSnapshot& state) {
     diagnostic_.swap(candidate.diagnostic);
     suspended_pending_.swap(candidate.suspended_pending);
     temps_ = candidate.temps;
+    temp_xl_ = candidate.temp_xl;
     status_ = candidate.status;
     steps_ = candidate.steps;
     pending_.swap(candidate.pending);
@@ -277,7 +279,7 @@ VmStatus Vm::start(RoutineKey key, VmContext context, const std::vector<std::int
     if (run_generation_ == std::numeric_limits<std::uint64_t>::max())
         throw std::logic_error("VM run generation overflow");
     ++run_generation_;
-    stack_.clear(); temps_.fill(0); diagnostic_.clear(); steps_ = 0;
+    stack_.clear(); temps_.fill(0); temp_xl_.fill(0); diagnostic_.clear(); steps_ = 0;
     pending_.reset();
     suspended_pending_.clear();
     interaction_return_.reset();
@@ -327,6 +329,7 @@ void Vm::restore_dormant_state(std::vector<VmFrame> frames,
     ++run_generation_;
     stack_ = std::move(frames);
     temps_ = temps;
+    temp_xl_.fill(0); // Native saved-thread profiles do not supply TempXL values.
     steps_ = 0;
     diagnostic_.clear();
     pending_.reset();

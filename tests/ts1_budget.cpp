@@ -1,6 +1,7 @@
 #include "odh/ts1_budget.hpp"
 
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -79,7 +80,24 @@ int main() {
 
         outcome = handler(frame, budget(3, 42, 0, 1), temps, dispatch);
         require(outcome.disposition == odh::PrimitiveDisposition::unsupported,
-            "unmodeled 32-bit TempXL amount does not become a guessed zero");
+            "TempXL is unavailable without a live VM owner");
+
+        odh::Vm tempxl_vm(odh::RoutineSet{});
+        tempxl_vm.temp_xl()[0] = 70000;
+        family_budget = 100000; writes.clear();
+        outcome = handler(frame, budget(3, 42, 0, 0), temps, {&tempxl_vm, 1});
+        require(outcome.disposition == odh::PrimitiveDisposition::goto_true &&
+            family_budget == 30000 && writes == std::vector<std::int32_t>{30000},
+            "TS1 Budget reads the full signed 32-bit TempXL value");
+        outcome = handler(frame, budget(3, 42, 2, 1), temps, {&tempxl_vm, 2});
+        require(outcome.disposition == odh::PrimitiveDisposition::unsupported,
+            "TempXL indices outside the two-value thread bank remain unsupported");
+        tempxl_vm.temp_xl()[1] = std::numeric_limits<std::int32_t>::min();
+        family_budget = 500; writes.clear();
+        outcome = handler(frame, budget(3, 42, 1, 2), temps, {&tempxl_vm, 3});
+        require(outcome.disposition == odh::PrimitiveDisposition::goto_true &&
+            family_budget == -2147483148 && writes == std::vector<std::int32_t>{-2147483148},
+            "Subtract flag wraps INT32_MIN without signed-overflow behavior");
 
         std::cout << "ts1_budget checks: " << checks << '\n';
         return 0;

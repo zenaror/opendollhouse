@@ -144,6 +144,8 @@ struct VmExternalFrameReturn {
 struct VmSnapshot {
     std::vector<VmFrame> stack;
     std::array<std::int16_t, 20> temps{};
+    // Simitone's VMThread owns two signed 32-bit TempXL values per entity.
+    std::array<std::int32_t, 2> temp_xl{};
     VmStatus status = VmStatus::ready;
     std::string diagnostic;
     std::uint64_t steps = 0;
@@ -188,6 +190,8 @@ public:
     const std::vector<VmFrame>& stack() const { return stack_; }
     std::array<std::int16_t, 20>& temps() { return temps_; }
     const std::array<std::int16_t, 20>& temps() const { return temps_; }
+    std::array<std::int32_t, 2>& temp_xl() { return temp_xl_; }
+    const std::array<std::int32_t, 2>& temp_xl() const { return temp_xl_; }
     std::uint64_t steps() const { return steps_; }
     std::uint64_t run_generation() const { return run_generation_; } // Every start attempt, including faults.
     const std::optional<VmPending>& pending() const { return pending_; }
@@ -226,6 +230,7 @@ private:
     VmLimits limits_;
     std::vector<VmFrame> stack_;
     std::array<std::int16_t, 20> temps_{};
+    std::array<std::int32_t, 2> temp_xl_{};
     VmStatus status_ = VmStatus::ready;
     std::string diagnostic_;
     std::uint64_t steps_ = 0;

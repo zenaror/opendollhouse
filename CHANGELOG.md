@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e
+  os conserva em sessões novas; sessões antigas continuam abrindo com esses
+  valores zerados. O `TS1 Budget` agora lê quantias TempXL completas, incluindo
+  o limite de 32 bits. Ainda faltam as rotinas que escrevem TempXL e a criação
+  de objetos. Veja [`current-handoff.md`](docs/current-handoff.md).
+
 - Clicar em um lote agora abre primeiro um cartão com nome, descrição e estado
   da família ou preço, usando textos localizados dos arquivos do jogo. Enter ou
   OK segue para os fluxos de entrada existentes; Escape ou Cancelar volta ao

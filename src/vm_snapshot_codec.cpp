@@ -5,8 +5,10 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 1;
-constexpr std::size_t header_size = 82;
+constexpr std::uint16_t codec_version = 2;
+constexpr std::uint16_t legacy_codec_version = 1;
+constexpr std::size_t header_size = 90;
+constexpr std::size_t legacy_header_size = 82;
 constexpr std::size_t minimum_frame_size = 32;
 constexpr std::size_t minimum_pending_size = 55;
 
@@ -20,6 +22,7 @@ public:
         push(static_cast<std::uint8_t>(value >> 8));
     }
     void i16(std::int16_t value) { u16(static_cast<std::uint16_t>(value)); }
+    void i32(std::int32_t value) { u32(static_cast<std::uint32_t>(value)); }
     void u32(std::uint32_t value) {
         for (unsigned shift = 0; shift < 32; shift += 8)
             push(static_cast<std::uint8_t>(value >> shift));
@@ -67,6 +70,12 @@ public:
             ? static_cast<std::int32_t>(bits)
             : static_cast<std::int32_t>(bits) - 65536;
         return static_cast<std::int16_t>(value);
+    }
+    std::int32_t i32() {
+        const auto bits = u32();
+        return bits <= static_cast<std::uint32_t>(INT32_MAX)
+            ? static_cast<std::int32_t>(bits)
+            : static_cast<std::int32_t>(static_cast<std::int64_t>(bits) - 0x100000000LL);
     }
     std::uint32_t u32() {
         std::uint32_t value = 0;
@@ -267,6 +276,7 @@ std::vector<std::uint8_t> encode_vm_snapshot(
     writer.u64(snapshot.ticket_sequence);
     writer.u64(snapshot.run_generation);
     for (const auto value : snapshot.temps) writer.i16(value);
+    for (const auto value : snapshot.temp_xl) writer.i32(value);
     writer.count(snapshot.stack.size());
     for (const auto& frame : snapshot.stack) write_frame(writer, frame);
     writer.boolean(snapshot.pending.has_value());
@@ -283,11 +293,13 @@ std::vector<std::uint8_t> encode_vm_snapshot(
 
 VmSnapshot decode_vm_snapshot(
         const std::vector<std::uint8_t>& bytes, VmSnapshotCodecLimits limits) {
-    if (limits.max_bytes < header_size || bytes.size() > limits.max_bytes)
+    if (limits.max_bytes < legacy_header_size || bytes.size() > limits.max_bytes)
         throw FormatError("VM snapshot exceeds byte limit");
-    if (bytes.size() < header_size) throw FormatError("VM snapshot header is truncated");
+    if (bytes.size() < legacy_header_size) throw FormatError("VM snapshot header is truncated");
     Reader reader(bytes);
-    if (reader.u16() != codec_version) throw FormatError("unsupported VM snapshot version");
+    const auto version = reader.u16();
+    if (version != legacy_codec_version && version != codec_version)
+        throw FormatError("unsupported VM snapshot version");
     VmSnapshot snapshot;
     const auto status = reader.u8();
     if (status > static_cast<std::uint8_t>(VmStatus::yielded))
@@ -298,6 +310,8 @@ VmSnapshot decode_vm_snapshot(
     snapshot.ticket_sequence = reader.u64();
     snapshot.run_generation = reader.u64();
     for (auto& value : snapshot.temps) value = reader.i16();
+    if (version >= codec_version)
+        for (auto& value : snapshot.temp_xl) value = reader.i32();
     auto count = reader.count(limits.vm.stack_depth, minimum_frame_size);
     snapshot.stack.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i)

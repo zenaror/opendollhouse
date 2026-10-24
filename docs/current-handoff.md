@@ -1,5 +1,24 @@
 # Continuidade atual
 
+## Atualização: valores TempXL de 32 bits na VM (2026-10-24)
+
+A VM agora mantém os dois valores TempXL assinados de 32 bits que o Simitone
+armazena por personagem. O leitor de `TS1 Budget` usa o valor completo quando
+essa rotina pede um TempXL como quantia; índice fora de 0–1 ou VM ausente segue
+como não suportado. Iniciar outra rotina limpa esses valores, e uma restauração
+de thread nativa que não os fornece começa com zero.
+
+O arquivo interno de sessão da VM agora usa a versão 2 para guardar TempXL.
+Versão 1 ainda é aceita e restaura os dois valores como zero, para não quebrar
+sessões antigas. Testes cobrem valores positivos e negativos no codec, leitura
+com valor maior que 16 bits e compatibilidade com arquivo versão 1. Build Linux
+de `odh-person` e testes focados de orçamento/snapshot passaram.
+
+Esse avanço não implementa ainda as rotinas que escrevem TempXL nem cria
+instâncias de objetos. O próximo bloqueio da ação de geladeira continua sendo
+`CreateObjectInstance` (opcode 42), incluindo inicialização e execução das
+rotinas do objeto; a persistência de objetos criados também falta.
+
 ## Atualização: ação da geladeira já alcança o objeto (2026-10-24)
 
 O perfil de `GotoRelativePosition` foi ampliado para aceitar a forma exata

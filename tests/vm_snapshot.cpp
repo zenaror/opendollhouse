@@ -34,6 +34,7 @@ std::string values(const odh::VmSnapshot& s) {
     std::ostringstream out;
     out << int(s.status) << ';' << s.steps << ';' << s.run_generation << ';' << s.ticket_sequence << ';' << s.diagnostic.size() << ':' << s.diagnostic << ';';
     for (auto v : s.temps) out << v << ',';
+    out << ';'; for (auto v : s.temp_xl) out << v << ',';
     out << ';' << s.stack.size() << ';';
     for (const auto& f : s.stack) {
         out << int(f.key.scope) << ',' << f.key.id << ',' << f.pc << ',' << int(f.return_mode) << ',' << f.invocation_ticket << ';';
@@ -90,6 +91,7 @@ int main() {
         odh::Vm source(bank(), {}, {}, service, owners());
         auto ready = restored(source);
         source.start(key(4096), {1,2,3}, {17,-8}); source.temps()[19] = -321;
+        source.temp_xl() = {70000, -70000};
         auto running = restored(source); run_same(source, *running, 1);
         auto child = restored(source); run_same(source, *child, 1);
         require(source.status() == odh::VmStatus::waiting && source.stack().size() == 2, "ordinary child WAIT fixture");

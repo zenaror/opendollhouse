@@ -5,9 +5,9 @@
 
 namespace odh {
 namespace {
-std::optional<std::int16_t> read_amount_word(const VmFrame& frame,
+std::optional<std::int32_t> read_amount_word(const VmFrame& frame,
         const std::array<std::int16_t, 20>& temps, const VmMemory& memory,
-        std::uint8_t scope, std::int16_t index) {
+        const VmDispatch& dispatch, std::uint8_t scope, std::int16_t index) {
     switch (scope) {
     case 7: return index; // Literal
     case 8:
@@ -20,7 +20,9 @@ std::optional<std::int16_t> read_amount_word(const VmFrame& frame,
     case 25:
         if (index < 0 || static_cast<std::size_t>(index) >= frame.locals.size()) return {};
         return frame.locals[static_cast<std::size_t>(index)];
-    case 42: return {}; // TempXL is 32-bit and is not yet represented by Vm.
+    case 42:
+        if (!dispatch.origin || index < 0 || static_cast<std::size_t>(index) >= dispatch.origin->temp_xl().size()) return {};
+        return dispatch.origin->temp_xl()[static_cast<std::size_t>(index)];
     default:
         if (!memory.read) return {};
         return memory.read(frame, scope, index);
@@ -40,7 +42,7 @@ VmPrimitive ts1_budget_primitive(const VmMemory& memory,
     return [&memory, read_budget = std::move(read_budget),
             write_budget = std::move(write_budget)](const VmFrame& frame,
             const Instruction& instruction, const std::array<std::int16_t, 20>& temps,
-            const VmDispatch&) -> PrimitiveOutcome {
+            const VmDispatch& dispatch) -> PrimitiveOutcome {
         if (instruction.operands.size() != 8)
             return {PrimitiveDisposition::unsupported, "TS1 Budget requires its 8-byte operand"};
 
@@ -55,14 +57,14 @@ VmPrimitive ts1_budget_primitive(const VmMemory& memory,
 
         const auto raw_index = static_cast<std::uint16_t>(operand[2]) |
             (static_cast<std::uint16_t>(operand[3]) << 8);
-        const auto amount_word = read_amount_word(frame, temps, memory, amount_scope,
+        const auto amount_word = read_amount_word(frame, temps, memory, dispatch, amount_scope,
             static_cast<std::int16_t>(raw_index));
         if (!amount_word)
             return {PrimitiveDisposition::unsupported, "TS1 Budget amount source is unavailable"};
 
         const auto flags = operand[4];
         std::int32_t amount = *amount_word;
-        if ((flags & 0x02U) != 0) amount = -amount; // TS1 names this flag Subtract; it adds.
+        if ((flags & 0x02U) != 0) amount = wrap_subtract(0, amount); // TS1 names this flag Subtract; it adds.
 
         const auto current = read_budget ? read_budget(frame) : std::nullopt;
         const std::int32_t old_budget = current.value_or(0);

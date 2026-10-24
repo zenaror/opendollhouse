@@ -25,7 +25,8 @@ void same(const odh::VmSnapshot& left, const odh::VmSnapshot& right) {
         left.suspended_pending.empty() && right.suspended_pending.empty() &&
         !left.pending && !right.pending && !left.interaction_return && !right.interaction_return &&
         !left.external_frame_return && !right.external_frame_return, "snapshot fields round-trip");
-    require(left.temps == right.temps, "temporary registers round-trip");
+    require(left.temps == right.temps && left.temp_xl == right.temp_xl,
+        "temporary registers round-trip");
 }
 }
 
@@ -39,18 +40,27 @@ int main() {
         snapshot.run_generation = 0x0102030405060708ull;
         for (std::size_t i = 0; i < snapshot.temps.size(); ++i)
             snapshot.temps[i] = static_cast<std::int16_t>(i * 97u) - 800;
+        snapshot.temp_xl = {70000, -70000};
 
         const auto encoded = odh::encode_vm_snapshot(snapshot);
         same(snapshot, odh::decode_vm_snapshot(encoded));
+        auto legacy = encoded;
+        const auto temp_xl_offset = 2u + 1u + 4u + snapshot.diagnostic.size() + 3u * 8u + 20u * 2u;
+        legacy.erase(legacy.begin() + static_cast<std::ptrdiff_t>(temp_xl_offset),
+                     legacy.begin() + static_cast<std::ptrdiff_t>(temp_xl_offset + 8));
+        legacy[0] = 1; legacy[1] = 0;
+        const auto old_snapshot = odh::decode_vm_snapshot(legacy);
+        require(old_snapshot.temp_xl == std::array<std::int32_t, 2>{},
+            "version 1 snapshots restore with zeroed TempXL values");
         const auto pending_flag_offset = 2u + 1u + 4u + snapshot.diagnostic.size() +
-            3u * 8u + 20u * 2u + 4u;
+            3u * 8u + 20u * 2u + 2u * 4u + 4u;
         for (std::size_t size = 0; size < encoded.size(); ++size) {
             auto truncated = encoded;
             truncated.resize(size);
             rejects([&] { (void)odh::decode_vm_snapshot(truncated); }, "every truncated prefix rejected");
         }
         auto changed = encoded;
-        changed[0] = 2;
+        changed[0] = 3;
         rejects([&] { (void)odh::decode_vm_snapshot(changed); }, "unsupported version rejected");
         changed = encoded;
         changed[2] = 0xff;
