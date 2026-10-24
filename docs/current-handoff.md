@@ -1,5 +1,29 @@
 # Continuidade atual
 
+## Atualização: Init0 da comida termina com os recursos reais (2026-10-24)
+
+Montei um probe separado para executar Food Init0 com `Objects.far!Food.iff`
+OBJD16808, BHAVs privados do mesmo IFF, BHAVs e BCONs globais de
+`Global.far!Global.iff`, e um objeto criado por
+`materialize_runtime_object`. O `CodeOwner` foi um identificador de recurso
+próprio (`0x80000002`), e o contexto Init usou Caller=Callee=Food e
+StackObject=0, conforme `VMEntity.ExecuteGenericEntryPoint` no Simitone. A
+leitura scope26 consultou o snapshot `BconTuning`; o World recebeu as demais
+leituras e escritas.
+
+Init0 terminou `returned_true` em 41 instruções. O trace percorreu Food BHAV
+4100 → Food BHAV 4112 → Global BHAV 271; `ObjectData[23]` da Food ficou 2.
+O probe tratou apenas Refresh opcode7 do tipo gráfico com o mesmo retorno
+verdadeiro já usado pelo `person.cpp`; as demais primitivas continuam
+unsupported. Build atual dos alvos `odh-object-runtime-resources-tests` e
+`odh-vm-tests` passou; CTest `object_runtime_resources` e `vm` passou 2/2.
+
+Isso prova a execução isolada de Init0 para esta definição e estes recursos em
+um World construído pelo ODH. Não cria Food a partir de Have A Snack, não roda
+Main1, não agenda uma VM nova no scheduler nem prova inicialização de outros
+objetos. Próximo: transformar este fluxo em criação adiada do opcode42, manter
+a VM do objeto por ID, e só concluir a espera do avatar após Init0 retornar.
+
 ## Atualização: conclusão de espera pode devolver novo StackObject (2026-10-24)
 
 `Vm::complete` agora aceita, além do resultado e da saída opcional de argumento
