@@ -13,13 +13,16 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const RoutineSet& globals, const RoutineOwners& owners,
     std::uint64_t instruction_budget, WorldLimits world_limits,
     VmMemory supplemental_memory, VmPrimitive supplemental_primitive,
-    SoundResolver sound_resolver, const GeometricRoomMap* room_map) {
+    SoundResolver sound_resolver, const GeometricRoomMap* room_map,
+    std::optional<std::uint64_t> random_seed) {
     StagedLoadEntryPointResult result;
     std::vector<SoundRequest> pending_sound_events;
     std::size_t unresolved_sound_events=0;
     std::size_t cancelled_sound_events=0;
     std::map<std::uint16_t,std::int16_t> pending_room_scores;
     std::size_t pending_room_score_refreshes=0;
+    std::optional<RandomState> staged_random;
+    if(random_seed)staged_random.emplace(*random_seed);
     auto reject = [&](std::string reason, std::int16_t entity = 0,
                       std::uint16_t action = 0, VmStatus status = VmStatus::ready) {
         result.snapshot.reset();
@@ -105,6 +108,8 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
         return PrimitiveOutcome{};
     };
     const auto primitive_for = [&](World& world) {
+        VmPrimitive random_handler;
+        if(staged_random)random_handler=random_primitive(*staged_random,memory_for(world));
         const auto sound_handler=sound_primitive(world,sound_resolver,{},
             [&pending_sound_events,&unresolved_sound_events](const SoundRequest& request,
                                                              const std::string& status){
@@ -112,12 +117,14 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
                 else if(status=="missing_resource"||status=="missing_owner")++unresolved_sound_events;
             });
         const auto entity_next_handler=entity_next_primitive(world);
-        return VmPrimitive{[load_profile_primitive,supplemental_primitive,sound_handler,
+        return VmPrimitive{[load_profile_primitive,supplemental_primitive,random_handler,sound_handler,
                             entity_next_handler,room_map,&pending_room_scores,
                             &pending_room_score_refreshes,&pending_sound_events,
                             &cancelled_sound_events,&world](
             const VmFrame& frame,const Instruction& instruction,const std::array<std::int16_t,20>& temps,
             const VmDispatch& dispatch) {
+            if(instruction.opcode==8&&random_handler)
+                return random_handler(frame,instruction,temps,dispatch);
             if(instruction.opcode==8&&supplemental_primitive)
                 return supplemental_primitive(frame,instruction,temps,dispatch);
             if(instruction.opcode==23)return sound_handler(frame,instruction,temps,dispatch);
@@ -237,6 +244,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     result.unresolved_sound_events=unresolved_sound_events;
     result.cancelled_sound_events=cancelled_sound_events;
     result.room_scores=std::move(pending_room_scores);
+    if(staged_random)result.random_seed=staged_random->seed();
     result.reason = "all Load actions completed synchronously in the unpublished candidate";
     return result;
 }

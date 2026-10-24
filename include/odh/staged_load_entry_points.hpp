@@ -3,6 +3,7 @@
 #include "odh/world.hpp"
 #include "odh/sound.hpp"
 #include "odh/room_score.hpp"
+#include "odh/random.hpp"
 #include <array>
 #include <map>
 #include <optional>
@@ -31,6 +32,8 @@ struct StagedLoadEntryPointResult {
     // Room scores are staged with the candidate and published only on success.
     std::map<std::uint16_t, std::int16_t> room_scores;
     std::size_t discarded_room_score_refreshes = 0;
+    // Present only on success when the caller supplied an explicit seed.
+    std::optional<std::uint64_t> random_seed;
 };
 
 // Runs Load (EntryPoint 2) in the supplied entity order against a private World
@@ -49,6 +52,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const RoutineSet& globals, const RoutineOwners& owners,
     std::uint64_t instruction_budget, WorldLimits world_limits = {},
     VmMemory supplemental_memory = {}, VmPrimitive supplemental_primitive = {},
-    SoundResolver sound_resolver = {}, const GeometricRoomMap* room_map = nullptr);
+    SoundResolver sound_resolver = {}, const GeometricRoomMap* room_map = nullptr,
+    std::optional<std::uint64_t> random_seed = {});
 
 } // namespace odh

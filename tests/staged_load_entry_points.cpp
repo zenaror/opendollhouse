@@ -183,6 +183,18 @@ int main() {
                 load_random.seed()==expected_random.seed(),
                 "saved Load shares the explicit TS1 RNG state through the injected opcode 8 handler");
 
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,random_owners,8,{}, {},{}, {},nullptr,1);
+        require(result.snapshot.has_value()&&result.random_seed==expected_random.seed()&&
+                result.snapshot->entities[0].object_words.at(23)==expected_random_value,
+                "transactional Load returns the advanced seed only with its successful candidate");
+        auto transactional_random_failure=random_owners;
+        transactional_random_failure[202][key(4096)]=routine({{999,254,255,{}}});
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,transactional_random_failure,8,{}, {},{}, {},nullptr,1);
+        require(!result.snapshot&& !result.random_seed,
+                "a later Load failure exposes neither a candidate nor an advanced random seed");
+
         auto sound_owners=owners;
         sound_owners[101][key(4096)]=routine({{23,254,255,{5,0,68,172,0,0,0,0}}});
         const odh::SoundResolver sound_resolver=[](const odh::VmFrame&,std::uint16_t id)
