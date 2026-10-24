@@ -71,6 +71,24 @@ de modo na janela, idioma persistido, logs integrados ou gestão de famílias.
 
 ## Validação
 
+### Investigação da tela “Loading” — 2026-10-24
+
+- Capturas separadas mostram o cartão “Loading” às 00:12:51 e o mapa pronto às
+  00:13:04. No código, a janela mostra o cartão antes de buscar rótulos em
+  `UIText.iff` e preparar o mapa. Essas capturas confirmam uma espera durante
+  trabalho síncrono, mas não identificam qual etapa levou mais tempo.
+- A entrada agora decodifica as cinco tabelas de menu usadas em uma só passagem
+  pelo `UIText.iff`. `linux_ui_strings` verifica cache, idioma solicitado,
+  fallback inglês, tabela ausente/duplicada e bloqueio de link para fora da
+  pasta do jogo.
+- A build com Pango exportou quadros 800×600 usando dados comerciais somente
+  para leitura: modos 1–5 e 7 tinham todas as camadas (`missing_layers: []`).
+  Modo 6 permanece explicitamente sem seleção, conforme o fluxo de Simitone.
+  Essa exportação não abre a janela X11 nem confirma a duração total da espera.
+- CTest Debug completo: 224 testes configurados, 221 aprovados e três testes
+  de janela pulados por falta de acesso ao display (`linux_window_backend`,
+  `linux_neighborhood_screen_actions`, `linux_move_out_integration`).
+
 ### Reteste depois da instalação do Pango — 2026-10-23
 
 - `cmake --build build/linux-checkpoint -j2` concluiu e reconstruiu `odh-person`

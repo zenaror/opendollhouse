@@ -7,6 +7,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A entrada Linux lê as tabelas de menu necessárias de `UIText.iff` em uma
+  única passagem e reutiliza os textos durante a escolha da vizinhança. Isso
+  reduz trabalho repetido enquanto a tela de carregamento fica visível, sem
+  mudar o idioma selecionado nem os fallbacks.
+
 - O diagnóstico de uma posição candidata agora reúne as regras de piso,
   sobreposição de objetos, inventário de obstáculos e célula livre. A resposta
   só é `clear` quando os quatro pontos estão conhecidos e liberados; isso ainda

@@ -2,6 +2,7 @@
 #ifdef ODH_HAVE_X11
 #include "neighborhood_screen.hpp"
 #include "linux_text_renderer.hpp"
+#include "linux_ui_strings.hpp"
 #endif
 #include "resource.hpp"
 
@@ -367,34 +368,6 @@ std::filesystem::path require_file(const std::filesystem::path& root,
 }
 
 #ifdef ODH_HAVE_X11
-std::string game_ui_string(const std::filesystem::path& game, std::uint16_t table_id,
-        std::size_t index, std::uint8_t language, const char* fallback) {
-    const auto candidate = game / "GameData/UIText.iff";
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(candidate, error) || error) return fallback;
-    const auto path = std::filesystem::canonical(candidate, error);
-    if (error) throw odh::FormatError("cannot resolve UIText.iff inside the game installation");
-    if (!path_is_within(game, path))
-        throw odh::FormatError("UIText.iff resolves outside the selected game installation");
-    std::optional<std::string> result;
-    bool found_table = false;
-    with_iff_file(path.string(), [&](const auto& view) {
-        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
-            if (chunk.type != "STR#" || chunk.id != table_id) return;
-            if (found_table) throw odh::FormatError("ambiguous UIText STR# resource");
-            found_table = true;
-            const auto table = odh::read_strings(chunk.payload);
-            if (const auto* entry = odh::string_in_language_or_english(table, language, index))
-                result = entry->value;
-        });
-    });
-    auto text = result.value_or(fallback);
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-    return odh_host::legacy_text_to_utf8(text, language);
-#else
-    return text;
-#endif
-}
 #endif
 
 std::int32_t house_purchase_price(const std::filesystem::path& game,
@@ -705,6 +678,7 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string neighborhood_title = "Neighborhood";
         std::string neighborhood_cancel = "Cancel";
         if (!options.plan_only && !options.headless_ticks) {
+            odh_host::GameUiStrings ui_strings(game);
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
                 options.load_session ? 240 : 600, "OpenDollhouse");
             if (options.choose_language) {
@@ -717,30 +691,30 @@ int odh_linux_game_entry(int argc, char** argv) {
                 options.language = *selected;
             }
             present_loading_screen(*window,static_cast<std::uint8_t>(options.language));
-            move_in_title = game_ui_string(game, 132, 0,
+            move_in_title = ui_strings.get(132, 0,
                 static_cast<std::uint8_t>(options.language), "Purchase House?");
-            move_in_question = game_ui_string(game, 132, 1,
+            move_in_question = ui_strings.get(132, 1,
                 static_cast<std::uint8_t>(options.language),
                 "Are you sure you want to buy this house?");
-            move_out_title = game_ui_string(game, 131, 2,
+            move_out_title = ui_strings.get(131, 2,
                 static_cast<std::uint8_t>(options.language), "Evict Family?");
-            confirm_yes = game_ui_string(game, 142, 2,
+            confirm_yes = ui_strings.get(142, 2,
                 static_cast<std::uint8_t>(options.language), "Yes");
-            confirm_no = game_ui_string(game, 142, 3,
+            confirm_no = ui_strings.get(142, 3,
                 static_cast<std::uint8_t>(options.language), "No");
-            family_picker_action = game_ui_string(game, 128, 3,
+            family_picker_action = ui_strings.get(128, 3,
                 static_cast<std::uint8_t>(options.language), "Move In Family");
-            family_picker_title = game_ui_string(game, 128, 8,
+            family_picker_title = ui_strings.get(128, 8,
                 static_cast<std::uint8_t>(options.language), "SELECT A FAMILY");
-            no_family_title = game_ui_string(game, 132, 2,
+            no_family_title = ui_strings.get(132, 2,
                 static_cast<std::uint8_t>(options.language), "Sorry");
-            no_family_message = game_ui_string(game, 132, 3,
+            no_family_message = ui_strings.get(132, 3,
                 static_cast<std::uint8_t>(options.language), "You can't afford it.");
-            family_picker_cancel = game_ui_string(game, 128, 5,
+            family_picker_cancel = ui_strings.get(128, 5,
                 static_cast<std::uint8_t>(options.language), "Cancel");
-            neighborhood_title = game_ui_string(game, 145, 1,
+            neighborhood_title = ui_strings.get(145, 1,
                 static_cast<std::uint8_t>(options.language), "Neighborhood");
-            neighborhood_cancel = game_ui_string(game, 128, 5,
+            neighborhood_cancel = ui_strings.get(128, 5,
                 static_cast<std::uint8_t>(options.language), "Cancel");
             map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
                 family_overlay ? &*family_overlay : nullptr);
