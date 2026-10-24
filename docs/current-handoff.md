@@ -19,6 +19,21 @@ rotas, orçamento e fluxo de interação passou 4/4. Próxima investigação: lo
 e identificar o recurso desse GUID e mapear o que a criação exige no World e na
 persistência antes de implementar uma factory segura.
 
+### O que a criação exige
+
+Uma busca estática nas definições de `Objects.far`, `ExpansionShared.far` e
+`ExpansionPack1..7.far` encontrou uma definição para esse GUID em
+`Objects.far!Food.iff`, OBJD16808, tipo4, versão138, sem partes multitile. No
+Simitone fixado em `docs/references.md`, `VMCreateObjectInstance` resolve a
+definição, constrói o objeto e `VMMultitileGroup.Init` executa os entry points
+de inicialização0 e8 e agenda o Main1. Depois o opcode coloca o objeto no
+slot0 do StackObject. Portanto, apenas alocar uma entidade e anexá-la à
+geladeira não é uma implementação suficiente. O próximo passo é criar um
+serviço limitado de objetos do World com definição, slots, inicialização e
+agendamento de VM: hoje o scheduler de `tools/person.cpp` registra os Sims da
+família, não objetos comuns. Depois, integrar a persistência de novos objetos
+ao formato de sessão/salvamento antes de alegar save completo.
+
 ## Atualização: geladeira real revela o próximo limite da VM (2026-10-24)
 
 Um probe controlado do objeto 112 da House07 (GUID `1734088879`) confirmou a
