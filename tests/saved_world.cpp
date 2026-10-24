@@ -1,4 +1,7 @@
 #include "odh/saved_world.hpp"
+#include "odh/saved_avatar_place_discovery.hpp"
+#include "odh/saved_collision_candidates.hpp"
+#include <algorithm>
 #include <cfenv>
 #include <iostream>
 #include <stdexcept>
@@ -13,7 +16,7 @@ template<class F> void rejected(F&& f,const char* message) {
     throw std::runtime_error(message);
 }
 odh::ObjectDefinition definition(std::uint32_t guid,std::uint16_t master=0,std::int16_t sub=0) {
-    return {138,guid,4,master,sub,master!=0,32,100};
+    return {138,guid,4,master,sub,master!=0,156,0,0,0,16,0};
 }
 odh::SavedWorldEntity record(std::uint16_t id,std::uint32_t guid) {
     odh::SavedWorldEntity r{};
@@ -36,8 +39,10 @@ std::vector<odh::SavedWorldEntity> fixture() {
     a.common.slots={{17,0},{18,2}};
     b.saved.prefix.object_data[2]=1;b.saved.prefix.object_data[3]=1;
     b.serialized_object_type=2;b.tail.person.emplace();b.tail.person->person_data.resize(80,-22);
-    b.definition.object_type=2;
     b.saved.prefix.object_data[8]=8;b.saved.prefix.object_data[42]=2307;
+    b.definition=definition(102,12,2);
+    b.definition.object_type=2;
+    b.tail.multitile=odh::ObjmMultitileState{0,0,0,0,0,0,0};
     b.tail.person->motive_data_bits.fill(0x42c90000U); // 100.5 -> even100.
     b.tail.person->motive_data_bits[1]=0x43018000U; //129.5 ->130, no setter clamp.
     b.tail.person->motive_data_bits[2]=0xc6800000U; //-16384.
@@ -52,8 +57,9 @@ std::vector<odh::SavedWorldEntity> fixture() {
     a.common.relationship_count=1;a.common.relationships={{1,2,3,{65535,32768,70000}}};
     a.common.stack_count=1;a.common.stack={{2,4096,3,1,2,{8,9},{10},-1,4}};
     c.definition=definition(103,12,0);d.definition=definition(104,12,1);
-    c.tail.multitile=odh::ObjmMultitileState{0,0,0,2,0,0,0};
-    d.tail.multitile=odh::ObjmMultitileState{-1,1,0,3,4,0,3};
+    c.tail.multitile=odh::ObjmMultitileState{0,0,0,2,0,0,2};
+    d.tail.multitile=odh::ObjmMultitileState{-1,1,0,3,4,0,2};
+    c.saved.prefix.x=32;c.saved.prefix.y=64;
     d.saved.prefix.x=-16;d.saved.prefix.y=-16;d.saved.prefix.level=2;
     return {d,b,a,c}; // Source order does not determine IDs or group leader.
 }
@@ -131,13 +137,52 @@ int main() {
             "saved World exposes the resolved OBJD Type through StackObjectDefinition word 9");
         require(w.read(frame(2),3,8)==8 && w.read(frame(2),3,42)==2307,
             "general object flags and PlacementFlags remain distinct live World fields");
-        require(restored->multitile_groups.size()==1 && restored->multitile_groups[0].leader==3 &&
-            restored->multitile_groups[0].members==std::vector<std::int16_t>({3,4}),"multitile leader first independent of decoded order");
-        require(odh::saved_world_has_multitile_member(*restored,3,105)&&
+        require(restored->multitile_groups.size()==1 && restored->multitile_groups[0].leader==2 &&
+            restored->multitile_groups[0].members==std::vector<std::int16_t>({2,4,3}),"multitile leader first independent of decoded order");
+        require(odh::saved_world_has_multitile_member(*restored,2,105)&&
+            odh::saved_world_has_multitile_member(*restored,3,105)&&
             odh::saved_world_has_multitile_member(*restored,4,105)&&
-            !odh::saved_world_has_multitile_member(*restored,3,104)&&
-            !odh::saved_world_has_multitile_member(*restored,2,105),
+            !odh::saved_world_has_multitile_member(*restored,2,104),
             "saved multi-tile membership requires the exact resolved master and a real group member");
+        {
+            odh::GeometricRoomMap rooms;
+            rooms.floor_resources_resolved=true;rooms.width=4;rooms.height=8;
+            rooms.rooms.resize(2);rooms.rooms[0].id=0;rooms.rooms[1]={1,0,32,{},false,false,{}};
+            rooms.levels[0].assign(32,0x00010001U);rooms.levels[1].assign(32,0);
+            const auto* actor_entity=w.find(2);const auto* part_entity=w.find(3);
+            const auto part_record=std::find_if(restored->records.begin(),restored->records.end(),
+                [](const auto& row){return row.saved.object_id==3;});
+            const auto outside_record=std::find_if(restored->records.begin(),restored->records.end(),
+                [](const auto& row){return row.saved.object_id==4;});
+            require(actor_entity&&actor_entity->position&&part_entity&&part_entity->position&&
+                part_record!=restored->records.end()&&outside_record!=restored->records.end(),
+                "restored actor and multitile members are available to discovery");
+            const auto actor_position=*actor_entity->position;
+            const auto actor_shape=odh::avatar_candidate_collision_shape(actor_position);
+            const auto part=saved_collision_candidate(*part_record,part_entity);
+            const auto outside=saved_collision_candidate(*outside_record,w.find(4));
+            require(part.state==odh::SavedCollisionCandidateState::candidate&&part.box,
+                "real restored multitile member has a supported collision shape");
+            require(outside.reason==odh::SavedCollisionCandidateReason::position_unavailable,
+                "the out-of-world multitile member remains represented in the complete group");
+            const std::vector<odh::SavedCollisionCandidate> entities{
+                {2,true,odh::SavedCollisionCandidateState::candidate,
+                    odh::SavedCollisionCandidateReason::none,actor_shape.box,actor_position},part,outside};
+            const auto grouped=odh::discover_saved_avatar_place_blockers(rooms,actor_position,2,entities,
+                restored->multitile_groups,true,true);
+            require(grouped.status==odh::SavedAvatarPlaceDiscoveryStatus::ready&&
+                grouped.entity_snapshot_blockers.size()==1&&grouped.entity_snapshot_blockers[0].blocker_id==3&&
+                grouped.entity_snapshot_blockers[0].overlap.same_multitile_group&&
+                grouped.entity_snapshot_rule_audit.status==odh::SavedAvatarPlaceAuditStatus::allowed&&
+                !grouped.runtime_obstacle_inventory_complete,
+                "restored saved-world group suppresses only its self-overlap during candidate discovery");
+            const auto missing_groups=odh::discover_saved_avatar_place_blockers(rooms,actor_position,2,entities,{},true,true);
+            require(missing_groups.status==odh::SavedAvatarPlaceDiscoveryStatus::ready&&
+                missing_groups.entity_snapshot_blockers.size()==1&&
+                !missing_groups.entity_snapshot_blockers[0].overlap.same_multitile_group&&
+                missing_groups.entity_snapshot_rule_audit.status==odh::SavedAvatarPlaceAuditStatus::unsupported,
+                "without the restored group, the overlapping member remains an unknown blocker");
+        }
         require(restored->relationships->object_value(w,1,2,0)==-1 && restored->relationships->object_value(w,1,2,1)==-32768 &&
             restored->relationships->object_value(w,1,2,2)==4464,"raw relationships adapted to signed low16 in generation backend");
         require(restored->records[1].tail.person->motive_data_old_bits[0]==0x7fc01234U &&
@@ -166,7 +211,7 @@ int main() {
         reject_change([](auto& v){v[2].common.linked_slot->object_id=90;},"dangling linked slot rejected");
         reject_change([](auto& v){v[1].saved.prefix.object_data[3]=0;},"containment reciprocity rejected");
         reject_change([](auto& v){v[2].common.slots[1].object_id=0;},"orphan container rejected");
-        reject_change([](auto& v){v[0].tail.multitile->parent_id=2;},"nonmultitile parent rejected");
+        reject_change([](auto& v){v[0].tail.multitile->parent_id=1;},"nonmultitile parent rejected");
         reject_change([](auto& v){v[3].tail.multitile->parent_id=4;},"multitile parent cycle rejected");
         reject_change([](auto& v){v[1].tail.person->motive_data_bits[4]=0x7fc01234U;},"current NaN motive rejected");
         reject_change([](auto& v){v[1].tail.person->person_data.resize(81);},"person extent rejected");
