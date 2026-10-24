@@ -744,3 +744,21 @@ continuam pendentes.
 
 
 O fluxo integrado agora também pode voltar à vizinhança com **M** e retomar o lote carregado sem avançar o relógio nem recarregar o World. A prova headless Sit→mapa→mesmo lote→Stand está em [neighborhood-return-validation.md](neighborhood-return-validation.md); trocar para outro lote continua indisponível.
+
+### Lista provisória de ações visíveis — 2026-10-24
+
+Ao selecionar um objeto com ações elegíveis, a janela Linux agora desenha até
+oito rótulos do TTAB em uma lista sobre a cena e destaca a ação selecionada.
+Tab/Shift+Tab ainda percorrem as opções e Space/Enter ainda enfileiram a ação;
+o título da janela deixou de expor GUID, TTAB e outros identificadores internos.
+O painel reutiliza o texto localizado já lido dos recursos e o renderizador
+Linux existente. A compilação de `odh-person` e os testes
+`linux_window_backend`, `saved_interaction_discovery` e `person_cli` passaram
+(3/3, sob Xvfb).
+
+Este é apenas um passo de interação visível. Não foi feita captura de uma
+partida com uma ação aberta; o painel não é o pie menu original nem o menu do
+Simitone, ainda não recebe seleção de ação pelo mouse e não prova paridade
+visual. O próximo passo é validar a lista aberta numa janela X11 isolada e
+ligar escolha por clique; depois reconstruir a apresentação usando a arte e o
+comportamento original do jogo.

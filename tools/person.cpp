@@ -2969,47 +2969,55 @@ struct PlacementCandidateProbe {
     std::uint8_t current_overlay_language=game_language;
     const auto interaction_window_title=[&]{
         current_overlay_text.reset();
-        std::string title="OpenDollhouse Main preview | resident "+std::to_string(active_household_actor)+" selected";
-        if(active_household_actor!=runtime_avatar_id)
-            title+="; object actions use this resident";
-        if(render_selection){
-            title+=" | object "+std::to_string(render_selection->id)+" GUID "+
-                std::to_string(render_selection->guid)+" TTAB "+std::to_string(render_selection->tree_table_id);
-            const auto eligible=render_interactions?eligible_saved_interaction_rows(*render_interactions,
-                render_test_results,world.find(active_household_actor)):std::vector<std::size_t>{};
-            if(eligible.empty())title+=" | no supported eligible action";
-            else {
-                auto selected=render_selected_interaction_row.value_or(eligible.front());
-                if(std::find(eligible.begin(),eligible.end(),selected)==eligible.end())selected=eligible.front();
-                const auto position=static_cast<std::size_t>(std::distance(eligible.begin(),
-                    std::find(eligible.begin(),eligible.end(),selected)));
-                const auto raw_label=selected<render_interactions->row_labels.size()&&
-                    render_interactions->row_labels[selected]?*render_interactions->row_labels[selected]:
-                    std::string("eligible action");
-                current_overlay_language=selected<render_interactions->row_label_languages.size()?
-                    render_interactions->row_label_languages[selected]:game_language;
-#ifdef ODH_HAVE_LINUX_TEXT_CODEC
-                const auto label=odh_host::legacy_text_to_utf8(raw_label,current_overlay_language,2048);
-#else
-                const auto& label=raw_label;
-#endif
-                current_overlay_text=label;
-                title+=" | action "+std::to_string(position+1)+"/"+
-                    std::to_string(eligible.size())+": "+label;
-                if(eligible.size()>1)title+=" (Tab/Shift+Tab to choose)";
-                title+="; Space/Enter to queue";
-            }
-        }else if(render_ground_selection){
-            const auto& ground=*render_ground_selection;
-            title+=" | ground ("+std::to_string(ground.x)+","+std::to_string(ground.y)+") level "+
-                std::to_string(ground.level)+" room "+std::to_string(ground.room)+"; Space/Enter to Go Here";
+        const std::string title="OpenDollhouse";
+        if(!render_selection&&render_ground_selection){
+            current_overlay_text="Go here";
         }
         if(render_selection&&stand_selection_is_current(*render_selection)){
-            title+=" | U to stand";
-            current_overlay_text="U: Stand";
+            current_overlay_text="Stand up";
         }
-        if(neighborhood_resume)title+=" | M: neighborhood";
-        return title+" | S save (experimental), Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+        return title;
+    };
+    const auto draw_interaction_menu=[&](odh::RasterFrame& image){
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        if(!render_selection||!render_interactions||!render_interactions->table)return;
+        const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
+            world.find(active_household_actor));
+        if(eligible.empty())return;
+        auto selected=render_selected_interaction_row.value_or(eligible.front());
+        auto selected_at=std::find(eligible.begin(),eligible.end(),selected);
+        if(selected_at==eligible.end()){selected_at=eligible.begin();selected=*selected_at;}
+        const auto selected_position=static_cast<std::size_t>(std::distance(eligible.begin(),selected_at));
+        const auto max_rows=std::min<std::size_t>(8,image.height>16?(image.height-16)/22:0);
+        if(max_rows==0)return;
+        const auto first=selected_position>=max_rows?selected_position-max_rows+1:0;
+        const auto last=std::min(eligible.size(),first+max_rows);
+        const auto width=static_cast<std::int32_t>(std::min<std::uint32_t>(304,image.width>16?image.width-16:0));
+        if(width<80)return;
+        for(std::size_t position=first;position<last;++position){
+            const auto row=eligible[position];
+            const auto raw=row<render_interactions->row_labels.size()&&render_interactions->row_labels[row]
+                ?*render_interactions->row_labels[row]:std::string("Action");
+            const auto language=row<render_interactions->row_label_languages.size()
+                ?render_interactions->row_label_languages[row]:game_language;
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+            const auto label=odh_host::legacy_text_to_utf8(raw,language,2048);
+#else
+            const auto& label=raw;
+#endif
+            odh_host::TextOverlayStyle style;
+            style.x=8;style.y=8+static_cast<std::int32_t>(position-first)*22;
+            style.width=width;style.height=21;style.font_size_px=13;style.padding=4;
+            style.foreground={250,248,230,255};
+            style.background=position==selected_position
+                ?std::array<std::uint8_t,4>{42,91,121,238}
+                :std::array<std::uint8_t,4>{24,27,31,218};
+            (void)odh_host::draw_text_overlay(image,
+                (position==selected_position?"> ":"  ")+label,language,style);
+        }
+#else
+        (void)image;
+#endif
     };
 #ifdef ODH_HAVE_X11
     std::unique_ptr<odh_host::LinuxWindow> owned_render_window;
@@ -4341,6 +4349,7 @@ struct PlacementCandidateProbe {
                     render_window_host->set_title(interaction_window_title()+" | missing font glyphs: "+
                                                   std::to_string(text_result.missing_glyphs));
             }
+            draw_interaction_menu(frame.image);
 #endif
             render_window_host->present(frame.image);
         }
