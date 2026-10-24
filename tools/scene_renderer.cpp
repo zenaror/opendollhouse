@@ -1,5 +1,6 @@
 #include "scene_renderer.hpp"
 #include "odh/skinning.hpp"
+#include "odh/mesh.hpp"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -73,6 +74,26 @@ const odh::Chunk& unique_chunk(const std::vector<odh::Chunk>& chunks,
     if (!selected) throw odh::FormatError("scene renderer missing " + kind + " chunk: " + std::to_string(id));
     return *selected;
 }
+
+odh::AppearanceCollection loose_cmx(const std::string& path) {
+    std::ifstream input(path,std::ios::binary);
+    if(!input)throw odh::FormatError("scene renderer cannot open loose CMX: "+path);
+    auto result=odh::read_cmx_appearances(odh::View(input,std::filesystem::file_size(path)));
+    if(result.remaining_bytes)throw odh::FormatError("scene renderer trailing CMX bytes");
+    return result;
+}
+odh::Mesh loose_skn(const std::string& path) {
+    std::ifstream input(path,std::ios::binary);
+    if(!input)throw odh::FormatError("scene renderer cannot open loose SKN: "+path);
+    auto result=odh::read_skn(odh::View(input,std::filesystem::file_size(path)));
+    if(result.remaining_bytes)throw odh::FormatError("scene renderer trailing SKN bytes");
+    return result;
+}
+odh::BitmapImage loose_bmp(const std::string& path) {
+    std::ifstream input(path,std::ios::binary);
+    if(!input)throw odh::FormatError("scene renderer cannot open loose BMP: "+path);
+    return odh::read_bmp(odh::View(input,std::filesystem::file_size(path)));
+}
 } // namespace
 
 struct SceneRenderer::Impl {
@@ -111,28 +132,42 @@ struct SceneRenderer::Impl {
         for (const auto& part : config.parts) {
             if (part.hand && (!odh::valid_hand_gesture(part.hand->gesture) || part.hand->gesture == odh::HandGesture::none))
                 throw odh::FormatError("scene renderer hand part must specify idle, pointing or fist");
-            const auto appearances = odh::read_bcf_appearances(animation_archive.exact(part.appearance_entry));
-            const odh::Appearance* appearance = nullptr;
-            for (const auto& candidate : appearances.appearances) {
-                if (candidate.name != part.appearance_name) continue;
-                if (appearance) throw odh::FormatError("scene renderer ambiguous appearance name: " + part.appearance_name);
-                appearance = &candidate;
+            odh::Mesh mesh;odh::BitmapImage texture;std::string attachment_bone;
+            if(part.loose_skin_assets){
+                const auto appearances=loose_cmx(part.appearance_entry);const odh::Appearance* appearance=nullptr;
+                for(const auto& candidate:appearances.appearances)if(fold(candidate.name)==fold(part.appearance_name)){
+                    if(appearance)throw odh::FormatError("scene renderer ambiguous CMX appearance name: "+part.appearance_name);
+                    appearance=&candidate;}
+                if(!appearance)throw odh::FormatError("scene renderer CMX appearance not found: "+part.appearance_name);
+                const odh::AppearanceBinding* binding=nullptr;
+                for(const auto& candidate:appearance->bindings)if(fold(candidate.mesh_name+".skn")==fold(std::filesystem::path(part.bmf_entry).filename().string())){
+                    if(binding)throw odh::FormatError("scene renderer ambiguous CMX SKN binding: "+part.bmf_entry);
+                    binding=&candidate;}
+                if(!binding)throw odh::FormatError("scene renderer CMX appearance has no selected SKN binding: "+part.bmf_entry);
+                attachment_bone=binding->bone;
+                mesh=loose_skn(part.bmf_entry);
+                if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer SKN skin name differs from CMX binding");
+                texture=loose_bmp(part.texture_entry);
+            }else{
+                const auto appearances=odh::read_bcf_appearances(animation_archive.exact(part.appearance_entry));
+                const odh::Appearance* appearance=nullptr;
+                for(const auto& candidate:appearances.appearances){if(candidate.name!=part.appearance_name)continue;
+                    if(appearance)throw odh::FormatError("scene renderer ambiguous appearance name: "+part.appearance_name);
+                    appearance=&candidate;}
+                if(!appearance)throw odh::FormatError("scene renderer exact appearance name not found: "+part.appearance_name);
+                const odh::AppearanceBinding* binding=nullptr;
+                for(const auto& candidate:appearance->bindings){if(fold(candidate.mesh_name+".bmf")!=fold(part.bmf_entry))continue;
+                    if(binding)throw odh::FormatError("scene renderer ambiguous appearance mesh binding: "+part.bmf_entry);
+                    binding=&candidate;}
+                if(!binding)throw odh::FormatError("scene renderer appearance has no selected BMF binding: "+part.bmf_entry);
+                attachment_bone=binding->bone;
+                mesh=odh::read_bmf(animation_archive.exact(part.bmf_entry));
+                if(fold(mesh.skin_name)!=fold(binding->mesh_name))throw odh::FormatError("scene renderer BMF skin name differs from appearance binding");
+                texture=odh::read_bmp(texture_archive.exact(part.texture_entry));
             }
-            if (!appearance) throw odh::FormatError("scene renderer exact appearance name not found: " + part.appearance_name);
-            const odh::AppearanceBinding* binding = nullptr;
-            for (const auto& candidate : appearance->bindings) {
-                if (fold(candidate.mesh_name + ".bmf") != fold(part.bmf_entry)) continue;
-                if (binding) throw odh::FormatError("scene renderer ambiguous appearance mesh binding: " + part.bmf_entry);
-                binding = &candidate;
-            }
-            if (!binding) throw odh::FormatError("scene renderer appearance has no selected BMF binding: " + part.bmf_entry);
-            auto mesh = odh::read_bmf(animation_archive.exact(part.bmf_entry));
-            if (fold(mesh.skin_name) != fold(binding->mesh_name))
-                throw odh::FormatError("scene renderer BMF skin name differs from appearance binding");
             std::size_t bones = 0;
-            for (const auto& bone : skeleton.bones)
-                if (fold(bone.name) == fold(binding->bone)) ++bones;
-            if (bones != 1) throw odh::FormatError("scene renderer appearance bone must resolve uniquely in skeleton");
+            for(const auto& bone:skeleton.bones)if(fold(bone.name)==fold(attachment_bone))++bones;
+            if(bones!=1)throw odh::FormatError("scene renderer appearance bone must resolve uniquely in skeleton");
             geometry_vertices += mesh.real_vertices.size() + mesh.blend_vertices.size();
             if (geometry_vertices > odh::MeshLimits{}.vertices)
                 throw odh::FormatError("scene renderer cumulative geometry vertex limit exceeded");
@@ -140,7 +175,6 @@ struct SceneRenderer::Impl {
             if (triangle_count > odh::RasterLimits{}.triangles)
                 throw odh::FormatError("scene renderer cumulative triangle limit exceeded");
             vertex_count += mesh.real_vertices.size();
-            auto texture = odh::read_bmp(texture_archive.exact(part.texture_entry));
             texture_pixels += texture.pixels.size();
             if (texture_pixels > odh::RasterLimits{}.texture_pixels)
                 throw odh::FormatError("scene renderer cumulative texture pixel limit exceeded");

@@ -7,6 +7,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O renderer do host interativo agora lê appearances CMX e meshes SKN com suas
+  texturas BMP soltas em `GameData/Skins`. Um SKN comercial do jogo foi
+  decodificado, ligado ao rig adulto e rasterizado pela cena CPU. O teste usou
+  o mesmo corpo nos oito componentes apenas para verificar o caminho de dados;
+  a aparência completa do Sim, pastas de expansão e gameplay visual ainda não
+  foram validados. Veja
+  [`mesh-validation.md`](docs/mesh-validation.md) e
+  [`saved-avatar-render-validation.md`](docs/saved-avatar-render-validation.md).
+
 - O catálogo CAS Linux agora lê nomes de aparência CMX e texturas BMP/TGA
   soltas ou dentro de FAR, incluindo roupas das pastas de expansão. Caminhos
   Windows dentro dos FAR são convertidos corretamente em nomes de arquivo no

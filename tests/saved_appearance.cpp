@@ -1,5 +1,6 @@
 #include "saved_appearance.hpp"
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -9,15 +10,39 @@ int checks=0;
 void check(bool ok){++checks;if(!ok)throw std::runtime_error("saved appearance assertion failed");}
 template<class F> void rejects(F f){bool caught=false;try{f();}catch(const odh::FormatError&){caught=true;}check(caught);}
 void word(std::string& b,std::uint32_t n){for(int i=0;i<4;++i)b.push_back(static_cast<char>((n>>(i*8))&255));}
+void scalar(std::string& b,float n){std::uint32_t bits;std::memcpy(&bits,&n,4);word(b,bits);}
 void text(std::string& b,const std::string& s){b.push_back(static_cast<char>(s.size()));b+=s;}
+std::string rig(){std::string b;word(b,1);text(b,"adult");b.push_back(1);b.push_back(0);text(b,"ROOT");text(b,"NULL");word(b,0);
+ for(float n:{0.f,0.f,0.f,0.f,0.f,0.f,1.f})scalar(b,n);for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);word(b,0);word(b,0);return b;}
+std::string loose_mesh(){return
+ "xskin-loose\nloose-texture\n1\nROOT\n1\n0 1 2\n1\n0 0 3 0 0\n"
+ "3\n0.25 0.25\n0.25 0.25\n0.25 0.25\n0\n3\n"
+ "-0.7 2 0 0 1 0\n0.7 2 0 0 1 0\n0 4 0 0 1 0\n";}
+std::string loose_bitmap(){std::string b="BM";word(b,58);word(b,0);word(b,54);word(b,40);word(b,1);word(b,1);
+ b.push_back(1);b.push_back(0);b.push_back(24);b.push_back(0);word(b,0);word(b,4);for(int i=0;i<4;++i)word(b,0);
+ b.push_back(20);b.push_back(40);b.push_back(static_cast<char>(200));b.push_back(0);return b;}
 std::string appearance(const std::string& name,const std::vector<std::string>& meshes,const std::string& bone="ROOT"){std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,static_cast<std::uint32_t>(meshes.size()));for(const auto& m:meshes){text(b,bone);text(b,m);word(b,0);word(b,0);}word(b,0);return b;}
 std::string mesh(const std::string& name,const std::string& tex){std::string b;text(b,name);text(b,tex);for(int i=0;i<6;++i)word(b,0);return b;}
 std::string clip(){std::string b;word(b,0);word(b,0);word(b,1);text(b,"clip");text(b,"pose");for(int i=0;i<5;++i)word(b,0);word(b,1);text(b,"ROOT");word(b,10);for(int i=0;i<7;++i)word(b,0);return b;}
 using Entry=std::pair<std::string,std::string>;
 void far(const std::filesystem::path& p,const std::vector<Entry>& entries){std::string b="FAR!byAZ";word(b,1);word(b,0);std::vector<std::uint32_t> offsets;for(const auto& e:entries){offsets.push_back(static_cast<std::uint32_t>(b.size()));b+=e.second;}auto offset=static_cast<std::uint32_t>(b.size());for(int i=0;i<4;++i)b[12+i]=static_cast<char>((offset>>(i*8))&255);word(b,static_cast<std::uint32_t>(entries.size()));for(std::size_t i=0;i<entries.size();++i){auto size=static_cast<std::uint32_t>(entries[i].second.size());word(b,size);word(b,size);word(b,offsets[i]);word(b,static_cast<std::uint32_t>(entries[i].first.size()));b+=entries[i].first;}std::ofstream out(p,std::ios::binary);out.write(b.data(),static_cast<std::streamsize>(b.size()));}
+void save(const std::filesystem::path& path,const std::string& bytes){std::ofstream out(path,std::ios::binary);out.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));}
 struct Temp {std::filesystem::path path;Temp(){path=std::filesystem::temp_directory_path()/("odh-saved-appearance-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));std::filesystem::create_directory(path);}~Temp(){std::error_code e;std::filesystem::remove_all(path,e);}};
 }
-int main(){try{
+int main(int argc,char** argv){try{
+ if(argc==5&&std::string(argv[1])=="--commercial-skin"){
+  SavedAppearanceResources resources(argv[2],argv[3],"adult-skeleton.cmx.bcf","adult",argv[4]);
+  odh::AvatarBodyStrings body{};body.body="b010fafit_01";body.head=body.body;
+  for(auto& hand:body.hands)hand=body.body;
+  SceneRenderer renderer(resources.resolve_body(body));
+  SceneState state{};
+  odh::WorldProjection camera;camera.width=320;camera.height=240;
+  const auto frame=renderer.render(state,camera);
+  std::cout<<"commercial loose-skin resources loaded: vertices="<<renderer.vertices()
+      <<" triangles="<<renderer.triangles()<<" texture_bytes="<<renderer.texture_bytes()
+      <<" raster_samples="<<frame.image.shaded_samples<<'\n';
+  return 0;
+ }
  odh::AnimationHeader h{};h.name="clip";odh::BoneMotion motion{};motion.frames=121;h.motions.push_back(motion);
  auto parsed=saved_animation_appearance("clip;6;1000;25;1000;0;7;8",h);
  check(parsed.frame==3.025&&parsed.priority==6&&parsed.weight_milli==1000&&parsed.speed_milli==1000);check(!parsed.loop&&!parsed.backwards&&!parsed.end_reached&&parsed.unknown1==7&&parsed.unknown2==8);
@@ -29,8 +54,24 @@ int main(){try{
  {"accessory-toothbrush.cmx.bcf",appearance("suit-toothbrush",{"toothbrush"},"R_HAND")},
  {"toothbrush.bmf",mesh("toothbrush","x")}};
  // The rig is caller-selected; scanner skips its nonzero skeleton count.
- entries[0].second=std::string(4,'\0');entries[0].second[0]=1;
+ entries[0].second=rig();
  far(a,entries);far(t,{{"unmatched.bmp",""},{"skinlgt.bmp",""},{"override.bmp",""},{"skinmed.bmp",""},{"x.bmp",""}});
+ const auto skins=dir.path/"loose-skins";std::filesystem::create_directory(skins);
+ save(skins/"loose.cmx","// synthetic CMX\nversion 300\n0\n1\nb123mafat\n1\n0\n1\nROOT\nxskin-loose\n0\n0\n0\n");
+ save(skins/"xskin-loose.skn",loose_mesh());
+ save(skins/"loose-texture.bmp",loose_bitmap());
+ SavedAppearanceResources loose_resources(a.string(),t.string(),"rig.bcf","adult",skins.string());
+ odh::AvatarBodyStrings loose_body{};loose_body.body="b123mafat";loose_body.head="b123mafat";
+ for(auto& hand:loose_body.hands)hand="b123mafat";
+ const auto loose_scene=loose_resources.resolve_body(loose_body);
+ check(loose_scene.parts.size()==8&&loose_scene.parts.front().loose_skin_assets&&
+       loose_scene.parts.front().appearance_entry==(skins/"loose.cmx").string()&&
+       loose_scene.parts.front().bmf_entry==(skins/"xskin-loose.skn").string()&&
+       loose_scene.parts.front().texture_entry==(skins/"loose-texture.bmp").string());
+ SceneRenderer loose_renderer(loose_scene);
+ check(loose_renderer.vertices()==24&&loose_renderer.triangles()==8&&loose_renderer.texture_bytes()==32);
+ odh::WorldProjection loose_camera;loose_camera.width=160;loose_camera.height=160;
+ check(loose_renderer.render(SceneState{},loose_camera).image.shaded_samples>0);
  SavedAppearanceResources resources(a.string(),t.string(),"rig.bcf","adult");odh::ObjmPersonState p{};p.body.bytes="BODY";p.body_texture.bytes="BODY=skinmed";p.head.bytes="head";p.head_texture.bytes="HEAD-HEAD=override";p.left_hand.bytes=p.right_hand.bytes="hand";p.left_hand_texture.bytes=p.right_hand_texture.bytes="HAND=override";
  auto result=resources.resolve(p);check(result.scene.parts.size()==6);check(result.scene.parts[0].appearance_entry=="unexpected-host.bcf");check(result.scene.parts[0].texture_entry=="unmatched.bmp"&&result.scene.parts[1].texture_entry=="skinlgt.bmp"&&result.scene.parts[2].texture_entry=="skinmed.bmp");check(!result.current&&!result.base&&!result.base_executed);
  SavedAppearanceResources moved(std::move(resources));rejects([&]{resources.resolve(p);});

@@ -15,6 +15,9 @@ struct ScenePart {
     std::string appearance_entry, appearance_name, bmf_entry, texture_entry;
     // Untagged parts always render. Tagged parts match the current side gesture.
     std::optional<SceneHandPart> hand{};
+    // Traditional TS1 CAS assets are loose CMX/SKN/BMP files. The renderer
+    // reads them through the same Mesh/Bitmap structures as archive assets.
+    bool loose_skin_assets = false;
 };
 
 struct SceneConfig {

@@ -3074,8 +3074,15 @@ struct PlacementCandidateProbe {
             if(std::filesystem::exists(*render_output,path_error)||path_error)
                 throw odh::FormatError("person frame output must be a new file; existing output preserved");
         }
+        auto game_root=session_context&&!session_context->game_root.empty()
+            ?std::filesystem::path(session_context->game_root)
+            :std::filesystem::path(*render_animation_far).parent_path().parent_path().parent_path();
+        auto skins_directory=game_root/"GameData"/"Skins";
+        std::error_code skin_path_error;
+        const auto loose_skins=std::filesystem::is_directory(skins_directory,skin_path_error)&&!skin_path_error
+            ?skins_directory.string():std::string{};
         render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
-                                                                       *render_skeleton_entry,*render_skeleton_name);
+            *render_skeleton_entry,*render_skeleton_name,loose_skins);
         auto scene_config=render_appearances->resolve_body(*body_state->body);
         if(const auto* live_avatar=world.find(runtime_avatar_id))
             render_appearances->append_accessories(scene_config,live_avatar->bound_appearances);

@@ -13,8 +13,9 @@ variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
 | TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
 | SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
 | STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Parsers preservam bytes; lookup exato não aplica fallback; helper Linux converte texto visível e oferece fallback inglês; formato -4 |
-| BCF | Leitores separados para animações, skeletons ou appearances, exigindo demais seções vazias; campos brutos, propriedades, ranges e extensões | BCF misto e formatos textuais CMX/SKN/ANIM |
-| BMF | Nomes, bones, faces, bindings, UVs, pesos, transforms floatbits e vertex_count2 bruto | SKN textual, materiais/roupas completos e semântica geral de vertex_count2 |
+| BCF | Leitores separados para animações, skeletons ou appearances, exigindo demais seções vazias; campos brutos, propriedades, ranges e extensões | BCF misto e formatos textuais SKN/ANIM |
+| CMX/SKN | CMX de appearances e SKN textual para meshes TS1; leitor SKN converte dados para a estrutura BMF comum | Outros segmentos CMX, seleção completa de roupas/censura e formatos TSO |
+| BMF | Nomes, bones, faces, bindings, UVs, pesos, transforms floatbits e vertex_count2 bruto | Materiais/roupas completos e semântica geral de vertex_count2 |
 | BMP | DIB40/BI_RGB8 ou24bpp, paleta/BGR, padding/orientação e RGBA opaco | DIBs/compressões/bpp restantes, alpha e color key genérico; os mapas UI aplicam somente as três cores-chave documentadas em [neighborhood-map-validation.md](neighborhood-map-validation.md) |
 | CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
 | FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |

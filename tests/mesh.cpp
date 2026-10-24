@@ -15,6 +15,8 @@ auto appearances(const std::string& b,odh::MeshLimits limits={}){
     std::istringstream stream(b);return odh::read_bcf_appearances(odh::View(stream,b.size()),limits);}
 auto cmx_appearances(const std::string& b,odh::MeshLimits limits={}){
     std::istringstream stream(b);return odh::read_cmx_appearances(odh::View(stream,b.size()),limits);}
+auto skn(const std::string& b,odh::MeshLimits limits={}){
+    std::istringstream stream(b);return odh::read_skn(odh::View(stream,b.size()),limits);}
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const odh::FormatError&){failed=true;}
     require(failed,"invalid or truncated mesh/appearance rejected");}
 struct BmfFixture {
@@ -44,6 +46,11 @@ BcfFixture bcf(){BcfFixture f{};auto& b=f.bytes;put(b,0);f.count=b.size();put(b,
 std::string cmx(){
     return "// Character File.\nversion 300\n0\n1\nb123mafat\n1\n0\n1\nPELVIS\nxskin-b123mafat-body\n0\n0\n0\n";
 }
+std::string skn_fixture(){return
+    "xskin-test\ntexture-test\n1\nROOT\n1\n0 1 2\n1\n0 0 3 0 1\n"
+    "3\n0.5 0.25\n1 0\n0 1\n1\n2 16384\n4\n"
+    "0 0 0 0 0 1\n1 0 0 0 0 1\n0 1 0 0 0 1\n"
+    "0 0 1 0 0 1\n";}
 }
 int main(){try{
     const auto f=bmf();const auto result=mesh(f.bytes);
@@ -127,5 +134,21 @@ int main(){try{
     odh::MeshLimits cmx_limits;cmx_limits.appearances=0;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
     cmx_limits={};cmx_limits.appearance_bindings=0;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
     cmx_limits={};cmx_limits.text_bytes=cmx_bytes.size()-1;rejects([&]{cmx_appearances(cmx_bytes,cmx_limits);});
+    const auto skn_bytes=skn_fixture();const auto text_mesh=skn(skn_bytes);
+    require(text_mesh.skin_name=="xskin-test"&&text_mesh.texture_name=="texture-test"&&
+        text_mesh.bones==std::vector<std::string>{"ROOT"}&&text_mesh.faces==
+        std::vector<std::array<std::int32_t,3>>{{0,1,2}},"text SKN names, bones and faces decoded");
+    require(text_mesh.bindings.size()==1&&text_mesh.bindings[0].real_count==3&&
+        text_mesh.bindings[0].blend_count==1&&text_mesh.real_vertices.size()==3&&
+        text_mesh.real_vertices[0].texcoord_bits[0]==0x3F000000U,
+        "text SKN bindings, UVs and real vertex extent decoded");
+    require(text_mesh.blend_data.size()==1&&text_mesh.blend_data[0].other_vertex==2&&
+        text_mesh.blend_data[0].weight==16384&&text_mesh.blend_vertices.size()==1&&
+        text_mesh.vertex_count2==4&&text_mesh.remaining_bytes==0,
+        "text SKN blend order is normalized to BMF mesh fields");
+    for(std::size_t cut=0;cut+1<skn_bytes.size();++cut)rejects([&]{skn(skn_bytes.substr(0,cut));});
+    rejects([&]{skn(skn_bytes+"unexpected\n");});
+    odh::MeshLimits skn_limits;skn_limits.vertices=2;rejects([&]{skn(skn_bytes,skn_limits);});
+    skn_limits={};skn_limits.text_bytes=skn_bytes.size()-1;rejects([&]{skn(skn_bytes,skn_limits);});
     std::cout<<checks<<" mesh resource checks passed (synthetic fixtures only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Mesh test failed: "<<e.what()<<'\n';return 1;}}

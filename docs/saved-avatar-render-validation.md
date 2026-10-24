@@ -9,13 +9,24 @@ salvas continuam dormentes. Não é uma comparação visual com o jogo original.
 ## Recursos e adaptação
 
 `SavedAppearanceResources` recebe FAR de animação e texturas e uma seleção
-explícita de skeleton. Indexa nomes internos dos BCF de aparência/animação;
+explícita de skeleton. No modo `odh-saved-scene`, sem uma pasta extra de skins,
+indexa nomes internos dos BCF de aparência/animação;
 não deduz o nome do arquivo a partir do nome do recurso. Lookup usa ASCII
 casefold, conserva a grafia real e rejeita ambiguidades. BCF com skeleton é
 ignorado pelo índice de nomes; o renderer valida o rig selecionado. BCF misto
 fora dos perfis já implementados é recusado. BMF e BMP também exigem seleção
-única; não há busca em outros arquivos, precedência de expansões ou substituição
-anônima de recursos ausentes.
+única nesse modo; ele não faz busca em outros arquivos, precedência de expansões
+ou substituição anônima de recursos ausentes.
+
+O host interativo `odh-person` também indexa CMX, SKN e BMP soltos em
+`GameData/Skins`. Uma appearance CMX escolhe o SKN pelo nome do binding; o
+renderer confere o osso de ligação no rig e lê a textura BMP indicada pelo SKN.
+Arquivos são abertos somente para leitura, com limites de contagem e tamanho.
+Se o mesmo nome existir nos BCF já indexados, o host os escolhe para preservar
+o caminho anterior; CMX solto é usado quando o BCF não contém a appearance.
+Essa prioridade é uma escolha atual do ODH, não uma regra do jogo original já
+confirmada. Pastas de expansão e prioridade entre cópias soltas ainda não estão
+ligadas nesse caminho.
 
 Cada appearance expande todos os bindings. O valor após `=` da textura salva
 é o override; os rótulos BODY/HEAD-HEAD/HAND não escolhem o binding. Seguindo
@@ -59,12 +70,24 @@ são recusados explicitamente, sem descartar campos silenciosamente.
 O renderer agora aceita os acessórios OBJM cujo vínculo está vazio. O leitor
 OBJM do Simitone comenta que esse vínculo costuma estar vazio, e o activator
 TS1 transfere o nome do acessório para o avatar. O nome precisa terminar em
-`.apr`; o ODH encontra esse nome dentro
-de um BCF de aparência, expande cada vínculo em BMF, confere a textura BMP e
-acrescenta a malha ligada ao osso indicado. Vínculos preenchidos, recursos
+`.apr`; o ODH encontra esse nome em BCF/BMF ou, no host interativo, em CMX/SKN,
+expande cada vínculo, confere a textura BMP e acrescenta a malha ligada ao osso
+indicado. Vínculos preenchidos, recursos
 ambíguos ou ausentes e excesso do limite de 16 peças continuam sendo recusados.
 
-`odh-saved-appearance-tests` passou 171 verificações com uma escova sintética.
+No checkpoint de 2026-10-24, o modo manual opcional
+`odh-saved-appearance-tests --commercial-skin Animation.far Textures.far
+GameData/Skins` abriu recursos originais e rasterizou uma cena CPU. O SKN do
+corpo tinha 19 bones, 572 faces, 406 vértices reais e 106 de mistura; a cena de
+validação somou 3.248 vértices, 4.576 triângulos e 4.975 amostras sombreadas.
+Para exercitar o renderer isolado, os oito componentes BodySTR foram apontados
+ao mesmo corpo. Isso confirma leitura, skinning e rasterização de um mesh
+comercial; não representa um avatar montado corretamente nem valida a entrada
+em lote, a aparência completa ou fidelidade visual.
+
+`odh-saved-appearance-tests` passou 174 verificações. Fixtures sintéticas
+agora passam CMX→SKN→BMP pelo renderer, conferem o osso no rig e produzem pixels.
+Outra fixture de acessório cobre uma escova sintética.
 Separadamente, os arquivos comerciais de `Animation.far` foram lidos pelo
 `odh-mesh`: `suit-toothbrush.apr` resolve para uma malha `R_HAND` e o esqueleto
 adulto. Uma captura headless real de House07, no armário154, durante a ação4102

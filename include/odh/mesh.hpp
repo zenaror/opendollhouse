@@ -43,6 +43,10 @@ struct AppearanceCollection {
 // weights, vertex_count2 and float bits remain raw for later skin validation.
 // Blend vertices have no stored texture coordinates (their bits are zero).
 Mesh read_bmf(const View&,MeshLimits limits={});
+// Text SKN profile used by TS1. Its fields follow the BMF mesh layout, with
+// each blend record stored as other_vertex then weight. Numeric geometry is
+// retained as raw float bits for the same later skin validation as BMF.
+Mesh read_skn(const View&,MeshLimits limits={});
 // Appearance-only binary BCF: skeleton and animation counts must be zero.
 // Text and binding limits are cumulative across the collection. No text SKN
 // or mixed-section BCF inference is attempted.

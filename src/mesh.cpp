@@ -2,6 +2,8 @@
 #include "read_cursor.hpp"
 
 #include <charconv>
+#include <cctype>
+#include <cstring>
 #include <sstream>
 
 namespace odh {
@@ -95,6 +97,75 @@ private:
     std::vector<std::string> tokens_;
     std::size_t line_=0,token_=0;
 };
+
+class SknCursor {
+public:
+    explicit SknCursor(std::string bytes):bytes_(std::move(bytes)){}
+    std::string text() {
+        if(numeric_line_){
+            while(position_<bytes_.size()&&(bytes_[position_]==' '||bytes_[position_]=='\t'))++position_;
+            if(position_<bytes_.size()&&bytes_[position_]!='\r'&&bytes_[position_]!='\n')
+                throw FormatError("unexpected SKN numeric fields before text name");
+            newline();numeric_line_=false;
+        }
+        if(position_>=bytes_.size())throw FormatError("truncated SKN text name");
+        const auto end=bytes_.find_first_of("\r\n",position_);
+        const auto stop=end==std::string::npos?bytes_.size():end;
+        auto value=bytes_.substr(position_,stop-position_);position_=stop;
+        if (value.empty() || value.find('\0')!=std::string::npos)
+            throw FormatError("empty or NUL-containing SKN name");
+        newline();
+        return value;
+    }
+    std::int32_t i32() {
+        const auto value=token();std::int32_t result=0;
+        const auto parsed=std::from_chars(value.data(),value.data()+value.size(),result);
+        if(parsed.ec!=std::errc{}||parsed.ptr!=value.data()+value.size())
+            throw FormatError("invalid SKN integer");
+        return result;
+    }
+    std::uint32_t count(std::uint32_t& budget,std::uint32_t minimum_tokens) {
+        const auto value=i32();
+        if(value<0)throw FormatError("negative SKN count");
+        const auto count=static_cast<std::uint32_t>(value);
+        if(count>budget)throw FormatError("SKN count exceeds configured allocation budget");
+        budget-=count;
+        if(minimum_tokens&&count>remaining()/minimum_tokens)
+            throw FormatError("SKN declared item count exceeds remaining text extent");
+        return count;
+    }
+    std::uint32_t bits() {
+        const auto value=token();float number=0;
+        const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number,
+                                          std::chars_format::general);
+        if(parsed.ec!=std::errc{}||parsed.ptr!=value.data()+value.size())
+            throw FormatError("invalid SKN float");
+        std::uint32_t raw=0;static_assert(sizeof(raw)==sizeof(number));
+        std::memcpy(&raw,&number,sizeof(raw));return raw;
+    }
+    void require_end() {
+        for(;position_<bytes_.size();++position_)
+            if(!std::isspace(static_cast<unsigned char>(bytes_[position_])))
+                throw FormatError("unexpected SKN data after mesh");
+    }
+    std::size_t remaining()const{return bytes_.size()-position_;}
+private:
+    std::string token() {
+        while(position_<bytes_.size()&&std::isspace(static_cast<unsigned char>(bytes_[position_])))++position_;
+        if(position_>=bytes_.size())throw FormatError("truncated SKN numeric field");
+        const auto start=position_;
+        while(position_<bytes_.size()&&!std::isspace(static_cast<unsigned char>(bytes_[position_])))++position_;
+        numeric_line_=true;
+        return bytes_.substr(start,position_-start);
+    }
+    void newline(){
+        if(position_<bytes_.size()&&bytes_[position_]=='\r')++position_;
+        if(position_<bytes_.size()&&bytes_[position_]=='\n')++position_;
+    }
+    std::string bytes_;
+    std::size_t position_=0;
+    bool numeric_line_=false;
+};
 }
 
 Mesh read_bmf(const View& view,MeshLimits limits) {
@@ -130,6 +201,38 @@ Mesh read_bmf(const View& view,MeshLimits limits) {
     for(auto& vertex:result.blend_vertices)transform(c,vertex);
     result.remaining_bytes=c.remaining();
     return result;
+}
+
+Mesh read_skn(const View& view,MeshLimits limits) {
+    if(view.size()>limits.text_bytes||view.size()>std::string{}.max_size())
+        throw FormatError("SKN exceeds configured text limit");
+    std::string bytes(static_cast<std::size_t>(view.size()),'\0');
+    if(!bytes.empty())view.read(0,bytes.data(),bytes.size());
+    if(bytes.find('\0')!=std::string::npos)throw FormatError("SKN contains embedded NUL");
+    SknCursor c(std::move(bytes));
+    Mesh result{};result.skin_name=c.text();result.texture_name=c.text();
+    auto bone_budget=limits.bones;
+    const auto bones=c.count(bone_budget,1);result.bones.reserve(bones);
+    for(std::uint32_t i=0;i<bones;++i)result.bones.push_back(c.text());
+    auto face_budget=limits.faces;
+    const auto faces=c.count(face_budget,3);result.faces.resize(faces);
+    for(auto& face:result.faces)for(auto& index:face)index=c.i32();
+    auto binding_budget=limits.bindings;
+    const auto bindings=c.count(binding_budget,5);result.bindings.reserve(bindings);
+    for(std::uint32_t i=0;i<bindings;++i)result.bindings.push_back(
+        {c.i32(),c.i32(),c.i32(),c.i32(),c.i32()});
+    auto vertex_budget=limits.vertices;
+    const auto real=c.count(vertex_budget,2);result.real_vertices.resize(real);
+    for(auto& vertex:result.real_vertices)for(auto& uv:vertex.texcoord_bits)uv=c.bits();
+    auto blend_budget=limits.blends;
+    const auto blend=c.count(blend_budget,2);result.blend_data.reserve(blend);result.blend_vertices.resize(blend);
+    for(std::uint32_t i=0;i<blend;++i){const auto other=c.i32();const auto weight=c.i32();result.blend_data.push_back({weight,other});}
+    result.vertex_count2=c.i32();
+    for(auto& vertex:result.real_vertices){for(auto& bits:vertex.position_bits)bits=c.bits();
+        for(auto& bits:vertex.normal_bits)bits=c.bits();}
+    for(auto& vertex:result.blend_vertices){for(auto& bits:vertex.position_bits)bits=c.bits();
+        for(auto& bits:vertex.normal_bits)bits=c.bits();}
+    result.remaining_bytes=0;c.require_end();return result;
 }
 
 AppearanceCollection read_bcf_appearances(const View& view,MeshLimits limits) {

@@ -27,9 +27,18 @@ nesta etapa. Cada contagem primária é validada contra payload, limite e
 max_size antes de alocar; regiões UV/transform e blend_data/transform são
 consideradas juntas. Extensão restante é reportada.
 
+`read_skn` lê o perfil textual TS1 com os mesmos campos de mesh. Os registros
+de mistura vêm como OtherVertex seguido por weight e são convertidos para a
+estrutura comum; coordenadas e pesos continuam brutos para validação posterior
+no skinning. Contagens, nomes, truncamento e dados inesperados no fim são
+limitados ou recusados. O renderer aceita CMX/SKN/BMP soltos sob
+`GameData/Skins`, validando cada malha contra o osso CMX e o rig escolhido.
+Busca em pastas de expansão e regras de prioridade ainda não estão validadas.
+
 Limites por leitura:4096 nomes/bindings,131072 faces,65536 real vertices e
 65536 blend vertices,4MiB texto. Não são orçamento global de outfit, RAM medida
-ou limites atribuídos ao TS1/3DS. SKN/CMX textuais e meshes TSO não são lidos.
+ou limites atribuídos ao TS1/3DS. CMX é aceito apenas no perfil de appearances
+já descrito; outros segmentos CMX e meshes TSO não são lidos.
 
 No corpo original, vertex_count2=687, real=545, blend=142. Na cabeça,56/56/0.
 FreeSO.Read ignora vertex_count2, enquanto Write escreve somente real count.
@@ -141,11 +150,11 @@ FreeSO fixo4c6b3e8f5835b228723caea3c9f683c62f244f73, MPL2.0 declarada:
 Implementação ODH própria; não importou engine/shader C# como backend.
 Sem original executado, fidelidade visual comprovada ou hardware validado.
 
-Próximo: BMP/texturas e rasterizador portátil com depth, câmera calibrada,
-compositor/avatar integrado a World/playback e janela/input Linux. Inventário
-local encontrou Textures.far/ExtremeMlgt_01.bmp66616bytes (mesh body declara
-extrememlgt_01), B001MAFitlgt_relax.bmp66616 e C001MAlgt_Ross.bmp17464; escolha
-de outfit/skin/head ainda deve ser explícita, não inferida de TextureName='x'
-da cabeça. Não foram decodificados neste gate.
+O próximo teste é repetir a entrada de lote com um Sim criado no CAS, usando os
+recursos originais completos (cabeça, corpo e mãos), e conferir a imagem. O
+teste comercial executado neste checkpoint montou o mesmo corpo 8 vezes para
+exercitar bindings diferentes; rasterizou 4.975 amostras, mas não é uma roupa
+completa nem valida gameplay ou semelhança visual. Inventário de expansões e
+seleção de roupas continuam pendentes.
 Scheduler geral/queue/RNG/decay/áudio/lote/persistência continuam pendentes.
 A meta funcional inteira segue ativa, com ports posteriores ao Linux.

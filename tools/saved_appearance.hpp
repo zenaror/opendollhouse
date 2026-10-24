@@ -22,7 +22,8 @@ struct SavedAppearance {
 class SavedAppearanceResources {
 public:
     SavedAppearanceResources(const std::string& animation_far, const std::string& textures_far,
-                             const std::string& skeleton_entry, const std::string& skeleton_name);
+                             const std::string& skeleton_entry, const std::string& skeleton_name,
+                             const std::string& skins_directory = {});
     ~SavedAppearanceResources();
     SavedAppearanceResources(SavedAppearanceResources&&) noexcept;
     SavedAppearanceResources& operator=(SavedAppearanceResources&&) noexcept;
