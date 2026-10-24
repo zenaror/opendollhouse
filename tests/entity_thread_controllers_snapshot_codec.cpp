@@ -91,6 +91,18 @@ int main() {
         const auto state = fixture();
         const auto encoded = odh::encode_entity_thread_controllers_snapshot(state);
         same(state, odh::decode_entity_thread_controllers_snapshot(encoded));
+        auto push_head = state;
+        push_head.interactions.sequence = 3;
+        push_head.interactions.actions = {{1, 8, state.interactions.actions[0].call},
+            {3, 9, state.interactions.actions[1].call},
+            {2, 9, state.interactions.actions[1].call}};
+        same(push_head, odh::decode_entity_thread_controllers_snapshot(
+            odh::encode_entity_thread_controllers_snapshot(push_head)));
+        push_head.interactions.actions = {{2, 9, state.interactions.actions[1].call}};
+        push_head.interactions.active.reset();
+        push_head.interactions.completion = odh::InteractionCompletion{3, 7, 5, true};
+        same(push_head, odh::decode_entity_thread_controllers_snapshot(
+            odh::encode_entity_thread_controllers_snapshot(push_head)));
         auto action_wait = state;
         action_wait.interactions.idle_start = action_wait.interactions.clock;
         action_wait.interactions.wait = odh::InteractionWaitSnapshot{7, 9};
@@ -133,7 +145,7 @@ int main() {
 
         auto invalid = state;
         invalid.interactions.actions[1].uid = invalid.interactions.actions[0].uid;
-        rejects([&] { (void)odh::encode_entity_thread_controllers_snapshot(invalid); }, "non-increasing FIFO IDs rejected");
+        rejects([&] { (void)odh::encode_entity_thread_controllers_snapshot(invalid); }, "duplicate queued IDs rejected");
         invalid = state;
         invalid.interactions.actions[0].call.key.scope = static_cast<odh::RoutineScope>(99);
         rejects([&] { (void)odh::encode_entity_thread_controllers_snapshot(invalid); }, "invalid routine scope rejected");

@@ -65,4 +65,11 @@ CreateObjectInstanceResult create_object_instance_in_slot0(
     World&, std::int16_t new_id, std::int16_t stack_object,
     const CreateObjectInstanceRequest&, const ObjectRuntimeResources&);
 
+// Materialize the supported OutOfWorld profile without assigning a lot
+// position or container. The caller still owns startup, Main scheduling and
+// the VM StackObject return.
+CreateObjectInstanceResult create_object_instance_out_of_world(
+    World&, std::int16_t new_id, const CreateObjectInstanceRequest&,
+    const ObjectRuntimeResources&);
+
 } // namespace odh

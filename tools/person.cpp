@@ -1000,7 +1000,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(nbrs)neighbors.emplace(std::move(*nbrs));
     profile_mark("neighborhood-context");
     std::optional<odh::FamilyContext> families;
-    const odh::FamilyEntry* active_family=nullptr;
+    odh::FamilyEntry* active_family=nullptr;
     std::optional<std::int16_t> family_global;
     if(activate_family){
         families.emplace(family_records);
@@ -1462,6 +1462,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 *session_context->resources,selection,*session_baseline,*lot,*bootstrap_globals,family_global);
             *lot=session_restore->lot();*bootstrap_globals=session_restore->bootstrap();
             family_global=session_restore->family_global();
+            if(active_family&&session_restore->family_budget())
+                active_family->family.budget=*session_restore->family_budget();
             auto candidate=session_restore->take_world();
             if(!candidate||!restored_world->world->publish_snapshot(candidate->snapshot()))
                 throw odh::FormatError("single-resident session World candidate could not be published");
@@ -1470,6 +1472,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 *session_context->resources,selection,capture_household_roster(),*session_baseline,*lot,*bootstrap_globals,family_global);
             *lot=household_restore->lot();*bootstrap_globals=household_restore->bootstrap();
             family_global=household_restore->family_global();
+            if(active_family&&household_restore->family_budget())
+                active_family->family.budget=*household_restore->family_budget();
             auto candidate=household_restore->take_world();
             if(!candidate||!restored_world->world->publish_snapshot(candidate->snapshot()))
                 throw odh::FormatError("household session World candidate could not be published");
@@ -1724,6 +1728,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     for(auto& member:household_runtime)
         member->controllers=std::make_unique<odh::EntityThreadControllers>(world,member->id,
             [&]{++rng_requests;random.next(1);});
+    const auto any_interaction_references_target=[&](std::int16_t target){
+        if(thread_controllers.interactions().references_target(target))return true;
+        if(second_main_thread&&second_main_thread->interactions().references_target(target))return true;
+        return std::any_of(household_runtime.begin(),household_runtime.end(),[&](const auto& member){
+            return member->controllers&&member->controllers->interactions().references_target(target);
+        });
+    };
     odh::EntityVmScheduler entity_scheduler(64);
     struct PendingCreateObject {
         odh::Vm* vm = nullptr;
@@ -1731,12 +1742,20 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         odh::CreateObjectInstanceRequest request;
         std::int16_t stack_object = 0;
     };
+    struct PendingRemoveObject {
+        odh::Vm* vm = nullptr;
+        std::uint64_t ticket = 0;
+        std::int16_t object = 0;
+        std::uint64_t generation = 0;
+        bool defer_until_unreferenced = false;
+    };
     struct RuntimeObjectThread {
         std::unique_ptr<odh::Vm> vm;
         std::unique_ptr<odh::Sleep> sleep;
         odh::CodeOwner owner = 0;
     };
     std::deque<PendingCreateObject> pending_create_objects;
+    std::deque<PendingRemoveObject> pending_remove_objects;
     std::map<std::int16_t,std::unique_ptr<RuntimeObjectThread>> runtime_object_threads;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
@@ -1744,6 +1763,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     auto tree_name_global_strings=saved_world_main?load_strings(*globals,{303}):
         std::map<std::uint16_t,odh::StringTable>{};
     std::string last_create_object_diagnostic;
+    std::string last_remove_object_diagnostic;
     auto& sleep=thread_controllers.sleep();
     auto& queue=thread_controllers.interactions();
     const auto random_handler=odh::random_primitive(random,memory,[&](const odh::RandomRecord& value){
@@ -2176,6 +2196,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const auto ts1_budget_handler=odh::ts1_budget_primitive(memory,
         [&](const odh::VmFrame&)->std::optional<std::int32_t>{
             return active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt;
+        },[&](const odh::VmFrame&,std::int32_t value){
+            if(!active_family)return false;
+            active_family->family.budget=value;return true;
         });
     std::map<odh::CodeOwner,odh::StringTable> saved_action_string304;
     std::set<odh::CodeOwner> saved_action_string304_attempted;
@@ -2280,6 +2303,76 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return {odh::PrimitiveDisposition::call,{}, {},
             odh::VmCall{*routine,call_context,std::move(arguments)}};
     };
+    const odh::VmPrimitive push_interaction_handler=[&](const odh::VmFrame& frame,
+        const odh::Instruction& instruction,const std::array<std::int16_t,20>&,
+        const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        if(instruction.opcode!=13)return {};
+        const auto interaction_index=instruction.operands[0];
+        const auto object_location=instruction.operands[1];
+        const auto priority=instruction.operands[2];
+        const auto flags=instruction.operands[3];
+        const auto icon_location=instruction.operands[4];
+        constexpr std::uint8_t supported_flags=0x87; // custom icon, local source, head/tail continuation
+        if(priority!=0||(flags&static_cast<std::uint8_t>(~supported_flags))!=0)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction priority/flags outside the inherited Food continuation profile"};
+        const bool source_is_local=(flags&2)!=0;
+        const auto& source_bank=source_is_local?frame.locals:frame.arguments;
+        if(object_location>=source_bank.size()||((flags&1)!=0&&icon_location>=frame.locals.size()))
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction object/icon local index outside its BHAV frame"};
+        if(frame.context.stack_object!=runtime_avatar_id)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction currently supports the primary avatar StackObject queue only"};
+        const auto source_id=source_bank[object_location];
+        const auto* source_object=world.find(source_id);
+        if(source_id<=0||!source_object||source_object->kind!=odh::EntityKind::object||
+           !source_object->definition||!definition_index)
+            return {odh::PrimitiveDisposition::goto_false,{}};
+        const auto* candidate=definition_index->unique(source_object->definition->guid);
+        if(!candidate||candidate->definition.guid!=source_object->definition->guid)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction source definition is missing or ambiguous"};
+        const auto source_thread=runtime_object_threads.find(source_id);
+        if(source_thread==runtime_object_threads.end()||!source_thread->second)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction source object has no installed runtime code owner"};
+        const auto owner_resource=saved_action_resources.find(source_thread->second->owner);
+        if(owner_resource==saved_action_resources.end()||owner_resource->second.archive!=candidate->source||
+           owner_resource->second.entry!=candidate->asset)
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "PushInteraction exact source resource does not match its installed code owner"};
+        try{
+            auto interactions=saved_object_interactions(*candidate,game_language);
+            if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded||
+               interaction_index>=interactions.table->interactions.size())
+                return {odh::PrimitiveDisposition::goto_false,{}};
+            const auto& row=interactions.table->interactions[interaction_index];
+            const auto action_key=odh::routine_key(row.action);
+            const auto test_key=odh::routine_key(row.test);
+            if(action_key.scope!=odh::RoutineScope::private_object||
+               (row.test!=0&&test_key.scope!=odh::RoutineScope::private_object))
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "PushInteraction action/test is outside the exact private Food owner profile"};
+            const auto action_routines=load_saved_action_routines(*candidate,row.action);
+            if(!action_routines.count(action_key))return {odh::PrimitiveDisposition::goto_false,{}};
+            if(row.test!=0){
+                const auto test_routines=load_saved_action_routines(*candidate,row.test);
+                if(!test_routines.count(test_key))return {odh::PrimitiveDisposition::goto_false,{}};
+            }
+            const odh::VmContext queued_context{runtime_avatar_id,source_id,source_id,
+                source_thread->second->owner};
+            const bool push_head=(flags&4)!=0;
+            if(!thread_controllers.interactions().enqueue(action_key,queued_context,{},push_head))
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "PushInteraction could not enqueue the exact Food action: "+
+                    thread_controllers.interactions().diagnostic()};
+            return {odh::PrimitiveDisposition::goto_true,{}};
+        }catch(const std::exception& error){
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                std::string("PushInteraction exact Food table/action could not be read: ")+error.what()};
+        }
+    };
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==42){
             if(!d.origin||!d.ticket||pending_create_objects.size()>=64)
@@ -2298,11 +2391,39 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==0)return sleep_handler(f,i,t,d);
         if(i.opcode==29)return motive_change_handler(f,i,t,d);
         if(i.opcode==25)return ts1_budget_handler(f,i,t,d);
+        if(i.opcode==16){
+            // The current House07 Food auxiliary object's EP0 uses the
+            // ordinary signed GreaterThan comparison over its own attributes.
+            // Keep other Expression operators/scopes closed until their
+            // 32-bit reads and writes have dedicated coverage.
+            const auto op=i.operands[5];
+            const auto lhs_scope=i.operands[6],rhs_scope=i.operands[7];
+            if(op!=0||(lhs_scope!=0&&lhs_scope!=1)||(rhs_scope!=0&&rhs_scope!=1))
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "Expression supports GreaterThan over explicit object attributes only"};
+            const auto lhs=memory.read?memory.read(f,lhs_scope,
+                static_cast<std::int16_t>(static_cast<std::uint16_t>(i.operands[0])|
+                    (static_cast<std::uint16_t>(i.operands[1])<<8))):std::nullopt;
+            const auto rhs=memory.read?memory.read(f,rhs_scope,
+                static_cast<std::int16_t>(static_cast<std::uint16_t>(i.operands[2])|
+                    (static_cast<std::uint16_t>(i.operands[3])<<8))):std::nullopt;
+            if(!lhs||!rhs)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "Expression object attribute is unavailable"};
+            return odh::PrimitiveOutcome{*lhs>*rhs?odh::PrimitiveDisposition::goto_true:
+                odh::PrimitiveDisposition::goto_false,{}};
+        }
         if(i.opcode==7){
             const auto refresh_type=static_cast<std::uint16_t>(i.operands[2])|
                 (static_cast<std::uint16_t>(i.operands[3])<<8);
+            if(refresh_type==2){
+                const auto target_id=i.operands[0]==0?f.context.caller:
+                    i.operands[0]==1?f.context.stack_object:std::int16_t{0};
+                const auto* target=world.find(target_id);
+                if(target&&!target->position)
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            }
             if(refresh_type!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "Refresh supports only the graphic type in the current renderer profile"};
+                "Refresh type needs a positioned target and resolved room resources"};
             // SavedLotRenderer reads the live Graphic ObjectData word on each
             // capture and resolves its DGRP then; it has no cached per-instance
             // graphic binding to invalidate. FreeSO's Refresh primitive returns
@@ -2311,7 +2432,38 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
+        if(i.opcode==13)return push_interaction_handler(f,i,t,d);
+        if(i.opcode==18){
+            const auto target=i.operands[0]==0&&i.operands[1]==0?f.context.caller:f.context.stack_object;
+            const auto flags=i.operands[2];
+            if(flags!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "RemoveObjectInstance ReturnImmediately/CleanupAll flags are outside the deferred removal profile"};
+            if(!d.origin||!d.ticket||pending_remove_objects.size()>=64)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "RemoveObjectInstance queue is missing a VM ticket or is full"};
+            const auto* object=world.find(target);
+            if(!object)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            if(object->kind!=odh::EntityKind::object)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "RemoveObjectInstance avatar deletion is outside the object cleanup profile"};
+            // A VM deleting its own object must not leave a completion ticket
+            // pointing into the RuntimeObjectThread that the safe-point service
+            // is about to destroy. Defer that case without a VM ticket.
+            const bool defer=target==f.context.caller||any_interaction_references_target(target);
+            try{pending_remove_objects.push_back({defer?nullptr:const_cast<odh::Vm*>(d.origin),
+                defer?0:d.ticket,target,object->generation,defer});}
+            catch(const std::exception& error){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                std::string("RemoveObjectInstance request could not be queued: ")+error.what()};}
+            if(defer)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+        }
         if(i.opcode==4)return grab_handler(f,i,t,d);
+        if(i.opcode==50){
+            // AddChangeActionString only renames the active queue label. This
+            // headless runner has no action-list UI to update; Simitone returns
+            // true even when the requested string table is unavailable.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
         if(i.opcode==48){
             // This Linux host does not start audio playback, so there are no
             // live sound threads to cancel. Keep sound diagnostics as history.
@@ -4329,6 +4481,7 @@ struct PlacementCandidateProbe {
         bundle.host.runtime_avatar_id=runtime_avatar_id;
         bundle.host.tick=ticks;
         bundle.host.random_seed=random.seed();
+        if(active_family)bundle.host.family_budget=active_family->family.budget;
         if(simulation_clock){
             odh::SessionSimulationState sim;sim.clock=simulation_clock->snapshot();
             for(const auto& a:simulation_motives)sim.avatars.push_back({a.first,a.second.snapshot()});
@@ -4638,8 +4791,10 @@ struct PlacementCandidateProbe {
                 while(candidate_id<=32767&&world.find(static_cast<std::int16_t>(candidate_id)))++candidate_id;
                 if(candidate_id>32767)throw odh::FormatError("runtime object ID range exhausted");
                 const auto object_id=static_cast<std::int16_t>(candidate_id);
-                const auto materialized=odh::create_object_instance_in_slot0(
-                    world,object_id,pending.stack_object,pending.request,*object_resources);
+                const auto materialized=pending.request.position()==odh::CreateObjectPosition::out_of_world?
+                    odh::create_object_instance_out_of_world(world,object_id,pending.request,*object_resources):
+                    odh::create_object_instance_in_slot0(
+                        world,object_id,pending.stack_object,pending.request,*object_resources);
                 if(materialized.status!=odh::CreateObjectInstanceStatus::created||!materialized.object_id)
                     throw odh::FormatError("CreateObjectInstance placement was rejected by the World");
                 created_id=*materialized.object_id;
@@ -4711,6 +4866,39 @@ struct PlacementCandidateProbe {
             }
         }
     };
+    const auto process_pending_remove_objects=[&]{
+        auto attempts=pending_remove_objects.size();
+        while(attempts--&&!pending_remove_objects.empty()){
+            const auto pending=pending_remove_objects.front();
+            pending_remove_objects.pop_front();
+            if(pending.defer_until_unreferenced&&any_interaction_references_target(pending.object)){
+                pending_remove_objects.push_back(pending);
+                continue;
+            }
+            last_remove_object_diagnostic.clear();
+            if(!pending.defer_until_unreferenced&&(!pending.vm||pending.vm->status()!=odh::VmStatus::waiting||
+               !pending.vm->pending()||pending.vm->pending()->ticket!=pending.ticket))continue;
+            const auto* object=world.find(pending.object);
+            bool removed=object&&object->kind==odh::EntityKind::object&&
+                object->generation==pending.generation;
+            const auto runtime=runtime_object_threads.find(pending.object);
+            if(removed&&runtime!=runtime_object_threads.end()){
+                if(!entity_scheduler.remove(pending.object)){
+                    removed=false;
+                    last_remove_object_diagnostic="object VM could not leave the scheduler at its safe point";
+                }else runtime_object_threads.erase(runtime);
+            }
+            if(removed)removed=world.remove(pending.object);
+            if(!removed&&last_remove_object_diagnostic.empty())
+                last_remove_object_diagnostic="RemoveObjectInstance target identity became stale";
+            if(pending.vm&&!pending.vm->complete(pending.ticket,removed)){
+                host_failed=true;
+                host_diagnostic="RemoveObjectInstance completion ticket became stale";
+                return;
+            }
+            if(removed)last_remove_object_diagnostic="removed object "+std::to_string(pending.object);
+        }
+    };
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
         const auto budget=session_policy.entity_budget(total_steps());
@@ -4727,6 +4915,7 @@ struct PlacementCandidateProbe {
                 host_diagnostic=entity_scheduler.diagnostic();
             }
             if(!host_failed)process_pending_create_objects();
+            if(!host_failed)process_pending_remove_objects();
             return;
         }
         const auto run_initial=[&](odh::Vm& target,odh::EntityThreadControllers& controllers,
@@ -4756,6 +4945,7 @@ struct PlacementCandidateProbe {
         for(const auto& item:initial)
             if(!run_initial(*std::get<0>(item.second),*std::get<1>(item.second),std::get<2>(item.second)))return;
         if(!host_failed)process_pending_create_objects();
+        if(!host_failed)process_pending_remove_objects();
     };
     profile_mark("host-runtime-ready");
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -6163,7 +6353,8 @@ struct PlacementCandidateProbe {
         else std::cout<<"null";
         std::cout<<'}';
     }
-    std::cout<<"]},\"second_main\":";
+    std::cout<<"],\"remove_object_instance\":{\"pending_requests\":"<<pending_remove_objects.size()
+        <<",\"last_diagnostic\":"<<json_bytes(last_remove_object_diagnostic)<<"}},\"second_main\":";
     if(second_main_vm){
         const auto* second_entity=world.find(static_cast<std::int16_t>(headless_second_main->avatar.id));
         std::cout<<"{\"entity_id\":"<<headless_second_main->avatar.id<<",\"guid\":";

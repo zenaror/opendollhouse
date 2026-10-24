@@ -1,6 +1,7 @@
 #include "odh/interaction.hpp"
 #include <algorithm>
 #include <limits>
+#include <set>
 
 namespace odh {
 namespace {
@@ -28,16 +29,15 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
        state.run_generation!=vm.run_generation||!state.capacity||state.capacity>capacity_||
        state.actions.size()>state.capacity||state.clock>max_clock||state.idle_start>state.clock||
        (state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
-    std::uint64_t previous_uid=0;
+    std::set<std::uint64_t> action_uids;
     for(const auto& action:state.actions){
         const auto& call=action.call;
         const auto* target=world_.find(call.context.callee);
-        if(!action.uid||action.uid<=previous_uid||action.uid>state.sequence||!target||
+        if(!action.uid||!action_uids.insert(action.uid).second||action.uid>state.sequence||!target||
            action.target_generation!=target->generation||call.context.caller!=actor_id_||
            call.context.stack_object!=call.context.callee||call.arguments.size()>4096||
            call.key.scope!=routine_key(call.key.id).scope||call.return_mode!=VmCallReturnMode::interaction_next_tick)
             return false;
-        previous_uid=action.uid;
     }
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
     bool action_frame=false;
@@ -76,7 +76,7 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
     if(state.completion){
         const auto& completion=*state.completion;
         if(!completion.uid||completion.uid>state.sequence||!valid_ticket(completion.ticket)||completion.tick>state.clock||
-           (!state.actions.empty()&&completion.uid>=state.actions.front().uid))return false;
+           action_uids.count(completion.uid))return false;
     }
     if(state.resume_tick){
         if(!state.completion||state.active||state.wait||*state.resume_tick>max_clock||
@@ -130,7 +130,8 @@ bool InteractionQueue::validate() {
     }
     return true;
 }
-bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args) {
+bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
+                               bool push_after_active) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
     fresh_=false;
     if(!validate())return false;
@@ -143,7 +144,9 @@ bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vecto
        vm_->status()==VmStatus::returned_true || vm_->status()==VmStatus::returned_false) {
         diagnostic_="interaction requires a live Main run";return false;
     }
-    queue_.push_back(Action{++sequence_,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick}});
+    Action action{++sequence_,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick}};
+    if(push_after_active&&active_&&!queue_.empty())queue_.insert(queue_.begin()+1,std::move(action));
+    else queue_.push_back(std::move(action));
     diagnostic_.clear();return true;
 }
 VmPrimitive InteractionQueue::primitive() {

@@ -73,7 +73,7 @@ def main():
             path = Path(report['saved_session_path'])
             saved = path.read_bytes()
             sections = {ident: body for ident, _, body in archive_sections(saved)}
-            assert sections[b'HOST'][8:10] == b'\x02\0'
+            assert sections[b'HOST'][8:10] == b'\x04\0'
             assert int.from_bytes(sections[b'HHRD'][2:4], 'little') == 2
             resumed_result = subprocess.run([str(binary), '--game-root', str(game), '--load-session', str(path),
                 '--headless-ticks', str(args.ticks), '--save-session-on-exit'], text=True, capture_output=True,

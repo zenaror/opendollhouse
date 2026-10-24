@@ -122,8 +122,14 @@ int main() {
     require(context.by_id(65535)->family.family_number==-1,"unsigned chunk identity distinct from FamilyNumber");
     require(!context.by_id(8)&&!context.by_house(8),"missing identity/house is absent");
     require(odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU)&&!odh::FamilyContext::contains(*context.by_id(65535),0x80000000U),"membership uses exact unsigned GUIDs");
+    const auto source_budget=source[3].family.budget;
     source[0].family.member_guids.clear();source[3].family.house_number=8;source.clear();
-    require(context.by_house(7)->chunk_id==1&&odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU),"immutable owned source snapshot");
+    const auto original_budget=context.by_house(7)->family.budget;
+    context.by_house(7)->family.budget=original_budget-30;
+    require(context.by_house(7)->chunk_id==1&&context.by_house(7)->family.budget==original_budget-30&&
+            source_budget!=context.by_house(7)->family.budget&&
+            odh::FamilyContext::contains(*context.by_id(65535),0xffffffffU),
+            "runtime family budget changes only the owned copy of original family data");
     std::vector<odh::FamilyEntry> reversed{entry(1,7),entry(65535,7)};
     require(odh::FamilyContext(reversed).by_house(7)->chunk_id==65535,"serialized reverse chooses different winner");
     reversed[1].chunk_id=1;rejects([&]{odh::FamilyContext c(reversed);},"duplicate chunk IDs ambiguous even across houses");

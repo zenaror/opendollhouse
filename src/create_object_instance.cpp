@@ -51,4 +51,20 @@ CreateObjectInstanceResult create_object_instance_in_slot0(
     return {CreateObjectInstanceStatus::created, new_id};
 }
 
+CreateObjectInstanceResult create_object_instance_out_of_world(
+    World& world, std::int16_t new_id, const CreateObjectInstanceRequest& request,
+    const ObjectRuntimeResources& resources) {
+    if(!request.has_known_position()||request.position()!=CreateObjectPosition::out_of_world)
+        return {CreateObjectInstanceStatus::unsupported_position,{}};
+    if(!request.guid||resources.definition.guid!=request.guid)
+        return {CreateObjectInstanceStatus::definition_mismatch,{}};
+    const auto materialized=materialize_runtime_object(world,new_id,resources);
+    if(materialized==ObjectRuntimeCreateStatus::unsupported_profile)
+        return {CreateObjectInstanceStatus::unsupported_resources,{}};
+    if(materialized!=ObjectRuntimeCreateStatus::created)
+        return {CreateObjectInstanceStatus::world_rejected,{}};
+    // World entities without a position are the host's OUT_OF_WORLD objects.
+    return {CreateObjectInstanceStatus::created,new_id};
+}
+
 } // namespace odh

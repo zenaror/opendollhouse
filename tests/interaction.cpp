@@ -81,6 +81,7 @@ int main(int argc,char** argv){try {
   require(queue.bind(vm),"action-tree queue binds");
   vm.start(key(4096),{1,1,1,0},{0});
   require(queue.enqueue(key(4096),{1,2,2,22},{4}),"action-tree IdleForInput fixture starts");
+  require(queue.references_target(2),"active interaction target remains protected until observed complete");
   require(queue.tick(1)&&vm.run(30)==odh::VmStatus::waiting&&queue.active()&&queue.waiting()&&
           vm.stack().back().arguments[0]==3,"action-tree IdleForInput waits without completing the active interaction");
   const auto action_wait_state=queue.snapshot();odh::InteractionQueue restored(world,1);
@@ -94,6 +95,22 @@ int main(int argc,char** argv){try {
   require(queue.observe()&&queue.completion()&&queue.completion()->result&&
           !queue.active()&&queue.tick(6)&&vm.run(30)==odh::VmStatus::returned_true,
           "Main resumes on the following tick after action-tree idle and successful completion");
+  require(!queue.references_target(2),"completed interaction releases its target for deferred object removal");
+ }
+ { // PushHead keeps the running action first but may reorder later UIDs.
+  Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"PushHead fixture queues two actions");
+  require(f.queue.references_target(2),"queue reports active or pending targets for safe deferred deletion");
+  require(f.vm.run(1)==odh::VmStatus::budget_exhausted&&f.queue.active(),
+      "PushHead fixture starts the first action");
+  require(f.queue.enqueue(key(4097),{1,2,2,22},{},true),
+      "PushHead continuation inserts while another action is active");
+  const auto snapshot=f.queue.snapshot();
+  require(snapshot.actions.size()==3&&snapshot.actions[0].uid==1&&
+      snapshot.actions[1].uid==3&&snapshot.actions[2].uid==2,
+      "PushHead continuation runs after active action and before older pending work");
+  odh::InteractionQueue restored(f.world,1,3);
+  require(restored.bind(f.vm)&&restored.restore_snapshot(snapshot),
+      "reordered interaction queue snapshot restores against the active action");
  }
  { // A named BHAV can change code owner while remaining part of the active action.
   odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);

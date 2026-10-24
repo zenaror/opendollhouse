@@ -1,5 +1,6 @@
 #pragma once
 #include "odh/world.hpp"
+#include <algorithm>
 #include <deque>
 
 namespace odh {
@@ -35,7 +36,15 @@ public:
     // the destination. Capture/restore during controller or VM callbacks throws.
     bool restore_snapshot(const InteractionQueueSnapshot&);
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
-    bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={});
+    // Queue behind existing actions by default. push_after_active inserts a
+    // continuation immediately after the running action, matching TS1's
+    // PushInteraction PushHead behavior.
+    bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={},bool push_after_active=false);
+    bool references_target(std::int16_t entity) const {
+        return std::any_of(queue_.begin(),queue_.end(),[&](const InteractionActionSnapshot& action){
+            return action.call.context.callee==entity;
+        });
+    }
     VmPrimitive primitive();
     bool observe(); // Validates identities and removes completion in the same host tick.
     bool tick(std::uint64_t); // Enforces next-tick resume and wakes idle waits.

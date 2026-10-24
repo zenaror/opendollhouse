@@ -90,7 +90,15 @@ const FamilyEntry* FamilyContext::by_house(std::int16_t house) const {
     const auto found=houses_.find(house);
     return found==houses_.end()?nullptr:&source_[found->second];
 }
+FamilyEntry* FamilyContext::by_house(std::int16_t house) {
+    const auto found=houses_.find(house);
+    return found==houses_.end()?nullptr:&source_[found->second];
+}
 const FamilyEntry* FamilyContext::by_id(std::uint16_t id) const {
+    const auto found=ids_.find(id);
+    return found==ids_.end()?nullptr:&source_[found->second];
+}
+FamilyEntry* FamilyContext::by_id(std::uint16_t id) {
     const auto found=ids_.find(id);
     return found==ids_.end()?nullptr:&source_[found->second];
 }

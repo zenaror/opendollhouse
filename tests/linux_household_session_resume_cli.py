@@ -117,7 +117,7 @@ def main():
             fresh=['--mode','1','--house','7','--resident-id',str(primary),'--language','1']
             first=run(fresh+['--headless-ticks','1','--save-session-on-exit'])
             path=Path(first['saved_session_path']);saved=path.read_bytes()
-            assert dict((i,b) for i,_,b in archive_sections(saved))[b'HOST'][8:10]==b'\x02\0'
+            assert dict((i,b) for i,_,b in archive_sections(saved))[b'HOST'][8:10]==b'\x04\0'
             roster=dict((i,b) for i,_,b in archive_sections(saved))[b'HHRD']
             assets=[];offset=4
             for _ in range(struct.unpack_from('<H',roster,2)[0]):

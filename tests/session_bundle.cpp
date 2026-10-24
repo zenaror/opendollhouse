@@ -37,6 +37,7 @@ odh::SessionBundle fixture() {
     bundle.host.runtime_avatar_id=1;
     bundle.host.tick=0;
     bundle.host.random_seed=0x123456789abcdef0ULL;
+    bundle.host.family_budget=1234;
     bundle.host.global_values={{9,21},{17,-4},{25,99}};
     bundle.world=world.snapshot();
     bundle.relationships=relationships.snapshot();
@@ -160,6 +161,7 @@ int main() {
     const auto restored=odh::decode_session_bundle(bytes,source.resources);
     require(odh::encode_session_bundle(restored)==bytes,"two-resident bundle is canonical");
     require(restored.host.random_seed==source.host.random_seed&&restored.host.global_values.size()==3&&
+            restored.host.family_budget==source.host.family_budget&&
             restored.host.global_values[1].value==-4&&restored.runtime_entities.size()==2&&
             restored.runtime_entities[1].id==2,"host and both residents round-trip");
     require(!restored.runtime_entities[0].playback.state&&
@@ -167,6 +169,11 @@ int main() {
             !restored.runtime_entities[0].playback.hands,
             "empty Playback state round-trips for each resident");
     require(!restored.simulation,"legacy archive without SIMS stays decodable");
+    auto without_family_budget=source;without_family_budget.host.family_budget.reset();
+    const auto legacy_bytes=odh::encode_session_bundle(without_family_budget);
+    const auto legacy=odh::decode_session_bundle(legacy_bytes,source.resources);
+    require(!legacy.host.family_budget&&odh::encode_session_bundle(legacy)==legacy_bytes,
+        "legacy host without a saved family budget remains readable and canonical");
     auto simulated=source;simulated.simulation.emplace();
     simulated.simulation->avatars={{1,{}},{2,{}}};
     simulated.simulation->avatars[1].decay.fractions[4]=1000;

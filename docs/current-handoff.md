@@ -1,31 +1,33 @@
 # Continuidade atual
 
-## Atualização: sequência real Have A Snack na House07 (2026-10-24)
+## Atualização: Have A Snack conclui em House07 sem janela (2026-10-24)
 
-`RunTreeByName` destino2 agora continua na mesma VM do morador, usando o
-`CodeOwner` do objeto de destino. O teste de interação também confirma que
-`IdleForInput` dentro dessa rotina chamada continua pertencendo à ação ativa,
-mesmo quando o código muda de dono. CTest focal de `interaction`,
-`session_bundle`, `vm_stack_output`, `world_snapshot_codec`, `playback`, `vm`,
-`world`, `person_cli` e `snap` passou 8/8.
+`PushInteraction` agora carrega a ação exata do TTAB da Food no `CodeOwner`
+instalado e a põe na fila do avatar. `PushHead` mantém a ação ativa na frente,
+insere a continuação em seguida e preserva a validade dos snapshots mesmo quando
+os UIDs ficam fora de ordem. A fila reconhece o `IdleForInput` de BHAVs chamados
+pela ação como parte da mesma interação.
 
-Na House07 original, Have A Snack criou Food GUID `0xF301E375` como objeto180,
-anexado à geladeira112/slot0. EP0 percorreu Food BHAV4100 → 4112 → Global271 e
-terminou em 41 instruções. A Main da Food chegou até executar BHAV4120, que
-chamou RunTreeByName e Global281. A chamada real avançou do antigo ponto no
-tick136 até o tick392 e moveu o morador de (360,456) para (376,456), mas o
-processo ainda falha no opcode13 (`PushInteraction`). A chamada observada foi
-no BHAV4120 com Caller=105, Callee=112, StackObject=105 e CodeOwner=2147483648;
-os argumentos começam `[7,0,0,0]`, Local0=180 (Food) e os operandos são
-`[2,0,0,7,0]`. Pelo código do Simitone/FreeSO, isso busca a interação de índice2
-na Food e a coloca na fila do StackObject (o avatar), com prioridade herdada e
-continuação no início da fila. Ainda falta implementar essa fila secundária e
-confirmar o próximo ciclo da ação; Have A Snack não terminou.
+Na execução com os dados House07 da instalação selecionada, a geladeira112
+enfileirou `Have A Snack`, o avatar105 foi até (377,456), e a fila terminou com
+resultado `returned_true`, sem falha do host. O código Food4175 cria o objeto
+auxiliar GUID `0x7F907075` fora do lote, testa seus atributos, e remove os objetos
+auxiliares e Food quando os ramos reais do BHAV assim determinam. O alvo de
+remoção espera todas as filas de moradores, avatar principal e segundo avatar
+soltarem sua identidade; auto remoção não deixa um ticket apontando para uma VM
+destruída. O saldo da família agora muda apenas na cópia em memória do ODH e é
+salvo/restaurado em HOST v3/v4; HOST v1/v2 continua legível.
 
-O teste e as inspeções foram headless. Nenhuma tela virtual foi iniciada.
-Próximo passo: carregar o TTAB/ação da Food no `CodeOwner` já instalado,
-enfileirar a interação em `actor_queue_for(105)` com os limites e a ordem
-corretos, criar cobertura de teste para esse encaixe e repetir House07.
+CTest focal passou 9/9 após essas alterações (fila, snapshot, CLI, família,
+sessão, criação de objeto). A execução de House07 percorreu 1.024 ticks, terminou
+a interação e deixou a Main esperando outra ação; o código de saída 3 indica que
+o limite do teste foi alcançado durante essa espera. Esta prova cobre uma interação headless,
+não a UI final, renderização durante a ação, nem paridade geral com Simitone.
+
+Nenhuma tela virtual foi iniciada. Os diretórios temporários de HOME/XDG e o
+perfil do teste foram removidos. Próximo passo: trocar a lista de depuração
+por um menu de ações do lote inspirado na interface original. A tela atual
+continua sendo ferramenta de teste; ainda não é a interface da versão jogável.
 
 ## Atualização: início síncrono de objetos e EP8 vazio (2026-10-24)
 

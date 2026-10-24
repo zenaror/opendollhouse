@@ -29,6 +29,7 @@ struct SessionHostState {
     std::int16_t runtime_avatar_id = 0;
     std::uint64_t tick = 0;
     std::uint64_t random_seed = 0;
+    std::optional<std::int32_t> family_budget;
     std::vector<SessionGlobalValue> global_values; // Strictly ascending indices.
 };
 

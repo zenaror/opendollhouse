@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <utility>
 
 namespace odh {
@@ -279,15 +280,14 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
         interactions.clock > maximum_clock || interactions.idle_start > interactions.clock ||
         (interactions.last_tick ? *interactions.last_tick != interactions.clock : interactions.clock != 0))
         throw FormatError("interaction queue exceeds limits or has inconsistent clock");
-    std::uint64_t previous_uid = 0;
+    std::set<std::uint64_t> action_uids;
     for (const auto& action : interactions.actions) {
-        if (!action.uid || action.uid <= previous_uid || action.uid > interactions.sequence ||
+        if (!action.uid || !action_uids.insert(action.uid).second || action.uid > interactions.sequence ||
             !valid_key(action.call.key) || action.call.arguments.size() > limits.max_call_arguments ||
             action.call.context.caller != interactions.actor_id ||
             action.call.context.stack_object != action.call.context.callee ||
             action.call.return_mode != VmCallReturnMode::interaction_next_tick)
             throw FormatError("invalid queued interaction action");
-        previous_uid = action.uid;
     }
     const auto valid_ticket = [](std::uint64_t ticket) { return ticket != 0; };
     if (interactions.active && (interactions.actions.empty() ||
@@ -302,7 +302,7 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
     if (interactions.completion && (!interactions.completion->uid ||
         interactions.completion->uid > interactions.sequence || !valid_ticket(interactions.completion->ticket) ||
         interactions.completion->tick > interactions.clock ||
-        (!interactions.actions.empty() && interactions.completion->uid >= interactions.actions.front().uid)))
+        action_uids.count(interactions.completion->uid)))
         throw FormatError("invalid interaction completion state");
     if (interactions.resume_tick && (!interactions.completion || interactions.active || interactions.wait ||
         *interactions.resume_tick > maximum_clock || *interactions.resume_tick <= interactions.clock ||

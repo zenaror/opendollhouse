@@ -185,7 +185,7 @@ std::vector<std::uint8_t> encode_host(const SessionHostState& host,
     validate_host(host,limits);
     Writer writer(limits.archive.max_section_bytes);
     writer.append(host_magic.data(),host_magic.size());
-    writer.u16(household?2:1);
+    writer.u16(host.family_budget?(household?4:3):(household?2:1));
     writer.u8(host.neighborhood_mode);
     writer.u16(host.house_number);
     writer.u16(host.family_chunk_id);
@@ -197,6 +197,7 @@ std::vector<std::uint8_t> encode_host(const SessionHostState& host,
     writer.u64(host.random_seed);
     writer.u16(static_cast<std::uint16_t>(host.global_values.size()));
     for(const auto& entry:host.global_values){writer.u16(entry.index);writer.i16(entry.value);}
+    if(host.family_budget)writer.i32(*host.family_budget);
     return writer.take();
 }
 
@@ -206,8 +207,9 @@ SessionHostState decode_host(const std::vector<std::uint8_t>& bytes,
     if(reader.bytes(host_magic.size())!=std::vector<std::uint8_t>(host_magic.begin(),host_magic.end()))
         throw FormatError("unsupported session host format");
     const auto version=reader.u16();
-    if(version!=1&&version!=2)throw FormatError("unsupported session host version");
-    household=version==2;
+    if(version<1||version>4)throw FormatError("unsupported session host version");
+    household=version==2||version==4;
+    const bool has_family_budget=version==3||version==4;
     SessionHostState host;
     host.neighborhood_mode=reader.u8();
     host.house_number=reader.u16();
@@ -223,6 +225,7 @@ SessionHostState decode_host(const std::vector<std::uint8_t>& bytes,
         throw FormatError("session globals exceed bounds");
     host.global_values.reserve(count);
     for(std::size_t i=0;i<count;++i)host.global_values.push_back({reader.u16(),reader.i16()});
+    if(has_family_budget)host.family_budget=reader.i32();
     if(!reader.done())throw FormatError("session host has trailing data");
     validate_host(host,limits);
     return host;

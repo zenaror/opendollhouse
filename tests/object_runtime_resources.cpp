@@ -139,6 +139,14 @@ int main() {
                     food->attachment->slot == 0 && food->attachment->positioned &&
                     food->position == std::optional<odh::EntityPosition>{{80, 96, 1, 2}},
                 "Have A Snack creates Food and places it in fridge slot 0");
+        odh::World out_of_world;
+        const odh::CreateObjectInstanceRequest hidden_request{0xf301e375,6,0,0,0};
+        const auto hidden=odh::create_object_instance_out_of_world(
+            out_of_world,7,hidden_request,resources);
+        const auto* hidden_food=out_of_world.find(7);
+        require(hidden.status==odh::CreateObjectInstanceStatus::created&&hidden.object_id==7&&
+                hidden_food&&!hidden_food->position&&!hidden_food->attachment,
+                "OutOfWorld creation makes an unpositioned unattached runtime object");
         const auto occupied = odh::create_object_instance_in_slot0(
             snack_world, 3, 1, snack_request, resources);
         require(occupied.status == odh::CreateObjectInstanceStatus::slot_occupied &&

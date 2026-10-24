@@ -55,17 +55,19 @@ semiglobal 363, quatro ações de depuração retornaram falso e a ação de mag
 precisa de leitura global não suportada. Isso mostra que uma tabela grande não
 significa que todas as opções devem aparecer ao mesmo tempo.
 
-Ao escolher `Have A Snack`, a VM do ODH falhou no primeiro passo da ação,
-opcode 25. No caminho TS1 do Simitone, esse número é `VMTS1Budget`, que consulta
-o orçamento da família. A falha foi observada num probe controlado com quadro de
-800×600; não é uma ação concluída nem uma validação de UI na janela. A próxima
-peça já trata o perfil `JustTest` usado por essa interação, lendo o saldo da
-família ativa. O probe agora passa pelo opcode25 e chega ao primeiro movimento:
-opcode27 `GotoRelativePosition`, que ainda não tem o destino/rota necessários
-nesse contexto. A ação continua incompleta. Modos que alteram o orçamento ainda
-exigem um gravador persistente. A VM já representa os dois `TempXL` de 32 bits,
-mas ainda faltam outros handlers que os preenchem e consomem.
-O detalhe do orçamento não deve ser tratado como um simples botão da interface.
+Ao escolher `Have A Snack`, a execução headless de House07 agora enfileira a ação
+Food4170/4175 e termina com `returned_true`, sem falha do host e com a fila vazia.
+O avatar chega até (377,456), volta à animação de descanso, e o objeto Food é
+removido conforme o ramo executado no BHAV. O fluxo inclui orçamento de família,
+criação auxiliar OutOfWorld, `Refresh` de área sem cômodo e comparação de
+atributos; mudanças de saldo fazem parte da cópia ODH e persistem no save de
+sessão HOST v3/v4 sem alterar os arquivos originais do jogo.
+
+O teste foi headless e parou no limite de 1.024 ticks enquanto a Main aguardava
+outra ação. Isso valida a sequência da interação selecionada, mas não a
+renderização/UI durante o movimento, nem todas as opções da geladeira, outros
+objetos ou paridade completa com o jogo/Simitone. A criação auxiliar de uma
+posição diferente continua explicitamente fora do perfil desta execução.
 
 ## Primeira reconstrução proposta
 

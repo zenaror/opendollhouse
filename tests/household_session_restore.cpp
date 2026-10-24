@@ -68,7 +68,8 @@ struct Fixture {
             {static_cast<std::int16_t>(e.first+2)})==odh::VmStatus::running,"start resident Main");}
     void step(){require(scheduler.tick(++tick,16,8),"household tick");}
     odh::SessionBundle snapshot(){odh::SessionBundle b;b.resources=resources;b.host=selection;b.host.tick=tick;b.host.random_seed=rng.seed();
-        b.host.global_values=globals(lot,bootstrap);b.household_roster=roster;b.world=world.snapshot();b.relationships=relationships.snapshot();
+        b.host.global_values=globals(lot,bootstrap);b.host.family_budget=4321;
+        b.household_roster=roster;b.world=world.snapshot();b.relationships=relationships.snapshot();
         b.runtime_entities={first->snapshot(1),second->snapshot(2)};b.scheduler=scheduler.snapshot();return b;}
 };
 auto prepare(const std::vector<std::uint8_t>& bytes,Fixture& f){return odh::HouseholdSessionRestore::prepare(bytes,f.resources,f.selection,
@@ -103,7 +104,10 @@ void tests(){Fixture f;f.start();f.step();auto saved=f.snapshot();const auto byt
         with_sim.host.global_values.erase(with_sim.host.global_values.begin());
         rejects([&]{prepare(odh::encode_session_bundle(with_sim),f);},"SIMS missing clock global accepted");
     }
-    auto candidate=prepare(bytes,f);for(;f.tick<6;)f.step();resume(*candidate,f.snapshot());
+    auto candidate=prepare(bytes,f);
+    require(candidate->family_budget()==std::optional<std::int32_t>{4321},
+        "household session restores the active family's runtime budget");
+    for(;f.tick<6;)f.step();resume(*candidate,f.snapshot());
     auto bad=saved;bad.household_roster[1].character_fingerprint[0]^=1;
     rejects([&]{prepare(odh::encode_session_bundle(bad),f);},"changed character hash accepted");
     bad=saved;bad.household_roster[1].neighbor_id=42+1;

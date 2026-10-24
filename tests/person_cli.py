@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory(prefix='odh-person-') as folder:
  assert r.returncode==0 and d['status']=='returned_true' and d['steps']==1
  assert d['trace'][0]['opcode']==7 and d['trace'][0]['operands']==[1,0,0,0,255,255,255,255]
  setup(main=[call(7,args=bytes([1,0,1,0,255,255,255,255]))]);r=run();d=json.loads(r.stdout)
- assert r.returncode==3 and d['status']=='fault' and 'Refresh supports only the graphic type' in d['diagnostic']
+ assert r.returncode==3 and d['status']=='fault' and 'Refresh type needs a positioned target and resolved room resources' in d['diagnostic']
  # Sleep consumes the same state between two random primitive calls.
  first,_=next_random(1,100);cycled,_=next_random(first,1);last,value=next_random(cycled,100)
  setup(main=[call(256,args=[2,0,0,0,0,0,0,0])],global_rows=[random_row(0,8,100), (0,2,255,bytes(8)),random_row(0,8,100,t=3),check_temp(0,value)])

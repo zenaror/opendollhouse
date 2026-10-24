@@ -35,13 +35,16 @@ struct FamilyEntry {
     // Neighborhood.iff entries remain unnamed until their FAMs names are read.
     std::string display_name{};
 };
-// Owns an immutable bounded snapshot. The last serialized family for a signed
-// low16 house key wins, following TS1NeighbourProvider; never sort by chunk ID.
+// Owns a bounded runtime copy of family records. The last serialized family
+// for a signed low16 house key wins, following TS1NeighbourProvider; never sort
+// by chunk ID. Runtime edits never mutate the caller's original records.
 class FamilyContext {
 public:
     explicit FamilyContext(const std::vector<FamilyEntry>&);
     const std::vector<FamilyEntry>& source() const { return source_; }
+    FamilyEntry* by_house(std::int16_t);
     const FamilyEntry* by_house(std::int16_t) const;
+    FamilyEntry* by_id(std::uint16_t);
     const FamilyEntry* by_id(std::uint16_t) const;
     static bool contains(const FamilyEntry&, std::uint32_t guid);
 private:

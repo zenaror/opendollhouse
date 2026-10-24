@@ -59,6 +59,7 @@ struct Fixture {
         odh::SessionBundle bundle;bundle.resources=resources;bundle.host=selection;
         bundle.host.tick=tick;bundle.host.random_seed=random.seed();
         bundle.host.global_values=capture_globals(lot,bootstrap,21);
+        bundle.host.family_budget=1234;
         bundle.world=world.snapshot();bundle.relationships=relationships.snapshot();
         odh::PlaybackSnapshot state;require(playback.capture_snapshot(state),"capture animation");
         bundle.runtime_entities={{1,vm.snapshot(),controllers.snapshot(),state}};
@@ -147,6 +148,8 @@ void unit_tests() {
         rejects([&]{prepare(odh::encode_session_bundle(with_sim),source);},"SIMS missing clock global accepted");
     }
     auto candidate=prepare(bytes,source);
+    require(candidate->family_budget()==std::optional<std::int32_t>{1234},
+        "single-resident session restores the active family's runtime budget");
     require(candidate->bootstrap().read(17)==source.bootstrap.read(17)&&
         candidate->lot().read(10)==7&&candidate->lot().read(12)==321&&candidate->family_global()==21,"global restore");
     require(candidate->relationships().object_value(candidate->world(),1,1,1)==-9,"restore nonempty relationship values");

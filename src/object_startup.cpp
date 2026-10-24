@@ -41,7 +41,10 @@ ObjectStartupResult run_object_startup(
             throw std::overflow_error("object startup instruction count overflow");
         result.steps += used;
         if (vm.status() != VmStatus::returned_true && vm.status() != VmStatus::returned_false) {
-            result.diagnostic = "object startup entry did not return synchronously";
+            result.diagnostic = "object startup " + std::string(phase) + " entry " +
+                std::to_string(routine) + " did not return synchronously (" +
+                vm_status_name(vm.status()) + ")";
+            if(!vm.diagnostic().empty())result.diagnostic += ": " + vm.diagnostic();
             return result;
         }
     }
