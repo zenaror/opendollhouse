@@ -12,8 +12,9 @@ O teste sintético confirma Caller=Callee=ID do objeto, StackObject=0, quatro
 argumentos zerados, CodeOwner próprio, ordem de execução, EP8 vazio e rejeição
 de tabela incompleta. Build dos testes `odh-object-startup-tests` e
 `odh-avatar-startup-tests` passou; CTest focal passou 2/2; `git diff --check`
-passou. Ainda não foi ligado ao carregamento da Food real, à fila pós-tick, ao
-retorno do avatar nem ao scheduler Main.
+passou. O alvo principal `odh-person` também compilou por completo com essa
+biblioteca ligada. Ainda não foi ligado ao carregamento da Food real, à fila
+pós-tick, ao retorno do avatar nem ao scheduler Main.
 
 ## Atualização: criação controlada no compartimento 0 (2026-10-24)
 
