@@ -7,6 +7,8 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Entrada Linux agora reconstrói um morador adicional adulto presente em FAMI/NBRS e nos recursos de personagem, mas ausente de OBJM/OBJT. A criação acontece antes do baseline, reproduz startup, corpo, herança e horário do lote; chegada aceita apenas um perfil sem efeitos de sala/luz/portal/janela ainda não modelados. O runtime e o save/resume usam o World/HHRD existente, sem inventar registros do save do jogo. Fixture sintético confirma retomada em processo novo byte a byte igual à execução contínua e 13 recusas seguras. Não há ainda validação com instalação comercial ou janela. Veja a matriz `docs/playable-feature-matrix.md`.
+
 - `World::publish_snapshot` publica o estado validado de um lote candidato sem
   substituir o objeto `World` observado pelas leituras da VM. Rejeição e falta
   de memória preservam o estado anterior; isso não restaura VMs/controladores,
@@ -14,8 +16,7 @@ validação indicados por versão.
 
 - A retomada de uma sessão aplica o mundo validado ao `World` já carregado,
   preservando o objeto usado pelo host. Os caminhos single-resident e household
-  passaram retomada headless; isso não valida renderização nem moradores FAMI
-  ausentes.
+  passaram retomada headless; quando há morador FAMI ausente, a entrada agora o reconstrói no perfil sintético adulto documentado; renderização desse caso ainda não foi validada.
 
 - A entrada Linux lê as tabelas de menu necessárias de `UIText.iff` em uma
   única passagem e reutiliza os textos durante a escolha da vizinhança. Isso
@@ -37,13 +38,11 @@ validação indicados por versão.
 
 - Um teste sintético liga a criação isolada de um morador ausente ao startup
   Init/entrada8, ao RNG explícito e à herança posterior dos dados NBRS/FAMI. Ele
-  confirma que as escritas ficam no terreno temporário, mas não valida chegada,
-  saves nem uma partida real.
+  confirma que as escritas ficam no terreno temporário. A integração posterior tem fixture CLI de chegada e save/resume sintéticos, sem demonstrar casa comercial ou partida real.
 
 - Um orquestrador de teste agora percorre, para cada morador FAMI ausente, a
   preparação, herança, busca ordenada na caixa postal e ativação antes de
-  começar o próximo. Os callbacks deixam explícitos os efeitos que o host ainda
-  precisa implementar; o fluxo normal do jogo continua sem essa integração.
+  começar o próximo. O adapter Linux agora integra esse orquestrador sob perfil restrito; testes sintéticos cobrem chegada, registro de sala e save/resume, sem comprovar paridade geral.
 
 ### Alterado
 

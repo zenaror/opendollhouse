@@ -822,7 +822,7 @@ target_link_libraries(odh_single_resident_session_restore PUBLIC odh_session_bun
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(odh_single_resident_session_restore PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
-target_link_libraries(odh-person PRIVATE odh_session_bundle odh_single_resident_session_restore)
+target_link_libraries(odh-person PRIVATE odh_session_bundle odh_single_resident_session_restore odh_household_spawn)
 if(TARGET odh_linux_session_archive_store)
   target_link_libraries(odh-person PRIVATE odh_linux_session_archive_store)
 endif()
@@ -1006,6 +1006,10 @@ if(BUILD_TESTING)
   add_executable(odh-household-arrival-tests tests/household_arrival.cpp)
   target_link_libraries(odh-household-arrival-tests PRIVATE odh_household_arrival)
   add_test(NAME household_arrival_preflight COMMAND odh-household-arrival-tests)
+  add_executable(odh-household-runtime-arrival-tests tests/household_runtime_arrival.cpp)
+  target_link_libraries(odh-household-runtime-arrival-tests PRIVATE odh_world_room_info
+    odh_world_avatar_place_audit odh_route_geometry odh_floor_placement odh_world_snapshot_codec odh_room_map)
+  add_test(NAME household_runtime_arrival COMMAND odh-household-runtime-arrival-tests)
   add_executable(odh-character-catalog-tests tests/character_catalog.cpp)
   target_link_libraries(odh-character-catalog-tests PRIVATE odh_character_catalog)
   add_test(NAME character_catalog_scan COMMAND odh-character-catalog-tests)
@@ -1478,6 +1482,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_game_entry_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_household_session_resume_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_session_resume_cli.py $<TARGET_FILE:odh-person>)
+      add_test(NAME linux_household_materialization_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_materialization_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_lot_travel_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_lot_travel_cli.py $<TARGET_FILE:odh-person>)
       set_tests_properties(linux_lot_travel_cli PROPERTIES TIMEOUT 120)

@@ -52,6 +52,7 @@
 #include "odh/route.hpp"
 #include "odh/world_room_route_grid.hpp"
 #include "household_go_here_session.hpp"
+#include "household_runtime_arrival.hpp"
 #include "animation_catalog.hpp"
 #include "resource.hpp"
 #include "person_session.hpp"
@@ -1129,6 +1130,122 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }else runtime_avatar_id=static_cast<std::int16_t>(headless_fixture_avatar->id);
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
+    odh::RandomState random(seed.value_or(1));
+    std::map<std::int16_t,odh::VmSnapshot> materialized_main_states;
+    if(session_context&&!session_context->single_resident_session&&saved_world_main&&active_family){
+        const auto source=restored_world->world->snapshot();
+        const auto reconciliation=odh::reconcile_session_household(active_family->family.member_guids,*restored_world->world);
+        const bool missing=std::any_of(reconciliation.begin(),reconciliation.end(),[](const auto& member){
+            return member.presence==odh::HouseholdMemberPresence::absent;
+        });
+        if(missing){
+            if(!neighbors||session_context->household_members.empty())
+                throw odh::FormatError("missing household resident requires prepared architecture and exact character resources");
+            // An installation with no external .flr/.wll providers has an
+            // explicitly empty alias catalog. The renderer must use the same
+            // prepared geometry as the reconstruction even in that case.
+            if(!render_materials)render_materials.emplace();
+            odh::Ts1Clock construction_clock;
+            const auto& construction_globals=simi->global_data;
+            if(construction_globals.size()<=8||construction_globals[0]<0||construction_globals[1]<0||
+               construction_globals[5]<0||construction_globals[6]<0||construction_globals[7]<0||
+               !construction_clock.initialize_simi(static_cast<unsigned>(construction_globals[0]),
+                   static_cast<unsigned>(construction_globals[1]),static_cast<unsigned>(construction_globals[5]),
+                   static_cast<unsigned>(construction_globals[6]),static_cast<unsigned>(construction_globals[7]),
+                   construction_globals[8]))
+                throw odh::FormatError("missing household resident requires a supported SIMI clock");
+            const auto architecture=saved_architecture_resource(*lot_path);
+            const odh::ArchitectureMap empty;
+            const auto* floor_map=selected_architecture_map(architecture,"FLRm");
+            const auto* wall_map=selected_architecture_map(architecture,"WALm");
+            const auto aliases=odh::resolve_architecture_aliases(floor_map?*floor_map:empty,wall_map?*wall_map:empty,
+                render_materials->catalog.floors(),render_materials->catalog.walls(),render_materials->alias_limits);
+            if(!aliases.floor_map_complete()||!aliases.wall_map_complete())
+                throw odh::FormatError("household arrival architecture aliases are unresolved");
+            const auto prepared=odh::prepare_saved_architecture(architecture.architecture,aliases.aliases,
+                render_materials->preparation,render_materials->preparation_limits);
+            std::optional<odh::EntityPosition> mailbox;
+            for(const auto& entity:source.entities){
+                if(!entity.definition||(entity.definition->guid!=0xEF121974&&entity.definition->guid!=0x1D95C9B0))continue;
+                if(mailbox||entity.kind!=odh::EntityKind::object||!entity.position||entity.attachment||entity.ui_ghost)
+                    throw odh::FormatError("household arrival requires one positioned singleton mailbox");
+                mailbox=entity.position;
+            }
+            if(!mailbox)throw odh::FormatError("household arrival requires one positioned singleton mailbox");
+            std::vector<odh::HouseholdSpawnRequest> requests;
+            for(const auto guid:active_family->family.member_guids){
+                const auto neighbor=neighbors->id_for_guid(guid);
+                if(!neighbor)throw odh::FormatError("household arrival member has no exact NBRS record");
+                requests.push_back({guid,neighbors->by_id(*neighbor)});
+            }
+            auto candidate_random=random;
+            const auto prepare=[&](odh::World& candidate,std::int16_t id,std::uint32_t guid){
+                const auto member=std::find_if(session_context->household_members.begin(),session_context->household_members.end(),
+                    [&](const auto& value){return value.guid==guid;});
+                if(member==session_context->household_members.end())return false;
+                const auto pinned=pinned_characters.find(std::filesystem::canonical(member->character_path));
+                if(pinned==pinned_characters.end())return false;
+                Resource resource{member->character_path.string(),{},true,pinned->second.bytes};
+                auto data=load(resource,odh::RoutineScope::private_object,member->object_definition_id,true);
+                const auto* definition=definition_index->unique(guid);
+                if(!definition||definition->definition.is_multitile||data.binding->version!=138||data.object_type!=2||
+                   data.binding->guid!=guid||!data.entry_points||data.entry_points->entries.size()<=9||
+                   data.entry_points->entries[9].action!=0||!data.startup||!data.glob||
+                   fold(data.glob->name+".iff")!=fold(semi->entry))
+                    throw odh::FormatError("missing household resident requires exact singleton adult resource with absent placement EP9");
+                const auto main=data.entry_points->entries[1].action;
+                if(!main||odh::routine_key(main).scope!=odh::RoutineScope::private_object||!data.routines.count(odh::routine_key(main)))
+                    throw odh::FormatError("missing household resident Main is unavailable");
+                auto strings=load_strings(resource,{data.startup->body_strings,150});
+                const auto body_table=strings.find(data.startup->body_strings);
+                if(body_table==strings.end())throw odh::FormatError("missing household resident BodySTR unavailable");
+                const auto descriptor=odh::parse_avatar_body_strings(body_table->second);
+                if(descriptor.avatar_type!="adult"||!descriptor.age||*descriptor.age<18)
+                    throw odh::FormatError("missing household resident constructor supports adults only");
+                const auto tables=load_strings(*globals,{150,158});
+                if(!tables.count(150)||!tables.count(158))throw odh::FormatError("missing household resident walk/swim tables unavailable");
+                if(!candidate.define_entry_points(id,data.entry_points->entries)||
+                   !candidate.declare_definition_word(id,9,2)||!candidate.declare_object_word(id,29,-1))return false;
+                data.routines.insert(semi_data.routines.begin(),semi_data.routines.end());
+                // The private startup VM has only candidate World memory. Calls
+                // and expressions work; external primitives/globals/tuning/RNG
+                // are unavailable and fail closed instead of escaping rollback.
+                odh::Vm startup(shared.routines,candidate.vm_memory(),{}, {},{{static_cast<odh::CodeOwner>(id),data.routines}});
+                const auto started=odh::run_avatar_startup(startup,id,data.entry_points->entries[0].action,
+                    data.entry_points->entries[8].action,10000);
+                if(!started.completed)throw odh::FormatError("missing household resident startup unsupported: "+startup.diagnostic());
+                startup.start(odh::routine_key(main),{id,id,0,static_cast<odh::CodeOwner>(id)},std::vector<std::int16_t>(4));
+                if(startup.status()==odh::VmStatus::fault)throw odh::FormatError("missing household resident Main could not be stacked");
+                materialized_main_states.emplace(id,startup.snapshot());
+                const auto special=strings.find(150);
+                odh::apply_avatar_body(candidate,id,candidate_random,descriptor,tables.at(150),tables.at(158),
+                    special==strings.end()?std::optional<odh::StringTable>{}:std::optional<odh::StringTable>{special->second});
+                // CreateObjectInstance.SetBirthTime uses the lot's construction
+                // clock, not wall time or the later ODH resume clock. These
+                // ObjectData writes commute with the subsequent NBRS-only
+                // PersonData inheritance; Main remains stacked but unexecuted.
+                const auto& birth=construction_clock.snapshot();
+                for(const auto& field:std::array<std::pair<std::int16_t,std::int16_t>,5>{{
+                    {45,static_cast<std::int16_t>(birth.year)},{46,birth.month},{47,birth.day},
+                    {21,birth.minute},{24,birth.hour}}})
+                    if(!candidate.declare_object_word(id,field.first,field.second))return false;
+                return true;
+            };
+            odh::WorldLimits limits;limits.words=131072;
+            auto result=odh::verify_household_members(source,requests,active_family->chunk_id,prepare,mailbox,
+                static_cast<std::uint16_t>(prepared.width),static_cast<std::uint16_t>(prepared.height),
+                [&](odh::World& candidate,std::int16_t id,const odh::EntityPosition& position){
+                    return attempt_household_runtime_arrival(candidate,id,position,*definition_index,prepared);
+                },[](odh::World& candidate,std::int16_t id,std::uint32_t,bool positioned){
+                    const auto* avatar=candidate.find(id);
+                    return positioned&&avatar&&avatar->person_data.size()>68&&avatar->person_data[0]==0&&
+                        avatar->person_data[68]==0;
+                },limits);
+            if(!result.candidate||!restored_world->world->publish_snapshot(result.candidate->snapshot()))
+                throw odh::FormatError("verified household arrival candidate could not be published");
+            random=candidate_random;
+        }
+    }
     std::optional<odh::WorldSnapshot> session_baseline;
     if(session_context&&saved_world_main&&restored_world)session_baseline=restored_world->world->snapshot();
     const auto capture_household_roster=[&](bool verify_current=false) {
@@ -1429,7 +1546,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(!world.create(2,odh::EntityKind::object)||!world.define_type(2,action_data->binding->guid))throw odh::FormatError("action target construction failed");
         if(action_data->entry_points&&!world.define_entry_points(2,action_data->entry_points->entries))throw odh::FormatError("action entry point binding failed");}
     std::uint64_t rng_requests=0;
-    odh::RandomState random(seed.value_or(1));std::vector<odh::RandomRecord> random_reads;
+    std::vector<odh::RandomRecord> random_reads;
     odh::EntityThreadControllers thread_controllers(world,runtime_avatar_id,
         [&]{++rng_requests;random.next(1);});
     std::unique_ptr<odh::EntityThreadControllers> second_main_thread;
@@ -1917,6 +2034,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         };
         runtime->vm=std::make_unique<odh::Vm>(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},primitive,
             odh::RoutineOwners{{runtime->id,std::move(runtime->data.routines)}});
+        if(!restoring_session&&materialized_main_states.count(runtime->id)&&
+           !runtime->vm->restore_snapshot(materialized_main_states.at(runtime->id)))
+            throw odh::FormatError("materialized household Main state could not bind to runtime");
         if(!runtime->controllers->bind(*runtime->vm)||(runtime->playback&&!runtime->playback->bind(*runtime->vm)))
             throw odh::FormatError("household resident controllers could not bind");
         if(!entity_scheduler.add(runtime->id,*runtime->vm,
@@ -1998,8 +2118,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 {id,id,0,static_cast<odh::CodeOwner>(id)},arguments);
         }
         for(auto& member:household_runtime)
-            member->vm->start(odh::routine_key(member->main),
-                {member->id,member->id,0,static_cast<odh::CodeOwner>(member->id)},std::vector<std::int16_t>(4));
+            if(!materialized_main_states.count(member->id))
+                member->vm->start(odh::routine_key(member->main),
+                    {member->id,member->id,0,static_cast<odh::CodeOwner>(member->id)},std::vector<std::int16_t>(4));
         if(initialize&&vm.status()!=odh::VmStatus::fault){
             try{body_seed_before=random.seed();body_state=odh::apply_avatar_body(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);body_seed_after=random.seed();}
             catch(const std::exception& e){host_failed=true;host_diagnostic=e.what();}
@@ -5307,14 +5428,17 @@ struct PlacementCandidateProbe {
     if(active_family){const auto& v=*active_family;
         std::cout<<"{\"chunk_id\":"<<v.chunk_id<<",\"house_number\":"<<v.family.house_number<<",\"family_number\":"<<v.family.family_number
             <<",\"version\":"<<v.family.version<<",\"budget\":"<<v.family.budget<<",\"current_global9\":"<<*family_global
-            <<",\"profile\":"<<json_bytes(saved_world_main?
-                "CurrentFamily/global9 selected; restored members compared by exact GUID only; no VerifyFamily or resident creation":
+            <<",\"profile\":"<<json_bytes(!materialized_main_states.empty()?
+                "CurrentFamily/global9 selected; missing adults constructed before restore with bounded mailbox arrival":saved_world_main?
+                "CurrentFamily/global9 selected; restored members compared by exact GUID; no resident construction required":
                 "CurrentFamily/global9 selected; no SelectWholeFamily/VerifyFamily or saved resident restoration")<<",\"members\":[";
         for(std::size_t n=0;n<v.family.member_guids.size();++n){if(n)std::cout<<',';std::cout<<v.family.member_guids[n];}std::cout<<"]}";
     }else std::cout<<"null";
     std::cout<<",\"family_world_reconciliation\":";
     if(family_world_reconciliation){
-        std::cout<<"{\"evidence\":\"restored_World_exact_avatar_GUID_match_only\",\"creates_or_moves_Sims\":false,\"members\":[";
+        std::cout<<"{\"evidence\":"<<json_bytes(materialized_main_states.empty()?
+            "restored_World_exact_avatar_GUID_match_only":"restored_and_constructed_World_exact_avatar_GUID_match")
+            <<",\"creates_or_moves_Sims\":"<<(!materialized_main_states.empty()?"true":"false")<<",\"members\":[";
         for(std::size_t n=0;n<family_world_reconciliation->size();++n){
             if(n)std::cout<<',';
             const auto& member=family_world_reconciliation->at(n);
