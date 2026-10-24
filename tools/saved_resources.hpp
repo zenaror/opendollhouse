@@ -1,8 +1,19 @@
 #pragma once
 #include "odh/saved_world.hpp"
+#include "odh/lot.hpp"
 #include "resource.hpp"
 
 struct SavedDefinitionSource {std::string path;bool standalone;};
+inline odh::Simi saved_lot_simi(const std::string& path){
+    std::optional<odh::Simi> simi;
+    with_iff_file(path,[&](const auto& view){odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+        if(chunk.type!="SIMI"||chunk.id!=1)return;
+        if(simi)throw odh::FormatError("duplicate SIMI1 in saved lot");
+        simi=odh::read_simi(chunk.payload);
+    });});
+    if(!simi)throw odh::FormatError("SIMI1 absent in selected saved lot");
+    return std::move(*simi);
+}
 inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::vector<SavedDefinitionSource>& sources){
     if(sources.size()>128)throw odh::FormatError("definition source count exceeds limit");
     std::vector<odh::DefinitionCandidate> candidates;

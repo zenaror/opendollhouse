@@ -1,5 +1,6 @@
 #include "odh/staged_load_entry_points.hpp"
 #include "odh/world_snapshot_codec.hpp"
+#include "odh/random.hpp"
 #include <array>
 #include <iostream>
 
@@ -25,6 +26,13 @@ odh::Instruction assign_from_temp(std::int16_t index, std::int16_t temp) {
     const auto rhs = static_cast<std::uint16_t>(temp);
     return {2, 254, 255, {static_cast<std::uint8_t>(lhs), static_cast<std::uint8_t>(lhs >> 8),
         static_cast<std::uint8_t>(rhs), static_cast<std::uint8_t>(rhs >> 8), 0, 5, 3, 8}};
+}
+odh::Instruction assign_from_scope(std::uint8_t lhs_scope,std::int16_t lhs_index,
+                                   std::uint8_t rhs_scope,std::int16_t rhs_index) {
+    const auto lhs=static_cast<std::uint16_t>(lhs_index);
+    const auto rhs=static_cast<std::uint16_t>(rhs_index);
+    return {2,254,255,{static_cast<std::uint8_t>(lhs),static_cast<std::uint8_t>(lhs>>8),
+        static_cast<std::uint8_t>(rhs),static_cast<std::uint8_t>(rhs>>8),0,5,lhs_scope,rhs_scope}};
 }
 odh::WorldSnapshot fixture() {
     odh::World world;
@@ -77,6 +85,58 @@ int main() {
         require(result.snapshot->entities[0].object_words.at(23) == -1 &&
                 result.snapshot->entities[1].object_words.at(23) == 22,
                 "missing-root false return preserves the object and continues later Load actions");
+
+        auto tuning_owners=owners;
+        tuning_owners[101][key(4096)]=routine({assign_from_scope(3,23,26,16516)});
+        odh::VmMemory tuning_memory;
+        bool exact_tuning_query=false;
+        tuning_memory.read=[&](const odh::VmFrame& frame,std::uint8_t scope,
+                               std::int16_t index)->std::optional<std::int16_t>{
+            if(scope!=26)return {};
+            exact_tuning_query=frame.context.code_owner==101&&index==16516;
+            return exact_tuning_query?std::optional<std::int16_t>{42}:std::nullopt;
+        };
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,tuning_owners,8,{},tuning_memory);
+        require(result.snapshot.has_value()&&exact_tuning_query&&
+                result.snapshot->entities[0].object_words.at(23)==42,
+                "a supplemental owner-scoped read reaches the staged Load VM and its World copy");
+
+        auto missing_primitive_owners=owners;
+        missing_primitive_owners[101][key(4096)]=routine({
+            {10,1,253,{}},assign(23,71)
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,missing_primitive_owners,8);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==71,
+                "Simitone's unregistered opcode 10 follows its true branch in saved Load");
+        missing_primitive_owners[101][key(4096)]=routine({
+            {1,1,253,{}},assign(23,72)
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,missing_primitive_owners,8);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==72,
+                "Simitone's unregistered opcode 1 placeholder follows its true branch in saved Load");
+        missing_primitive_owners[101][key(4096)]=routine({
+            {7,1,253,{0,0,0,0,0,0,0,0}},assign(23,73)
+        });
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,missing_primitive_owners,8);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==73,
+                "Load Refresh(Caller, graphic) is a render-cache no-op in the unpublished candidate");
+
+        auto random_owners=owners;
+        random_owners[101][key(4096)]=routine({
+            {8,1,253,{0,0,8,0,5,0,7,0}},assign_from_temp(23,0)
+        });
+        odh::RandomState load_random(1),expected_random(1);
+        const auto expected_random_value=static_cast<std::int16_t>(expected_random.next(5));
+        const auto random_handler=odh::random_primitive(load_random);
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,random_owners,8,{}, {},random_handler);
+        require(result.snapshot.has_value()&&result.snapshot->entities[0].object_words.at(23)==expected_random_value&&
+                load_random.seed()==expected_random.seed(),
+                "saved Load shares the explicit TS1 RNG state through the injected opcode 8 handler");
 
         auto failing_owners = owners;
         failing_owners[101][key(4096)] = routine({assign(23, 33)});

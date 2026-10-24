@@ -18,6 +18,7 @@ struct SavedLoadPreparation {
     std::map<std::int16_t, std::array<std::int16_t, 20>> temporary_registers;
     odh::RoutineSet globals;
     odh::RoutineOwners owners;
+    odh::TuningResources tuning;
 };
 
 // Prepare the exact resource inputs for a fresh saved-lot restore. EntryPoint
@@ -35,6 +36,7 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
 
     SavedLoadPreparation result;
     result.globals = load_saved_global_code_bank(global_archive, global_entry).routines;
+    result.tuning.globals = load_saved_tuning_tables(global_archive, global_entry);
     std::map<std::uint32_t, SavedEntryPointResource> resources;
     std::map<std::pair<std::string, std::string>, odh::CodeOwner> owner_ids;
     std::map<std::string, SavedSemiglobalCodeBank> semiglobals;
@@ -87,6 +89,10 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
                 throw odh::FormatError("saved Load distinct resource owners exceed VM limit");
             owner = owner_ids.emplace(identity, next_owner++).first;
             result.owners.try_emplace(owner->second);
+            odh::TuningOwner tuning_owner;
+            tuning_owner.private_tables = load_saved_tuning_tables(*candidate);
+            tuning_owner.semiglobal_state = odh::TuningSemiState::absent;
+            result.tuning.owners.emplace(owner->second,std::move(tuning_owner));
         }
         result.code_owners.emplace(id, owner->second);
 
@@ -118,6 +124,9 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
                 try {
                     semiglobal = semiglobals.emplace(name,
                         load_saved_semiglobal_code_bank(global_archive, name + ".iff")).first;
+                    auto& tuning_owner=result.tuning.owners.at(owner->second);
+                    tuning_owner.semiglobal_tables=load_saved_tuning_tables(global_archive,name+".iff");
+                    tuning_owner.semiglobal_state=odh::TuningSemiState::loaded;
                 } catch (const std::exception& error) {
                     throw odh::FormatError("Load action " + std::to_string(action) + " for object " +
                         std::to_string(id) + " links missing semiglobal " + name + ": " + error.what());

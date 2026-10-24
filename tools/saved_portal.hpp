@@ -3,6 +3,7 @@
 #include "saved_interactions.hpp"
 #include "saved_wall_appearance.hpp"
 #include "odh/saved_world.hpp"
+#include "odh/tuning.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <map>
@@ -18,6 +19,42 @@ struct SavedGlobalCodeBank {
     std::string archive,entry;
     odh::RoutineSet routines;
 };
+
+inline odh::TuningTables read_saved_tuning_tables(const odh::View& view) {
+    odh::TuningTables result;
+    odh::Limits limits;limits.iff_chunks=4096;
+    odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+        if(chunk.type!="BCON")return;
+        if(!result.emplace(chunk.id,odh::read_bcon(chunk.payload)).second)
+            throw odh::FormatError("duplicate BCON in exact tuning resource");
+    },limits);
+    return result;
+}
+
+inline odh::TuningTables load_saved_tuning_tables(
+    const std::string& archive,const std::string& entry) {
+    odh::TuningTables result;
+    with_far_entry(archive,entry,[&](const odh::View& view){
+        result=read_saved_tuning_tables(view);
+    });
+    return result;
+}
+
+inline odh::TuningTables load_saved_tuning_tables(
+    const odh::DefinitionCandidate& definition) {
+    if(definition.asset.empty()){
+        odh::TuningTables result;
+        with_iff_file(definition.source,[&](const odh::View& view){
+            result=read_saved_tuning_tables(view);
+        });
+        return result;
+    }
+    odh::TuningTables result;
+    with_far_entry(definition.source,definition.asset,[&](const odh::View& view){
+        result=read_saved_tuning_tables(view);
+    });
+    return result;
+}
 
 // Evaluate the small, read-only BHAV profile used by the two known Superstar
 // chair entry-point conditions. This deliberately accepts only expression

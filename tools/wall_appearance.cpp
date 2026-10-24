@@ -20,6 +20,8 @@
 #include "odh/saved_floor_placement.hpp"
 #include "odh/prepared_architecture.hpp"
 #include "odh/staged_load_entry_points.hpp"
+#include "odh/bootstrap.hpp"
+#include "odh/random.hpp"
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -409,9 +411,10 @@ void emit_route_grid_diagnostic(
 }
 
 int main(int argc,char** argv){try{
- if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--load-stage-probe --global-resource ARCHIVE ENTRY] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
+ if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--architecture-resource IFF] [--route-edges] [--portal-probe] [--entry-point-probe] [--load-stage-probe --global-resource ARCHIVE ENTRY [--load-stage-probe-seed UINT64]] [--route-grid-diagnostic ACTOR_ID TARGET_ID --route-slot-resource ARCHIVE ENTRY CHUNK_ID 3 TYPE3_INDEX]");
  const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::vector<std::string> architecture_resources;std::optional<std::string> neighborhood;bool route_edges=false,portal_probe=false,entry_point_probe=false,load_stage_probe=false;
  std::optional<std::pair<std::string,std::string>> load_global_resource;
+ std::optional<std::uint64_t> load_stage_seed;
  std::optional<std::pair<std::int16_t,std::int16_t>> route_grid_diagnostic;
  std::optional<SlotResource> slot_resource;
  const auto parse_id=[](const char* value){
@@ -431,6 +434,12 @@ int main(int argc,char** argv){try{
   else if(option=="--load-stage-probe"&&!load_stage_probe)load_stage_probe=true;
   else if(option=="--global-resource"&&!load_global_resource&&n+2<argc){
    const auto archive=argv[++n];const auto entry=argv[++n];load_global_resource=std::make_pair(archive,entry);
+  }
+  else if(option=="--load-stage-probe-seed"&&!load_stage_seed&&n+1<argc){
+   std::uint64_t seed=0;const auto* begin=argv[++n];const auto* end=begin+std::char_traits<char>::length(begin);
+   const auto parsed=std::from_chars(begin,end,seed);
+   if(parsed.ec!=std::errc{}||parsed.ptr!=end)throw odh::FormatError("Load probe seed must be an unsigned 64-bit decimal integer");
+   load_stage_seed=seed;
   }
   else if(option=="--route-grid-diagnostic"&&!route_grid_diagnostic&&n+2<argc){
    const auto actor_id=parse_id(argv[++n]);const auto target_id=parse_id(argv[++n]);
@@ -691,11 +700,35 @@ int main(int argc,char** argv){try{
   try{
    if(!load_global_resource)throw odh::FormatError("--load-stage-probe requires --global-resource ARCHIVE ENTRY");
    auto prepared=prepare_saved_load_entry_points(*world,*index,load_global_resource->first,load_global_resource->second);
+   const odh::BconTuning tuning(std::move(prepared.tuning));
+   const auto simi=saved_lot_simi(house);
+   const odh::Ts1BootstrapGlobals bootstrap;
+   const std::uint64_t load_probe_seed=load_stage_seed.value_or(1);
+   odh::RandomState load_probe_random(load_probe_seed);
+   odh::VmMemory supplemental_memory;
+   supplemental_memory.read=[&tuning,&simi,&bootstrap](const odh::VmFrame& frame,std::uint8_t scope,
+                                       std::int16_t index)->std::optional<std::int16_t>{
+    if(scope==6){
+     if(const auto value=bootstrap.read(index))return value;
+     if(index>=0&&static_cast<std::size_t>(index)<simi.global_data.size())
+      return simi.global_data[static_cast<std::size_t>(index)];
+    }
+    if(scope==26){
+     const auto value=tuning.read(frame.context.code_owner,index);
+     return value?std::optional<std::int16_t>{value->value}:std::nullopt;
+    }
+    return {};
+   };
+   const auto load_probe_random_primitive=odh::random_primitive(load_probe_random,supplemental_memory);
    const auto result=odh::stage_saved_load_entry_points(world->world->snapshot(),prepared.entity_order,
-       prepared.code_owners,prepared.ghost_images,prepared.temporary_registers,prepared.globals,prepared.owners,1000000);
+       prepared.code_owners,prepared.ghost_images,prepared.temporary_registers,prepared.globals,prepared.owners,
+       1000000,{},std::move(supplemental_memory),load_probe_random_primitive);
    std::cout<<",\"state\":"<<json_bytes(result.snapshot?"complete":"stopped")
     <<",\"entities\":"<<prepared.entity_order.size()<<",\"completed_entities\":"<<result.completed_entities.size()
     <<",\"code_owner_banks\":"<<prepared.owners.size()<<",\"instructions\":"<<result.instructions
+    <<",\"load_probe_random_seed_initial\":"<<load_probe_seed
+    <<",\"load_probe_random_seed_final\":"<<load_probe_random.seed()
+    <<",\"load_probe_random_seed_is_saved_state\":false"
     <<",\"missing_root_actions\":[";
    for(std::size_t i=0;i<result.missing_root_actions.size();++i){
     if(i)std::cout<<',';

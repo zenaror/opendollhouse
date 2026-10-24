@@ -34,6 +34,7 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const std::map<std::int16_t, bool>& ghost_images,
     const std::map<std::int16_t, std::array<std::int16_t, 20>>& temporary_registers,
     const RoutineSet& globals, const RoutineOwners& owners,
-    std::uint64_t instruction_budget, WorldLimits world_limits = {});
+    std::uint64_t instruction_budget, WorldLimits world_limits = {},
+    VmMemory supplemental_memory = {}, VmPrimitive supplemental_primitive = {});
 
 } // namespace odh

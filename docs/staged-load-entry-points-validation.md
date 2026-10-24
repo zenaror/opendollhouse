@@ -47,22 +47,42 @@ execução comercial de Load nem o significado completo dos campos gravados.
 
 ### Probe limitado com os dados comerciais
 
-`odh-wall-appearance HOUSE --load-stage-probe --global-resource ARCHIVE ENTRY`
-prepara uma cópia do World salvo, resolve cada definição pelo recurso exato
-selecionado e executa as ações Load em ordem crescente de ID, com limite de
-1.000.000 de instruções. O JSON marca que nenhum executável foi usado e que o
-World não foi publicado. Uma ação principal ausente é registrada em
-`missing_root_actions` e retorna falso, como em
-`VMEntity.ExecuteGenericEntryPoint` do Simitone; uma chamada privada interna
+`odh-wall-appearance HOUSE --load-stage-probe --global-resource ARCHIVE ENTRY
+[--load-stage-probe-seed UINT64]` prepara uma cópia do World salvo, resolve cada
+definição pelo recurso exato selecionado e executa as ações Load em ordem
+crescente de ID, com limite de 1.000.000 de instruções. O JSON marca que nenhum
+executável foi usado e que o World não foi publicado. O estado global começa
+dos valores SIMI salvos, aplicando o perfil bootstrap do Simitone nos índices
+17, 20 e 25; assim, `SIMI[10]` continua sendo o número do lote selecionado.
+Tuning vem do BCON exato global, privado e semiglobal. O opcode 8 usa o RNG já
+implementado pelo projeto e uma semente de diagnóstico explícita (padrão 1;
+configurável pela opção acima); essa semente não está salva no lote e não é
+apresentada como a semente que o Simitone usaria em uma sessão real. Uma ação
+principal ausente é registrada em `missing_root_actions` e retorna falso, como
+em `VMEntity.ExecuteGenericEntryPoint` do Simitone; uma chamada privada interna
 ausente ainda interrompe a preparação.
 
-Na instalação Complete Collection consultada em 2026-10-24, o probe preparou
-182 entidades de House07 e 245 de House05. House07 completou 3 ações e parou na
-entidade 4, ação 4157, após 5 instruções: primitiva 10 não suportada. House05
-completou 4 ações e parou na entidade 6, ação 4109, após 5 instruções: leitura
-de escopo 26, índice 16516 não suportada. Esses pontos marcam o próximo trabalho
-de interpretação; nenhum dos lotes completou a restauração e a etapa continua
-desconectada do loader do jogo. Os arquivos comerciais foram somente lidos.
+Para o perfil de primitivas, o registro do cliente Simitone observado chama
+`VMContext.InitVMConfig(false)`: nessa configuração opcode 1 não tem handler;
+opcode 10 também não tem handler. A VM encaminha ambos pelo ramo verdadeiro.
+Opcode 7 Refresh(Caller, graphic) só invalida cache gráfico, ausente no World
+transacional não publicado, então esse caso específico retorna verdadeiro.
+Outros casos de Refresh e operações ainda não implementadas seguem falhando.
+
+Na instalação Complete Collection consultada em 2026-10-24, com semente 1,
+House07 preparou 182 entidades, completou 108 ações e parou na entidade 109,
+ação 4110 (`Sinks.iff`), opcode 7 Refresh de pontuação do cômodo. Esse serviço
+chama `RefreshRoomScore` no Simitone e ainda não tem destino no World candidato.
+House05 preparou 245 entidades, completou 68 ações e parou na entidade 71,
+ação 4096 (`aquarium1.iff`), opcode 23 PlaySound; a resolução e o enfileiramento
+transacional de áudio ainda não estão ligados a esta etapa. Os dois pontos
+anteriores avançaram; nenhum dos lotes completou a restauração. Os dados
+comerciais foram somente lidos e a etapa continua desconectada do loader do jogo.
+
+As sementes 1, 2 e 42 foram testadas: o número de instruções muda conforme as
+decisões aleatórias, mas cada lote alcança o mesmo primeiro serviço ainda
+ausente. Isso é um teste de progresso do probe, não uma comparação de saída
+aleatória com o original nem uma validação de lote jogável.
 
 Após a instalação de PangoCairo 1.52.1 no ambiente, `linux_text_renderer` e
 `staged_load_entry_points` passaram. Isso valida a biblioteca de texto e a etapa
@@ -73,6 +93,8 @@ Xvfb neste ambiente.
 ordem de execução, isolamento entre donos, retorno falso síncrono, escrita na
 cópia, descarte de escrita GhostImage, rejeição de tabela/ordem incompleta,
 ação sem dono, falha numa ação posterior, orçamento agregado e preservação
-byte a byte do snapshot de origem e leitura de registradores salvos. Não valida
-a cadeia comercial de Windows 4105/4104, o resolvedor dos recursos, o loader
-Linux ou equivalência com o executável original.
+byte a byte do snapshot de origem e leitura de registradores salvos. Também
+testa a leitura suplementar de tuning, o fallback do perfil de primitivas para
+opcodes sem handler e a passagem do estado RNG explícito ao opcode 8. Não valida
+a cadeia comercial de Windows 4105/4104, todos os serviços de áudio/cômodo, o
+loader Linux ou equivalência com o executável original.
