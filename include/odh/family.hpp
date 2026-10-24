@@ -1,6 +1,7 @@
 #pragma once
 #include "odh/formats.hpp"
 #include <map>
+#include <string>
 
 namespace odh {
 struct FamiLimits {
@@ -30,6 +31,9 @@ std::vector<std::uint8_t> encode_simitone_create_family_fami(
 struct FamilyEntry {
     std::uint16_t chunk_id;
     Family family;
+    // Player-created entries can carry a name from their sidecar; source
+    // Neighborhood.iff entries remain unnamed until their FAMs names are read.
+    std::string display_name{};
 };
 // Owns an immutable bounded snapshot. The last serialized family for a signed
 // low16 house key wins, following TS1NeighbourProvider; never sort by chunk ID.

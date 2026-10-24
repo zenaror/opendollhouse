@@ -413,7 +413,7 @@ std::vector<FamilyEntry> apply_family_overlay(const std::vector<FamilyEntry>& so
             throw FormatError("created FAMI chunk ID is already used");
         for (const auto guid : family.member_guids)
             if (!guids.insert(guid).second) throw FormatError("created GUID is already used");
-        result.push_back({creation.family_chunk_id, std::move(family)});
+        result.push_back({creation.family_chunk_id, std::move(family), creation.family_name});
     }
     (void)FamilyContext(result);
     const auto originals = result;

@@ -77,6 +77,11 @@ std::array<std::uint8_t, 32> neighborhood_identity(const odh::View& view) {
     }
     return hash.finish();
 }
+
+std::string family_display_label(const odh::FamilyEntry& family) {
+    if (!family.display_name.empty()) return family.display_name;
+    return "Family " + std::to_string(family.family.family_number);
+}
 }
 
 PreparedNeighborhoodMap prepare_neighborhood_map(
@@ -294,8 +299,8 @@ OccupiedLotChoice show_occupied_lot_choice(LinuxWindow& window,
     style.height = 36; style.font_size_px = 18; style.padding = 7;
     style.foreground = {245,245,245,255}; style.background = {22,25,32,255};
     style.y = 156;
-    draw_text_overlay(frame, "House " + std::to_string(house_number) + " | Family " +
-        std::to_string(family.family.family_number), language, style);
+    draw_text_overlay(frame, "House " + std::to_string(house_number) + " | " +
+        family_display_label(family), language, style);
     style.y = 220;
     draw_text_overlay(frame, "Enter or click: enter this house", language, style);
     style.y = 276;
@@ -384,9 +389,10 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         for (std::size_t row = 0; row < page_size; ++row) {
             const auto index = (selected / page_size) * page_size + row;
             if (index >= choices.size()) break;
-            const auto& family = choices[index]->family;
-            const auto label = std::string(index == selected ? "> Family " : "  Family ") +
-                std::to_string(family.family_number) + " | " +
+            const auto& family_entry = *choices[index];
+            const auto& family = family_entry.family;
+            const auto label = std::string(index == selected ? "> " : "  ") +
+                family_display_label(family_entry) + " | " +
                 std::to_string(family.member_guids.size()) + " residents | budget " +
                 std::to_string(family.budget);
             style.y = static_cast<std::int32_t>(row_start + row * row_height);
@@ -468,7 +474,7 @@ bool show_move_in_confirmation(LinuxWindow& window, const odh::FamilyEntry& fami
     style.y = 188;
     draw_text_overlay(frame, localized_question, language, style);
     style.y = 236;
-    draw_text_overlay(frame, "Family " + std::to_string(family.family.family_number) +
+    draw_text_overlay(frame, family_display_label(family) +
         " | House " + std::to_string(house_number), language, style);
     style.y = 284;
     draw_text_overlay(frame, "Price: " + std::to_string(purchase_price) + " | Current budget: " +
@@ -524,7 +530,7 @@ bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& fam
     style.y = 142;
     draw_text_overlay(frame, localized_title, language, style);
     style.y = 202;
-    draw_text_overlay(frame, "Family " + std::to_string(family.family.family_number) +
+    draw_text_overlay(frame, family_display_label(family) +
         " | House " + std::to_string(house_number), language, style);
     style.y = 246;
     draw_text_overlay(frame, "Refund: " + std::to_string(family.family.value_in_arch), language, style);

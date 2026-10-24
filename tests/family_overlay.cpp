@@ -235,8 +235,9 @@ int main() {
         const auto created_effective = odh::apply_family_overlay({resident, cas}, source_id, created_decoded);
         require(created_effective.size() == 3 && created_effective[2].chunk_id == 0 &&
                 created_effective[2].family.family_number == 39 &&
+                created_effective[2].display_name == "New family" &&
                 created_effective[2].family.member_guids == created_family.member_guids,
-                "free FAMI zero appends an owned household without changing original order");
+                "free FAMI zero appends a named owned household without changing original order");
         const auto appended = odh::apply_neighbor_overlay(neighbors, source_id, created_decoded);
         auto original_prefix = appended; original_prefix.entries.resize(neighbors.entries.size());
         require(odh::encode_nbrs(original_prefix) == neighbor_bytes && appended.entries.size() == 4 &&
