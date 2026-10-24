@@ -9,6 +9,7 @@
 #include "odh/lot.hpp"
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
+#include "odh/room_score.hpp"
 #include "odh/avatar_body.hpp"
 #include "odh/avatar_startup.hpp"
 #include "odh/neighbor_context.hpp"
@@ -4547,14 +4548,28 @@ struct PlacementCandidateProbe {
         if(simulation_clock){
             if(!simulation_clock->tick(true))throw odh::FormatError("simulation clock exhausted");
             const auto& time=simulation_clock->snapshot();
+            const auto motive_contributions=odh::room_score_contributions(world);
             for(auto& entry:simulation_motives){
                 const auto* actor=world.find(entry.first);
                 odh::Ts1MotiveInputs in;
                 if(!actor || actor->person_data.size()<=6 || actor->motives.size()<16 || !actor->object_words.count(34)){
                     simulation_motive_status[entry.first]="unsupported_missing_avatar_banks";++simulation_skipped_updates;continue;
                 }
+                if(!vm_room_map){
+                    simulation_motive_status[entry.first]="unsupported_room_map_unavailable";++simulation_skipped_updates;continue;
+                }
+                if(!actor->position){
+                    simulation_motive_status[entry.first]="unsupported_avatar_position";++simulation_skipped_updates;continue;
+                }
+                const auto room_score=odh::calculate_room_score(*vm_room_map,motive_contributions,
+                    actor->position->x,actor->position->y,actor->position->level);
+                if(!room_score){
+                    simulation_motive_status[entry.first]="unsupported_room_score_unresolved";++simulation_skipped_updates;continue;
+                }
+                if(!world.set_motive(entry.first,13,room_score->score))
+                    throw odh::FormatError("simulation room-score write failed");
                 in.active_personality=actor->person_data[3];in.outgoing_personality=actor->person_data[6];
-                in.sleep_state=actor->motives[11];in.room_score=actor->motives[13];in.hidden=actor->object_words.at(34)>0;
+                in.sleep_state=actor->motives[11];in.room_score=room_score->score;in.hidden=actor->object_words.at(34)>0;
                 // This host has no supported SetMotiveChange controller. The supported
                 // profile therefore has no active per-motive changes; custom controllers
                 // must supply those flags before they can join this decay profile.

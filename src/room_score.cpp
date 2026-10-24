@@ -39,7 +39,11 @@ std::optional<RoomScoreUpdate> calculate_room_score(
     std::int64_t room_impact = 0;
     for (const auto& entity : entities) {
         const auto entity_room = geometric_room_at_runtime(map, entity.x, entity.y, entity.level);
-        if (!entity_room || *entity_room >= supported.size()) return std::nullopt;
+        if (!entity_room) {
+            if(entity.impact==0)continue;
+            return std::nullopt;
+        }
+        if (*entity_room >= supported.size()) return std::nullopt;
         if (supported[*entity_room]) room_impact += entity.impact;
     }
     if (room_impact < std::numeric_limits<std::int32_t>::min() ||
@@ -56,6 +60,20 @@ std::optional<RoomScoreUpdate> calculate_room_score(
     const auto adjusted = scaled - (*outside ? 15 : 10);
     const auto score = std::clamp(adjusted, -100, 100);
     return RoomScoreUpdate{*room, base, static_cast<std::int16_t>(score), true};
+}
+
+std::vector<RoomScoreContribution> room_score_contributions(const World& world) {
+    std::vector<RoomScoreContribution> contributions;
+    auto cursor=std::int16_t{-1};
+    while(const auto id=world.next_entity(cursor)){
+        cursor=*id;
+        const auto* entity=world.find(*id);
+        if(!entity||!entity->position)continue;
+        const auto impact=entity->object_words.find(7);
+        contributions.push_back({entity->position->x,entity->position->y,entity->position->level,
+            impact==entity->object_words.end()?std::int16_t{0}:impact->second});
+    }
+    return contributions;
 }
 
 } // namespace odh

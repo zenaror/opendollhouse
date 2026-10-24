@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/room_map.hpp"
+#include "odh/world.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -27,5 +28,9 @@ struct RoomScoreUpdate {
 std::optional<RoomScoreUpdate> calculate_room_score(
     const GeometricRoomMap&, const std::vector<RoomScoreContribution>&,
     std::int32_t target_x, std::int32_t target_y, std::int16_t target_level);
+
+// Capture positioned entities and their RoomImpact values without copying the
+// World banks. UI ghosts are excluded by World::next_entity, as in Simitone.
+std::vector<RoomScoreContribution> room_score_contributions(const World&);
 
 } // namespace odh
