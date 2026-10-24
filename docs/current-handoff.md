@@ -1,5 +1,20 @@
 # Continuidade atual
 
+## Atualização: início síncrono de objetos e EP8 vazio (2026-10-24)
+
+Adicionei `run_object_startup`, que executa as ações EP0 e EP8 pela tabela do
+objeto e pelo `CodeOwner` independente do recurso. As duas etapas compartilham
+o limite de instruções; IDs até 255 são pulados; a rotina retorna sem iniciar
+Main, que permanece para o scheduler. A Food tem EP8=0, então essa etapa é
+ignorada, como no Simitone.
+
+O teste sintético confirma Caller=Callee=ID do objeto, StackObject=0, quatro
+argumentos zerados, CodeOwner próprio, ordem de execução, EP8 vazio e rejeição
+de tabela incompleta. Build dos testes `odh-object-startup-tests` e
+`odh-avatar-startup-tests` passou; CTest focal passou 2/2; `git diff --check`
+passou. Ainda não foi ligado ao carregamento da Food real, à fila pós-tick, ao
+retorno do avatar nem ao scheduler Main.
+
 ## Atualização: criação controlada no compartimento 0 (2026-10-24)
 
 `create_object_instance_in_slot0` agora combina um pedido opcode42 já decodificado
