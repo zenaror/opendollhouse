@@ -1,4 +1,4 @@
-#include "odh/object_runtime_resources.hpp"
+#include "odh/create_object_instance.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -122,6 +122,35 @@ int main() {
                     odh::ObjectRuntimeCreateStatus::world_rejected &&
                     world.snapshot().entities.size() == 2,
                 "failed second materialization preserves the existing World");
+
+        odh::World snack_world;
+        require(snack_world.create(1, odh::EntityKind::object, {0, 0, 1, 0}) &&
+                    snack_world.set_position(1, {80, 96, 1, 2}),
+                "positioned fridge fixture is ready");
+        const odh::CreateObjectInstanceRequest snack_request{
+            0xf301e375, 4, 1, 0, 0};
+        const auto snack = odh::create_object_instance_in_slot0(
+            snack_world, 2, 1, snack_request, resources);
+        const auto* fridge = snack_world.find(1);
+        const auto* food = snack_world.find(2);
+        require(snack.status == odh::CreateObjectInstanceStatus::created &&
+                    snack.object_id == 2 && fridge && fridge->slots[0] == 2 && food &&
+                    food->attachment && food->attachment->container == 1 &&
+                    food->attachment->slot == 0 && food->attachment->positioned &&
+                    food->position == std::optional<odh::EntityPosition>{{80, 96, 1, 2}},
+                "Have A Snack creates Food and places it in fridge slot 0");
+        const auto occupied = odh::create_object_instance_in_slot0(
+            snack_world, 3, 1, snack_request, resources);
+        require(occupied.status == odh::CreateObjectInstanceStatus::slot_occupied &&
+                    !occupied.object_id && snack_world.find(3) == nullptr,
+                "occupied slot rejects a second Food without changing World");
+        auto unsupported_request = snack_request;
+        unsupported_request.raw_position = 0;
+        require(odh::create_object_instance_in_slot0(
+                    snack_world, 3, 1, unsupported_request, resources).status ==
+                    odh::CreateObjectInstanceStatus::unsupported_position &&
+                    snack_world.find(3) == nullptr,
+                "other CreateObjectInstance positions fail without partial creation");
 
         auto bad = odh::ObjectRuntimeResourceLimits{};
         bad.private_routines = 0;

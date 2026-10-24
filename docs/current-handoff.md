@@ -1,5 +1,22 @@
 # Continuidade atual
 
+## Atualização: criação controlada no compartimento 0 (2026-10-24)
+
+`create_object_instance_in_slot0` agora combina um pedido opcode42 já decodificado
+com recursos de objeto previamente lidos e um ID novo fornecido pelo chamador.
+O perfil aceito é InSlot0OfStackObject: exige GUID igual, alvo existente com
+slot 0 livre, cria os bancos do objeto, herda a posição do alvo quando ela
+existe e anexa Food ao compartimento. Se a colocação falhar, remove a entidade
+recém-criada. Os outros tipos de posição continuam explicitamente sem suporte.
+
+O teste usa fixture IFF sintética baseada na definição Food: verifica a
+colocação no slot0 e posição herdada, o slot já ocupado e uma posição não
+suportada. Build dos alvos `odh-object-runtime-resources-tests` e
+`odh-create-object-instance-tests` passou; CTest focal passou 2/2; `git diff
+--check` passou. Isso prova o serviço de World com recursos preparados, não a
+leitura/execução da Food real nem a chamada pela VM. Ainda faltam a fila segura
+após o tick, Init0, retorno de StackObject e integração da ação Have A Snack.
+
 ## Atualização: leitura dos pedidos CreateObjectInstance (2026-10-24)
 
 Adicionei um leitor tipado dos oito operandos do opcode42 e nomes para as dez

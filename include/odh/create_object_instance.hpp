@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/formats.hpp"
+#include "odh/object_runtime_resources.hpp"
 
 namespace odh {
 
@@ -41,5 +42,27 @@ struct CreateObjectInstanceRequest {
 // Decode opcode 42's fixed eight-byte operand without deciding whether the
 // selected position, options, or object definition are supported by the host.
 CreateObjectInstanceRequest decode_create_object_instance(const Instruction&);
+
+enum class CreateObjectInstanceStatus {
+    created,
+    unsupported_position,
+    invalid_stack_object,
+    definition_mismatch,
+    unsupported_resources,
+    slot_occupied,
+    world_rejected
+};
+
+struct CreateObjectInstanceResult {
+    CreateObjectInstanceStatus status = CreateObjectInstanceStatus::world_rejected;
+    std::optional<std::int16_t> object_id;
+};
+
+// Materialize the supported InSlot0OfStackObject profile. The caller supplies
+// resources selected by an exact, unique GUID match and a fresh positive ID.
+// This does not bind or execute the object's BHAVs.
+CreateObjectInstanceResult create_object_instance_in_slot0(
+    World&, std::int16_t new_id, std::int16_t stack_object,
+    const CreateObjectInstanceRequest&, const ObjectRuntimeResources&);
 
 } // namespace odh
