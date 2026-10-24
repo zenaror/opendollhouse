@@ -22,7 +22,10 @@ O estado `GhostImage` precisa ser informado para cada entidade. Quando marcado,
 a ação roda em outra cópia descartável e suas mudanças no `World` candidato não
 são mantidas. Essa cópia cobre o estado que o `World` atual representa; a
 montagem do grupo multitile e serviços do motor ainda não são implementados.
-Operações BHAV sem primitiva fornecida falham fechadas. Por isso, este preparador
+Operações BHAV sem primitiva fornecida falham fechadas. PlaySound resolve o
+FWAV no recurso do dono da ação e depois em `Global.iff`; o pedido fica guardado
+junto ao World candidato, sem tocar áudio durante a preparação. Se uma ação
+posterior rejeitar o lote, os pedidos guardados são descartados. O preparador
 ainda não está ligado ao carregamento de lotes reais.
 
 As ações não-GhostImage usam a mesma cópia privada durante toda a sequência,
@@ -69,15 +72,24 @@ Opcode 7 Refresh(Caller, graphic) só invalida cache gráfico, ausente no World
 transacional não publicado, então esse caso específico retorna verdadeiro.
 Outros casos de Refresh e operações ainda não implementadas seguem falhando.
 
+Na repetição do probe comercial com todas as 90 FARs e 20 definições de
+personagem da Complete Collection disponíveis, House05 passou do pedido de som
+do aquário: 106 entidades completaram e a validação parou na entidade 111,
+ação 4110, opcode 7 (Refresh de pontuação do cômodo). O pedido de som foi
+resolvido, mas descartado porque o lote ainda falhou depois; nenhum áudio foi
+reproduzido. House07 segue parando na entidade 109, ação 4110, no mesmo serviço de
+pontuação. A contagem de ações em House05 mudou de 68 para 106 porque agora o
+probe recebeu o conjunto completo de definições. Nenhum dos lotes completou.
+
 Na instalação Complete Collection consultada em 2026-10-24, com semente 1,
 House07 preparou 182 entidades, completou 108 ações e parou na entidade 109,
 ação 4110 (`Sinks.iff`), opcode 7 Refresh de pontuação do cômodo. Esse serviço
 chama `RefreshRoomScore` no Simitone e ainda não tem destino no World candidato.
-House05 preparou 245 entidades, completou 68 ações e parou na entidade 71,
-ação 4096 (`aquarium1.iff`), opcode 23 PlaySound; a resolução e o enfileiramento
-transacional de áudio ainda não estão ligados a esta etapa. Os dois pontos
-anteriores avançaram; nenhum dos lotes completou a restauração. Os dados
-comerciais foram somente lidos e a etapa continua desconectada do loader do jogo.
+House05 preparou 245 entidades, completou 106 ações e parou na entidade 111,
+ação 4110. O pedido PlaySound do aquário foi resolvido e enfileirado, mas
+descartado junto ao lote porque a ação seguinte ainda não pode ser concluída.
+Nenhum áudio foi reproduzido. Os dados comerciais foram somente lidos e a etapa
+continua desconectada do loader do jogo.
 
 As sementes 1, 2 e 42 foram testadas: o número de instruções muda conforme as
 decisões aleatórias, mas cada lote alcança o mesmo primeiro serviço ainda
@@ -95,6 +107,7 @@ cópia, descarte de escrita GhostImage, rejeição de tabela/ordem incompleta,
 ação sem dono, falha numa ação posterior, orçamento agregado e preservação
 byte a byte do snapshot de origem e leitura de registradores salvos. Também
 testa a leitura suplementar de tuning, o fallback do perfil de primitivas para
-opcodes sem handler e a passagem do estado RNG explícito ao opcode 8. Não valida
-a cadeia comercial de Windows 4105/4104, todos os serviços de áudio/cômodo, o
-loader Linux ou equivalência com o executável original.
+opcodes sem handler, a passagem do estado RNG explícito ao opcode 8 e o
+enfileiramento/descarte de pedidos de som em lotes sintéticos. Não valida a
+cadeia comercial de Windows 4105/4104, a reprodução de áudio, todos os serviços
+de cômodo, o loader Linux ou equivalência com o executável original.

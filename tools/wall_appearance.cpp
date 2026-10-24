@@ -720,15 +720,26 @@ int main(int argc,char** argv){try{
     return {};
    };
    const auto load_probe_random_primitive=odh::random_primitive(load_probe_random,supplemental_memory);
+   const auto sound_resolver=[&prepared,&load_global_resource](const odh::VmFrame& frame,
+       std::uint16_t event_id)->std::optional<odh::SoundEvent>{
+    const auto owner=prepared.sound_resources.find(frame.context.code_owner);
+    if(owner!=prepared.sound_resources.end()){
+     if(const auto local=saved_sound_event(owner->second,event_id))return local;
+    }
+    return saved_sound_event(load_global_resource->first,load_global_resource->second,event_id);
+   };
    const auto result=odh::stage_saved_load_entry_points(world->world->snapshot(),prepared.entity_order,
        prepared.code_owners,prepared.ghost_images,prepared.temporary_registers,prepared.globals,prepared.owners,
-       1000000,{},std::move(supplemental_memory),load_probe_random_primitive);
+       1000000,{},std::move(supplemental_memory),load_probe_random_primitive,sound_resolver);
    std::cout<<",\"state\":"<<json_bytes(result.snapshot?"complete":"stopped")
     <<",\"entities\":"<<prepared.entity_order.size()<<",\"completed_entities\":"<<result.completed_entities.size()
     <<",\"code_owner_banks\":"<<prepared.owners.size()<<",\"instructions\":"<<result.instructions
     <<",\"load_probe_random_seed_initial\":"<<load_probe_seed
     <<",\"load_probe_random_seed_final\":"<<load_probe_random.seed()
     <<",\"load_probe_random_seed_is_saved_state\":false"
+    <<",\"deferred_sound_events\":"<<result.deferred_sound_events.size()
+    <<",\"unresolved_sound_events\":"<<result.unresolved_sound_events
+    <<",\"discarded_sound_events\":"<<result.discarded_sound_events
     <<",\"missing_root_actions\":[";
    for(std::size_t i=0;i<result.missing_root_actions.size();++i){
     if(i)std::cout<<',';

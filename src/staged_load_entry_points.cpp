@@ -11,11 +11,17 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     const std::map<std::int16_t, std::array<std::int16_t, 20>>& temporary_registers,
     const RoutineSet& globals, const RoutineOwners& owners,
     std::uint64_t instruction_budget, WorldLimits world_limits,
-    VmMemory supplemental_memory, VmPrimitive supplemental_primitive) {
+    VmMemory supplemental_memory, VmPrimitive supplemental_primitive,
+    SoundResolver sound_resolver) {
     StagedLoadEntryPointResult result;
+    std::vector<SoundRequest> pending_sound_events;
+    std::size_t unresolved_sound_events=0;
     auto reject = [&](std::string reason, std::int16_t entity = 0,
                       std::uint16_t action = 0, VmStatus status = VmStatus::ready) {
         result.snapshot.reset();
+        result.discarded_sound_events=pending_sound_events.size();
+        pending_sound_events.clear();
+        result.unresolved_sound_events=unresolved_sound_events;
         result.failed_entity = entity;
         result.failed_action = action;
         result.vm_status = status;
@@ -87,14 +93,24 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             return PrimitiveOutcome{PrimitiveDisposition::goto_true,{}};
         return PrimitiveOutcome{};
     };
-    const VmPrimitive load_primitive = [load_profile_primitive,supplemental_primitive](
-        const VmFrame& frame,const Instruction& instruction,const std::array<std::int16_t,20>& temps,
-        const VmDispatch& dispatch) {
-        if(instruction.opcode==8&&supplemental_primitive)
-            return supplemental_primitive(frame,instruction,temps,dispatch);
-        return load_profile_primitive(frame,instruction,temps,dispatch);
+    const auto primitive_for = [&](World& world) {
+        const auto sound_handler=sound_primitive(world,sound_resolver,{},
+            [&pending_sound_events,&unresolved_sound_events](const SoundRequest& request,
+                                                             const std::string& status){
+                if(status=="skipped_no_backend")pending_sound_events.push_back(request);
+                else if(status=="missing_resource"||status=="missing_owner")++unresolved_sound_events;
+            });
+        return VmPrimitive{[load_profile_primitive,supplemental_primitive,sound_handler](
+            const VmFrame& frame,const Instruction& instruction,const std::array<std::int16_t,20>& temps,
+            const VmDispatch& dispatch) {
+            if(instruction.opcode==8&&supplemental_primitive)
+                return supplemental_primitive(frame,instruction,temps,dispatch);
+            if(instruction.opcode==23)return sound_handler(frame,instruction,temps,dispatch);
+            return load_profile_primitive(frame,instruction,temps,dispatch);
+        }};
     };
-    Vm vm(globals, memory_for(candidate), {}, load_primitive, owners);
+    const auto candidate_primitive=primitive_for(candidate);
+    Vm vm(globals, memory_for(candidate), {}, candidate_primitive, owners);
 
     for (const auto id : entity_order) {
         const auto* entity = candidate.find(id);
@@ -131,7 +147,8 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
             World sandbox(world_limits, source.attribute_policy);
             if (!sandbox.restore_snapshot(candidate.snapshot()))
                 return reject("cannot create isolated GhostImage sandbox", id, action);
-            Vm sandbox_vm(globals, memory_for(sandbox), {}, load_primitive, owners);
+            const auto sandbox_primitive=primitive_for(sandbox);
+            Vm sandbox_vm(globals, memory_for(sandbox), {}, sandbox_primitive, owners);
             const VmContext context{id, id, 0, owner->second};
             const auto started = sandbox_vm.start(routine_key(action), context, {0, 0, 0, 0});
             if (started == VmStatus::running) sandbox_vm.temps() = temporary_registers.at(id);
@@ -153,6 +170,8 @@ StagedLoadEntryPointResult stage_saved_load_entry_points(
     }
 
     result.snapshot = candidate.snapshot();
+    result.deferred_sound_events=std::move(pending_sound_events);
+    result.unresolved_sound_events=unresolved_sound_events;
     result.reason = "all Load actions completed synchronously in the unpublished candidate";
     return result;
 }

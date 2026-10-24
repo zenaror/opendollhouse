@@ -1,6 +1,7 @@
 #pragma once
 #include "odh/saved_world.hpp"
 #include "odh/lot.hpp"
+#include "odh/sound.hpp"
 #include "resource.hpp"
 
 struct SavedDefinitionSource {std::string path;bool standalone;};
@@ -13,6 +14,29 @@ inline odh::Simi saved_lot_simi(const std::string& path){
     });});
     if(!simi)throw odh::FormatError("SIMI1 absent in selected saved lot");
     return std::move(*simi);
+}
+inline std::optional<odh::SoundEvent> saved_sound_event(const odh::View& view,std::uint16_t id){
+    std::optional<odh::SoundEvent> result;
+    odh::iff_chunks(view,[&](const odh::Chunk& chunk){
+        if(chunk.type!="FWAV"||chunk.id!=id)return;
+        if(result)throw odh::FormatError("duplicate FWAV ID in selected sound resource");
+        result=odh::read_fwav(chunk.payload);
+    });
+    return result;
+}
+inline std::optional<odh::SoundEvent> saved_sound_event(const odh::DefinitionCandidate& candidate,
+                                                         std::uint16_t id){
+    std::optional<odh::SoundEvent> result;
+    const auto read=[&](const odh::View& view){result=saved_sound_event(view,id);};
+    if(candidate.asset.empty())with_iff_file(candidate.source,read);
+    else with_far_entry(candidate.source,candidate.asset,read);
+    return result;
+}
+inline std::optional<odh::SoundEvent> saved_sound_event(const std::string& archive,
+    const std::string& entry,std::uint16_t id){
+    std::optional<odh::SoundEvent> result;
+    with_far_entry(archive,entry,[&](const odh::View& view){result=saved_sound_event(view,id);});
+    return result;
 }
 inline std::unique_ptr<odh::DefinitionIndex> saved_definition_index(const std::vector<SavedDefinitionSource>& sources){
     if(sources.size()>128)throw odh::FormatError("definition source count exceeds limit");

@@ -138,6 +138,27 @@ int main() {
                 load_random.seed()==expected_random.seed(),
                 "saved Load shares the explicit TS1 RNG state through the injected opcode 8 handler");
 
+        auto sound_owners=owners;
+        sound_owners[101][key(4096)]=routine({{23,254,255,{5,0,68,172,0,0,0,0}}});
+        const odh::SoundResolver sound_resolver=[](const odh::VmFrame&,std::uint16_t id)
+            ->std::optional<odh::SoundEvent>{
+            return id==5?std::optional<odh::SoundEvent>{{"fixture_aquarium",0}}:std::nullopt;
+        };
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,sound_owners,8,{}, {},{},sound_resolver);
+        require(result.snapshot.has_value()&&result.deferred_sound_events.size()==1&&
+                result.deferred_sound_events[0].name=="fixture_aquarium"&&
+                result.deferred_sound_events[0].source==1&&result.unresolved_sound_events==0,
+                "successful Load defers its resolved PlaySound request without playing audio");
+
+        auto sound_failure_owners=sound_owners;
+        sound_failure_owners[202][key(4096)]=routine({{999,254,255,{}}});
+        result=odh::stage_saved_load_entry_points(source,{1,2},entity_owners,non_ghost,zero_temps,
+            globals,sound_failure_owners,8,{}, {},{},sound_resolver);
+        require(!result.snapshot.has_value()&&result.deferred_sound_events.empty()&&
+                result.discarded_sound_events==1,
+                "a later Load failure discards earlier pending audio effects");
+
         auto failing_owners = owners;
         failing_owners[101][key(4096)] = routine({assign(23, 33)});
         failing_owners[202][key(4096)] = routine({{999, 254, 255, {}}});

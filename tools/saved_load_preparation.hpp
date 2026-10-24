@@ -19,6 +19,7 @@ struct SavedLoadPreparation {
     odh::RoutineSet globals;
     odh::RoutineOwners owners;
     odh::TuningResources tuning;
+    std::map<odh::CodeOwner,odh::DefinitionCandidate> sound_resources;
 };
 
 // Prepare the exact resource inputs for a fresh saved-lot restore. EntryPoint
@@ -89,6 +90,7 @@ inline SavedLoadPreparation prepare_saved_load_entry_points(
                 throw odh::FormatError("saved Load distinct resource owners exceed VM limit");
             owner = owner_ids.emplace(identity, next_owner++).first;
             result.owners.try_emplace(owner->second);
+            result.sound_resources.emplace(owner->second,*candidate);
             odh::TuningOwner tuning_owner;
             tuning_owner.private_tables = load_saved_tuning_tables(*candidate);
             tuning_owner.semiglobal_state = odh::TuningSemiState::absent;
