@@ -140,6 +140,17 @@ Sit/Stand, save at tick512 and fresh-process continuation to tick1024 against
 uninterrupted execution, for both resident selections. UI/X11 interaction and a long-running
 household session still need validation.
 
+Additional run on 2026-10-24: `tests/house07_household_runtime_cli.py --ticks
+128` completed 128 ticks for each resident selection (owners 105 and 137), with
+two entities in the scheduler. Household save/resume still matched uninterrupted
+execution. Repeating with `--ticks 64 --resident-sit-stand` also passed Sit and
+Stand for the additional resident in both selection orders; the tick-512 save,
+fresh-process resume through tick 1024, and byte-for-byte continuous-run archive
+comparison passed. Saving while seated was rejected and the prior save stayed
+unchanged. The original House07, Neighborhood, and two character files retained
+their SHA-256 fingerprints. These are headless, bounded runtime checks; the
+script reports `visual_window_validated=false` and `full_gameplay=false`.
+
 The Linux runtime receives the canonical game root and resolved resource paths
 without hashing them on a fresh launch; loading an ODH archive first hashes and
 compares the selected manifest, language and expansion mask. When the experimental save key is pressed, it
