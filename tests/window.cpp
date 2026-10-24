@@ -130,11 +130,11 @@ int main(int argc,char** argv){try{
     if(!window.poll().text_input_utf8.empty())throw std::runtime_error("Control shortcut produced text");
     key(XK_a,KeyRelease);window.poll();key(XK_a,KeyPress,Mod1Mask);
     if(!window.poll().text_input_utf8.empty())throw std::runtime_error("Alt shortcut produced text");
-    key(XK_c);input=window.poll();
+    key(XK_c);input=window.poll(true);
     if(!input.create_family||input.text_input_utf8!="c")throw std::runtime_error("C create-family shortcut differs");
-    key(XK_c);if(window.poll().create_family)throw std::runtime_error("held C shortcut repeated");
-    key(XK_c,KeyRelease);window.poll();key(XK_c);
-    if(!window.poll().create_family)throw std::runtime_error("released C shortcut not rearmed");
+    key(XK_c);if(window.poll(true).create_family)throw std::runtime_error("held C shortcut repeated");
+    key(XK_c,KeyRelease);window.poll(true);key(XK_c);
+    if(!window.poll(true).create_family)throw std::runtime_error("released C shortcut not rearmed");
     auto click=[&](unsigned button,int x,int y){XEvent event{};event.xbutton.type=ButtonPress;event.xbutton.display=sender.get();event.xbutton.window=window.native_id();event.xbutton.root=DefaultRootWindow(sender.get());event.xbutton.same_screen=True;event.xbutton.button=button;event.xbutton.x=x;event.xbutton.y=y;if(!XSendEvent(sender.get(),window.native_id(),False,ButtonPressMask,&event))throw std::runtime_error("own-window click injection failed");XSync(sender.get(),False);window.readback();};
     click(Button1,17,23);input=window.poll();if(!input.action||!input.primary_click||*input.primary_click!=std::array<std::int32_t,2>{17,23})throw std::runtime_error("click coordinates lost");
     if(window.poll().primary_click)throw std::runtime_error("click repeated without event");
@@ -147,6 +147,10 @@ int main(int argc,char** argv){try{
     input=window.poll();
     if(!input.quit||input.quit_reason!=WindowQuitReason::escape_key)
         throw std::runtime_error("quit reason did not persist across polls");
+    window.clear_escape_quit_reason();input=window.poll();
+    if(input.quit||input.quit_reason!=WindowQuitReason::none||
+        window.quit_reason()!=WindowQuitReason::none)
+        throw std::runtime_error("Escape cancellation did not clear the pending quit state");
     {
         odh_host::LinuxWindow closing(16,16,"OpenDollhouse own-window close diagnostic test");
         XEvent event{};event.xclient.type=ClientMessage;event.xclient.window=closing.native_id();

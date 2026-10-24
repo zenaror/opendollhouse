@@ -211,6 +211,9 @@ Window new_map(Display* display, const std::set<Window>& before, pid_t expected_
 void wait_title(Display* display, Window window, const std::string& expected) {
     await([&] { return title(display, window).find(expected) != std::string::npos; }, expected);
 }
+void wait_exact_title(Display* display, Window window, const std::string& expected) {
+    await([&] { return title(display, window) == expected; }, expected);
+}
 void key(Display* display, Window window, KeySym symbol) {
     for (int type : {KeyPress, KeyRelease}) {
         XEvent event{}; event.xkey.type = type; event.xkey.display = display;
@@ -298,6 +301,16 @@ int main(int argc, char** argv) {
         {
             Child app(argv[1], game, temp.path / "first.log");
             const auto window = new_map(display, before, app.pid);
+            key(display, window, XK_c);
+            wait_exact_title(display, window, "OpenDollhouse | Create family");
+            key(display, window, XK_Escape);
+            wait_exact_title(display, window,
+                "OpenDollhouse | Neighborhood | C: Create family | Esc: Cancel");
+            key(display, window, XK_c);
+            wait_exact_title(display, window, "OpenDollhouse | Create family");
+            key(display, window, XK_Escape);
+            wait_exact_title(display, window,
+                "OpenDollhouse | Neighborhood | C: Create family | Esc: Cancel");
             marker(display, window, 200, true); marker(display, window, 600, true);
             click(display, window, 200);
             wait_title(display, window, "House 7 | Enter: enter | E: move out");

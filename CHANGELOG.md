@@ -161,6 +161,13 @@ validação indicados por versão.
 
 ### Corrigido
 
+- O atalho `C` da vizinhança agora é reconhecido antes de o método de entrada
+  do sistema filtrar teclas de texto; a verificação fica limitada à tela da
+  vizinhança, para não interceptar nomes no CAS. Cancelar o CAS com Escape
+  limpa esse pedido de cancelamento antes de voltar ao mapa. O teste gráfico
+  exercita abrir/cancelar o CAS duas vezes no Xvfb e depois continua o fluxo
+  de mudança de lote.
+
 - A configuração Linux padrão agora para com instrução clara se PangoCairo não
   estiver disponível. Antes, o build podia continuar e abrir uma janela sem os
   menus e rótulos necessários. Também exige os arquivos de desenvolvimento X11;

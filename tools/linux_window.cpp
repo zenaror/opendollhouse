@@ -314,7 +314,7 @@ void LinuxWindow::present(const odh::RasterFrame& frame) {
     XFlush(p.display);
 }
 
-WindowInput LinuxWindow::poll() {
+WindowInput LinuxWindow::poll(bool allow_create_family_shortcut) {
     auto& p = *impl_;
     WindowInput result;
     for (unsigned count = 0; count < 4096 && XPending(p.display); ++count) {
@@ -326,6 +326,34 @@ WindowInput LinuxWindow::poll() {
             if (p.input_context) XUnsetICFocus(p.input_context);
         }
         if (event.type == FocusIn && p.input_context) XSetICFocus(p.input_context);
+        if (allow_create_family_shortcut && event.type == KeyPress &&
+            event.xkey.keycode < p.key_down.size()) {
+            const bool held = p.key_down[event.xkey.keycode];
+            KeySym shortcut = XLookupKeysym(&event.xkey,
+                (event.xkey.state & ShiftMask) ? 1 : 0);
+            if (shortcut == NoSymbol) shortcut = XLookupKeysym(&event.xkey, 0);
+            if (window_create_family_shortcut(shortcut, held)) {
+                result.create_family = true;
+                p.key_down[event.xkey.keycode] = true;
+            }
+        }
+        if (allow_create_family_shortcut && event.type == KeyRelease &&
+            event.xkey.keycode < p.key_down.size()) {
+            KeySym released = XLookupKeysym(&event.xkey,
+                (event.xkey.state & ShiftMask) ? 1 : 0);
+            if (released == NoSymbol) released = XLookupKeysym(&event.xkey, 0);
+            if (released == 'c' || released == 'C') {
+                bool repeat_pair = false;
+                if (XPending(p.display)) {
+                    XEvent next{};
+                    XPeekEvent(p.display, &next);
+                    repeat_pair = next.type == KeyPress && next.xkey.window == p.window &&
+                        next.xkey.keycode == event.xkey.keycode &&
+                        next.xkey.time == event.xkey.time;
+                }
+                if (!repeat_pair) p.key_down[event.xkey.keycode] = false;
+            }
+        }
         if (p.input_context && XFilterEvent(&event, p.window)) continue;
         if (event.type == DestroyNotify) {
             p.alive = false;
@@ -362,7 +390,8 @@ WindowInput LinuxWindow::poll() {
         if (event.xkey.keycode < p.key_down.size()) p.key_down[event.xkey.keycode] = true;
         KeySym key = XLookupKeysym(&event.xkey, (event.xkey.state & ShiftMask) ? 1 : 0);
         if (key == NoSymbol) key = XLookupKeysym(&event.xkey, 0);
-        if (window_create_family_shortcut(key, held)) result.create_family = true;
+        if (allow_create_family_shortcut && window_create_family_shortcut(key, held))
+            result.create_family = true;
         if (key == XK_BackSpace) result.text_backspace = true;
         if (!(event.xkey.state & (ControlMask | Mod1Mask | Mod4Mask))) {
             // A fixed buffer bounds both XIM commits and per-poll storage.
@@ -416,6 +445,11 @@ WindowInput LinuxWindow::poll() {
 
 WindowQuitReason LinuxWindow::quit_reason() const noexcept {
     return impl_->quit_reason;
+}
+
+void LinuxWindow::clear_escape_quit_reason() noexcept {
+    if (impl_->quit_reason == WindowQuitReason::escape_key)
+        impl_->quit_reason = WindowQuitReason::none;
 }
 
 void LinuxWindow::set_title(const std::string& title) {

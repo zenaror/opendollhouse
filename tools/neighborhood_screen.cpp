@@ -295,7 +295,7 @@ std::optional<NeighborhoodPickerResult> show_neighborhood_picker_with_create(
 #endif
     window.present(frame);
     for(;;) {
-        const auto input=window.poll();
+        const auto input=window.poll(true);
         if(input.quit)return std::nullopt;
         if(input.create_family)return NeighborhoodPickerResult{NeighborhoodPickerAction::create_family,0};
         if(input.primary_click) {

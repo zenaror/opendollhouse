@@ -794,7 +794,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                 const auto draft = odh_host::show_linux_cas_family_creator(*window,
                     odh_host::scan_linux_cas_catalog(game),
                     static_cast<std::uint8_t>(options.language));
-                if (!draft) continue;
+                if (!draft) {
+                    window->clear_escape_quit_reason();
+                    continue;
+                }
                 if (player_character_directory.empty())
                     throw odh::FormatError("player data directory is unavailable for CAS characters");
                 const auto objects_far = require_file(game,

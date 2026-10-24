@@ -11,8 +11,8 @@ namespace odh_host {
 
 enum class WindowQuitReason { none, escape_key, window_manager_close, window_destroyed };
 
-// Stable diagnostic names for logs/JSON. The first observed cause is retained
-// even if more close events are drained by the same or a later poll.
+// Stable diagnostic names for logs/JSON. The first observed cause remains
+// until a nested screen explicitly consumes an Escape cancellation.
 constexpr const char* window_quit_reason_name(WindowQuitReason reason) noexcept {
     switch (reason) {
     case WindowQuitReason::none: return "none";
@@ -70,8 +70,13 @@ public:
     void resize(std::uint32_t width, std::uint32_t height);
     std::uint32_t width() const noexcept;
     std::uint32_t height() const noexcept;
-    WindowInput poll();
+    // Enable the C shortcut only on the neighborhood screen. It is checked
+    // before XIM filtering there, while CAS text fields keep normal input.
+    WindowInput poll(bool allow_create_family_shortcut = false);
     WindowQuitReason quit_reason() const noexcept;
+    // A nested screen can consume Escape to cancel and return to its parent;
+    // window-manager close and window destruction remain sticky.
+    void clear_escape_quit_reason() noexcept;
     void set_title(const std::string& title);
     // Read only this backend's drawable, synchronizing pending drawing first.
     std::vector<std::array<std::uint8_t,4>> readback() const;
