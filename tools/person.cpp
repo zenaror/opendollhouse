@@ -4758,10 +4758,14 @@ struct PlacementCandidateProbe {
         residents.reserve(household_runtime.size()+1);
         const auto append=[&](std::int16_t runtime_id,std::uint32_t guid) {
             std::string label;
-            if(neighbors) {
-                const auto neighbor_id=neighbors->id_for_guid(guid);
-                const auto* record=neighbor_id?neighbors->by_id(*neighbor_id):nullptr;
-                if(record&&!record->name.empty()) {
+            if(saved_prefixes&&objt) {
+                const odh::SavedObjectPrefix* match=nullptr;
+                for(const auto& prefix:*saved_prefixes)if(prefix.guid==guid) {
+                    if(match){match=nullptr;break;}
+                    match=&prefix;
+                }
+                const auto* record=match?objt->entry_for_type(match->type_id):nullptr;
+                if(record&&record->guid==guid&&!record->name.empty()) {
 #ifdef ODH_HAVE_LINUX_TEXT_CODEC
                     try { label=odh_host::legacy_text_to_utf8(record->name,game_language,256); }
                     catch(const std::exception&) { label.clear(); }

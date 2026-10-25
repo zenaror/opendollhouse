@@ -16,10 +16,10 @@ validação indicados por versão.
 
 - O botão “Sims” abre uma faixa para escolher outro morador já carregado no
   lote. A House07 confirmou a troca do Sim 105 para o 137 e atualizou as
-  necessidades mostradas. Os cartões agora buscam o nome nos registros NBRS da
-  vizinhança pelo GUID do Sim e mostram o ID interno quando não encontram um
-  nome válido. Ainda faltam validar os nomes na janela com dados reais e criar
-  os retratos; a interface continua provisória. Veja
+  necessidades mostradas. Os cartões buscam o nome da tabela OBJT do lote pelo
+  GUID do Sim e mostram o ID interno quando não encontram um nome válido. Na
+  House07, a leitura confirmou Bob (105) e Betty (137). Ainda falta conferir os
+  nomes na janela e criar retratos; a interface continua provisória. Veja
   [`current-handoff.md`](docs/current-handoff.md).
 
 - A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e

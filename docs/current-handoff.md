@@ -1,18 +1,28 @@
 # Continuidade atual
 
-## Atualização: nomes dos moradores no seletor (2026-10-24)
+## Atualização: nomes dos moradores no seletor (2026-10-25)
 
-O seletor agora usa o GUID de cada Sim para localizar seu registro em NBRS e
-mostrar o nome da vizinhança, convertido conforme o idioma selecionado. Se o
-registro ou a conversão falhar, aparece o ID interno. O ID continua sendo a
-chave que troca o Sim ativo. O teste confirma que trocar o texto do cartão não
-muda o destino da seleção e que o desenho exibe o nome recebido.
+O seletor usa o GUID do Sim para encontrar o prefixo salvo em OBJM, resolve seu
+tipo na tabela OBJT do lote e mostra o nome do objeto, convertido conforme o
+idioma selecionado. Esse é o campo que o Simitone usa para montar o nome do
+avatar (`VMTS1ActivatorNew` guarda `inst.OBJT.Name` no grupo, e
+`UISwitchAvatarPanel` exibe `fam.Name`). Uma checagem dos arquivos originais da
+House07 confirmou ObjID 105/GUID 850010198 como “Bob” e ObjID 137/GUID
+844195932 como “Betty”. A primeira fonte testada, `NBRS.Name`, contém
+`user00000`/`user00001` e é apenas o nome do arquivo; ela foi descartada. Se a
+entrada OBJT ou a conversão falhar, aparece o ID interno. O ID continua sendo
+a chave que troca o Sim ativo. O teste confirma que trocar o texto do cartão
+não muda o destino da seleção e que o desenho exibe o nome recebido.
 
 Build de `odh-person` e `odh-linux-household-selector-tests` passou. CTest dos
-casos `linux_household_selector`, `linux_motive_panel`, `linux_text_renderer`
-e `neighbor_context` passou (4/4). Isso valida o vínculo e a renderização do
-rótulo em testes; ainda falta conferir os nomes na janela com os dados reais e
-criar retratos. A interface segue provisória.
+casos `linux_household_selector`, `linux_motive_panel`, `linux_text_renderer`,
+`neighbor_context`, `saved_object_types`, `saved_object_prefixes` e
+`object_type` passou (7/7). Isso valida o vínculo e a renderização do rótulo em
+testes. A leitura da House07 confirmou os nomes por meio dos leitores do próprio
+ODH e converteu ambos para “Bob” e “Betty”. Ainda falta confirmar a
+captura da janela e criar retratos. Uma tentativa de abrir o preview em Xvfb
+ficou mais de 180 segundos preparando o lote sem mostrar uma janela; o processo
+foi encerrado e o Xvfb temporário terminou. A interface segue provisória.
 
 ## Atualização: seletor de moradores no lote Linux (2026-10-24)
 
