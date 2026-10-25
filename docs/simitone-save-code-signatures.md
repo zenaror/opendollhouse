@@ -109,7 +109,7 @@ tipo 4, MasterID0 e SubIndex0 para os seis GUIDs, com hashes dos entries em
 não foi capturada uma instância do original em memória para medir sua vtable.
 Todas as seis entradas Reset/EP3 atuais são zero.
 
-## Recuperação nativa que ainda precisa ser adaptada
+## Contrato de recuperação nativa
 
 `0x431edd` executa Load/EP2 quando aplicável. Com diferença de assinatura e
 controle global habilitado (byte `0x6c2972` inicialmente 1 na imagem), notifica
@@ -140,7 +140,7 @@ outras sobrescritas. As APIs atuais `VMEntity.Reset`, `Init`, `ResetData` e
 `Delete/CreateObjectInstance` não substituem esse contrato automaticamente:
 podem perder identidade, slots, atributos, posição ou notificações.
 
-Próxima implementação: planejar **todos** os tipos e instâncias incompatíveis
+Plano inicial, preservado como histórico: planejar **todos** os tipos e instâncias incompatíveis
 do lote, não só os seis que já geram exceção; preservar a ordem Load,
 notificações, recuperação e Init com APIs adequadas. Mapear os ramos de pessoa,
 multitile e colocação antes de declará-los cobertos. Não desativar diálogos,
@@ -158,8 +158,8 @@ palavras, preservando os campos demonstrados acima. O plano considera os 82
 tipos não nulos da House07: 61 têm assinaturas diferentes, sem definições ou
 raízes obrigatórias ausentes. Não se limita aos seis tipos cujos frames falham.
 
-A implementação de recuperação ainda é **experimental e incompleta**. O teste
-`house07-recovery-padded` compila, mas falha antes da migração por classes ainda
+A implementação de recuperação ainda é **experimental e incompleta**. No checkpoint anterior, o teste
+`house07-recovery-padded` compilou, mas falhou antes da migração por classes ainda
 não mapeadas. Essa rejeição não prova recuperação funcional. Ela confirmou que
 árvores, portas/janelas, móveis, Bob e Betty também precisam ser tratados.
 O runner agora oferece `--require-clean-vm` com `--vm-diagnostics`: processo
@@ -232,3 +232,42 @@ argumentos copiados para coleções somente leitura. Esse estado é conservado
 no plano de compatibilidade; ainda não executa o reset de pessoa. A seleção
 pura por alvo segue o uso ativo ou o ícone ativo, sem inferir validade por
 TTAIndex; a última ação não participa desse teste.
+
+
+## Resultado executado do adaptador de pessoas e portas
+
+A entrada atual da House07 passou sem exceções após completar a coordenação dos
+caminhos de pessoa/portal. `VMTS1SavedCodeRecovery` pré-valida todas as pessoas
+notificadas e seus usos, inclusive pessoas com assinatura compatível, e separa
+reset recursivo do Init final de post-load. `VMTS1PersonRecovery` mantém a thread,
+desenrola usos/ações e aplica limpeza dirigida, sem `VMAvatar.Init` ou reset geral
+das necessidades. A busca usa `PositionValid` e só chama `SetPosition` ao escolher
+um candidato; candidatos rejeitados não executam repetidamente EP9.
+
+`VMTS1PortalRecovery` remove as ligações antes de EP10 e as recompõe após todas
+as peças serem colocadas. A reconciliação em finally também considera exclusões,
+reagrupamentos e peças fora do mundo, sem ressuscitar entidades. A tradução usa
+os registros de passagem, ocupação e obstáculos já existentes no motor. A ordem
+exata de alguns caches de parede do original ainda não foi demonstrada.
+
+A integração expôs diferenças de alocação de saves antigos: além de ObjectData,
+PersonData pode ter apenas 80 campos e o armazenamento de objetos carregados pode
+ter somente a mão. O motor expõe pelo menos 101 campos de pessoa e três posições
+(mão/cabeça/pelve). A leitura completa os campos ausentes sem descartar os salvos;
+a mesma extensão de PersonData vale para herança de registros de vizinhos.
+
+Validação atual: 22 casos sintéticos de política/portais, cinco snapshots com
+tipos reais FSO.Files, compilação/publicação e gates reais de entrada/caminhada.
+A House07 emitiu 150 registros de recuperação de objetos e dois de pessoas; os
+oito frames antigos ausentes não persistiram. Identidades/palavras retidas foram
+mantidas; necessidades das pessoas coincidiram no diagnóstico antes do Init final.
+Isso não cobre o ciclo salvar/reabrir, todos os lotes/expansões, UseCount nativo
+aninhado, ordem exata da busca de posição nem o tipo especial cursor. Ver
+[simitone-linux-evaluation.md](simitone-linux-evaluation.md) para evidências.
+
+
+O diagnóstico periódico opt-in em `VMTS1GameplayDiagnostics` também permitiu
+verificar uma interação completa com comida: Have A Snack→comida carregada→Eat,
+fome 94→100, depois ações vazias e mãos livres, sem exceções. São observações na
+thread da simulação, sem execução auxiliar de BHAV. O ciclo salvar/reabrir e a
+cobertura das expansões continuam pendentes.

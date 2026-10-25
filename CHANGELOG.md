@@ -7,11 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
-- Checkpoint experimental da recuperação de objetos de casas salvas, com
-  preservação dos dados e ações necessários à migração. Passou em 18 testes
-  de política e snapshots; a entrada real ainda para por falta do tratamento
-  de portas e Sims. Não é uma build jogável. Veja
-  [a avaliação](docs/simitone-linux-evaluation.md).
+- O candidato Simitone Linux abriu a casa de Bob/Betty e executou Go Here sem
+  erros; Bob também chegou ao pátio e concluiu um lanche, com melhora de fome.
+  A recuperação preserva dados de objetos
+  e pessoas, incluindo campos ausentes em casas antigas. O checkpoint passou
+  em 27 testes de política/portais/snapshots. Ainda faltam os demais fluxos para
+  uma build jogável. Veja [a avaliação](docs/simitone-linux-evaluation.md).
 
 - Diagnóstico identifica a diferença entre o código guardado no save e o
   instalado nos objetos. O cálculo nativo dessas assinaturas passou em 17

@@ -28,6 +28,14 @@ exercise category-index consistency, callback changes after EP10, contained-chil
 links, shared group price, mutation-free preflight and fail-closed rejection.
 The engine integration gate remains separate.
 
+The project also source-links the actual `VMTS1PortalRecovery.cs`. Six topology
+cases use synthetic room services to check read-only capture, successful
+restoration with unrelated links retained, deleted partners, cleanup after a
+partial restore failure, reassigned groups, repeated cleanup, removed or
+out-of-world pieces, and zero-based room Floor to one-based Level conversion.
+They verify portal-graph invariants; they do not model native wall occupancy or
+prove navigation through a door in the real engine.
+
 `person-state/` is a separate project that compiles the actual
 `VMTS1SavedPersonRecoveryState.cs` against the published **real `FSO.Files.dll`**.
 It uses synthetic `OBJMPerson` values of those real format types, without engine

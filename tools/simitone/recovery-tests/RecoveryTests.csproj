@@ -10,6 +10,8 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="Stubs.cs" />
+    <Compile Include="PortalTests.cs" />
     <Compile Include="$(SimitoneSourceRoot)/FreeSO/TSOClient/tso.simantics/Utils/VMTS1ObjectRecovery.cs" Link="VMTS1ObjectRecovery.cs" />
+    <Compile Include="$(SimitoneSourceRoot)/FreeSO/TSOClient/tso.simantics/Utils/VMTS1PortalRecovery.cs" Link="VMTS1PortalRecovery.cs" />
   </ItemGroup>
 </Project>

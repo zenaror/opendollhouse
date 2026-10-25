@@ -24,6 +24,7 @@ namespace FSO.SimAntics.Model
     [Flags] public enum VMEntityFlags { Occupied = 32 }
     public enum VMPlacementError { Success }
     public class VMPlacementResult { public VMPlacementResult(VMPlacementError error) { } }
+    public record VMRoomPortal(short ObjectID, ushort TargetRoom);
 }
 namespace FSO.SimAntics.Marshals
 {
@@ -104,11 +105,28 @@ namespace FSO.SimAntics
         public VM VM;
         public List<string> Events = new();
         public Dictionary<short, HashSet<VMEntity>> Categories = new();
+        public Architecture Architecture = new();
+        public RoomInfo[] RoomInfo = Enumerable.Range(0, 4).Select(_ => new RoomInfo()).ToArray();
+        public Dictionary<short, ushort> Rooms = new();
+        public List<(ushort Room, sbyte Level)> RegeneratedRooms = new();
+        public ushort GetObjectRoom(VMEntity obj) => Rooms.GetValueOrDefault(obj.ObjectID);
+        public void AddRoomPortal(VMEntity obj, ushort room)
+        {
+            // Real VMContext.AddRoomPortal selects the first opposite-room
+            // portal part; the helper must supply valid final topology.
+            foreach (var other in obj.MultitileGroup.Objects)
+                if (other != obj && other.Portal && GetObjectRoom(other) != room)
+                { RoomInfo[room].Portals.Add(new(obj.ObjectID, GetObjectRoom(other))); break; }
+        }
+        public void RegenRoomObs(ushort room, sbyte level) => RegeneratedRooms.Add((room, level));
         public void RegisterCategory(VMEntity obj, short category)
         { if (!Categories.ContainsKey(category)) Categories[category] = new(); Categories[category].Add(obj); }
         public void ChangeCategory(VMEntity obj, short oldValue, short value)
         { if (Categories.TryGetValue(oldValue, out var entries)) entries.Remove(obj); RegisterCategory(obj, value); }
     }
+    public class Architecture { public int Stories = 2; }
+    public class Room { public int Floor; }
+    public class RoomInfo { public Room Room = new(); public List<VMRoomPortal> Portals = new(); }
     public class VMEntity
     {
         public GameObject Object = new();

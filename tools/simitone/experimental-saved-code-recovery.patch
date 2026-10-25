@@ -1,5 +1,43 @@
+diff --git a/TSOClient/tso.simantics/Entities/VMAvatar.cs b/TSOClient/tso.simantics/Entities/VMAvatar.cs
+index 2c82435..b9b6e46 100644
+--- a/TSOClient/tso.simantics/Entities/VMAvatar.cs
++++ b/TSOClient/tso.simantics/Entities/VMAvatar.cs
+@@ -959,7 +959,13 @@ namespace FSO.SimAntics
+             var lastGender = GetPersonData(VMPersonDataVariable.Gender);
+             var lastPersonType = GetPersonData(VMPersonDataVariable.PersonType);
+             var sched = GetPersonData(VMPersonDataVariable.VisitorSchedule);
+-            if (neigh.PersonData != null) PersonData = neigh.PersonData.ToArray();
++            if (neigh.PersonData != null)
++            {
++                // NPCs/family members loaded from older neighbor records need
++                // the same runtime person bank as native lot imports.
++                PersonData = new short[Math.Max(101, neigh.PersonData.Length)];
++                Array.Copy(neigh.PersonData, PersonData, neigh.PersonData.Length);
++            }
+             SetPersonData(VMPersonDataVariable.Gender, lastGender); //fixes cats switching to children suddenly
+             SetPersonData(VMPersonDataVariable.NeighborId, neigh.NeighbourID);
+             if (lastPersonType == 0) SetPersonData(VMPersonDataVariable.PersonType, (short)((GetPersonData(VMPersonDataVariable.TS1FamilyNumber) == current?.ChunkID) ? 0 : 1));
+@@ -1271,10 +1277,15 @@ namespace FSO.SimAntics
+ 
+         public virtual void LoadCrossRef(VMAvatarMarshal input, VMContext context)
+         {
+-            if (input.Contained.Length == 0)
++            if (input.Contained.Length < 3)
+             {
+-                input.Contained = new short[3];
+-                input.Contained[0] = input.HandObjectOld;
++                // Old native saves can have only the hand slot. The runtime
++                // exposes hand, head and pelvis; preserve existing contents and
++                // allocate empty slots instead of indexing a shorter bank.
++                var contained = new short[3];
++                Array.Copy(input.Contained, contained, input.Contained.Length);
++                if (input.Contained.Length == 0) contained[0] = input.HandObjectOld;
++                input.Contained = contained;
+             }
+             base.LoadCrossRef(input, context);
+             foreach (var obj in Contained)
 diff --git a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
-index 3e89a2d..5d7baf2 100644
+index 3e89a2d..24287e9 100644
 --- a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
 +++ b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
 @@ -41,6 +41,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
@@ -10,7 +48,7 @@ index 3e89a2d..5d7baf2 100644
  
                  if (fsov != null)
                  {
-@@ -54,13 +55,36 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+@@ -54,13 +55,22 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                      //var activator = new VMTS1Activator(vm, vm.Context.World, JobLevel);
                      var activator = new VMTS1ActivatorNew(vm, JobLevel);
                      activator.LoadFromIff(iff);
@@ -19,22 +57,9 @@ index 3e89a2d..5d7baf2 100644
  
                  var entClone = new List<VMEntity>(vm.Entities);
  
-+                if (nativeCodeCompatibility != null)
-+                {
-+                    // Reject unsupported recovery branches before any object is migrated.
-+                    var unsupported = new List<string>();
-+                    foreach (var nobj in entClone)
-+                    {
-+                        if (!nobj.Dead && nativeCodeCompatibility.NeedsReset(nobj))
-+                        {
-+                            try { VMTS1ObjectRecovery.Validate(vm, nobj, nativeCodeCompatibility.CodeChanged(nobj)); }
-+                            catch (NotSupportedException error) { unsupported.Add(error.Message); }
-+                        }
-+                    }
-+                    if (unsupported.Count != 0)
-+                        throw new NotSupportedException("TS1 recovery preflight failed before migration:\n"
-+                            + string.Join("\n", unsupported));
-+                }
++                var nativeRecovery = nativeCodeCompatibility == null ? null
++                    : new VMTS1SavedCodeRecovery(vm, nativeCodeCompatibility);
++                nativeRecovery?.Validate(entClone);
 +
                  foreach (var nobj in entClone)
                  {
@@ -43,13 +68,12 @@ index 3e89a2d..5d7baf2 100644
 +                    // Preserve FSOV behavior; native TS1 Load skips person-type objects.
 +                    if (nativeCodeCompatibility == null || !(nobj is VMAvatar))
 +                        nobj.ExecuteEntryPoint(2, vm.Context, true);
-+                    if (!nobj.Dead && nativeCodeCompatibility?.NeedsReset(nobj) == true)
-+                        VMTS1ObjectRecovery.Apply(vm, nobj, nativeCodeCompatibility.CodeChanged(nobj));
++                    if (!nobj.Dead) nativeRecovery?.RecoverAfterLoad(nobj);
                  }
  
                  vm.TS1State.VerifyFamily(vm);
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
-index 007e875..28e4568 100644
+index 007e875..0867340 100644
 --- a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
 +++ b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
 @@ -36,6 +36,7 @@ namespace FSO.SimAntics.Utils
@@ -60,7 +84,19 @@ index 007e875..28e4568 100644
  
          public VMTS1ActivatorNew(VM vm, short hn)
          {
-@@ -525,6 +526,7 @@ namespace FSO.SimAntics.Utils
+@@ -486,7 +487,10 @@ namespace FSO.SimAntics.Utils
+ 
+                 MotiveChanges = new VMMotiveChange[16],
+                 MotiveDecay = new VMTS1MotiveDecay(),
+-                PersonData = person.PersonData,
++                // Older native houses serialize 80 person words. New trees
++                // also read runtime fields through 100; match VMAvatar's bank
++                // allocation without changing or truncating the native record.
++                PersonData = ArrayPad(person.PersonData, 101),
+                 MotiveData = person.MotiveData.Select(motive =>
+                 {
+                     return (short)Math.Round(motive);
+@@ -525,6 +529,7 @@ namespace FSO.SimAntics.Utils
  
          public Blueprint LoadFromIff(IffFile iff)
          {
@@ -68,7 +104,7 @@ index 007e875..28e4568 100644
              var content = Content.Content.Get();
              var simi = iff.Get<SIMI>(1);
              var hous = iff.Get<HOUS>(0);
-@@ -587,6 +589,12 @@ namespace FSO.SimAntics.Utils
+@@ -587,6 +592,12 @@ namespace FSO.SimAntics.Utils
  
              // Load objects
  
@@ -81,7 +117,7 @@ index 007e875..28e4568 100644
              var objt = iff.Get<OBJT>(0);
              var objm = iff.Get<OBJM>(1);
  
-@@ -600,6 +608,9 @@ namespace FSO.SimAntics.Utils
+@@ -600,6 +611,9 @@ namespace FSO.SimAntics.Utils
                  };
              });
  
@@ -91,7 +127,7 @@ index 007e875..28e4568 100644
              var objectCount = objm.ObjectData.Count;
  
              var objects = new List<VMEntityMarshal>();
-@@ -669,7 +680,9 @@ namespace FSO.SimAntics.Utils
+@@ -669,7 +683,9 @@ namespace FSO.SimAntics.Utils
  
                  ent.Attributes = inst.Attributes;
                  ent.MyList = new short[0];
@@ -102,7 +138,7 @@ index 007e875..28e4568 100644
                  ent.ObjectID = inst.ObjectData[(int)VMStackObjectVariable.ObjectId];
                  ent.PersistID = selectedPerson == ent.ObjectID ? 65537 : (uint)ent.ObjectID;
                  ent.Container = inst.ObjectData[(int)VMStackObjectVariable.ContainerId];
-@@ -713,6 +726,8 @@ namespace FSO.SimAntics.Utils
+@@ -713,6 +729,8 @@ namespace FSO.SimAntics.Utils
                  ent.MeToPersist = new VMEntityPersistRelationshipMarshal[0];
  
                  objects.Add(ent);
@@ -111,12 +147,74 @@ index 007e875..28e4568 100644
                  threads.Add(ConvertThread(objm, objt, inst));
  
                  if (inst.MultitileData == null)
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs b/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs
+new file mode 100644
+index 0000000..de47a42
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs
+@@ -0,0 +1,56 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Linq;
++using System.Text.Json;
++using FSO.SimAntics.Model;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// Optional, read-only TS1 state samples at the simulation boundary.
++    /// Records commands, movement and needs without executing trees or
++    /// introducing a background reader of mutable simulation state.
++    /// </summary>
++    public static class VMTS1GameplayDiagnostics
++    {
++        public static void LogTick(VM vm, uint tickID)
++        {
++            if (!vm.TS1 || tickID % 30 != 0
++                || Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") != "1") return;
++            foreach (var person in vm.Entities.OfType<VMAvatar>())
++            {
++                var thread = person.Thread;
++                if (person.Dead || thread == null) continue;
++                Console.Error.WriteLine("TS1 avatar state: " + JsonSerializer.Serialize(new
++                {
++                    Tick = tickID,
++                    ObjectID = person.ObjectID,
++                    person.PersistID,
++                    Clock = new { vm.Context.Clock.Hours, vm.Context.Clock.Minutes },
++                    Position = new { person.Position.x, person.Position.y, person.Position.Level },
++                    Room = vm.Context.GetObjectRoom(person),
++                    Hunger = person.GetMotiveData(VMMotive.Hunger),
++                    thread.ActiveQueueBlock,
++                    Queue = thread.Queue.Select(action => new
++                    {
++                        action.UID,
++                        action.Name,
++                        Routine = action.ActionRoutine?.ID,
++                        Callee = action.Callee?.ObjectID,
++                        Icon = action.IconOwner?.ObjectID
++                    }).ToArray(),
++                    Frames = thread.Stack.Select(frame => new
++                    {
++                        Routine = frame.Routine?.ID,
++                        frame.InstructionPointer,
++                        Kind = frame.GetType().Name
++                    }).ToArray(),
++                    Carried = person.Contained.Select(child => child?.ObjectID ?? (short)0).ToArray()
++                }));
++            }
++        }
++    }
++}
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1ObjectRecovery.cs b/TSOClient/tso.simantics/Utils/VMTS1ObjectRecovery.cs
 new file mode 100644
-index 0000000..83be5a8
+index 0000000..99f4f9c
 --- /dev/null
 +++ b/TSOClient/tso.simantics/Utils/VMTS1ObjectRecovery.cs
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,493 @@
 +// This Source Code Form is subject to the terms of the Mozilla Public
 +// License, v. 2.0. If a copy of the MPL was not distributed with this
 +// file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -146,9 +244,10 @@ index 0000000..83be5a8
 +        /// Preflight all affected entities with this method before applying
 +        /// recovery to any of them. It does not execute trees or change state.
 +        /// </summary>
-+        public static void Validate(VM vm, VMEntity target, bool codeChanged)
++        public static void Validate(VM vm, VMEntity target, bool codeChanged,
++            bool notificationsHandled = false, bool allowPortals = false)
 +        {
-+            Preflight(vm, target, codeChanged);
++            Preflight(vm, target, codeChanged, notificationsHandled, allowPortals);
 +        }
 +
 +        private static NotSupportedException Unsupported(VMEntity target, string reason)
@@ -159,7 +258,8 @@ index 0000000..83be5a8
 +                + target.ObjectID + " / " + guid + ": " + reason);
 +        }
 +
-+        private static List<QueueCancellation> Preflight(VM vm, VMEntity target, bool codeChanged)
++        private static List<QueueCancellation> Preflight(VM vm, VMEntity target, bool codeChanged,
++            bool notificationsHandled = false, bool allowPortals = false)
 +        {
 +            if (vm == null) throw new ArgumentNullException(nameof(vm));
 +            if (target == null) throw new ArgumentNullException(nameof(target));
@@ -168,7 +268,7 @@ index 0000000..83be5a8
 +                throw Unsupported(target, "the cursor case needs its own adapter");
 +
 +            var obj = target as VMGameObject;
-+            if (obj == null || obj.Portal || obj.Dead || obj.GhostImage || obj.Thread == null
++            if (obj == null || (obj.Portal && !allowPortals) || obj.Dead || obj.GhostImage || obj.Thread == null
 +                || obj.MultitileGroup == null || obj.MultitileGroup.Objects.Count == 0)
 +                throw Unsupported(target, "native class, portal, dead/ghost state, or missing group is not mapped");
 +            var group = obj.MultitileGroup;
@@ -178,7 +278,7 @@ index 0000000..83be5a8
 +            foreach (var member in group.Objects)
 +            {
 +                var piece = member as VMGameObject;
-+                if (piece == null || piece.Portal || piece.Dead || piece.GhostImage
++                if (piece == null || (piece.Portal && !allowPortals) || piece.Dead || piece.GhostImage
 +                    || piece.MultitileGroup != group || piece.Thread == null
 +                    || piece.ObjectData == null || piece.ObjectData.Length < 72
 +                    || piece.EntryPoints == null || piece.EntryPoints.Length <= 10
@@ -230,12 +330,14 @@ index 0000000..83be5a8
 +            // Notify other world entities before touching this object's state.
 +            // Ordinary objects ignore a non-null reset target. The person path
 +            // can instead cancel queued references or reset an active person.
-+            return FindSupportedNotifications(vm, obj);
++            return notificationsHandled ? new List<QueueCancellation>() : FindSupportedNotifications(vm, obj);
 +        }
 +
-+        public static void Apply(VM vm, VMEntity target, bool codeChanged)
++        public static void Apply(VM vm, VMEntity target, bool codeChanged,
++            bool notificationsHandled = false, bool postLoadInitialization = true,
++            bool allowPortals = false, Action beforeDetach = null, Action afterRestore = null)
 +        {
-+            var cancellations = Preflight(vm, target, codeChanged);
++            var cancellations = Preflight(vm, target, codeChanged, notificationsHandled, allowPortals);
 +            if (!vm.TS1) return;
 +
 +            var affectedPeople = cancellations.Select(x => x.Person).Distinct().ToArray();
@@ -249,7 +351,7 @@ index 0000000..83be5a8
 +            // EP4 may move or delete the target. Native notifications precede
 +            // the reset snapshot; never restore pre-notification state.
 +            if (target.Dead) return;
-+            Preflight(vm, target, codeChanged);
++            Preflight(vm, target, codeChanged, notificationsHandled, allowPortals);
 +
 +            var context = vm.Context;
 +            var obj = (VMGameObject)target;
@@ -277,10 +379,10 @@ index 0000000..83be5a8
 +                || obj.MultitileGroup.Objects.Count > 1;
 +            if (!hasResetEntry && nativeMultitile)
 +            {
-+                ApplyGroupFallback(vm, obj);
++                ApplyGroupFallback(vm, obj, beforeDetach, afterRestore);
 +                // 00431edd executes Init on the originally loaded target after
 +                // the virtual reset, even though the group reset initialized all pieces.
-+                if (!obj.Dead) obj.ExecuteEntryPoint(0, context, true);
++                if (postLoadInitialization && !obj.Dead) obj.ExecuteEntryPoint(0, context, true);
 +                return;
 +            }
 +            if (hasResetEntry)
@@ -297,6 +399,7 @@ index 0000000..83be5a8
 +                // VMEntity.ResetData: it replaces the entire array and loses the
 +                // selected state. For an ordinary part, retain its contained
 +                // slot table and let placement update child positions.
++                beforeDetach?.Invoke();
 +                if (obj.EntryPoints[10].ActionFunction != 0)
 +                    obj.ExecuteEntryPoint(10, context, true);
 +                // The native fallback skips reinitialization/placement after
@@ -376,10 +479,11 @@ index 0000000..83be5a8
 +                // Native ordinary placement calls it once, plus once for a parent.
 +                obj.ExecuteEntryPoint(9, context, true);
 +                if (parent != null) obj.ExecuteEntryPoint(9, context, true);
++                afterRestore?.Invoke();
 +            }
 +
 +            // 00431edd's incompatibility branch invokes EP0 after the reset.
-+            obj.ExecuteEntryPoint(0, context, true);
++            if (postLoadInitialization) obj.ExecuteEntryPoint(0, context, true);
 +            obj.RefreshGraphic();
 +            obj.RefreshLight();
 +            if (Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1")
@@ -430,7 +534,7 @@ index 0000000..83be5a8
 +            public short[] Children;
 +        }
 +
-+        private static void ApplyGroupFallback(VM vm, VMGameObject target)
++        private static void ApplyGroupFallback(VM vm, VMGameObject target, Action beforeDetach, Action afterRestore)
 +        {
 +            var context = vm.Context;
 +            var group = target.MultitileGroup;
@@ -460,6 +564,7 @@ index 0000000..83be5a8
 +            // cXMTObject::+0x50 (00422db9): EP10 for every piece first,
 +            // followed by detach for every piece. Do not reset a child merely
 +            // because its parent owns a contained slot.
++            beforeDetach?.Invoke();
 +            foreach (var state in snapshots)
 +                if (state.Object.EntryPoints[10].ActionFunction != 0)
 +                    state.Object.ExecuteEntryPoint(10, context, true);
@@ -535,6 +640,7 @@ index 0000000..83be5a8
 +            }
 +            foreach (var state in snapshots)
 +                if (!state.Object.Dead) state.Object.ExecuteEntryPoint(9, context, true);
++            afterRestore?.Invoke();
 +            foreach (var state in snapshots)
 +            {
 +                state.Object.RefreshGraphic();
@@ -599,6 +705,695 @@ index 0000000..83be5a8
 +                }
 +            }
 +            return result;
++        }
++    }
++}
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1PersonRecovery.cs b/TSOClient/tso.simantics/Utils/VMTS1PersonRecovery.cs
+new file mode 100644
+index 0000000..cb45efb
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1PersonRecovery.cs
+@@ -0,0 +1,422 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using FSO.LotView.Model;
++using FSO.SimAntics.Engine;
++using FSO.SimAntics.Model;
++using FSO.Vitaboy;
++using Microsoft.Xna.Framework;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// One import's cXPerson reset/notification adapter (native 0045e8fd).
++    /// Owns mutable execution metadata because OBJM use boundaries and the raw
++    /// active icon are not represented by VMThread's ordinary action model.
++    /// The caller owns world notifications, referenced-object reset dispatch,
++    /// and the final incompatibility Init. This class never calls Init/Reset.
++    /// </summary>
++    public sealed class VMTS1PersonRecovery
++    {
++        private readonly VM VM;
++        private readonly VMTS1SavedCodeCompatibility Plan;
++        private readonly Action<VMEntity> ResetReferencedObject;
++        private readonly Dictionary<short, PersonState> People = new Dictionary<short, PersonState>();
++        private readonly HashSet<short> Resetting = new HashSet<short>();
++
++        /// <summary>
++        /// Semantic equivalent of native target+114 bit12: suppress cascading
++        /// referenced-object resets while still unwinding the person's uses.
++        /// It is an internal reset policy, not an ObjectData/VMEntityFlags bit.
++        /// The predicate receives the notification target, or the person for SELF.
++        /// </summary>
++        public Func<VMEntity, bool> SuppressReferencedObjectReset { get; set; }
++
++        public VMTS1PersonRecovery(VM vm, VMTS1SavedCodeCompatibility plan,
++            Action<VMEntity> resetReferencedObject)
++        {
++            VM = vm ?? throw new ArgumentNullException(nameof(vm));
++            Plan = plan ?? throw new ArgumentNullException(nameof(plan));
++            ResetReferencedObject = resetReferencedObject ?? throw new ArgumentNullException(nameof(resetReferencedObject));
++        }
++
++        private sealed class PersonState
++        {
++            public readonly List<VMTS1SavedPersonRecoveryState.ObjectUse> Uses;
++            public VMQueuedAction ActiveAction;
++            public short ActiveTarget;
++            public short ActiveIcon;
++            public short LastTarget;
++            public short LastIcon;
++
++            public PersonState(VMAvatar person, VMTS1SavedPersonRecoveryState saved)
++            {
++                Uses = saved.ObjectUses.ToList();
++                ActiveTarget = saved.ActiveInteraction.TargetID;
++                ActiveIcon = saved.ActiveInteraction.Icon;
++                LastTarget = saved.LastInteraction.TargetID;
++                LastIcon = saved.LastInteraction.Icon;
++                // Native queued interactions exclude the active interaction;
++                // the runtime importer places a valid active interaction at 0.
++                if (saved.ActiveInteraction.IsValid && person.Thread.Queue.Count != 0)
++                    ActiveAction = person.Thread.Queue[0];
++            }
++        }
++
++        private static NotSupportedException Unsupported(VMAvatar person, string reason)
++        {
++            return new NotSupportedException("TS1 person recovery unsupported for avatar "
++                + (person?.ObjectID ?? 0) + ": " + reason);
++        }
++
++        /// <summary>Preflight without executing BHAVs or changing VM state.</summary>
++        public void Validate(VMAvatar person)
++        {
++            if (person == null) throw new ArgumentNullException(nameof(person));
++            if (!VM.TS1) throw Unsupported(person, "the adapter requires TS1");
++            if (person.Dead || person.GhostImage || person.Object?.OBJ == null
++                || !ReferenceEquals(VM.GetObjectById(person.ObjectID), person)
++                || person.Thread?.Stack == null || person.Thread.Queue == null
++                || person.ObjectData == null || person.ObjectData.Length < 72
++                || person.EntryPoints == null || person.EntryPoints.Length <= 10
++                || person.Contained == null || person.Animations == null
++                || person.GetPersonDataClone().Length < 74
++                || person.MultitileGroup == null || person.MultitileGroup.Objects.Count != 1
++                || person.MultitileGroup.Objects[0] != person)
++                throw Unsupported(person, "missing execution/data state, dead/ghost state, or grouped avatar");
++            if (person.Thread.ActiveQueueBlock < -1 || person.Thread.ActiveQueueBlock >= person.Thread.Queue.Count)
++                throw Unsupported(person, "invalid active queue boundary");
++            if (person.Thread.Queue.Any(action => action == null || action.Callback != null))
++                throw Unsupported(person, "a null action or non-native action callback cannot be discarded as an OBJM interaction");
++            var parent = person.Container;
++            if (parent != null && (person.ContainerSlot < 0 || person.ContainerSlot >= parent.TotalSlots()
++                || parent.GetSlot(person.ContainerSlot) != person))
++                throw Unsupported(person, "inconsistent container slot");
++            foreach (var child in person.Contained)
++                if (child != null && (child.Container != person || child.ContainerSlot < 0
++                    || child.ContainerSlot >= person.Contained.Length || person.Contained[child.ContainerSlot] != child))
++                    throw Unsupported(person, "inconsistent carried-object slot");
++
++            PersonState current;
++            if (People.TryGetValue(person.ObjectID, out current)) return;
++            var saved = Plan.GetPersonState(person.ObjectID);
++            if (saved == null) throw Unsupported(person, "native saved ObjectUses/active-icon metadata was not captured");
++            var previousDepth = 0;
++            foreach (var use in saved.ObjectUses)
++            {
++                if (use.StackLength < 1 || use.StackLength < previousDepth || use.StackLength > person.Thread.Stack.Count)
++                    throw Unsupported(person, "native object-use stack boundaries are inconsistent");
++                if (use.TargetID == 0 || VM.GetObjectById(use.TargetID) == null)
++                    throw Unsupported(person, "a native object-use target is missing: " + use.TargetID);
++                previousDepth = use.StackLength;
++            }
++            var activeCount = saved.ActiveInteraction.IsValid ? 1 : 0;
++            if (person.Thread.Queue.Count != activeCount + saved.QueuedInteractions.Count
++                || person.Thread.ActiveQueueBlock != activeCount - 1)
++                throw Unsupported(person, "the imported queue no longer matches the captured native interactions");
++            for (var i = 0; i < saved.QueuedInteractions.Count; i++)
++                if (person.Thread.Queue[activeCount + i].UID != unchecked((ushort)saved.QueuedInteractions[i].UID))
++                    throw Unsupported(person, "the native queued interaction order changed before recovery");
++            if (activeCount != 0 && person.Thread.Queue[0].UID != unchecked((ushort)saved.ActiveInteraction.UID))
++                throw Unsupported(person, "the native active interaction changed before recovery");
++            // Stage all people during the caller's preflight. Later callbacks
++            // may legitimately change their live queues before their own reset.
++            People.Add(person.ObjectID, new PersonState(person, saved));
++        }
++
++        private PersonState State(VMAvatar person)
++        {
++            PersonState state;
++            if (!People.TryGetValue(person.ObjectID, out state))
++            {
++                state = new PersonState(person, Plan.GetPersonState(person.ObjectID));
++                People.Add(person.ObjectID, state);
++            }
++            return state;
++        }
++
++        public bool DoesRequireFullReset(VMAvatar person, VMEntity target)
++        {
++            if (target == null) return true;
++            Validate(person);
++            var state = State(person);
++            // 0045e974 compares the raw active icon, without testing TTA validity.
++            return state.ActiveIcon == target.ObjectID
++                || state.Uses.Any(use => use.TargetID == target.ObjectID);
++        }
++
++        public void ResetSelf(VMAvatar person)
++        {
++            if (person != null && Resetting.Contains(person.ObjectID)) return;
++            Validate(person);
++            if (!Resetting.Add(person.ObjectID)) return; // native +114 bit11
++            try
++            {
++                var state = State(person);
++                ResetExecution(person, state, person);
++                DiscardQueued(person, state, null);
++            }
++            finally { Resetting.Remove(person.ObjectID); }
++        }
++
++        public void Notify(VMAvatar person, VMEntity target)
++        {
++            if (target == null) { ResetSelf(person); return; }
++            if (person == target || person.Dead || Resetting.Contains(person.ObjectID)) return;
++            Validate(person);
++            if (!Resetting.Add(person.ObjectID)) return;
++            try
++            {
++                var state = State(person);
++                if (state.ActiveIcon == target.ObjectID || state.Uses.Any(use => use.TargetID == target.ObjectID))
++                    ResetExecution(person, state, target);
++                DiscardQueued(person, state, target);
++
++                // 0045ed67 onward clears last/active target or icon separately.
++                // LastInteraction has no runtime action slot, so retain its
++                // pointer state here for subsequent notifications in this import.
++                if (state.LastTarget == target.ObjectID) state.LastTarget = state.LastIcon = 0;
++                else if (state.LastIcon == target.ObjectID) state.LastIcon = 0;
++                if (state.ActiveTarget == target.ObjectID) ClearActive(person, state);
++                else if (state.ActiveIcon == target.ObjectID) SetActiveIcon(state, 0);
++            }
++            finally { Resetting.Remove(person.ObjectID); }
++        }
++
++        private void ResetExecution(VMAvatar person, PersonState state, VMEntity notificationTarget)
++        {
++            var cascade = SuppressReferencedObjectReset?.Invoke(notificationTarget) != true;
++            // 0045e980 unwinds each use in reverse order before notifying and
++            // resetting that referenced object. Do not execute obsolete frames.
++            while (state.Uses.Count != 0)
++            {
++                var use = state.Uses[state.Uses.Count - 1];
++                var referenced = VM.GetObjectById(use.TargetID);
++                while (person.Thread.Stack.Count >= use.StackLength)
++                {
++                    person.Thread.Stack.RemoveAt(person.Thread.Stack.Count - 1);
++                    AfterPop(person, state);
++                }
++                if (state.Uses.Contains(use)) AfterPop(person, state);
++                if (cascade && referenced != null && !referenced.Dead)
++                    ResetReferencedObject(referenced);
++                if (person.Dead) return;
++            }
++
++            ResetController(person);
++            RepairPlacement(person);
++            if (person.Dead) return;
++
++            // Main restart keeps the same thread and its temporary registers.
++            // Old routing frames and asynchronous ownership cannot survive it.
++            var thread = person.Thread;
++            thread.Stack.Clear();
++            thread.BlockingState = null;
++            if (thread.EODConnection != null) VM.EODHost?.ForceDisconnect(person);
++            thread.EODConnection = null;
++            thread.Interrupt = false;
++            thread.ThreadBreak = VMThreadBreakMode.Active;
++            VM.Scheduler.DescheduleTick(person);
++            VM.Scheduler.ScheduleTickIn(person, 1);
++            person.ExecuteEntryPoint(1, VM.Context, false);
++            person.ExecuteEntryPoint(3, VM.Context, true); // includes human Sims
++            person.SetPersonData(VMPersonDataVariable.Posture, 0);
++            person.SetPersonData(VMPersonDataVariable.WalkingUpStairs, 0);
++            person.SetPersonData(VMPersonDataVariable.InteractionStatus, 0);
++            person.SetValue(VMStackObjectVariable.Hidden, 0);
++            person.SetValue(VMStackObjectVariable.RoutePrefference, 0);
++            ClearActive(person, state);
++        }
++
++        private void AfterPop(VMAvatar person, PersonState state)
++        {
++            // 0045e769: process native object-use records crossed by this pop.
++            if (state.Uses.Count != 0 && person.Thread.Stack.Count < state.Uses[state.Uses.Count - 1].StackLength)
++            {
++                var last = state.Uses[state.Uses.Count - 1];
++                if (person.Thread.Stack.Count == last.StackLength - 1)
++                    foreach (var use in state.Uses)
++                        if (use.Unknown2 != 0) SetActiveIcon(state, use.TargetID);
++                state.Uses.RemoveAt(state.Uses.Count - 1);
++                var referenced = VM.GetObjectById(last.TargetID);
++                if (referenced?.ObjectData != null && referenced.ObjectData.Length > (int)VMStackObjectVariable.UseCount)
++                    referenced.ObjectData[(int)VMStackObjectVariable.UseCount]--;
++
++                // Simitone computes UseCount from active queue ownership instead
++                // of native use records. Release that ownership when its last
++                // callee use is crossed, without sending queued-drop EP4.
++                if (state.ActiveAction?.Callee == referenced
++                    && !state.Uses.Any(use => use.TargetID == last.TargetID))
++                    person.Thread.ActiveQueueBlock = -1;
++            }
++            if (state.Uses.Count == 0) ClearActive(person, state);
++        }
++
++        private void SetActiveIcon(PersonState state, short objectID)
++        {
++            state.ActiveIcon = objectID;
++            if (state.ActiveAction != null) state.ActiveAction.IconOwner = VM.GetObjectById(objectID);
++        }
++
++        private void ClearActive(VMAvatar person, PersonState state)
++        {
++            var hadTarget = state.ActiveTarget != 0;
++            if (state.ActiveAction != null)
++            {
++                RemoveAction(person.Thread, state.ActiveAction);
++                state.ActiveAction = null;
++            }
++            state.ActiveTarget = state.ActiveIcon = 0;
++            if (hadTarget)
++            {
++                person.SetPersonData(VMPersonDataVariable.MultipleRoutes, 0);
++                person.SetPersonData(VMPersonDataVariable.RoutingComplete, 0);
++            }
++            person.SetPersonData(VMPersonDataVariable.Priority, 0);
++            person.ClearMotiveChanges();
++            person.SetPersonData(VMPersonDataVariable.NonInterruptable, 0);
++            person.SetPersonData(VMPersonDataVariable.RouteFootprintMask, 0);
++            var extended = person.GetPersonData(VMPersonDataVariable.FootprintExtension) != 0;
++            person.SetPersonData(VMPersonDataVariable.FootprintExtension, 0);
++            if (extended) person.UpdateFootprint();
++        }
++
++        private static void RemoveAction(VMThread thread, VMQueuedAction action)
++        {
++            var index = thread.Queue.IndexOf(action);
++            if (index < 0) return;
++            thread.Queue.RemoveAt(index);
++            if (index <= thread.ActiveQueueBlock) thread.ActiveQueueBlock--;
++            thread.QueueDirty = true;
++        }
++
++        private void DiscardQueued(VMAvatar person, PersonState state, VMEntity target)
++        {
++            // Remove before EP4: callbacks can mutate the queue. Re-scan the
++            // live queue to preserve survivor order and include callback changes.
++            while (true)
++            {
++                var action = person.Thread.Queue.FirstOrDefault(item => item != state.ActiveAction
++                    && (target == null || item.Callee == target || item.IconOwner == target));
++                if (action == null) return;
++                RemoveAction(person.Thread, action);
++                if (action.Callee != null && !action.Callee.Dead)
++                    action.Callee.ExecuteEntryPoint(4, VM.Context, true, person);
++            }
++        }
++
++        private void ResetController(VMAvatar person)
++        {
++            // The engine represents native controller/animation state through
++            // animation lists, transient accessories, a skeleton and outfits.
++            // Refresh those using their existing APIs, retaining saved appearance
++            // and all motive/personality banks rather than re-running avatar Init.
++            person.Animations.Clear();
++            person.CarryAnimationState = null;
++            person.VisualPositionStart = null;
++            person.Velocity = Vector3.Zero;
++            person.TurnVelocity = 0;
++            person.SetObstacleStatic(true);
++            person.SetPersonData(VMPersonDataVariable.CensorshipFlags, 0);
++            person.SetPersonData(VMPersonDataVariable.HandGestureLeft, 0);
++            person.SetPersonData(VMPersonDataVariable.HandGestureRight, 0);
++            if (person.Headline != null)
++            {
++                person.HeadlineRenderer?.Dispose();
++                person.Headline = null;
++                person.HeadlineRenderer = null;
++            }
++            if (FSO.SimAntics.VM.UseWorld && person.Avatar != null)
++            {
++                foreach (var name in person.BoundAppearances)
++                {
++                    var appearance = FSO.Content.Content.Get().AvatarAppearances.Get(name);
++                    if (appearance != null) person.Avatar.RemoveAccessory(appearance);
++                }
++                person.Avatar.Skeleton = person.Avatar.BaseSkeleton.Clone();
++                person.Avatar.ReloadSkeleton();
++                person.Avatar.LeftHandGesture = SimHandGesture.Idle;
++                person.Avatar.RightHandGesture = SimHandGesture.Idle;
++            }
++            person.BoundAppearances.Clear();
++            var gender = person.GetPersonData(VMPersonDataVariable.Gender);
++            person.InitBodyData(VM.Context);
++            person.SetPersonData(VMPersonDataVariable.Gender, gender);
++            var body = person.BodyOutfit;
++            var head = person.HeadOutfit;
++            var skin = person.SkinTone;
++            if (body != null) person.BodyOutfit = body; // setters refresh meshes
++            if (head != null) person.HeadOutfit = head;
++            person.SkinTone = skin;
++        }
++
++        private void RepairPlacement(VMAvatar person)
++        {
++            // Native leaves an ordinary in-world standing person in place. A
++            // contained person is detached to the same position; an out-of-world
++            // person searches from the lot centre. Probe with PositionValid:
++            // rejected SetPosition attempts would run rollback Placement/EP9.
++            if (person.Container == null && person.Position != LotTilePos.OUT_OF_WORLD) return;
++            var origin = person.Position;
++            var direction = person.Direction;
++            if (person.Container != null)
++            {
++                person.ExecuteEntryPoint(10, VM.Context, true);
++                if (person.Dead) return;
++            }
++            if (origin == LotTilePos.OUT_OF_WORLD || VM.Context.IsOutOfBounds(origin))
++                origin = LotTilePos.FromBigTile((short)(VM.Context.Architecture.Width / 2),
++                    (short)(VM.Context.Architecture.Height / 2), 1);
++            var preferredRoom = VM.Context.GetRoomAt(origin);
++            LotTilePos? chosen = null;
++            var limit = Math.Max(VM.Context.Architecture.Width, VM.Context.Architecture.Height);
++            // Native 00434895 first keeps the origin's room, then relaxes that
++            // constraint. Collision/EP5 checks remain the engine's own policy.
++            for (var pass = 0; pass < 2 && !chosen.HasValue && !person.Dead; pass++)
++            {
++                foreach (var candidate in PlacementCandidates(origin, limit))
++                {
++                    if (VM.Context.IsOutOfBounds(candidate)) continue;
++                    var sameRoom = VM.Context.GetRoomAt(candidate) == preferredRoom;
++                    if (pass == 0 && !sameRoom) continue;
++                    var result = person.PositionValid(candidate, direction, VM.Context, VMPlaceRequestFlags.Default);
++                    if (person.Dead) return;
++                    if (result.Status != VMPlacementError.Success) continue;
++                    chosen = candidate;
++                    break;
++                }
++            }
++            if (person.Dead) return;
++            if (!chosen.HasValue)
++                throw new InvalidOperationException("TS1 person recovery found no legal position for avatar " + person.ObjectID);
++
++            // Commit exactly once after selection. A callback may have changed
++            // placement legality since the probe; report that failure directly.
++            var placement = person.SetPosition(chosen.Value, direction, VM.Context);
++            if (placement.Status != VMPlacementError.Success)
++                throw new InvalidOperationException("TS1 person recovery could not commit the selected position for avatar "
++                    + person.ObjectID + ": " + placement.Status);
++            if (person.Dead) return;
++            if (person.Position != LotTilePos.OUT_OF_WORLD)
++                person.SetPersonData(VMPersonDataVariable.IsSwimming,
++                    (short)(VM.Context.Architecture.GetPreciseFloor(person.Position) == ushort.MaxValue ? 1 : 0));
++        }
++
++        private static IEnumerable<LotTilePos> PlacementCandidates(LotTilePos origin, int limit)
++        {
++            yield return origin;
++            for (var radius = 1; radius < limit; radius++)
++                for (var y = -radius; y <= radius; y++)
++                    for (var x = -radius; x <= radius; x++)
++                    {
++                        if (Math.Abs(x) != radius && Math.Abs(y) != radius) continue;
++                        yield return LotTilePos.FromBigTile((short)(origin.TileX + x),
++                            (short)(origin.TileY + y), origin.Level);
++                    }
++        }
++    }
++}
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1PortalRecovery.cs b/TSOClient/tso.simantics/Utils/VMTS1PortalRecovery.cs
+new file mode 100644
+index 0000000..a1daede
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1PortalRecovery.cs
+@@ -0,0 +1,255 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using FSO.LotView.Model;
++using FSO.SimAntics.Entities;
++using FSO.SimAntics.Model;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// Portal-specific bookends for the TS1 multi-part recovery sequence.
++    /// The caller still performs EP10, detach, reset, placement and EP9 for
++    /// every piece. This class reconciles the portal links and room obstacles
++    /// before detach and after the last piece has been placed.
++    /// </summary>
++    public static class VMTS1PortalRecovery
++    {
++        public sealed class Snapshot
++        {
++            internal VMMultitileGroup Group;
++            internal VMGameObject[] Members;
++            internal VMGameObject[] Portals;
++            internal short[] ObjectIDs;
++            internal short[] PortalObjectIDs;
++            internal ushort[] OldRooms;
++            internal sbyte[] OldLevels;
++            internal bool Detached;
++
++            public bool IsDetached => Detached;
++        }
++
++        /// <summary>
++        /// Capture immediately before the native portal detach override.
++        /// Also serves as a read-only preflight for the portal-specific state.
++        /// </summary>
++        public static Snapshot Capture(VM vm, VMGameObject target)
++        {
++            if (vm == null) throw new ArgumentNullException(nameof(vm));
++            if (target == null) throw new ArgumentNullException(nameof(target));
++            var context = vm.Context;
++            var group = target.MultitileGroup;
++            if (context == null || group == null || group.Objects == null
++                || group.Objects.Count == 0 || !group.Objects.Contains(target))
++                throw Unsupported(target, "missing portal group or context");
++
++            var members = group.Objects.OfType<VMGameObject>().ToArray();
++            if (members.Length != group.Objects.Count || members.Distinct().Count() != members.Length)
++                throw Unsupported(target, "portal group membership is inconsistent");
++            if (members.Any(piece => piece.EntryPoints == null || piece.EntryPoints.Length <= 15))
++                throw Unsupported(target, "a group piece has no portal entry-point table");
++            var portals = members.Where(piece => piece.Portal).ToArray();
++            if (portals.Length == 0)
++                throw Unsupported(target, "the group has no portal entry point");
++            if (context.RoomInfo == null || context.Architecture == null)
++                throw Unsupported(target, "room tables are unavailable");
++
++            var oldRooms = new ushort[portals.Length];
++            var oldLevels = new sbyte[portals.Length];
++            for (var i = 0; i < portals.Length; i++)
++            {
++                var piece = portals[i];
++                if (piece.Dead || piece.GhostImage || piece.Container != null
++                    || piece.Position == LotTilePos.OUT_OF_WORLD
++                    || piece.Position.Level < 1
++                    || piece.Position.Level > context.Architecture.Stories
++                    || piece.MultitileGroup != group)
++                    throw Unsupported(target, "a portal piece is not placed in the world");
++                oldRooms[i] = context.GetObjectRoom(piece);
++                oldLevels[i] = piece.Position.Level;
++                if (oldRooms[i] >= context.RoomInfo.Length
++                    || context.RoomInfo[oldRooms[i]].Portals == null)
++                    throw Unsupported(target, "a portal piece has no room table");
++            }
++
++            return new Snapshot
++            {
++                Group = group,
++                Members = members,
++                Portals = portals,
++                ObjectIDs = members.Select(piece => piece.ObjectID).ToArray(),
++                PortalObjectIDs = portals.Select(piece => piece.ObjectID).ToArray(),
++                OldRooms = oldRooms,
++                OldLevels = oldLevels
++            };
++        }
++
++        /// <summary>
++        /// Call before the group EP10 loop. Native cXPortal::+0x50 changes
++        /// portal topology before delegating to cXMTObject::+0x50. Physical
++        /// detach remains in the caller's normal per-piece sequence, so each
++        /// piece still receives PrePositionChange once after EP10.
++        /// </summary>
++        public static void BeforeDetach(VM vm, Snapshot snapshot)
++        {
++            Validate(vm, snapshot);
++            if (snapshot.Detached)
++                throw Unsupported(snapshot.Members[0], "portal detach was already started");
++            var rooms = OldRoomLevels(snapshot);
++            snapshot.Detached = true;
++            RemoveLinks(vm.Context, new HashSet<short>(snapshot.PortalObjectIDs), rooms);
++            RegenerateRoomObstacles(vm.Context, rooms);
++        }
++
++        /// <summary>
++        /// Call after the group's placement and EP9 loops. A piece registered
++        /// earlier may have observed its partner still out of world, so links
++        /// are reconstructed from the final positions of the whole group.
++        /// </summary>
++        public static void AfterRestore(VM vm, Snapshot snapshot)
++        {
++            Validate(vm, snapshot);
++            if (!snapshot.Detached)
++                throw Unsupported(snapshot.Members[0], "portal detach was not started");
++            var context = vm.Context;
++            var rooms = OldRoomLevels(snapshot);
++            RemoveLinks(context, new HashSet<short>(snapshot.PortalObjectIDs), rooms);
++            foreach (var piece in snapshot.Portals)
++            {
++                if (piece.Dead || piece.GhostImage || piece.Container != null
++                    || piece.Position == LotTilePos.OUT_OF_WORLD
++                    || piece.Position.Level < 1
++                    || piece.Position.Level > context.Architecture.Stories)
++                    throw Unsupported(piece, "a restored portal piece is not placed in the world");
++                var room = context.GetObjectRoom(piece);
++                if (room >= context.RoomInfo.Length)
++                    throw Unsupported(piece, "a restored portal piece has no room table");
++                rooms.Add(RoomLevel(room, piece.Position.Level));
++                context.AddRoomPortal(piece, room);
++            }
++            RegenerateRoomObstacles(context, rooms);
++            snapshot.Detached = false;
++        }
++
++        /// <summary>
++        /// Repair portal topology after an EP10/Init/EP9 callback deletes or
++        /// regroups a piece, or after the recovery sequence exits early.
++        /// Rebuild only the live groups reached from the original members;
++        /// never register a deleted or out-of-world piece as a portal.
++        /// </summary>
++        public static void Reconcile(VM vm, Snapshot snapshot)
++        {
++            if (vm == null) throw new ArgumentNullException(nameof(vm));
++            if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
++            if (!snapshot.Detached) return;
++            var context = vm.Context;
++            if (context == null || context.RoomInfo == null || context.Architecture == null)
++                throw Unsupported(snapshot.Members[0], "room tables are unavailable during portal reconciliation");
++
++            var rooms = OldRoomLevels(snapshot);
++            var sources = new HashSet<VMGameObject>();
++            foreach (var original in snapshot.Members)
++            {
++                if (!vm.Entities.Contains(original) || original.Dead) continue;
++                var group = original.MultitileGroup;
++                if (group == null || group.Objects == null) continue;
++                foreach (var member in group.Objects.OfType<VMGameObject>())
++                    if (IsLivePortal(vm, member)) sources.Add(member);
++            }
++
++            var ids = new HashSet<short>(snapshot.PortalObjectIDs);
++            foreach (var originalPortal in snapshot.Portals) ids.Add(originalPortal.ObjectID);
++            foreach (var source in sources) ids.Add(source.ObjectID);
++            RemoveLinks(context, ids, rooms);
++            foreach (var source in sources)
++            {
++                var room = context.GetObjectRoom(source);
++                if (room >= context.RoomInfo.Length || context.RoomInfo[room].Portals == null) continue;
++                rooms.Add(RoomLevel(room, source.Position.Level));
++                var group = source.MultitileGroup;
++                foreach (var other in group.Objects.OfType<VMGameObject>())
++                {
++                    if (other == source || !IsLivePortal(vm, other)) continue;
++                    var otherRoom = context.GetObjectRoom(other);
++                    if (otherRoom >= context.RoomInfo.Length || otherRoom == room) continue;
++                    context.RoomInfo[room].Portals.Add(new VMRoomPortal(source.ObjectID, otherRoom));
++                    break;
++                }
++            }
++            RegenerateRoomObstacles(context, rooms);
++            snapshot.Detached = false;
++        }
++
++        private static bool IsLivePortal(VM vm, VMGameObject piece)
++        {
++            return piece != null && vm.Entities.Contains(piece) && !piece.Dead && !piece.GhostImage
++                && piece.Container == null && piece.Position != LotTilePos.OUT_OF_WORLD
++                && piece.Position.Level >= 1
++                && piece.Position.Level <= vm.Context.Architecture.Stories
++                && piece.EntryPoints != null && piece.EntryPoints.Length > 15 && piece.Portal
++                && piece.MultitileGroup != null && piece.MultitileGroup.Objects != null;
++        }
++
++        private static void Validate(VM vm, Snapshot snapshot)
++        {
++            if (vm == null) throw new ArgumentNullException(nameof(vm));
++            if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
++            if (vm.Context == null || vm.Context.RoomInfo == null
++                || vm.Context.Architecture == null)
++                throw Unsupported(snapshot.Members[0], "room tables are unavailable");
++            if (snapshot.Group.Objects.Count != snapshot.Members.Length
++                || !snapshot.Group.Objects.SequenceEqual(snapshot.Members))
++                throw Unsupported(snapshot.Members[0], "portal group membership changed");
++            for (var i = 0; i < snapshot.Members.Length; i++)
++                if (snapshot.Members[i].MultitileGroup != snapshot.Group
++                    || snapshot.Members[i].ObjectID != snapshot.ObjectIDs[i])
++                    throw Unsupported(snapshot.Members[i], "portal piece identity changed");
++        }
++
++        private static void RemoveLinks(VMContext context, HashSet<short> ids,
++            HashSet<int> affectedRooms)
++        {
++            for (var room = 0; room < context.RoomInfo.Length; room++)
++            {
++                var links = context.RoomInfo[room].Portals;
++                if (links != null && links.RemoveAll(link => ids.Contains(link.ObjectID)) != 0)
++                    affectedRooms.Add(RoomLevel((ushort)room, (sbyte)(context.RoomInfo[room].Room.Floor + 1)));
++            }
++        }
++
++        private static HashSet<int> OldRoomLevels(Snapshot snapshot)
++        {
++            var rooms = new HashSet<int>();
++            for (var i = 0; i < snapshot.OldRooms.Length; i++)
++                rooms.Add(RoomLevel(snapshot.OldRooms[i], snapshot.OldLevels[i]));
++            return rooms;
++        }
++
++        private static int RoomLevel(ushort room, sbyte level)
++        {
++            return (room << 8) | (byte)level;
++        }
++
++        private static void RegenerateRoomObstacles(VMContext context, HashSet<int> rooms)
++        {
++            foreach (var pair in rooms)
++            {
++                var room = (ushort)(pair >> 8);
++                var level = (sbyte)(pair & 0xff);
++                if (room < context.RoomInfo.Length && level >= 1
++                    && level <= context.Architecture.Stories)
++                    context.RegenRoomObs(room, level);
++            }
++        }
++
++        private static NotSupportedException Unsupported(VMGameObject target, string reason)
++        {
++            return new NotSupportedException("TS1 portal recovery unsupported for entity "
++                + target.ObjectID + ": " + reason);
 +        }
 +    }
 +}
@@ -815,6 +1610,176 @@ index 0000000..06cb046
 +        }
 +    }
 +}
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1SavedCodeRecovery.cs b/TSOClient/tso.simantics/Utils/VMTS1SavedCodeRecovery.cs
+new file mode 100644
+index 0000000..7aabccb
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1SavedCodeRecovery.cs
+@@ -0,0 +1,164 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Text.Json;
++using FSO.SimAntics.Model;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// One native import's recovery state. Notifications visit other people;
++    /// nested resets retain the same entity IDs and do not run post-load Init.
++    /// The caller owns Load and the final family verification.
++    /// </summary>
++    public sealed class VMTS1SavedCodeRecovery
++    {
++        private readonly VM VM;
++        private readonly VMTS1SavedCodeCompatibility Plan;
++        private readonly VMTS1PersonRecovery People;
++        private readonly HashSet<short> Resetting = new HashSet<short>();
++
++        public VMTS1SavedCodeRecovery(VM vm, VMTS1SavedCodeCompatibility plan)
++        {
++            VM = vm ?? throw new ArgumentNullException(nameof(vm));
++            Plan = plan ?? throw new ArgumentNullException(nameof(plan));
++            People = new VMTS1PersonRecovery(vm, plan, entity => ResetEntity(entity, false));
++        }
++
++        public void Validate(IEnumerable<VMEntity> entities)
++        {
++            var visited = new HashSet<short>();
++            var unsupported = new List<string>();
++            // Every live person receives notifications, including people whose
++            // own code is compatible. Stage their metadata and referenced reset
++            // closure before any Load callback or recovery can mutate the VM.
++            foreach (var person in VM.Entities.OfType<VMAvatar>().Where(person => !person.Dead))
++                ValidateEntity(person, visited, unsupported);
++            foreach (var entity in entities)
++            {
++                if (entity.Dead || !Plan.NeedsReset(entity)) continue;
++                if (entity.Object?.OBJ?.GUID == VMTS1SavedCodeCompatibility.NativeAlwaysResetGuid)
++                    unsupported.Add("TS1 special-type recovery requires a dedicated adapter: " + entity.ObjectID);
++                ValidateEntity(entity, visited, unsupported);
++            }
++            if (unsupported.Count != 0)
++                throw new NotSupportedException("TS1 recovery preflight failed before migration:\n"
++                    + string.Join("\n", unsupported));
++        }
++
++        private void ValidateEntity(VMEntity target, HashSet<short> visited, List<string> unsupported)
++        {
++            if (target == null || target.Dead || !visited.Add(target.ObjectID)) return;
++            try
++            {
++                if (target is VMAvatar person)
++                {
++                    People.Validate(person);
++                    var state = Plan.GetPersonState(person.ObjectID);
++                    if (state != null)
++                        foreach (var use in state.ObjectUses)
++                            ValidateEntity(VM.GetObjectById(use.TargetID), visited, unsupported);
++                }
++                else
++                {
++                    var portal = CapturePortal(target);
++                    VMTS1ObjectRecovery.Validate(VM, target, true, true, portal != null);
++                }
++            }
++            catch (NotSupportedException error) { unsupported.Add(error.Message); }
++        }
++
++        public void RecoverAfterLoad(VMEntity target)
++        {
++            if (target != null && !target.Dead && Plan.NeedsReset(target))
++                ResetEntity(target, Plan.CodeChanged(target));
++        }
++
++        private VMTS1PortalRecovery.Snapshot CapturePortal(VMEntity target)
++        {
++            var obj = target as VMGameObject;
++            if (obj?.MultitileGroup?.Objects.Any(piece => piece.Portal) == true)
++                return VMTS1PortalRecovery.Capture(VM, obj);
++            return null;
++        }
++
++        private void NotifyOthers(VMEntity target)
++        {
++            foreach (var person in VM.Entities.OfType<VMAvatar>().ToArray())
++                if (person != target && !person.Dead) People.Notify(person, target);
++        }
++
++        private void ResetEntity(VMEntity target, bool postLoadInitialization)
++        {
++            if (target == null || target.Dead || !Resetting.Add(target.ObjectID)) return;
++            try
++            {
++                // 00444346 precedes the virtual reset and its position/data snapshots.
++                NotifyOthers(target);
++                if (target.Dead) return;
++                if (target is VMAvatar person)
++                {
++                    var diagnostic = Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1";
++                    var thread = person.Thread;
++                    var beforeData = diagnostic ? person.GetPersonDataClone() : null;
++                    var beforeMotives = diagnostic ? Enumerable.Range(0, 16)
++                        .Select(index => person.GetMotiveData((VMMotive)index)).ToArray() : null;
++                    var beforePosition = person.Position;
++                    var beforeQueue = person.Thread.Queue.Count;
++                    People.ResetSelf(person);
++                    if (diagnostic)
++                    {
++                        var afterData = person.GetPersonDataClone();
++                        Console.Error.WriteLine("Native person recovery: " + JsonSerializer.Serialize(new
++                        {
++                            ObjectID = person.ObjectID,
++                            SameInstance = ReferenceEquals(VM.GetObjectById(person.ObjectID), person),
++                            SameThread = ReferenceEquals(person.Thread, thread),
++                            BeforePosition = new { beforePosition.x, beforePosition.y, beforePosition.Level },
++                            AfterPosition = new { person.Position.x, person.Position.y, person.Position.Level },
++                            PersonWordCount = afterData.Length,
++                            ChangedPersonWords = Enumerable.Range(0, Math.Min(beforeData.Length, afterData.Length))
++                                .Where(index => beforeData[index] != afterData[index])
++                                .Select(index => new { Index = index, Before = beforeData[index], After = afterData[index] }).ToArray(),
++                            BeforeMotives = beforeMotives,
++                            AfterMotives = Enumerable.Range(0, 16).Select(index => person.GetMotiveData((VMMotive)index)).ToArray(),
++                            BeforeQueue = beforeQueue,
++                            AfterQueue = person.Thread.Queue.Count,
++                            NewUnresolvedFrames = person.Thread.Stack.Count(frame => frame.Routine == null)
++                        }));
++                    }
++                }
++                else
++                {
++                    var portal = CapturePortal(target);
++                    try
++                    {
++                        VMTS1ObjectRecovery.Apply(VM, target, true,
++                            notificationsHandled: true, postLoadInitialization: false,
++                            allowPortals: portal != null,
++                            beforeDetach: portal == null ? null : (Action)(() => VMTS1PortalRecovery.BeforeDetach(VM, portal)),
++                            afterRestore: portal == null ? null : (Action)(() => VMTS1PortalRecovery.AfterRestore(VM, portal)));
++                    }
++                    finally
++                    {
++                        // Callback deletion is not a rollback: rebuild topology
++                        // from the surviving pieces without resurrecting any.
++                        if (portal?.IsDetached == true) VMTS1PortalRecovery.Reconcile(VM, portal);
++                    }
++                }
++                if (postLoadInitialization && !target.Dead)
++                    target.ExecuteEntryPoint(0, VM.Context, true);
++                if (!target.Dead && target is VMGameObject obj)
++                {
++                    obj.RefreshGraphic();
++                    obj.RefreshLight();
++                }
++            }
++            finally { Resetting.Remove(target.ObjectID); }
++        }
++    }
++}
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1SavedPersonRecoveryState.cs b/TSOClient/tso.simantics/Utils/VMTS1SavedPersonRecoveryState.cs
 new file mode 100644
 index 0000000..bbd311d
@@ -922,3 +1887,15 @@ index 0000000..bbd311d
 +        }
 +    }
 +}
+diff --git a/TSOClient/tso.simantics/VM.cs b/TSOClient/tso.simantics/VM.cs
+index d66baf8..c8cf08f 100644
+--- a/TSOClient/tso.simantics/VM.cs
++++ b/TSOClient/tso.simantics/VM.cs
+@@ -435,6 +435,7 @@ namespace FSO.SimAntics
+             }
+ 
+             if (tickID % Math.Max(1, SpeedMultiplier) == 0) Context.ProcessLightingChanges();
++            Utils.VMTS1GameplayDiagnostics.LogTick(this, tickID);
+             //Context.SetToNextCache.VerifyPositions(); use only for debug!
+ 
+             if (UseWorld && Context.Blueprint?.SM64 != null)

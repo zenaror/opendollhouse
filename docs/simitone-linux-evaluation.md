@@ -115,8 +115,9 @@ O objeto 136 coincide com a pendência PhoneLine do motor próprio; mudar de bas
 não resolveu automaticamente essa questão. A investigação seguinte confirmou
 os arquivos carregados e as assinaturas completas de Init/Main, incluindo
 dependências, e encontrou o tratamento nativo de incompatibilidade. O cálculo
-foi implementado e validado em 17 casos. A recuperação tem agora um adaptador
-experimental incompleto; o gate integrado abaixo ainda falha antes da migração. Os campos baixos do OBJT não são contagens de instruções;
+foi implementado e validado em 17 casos. Naquele checkpoint a recuperação tinha apenas
+um adaptador experimental que falhava antes da migração; o resultado atual está
+na seção de entrada e primeiro comando abaixo. Os campos baixos do OBJT não são contagens de instruções;
 comparar apenas `BHAV.Version` é insuficiente. Ver
 [contrato de assinaturas e recuperação](simitone-save-code-signatures.md).
 Não esconder erros, escolher outro dono por aproximação, descartar frames ou
@@ -153,7 +154,7 @@ Simitone. Essa procedência precisa ser esclarecida por componente antes de
 distribuir uma base derivada; não presumir uma licença única por associação.
 
 
-## Recuperação de saves: candidato experimental (2026-10-25)
+## Recuperação de saves: checkpoint anterior de preflight (2026-10-25)
 
 `tools/simitone/experimental-saved-code-recovery.patch` é um incremento aplicado
 **depois** dos patches0003/0004/0005 na raiz do FreeSO de trabalho. Não faz parte
@@ -191,3 +192,74 @@ as portas precisam das operações específicas de ocupação e rotas. Preservar
 os registros ordenados dos usos e ações da pessoa antes da conversão para que
 a próxima implementação não dependa de reconstrução incompleta dos frames.
 Contrato e limites em [simitone-save-code-signatures.md](simitone-save-code-signatures.md).
+
+
+## Entrada e primeiro comando sem erros (2026-10-25)
+
+O candidato com recuperação de pessoas/portas e normalização dos bancos antigos
+compilou/publicou. O patch experimental continua fora da receita básica, aplicado
+após 0003/0004/0005, mas agora contém onze arquivos e passou por replay exato.
+A revisão conferiu o patch e os hashes das fontes. Os testes sintéticos são 22 de
+política/portais e 5 de snapshots com tipos FSO.Files reais. Saídas, comandos e
+hashes em `house07-recovery-avatar-slots/policy-tests.json`.
+
+| Gate real isolado | Duração | Resultado observado |
+|---|---:|---|
+| `house07-recovery-avatar-slots` | 40 s | Casa renderizada com Bob/Betty; zero exceções de VM/fatais |
+| `house07-first-command` | 40 s | Menu Go Here mostrado pelo clique no chão; zero exceções |
+| `house07-first-go-here` | 45 s | Selecionar Go Here moveu Bob a outro ponto; zero exceções |
+| `house07-first-door-walk` | 55 s | Destino no pátio fez Bob sair da cozinha e chegar fora; zero exceções |
+
+Todos preservaram os seis hashes protegidos e encerraram aplicação/Xvfb,
+removendo os dados/perfis temporários. A imagem final da caminhada ao pátio
+comprova origem/destino, sem traçar cada passo ou provar o instante/animação da
+porta. Nenhum teste usa o teclado ou mouse físico. `result.json` continua com
+`gameplay_verified=false`, pois não há aprovação do ciclo completo ou do jogo.
+
+A entrada registra 150 recuperações de objetos e 2 de pessoas. Os oito frames
+antigos ausentes viraram zero frames ausentes nas recuperações registradas;
+identidades e palavras retidas foram preservadas. Pessoas mantiveram sua
+instância/thread e necessidades no diagnóstico de reset, antes do Init final.
+Os primeiros testes após integrar a recuperação expuseram bancos antigos menores
+que o modelo atual: PersonData80→pelo menos 101 campos e armazenamento de objetos
+carregados com menos de três posições. A extensão preserva o prefixo salvo e
+registros maiores. A correção de PersonData também cobre o caminho de vizinhos.
+Não foram adicionados retornos fictícios nem suprimidos diálogos de erro.
+
+A captura Linux registrou cerca de 750 MiB RSS/HWM com renderização por software.
+Isso inclui o ambiente desktop e não valida viabilidade, orçamento de memória,
+gráficos ou runtime de qualquer console. A arquitetura e os alvos futuros
+continuam sob avaliação separada.
+
+Pendências: salvar/reabrir, vizinhança, famílias,
+compra/construção, viagens e atividades das sete expansões, idioma e áudio.
+A equivalência nativa ainda requer validar UseCount aninhado, ordem de busca de
+colocação, cache de paredes e o tipo especial cursor. Este é um avanço executável
+do fluxo, sem declaração de build jogável segundo o escopo definido pelo usuário.
+
+
+### Interação completa com a geladeira
+
+`house07-first-fridge-menu` mostrou Have A Snack. O primeiro teste da ação,
+`house07-first-snack`, não registrou erro e mostrou a cobrança de §5, mas isso
+sozinho não provava que o Sim havia comido. O gate `house07-snack-state` de 60 s
+acrescentou amostras somente leitura após o passo de simulação:
+
+| Etapa observada de Bob | Evidência do log |
+|---|---|
+| Escolheu o lanche | Have A Snack, ação 2, geladeira 112 |
+| Pegou comida | Objeto 192 carregado na mão |
+| Comeu | Eat, ação 3; fome de 94 para 100 durante a ação |
+| Terminou | Depois de Eat, ações vazias e mãos livres no tick 1200 |
+
+O teste passou com zero exceções de VM/fatais, dados originais intactos e
+aplicação/Xvfb encerrados. `snack-summary.json` preserva as transições e os hashes
+das assemblies; `source-manifest.json` identifica as onze fontes e o patch.
+O diagnóstico usa `ODH_VM_DIAGNOSTICS=1`, limita a amostragem a cada 30 ticks,
+funciona na thread da simulação e não executa árvores nem ações adicionais.
+A melhora de fome foi correlacionada com Eat e com o objeto carregado; o simples
+desaparecimento de uma ação não seria prova suficiente, pois poderia ser cancelamento.
+
+A revisão independente anterior cobriu a entrada e o Go Here local. O novo
+resultado da comida é separado e não valida todos os objetos, o ciclo salvar/
+reabrir, áudio, conteúdo personalizado ou qualquer expansão completa.

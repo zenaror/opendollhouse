@@ -245,6 +245,46 @@ static class Program
             Unsupported(() => VMTS1ObjectRecovery.Apply(vm, child, true));
             Assert(State(vm) == before, "ambiguous hierarchy rejection mutated state");
         });
+        Test("production group hooks bracket all detach and placement callbacks without outer Init", () =>
+        {
+            var vm = new VM(); var a = Object(vm, 17); var b = Object(vm, 18);
+            var group = a.MultitileGroup; group.MultiTile = true;
+            group.Objects.Add(b); group.Offsets.Add(new(16, 0, 0)); b.MultitileGroup = group;
+            a.Portal = b.Portal = true;
+            a.EntryPoints[10].ActionFunction = b.EntryPoints[10].ActionFunction = 4106;
+            VMTS1ObjectRecovery.Apply(vm, a, true, notificationsHandled: true,
+                postLoadInitialization: false, allowPortals: true,
+                beforeDetach: () => vm.Context.Events.Add("before-portal"),
+                afterRestore: () => vm.Context.Events.Add("after-portal"));
+            var events = vm.Context.Events;
+            Assert(events.Count(x => x == "before-portal") == 1 && events.Count(x => x == "after-portal") == 1,
+                "portal hooks must run once per group reset");
+            Assert(events.IndexOf("before-portal") < events.IndexOf("ep10:17")
+                && events.IndexOf("before-portal") < events.IndexOf("ep10:18"), "portal detach hook ran after EP10");
+            Assert(events.IndexOf("after-portal") > events.IndexOf("ep9:17")
+                && events.IndexOf("after-portal") > events.IndexOf("ep9:18"), "portal restore hook ran before final EP9");
+            Assert(events.Count(x => x == "ep0:17") == 1 && events.Count(x => x == "ep0:18") == 1,
+                "nested group reset ran the caller-owned post-load Init");
+        });
+        Test("production handled-notification mode delegates EP4 ownership to caller", () =>
+        {
+            var vm = new VM(); var obj = Object(vm, 17);
+            var person = Person(vm, new VMQueuedAction { UID = 1, Callee = obj });
+            VMTS1ObjectRecovery.Apply(vm, obj, true, notificationsHandled: true, postLoadInitialization: false);
+            Assert(person.Thread.Queue.Count == 1 && !vm.Context.Events.Contains("ep4:17"),
+                "adapter repeated a caller-owned notification");
+            Assert(vm.Context.Events.Count(x => x == "ep0:17") == 1, "fallback ran extra post-load Init");
+        });
+        Test("production EP3 reset suppresses caller-owned post-load Init and skips placement hooks", () =>
+        {
+            var vm = new VM(); var obj = Object(vm, 17); obj.EntryPoints[3].ActionFunction = 4099;
+            VMTS1ObjectRecovery.Apply(vm, obj, true, notificationsHandled: true, postLoadInitialization: false,
+                beforeDetach: () => throw new Exception("EP3 took detach hook"),
+                afterRestore: () => throw new Exception("EP3 took restore hook"));
+            Assert(!vm.Context.Events.Contains("ep0:17"), "EP3 ran caller-owned Init");
+            Assert(vm.Context.Events.IndexOf("ep3:17") < vm.Context.Events.IndexOf("ep1:17"), "EP3 must precede Main restart");
+        });
+        PortalTests.Run(Test);
         Console.WriteLine($"{Passed} synthetic source-linked native recovery policy cases passed. No real engine/BHAV/graphics/gameplay validation.");
     }
 }

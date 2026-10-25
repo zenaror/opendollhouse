@@ -1,40 +1,64 @@
 # Continuidade atual
 
-## WIP experimental de recuperação de saves (2026-10-25)
+## Casa aberta e primeiro comando no Simitone (2026-10-25)
 
-Meta ACTIVE conferida nesta retomada; objetivo completo permanece incompleto.
-Checkpoint experimental preservado em `tools/simitone/experimental-saved-code-recovery.patch`,
-incremental sobre 0003/0004/0005, com replay exato dos cinco arquivos. O patch não entra
-na receita básica até completar a migração. Fontes continuam no clone de trabalho
-ignorado `refs/work/Simitone-linux`, publicação atual em `build/simitone-linux`.
-O candidato compilou/publicou. Foram aprovados 13 testes sintéticos de política
-ligados ao adaptador real e 5 de snapshots de pessoa com tipos FSO.Files reais;
-não são execução de BHAV, prova de colocação real ou jogabilidade.
+Meta ACTIVE conferida nesta retomada; objetivo completo continua incompleto.
+O candidato Linux já abre a House07 com Bob/Betty, sem diálogo de erro. O teste
+`house07-recovery-avatar-slots` durou 40 s e passou com zero exceções de VM/fatais.
+Houve 150 registros de recuperação de objetos e 2 de pessoas: os oito frames
+antigos não resolvidos foram substituídos por frames válidos, IDs preservados.
+O diagnóstico de reset das pessoas manteve a mesma instância/thread, necessidades
+e palavras de personalidade; ele ocorre antes do Init final de post-load.
 
-A importação completa 68 para 80 palavras sem tocar OBJM, planeja todos os 82 tipos não nulos
-(61 diferenças) e captura usos/ações nativos de pessoas antes da conversão.
-Implementação WIP cobre objetos comuns, grupos não portal e filhos diretos com
-links nativos coerentes, preservando IDs. Revisão corrigiu categoria indexada,
-temporários do ramo EP3 e snapshot após notificações/EP10. SlotHierNumber é
-slot+1; 0x432a70 chama 0x432771 antes de 0x4327d9, comprovando a conversão. O runner tem gate opcional
-`--require-clean-vm` que falha com exceções mesmo que o processo permaneça vivo.
+`house07-first-command` mostrou o menu Go Here; `house07-first-go-here` de 45 s
+mostrou Bob em outra posição após selecionar o comando, sem erros. No teste
+`house07-first-door-walk` de 55 s, o destino no pátio fez Bob sair da cozinha e
+chegar à área externa, novamente sem erros. As capturas não registram cada
+passo nem comprovam isoladamente a animação/momento da passagem pela porta.
+Todos preservaram seis hashes dos originais, encerraram game/Xvfb e removeram
+as cópias/perfis temporários. Evidência em `reports/simitone-linux-evaluation/`
+nesses diretórios, com result/source-manifest JSON, capturas e logs. O runner
+continua `gameplay_verified=false`: não representa aprovação do jogo completo.
 
-Último gate real: `reports/simitone-linux-evaluation/house07-recovery-direct/`,
-28s planejados, encerrado antes por exceção fatal de preflight: 14 instâncias
-não suportadas (portas 17–22, 25–28, 57–58 e pessoas 105/137). **Nenhuma migração foi
-executada**; não declarar que grupos/filhos foram recuperados no motor. Captura
-confirma Bob/Betty em 7 Sim Lane e log house=7. Os seis hashes comerciais permaneceram
-iguais; game/Xvfb encerrados e cópia/perfil removidos. Resumos JSON e capturas
-no diretório do gate, exports nativos pessoa/container com manifests em
-`reports/ghidra/person-recovery-audit/` e `container-recovery-audit/`.
+Patch `tools/simitone/experimental-saved-code-recovery.patch`, incremental após
+0003/0004/0005, agora reproduz onze arquivos; SHA256
+`68af1a94478a0a95ce18cf4d319399df2cd1d383876349bc44cf842618809162`.
+Replay exato e reverse-apply conferidos. Revisão independente aprovou a entrada
+e Go Here local, com 22 testes de política/portais ligados às fontes e 5 de
+snapshots com tipos reais FSO.Files; não são BHAV comercial nem hardware.
+Saída e hashes em `house07-recovery-avatar-slots/policy-tests.json`.
 
-Próximo: implementar recuperação de pessoas com usos ordenados/UseCount/EP4,
-controle de recursão, aparência e busca de posição; mapear operações próprias
-de porta ao registro de ocupação/rotas do motor. Depois rodar o gate completo
-sem atalhos por GUID nem silenciar erros, e validar interação/compra/salvar/reabrir.
-Os guardas atuais não substituem esses caminhos nem a paridade do jogo original.
-Preservar os quatro arquivos C++ WIP listados abaixo e scripts antigos não rastreados.
+A recuperação agora coordena notificações, pessoas e grupos de portas. Preserva
+os usos/ações nativos, desenrola referências, mantém necessidades/personalidade,
+reinicia Main/EP3 e faz a colocação por validação seguida de um único commit.
+Os portais reconciliam passagens/obstáculos ao terminar, inclusive após exclusão
+por callback. O preflight inclui todas as pessoas notificadas e suas referências,
+mesmo quando o código da própria pessoa não mudou. Casas antigas também recebem
+bancos de pessoa com pelo menos 101 campos e os três pontos de objetos carregados
+esperados pelo motor, sem perder os dados que já existiam. A leitura de vizinhos
+usa a mesma extensão do banco, preservando registros maiores. Isso corrigiu dois
+erros reais surgidos depois da migração: campos de magia e GetSlot em pessoas.
 
+A base segue experimental, não paridade do original: UseCount nativo aninhado,
+ordem da busca de colocação, detalhes de cache de paredes e tipo especial cursor
+continuam pendências. Não generalizar estes resultados a outros lotes/expansões.
+RSS/HWM de cerca de 750 MiB no teste Linux com renderização por software é uma
+medida deste ambiente, não orçamento nem viabilidade para os portáteis.
+
+O gate `house07-snack-state` de 60 s concluiu uma interação completa: Bob escolheu
+Have A Snack (ação 2), carregou a comida 192, executou Eat (ação 3), melhorou a fome
+de 94 para 100 e terminou sem ações ou objetos carregados. Zero exceções e seis
+hashes protegidos iguais. `snack-summary.json` contém as transições; o log opt-in
+registra posição, ambiente, fome, ações e objetos carregados a cada 30 ticks, na
+mesma thread da simulação. A amostragem não executa BHAV nem muda o estado.
+O patch anterior de nove fontes foi preservado no report de entrada como
+`recovery-source.patch`; os manifests distinguem essa versão da atual de onze.
+
+Próximo: salvar/reabrir a mesma partida e voltar
+à vizinhança; validar compra/construção/famílias e viagens das sete expansões,
+idioma e logs. Preservar arquitetura multiplataforma, sem declarar consoles
+funcionais. Manter quatro arquivos C++ WIP listados abaixo e scripts antigos
+não rastreados fora dos commits desta frente.
 
 ## Causa confirmada e assinaturas nativas (2026-10-25)
 
@@ -891,7 +915,7 @@ O teste sintético cobre ator adulto/criança e inventário ausente, vazio e com
 token correspondente, além de exigir a máscara de expansão para a ação mágica.
 Build de `odh-saved-interactions-tests` e `odh-person` passou; CTest focal
 passou 4/4 e `git diff --check` passou. No probe real, House07 selecionou a
-geladeira112 e leu a TTAB128 de `Fridges.iff`: `Have A Snack` ficou elegível;
+geladeira 112 e leu a TTAB128 de `Fridges.iff`: `Have A Snack` ficou elegível;
 `Cast.../Enchant` (ação4145/teste4144/flags0x31) passou pelo filtro de idade e
 edição, mas retornou falso em `FindToken`, PC2. O NGBH carregado não tem itens,
 então a categoria realmente não aparece para o morador atual. O status `waiting`
@@ -970,7 +994,7 @@ sem falha do host. O processo termina no limite de 512 ticks enquanto Main
 espera outra ação. O teste usa eventos de janela sem abrir display; confirma
 clique e ação, mas ainda não é comparação visual em X11 nem prova de paridade.
 O teste separado Have A Snack headless também passou seus seis checks na
-geladeira112. CTest focal passou 11/11 e `git diff --check` passou.
+geladeira 112. CTest focal passou 11/11 e `git diff --check` passou.
 
 Este é um primeiro menu de gameplay, ainda simples e sem a arte final do jogo.
 HUD, molduras e outras partes da tela do lote continuam de diagnóstico. Próximo:
@@ -985,7 +1009,7 @@ insere a continuação em seguida e preserva a validade dos snapshots mesmo quan
 os UIDs ficam fora de ordem. A fila reconhece o `IdleForInput` de BHAVs chamados
 pela ação como parte da mesma interação.
 
-Na execução com os dados House07 da instalação selecionada, a geladeira112
+Na execução com os dados House07 da instalação selecionada, a geladeira 112
 enfileirou `Have A Snack`, o avatar105 foi até (377,456), e a fila terminou com
 resultado `returned_true`, sem falha do host. O código Food4175 cria o objeto
 auxiliar GUID `0x7F907075` fora do lote e testa seus atributos. Breakpoints no
@@ -1655,10 +1679,10 @@ travessias sem bloqueador continuam passando. O teste usa a House03 como base,
 mas os dois Sims e a Main são fixtures sintéticas. Isso verifica a recusa local,
 não define o comportamento correto do jogo original. O Simitone TS1 fixado
 mostra que, após uma chegada ocupada, o `Snap` cria `GOTO` (GUID `0x7C4`), agenda
-a interação3 no avatar bloqueador e retorna falso. O BHAV4113 da House03
+a interação 3 no avatar bloqueador e retorna falso. O BHAV4113 da House03
 continua em PCs23/13 e Snaps sem Shoo nos PCs15/17 após alguns falsos; o teste
 atual para no primeiro pedido e não cobre essa continuação. Os dados TS1
-instalados confirmam `Destination.iff`, GUID `0x7C4`, interação3
+instalados confirmam `Destination.iff`, GUID `0x7C4`, interação 3
 ligada a BHAV4107 (“Move out of way”) e as rotinas4112/4114 para “Shooed Out” e
 “do I need to shoo?”. Próximo: mapear as condições dessas rotinas e os ramos do
 BHAV4113; depois conferir no executável original como a fila de interação é
@@ -2558,7 +2582,7 @@ armazenamento fixo padrão21.176 bytes exclui backends/capturas/allocator.
 Revisão corrigiu overflow de releases adiados por tokens aposentados; regressão
 `{1,1,1}` confirma cleanup. Registry deve sobreviver a todos os leases.
 
-Fonte final: controller154 checks, registry55, integração29; CTest Debug e
+Fonte final: controller154 checks, registry55, integração 29; CTest Debug e
 ASan/UBSan120 configurados,119 aprovados,1 skip X11,0 falhas (15,42/25,87 s),
 LSan desligado. Sem SDL/X11 três testes selecionados passaram. Auditoria PE
 independente conferiu25 recortes/4.070 bytes. Recibos em

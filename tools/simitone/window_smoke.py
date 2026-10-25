@@ -168,6 +168,10 @@ def main():
                         'Unhandled exception.' in line or '=== FATAL ERROR ===' in line for line in lines)
                     result['native_recoveries'] = [json.loads(line.split(': ', 1)[1])
                         for line in lines if line.startswith('Native object recovery: ')]
+                    result['native_person_recoveries'] = [json.loads(line.split(': ', 1)[1])
+                        for line in lines if line.startswith('Native person recovery: ')]
+                    result['avatar_samples'] = [json.loads(line.split(': ', 1)[1])
+                        for line in lines if line.startswith('TS1 avatar state: ')]
                     result['compatibility_summaries'] = [record for line in lines
                         if line.startswith('Saved code compatibility: ')
                         for record in [json.loads(line.split(': ', 1)[1])]
