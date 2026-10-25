@@ -52,6 +52,23 @@ UiRect household_selector_panel_rect(std::uint32_t width,std::uint32_t height) {
     return {6,6,std::max(0,bounded_width-12),88};
 }
 
+std::optional<std::string> household_selector_saved_name(std::int16_t runtime_id,
+    std::uint32_t guid,const std::vector<odh::SavedWorldEntity>& saved_records,
+    const odh::Objt& object_types) {
+    const odh::SavedWorldEntity* match=nullptr;
+    for(const auto& saved:saved_records) {
+        if(saved.saved.object_id!=runtime_id||saved.saved.guid!=guid||saved.serialized_object_type!=2)continue;
+        if(match)return std::nullopt;
+        match=&saved;
+    }
+    if(!match||match->saved.type_id==0||match->saved.type_id>object_types.entries.size())
+        return std::nullopt;
+    const auto& type=object_types.entries[static_cast<std::size_t>(match->saved.type_id)-1];
+    if(type.guid!=guid||!type.metadata||type.metadata->objd_type!=2||type.name.empty())
+        return std::nullopt;
+    return type.name;
+}
+
 bool household_selector_button_hit(std::uint32_t width,std::uint32_t height,
                                    std::int32_t x,std::int32_t y) {
     const auto rect=household_selector_button_rect(width,height);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/raster.hpp"
+#include "odh/saved_world.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -21,6 +22,11 @@ struct HouseholdSelectorResident {
     std::int16_t runtime_id=0;
     std::string label;
 };
+// Look up the saved object's OBJT name by its original ID and GUID. The
+// restored World owns these records after the loader moves its source vectors.
+std::optional<std::string> household_selector_saved_name(std::int16_t runtime_id,
+    std::uint32_t guid,const std::vector<odh::SavedWorldEntity>& saved_records,
+    const odh::Objt& object_types);
 std::optional<std::int16_t> household_selector_pick(const std::vector<HouseholdSelectorResident>& residents,
     std::uint32_t width,std::uint32_t height,std::int32_t x,std::int32_t y);
 

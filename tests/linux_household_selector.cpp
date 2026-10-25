@@ -11,6 +11,31 @@ void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message)
 
 int main(){try{
     constexpr std::uint32_t width=800,height=600;
+    odh::Objt object_types{};
+    object_types.entries.resize(2);
+    object_types.entries[0].guid=850010198;
+    object_types.entries[0].metadata=odh::ObjtMetadata{};
+    object_types.entries[0].metadata->objd_type=2;
+    object_types.entries[0].name="Bob";
+    object_types.entries[1].guid=844195932;
+    object_types.entries[1].metadata=odh::ObjtMetadata{};
+    object_types.entries[1].metadata->objd_type=2;
+    object_types.entries[1].name="Betty";
+    std::vector<odh::SavedWorldEntity> saved_records(2);
+    saved_records[0].saved.object_id=105;saved_records[0].saved.type_id=1;
+    saved_records[0].saved.guid=850010198;saved_records[0].serialized_object_type=2;
+    saved_records[1].saved.object_id=137;saved_records[1].saved.type_id=2;
+    saved_records[1].saved.guid=844195932;saved_records[1].serialized_object_type=2;
+    check(odh_host::household_selector_saved_name(105,850010198,saved_records,object_types)=="Bob",
+          "saved resident name follows the restored object ID and OBJT type");
+    check(odh_host::household_selector_saved_name(137,844195932,saved_records,object_types)=="Betty",
+          "second saved resident name follows its own OBJT type");
+    check(!odh_host::household_selector_saved_name(105,844195932,saved_records,object_types),
+          "resident ID and GUID must identify the same saved avatar");
+    auto duplicated_records=saved_records;duplicated_records.push_back(saved_records.front());
+    check(!odh_host::household_selector_saved_name(105,850010198,duplicated_records,object_types),
+          "ambiguous saved resident identity falls back instead of guessing");
+
     const std::vector<odh_host::HouseholdSelectorResident> residents{
         {48,"Ada"},{52,"Bea"},{67,"Sim 67"},{71,"Dee"},{89,"Eve"}};
     const auto button=odh_host::household_selector_button_rect(width,height);

@@ -2,27 +2,32 @@
 
 ## Atualização: nomes dos moradores no seletor (2026-10-25)
 
-O seletor usa o GUID do Sim para encontrar o prefixo salvo em OBJM, resolve seu
-tipo na tabela OBJT do lote e mostra o nome do objeto, convertido conforme o
-idioma selecionado. Esse é o campo que o Simitone usa para montar o nome do
-avatar (`VMTS1ActivatorNew` guarda `inst.OBJT.Name` no grupo, e
+O seletor usa o GUID do Sim para encontrar o objeto salvo, resolve seu tipo na
+tabela OBJT do lote e mostra o nome do objeto, convertido conforme o idioma
+selecionado. Esse é o campo que o Simitone usa para montar o nome do avatar
+(`VMTS1ActivatorNew` guarda `inst.OBJT.Name` no grupo, e
 `UISwitchAvatarPanel` exibe `fam.Name`). Uma checagem dos arquivos originais da
 House07 confirmou ObjID 105/GUID 850010198 como “Bob” e ObjID 137/GUID
 844195932 como “Betty”. A primeira fonte testada, `NBRS.Name`, contém
-`user00000`/`user00001` e é apenas o nome do arquivo; ela foi descartada. Se a
-entrada OBJT ou a conversão falhar, aparece o ID interno. O ID continua sendo
-a chave que troca o Sim ativo. O teste confirma que trocar o texto do cartão
-não muda o destino da seleção e que o desenho exibe o nome recebido.
+`user00000`/`user00001` e é apenas o nome do arquivo; ela foi descartada.
+
+A primeira tentativa de mostrar esses nomes falhava porque o carregador move os
+registros do lote para o mundo restaurado; o seletor consultava a lista antiga,
+já vazia, e mostrava os IDs. Agora ele busca pelo ID e GUID nos registros que o
+mundo restaurado conserva e só usa o ID quando a identidade é ausente ou
+ambígua. O ID continua sendo a chave que troca o Sim ativo.
 
 Build de `odh-person` e `odh-linux-household-selector-tests` passou. CTest dos
 casos `linux_household_selector`, `linux_motive_panel`, `linux_text_renderer`,
 `neighbor_context`, `saved_object_types`, `saved_object_prefixes` e
-`object_type` passou (7/7). Isso valida o vínculo e a renderização do rótulo em
-testes. A leitura da House07 confirmou os nomes por meio dos leitores do próprio
-ODH e converteu ambos para “Bob” e “Betty”. Ainda falta confirmar a
-captura da janela e criar retratos. Uma tentativa de abrir o preview em Xvfb
-ficou mais de 180 segundos preparando o lote sem mostrar uma janela; o processo
-foi encerrado e o Xvfb temporário terminou. A interface segue provisória.
+`object_type` passou (7/7). A janela integrada em Xvfb, 800×600, abriu o lote
+House07 com idioma 1. O registro da sessão confirmou que o botão abriu o
+seletor; a captura OCR identificou “Bob” e “Betty” nos cartões. A captura local,
+ignorada pelo Git, está em `reports/household-selector/selector-names-house07-confirmed.png`
+(SHA256 `564b6d858adc59f7d6ffd268a6faf4844fddceb1ae790708a61660b242285a68`).
+Os arquivos originais foram somente lidos; Xvfb e o jogo terminaram após o
+teste. Isso confirma os nomes nessa janela, não paridade visual completa. Ainda
+faltam criar retratos e substituir a interface provisória.
 
 ## Atualização: seletor de moradores no lote Linux (2026-10-24)
 
