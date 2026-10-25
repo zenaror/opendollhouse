@@ -1,5 +1,57 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Diálogo privado bloqueante e resposta do jogador (2026-10-25)
+
+`DialogPrivateStrings` agora lê o texto e o título do `STR#301` do recurso
+privado que contém o código chamado, aplica a referência `$Local:n` usada pelo
+jogo e pede os textos no idioma escolhido, com fallback para inglês. O botão
+OK também vem da `UIText.iff`. No Linux, a mensagem bloqueante aparece sobre a
+cena e pausa a execução até Enter ou clique no botão. Enquanto ela está aberta,
+o host não encaminha ações comuns do lote. Fechar a janela encerra a sessão;
+Escape não confirma a mensagem.
+
+O primeiro perfil cobre somente mensagens privadas do tipo `Message` que
+esperam resposta. Outras classes e flags de diálogo continuam sem suporte. Esta
+janela é uma primeira ponte de teste; a interface jogável ainda será reconstruída
+com os recursos e a organização visual do The Sims, usando Simitone como
+referência. Não é a interface final.
+
+A integração exercitou o texto inglês da Casa 7. As outras traduções não foram
+percorridas nesta etapa; a seleção usa a mesma busca de idioma/fallback do
+leitor de tabelas existente.
+
+O teste sintético `linux_vm_dialog` verifica o painel, o texto, a substituição
+de `$Local`, a rejeição de marcadores desconhecidos, a espera da VM, o retorno
+do ticket correto e os ramos verdadeiro/falso. A integração externa de House07
+verifica a mensagem inglesa real: sem resposta, a VM permanece em `waiting` no
+tick645; com um Enter de teste pela mesma entrada de janela, a BHAV8312 avança e
+o fluxo chega ao pedido de acordar a Main do telefone. Nesse ponto ainda falha
+de forma explícita, em 823 ticks, porque a Main do PhoneLine não está no
+Scheduler. A fila continua ativa; a Pizza não é entregue.
+
+O opcode15 (`BreakPoint`) foi tratado como Simitone: retorna pelo ramo verdadeiro
+sem efeito, conforme `VMBreakPoint.cs`. A segunda chamada à rotina do PhoneLine
+alcança opcode49 (`NotifyOutOfIdle`), que exige agendar e interromper a Main
+salva do objeto. O host ainda não faz isso, então não simula um agendamento.
+Além disso, a chamada parcial deixou escritas visíveis somente no World em
+memória; a execução da integração não grava esses valores nos arquivos
+comerciais. Os hashes dos cinco saves/personagens verificados ficaram iguais.
+
+Build `odh-person` e o alvo `odh-linux-vm-dialog-tests` passaram. CTest focado:
+`linux_vm_dialog`, `vm`, `entity_vm_scheduler`, `interaction_queue` e `person_cli`
+(5/5). A integração reproduzível é:
+
+```sh
+python3 tests/house07_phone_subroutine_integration.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '../referencias/The Sims'
+```
+
+Relatório local ignorado pelo Git:
+[`house07-phone-pizza-response.json`](../reports/phone-pizza-path/house07-phone-pizza-response.json).
+
+## Checkpoint anterior: pedido de Pizza parava antes do diálogo
+
 ## PhoneLine destino1: chamada parcial em House07 (2026-10-25)
 
 O host agora só permite a rota destination1 de `Global.iff STR#303` texto

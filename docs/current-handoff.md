@@ -1,5 +1,30 @@
 # Continuidade atual
 
+## Estado mais recente: diálogo privado e resposta (2026-10-25)
+
+O host desenha o primeiro diálogo privado bloqueante, lê STR#301 do código
+privado correto, expande `$Local:n` e espera Enter/clique no OK. Sem resposta,
+House07 permanece em `waiting` no BHAV8312/IP11; com uma resposta de teste, a
+VM continua. `BreakPoint` (15) segue o ramo true conforme Simitone. O trace
+alcança `NotifyOutOfIdle` (49), mas a Main do PhoneLine 207 ainda não integra o
+Scheduler; por isso a execução controlada para em tick823. A fila da Pizza
+continua ativa e nenhuma entrega foi comprovada. As chamadas parciais podem
+alterar o World em memória; os cinco arquivos comerciais preservaram seus
+hashes.
+
+Build do `odh-person` passou; CTest focado `linux_vm_dialog`, `vm`,
+`entity_vm_scheduler`, `interaction_queue` e `person_cli` passou (5/5). A
+integração House07 também passou com os dois casos: aguardar sem resposta e
+responder explicitamente. Evidência em
+[`interaction-validation.md`](interaction-validation.md) e no relatório local
+ignorado `reports/phone-pizza-path/house07-phone-pizza-response.json`.
+
+Próxima etapa: adicionar o fio Main salvo do objeto ao Scheduler e implementar
+NotifyOutOfIdle como interrupção agendada no próximo safe point, seguindo o
+comportamento Simitone. Validar os controllers de idle do PhoneLine antes de
+voltar a correr além de opcode49. A janela de mensagem é provisória; a interface
+final ainda deve recriar a organização visual e os recursos do The Sims.
+
 ## Progresso: primeira chamada salva do PhoneLine executada (2026-10-25)
 
 O teste headless de House07 agora executa a chamada de `RunTreeByName` destino1

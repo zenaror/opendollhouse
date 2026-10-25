@@ -2,9 +2,10 @@
 
 #include "odh/vm.hpp"
 
-// Structural closure check only. Opcode49 is recognized but the unscheduled
-// PhoneLine host must still reject it at dispatch; opcode15 is also unsupported.
-// The only child call permitted in update4097 is the read-only relation tree4098.
+// Structural closure check only. Opcode15 is a Simitone-compatible no-op;
+// opcode49 still needs a scheduled PhoneLine Main and is rejected until that
+// entity scheduler is installed. The only child call permitted in update4097
+// is the read-only relation tree4098.
 inline bool saved_phone_update_closure(const odh::Bhav& tree,std::uint16_t id) {
     if((id!=4097&&id!=4098)||tree.instructions.empty()||tree.instructions.size()>4096)return false;
     for(const auto& instruction:tree.instructions){

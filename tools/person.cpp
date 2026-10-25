@@ -94,6 +94,7 @@
 #include "linux_text_renderer.hpp"
 #include "linux_motive_panel.hpp"
 #include "linux_household_selector.hpp"
+#include "linux_vm_dialog.hpp"
 #endif
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
 #include "linux_session_log.hpp"
@@ -416,6 +417,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     bool headless_window_menu_script_complete=false;
     std::vector<std::vector<std::string>> headless_window_menu_path_history;
     std::optional<std::int16_t> headless_window_interaction;
+    bool headless_window_dialog_ok=false,headless_window_dialog_ok_sent=false;
+    std::optional<std::uint64_t> rendered_vm_dialog_ticket;
     std::optional<std::uint64_t> headless_window_stand_tick;
     struct HeadlessWindowGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     std::optional<HeadlessWindowGoHere> headless_window_go_here;
@@ -639,6 +642,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
             headless_window_interaction=static_cast<std::int16_t>(id);
         }
+        else if(option=="--headless-window-dialog-ok"&&!headless_window_dialog_ok)
+            headless_window_dialog_ok=true;
         else if((option=="--headless-window-menu-open"||option=="--headless-window-menu-select")&&n+1<argc){
             const auto index=selector(argv[++n]);
             if(index>31||headless_window_menu_steps.size()>=32)
@@ -789,6 +794,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
     if(!headless_window_menu_steps.empty()&&!headless_window_interaction)
         throw odh::FormatError("headless window menu steps require --headless-window-interaction");
+    if(headless_window_dialog_ok&&(!headless_main||!headless_window_interaction))
+        throw odh::FormatError("--headless-window-dialog-ok requires the headless window interaction probe");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
     if(headless_window_go_here&&(!headless_window_interaction||!headless_window_stand_tick||
@@ -1850,6 +1857,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     // Debug evidence only: the final world UI has not been integrated yet.
     std::vector<HeadlessHeadlineEvent> headless_headline_events;
+    struct PendingVmDialog {
+        odh::Vm* vm=nullptr;
+        std::uint64_t ticket=0;
+        odh::VmContext context;
+        std::uint16_t routine=0,pc=0;
+        std::string title,message,ok_label;
+    };
+    std::optional<PendingVmDialog> pending_vm_dialog;
+    std::size_t vm_dialog_response_count=0;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
     std::set<std::pair<odh::CodeOwner,std::uint16_t>> tree_name_local_string_attempted;
@@ -2395,11 +2411,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                routine->scope!=odh::RoutineScope::private_object||routine->id!=4097)
                 return {odh::PrimitiveDisposition::unsupported,
                     "RunTreeByName destination1 is restricted to the audited saved PhoneLine update"};
-            // The audited entry begins with PhoneLine attribute0 zero. The
-            // tree itself replaces argument0 with category1 before searching.
-            if(target->attributes.empty()||target->attributes[0]!=0)
+            // The first audited entry began with attribute0 zero, but later
+            // live calls may revisit the same PhoneLine after the saved tree
+            // has updated it. Execute the real routine instead of restricting
+            // future calls to that initial fixture state.
+            if(target->attributes.empty())
                 return {odh::PrimitiveDisposition::unsupported,
-                    "saved PhoneLine update requires initial attribute0 zero"};
+                    "saved PhoneLine update target has no attribute0"};
             if(saved_phone_calls.size()>=64)
                 return {odh::PrimitiveDisposition::unsupported,"saved PhoneLine subroutine call limit reached"};
             try{
@@ -2609,6 +2627,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(i.opcode==17)return queue_handler(f,i,t,d);
         if(i.opcode==28)return tree_by_name_handler(f,i,t,d);
         if(i.opcode==13)return push_interaction_handler(f,i,t,d);
+        if(i.opcode==15){
+            // Simitone's VMBreakPoint is a TODO/no-op that always takes the
+            // true branch. Preserve that TS1 control-flow behavior.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
         if(i.opcode==18){
             const auto target=i.operands[0]==0&&i.operands[1]==0?f.context.caller:f.context.stack_object;
             const auto flags=i.operands[2];
@@ -2639,6 +2662,62 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             // headless runner has no action-list UI to update; Simitone returns
             // true even when the requested string table is unavailable.
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
+        if(i.opcode==36){
+#ifndef ODH_HAVE_LINUX_TEXT_RENDERER
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                "blocking private dialogs require the Linux text renderer"};
+#else
+            // The first native dialog profile is the blocking Message kind.
+            // It uses the exact private code-owner resource, as Simitone does
+            // through VMStackFrame.ScopeResource.
+            if(!d.origin||!d.ticket||pending_vm_dialog)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "private message dialog requires a free global dialog slot and VM ticket"};
+            if(i.operands[5]!=0||(i.operands[7]&1)!=0)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "only blocking Message dialogs are supported by the Linux dialog window"};
+            const auto resource=code_owner_resource(f.context.code_owner);
+            if(!resource)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "private message dialog code-owner resource is unavailable"};
+            try{
+                const auto tables=load_strings(*resource,{301});
+                const auto table=tables.find(301);
+                if(table==tables.end()||table->second.state!=odh::StringTableState::decoded)
+                    throw odh::FormatError("private STR#301 is missing or undecoded");
+                const auto read_string=[&](std::uint8_t id,bool optional){
+                    if(optional&&id==0)return std::string{};
+                    const auto index=id==0?std::size_t{0}:static_cast<std::size_t>(id-1);
+                    const auto* entry=odh::string_in_language_or_english(table->second,game_language,index);
+                    if(!entry)throw odh::FormatError("private dialog string ID is outside STR#301");
+                    return odh_host::expand_vm_dialog_local_references(entry->value,f.locals);
+                };
+                std::string ok_label="OK";
+                if(globals&&!globals->archive.empty()){
+                    const auto ui_text=std::filesystem::path(globals->archive).parent_path().parent_path()/"UIText.iff";
+                    std::error_code error;
+                    if(std::filesystem::is_regular_file(ui_text,error)&&!error){
+                        const auto ui_tables=load_strings(Resource{ui_text.string(),"",true},{142});
+                        const auto ui_table=ui_tables.find(142);
+                        if(ui_table!=ui_tables.end()&&ui_table->second.state==odh::StringTableState::decoded)
+                            if(const auto* localized=odh::string_in_language_or_english(ui_table->second,game_language,0))
+                                ok_label=localized->value;
+                    }
+                }
+                pending_vm_dialog=PendingVmDialog{const_cast<odh::Vm*>(d.origin),d.ticket,f.context,
+                    f.key.id,f.pc,read_string(i.operands[6],true),read_string(i.operands[2],false),
+                    std::move(ok_label)};
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                session_log.event("VM private dialog opened caller="+std::to_string(f.context.caller)+
+                    " routine="+std::to_string(f.key.id)+" pc="+std::to_string(f.pc));
+#endif
+            }catch(const std::exception& error){
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    std::string("private message dialog resource could not be read: ")+error.what()};
+            }
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+#endif
         }
         if(i.opcode==41){
             // Simitone maps opcode 41 to SetBalloonHeadline. This probe accepts
@@ -5131,6 +5210,18 @@ struct PlacementCandidateProbe {
                     odh_host::draw_household_selector(frame.image,residents,active_household_actor,game_language);
                 }
             }
+            if(pending_vm_dialog){
+                auto title=pending_vm_dialog->title;
+                auto message=pending_vm_dialog->message;
+                auto ok_label=pending_vm_dialog->ok_label;
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+                title=odh_host::legacy_text_to_utf8(title,game_language,4096);
+                message=odh_host::legacy_text_to_utf8(message,game_language,4096);
+                ok_label=odh_host::legacy_text_to_utf8(ok_label,game_language,256);
+#endif
+                odh_host::draw_vm_message_dialog(frame.image,title,message,ok_label,game_language);
+                rendered_vm_dialog_ticket=pending_vm_dialog->ticket;
+            }
 #endif
             render_window_host->present(frame.image);
         }
@@ -5564,6 +5655,53 @@ struct PlacementCandidateProbe {
             else if(headless_window_input_index<headless_window_inputs.size())
                 input=headless_window_inputs[headless_window_input_index++];
             else if(headless_window_interaction&&!render_evidence)input.redraw=true;
+            if(pending_vm_dialog){
+                if(headless_window_dialog_ok&&!headless_window_dialog_ok_sent){
+                    input.confirm=true;
+                    headless_window_dialog_ok_sent=true;
+                }
+                if(input.quit&&input.quit_reason==odh_host::WindowQuitReason::escape_key){
+                    if(render_window_host)render_window_host->clear_escape_quit_reason();
+                    input.quit=false;
+                    input.quit_reason=odh_host::WindowQuitReason::none;
+                }
+                const bool clicked_ok=input.primary_click&&rendered_vm_dialog_ticket==pending_vm_dialog->ticket&&
+                    odh_host::vm_message_dialog_ok_hit(
+                        odh_host::vm_message_dialog_layout(render_camera.width,
+                            render_camera.height).value_or(odh_host::VmMessageDialogLayout{}),
+                        (*input.primary_click)[0],(*input.primary_click)[1]);
+                if(input.quit){
+                    window_closed=true;
+                    break;
+                }
+                if(input.confirm||clicked_ok){
+                    if(!pending_vm_dialog->vm||!pending_vm_dialog->vm->complete(pending_vm_dialog->ticket,true)){
+                        host_failed=true;
+                        host_diagnostic="private message response no longer matches its waiting VM instruction";
+                        break;
+                    }
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                    session_log.event(std::string("VM private dialog answered method=")+
+                        (headless_window_dialog_ok?"scripted_confirm":input.confirm?"keyboard_confirm":"mouse_ok")+
+                        " caller="+std::to_string(pending_vm_dialog->context.caller)+
+                        " routine="+std::to_string(pending_vm_dialog->routine)+
+                        " pc="+std::to_string(pending_vm_dialog->pc));
+#endif
+                    ++vm_dialog_response_count;
+                    pending_vm_dialog.reset();
+                    rendered_vm_dialog_ticket.reset();
+                    continue;
+                }
+                if(render_window_host){
+                    if(rendered_vm_dialog_ticket!=pending_vm_dialog->ticket)capture_frame();
+                    window_deadline=std::chrono::steady_clock::now();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                // A headless probe records the genuine waiting state and exits;
+                // only an explicit scripted OK response can resume the VM.
+                break;
+            }
             if(headless_window_stand_tick&&!headless_window_stand_input_sent&&render_selection&&!input.primary_click&&
                ticks>=*headless_window_stand_tick){
                 input.stand=true;headless_window_stand_input_sent=true;
@@ -6831,7 +6969,7 @@ struct PlacementCandidateProbe {
             <<",\"opcode\":"<<t.instruction.opcode<<",\"true\":"<<static_cast<unsigned>(t.instruction.on_true)<<",\"false\":"<<static_cast<unsigned>(t.instruction.on_false)<<",\"operands\":[";
         for(std::size_t j=0;j<8;++j){if(j)std::cout<<',';std::cout<<static_cast<unsigned>(t.instruction.operands[j]);}std::cout<<"]}";
     }
-    std::cout<<"],\"saved_phone_subroutines\":{\"profile\":\"saved_PhoneLine_update_initial_attribute0_zero\""
+    std::cout<<"],\"saved_phone_subroutines\":{\"profile\":\"saved_PhoneLine_exact_private_routine\""
         <<",\"main_scheduled\":false,\"instruction_budget_per_call\":4096,\"call_limit\":64"
         <<",\"maximum_subroutine_steps\":262144,\"private_code_closure\":[4097,4098],\"target_id\":";
     if(saved_phone_thread)std::cout<<saved_phone_id;else std::cout<<"null";
@@ -6895,7 +7033,16 @@ struct PlacementCandidateProbe {
             <<",\"duration\":"<<event.duration<<",\"type\":"<<unsigned(event.type)
             <<",\"flags\":"<<unsigned(event.flags)<<'}';
     }
-    std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
+    std::cout<<"],\"blocking_dialog\":";
+    if(pending_vm_dialog){
+        std::cout<<"{\"ticket\":"<<pending_vm_dialog->ticket<<",\"routine\":"<<pending_vm_dialog->routine
+            <<",\"pc\":"<<pending_vm_dialog->pc<<",\"caller\":"<<pending_vm_dialog->context.caller
+            <<",\"title\":"<<json_bytes(pending_vm_dialog->title)
+            <<",\"message\":"<<json_bytes(pending_vm_dialog->message)<<'}';
+    }else std::cout<<"null";
+    std::cout<<",\"blocking_dialog_responses\":"<<vm_dialog_response_count
+        <<",\"headless_dialog_ok_sent\":"<<(headless_window_dialog_ok_sent?"true":"false")
+        <<",\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"create_object_instance\":{\"pending_requests\":"<<pending_create_objects.size()
         <<",\"last_diagnostic\":"<<json_bytes(last_create_object_diagnostic)<<",\"runtime_objects\":[";

@@ -7,11 +7,11 @@ validação indicados por versão.
 
 ### Adicionado
 
-- O probe headless de House07 agora registra o pedido de balão do avatar e
-  avança até a mensagem de confirmação da Pizza em BHAV8312. Ele para porque a
-  mensagem espera uma resposta que a janela final ainda não fornece. Não entrega
-  a Pizza nem representa gameplay completo; a Main do telefone permanece
-  dormente e opcode49 continua bloqueado sem Scheduler. Veja
+- Mensagens privadas bloqueantes agora mostram título, texto localizado e botão
+  OK, pausam a VM e retomam pelo ramo do BHAV quando o jogador responde. A
+  integração House07 confirma que a rotina avança além do diálogo e alcança
+  `NotifyOutOfIdle`; o fluxo ainda para porque a Main do PhoneLine não está no
+  Scheduler. A Pizza não é entregue e esta janela não é a interface final. Veja
   [`interaction-validation.md`](docs/interaction-validation.md).
 
 - A leitura de fios salvos agora pode incluir a Main de um objeto, limitada por
