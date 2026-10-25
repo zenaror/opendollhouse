@@ -1,5 +1,30 @@
 # Continuidade atual
 
+## Atualização: permissões TS1 e busca de item nos testes das ações (2026-10-25)
+
+O avaliador isolado das ações agora considera as permissões de idade do TTAB:
+`TS1NoChild` bloqueia crianças e `TS1NoAdult` bloqueia adultos. O bit
+`TS1NoDemoChild` é preservado sem filtro, como na checagem TS1 consultada no
+Simitone para o jogo completo. A busca `FindToken` (opcode51, modo3) pode ler o
+inventário da vizinhança já carregado: inventário conhecido e vazio retorna
+falso; sem inventário disponível, o teste permanece `unsupported`. A rotina é
+somente de leitura.
+
+O teste sintético cobre ator adulto/criança e inventário ausente, vazio e com
+token correspondente. Build de `odh-saved-interactions-tests` e `odh-person`
+passou; CTest focal passou 4/4 e `git diff --check` passou. A tentativa visual
+de novo probe da geladeira House07 terminou com código 3 durante a espera do
+Main; portanto não confirmou se a ação categorizada ficou visível nem se o
+teste de inventário real passou. A captura criada ficou em
+`reports/pie-menu-window/house07-fridge-inventory-probe.ppm` como evidência
+local ainda não interpretada. Os seis arquivos temporários aprovados para
+limpeza já estavam ausentes; nenhum arquivo foi removido nesta retomada.
+
+Próximo: extrair o diagnóstico do probe salvo sem substituir a captura,
+identificar qual token (se algum) habilita a linha categorizada da geladeira,
+e então validar menu/submenu com uma ação realmente elegível. Não alegar
+paridade da UI original a partir do menu provisório.
+
 ## Atualização: primeira composição com arte original local (2026-10-24)
 
 A janela interativa agora recebe `UIGraphics.far` do diretório do jogo e lê

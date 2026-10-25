@@ -28,6 +28,9 @@ std::string call_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(b,1,2);
 std::string write_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(0);b.push_back(0);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(5);b.push_back(3);b.push_back(7);return b;}
+std::string inventory_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+    put(b,51,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    b.push_back(3);b.push_back(7);b.push_back(0);b.push_back(0);put(b,guid,4);return b;}
 void write(const std::filesystem::path& path,const std::string& bytes){std::ofstream f(path,std::ios::binary);f.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));if(!f)throw std::runtime_error("fixture write failed");}
 }
 int main(){try{
@@ -126,6 +129,23 @@ int main(){try{
     auto visitor_allowed=no_labels;visitor_allowed.table->interactions[0].flags=1;
     check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
         "AllowVisitors flag accepts resident adult");
+    auto age_restricted=no_labels;age_restricted.table->interactions[0].flags=0x31;
+    check(first_eligible_saved_interaction(age_restricted,eligible_row,actor)==0,
+        "adult may use an action flagged AllowVisitors, NoChild, and NoDemoChild");
+    age_restricted.table->interactions[0].flags=0x10;
+    check(actor_world.set_person_data(1,58,17),"child permission age initialized");
+    check(!first_eligible_saved_interaction(age_restricted,eligible_row,actor),
+        "NoChild excludes a saved child from a manual interaction");
+    age_restricted.table->interactions[0].flags=0x40;
+    check(first_eligible_saved_interaction(age_restricted,eligible_row,actor)==0,
+        "NoAdult does not exclude a saved child");
+    age_restricted.table->interactions[0].flags=0x20;
+    check(first_eligible_saved_interaction(age_restricted,eligible_row,actor)==0,
+        "NoDemoChild is ignored in the full-game TS1 permission profile");
+    check(actor_world.set_person_data(1,58,27),"resident adult age restored");
+    age_restricted.table->interactions[0].flags=0x40;
+    check(!first_eligible_saved_interaction(age_restricted,eligible_row,actor),
+        "NoAdult excludes a saved adult from a manual interaction");
     check(actor_world.set_person_data(1,32,1)&&actor_world.set_person_data(1,34,1),"active visitor profile initialized");
     check(!first_eligible_saved_interaction(no_labels,eligible_row,actor),
         "visitor with greet status below two is rejected when AllowVisitors is clear");
@@ -177,7 +197,8 @@ int main(){try{
     catch(const odh::FormatError&){closure_limit=true;}
     check(closure_limit,"private action closure routine budget is enforced");
     data=iff(chunk("BHAV",4098,test_bhav()));write(path,data);
-    odh::World world;check(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object,{0,0,1}),"probe world entities created");
+    odh::World world;check(world.create(1,odh::EntityKind::avatar,{0,66,0,0})&&
+        world.create(2,odh::EntityKind::object,{0,0,1}),"probe world entities created");
     check(world.define_type(2,123,456),"target identity bound");
     auto blocked=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(blocked.size()==1&&blocked[0].state==SavedTestFunctionResult::State::ineligible&&blocked[0].steps==1,"isolated read-only TestFunction false result");
@@ -203,5 +224,22 @@ int main(){try{
     const auto type_probe=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(type_probe.size()==1&&type_probe[0].state==SavedTestFunctionResult::State::eligible,
         "read-only TestFunction recognizes an object's explicitly bound master type");
+    constexpr std::uint32_t token_guid=0x12345678;
+    data=iff(chunk("BHAV",4098,inventory_test_bhav(token_guid)));write(path,data);
+    check(world.set_person_data(1,31,7),"inventory probe actor neighbor id initialized");
+    const auto inventory_missing=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
+    check(inventory_missing[0].state==SavedTestFunctionResult::State::unsupported,
+        "inventory TestFunction remains unsupported when the neighborhood inventory is unavailable");
+    odh::Ngbh empty_inventory{};empty_inventory.inventory_present=true;
+    const auto inventory_empty=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,&empty_inventory);
+    check(inventory_empty[0].state==SavedTestFunctionResult::State::ineligible,
+        "known-empty neighborhood inventory makes FindToken return false");
+    odh::Ngbh matching_inventory{};matching_inventory.inventory_present=true;
+    matching_inventory.inventory_by_id[7].push_back({7,token_guid,1});
+    const auto inventory_match=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,&matching_inventory);
+    check(inventory_match[0].state==SavedTestFunctionResult::State::eligible,
+        "read-only TestFunction sees a matching saved-neighborhood inventory token");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

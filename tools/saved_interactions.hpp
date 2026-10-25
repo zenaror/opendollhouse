@@ -2,6 +2,7 @@
 #include "odh/animation.hpp"
 #include "odh/definition_index.hpp"
 #include "odh/entity_next.hpp"
+#include "odh/inventory_find.hpp"
 #include "odh/object_type.hpp"
 #include "odh/relationship.hpp"
 #include "odh/world.hpp"
@@ -191,25 +192,32 @@ struct SavedTestFunctionResult {
     std::string diagnostic;
 };
 
-// Current manual host action profile supports ordinary private actions, the
-// TS1 AllowVisitors permission, AutoFirstSelect's menu-default hint, and a
-// matching successful ODH TestFunction. Other TTAB permission bits remain
-// unsupported.
+// Current manual host action profile supports ordinary private/linked
+// semiglobal actions, the TS1 visitor and age restrictions, AutoFirstSelect's
+// menu-default hint, and a matching successful ODH TestFunction. Other TTAB
+// permission bits remain unsupported.
 inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
     const odh::Entity* actor,const odh::RoutineSet* linked_semiglobal=nullptr) {
     std::vector<std::size_t> result;
     if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return result;
     // Simitone CheckTS1Action reads these saved person-data fields directly:
-    // PersonType, GreetStatus, and Gender (pet bits). Missing state is unknown.
+    // PersonType, GreetStatus, PersonsAge, and Gender (pet bits). Missing state
+    // is unknown.
     if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=65)return result;
     constexpr std::uint32_t allow_visitors=0x00000001U;
+    constexpr std::uint32_t no_child=0x00000010U;
+    constexpr std::uint32_t no_demo_child=0x00000020U;
+    constexpr std::uint32_t no_adult=0x00000040U;
     constexpr std::uint32_t auto_first_select=0x00000100U;
-    constexpr std::int16_t person_type=32,greet_status=34,gender=65;
+    constexpr std::uint32_t supported_flags=allow_visitors|no_child|no_demo_child|
+        no_adult|auto_first_select;
+    constexpr std::int16_t person_type=32,greet_status=34,age=58,gender=65;
     const auto is_visitor=actor->person_data[person_type]==1&&actor->person_data[greet_status]<2;
     const auto gender_flags=static_cast<std::uint16_t>(actor->person_data[gender]);
     const auto is_pet=(gender_flags&(8U|16U))!=0;
     if(is_pet)return result; // Pet-specific interactions are outside this profile.
+    const auto is_child=actor->person_data[age]<18;
     const auto count=std::min<std::size_t>({interactions.table->interactions.size(),tests.size(),32});
     for(std::size_t n=0;n<count;++n){
         const auto& row=interactions.table->interactions[n];
@@ -217,8 +225,10 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
         const bool action_owner_supported=action_key.scope==odh::RoutineScope::private_object||
             (action_key.scope==odh::RoutineScope::semiglobal&&linked_semiglobal&&
              linked_semiglobal->count(action_key));
-        if((row.flags&~(allow_visitors|auto_first_select))!=0||
+        if((row.flags&~supported_flags)!=0||
            (is_visitor&&(row.flags&allow_visitors)==0)||
+           (is_child&&(row.flags&no_child)!=0)||
+           (!is_child&&(row.flags&no_adult)!=0)||
            tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
            !action_owner_supported)continue;
         result.push_back(n);
@@ -256,7 +266,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const std::vector<std::int16_t>& arguments={0},
     const odh::RoutineSet* linked_semiglobal=nullptr,
     const std::vector<std::vector<std::int16_t>>& multitile_groups={},
-    const odh::RelationshipState* relationship_state=nullptr) {
+    const odh::RelationshipState* relationship_state=nullptr,
+    const odh::Ngbh* neighborhood_inventory=nullptr) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -295,10 +306,14 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     auto relationship=relationship_probe?relationship_probe->primitive(world,memory):odh::VmPrimitive{};
     auto entity_next=odh::entity_next_primitive(world,memory,{},multitile_groups);
     auto object_type=odh::object_type_primitive(world);
+    auto inventory_find=neighborhood_inventory
+        ?odh::inventory_find_primitive(*neighborhood_inventory,world):odh::VmPrimitive{};
     odh::VmPrimitive primitive=[entity_next=std::move(entity_next),object_type=std::move(object_type),
-        relationship=std::move(relationship)](
+        relationship=std::move(relationship),inventory_find=std::move(inventory_find)](
         const odh::VmFrame& frame,const odh::Instruction& instruction,const auto& temps,const auto& dispatch) {
         if(instruction.opcode==32)return object_type(frame,instruction,temps,dispatch);
+        if(instruction.opcode==51&&inventory_find)
+            return inventory_find(frame,instruction,temps,dispatch);
         if(instruction.opcode==24||instruction.opcode==26){
             const auto& operands=instruction.operands;
             const auto set_mode=instruction.opcode==24?operands[0]:

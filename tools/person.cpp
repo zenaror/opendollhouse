@@ -3057,7 +3057,7 @@ struct PlacementCandidateProbe {
         if(restored_world){groups.reserve(restored_world->multitile_groups.size());
             for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
         return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
-            linked_semiglobal,groups,relationships);
+            linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);

@@ -218,15 +218,28 @@ original nem uma interação de cama funcional.
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
 No preview de lote salvo, Tab/Shift+Tab percorre as linhas elegíveis com perfil
-de flags suportado e ActionFunction privado; Space/Return solicita a linha
-indicada no título. A elegibilidade é reavaliada ao percorrer e imediatamente
-antes de enfileirar. Flags zero são aceitas; `AllowVisitors` (bit `0x1`) é
-aceito depois de conferir o perfil do ator. Um visitor actor
-(`PersonType==1 && GreetStatus<2`) requer esse bit.
+de flags suportado e ActionFunction privado ou semiglobal explicitamente ligado;
+Space/Return solicita a linha indicada no título. A elegibilidade é reavaliada
+ao percorrer e imediatamente antes de enfileirar. Flags zero são aceitas.
+`AllowVisitors` (`0x1`), `TS1NoChild` (`0x10`) e `TS1NoAdult` (`0x40`) são
+comparados ao perfil salvo do ator. `TS1NoDemoChild` (`0x20`) não tem estado
+correspondente no teste TS1 do Simitone para o jogo completo, então é aceito
+sem alterar a elegibilidade. `AutoFirstSelect` (`0x100`) é apenas uma dica de
+seleção inicial do menu. Um visitor actor
+(`PersonType==1 && GreetStatus<2`) requer o bit `AllowVisitors`.
 Se a linha selecionada deixou de ser elegível quando a lista é recalculada,
 Tab/Shift+Tab seleciona a primeira linha ainda elegível; o envio também revalida
 a linha selecionada antes de enfileirar.
 Pets, perfil de ator ausente e bits desconhecidos continuam fora do perfil.
+O perfil salvo também lê `PersonsAge` (offset 58): `TS1NoChild` (`0x10`) exclui
+crianças e `TS1NoAdult` (`0x40`) exclui adultos. Para o jogo completo, o bit
+`TS1NoDemoChild` (`0x20`) é aceito sem filtro, pois a checagem TS1 consultada no
+Simitone não tem um estado separado para criança de demonstração.
+O opcode 51 (`FindToken`) agora pode consultar, em modo somente leitura, o
+inventário da vizinhança que foi realmente carregado. Inventário conhecido e
+vazio faz o teste retornar falso; inventário não carregado continua
+`unsupported`; um token correspondente pode tornar o teste elegível. Nenhuma
+rotina de adicionar ou remover itens é habilitada por esse caminho.
 O recurso exato
 `source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner
 de alta faixa, instalado na VM Main já viva. A fila valida novamente actor,
