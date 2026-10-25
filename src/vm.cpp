@@ -598,10 +598,12 @@ VmSubroutineResult Vm::run_subroutine_in_temporary_stack(
     RoutineKey key, VmContext context, const std::vector<std::int16_t>& arguments,
     std::uint64_t instruction_budget, const std::function<void(const VmTrace&)>& trace) {
     VmSubroutineResult result;
+    const bool suspended_sleep = status_ == VmStatus::waiting && pending_ &&
+        pending_->instruction.instruction.opcode == 0;
     const bool live_main = !stack_.empty() &&
         (status_ == VmStatus::dormant || status_ == VmStatus::running ||
-         status_ == VmStatus::budget_exhausted);
-    if (executing_ || !live_main || pending_ || !suspended_pending_.empty() ||
+         status_ == VmStatus::budget_exhausted || suspended_sleep);
+    if (executing_ || !live_main || (pending_ && !suspended_sleep) || !suspended_pending_.empty() ||
         interaction_return_ || external_frame_return_) {
         result.status = status_;
         result.diagnostic = "temporary subroutine requires a live Main at a safe point";
@@ -614,6 +616,7 @@ VmSubroutineResult Vm::run_subroutine_in_temporary_stack(
     auto main = snapshot();
     stack_.clear();
     status_ = VmStatus::running;
+    pending_.reset();
     diagnostic_.clear();
     steps_ = 0;
     try {

@@ -33,7 +33,7 @@ def main():
         "--object-definition-file", str(protected[3]), "--object-definition-file", str(protected[4]),
         "--animation-source", str(game / "GameData/Animation/Animation.far"),
         "--animation-source", str(game / "ExpansionShared/ExpansionShared.far"),
-        "--headless-main", "--render-saved-avatar", "105", "--ticks", "1200",
+        "--headless-main", "--render-saved-avatar", "105", "--ticks", "2300",
         "--instruction-budget", "1000000", "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
         "--headless-window-interaction", "136", "--headless-window-menu-open", "0",
@@ -73,20 +73,27 @@ def main():
     if not calls:
         raise RuntimeError("expected a saved PhoneLine update call")
     call = calls[0]
-    if (phone["target_id"] != 207 or phone["main_status"] != "dormant" or phone["main_steps"] != 0 or
-            phone["main_scheduled"] or call["status"] != "returned_true" or call["steps"] != 23 or
+    if (phone["target_id"] != 207 or phone["main_status"] != "waiting" or phone["main_steps"] < 1 or
+            not phone["main_scheduled"] or call["status"] != "returned_true" or call["steps"] != 23 or
             call["arguments"] != [2, 0, 0, 0] or call["caller"] != 207 or call["callee"] != 207 or
             call["stack_object"] != 207 or call["owner"] != 2933422533 or
             [(frame["routine"], frame["pc"]) for frame in phone["main_frames"]] != [(4096, 0), (280, 0)]):
-        raise RuntimeError("saved PhoneLine context, result or dormant Main differs from the audited fixture")
+        raise RuntimeError("saved PhoneLine context, result or scheduled Main differs from the audited fixture: " +
+            json.dumps({"main": {key: phone.get(key) for key in
+                ("target_id", "main_scheduled", "main_status", "main_steps", "main_frames")},
+                "diagnostic": phone.get("main_diagnostic"),
+                "trace": [event for event in report["trace"] if event["phase"] == "saved_phone_main"]}, indent=2))
+    if not any(read["owner"] == 2933422533 and read["scope"] == "private" and
+               read["table"] == 4096 and read["index"] == 2
+               for read in report["tuning_reads"]):
+        raise RuntimeError("saved PhoneLine Main did not read its exact private BCON table 4096 key 2")
     if (call["temps_before"][0] != 0 or call["temps_after"][0] != 1 or
             sum(event["routine"] == 4098 and event["pc"] == 0 for event in call["trace"]) != 2 or
             any(event["opcode"] == 49 for event in call["trace"])):
         raise RuntimeError("PhoneLine dependency/Temp/Notify trace differs")
-    if (len(calls) != 2 or calls[1]["status"] != "fault" or calls[1]["steps"] != 22 or
-            "NotifyOutOfIdle requires a scheduled Main" not in calls[1]["diagnostic"] or
-            not calls[1]["trace"] or calls[1]["trace"][-1]["opcode"] != 49):
-        raise RuntimeError("resumed phone flow did not stop at the audited NotifyOutOfIdle scheduler boundary")
+    if (len(calls) != 2 or calls[1]["status"] != "returned_true" or calls[1]["steps"] != 23 or
+            not any(event["opcode"] == 49 for event in calls[1]["trace"])):
+        raise RuntimeError("resumed phone flow did not complete NotifyOutOfIdle against its scheduled Main")
     writes = phone["memory_writes"]
     if not writes or any(writes[0][key] != value for key, value in {
             "attribute_entity_id": 207, "scope": 0, "index": 0,
@@ -121,18 +128,19 @@ def main():
         raise RuntimeError("House07 private message did not remain open while the VM waited")
     resumed_past_dialog = any(event["routine"] == 8312 and event["step"] > dialog["step"]
                               for event in report["trace"])
-    if (response_result.returncode != 3 or report["status"] != "fault" or report["ticks"] != 823 or
-            not report["host_failed"] or "NotifyOutOfIdle requires a scheduled Main" not in report["host_diagnostic"] or
+    if (response_result.returncode != 3 or report["status"] != "waiting" or report["ticks"] != 2300 or
+            report["host_failed"] or report["queue_active"] or report["queue_size"] != 0 or
             report["blocking_dialog_responses"] != 1 or not report["headless_dialog_ok_sent"] or
-            not resumed_past_dialog or not report["queue_active"] or report["queue_size"] != 1):
-        raise RuntimeError("explicit dialog response did not resume the House07 phone action: " +
+            not resumed_past_dialog):
+        raise RuntimeError("explicit dialog response did not finish the House07 phone action before the tick cap: " +
             json.dumps({"exit": response_result.returncode, "status": report["status"],
                 "ticks": report["ticks"], "host_failed": report["host_failed"],
                 "host_diagnostic": report["host_diagnostic"],
                 "dialog_responses": report["blocking_dialog_responses"],
                 "ok_sent": report["headless_dialog_ok_sent"],
                 "resumed_past_dialog": resumed_past_dialog,
-                "queue_active": report["queue_active"], "queue_size": report["queue_size"]}))
+                "queue_active": report["queue_active"], "queue_size": report["queue_size"],
+                "completion": report.get("completion")}))
     print(json.dumps({"evidence": "House07_saved_PhoneLine_private_message_wait_and_response",
         "full_gameplay": False,
         "waiting_process_exit": waiting_result.returncode, "response_process_exit": response_result.returncode,
@@ -143,11 +151,20 @@ def main():
         "after_response": {"status": report["status"], "ticks": report["ticks"],
             "host_failed": report["host_failed"], "host_diagnostic": report["host_diagnostic"],
             "dialog_responses": report["blocking_dialog_responses"], "next_dialog": report["blocking_dialog"]},
+        "phone_main": {"scheduled": phone["main_scheduled"], "status": phone["main_status"],
+            "steps": phone["main_steps"], "sleep_active": phone["main_sleep_active"],
+            "trace": [event for event in report["trace"] if event["phase"] == "saved_phone_main"]},
+        "interaction": {"queue_active": report["queue_active"], "queue_size": report["queue_size"],
+            "completion": report.get("completion")},
         "saved_phone_update": {"target_id": phone["target_id"], "main_status": phone["main_status"],
             "calls": [{"status": call["status"], "steps": call["steps"], "arguments": call["arguments"],
                 "owner": call["owner"], "caller": call["caller"], "callee": call["callee"],
-                "diagnostic": call["diagnostic"], "trace": call["trace"]}
+                "diagnostic": call["diagnostic"],
+                "opcode49_events": [event for event in call["trace"] if event["opcode"] == 49],
+                "relation_checks": [event for event in call["trace"]
+                    if event["routine"] == 4098 and event["pc"] == 0]}
                 for call in calls],
+            "interrupts": phone["interrupts"], "idle_notifications": phone["idle_notifications"],
             "memory_writes": phone["memory_writes"]}, "phone_relationship_reads": relations,
         "headless_headline_events": headline, "private_message_request": dialog,
         "phone_dialog_routine_trace": [event for event in report["trace"]

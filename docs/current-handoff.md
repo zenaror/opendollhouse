@@ -1,31 +1,37 @@
 # Continuidade atual
 
-## Estado mais recente: diálogo privado e resposta (2026-10-25)
+## Estado mais recente: Main do telefone e notificação (2026-10-25)
 
 O host desenha o primeiro diálogo privado bloqueante, lê STR#301 do código
 privado correto, expande `$Local:n` e espera Enter/clique no OK. Sem resposta,
 House07 permanece em `waiting` no BHAV8312/IP11; com uma resposta de teste, a
 VM continua. `BreakPoint` (15) segue o ramo true conforme Simitone. O trace
-alcança `NotifyOutOfIdle` (49), mas a Main do PhoneLine 207 ainda não integra o
-Scheduler; por isso a execução controlada para em tick823. A fila da Pizza
-continua ativa e nenhuma entrega foi comprovada. As chamadas parciais podem
-alterar o World em memória; os cinco arquivos comerciais preservaram seus
-hashes.
+alcança `NotifyOutOfIdle` (49). A Main salva do PhoneLine 207 agora é restaurada
+e registrada no Scheduler, usando o mesmo relógio do lote. Ela passa por
+`Sleep`, executa 22 instruções da cadeia Main 4096 → 4100, lê o BCON privado
+4096/key 2 do recurso exato `PhoneLine.iff` e volta a dormir. A segunda chamada
+de atualização emite opcode49 para o objeto 136, mas o Scheduler informa
+`no_thread`: o fio salvo desse objeto ainda não tem uma rotina carregável
+confirmada. Logo, não houve interrupção comprovada do objeto 136 nem entrega da
+Pizza. Depois da resposta explícita, a fila fica inativa sem falha do host, mas
+isso por si só não prova o efeito final. Os cinco arquivos comerciais
+preservaram seus hashes.
 
-Build do `odh-person` passou; CTest focado `linux_vm_dialog`, `vm`,
-`entity_vm_scheduler`, `interaction_queue` e `person_cli` passou (5/5). A
-integração House07 também passou com os dois casos: aguardar sem resposta e
-responder explicitamente. Evidência em
+Build do `odh-person` passou; CTest focado `vm`, `entity_vm_scheduler`,
+`interaction_queue` e `person_cli` passou (4/4). A integração House07 também
+passou com os dois casos: aguardar sem resposta e responder explicitamente; o
+teste verifica a leitura privada BCON pelo dono exato. Evidência em
 [`interaction-validation.md`](interaction-validation.md) e no relatório local
-ignorado `reports/phone-pizza-path/house07-phone-pizza-response.json`.
+ignorado `reports/phone-pizza-path/house07-phone-pizza-response.json`. Build e
+integração foram headless; nenhuma tela virtual ficou aberta.
 
-Próxima etapa: reconstruir e ativar a Main salva do PhoneLine 207 no Scheduler,
-com o mesmo relógio e os recursos privados exatos, antes de voltar a correr o
-pedido até opcode49. O scheduler agora entrega a interrupção ao controller
-depois que a VM emissora termina sua execução daquele ciclo, para evitar reentrar
-na própria VM. Ainda falta provar esse caminho com a Main real do objeto; a Pizza
-continua sem entrega comprovada. A janela de mensagem é provisória; a interface
-final ainda deve recriar a organização visual e os recursos do The Sims.
+Próxima etapa: identificar o recurso exato e a rotina executável do objeto 136,
+cuja pilha salva menciona BHAV 4096/4113 mas ainda não foi associada a código
+carregável. Não conectar rotinas de outro arquivo por coincidência de número.
+Depois, repetir a chamada até que `NotifyOutOfIdle` encontre um fio real e seguir
+o fluxo até observar um resultado verificável; a Pizza continua sem entrega
+comprovada. A janela de mensagem é provisória; a interface final deve usar os
+recursos e a organização visual do The Sims, com Simitone como referência.
 
 ## Ponto seguro do NotifyOutOfIdle no scheduler (2026-10-25)
 

@@ -18,6 +18,34 @@ inline bool saved_phone_update_closure(const odh::Bhav& tree,std::uint16_t id) {
     return true;
 }
 
+// Bounded static admission for the PhoneLine 207 Main path exercised by the
+// House07 probe. This is intentionally narrower than a general object BHAV
+// loader: every child routine is supplied separately from the exact audited
+// PhoneLine/Global resources, and only the opcodes used by this saved path are
+// admitted here.
+inline bool saved_phone_main_closure(const odh::Bhav& tree,std::uint16_t id) {
+    if((id!=280&&id!=320&&id!=4096&&id!=4100&&id!=4104&&id!=4106)||
+       tree.instructions.empty()||tree.instructions.size()>4096)return false;
+    for(const auto& instruction:tree.instructions){
+        const auto opcode=instruction.opcode;
+        if(opcode==2)continue;
+        if(id==280&&opcode==0)continue;
+        if(id==4096&&(opcode==280||opcode==4100||opcode==4106||opcode==320))continue;
+        if(id==4100&&opcode==8)continue;
+        if(id==4106&&(opcode==4097||opcode==280||opcode==4104))continue;
+        if(id==4104&&opcode==31&&(instruction.operands[4]&127)==0)continue;
+        if(id==4104&&opcode==26)continue;
+        if(id==4104&&opcode==28){
+            const auto table=static_cast<std::uint16_t>(instruction.operands[0]|
+                (static_cast<std::uint16_t>(instruction.operands[1])<<8));
+            if(table==303&&instruction.operands[2]==0&&instruction.operands[4]>=1&&
+               instruction.operands[4]<=2&&instruction.operands[5]==2)continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 // The host must audit/admit the tree and its side effects before calling this
 // adapter. This is branch/context plumbing, not permission to run arbitrary
 // saved object code or to resume its Main.

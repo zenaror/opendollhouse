@@ -148,6 +148,47 @@ int main() {
         require(temporary.temps()[0]==saved_temps[0]&&temporary.temps()[1]==55&&
                 temporary.temp_xl()[0]==123456,
                 "temporary named tree receives caller arguments while retaining target thread registers");
+
+        const odh::Instruction sleep_wait{0,254,255,{0,0,0,0,0,0,0,0}};
+        odh::Vm sleeping_main({{key(),routine({sleep_wait})},
+                               {key(4097),routine({expr(2,0,0,7,7)})}}, {}, {},
+            [](const auto&,const auto& instruction,const auto&,const auto&){
+                return instruction.opcode==0?odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}}:
+                                             odh::PrimitiveOutcome{};
+            });
+        sleeping_main.restore_dormant_state({saved_frame},saved_temps);
+        require(sleeping_main.activate_dormant_state()&&
+                sleeping_main.run(1)==odh::VmStatus::waiting&&sleeping_main.pending()&&
+                sleeping_main.pending()->instruction.instruction.opcode==0,
+                "restored Main reaches its scheduled Sleep wait");
+        const auto sleeping_main_before=sleeping_main.snapshot();
+        const auto child_during_sleep=sleeping_main.run_subroutine_in_temporary_stack(
+            key(4097),{14,14,14,0},{},8);
+        require(child_during_sleep.started&&child_during_sleep.status==odh::VmStatus::returned_true&&
+                sleeping_main.status()==odh::VmStatus::waiting&&sleeping_main.pending()&&
+                sleeping_main.pending()->ticket==sleeping_main_before.pending->ticket&&
+                sleeping_main.stack().size()==sleeping_main_before.stack.size()&&
+                sleeping_main.stack()[0].pc==sleeping_main_before.stack[0].pc&&
+                sleeping_main.steps()==sleeping_main_before.steps,
+                "temporary named tree runs over an idle Sleep and restores its pending Main wait");
+
+        const odh::Instruction other_wait{36,254,255,{}};
+        odh::Vm non_sleeping_main({{key(),routine({other_wait})},
+                                   {key(4097),routine({expr(2,0,0,7,7)})}}, {}, {},
+            [](const auto&,const auto& instruction,const auto&,const auto&){
+                return instruction.opcode==36?odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}}:
+                                              odh::PrimitiveOutcome{};
+            });
+        non_sleeping_main.restore_dormant_state({saved_frame},saved_temps);
+        require(non_sleeping_main.activate_dormant_state()&&
+                non_sleeping_main.run(1)==odh::VmStatus::waiting,
+                "non-sleeping Main fixture enters its private dialog wait");
+        const auto rejected_during_dialog=non_sleeping_main.run_subroutine_in_temporary_stack(
+            key(4097),{14,14,14,0},{},8);
+        require(!rejected_during_dialog.started&&non_sleeping_main.status()==odh::VmStatus::waiting&&
+                non_sleeping_main.pending()&&non_sleeping_main.pending()->instruction.instruction.opcode==36,
+                "temporary named tree does not hide a player-facing dialog wait");
+
         const auto child_false=temporary.run_subroutine_in_temporary_stack(
             key(4098),{14,14,14,0},{0,0,0,0},8);
         require(child_false.started&&child_false.status==odh::VmStatus::returned_false&&

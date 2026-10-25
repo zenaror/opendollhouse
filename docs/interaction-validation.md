@@ -15,10 +15,18 @@ acorde uma espera sem tentar alterar uma VM que ainda está dentro da chamada.
 Um teste sintético cobre o objeto notificando a si mesmo enquanto sua Main chega
 a `Sleep`; o sinal é entregue depois do retorno e a VM prossegue no ciclo
 seguinte. `entity_vm_scheduler`, `vm`, `interaction_queue` e `person_cli`
-passaram (4/4), assim como a integração House07. Ainda não conectamos o fio salvo
-da Main do PhoneLine ao scheduler; a integração real continua falhando de forma
-controlada no opcode49. Portanto o resultado prova o mecanismo de ponto seguro,
-não a entrega da Pizza.
+passaram (4/4).
+
+A Main salva de House07 PhoneLine 207 agora é restaurada como fio ativo, usa o
+relógio do lote e entra no scheduler. A cadeia Main 4096/4100 lê o BCON privado
+4096/key 2 do recurso exato `PhoneLine.iff` e volta a `Sleep`. O teste real
+confirma essa leitura pelo dono de código GUID 2933422533, além das duas chamadas
+de atualização 4097/4098 e do opcode49 na segunda chamada. Porém, o destino do
+opcode49 é o objeto 136 e o scheduler registra `no_thread`; ainda não existe uma
+Main executável confirmada para acordar nesse objeto. House07 chega a 2300 ticks,
+fica sem falha do host e esvazia a fila, mas isso não prova a entrega da Pizza.
+Os arquivos comerciais mantiveram os mesmos hashes antes e depois. A integração
+headless continua reproduzível pelo comando abaixo.
 
 Fontes: [VMNotifyOutOfIdle.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Primitives/VMNotifyOutOfIdle.cs), [VMScheduler.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Engine/VMScheduler.cs), [VM.Load](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/VM.cs) e [VMEntity.Init](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Entities/VMEntity.cs).
 
