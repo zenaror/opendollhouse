@@ -141,6 +141,15 @@ comprova início visível da ação, sem confirmar seu retorno ou a refeição
 completa. A carga inicial levou cerca de 78 segundos neste perfil temporário.
 O launcher e a janela Xvfb foram encerrados depois da captura.
 
+Em outra execução com o mesmo caminho integrado, o recibo JSON após 35 segundos
+da seleção registrou `returned_true` para BHAV4103. O ator estava em
+`[377,456,1,2]`, com `a2o-eatloop-stand` no frame 20.2/31; `queue_active` ainda
+era `true`. A captura
+`reports/pie-menu-window/launcher-house07-snack-after-35s.png` (SHA256
+`6c0be5dedc30e10c6066b77187ca245e1a47392b8bbbcac704cc9230e00cb92d`) mostra o
+morador comendo. O resultado confirma o retorno da ação, mas não que a animação,
+a fila ou a refeição já tenham terminado.
+
 Uma janela X11 isolada com os dados House07 abriu a casa e o HUD de diagnóstico.
 Clique real pela janela na geladeira mostrou `Have A Snack`; clicar na opção
 fez o avatar se mover até a geladeira e o programa permaneceu sem falha. O

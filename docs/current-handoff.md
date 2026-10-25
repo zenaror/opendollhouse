@@ -24,9 +24,15 @@ Capturas locais ignoradas pelo Git:
 `06d9f22ce81c943a77593c69eae7afad9d0e4bb28eb50bac8755ee4f80646f4d`) e
 `launcher-house07-snack-click.png` (SHA256
 `cf9a93d2e4b90c50f47cfba03b812634c71b05e99838801425b8594d0f9147bf`).
-Isso verifica entrada integrada e início visível dessa ação em House07; não
-confirma o retorno/fim da refeição nem paridade geral. O processo saiu após
-Escape, `xvfb-run` encerrou a tela e nenhum processo ficou aberto.
+Uma terceira execução manteve a janela aberta por 35s após escolher a opção. O
+JSON final registrou interação `returned_true`, BHAV4103, ator105 em `[377,456,1,2]`,
+animação `a2o-eatloop-stand` no frame 20.2/31, fila ainda ativa e relógio 7:41.
+A captura
+`launcher-house07-snack-after-35s.png` (SHA256
+`6c0be5dedc30e10c6066b77187ca245e1a47392b8bbbcac704cc9230e00cb92d`) mostra
+o Sim comendo. O retorno do BHAV está confirmado; o fim da animação, o
+esvaziamento da fila e os efeitos finais da refeição permanecem pendentes. As execuções
+saíram após Escape, `xvfb-run` encerrou a tela e nenhum processo ficou aberto.
 
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
@@ -39,7 +45,7 @@ e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
 passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
 prova paridade visual com o Simitone ou com o jogo original.
 
-Próximo: verificar o retorno e o fim da refeição pela janela e continuar a
+Próximo: observar o fim da animação e da fila após o retorno `true` e continuar a
 reconstrução visual do menu/HUD conforme Simitone e dados locais, mantendo cada
 resultado limitado ao que a captura ou o trace demonstra.
 
