@@ -278,6 +278,16 @@ std::optional<std::int16_t> World::next_entity(std::int16_t current,std::optiona
         if(!it->second.ui_ghost&&(!kind || it->second.kind==*kind))return it->first;
     return {};
 }
+std::optional<std::int16_t> World::next_entity_by_category(std::int16_t current,
+                                                           std::int16_t category) const {
+    constexpr std::int16_t category_word=59; // VMStackObjectVariable.Category
+    for(auto it=entities_.upper_bound(current);it!=entities_.end();++it) {
+        if(it->second.ui_ghost)continue;
+        const auto value=it->second.object_words.find(category_word);
+        if(value!=it->second.object_words.end()&&value->second==category)return it->first;
+    }
+    return {};
+}
 std::optional<std::int16_t> World::next_family_member(std::int16_t current) const {
     constexpr std::size_t family_word=61; // VMPersonDataVariable.TS1FamilyNumber
     const auto cursor=entities_.find(current);

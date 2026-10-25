@@ -2544,7 +2544,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
         if(i.opcode==1&&i.operands[0]==28&&lot_handler)return lot_handler(f,i,t,d);
-        if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==8||
+        if(i.opcode==31&&((i.operands[4]&127)<=4||(i.operands[4]&127)==6||(i.operands[4]&127)==8||
                            (i.operands[4]&127)==9||(i.operands[4]&127)==12))return entity_handler(f,i,t,d);
         if(i.opcode==31&&neighbor_handler)return neighbor_handler(f,i,t,d);
         if(i.opcode==32)return object_type_handler(f,i,t,d);

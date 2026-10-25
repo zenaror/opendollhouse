@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O opcode `SetToNext` agora cobre a busca por categoria usada pelo objeto
+  `PhoneLine`: compara `ObjectData[59]` com o argumento0 e avança pelos IDs sem
+  voltar ao início. O teste sintético valida busca, retorno falso e escrita
+  adiada do StackObject. Isso prepara `PhoneLine.iff:4097`, mas a chamada
+  síncrona `RunTreeByName` no fio salvo do objeto ainda não está implementada.
+  Veja [`current-handoff.md`](docs/current-handoff.md).
+
 - O renderizador agora calcula retratos de cabeça em perspectiva numa imagem
   própria de 74×74 pixels e recorta partes da malha que cruzam o limite próximo
   da câmera, com texturas e profundidade corrigidas para perspectiva. A saída

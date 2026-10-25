@@ -1,5 +1,29 @@
 # Continuidade atual
 
+## Progresso: busca por categoria do telefone (2026-10-25)
+
+A busca estática do alvo da chamada confirmou que `Global.iff` STR#303, índice
+57, resolve para “update phones”. No lote House07, o StackObject é o objeto207,
+GUID2933422533 (`Objects.far!PhoneLine.iff#16807`); o nome aponta para seu BHAV
+privado4097, que chama apenas o teste privado4098 (`is one of my phones`).
+BHAV4097 percorre objetos da categoria do argumento0 com `SetToNext` modo6,
+atualiza valores do próprio objeto e pode emitir `NotifyOutOfIdle` (opcode49).
+Isso é leitura estática da rotina; não prova que House07 já executa esses
+efeitos.
+
+O modo6 agora procura o próximo objeto pelo `ObjectData[59]` salvo, no mesmo
+sentido crescente de IDs do Simitone, sem voltar ao início. O resultado fica
+preparado para a VM publicar no StackObject. `odh-person` compilou e o teste
+`entity_next` passou (305 verificações internas; CTest 1/1). O probe real ainda
+para antes dessa rotina, em `RunTreeByName` destino1. Continuam pendentes o fio
+Main salvo do telefone, a chamada síncrona com seu orçamento e a interrupção
+opcode49; não houve injeção do Scheduler nem alegação de entrega.
+
+Próximo: carregar o BHAV Main existente do objeto salvo num fio próprio,
+executar4097 dentro desse fio com orçamento limitado, preservar pilha e
+registradores e encaminhar `NotifyOutOfIdle` apenas se o alvo e o efeito forem
+válidos. Cobrir o contexto com testes sintéticos antes de repetir House07.
+
 ## Progresso: relação do telefone restaurada; próximo limite é RunTreeByName (2026-10-25)
 
 O objeto controlador207 salva no OBJM uma relação com o telefone136, índice0,

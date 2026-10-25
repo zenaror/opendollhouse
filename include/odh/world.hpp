@@ -137,6 +137,10 @@ public:
     const Entity* find(std::int16_t id) const;
     // Live positive-ID enumeration, including entities with unknown definitions.
     std::optional<std::int16_t> next_entity(std::int16_t current,std::optional<EntityKind> kind={}) const;
+    // TS1 SetToNext category search (mode 6): next live entity whose saved
+    // ObjectData[59] matches the requested category. The cursor does not wrap.
+    std::optional<std::int16_t> next_entity_by_category(std::int16_t current,
+        std::int16_t category) const;
     // TS1 SetToNext FamilyMember (mode 12): enumerate avatars sharing PersonData[61],
     // ascending after the cursor and wrapping to the first matching avatar.
     std::optional<std::int16_t> next_family_member(std::int16_t current) const;

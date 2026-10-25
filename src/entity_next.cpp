@@ -23,7 +23,7 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
         multitile_groups=std::move(multitile_groups)](const VmFrame& frame,
         const Instruction& i,const auto& temps,const VmDispatch&)->PrimitiveOutcome {
         const auto mode=static_cast<std::uint8_t>(i.operands[4]&127);
-        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=8&&mode!=9&&mode!=12))return {};
+        if(i.opcode!=31||(mode!=0&&mode!=1&&mode!=2&&mode!=3&&mode!=4&&mode!=6&&mode!=8&&mode!=9&&mode!=12))return {};
         const auto guid=std::uint32_t{i.operands[0]}|(std::uint32_t{i.operands[1]}<<8)|
             (std::uint32_t{i.operands[2]}<<16)|(std::uint32_t{i.operands[3]}<<24);
         const auto scope=static_cast<std::uint8_t>((i.operands[4]&128)?i.operands[5]:10);
@@ -42,6 +42,8 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
             const auto* cursor=world.find(*current);
             if(!cursor||cursor->kind!=EntityKind::avatar)
                 return {PrimitiveDisposition::unsupported,"family-member cursor is not a live avatar"};
+        } else if(mode==6&&frame.arguments.empty()) {
+            return {PrimitiveDisposition::unsupported,"category enumeration requires argument 0"};
         } else if(mode==8){
             const auto* anchor=world.find(*current);
             if(!anchor||!anchor->position||anchor->position->x<0||anchor->position->y<0||
@@ -58,7 +60,8 @@ VmPrimitive entity_next_primitive(const World& world,VmMemory memory,std::functi
                     if(member>*current&&(!result||member<*result))result=member;
                 if(!result&&!group->empty())result=*std::min_element(group->begin(),group->end());
             }
-        } else if(mode==8)result=world.next_entity_on_same_tile(*current);
+        } else if(mode==6)result=world.next_entity_by_category(*current,frame.arguments[0]);
+        else if(mode==8)result=world.next_entity_on_same_tile(*current);
         else if(mode==9)result=world.next_entity_adjacent_to_local(
             frame.locals[static_cast<std::size_t>(i.operands[6])],*current);
         else if(mode==12)result=world.next_family_member(*current);

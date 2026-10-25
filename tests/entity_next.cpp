@@ -51,6 +51,39 @@ void live_query(){
         !full.next_entity_of_guid(32767,guid),"full world finds signed maximum without overflow/wrap");
     require(!full.create(0,odh::EntityKind::object)&&!full.create(-1,odh::EntityKind::object),"World object identities stay positive");
 }
+void category_query(){
+    odh::World w;
+    for(const auto id:{10,15,20,25,30})
+        require(w.create(static_cast<std::int16_t>(id),
+            id==20?odh::EntityKind::avatar:odh::EntityKind::object),
+            "create category enumeration entity");
+    require(w.declare_object_word(10,59,4)&&w.declare_object_word(15,59,3)&&
+        w.declare_object_word(20,59,4)&&w.declare_object_word(25,59,4),
+        "install saved Category words");
+    require(w.next_entity_by_category(10,4)==20&&w.next_entity_by_category(20,4)==25&&
+        !w.next_entity_by_category(25,4),
+        "category enumeration advances in ID order without wrapping and includes avatars");
+    require(w.next_entity_by_category(10,3)==15&&!w.next_entity_by_category(25,7),
+        "category enumeration matches only the requested ObjectData[59]");
+    require(w.set_ui_ghost(20,true)&&w.next_entity_by_category(10,4)==25,
+        "category enumeration omits UI-only ghosts");
+
+    const auto primitive=odh::entity_next_primitive(w);
+    auto instruction=next(10,0,134); // mode 6, explicit StackObject target
+    auto caller=frame(10);caller.arguments[0]=4;
+    auto result=dispatch(primitive,caller,instruction);
+    require(result.disposition==odh::PrimitiveDisposition::goto_true&&result.stack_object_write&&
+        result.stack_object_write->value==25,
+        "opcode31 category mode uses argument0 and stages StackObject output");
+    caller=frame(25);caller.arguments[0]=4;
+    result=dispatch(primitive,caller,instruction);
+    require(result.disposition==odh::PrimitiveDisposition::goto_false&&no_output(result),
+        "opcode31 category mode returns false at the end without wrapping");
+    caller.arguments.clear();
+    result=dispatch(primitive,caller,instruction);
+    require(result.disposition==odh::PrimitiveDisposition::unsupported&&no_output(result),
+        "opcode31 category mode rejects missing argument0");
+}
 void same_tile_query(){
     odh::World w;
     for(const auto [id,kind]:{std::pair<std::int16_t,odh::EntityKind>{10,odh::EntityKind::object},
@@ -308,5 +341,5 @@ void kinds(){
         "ID reused as untyped avatar immediately participates");
 }
 }
-int main(){try{live_query();same_tile_query();adjacent_local_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
+int main(){try{live_query();category_query();same_tile_query();adjacent_local_query();multitile_query();family_member_query();selectors();external_and_false();actual_vm();kinds();std::cout<<checks<<" entity-next checks passed\n";return 0;}
     catch(const std::exception& e){std::cerr<<"entity-next failure: "<<e.what()<<'\n';return 1;}}

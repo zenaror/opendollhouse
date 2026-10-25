@@ -1,5 +1,23 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Busca por categoria de PhoneLine (2026-10-25)
+
+A busca estática confirma que `Global.iff` STR#303, índice57, resolve para
+“update phones”. House07 object207 é `PhoneLine.iff` (GUID2933422533), e o nome
+resolve para BHAV privado4097, que chama BHAV4098 (`is one of my phones`). A
+rotina usa `SetToNext` modo6 para procurar objetos com a categoria do argumento0,
+escreve dados do objeto e pode notificar seu fio Main com opcode49. A leitura dos
+recursos descreve o que a rotina pode fazer; a execução real ainda não chegou a
+ela.
+
+O runtime agora implementa modo6 pela palavra `ObjectData[59]`, em ordem
+crescente de ID e sem wrap, com a saída de StackObject aplicada pelo núcleo VM.
+O teste sintético `entity_next` passou 305 verificações e CTest passou 1/1. O
+probe House07 permanece parado em `RunTreeByName` destino1: ainda falta restaurar
+o fio do objeto comum e chamar a rotina dentro dele, preservando seu estado e o
+efeito condicional de opcode49. Ainda não há Scheduler nem entregador neste
+probe.
+
 ## Telefone: relação salva e chamada ao controlador (2026-10-25)
 
 O trace anterior parava em `BHAV8203` porque o host usava somente as relações
