@@ -19,11 +19,34 @@ responder explicitamente. Evidência em
 [`interaction-validation.md`](interaction-validation.md) e no relatório local
 ignorado `reports/phone-pizza-path/house07-phone-pizza-response.json`.
 
-Próxima etapa: adicionar o fio Main salvo do objeto ao Scheduler e implementar
-NotifyOutOfIdle como interrupção agendada no próximo safe point, seguindo o
-comportamento Simitone. Validar os controllers de idle do PhoneLine antes de
-voltar a correr além de opcode49. A janela de mensagem é provisória; a interface
+Próxima etapa: reconstruir e ativar a Main salva do PhoneLine 207 no Scheduler,
+com o mesmo relógio e os recursos privados exatos, antes de voltar a correr o
+pedido até opcode49. O scheduler agora entrega a interrupção ao controller
+depois que a VM emissora termina sua execução daquele ciclo, para evitar reentrar
+na própria VM. Ainda falta provar esse caminho com a Main real do objeto; a Pizza
+continua sem entrega comprovada. A janela de mensagem é provisória; a interface
 final ainda deve recriar a organização visual e os recursos do The Sims.
+
+## Ponto seguro do NotifyOutOfIdle no scheduler (2026-10-25)
+
+Auditoria somente de leitura no Simitone `4906db3156616bfaffc10ce0963cf08062975fef`
+e no FreeSO fixado pelo submódulo `f86bbd34b2112296ed786741f640a0535886d180`:
+ao carregar um lote, `VM.Load` restaura cada fio salvo e agenda a entidade para
+um ciclo; `VMNotifyOutOfIdle` pede `RescheduleInterrupt` e marca `Thread.Interrupt`.
+O scheduler de referência executa no mesmo ciclo quando o ID do objeto-alvo é
+maior que o ID corrente, ou no próximo ciclo nos outros casos.
+
+O scheduler ODH já tinha o encaminhamento de notificação e a regra de ordem por
+ID, mas chamava o controller enquanto o VM emissor ainda estava em execução.
+Agora ele guarda o pedido e chama o controller quando a VM emissora retorna ao
+scheduler. O teste `entity_vm_scheduler` verifica uma notificação do objeto para
+si mesmo que encontra `Sleep`: não há reentrada no callback, o sono é liberado no
+ponto seguro e a Main prossegue no ciclo seguinte. Também passaram `vm`,
+`interaction_queue` e `person_cli` (4/4 no conjunto direcionado), além da
+integração House07, que ainda para em opcode49 porque a Main real do PhoneLine
+não está registrada. Isso valida o mecanismo genérico, não a chamada de Pizza.
+
+Referências primárias: [VMNotifyOutOfIdle.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Primitives/VMNotifyOutOfIdle.cs), [VMScheduler.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Engine/VMScheduler.cs), [VM.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/VM.cs) e [VMEntity.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Entities/VMEntity.cs).
 
 ## Progresso: primeira chamada salva do PhoneLine executada (2026-10-25)
 

@@ -153,6 +153,44 @@ int main() {
         }
         {
             odh::World notify_world;
+            require(notify_world.create(2,odh::EntityKind::object),
+                    "self-notification fixture creates its object");
+            const odh::Instruction notify_instruction{49,1,255,{0,0,0,0,0,0,0,0}};
+            const odh::Instruction sleep_to_set{0,2,255,{0,0,0,0,0,0,0,0}};
+            auto notify_program=std::make_shared<const odh::VmProgram>(odh::RoutineSet{
+                {key(4096),routine({notify_instruction,sleep_to_set,set(0,7)})}});
+            odh::Sleep object_sleep(notify_world);
+            odh::EntityVmScheduler notify_scheduler(1);
+            bool in_notify_primitive=false,callback_reentered=false;
+            odh::VmPrimitive notify;
+            notify=odh::notify_idle_primitive(notify_world,
+                [&](std::int16_t id){return notify_scheduler.interrupt(id);});
+            odh::Vm object(notify_program,odh::ShareVmProgramTag{},notify_world.vm_memory(),{},
+                [&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+                    if(instruction.opcode==49){
+                        in_notify_primitive=true;
+                        const auto result=notify(frame,instruction,temps,dispatch);
+                        in_notify_primitive=false;
+                        return result;
+                    }
+                    if(instruction.opcode==0)
+                        return object_sleep.primitive()(frame,instruction,temps,dispatch);
+                    return odh::PrimitiveOutcome{};
+                });
+            require(object_sleep.bind(object),"self-notification object binds its sleep controller");
+            object.start(key(4096),{2,2,2,0},{10});
+            require(notify_scheduler.add(2,object,[&](auto tick){return object_sleep.tick(tick);},{},
+                        [&]{callback_reentered=callback_reentered||in_notify_primitive;return object_sleep.interrupt();}),
+                    "self-notification object registers its scheduler callback");
+            require(notify_scheduler.tick(1,8,8)&&!callback_reentered&&
+                    object.status()==odh::VmStatus::running&&object.steps()==2,
+                    "self Notify waits until the Main returns to a scheduler safe point");
+            require(notify_scheduler.tick(2,8,8)&&object.status()==odh::VmStatus::returned_true&&
+                    object.steps()==3,
+                    "deferred self Notify wakes Sleep once and the Main continues on its next turn");
+        }
+        {
+            odh::World notify_world;
             require(notify_world.create(1,odh::EntityKind::avatar)&&
                     notify_world.create(3,odh::EntityKind::avatar),
                     "queue notification fixture creates two actors");

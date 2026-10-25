@@ -64,12 +64,30 @@ bool EntityVmScheduler::interrupt(std::int16_t entity) {
     if(faulted_)return false;
     const auto found=entities_.find(entity);
     if(found==entities_.end()||!found->second.interrupt)return false;
-    fresh_=false; // A callback may mutate its VM even if it rejects or throws.
+    fresh_=false;
+    if(ticking_) {
+        // A SimAntics thread may notify its own object while that object's
+        // temporary named-tree call is still on the C++ stack. Defer controller
+        // work until the sender VM has returned to a scheduler safe point.
+        if(std::find(pending_interrupts_.begin(),pending_interrupts_.end(),entity)==pending_interrupts_.end())
+            pending_interrupts_.push_back(entity);
+        return true;
+    }
     if(!found->second.interrupt())return false;
-    if(ticking_&&current_entity_&&entity>*current_entity_&&
-       std::find(same_tick_ready_.begin(),same_tick_ready_.end(),entity)==same_tick_ready_.end())
-        same_tick_ready_.push_back(entity);
     return true;
+}
+
+void EntityVmScheduler::process_pending_interrupts() {
+    if(pending_interrupts_.empty())return;
+    std::vector<std::int16_t> pending;
+    pending.swap(pending_interrupts_);
+    for(const auto id:pending) {
+        const auto found=entities_.find(id);
+        if(found==entities_.end()||!found->second.interrupt||!found->second.interrupt())continue;
+        if(current_entity_&&id>*current_entity_&&
+           std::find(same_tick_ready_.begin(),same_tick_ready_.end(),id)==same_tick_ready_.end())
+            same_tick_ready_.push_back(id);
+    }
 }
 
 bool EntityVmScheduler::remove(std::int16_t entity) {
@@ -100,7 +118,7 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
     }
     struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(ticking_);
     instructions_last_tick_=0;
-    current_entity_.reset();same_tick_ready_.clear();
+    current_entity_.reset();same_tick_ready_.clear();pending_interrupts_.clear();
     try {
     std::vector<std::int16_t> order;
     order.reserve(entities_.size());
@@ -112,6 +130,7 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
         auto& entity=entities_.at(id);
         if(entity.before&&!entity.before(now))return fail("entity pre-tick controller rejected tick for "+std::to_string(id));
     }
+    process_pending_interrupts();
     std::vector<std::int16_t> runnable;
     for(const auto id:order) {
         const auto status=entities_.at(id).vm->status();
@@ -163,6 +182,7 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
             current_entity_=id;
             struct CurrentGuard {std::optional<std::int16_t>& current;~CurrentGuard(){current.reset();}} current_guard{current_entity_};
             const auto result=entity.vm->run(slice,entity_trace);
+            process_pending_interrupts();
             const auto after_steps=entity.vm->steps();
             if(after_steps<before_steps)return fail("entity VM run generation changed during scheduler tick");
             const auto consumed=after_steps-before_steps;
@@ -174,6 +194,7 @@ bool EntityVmScheduler::tick(std::uint64_t now,std::uint64_t instruction_budget,
         }
         if(entity.after&&!entity.after())return fail("entity post-run controller rejected tick for "+std::to_string(id));
     }
+    process_pending_interrupts();
     last_tick_=now;
     diagnostic_.clear();
     return true;

@@ -1,5 +1,27 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Entrega de interrupções em ponto seguro (2026-10-25)
+
+O Simitone/FreeSO restaura cada fio salvo do lote e o agenda para o próximo
+ciclo. Quando `NotifyOutOfIdle` encontra um fio no `StackObject`, o jogo marca
+`Thread.Interrupt` e adianta a vez daquele objeto. Um ID de objeto maior que o
+ID atual ainda pode rodar no mesmo ciclo; um ID menor ou igual espera o próximo.
+Essa regra foi conferida no FreeSO fixado pelo Simitone em
+`f86bbd34b2112296ed786741f640a0535886d180`.
+
+O scheduler ODH agora segura a notificação recebida durante a execução de uma VM
+e só chama o controller depois que essa VM retorna. Isso permite que o controller
+acorde uma espera sem tentar alterar uma VM que ainda está dentro da chamada.
+Um teste sintético cobre o objeto notificando a si mesmo enquanto sua Main chega
+a `Sleep`; o sinal é entregue depois do retorno e a VM prossegue no ciclo
+seguinte. `entity_vm_scheduler`, `vm`, `interaction_queue` e `person_cli`
+passaram (4/4), assim como a integração House07. Ainda não conectamos o fio salvo
+da Main do PhoneLine ao scheduler; a integração real continua falhando de forma
+controlada no opcode49. Portanto o resultado prova o mecanismo de ponto seguro,
+não a entrega da Pizza.
+
+Fontes: [VMNotifyOutOfIdle.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Primitives/VMNotifyOutOfIdle.cs), [VMScheduler.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Engine/VMScheduler.cs), [VM.Load](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/VM.cs) e [VMEntity.Init](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Entities/VMEntity.cs).
+
 ## Diálogo privado bloqueante e resposta do jogador (2026-10-25)
 
 `DialogPrivateStrings` agora lê o texto e o título do `STR#301` do recurso

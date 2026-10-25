@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O scheduler agora adia o callback de uma interrupção até a VM que pediu a
+  notificação chegar ao próximo ponto seguro. Isso evita tentar acordar o mesmo
+  fio enquanto ele ainda está dentro de uma chamada BHAV; um teste confirma que
+  `NotifyOutOfIdle` seguido de `Sleep` continua no ciclo seguinte. A Main real do
+  PhoneLine ainda não foi conectada ao scheduler, e a Pizza continua pendente.
+  Veja [`interaction-validation.md`](docs/interaction-validation.md).
+
 - Mensagens privadas bloqueantes agora mostram título, texto localizado e botão
   OK, pausam a VM e retomam pelo ramo do BHAV quando o jogador responde. A
   integração House07 confirma que a rotina avança além do diálogo e alcança
