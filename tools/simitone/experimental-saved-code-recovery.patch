@@ -166,6 +166,26 @@ index b698522..185b190 100644
          }
  
          public override bool Write(IffFile iff, Stream stream)
+diff --git a/TSOClient/tso.files/Formats/IFF/Chunks/NBRS.cs b/TSOClient/tso.files/Formats/IFF/Chunks/NBRS.cs
+index bb1e928..6e8aa71 100644
+--- a/TSOClient/tso.files/Formats/IFF/Chunks/NBRS.cs
++++ b/TSOClient/tso.files/Formats/IFF/Chunks/NBRS.cs
+@@ -65,9 +65,13 @@ namespace FSO.Files.Formats.IFF.Chunks
+                 io.WriteUInt32(0x49);
+                 io.WriteCString("SRBN", 4);
+                 io.WriteInt32(Entries.Count);
+-                foreach (var n in NeighbourByID.Values)
++                foreach (var n in Entries)
+                 {
+-                    n.Save(io);
++                    // Inactive slots contain only a marker: Neighbour's reader
++                    // returns immediately for them. Preserve these slots as well
++                    // as active records so the count and payload agree.
++                    if (n.Unknown1 == 1) n.Save(io);
++                    else io.WriteInt32(n.Unknown1);
+                 }
+             }
+             return true;
 diff --git a/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs b/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs
 index c8b8f14..f70aa02 100644
 --- a/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs

@@ -1,0 +1,7 @@
+public void EvictLot(FAMI family, short houseID)
+        {
+            family.Budget += family.ValueInArch;
+            family.ValueInArch = 0;
+            Content.Get().Neighborhood.MoveOut(houseID);
+            TS1NeighPanel.SelectHouse(houseID);
+        }

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SimitoneFiles>$(MSBuildThisFileDirectory)../../../refs/work/Simitone-linux/FreeSO/TSOClient/tso.files</SimitoneFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NbrsProgram.cs" />
+    <Compile Include="NbrsOriginal.cs" />
+    <Compile Include="../../../managed/OpenDollhouse.Data.Interop.Tests/IffStubs.cs" Link="IffStubs.cs" />
+    <Compile Include="$(SimitoneFiles)/Formats/IFF/Chunks/NBRS.cs" Link="ActualNBRS.cs" />
+    <Compile Include="$(SimitoneFiles)/Utils/IoBuffer.cs" Link="ActualIoBuffer.cs" />
+    <Compile Include="$(SimitoneFiles)/Utils/IoWriter.cs" Link="ActualIoWriter.cs" />
+    <Compile Include="$(SimitoneFiles)/Utils/BCFReadProxy.cs" Link="ActualBCFReadProxy.cs" />
+    <Compile Include="$(SimitoneFiles)/Endian.cs" Link="ActualEndian.cs" />
+  </ItemGroup>
+</Project>

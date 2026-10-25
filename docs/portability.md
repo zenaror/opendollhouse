@@ -12,8 +12,11 @@ O Simitone permanece como candidato funcional e referência executável. Seu
 conjunto atual `net9.0`/DesktopGL **não está aprovado como núcleo compartilhado
 obrigatório dos consoles**. Extrair componentes realmente usados, com fronteiras
 explícitas, e provar a cadeia de execução dos alvos antes de consolidar essa
-escolha. Isso não autoriza manter dois motores completos nem iniciar uma tradução
-integral do jogo. A viabilidade do runtime continua uma decisão em aberto;
+escolha. Após nova cobrança humana, priorizar a migração incremental desse núcleo para
+C++, substituindo execução real e mantendo C# apenas como ponte temporária de
+validação. Próximo corte: operadores BHAV Expression TS1, com acesso a memória
+ainda fornecido pela ponte, sem cálculo duplicado ou fallback. Não manter dois
+motores completos em paralelo. A viabilidade do runtime legado continua aberta;
 interfaces de gráficos/áudio não fornecem um runtime ausente.
 
 ## Evidência atual, conferida em 2026-10-25

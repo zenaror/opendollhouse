@@ -8,6 +8,22 @@ The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
 controles, simulação e cobertura das expansões continuam tendo o original como
 critério final. Paridade Simitone é um marco intermediário, não a conclusão.
 
+Prioridade reforçada após o teste de famílias: o usuário cobrou que a reescrita
+para os demais alvos já ocorra. A próxima frente passa a ser a migração incremental
+do núcleo compartilhado para C++, usando o Simitone como referência executável e
+ponte temporária. As duas correções C# de famílias já testadas são um checkpoint
+de comportamento; não autorizam continuar ampliando um motor dependente de CLR.
+Não manter duas implementações completas: substituir caminhos usados, um por vez.
+
+Próximo corte escolhido: execução dos cálculos e condições das ações dos Sims,
+começando pela primitiva BHAV Expression do TS1, dentro de `native/simulation`.
+O C++ deve decidir os operadores e sua ordem de efeitos; a ponte inicial apenas
+acessa memória e entidades ainda gerenciadas. Não duplicar o cálculo em C# nem
+usar fallback silencioso. Comparar com a implementação herdada, provar chamadas
+nativas em um fluxo real de jogo e executar a mesma fonte nos testes ARM. Só isso
+não porta a VM inteira: estados de entidades, demais instruções, salvamento,
+rotas e serviços de plataforma continuam no mapa de migração.
+
 Ordem de trabalho confirmada pelo usuário: manter provisoriamente a interface
 Simitone para validar as funções e deixar a adaptação à interface original para
 a etapa final. Isso adia a execução visual, sem remover o requisito de aparência,
@@ -53,9 +69,9 @@ impedir um alvo importante, registrar a consequência e avaliar substituição d
 componentes ou adaptação antes de consolidá-la. Não pressupor que uma tradução
 integral seja necessária nem que a base desktop possa ser portada diretamente.
 
-Primeiro avaliar o fork alexjyong, que possui entrada Desktop Linux. Manter
-inicialmente C#/.NET e o motor existente; não iniciar uma tradução integral
-para C++. A inspeção estática encontrou projeto net9.0, MonoGame DesktopGL,
+Etapa inicial já executada: avaliar o fork alexjyong, que possui entrada Desktop
+Linux, conservando C#/.NET como base provisória. A prioridade atual de migração
+do núcleo está descrita acima; esta avaliação histórica não a substitui. A inspeção estática encontrou projeto net9.0, MonoGame DesktopGL,
 receita de build Linux e seleção explícita da pasta de dados. Isso não prova
 execução local. O clone de consulta está em
 `e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`; seu FreeSO
@@ -68,7 +84,7 @@ A máquina
 possui SDK/runtime .NET 10, sem runtime 9 listado na avaliação; conferir o
 ambiente e escolher dependências compatíveis na preparação efetiva.
 
-Sequência de trabalho:
+Sequência original da avaliação (a prioridade atual é a migração acima):
 
 1. Preparar checkout de desenvolvimento separado, com revisões exatas do
    Simitone e FreeSO, preservando os clones de consulta. Conferir licenças por

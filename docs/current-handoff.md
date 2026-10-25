@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada desta etapa: `e79955fded3d05d41d751ed8147ecf8cda280d67`.
+Base publicada antes desta etapa: `492c4f57fb79886c35c7b2b1875c1ca77647c3ae`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -21,6 +21,18 @@ Preservar WIP anterior fora desta frente: `include/odh/vm.hpp`, `tests/routing.c
 `tests/factory_tests_runner.py`, `.sh` e `tests/house07_snack_integration.py`.
 O cache CMake da raiz é legado inválido; `build/linux-checkpoint` é antigo apoio.
 Não desenvolver dois motores completos nem traduzir integralmente o Simitone.
+
+## Prioridade mais recente: migrar o núcleo agora
+
+Após esta validação, o usuário cobrou a reescrita para evitar retrabalho nos ports.
+A próxima frente é migrar execução real para C++ em `native/simulation`; não
+continuar ampliando funcionalidades permanentes em C#. Simitone é referência e
+ponte temporária. Próximo corte: VMExpression (opcode BHAV2), decisão dos operadores
+TS1 e ordem de leitura/escrita nativas; VMMemory fornece acesso temporário pelo
+adaptador. Preservar aliases, overflow, exceções, regras TS1/Room1024 e resultados.
+Comparar com fonte original, usar no jogo Linux e executar mesma fonte no ARM.
+A fila e BCON atuais continuam usados; o restante ainda depende de .NET.
+Não recomeçar outro jogo completo nem prometer port só por trocar a linguagem.
 
 ## Fila nativa compartilhada: implementada e validada
 
@@ -64,11 +76,11 @@ agendamento por Reset/tick1, sem novo formato. Detalhes e receita em
 SO da fila: a5c2a6e43c367fb74a500ede6c64c775da31c4ec6bba92a8e4c8d69f1aa3f85a.
 Fontes, dois SOs e pontes gerenciadas arquivados; ambos os parâmetros
 ODHNativeDataLibrary e ODHNativeSimulationLibrary são obrigatórios no publish.
-Patch experimental mantém 22 arquivos após0003/4/5; replay exato revisado,
-SHA f8d5aebf3d287c907ebbd5981fd7722d05f45f14fdd9c7fc7700548380494688.
+Patch experimental atual contém 23 arquivos após0003/4/5, incluindo correção NBRS;
+SHA b465e061fab545dceb65e5ea430d33123b833ac3c949a6a45e76a4d92d8ce64c.
+O checkpoint de fila acima usou a revisão anterior de 22 arquivos.
 
-Próximo fluxo visível: criar família, mudar, salvar/reabrir, despejar e excluir,
-com cópia/perfil isolados e revisão; mapa estático abaixo. Manter próximos cortes
+O fluxo limitado de família foi executado; evidência abaixo. Manter próximos cortes
 compartilhados ligados a fluxos reais e continuar investigação dos runtimes/alvos,
 sem traduzir o motor inteiro nem adiar portabilidade para o fim. O orçamento total
 e os demais sistemas compartilhados permanecem abertos.
@@ -109,7 +121,8 @@ Clones de trabalho ignorados `refs/work/Simitone-linux`: frontend
 Aplicar frontend0001/0002/0006; FreeSO0003/0004/0005 e depois
 `tools/simitone/experimental-saved-code-recovery.patch`. No checkpoint BCON anterior, experimental tinha 22 arquivos; a revisão atual
 e o hash do patch estão na seção da fila acima.
-Frontend0006 SHAdd62711a37ce989e181a072870861097fb85c44886309972fdb7f6ba056d0284.
+Frontend0006 atual SHAfa5cb3d3144c74d8f9e38e3b14f04499db765e7f9ac94cc706537668b86514a8;
+inclui gravação imediata do bairro após retirar uma família da casa.
 As fontes managed/native do checkout e biblioteca correta para o destino são
 obrigatórias. Receita [native-data-integration.md](native-data-integration.md).
 Regerar/verificar replay experimental após alterações no clone de trabalho.
@@ -129,12 +142,18 @@ conserva as fontes e limites. Inventário estático não prova execução nem me
 
 ## Pendências do jogo completo
 
-Após a fronteira compartilhada, retomar famílias: criar adulto, mudar para House09,
-salvar/reabrir, despejar e excluir. Mapa estático:
-`reports/simitone-linux-evaluation/family-flow-source-map/report.json`.
-Preço previsto3500/saldo20000→16500 ainda precisa prova pela interface. Evict sem
-save imediato/FSOV antigo, refund ValueInArch e DeleteFamily deixando NBRS/personfiles
-são riscos de fonte, não bugs demonstrados em execução.
+Fluxo de famílias em [simitone-family-lifecycle.md](simitone-family-lifecycle.md).
+Baseline executada: criar adulto, reabrir seletor, comprar House09 por3500
+(saldo20000→16500), andar, salvar e reabrir preservando família/avatar.
+Evict sem save imediato foi demonstrado: reiniciar restaura a família na casa.
+NBRS também omitia 16 marcadores conhecidos. Ambas as correções foram
+reconstruídas e validadas em nova cópia: NBRS 289/289 conserva os 16 marcadores;
+Evict grava HouseNumber 0 e o reinício mostra o terreno vazio. Delete remove
+FAMI/FAMs e a família não reaparece ao reiniciar. Evidência em
+`reports/simitone-linux-evaluation/family-lifecycle-fixed/`, sete processos
+encerrados e originais iguais. FSOV antigo, refund ValueInArch e NBRS/personfiles
+retidos após Delete continuam riscos separados; reuso ainda não testado.
+Não ampliar esses fluxos em C# antes da frente de migração acima.
 
 Continuam construção, outros objetos/grupos/rotações, viagens e atividades das sete
 expansões, escolha de idioma, áudio, conteúdo personalizado e UI original final.

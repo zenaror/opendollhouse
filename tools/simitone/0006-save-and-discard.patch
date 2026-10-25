@@ -2,6 +2,20 @@ diff --git a/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs b/Clien
 index ea94c34..de0c6d3 100644
 --- a/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs
 +++ b/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs
+@@ -1,4 +1,4 @@
+-
++﻿
+ using FSO.Client;
+ using FSO.Client.Debug;
+ using FSO.Client.UI.Controls;
+@@ -281,6 +281,7 @@ namespace Simitone.Client.UI.Screens
+             family.Budget += family.ValueInArch;
+             family.ValueInArch = 0;
+             Content.Get().Neighborhood.MoveOut(houseID);
++            Content.Get().Neighborhood.SaveNeighbourhood(false);
+             TS1NeighPanel.SelectHouse(houseID);
+         }
+ 
 @@ -948,7 +948,7 @@ namespace Simitone.Client.UI.Screens
                      Buttons =
                      UIAlertButton.YesNoCancel(

@@ -3,6 +3,15 @@
 - Base comum: papel OMM `project-base`. Mapa local no README; planejamento
   canônico em `docs/architecture.md`, evidência nos documentos de validação
   e em `reports/`. Preservar as particularidades e autorizações abaixo.
+- Direção mais recente (2026-10-25, após o fluxo de famílias): o usuário cobrou
+  que a reescrita necessária aos ports já aconteça, em vez de continuar ampliando
+  o motor em C#. Priorizar migração incremental do núcleo compartilhado para C++,
+  aproveitando componentes nativos já usados. Simitone/C# é referência e ponte
+  temporária de validação, não destino arquitetural. Evitar novas funcionalidades
+  permanentes de jogo em C#; cada migração deve substituir um caminho realmente
+  usado, conservar comportamento e explicitar o que ainda depende de .NET.
+  Não reconstruir um segundo jogo completo em paralelo. Esta prioridade substitui
+  os próximos passos antigos que ampliavam o jogo herdado antes da migração.
 - O desenvolvimento inicial foi autorizado em 2026-10-13. Avançar em unidades
   pequenas e verificáveis, mantendo as decisões humanas e os limites da evidência.
 - Git de trabalho: https://git.home.zsrv.com.br/zenaror/opendollhouse.
