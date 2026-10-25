@@ -2,13 +2,51 @@
 
 ## Estado atual: House07 Go Here pela janela, save e retomada (2026-10-25)
 
+### Salvar pela janela durante a caminhada da família
+
+O gate `tests/house07_window_go_here.py --save-resume` passou com House07 real.
+A janela X11 recebeu clique no chão, Espaço e depois S, disparado somente após
+o primeiro movimento aparecer no log. O arquivo foi gravado no tick 104 com a
+rota ativa. Outro processo carregou o arquivo com zero ticks para confirmar o
+estado; um terceiro retomou os 15 passos restantes e chegou ao tile `[24,26]`,
+com fila vazia, sem falha do host e com o segundo morador ainda presente.
+Uma janela independente percorreu a mesma ordem sem save/load: a concatenação
+do passo anterior ao save e dos 15 passos retomados coincidiu com os 16 passos
+contínuos, incluindo direção e posição.
+
+Seis arquivos comerciais mantiveram os hashes. Todos os jogos e Xvfb da
+validação foram encerrados; os perfis temporários do gate foram removidos pelo
+próprio teste. Build de `odh-person` e do teste household passou, os nove CTests
+focados de bundle/restore/processos/CLI passaram e a revisão independente não
+encontrou bloqueio. O gate real single-resident anterior também passou novamente
+(Sit/Stand, save no tick 1188 e chegada após restore até 1202), com os mesmos seis
+arquivos comerciais inalterados. O log agora registra o primeiro quadro do lote apresentado
+e o primeiro movimento Go Here; o gate espera esses eventos em vez dos seis
+segundos fixos usados antes.
+
+```sh
+python3 tests/house07_window_go_here.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' --save-resume
+```
+
+O suporte novo exige uma única rota local Go Here do morador primário e verifica
+a identidade do destino temporário, o recurso exato e o fingerprint do código
+antes de restaurar o VM. Os perfis Route45 anteriores sem owner dinâmico continuam
+aceitos para ambos os moradores. Go Here salvo do morador adicional, múltiplas
+rotas dinâmicas e retomada entre cômodos/andares continuam pendentes. Esta prova
+usa entrada X11 sintética no preview ODH; não valida a interface final nem a
+fidelidade geral ao TS1/Simitone.
+
+### Contrato de save local e gate single-resident anterior
+
 O pacote de sessão carrega a seção opcional `ROUT`, com o caminho local Route45
 já escolhido e a posição atual do Sim. `OBVM` registra o Main do PhoneLine 207;
 `DYNO` registra owners dinâmicos com alvo, definição, rotina-raiz, vínculo GLOB
 e fingerprint da closure. O restore single-resident recompõe o recurso exato,
 confere GLOB e fingerprint e instala o owner antes de restaurar o VM. A revisão
-independente não encontrou erro nessa ordem. Restore household ainda não aceita
-owners dinâmicos.
+independente não encontrou erro nessa ordem. O restore household aceita agora o único owner dinâmico da rota Go Here local
+do morador primário; moradores adicionais continuam sem esse suporte.
 
 O teste opt-in `tests/house07_route_save_resume.py` agora percorre House07 com
 dados comerciais somente para leitura. Sit na cadeira 128 (tick 1), Stand
@@ -34,8 +72,8 @@ python3 tests/house07_route_save_resume.py \
 Build dos alvos `odh-person`, `odh-routing-tests` e
 `odh-session-bundle-tests`, CTest focado `routing`/`session_bundle` (2/2) e o
 gate real acima passaram. A retomada real de rota local de um cômodo está
-validada nesse caso; rotas entre cômodos/andares, portais e retomada por
-household com owner dinâmico continuam sem validação. Isso também não demonstra
+validada nesse caso; retomada de rotas entre cômodos/andares e portais continua
+sem validação. Isso também não demonstra
 paridade geral com o The Sims ou Simitone.
 
 ### Go Here por clique no chão e Espaço (2026-10-25)

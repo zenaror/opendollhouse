@@ -3020,6 +3020,39 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
     if(!restoring_session)prepare_household_bodies();
+    const auto load_dynamic_action_owner=[&](const odh::SessionDynamicActionOwner& binding){
+        if(!definition_index||!session_context)
+            throw odh::FormatError("dynamic action restore needs the selected game definition catalog");
+        const auto* target=world.find(binding.target_id);
+        if(!target||target->kind!=odh::EntityKind::object||!target->definition||
+           target->generation!=binding.target_generation||target->definition->guid!=binding.target_guid)
+            throw odh::FormatError("dynamic action target identity changed before restore");
+        const auto* candidates=definition_index->candidates(binding.target_guid);
+        if(!candidates)throw odh::FormatError("dynamic action object definition is absent");
+        const odh::DefinitionCandidate* exact=nullptr;
+        for(const auto& candidate:*candidates){
+            if(candidate.source==binding.source&&candidate.asset==binding.asset&&
+               candidate.chunk_id==binding.definition_chunk_id&&
+               candidate.definition.tree_table_id==binding.tree_table_id){
+                if(exact)throw odh::FormatError("dynamic action object definition is ambiguous");
+                exact=&candidate;
+            }
+        }
+        if(!exact)throw odh::FormatError("dynamic action object provenance no longer matches selected resources");
+        auto source=load_session_action_source(*exact,binding.root_routine,binding.linked_semiglobal,
+            session_context->game_root,globals,definition_index?&*definition_index:nullptr);
+        const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
+        if(!saved_code_owners.emplace(key,binding.owner).second)
+            throw odh::FormatError("dynamic action owner resource key is duplicated");
+        saved_action_resources.emplace(binding.owner,Resource{binding.source,binding.asset,
+            binding.asset.empty()});
+        saved_action_tuning.emplace(binding.owner,load_saved_action_tuning(*exact));
+        if(binding.owner>=next_saved_code_owner){
+            if(binding.owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+            else next_saved_code_owner=binding.owner+1;
+        }
+        return std::make_pair(std::move(source.routines),std::move(source.linked_semiglobal));
+    };
     if(session_restore){
         if(!playback)throw odh::FormatError("session restore needs the matching animation catalog");
         if(!session_restore->object_threads().empty()){
@@ -3057,37 +3090,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(!session_restore->dynamic_action_owners().empty()){
             if(!definition_index||!session_context)
                 throw odh::FormatError("dynamic action restore needs the selected game's exact definition catalog");
-            session_restore->install_dynamic_action_owners(vm,[&](const auto& binding){
-                const auto* target=world.find(binding.target_id);
-                if(!target||target->kind!=odh::EntityKind::object||!target->definition||
-                   target->generation!=binding.target_generation||target->definition->guid!=binding.target_guid)
-                    throw odh::FormatError("dynamic action target identity changed before restore");
-                const auto* candidates=definition_index->candidates(binding.target_guid);
-                if(!candidates)throw odh::FormatError("dynamic action object definition is absent");
-                const odh::DefinitionCandidate* exact=nullptr;
-                for(const auto& candidate:*candidates){
-                    if(candidate.source==binding.source&&candidate.asset==binding.asset&&
-                       candidate.chunk_id==binding.definition_chunk_id&&
-                       candidate.definition.tree_table_id==binding.tree_table_id){
-                        if(exact)throw odh::FormatError("dynamic action object definition is ambiguous");
-                        exact=&candidate;
-                    }
-                }
-                if(!exact)throw odh::FormatError("dynamic action object provenance no longer matches selected resources");
-                auto source=load_session_action_source(*exact,binding.root_routine,binding.linked_semiglobal,
-                    session_context->game_root,globals,definition_index?&*definition_index:nullptr);
-                const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
-                if(!saved_code_owners.emplace(key,binding.owner).second)
-                    throw odh::FormatError("dynamic action owner resource key is duplicated");
-                saved_action_resources.emplace(binding.owner,Resource{binding.source,binding.asset,
-                    binding.asset.empty()});
-                saved_action_tuning.emplace(binding.owner,load_saved_action_tuning(*exact));
-                if(binding.owner>=next_saved_code_owner){
-                    if(binding.owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
-                    else next_saved_code_owner=binding.owner+1;
-                }
-                return std::make_pair(std::move(source.routines),std::move(source.linked_semiglobal));
-            });
+            session_restore->install_dynamic_action_owners(vm,load_dynamic_action_owner);
         }
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
@@ -3123,6 +3126,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             bindings.push_back({member->id,member->vm.get(),member->controllers.get(),&*member->playback,resolver});
         }
         std::sort(bindings.begin(),bindings.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+        if(!household_restore->dynamic_action_owners(runtime_avatar_id).empty())
+            household_restore->install_dynamic_action_owners(runtime_avatar_id,vm,load_dynamic_action_owner);
         household_restore->restore_execution(bindings,entity_scheduler,random,ticks);
         profile_mark("household-session-restored-before-main");
     }
@@ -3420,6 +3425,9 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     bool go_here_cancel_pending=false;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    bool go_here_movement_logged=false;
+#endif
     std::optional<std::uint16_t> go_here_action;
     std::optional<odh::CodeOwner> go_here_owner;
     std::optional<std::int16_t> go_here_marker_id;
@@ -4683,8 +4691,10 @@ struct PlacementCandidateProbe {
         const odh::LocalRouteSnapshot* saved){
         if(!saved)return;
         std::optional<odh::CodeOwner> verified_dynamic_owner;
-        if(id==runtime_avatar_id&&session_restore){
-            for(const auto& owner:session_restore->dynamic_action_owners()){
+        const auto* owners=session_restore?&session_restore->dynamic_action_owners():
+            household_restore?&household_restore->dynamic_action_owners(id):nullptr;
+        if(id==runtime_avatar_id&&owners){
+            for(const auto& owner:*owners){
                 if(owner.target_id!=saved->target||owner.target_guid!=0x7c4||
                    owner.root_routine!=4096||owner.linked_semiglobal)continue;
                 if(verified_dynamic_owner)throw odh::FormatError("saved route has multiple Destination code owners");
@@ -4855,16 +4865,22 @@ struct PlacementCandidateProbe {
             queue.completion()?std::optional<std::uint64_t>{queue.completion()->uid}:std::nullopt;
         go_here_action=4096;go_here_owner=owner->second;go_here_result.reset();
         go_here_status="queued";go_here_route_status="pending";go_here_diagnostic.clear();
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        go_here_movement_logged=false;
+#endif
     };
     const auto remove_go_here_marker=[&]{
         if(!go_here_marker_id||!go_here_marker_generation)return;
         const auto* marker=world.find(*go_here_marker_id);
         if(marker&&marker->generation==*go_here_marker_generation)world.remove(*go_here_marker_id);
     };
-    if(session_restore){
-        const auto* route=session_restore->local_route(runtime_avatar_id);
+    if(session_restore||household_restore){
+        const auto* route=session_restore?session_restore->local_route(runtime_avatar_id):
+            household_restore->local_route(runtime_avatar_id);
+        const auto& owners=session_restore?session_restore->dynamic_action_owners():
+            household_restore->dynamic_action_owners(runtime_avatar_id);
         if(route){
-            for(const auto& owner:session_restore->dynamic_action_owners()){
+            for(const auto& owner:owners){
                 if(owner.target_id!=route->target||owner.target_guid!=0x7c4||owner.root_routine!=4096)continue;
                 const auto* marker=world.find(owner.target_id);const auto* actor=world.find(runtime_avatar_id);
                 if(!marker||marker->kind!=odh::EntityKind::object||!marker->definition||
@@ -4982,8 +4998,8 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("this route cannot yet be saved safely; finish walking before saving ("+
                 (route_capture_rejection.empty()?"route capture did not identify the cause":route_capture_rejection)+")");
         }
-        if(go_here_status=="queued"&&!headless_go_here_same_room_only&&!resumed_go_here_route)
-            throw odh::FormatError("wait until Go Here finishes before saving");
+        if(go_here_status=="queued"&&!resumable_primary_route)
+            throw odh::FormatError("wait until Go Here reaches a supported local walking state before saving");
         if(std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
             return (member->routing&&member->routing->active()&&
                     !member->routing->capture_local_session_route())||
@@ -5401,6 +5417,9 @@ struct PlacementCandidateProbe {
             append(member->id,member->data.binding->guid);
         return residents;
     };
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    bool lot_frame_logged=false;
+#endif
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
         if(render_appearances&&body_state&&body_state->body){
@@ -5567,6 +5586,12 @@ struct PlacementCandidateProbe {
             }
 #endif
             render_window_host->present(frame.image);
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            if(render_lot_evidence&&!lot_frame_logged){
+                lot_frame_logged=true;
+                session_log.event("lot frame presented tick="+std::to_string(ticks));
+            }
+#endif
         }
 #endif
         if(render_output){
@@ -6580,6 +6605,13 @@ struct PlacementCandidateProbe {
             }
             const bool route_ok=runtime_routing->tick(ticks,[&](const odh::RouteMovement& movement){
                 ++route_runtime_movement_callbacks;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(go_here_status=="queued"&&!go_here_movement_logged){
+                    go_here_movement_logged=true;
+                    session_log.event("Go Here walking tick="+std::to_string(ticks)+
+                        " actor="+std::to_string(runtime_avatar_id));
+                }
+#endif
                 if(diagnostics.retain(Diagnostic::route_movement,route_runtime_movement_positions.size(),128))
                     route_runtime_movement_positions.push_back(movement.position);
             });

@@ -4,7 +4,9 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/session_bundle.hpp"
+#include "odh/seated_session_continuation.hpp"
 #include <algorithm>
+#include <functional>
 #include <memory>
 
 namespace odh {
@@ -12,7 +14,7 @@ namespace odh {
 // An unpublished candidate. Prepare restores owned World/relationship/global
 // values before the caller constructs VM primitives and controllers against
 // them. The live session must remain intact until restore_execution succeeds.
-// Routes, dynamic owners and seated continuation remain unsupported.
+// Only the primary resident's verified local Go Here dynamic owner is supported.
 struct SessionExecutionBinding {
     std::int16_t id = 0;
     Vm* vm = nullptr;
@@ -23,6 +25,8 @@ struct SessionExecutionBinding {
 
 class HouseholdSessionRestore {
 public:
+    using DynamicActionLoader = std::function<std::pair<RoutineSet,
+        std::optional<SessionLinkedSemiglobal>>(const SessionDynamicActionOwner&)>;
     static std::unique_ptr<HouseholdSessionRestore> prepare(
         const std::vector<std::uint8_t>& archive,
         const SessionResourceIdentity& expected_resources,
@@ -53,6 +57,8 @@ public:
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
+    const std::vector<SessionDynamicActionOwner>& dynamic_action_owners(std::int16_t id) const;
+    void install_dynamic_action_owners(std::int16_t id, Vm&, const DynamicActionLoader&);
     const LocalRouteSnapshot* local_route(std::int16_t id) const {
         const auto found=std::find_if(bundle_.runtime_entities.begin(),bundle_.runtime_entities.end(),
             [&](const auto& entity){return entity.id==id&&entity.route.has_value();});
@@ -74,6 +80,9 @@ private:
     Ts1BootstrapGlobals bootstrap_;
     std::optional<std::int16_t> family_global_;
     bool attempted_ = false;
+    std::optional<std::int16_t> dynamic_owner_resident_;
+    const Vm* dynamic_owner_vm_ = nullptr;
+    bool dynamic_owners_verified_ = false;
 };
 
 } // namespace odh

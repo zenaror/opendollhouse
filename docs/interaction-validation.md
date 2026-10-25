@@ -1,5 +1,37 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Save pela janela durante Go Here com household (2026-10-25)
+
+O gate `tests/house07_window_go_here.py --save-resume` usa clique X11 no chão,
+Espaço para pedir Go Here e S após o primeiro passo confirmado no log. Na
+House07, o save no tick 104 preservou a rota primária ativa e a família inteira.
+Um processo novo carregou com zero ticks para provar que havia rota pendente;
+outro executou os 15 passos restantes até `[392,424,1,0]`, com retorno `true`,
+fila vazia e o segundo morador presente. Uma execução contínua independente
+confirmou igualdade de todos os 16 passos (prefixo antes do save + trecho
+retomado), incluindo a direção. Os seis arquivos comerciais monitorados
+mantiveram os hashes. Jogo, processos de retomada e Xvfb foram encerrados.
+
+O restore household recompõe somente o owner dinâmico exato da Destination do
+morador primário, antes de restaurar o VM. Exige alvo/geração/GUID, identidade do
+recurso, vínculo semiglobal e fingerprint da closure consistentes; referências
+extras, instalação ausente ou no VM errado continuam recusadas. O teste
+sintético também mantém a aceitação das rotas locais Route45 sem DYNO dos dois
+moradores. O novo log de primeiro quadro apresentado remove a espera fixa da
+checagem de janela. Build e CTests focados passaram (9/9). O gate anterior
+`house07_route_save_resume.py` também passou após a integração, mantendo o save
+single-resident no tick 1188 e a chegada no tick 1202.
+
+Esta cobertura vale para o caso local da House07. Save de Go Here de moradores
+adicionais, vários caminhantes e retomada entre cômodos/andares ainda não estão
+validados. A interface final TS1/Simitone permanece pendente.
+
+```sh
+python3 tests/house07_window_go_here.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' --save-resume
+```
+
 ## Go Here pela janela em House07 (2026-10-25)
 
 `tests/house07_window_go_here.py` inicia o jogo integrado numa janela Xvfb vazia,

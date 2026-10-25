@@ -7,6 +7,16 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A tecla S pode salvar a família enquanto o morador principal percorre uma
+  rota Go Here local. Na House07, reabrir o arquivo completou a caminhada e
+  preservou o outro morador; todos os passos coincidiram com uma execução sem
+  interrupção. O suporte ainda não cobre Go Here salvo de moradores adicionais
+  nem retomada entre cômodos. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
+
+- O log registra quando o lote aparece na janela e quando Go Here começa a
+  andar, ajudando a localizar problemas de carregamento e de caminhada.
+
 - Uma caminhada Go Here local da House07 pode ser salva enquanto o Sim está
   andando e retomada em outro processo. O gate confirmou a chegada ao destino e
   preservou os arquivos originais do jogo; o teste de continuidade compara os

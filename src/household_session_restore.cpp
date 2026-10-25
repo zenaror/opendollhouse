@@ -1,4 +1,5 @@
 #include "odh/household_session_restore.hpp"
+#include "odh/seated_session_continuation.hpp"
 #include <algorithm>
 
 namespace odh {
@@ -18,10 +19,29 @@ bool same_banks(const std::optional<SavedObjectBanks>& a,const std::optional<Sav
 void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original) {
     if(bundle.world.attribute_policy!=original.attribute_policy)
         throw FormatError("session World attribute policy differs from the original lot");
-    if(bundle.world.entities.size()!=original.entities.size())
-        throw FormatError("session entity roster differs from the original lot");
-    for(std::size_t n=0;n<original.entities.size();++n) {
-        const auto& a=bundle.world.entities[n];const auto& b=original.entities[n];
+    const Entity* route_marker=nullptr;
+    const auto primary_it=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+        [&](const auto& runtime){return runtime.id==bundle.host.runtime_avatar_id;});
+    if(primary_it==bundle.runtime_entities.end())throw FormatError("primary household runtime is absent");
+    const auto& primary=*primary_it;
+    if(primary.route)for(const auto& owner:primary.dynamic_action_owners){
+        if(owner.target_id!=primary.route->target||owner.target_guid!=0x7c4||owner.root_routine!=4096)continue;
+        const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+            [&](const auto& entity){return entity.id==owner.target_id;});
+        if(route_marker||found==bundle.world.entities.end()||found->kind!=EntityKind::object||
+           !found->definition||found->definition->guid!=0x7c4||found->generation!=owner.target_generation||
+           !found->ui_ghost||found->static_footprint||!found->position||
+           !(*found->position==primary.route->target_position))
+            throw FormatError("saved Go Here route marker is not the exact temporary Destination object");
+        route_marker=&*found;
+    }
+    if(bundle.world.entities.size()!=original.entities.size()+(route_marker?1u:0u))
+        throw FormatError("session entity roster differs from original lot and optional Go Here marker");
+    for(const auto& b:original.entities) {
+        const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+            [&](const auto& entity){return entity.id==b.id;});
+        if(found==bundle.world.entities.end())throw FormatError("session entity roster lost original lot entity");
+        const auto& a=*found;
         const auto route=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [&](const auto& runtime){return runtime.id==a.id&&runtime.route.has_value();});
         const bool route_actor=route!=bundle.runtime_entities.end();
@@ -51,6 +71,12 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         if(!changed.empty())
             throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
     }
+    for(const auto& entity:bundle.world.entities){
+        const auto found=std::find_if(original.entities.begin(),original.entities.end(),
+            [&](const auto& value){return value.id==entity.id;});
+        if(found==original.entities.end() && &entity!=route_marker)
+            throw FormatError("session added an entity other than its exact active Go Here marker");
+    }
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});
     if(actor==bundle.world.entities.end()||!actor->definition||
@@ -59,8 +85,11 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
        (!actor->person_data.empty()&&actor->person_data[0]!=0))))
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
-void validate_owner(const VmContext& context,std::int16_t actor) {
-    if(context.code_owner!=static_cast<CodeOwner>(actor))
+void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) {
+    if(context.code_owner==static_cast<CodeOwner>(state.id))return;
+    if(state.route&&std::any_of(state.dynamic_action_owners.begin(),state.dynamic_action_owners.end(),
+       [&](const auto& owner){return owner.owner==context.code_owner;}))return;
+    if(context.code_owner!=static_cast<CodeOwner>(state.id))
         throw FormatError("session requires an unserialized dynamic code owner");
 }
 void validate_runtime(const SessionBundle& bundle) {
@@ -68,6 +97,15 @@ void validate_runtime(const SessionBundle& bundle) {
     if(bundle.household_roster.empty()||bundle.scheduler.faulted)
         throw FormatError("household restore requires a complete nonfaulted version-2 roster");
     for(const auto& state:bundle.runtime_entities) {
+    const bool primary=state.id==bundle.host.runtime_avatar_id;
+    if(!primary&&!state.dynamic_action_owners.empty())
+        throw FormatError("household dynamic Go Here owners are limited to the primary resident");
+    if(!state.dynamic_action_owners.empty()&&(!primary||!state.route||state.dynamic_action_owners.size()!=1||
+       state.dynamic_action_owners.front().target_id!=state.route->target||
+       state.dynamic_action_owners.front().target_guid!=0x7c4||
+       state.dynamic_action_owners.front().root_routine!=4096||
+       state.route->entry_flags!=0||!state.route->call_failure_trees))
+        throw FormatError("household restore supports only the exact primary Go Here route owner");
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==state.id;});
     if(actor==bundle.world.entities.end()||actor->attachment||(!actor->person_data.empty()&&actor->person_data[0]!=0))
@@ -75,12 +113,12 @@ void validate_runtime(const SessionBundle& bundle) {
     if(state.vm.status==VmStatus::fault||state.vm.status==VmStatus::dormant)
         throw FormatError("session VM is faulted or dormant");
     for(const auto& frame:state.vm.stack) {
-        validate_owner(frame.context,state.id);
+        validate_owner(frame.context,state);
         if(frame.return_mode==VmCallReturnMode::external_frame_next_tick)
             throw FormatError("session external portal frames are unsupported");
     }
     const auto pending=[&](const VmPending& wait){
-        validate_owner(wait.context,state.id);
+        validate_owner(wait.context,state);
         const auto& instruction=wait.instruction.instruction;
         const bool saved_go_here=state.route&&state.route->call_failure_trees&&instruction.opcode==27&&
             instruction.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
@@ -93,15 +131,17 @@ void validate_runtime(const SessionBundle& bundle) {
     for(const auto& wait:state.vm.suspended_pending)pending(wait);
     if(state.vm.external_frame_return)
         throw FormatError("session external portal return is unsupported");
-    if(state.vm.interaction_return&&state.vm.interaction_return->code_owner!=static_cast<CodeOwner>(state.id))
-        throw FormatError("session interaction return requires a dynamic owner");
+    if(state.vm.interaction_return)validate_owner({state.id,state.id,state.id,
+        state.vm.interaction_return->code_owner},state);
     for(const auto& action:state.controllers.interactions.actions) {
-        validate_owner(action.call.context,state.id);
+        validate_owner(action.call.context,state);
         if(action.call.return_mode==VmCallReturnMode::external_frame_next_tick)
             throw FormatError("session queued portal action is unsupported");
     }
     const auto playback_key=[&](const PlaybackResourceKey& key){
-        if(key.code_owner!=static_cast<CodeOwner>(state.id))
+        if(key.code_owner!=static_cast<CodeOwner>(state.id)&&
+           !(state.route&&std::any_of(state.dynamic_action_owners.begin(),state.dynamic_action_owners.end(),
+             [&](const auto& owner){return owner.owner==key.code_owner;})))
             throw FormatError("session animation requires a dynamic owner");
     };
     if(state.playback.state)playback_key(state.playback.state->resource);
@@ -115,6 +155,35 @@ HouseholdSessionRestore::HouseholdSessionRestore(SessionBundle bundle,
     std::optional<std::int16_t> family,WorldLimits world_limits,RelationshipLimits relationship_limits)
     :bundle_(std::move(bundle)),world_(std::make_unique<World>(world_limits)),relationships_(relationship_limits),
      lot_(lot),bootstrap_(bootstrap),family_global_(family) {}
+
+const std::vector<SessionDynamicActionOwner>& HouseholdSessionRestore::dynamic_action_owners(std::int16_t id) const {
+    const auto found=std::find_if(bundle_.runtime_entities.begin(),bundle_.runtime_entities.end(),
+        [&](const auto& state){return state.id==id;});
+    if(found==bundle_.runtime_entities.end())throw FormatError("household dynamic owner resident is absent");
+    return found->dynamic_action_owners;
+}
+
+void HouseholdSessionRestore::install_dynamic_action_owners(std::int16_t id,Vm& vm,
+    const DynamicActionLoader& load) {
+    if(attempted_||dynamic_owners_verified_||id!=bundle_.host.runtime_avatar_id||!load)
+        throw FormatError("dynamic action owners can only be installed once for the primary resident before restore");
+    const auto& owners=dynamic_action_owners(id);
+    if(owners.size()!=1||!local_route(id))
+        throw FormatError("household primary has no single verified Go Here dynamic owner");
+    std::vector<std::pair<CodeOwner,RoutineSet>> resolved;resolved.reserve(owners.size());
+    for(const auto& owner:owners){
+        auto source=load(owner);
+        if(source.second!=owner.linked_semiglobal||
+           !source.first.count(routine_key(owner.root_routine))||
+           session_action_routine_fingerprint(source.first)!=owner.routine_fingerprint)
+            throw FormatError("dynamic action owner resource, GLOB link or routine closure changed");
+        resolved.emplace_back(owner.owner,std::move(source.first));
+    }
+    for(auto& owner:resolved)if(!vm.install_owner(owner.first,std::move(owner.second))){
+        attempted_=true;throw FormatError("fresh household VM rejected verified dynamic action owner");
+    }
+    dynamic_owners_verified_=true;dynamic_owner_resident_=id;dynamic_owner_vm_=&vm;
+}
 
 std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
     const std::vector<std::uint8_t>& archive,const SessionResourceIdentity& resources,
@@ -184,6 +253,12 @@ void HouseholdSessionRestore::restore_execution(const std::vector<SessionExecuti
         for(std::size_t p=0;p<n;++p)if(bindings[p].vm==b.vm||bindings[p].controllers==b.controllers||bindings[p].playback==b.playback)
             throw FormatError("household execution bindings alias different residents");
     }
+    const auto primary=std::find_if(bindings.begin(),bindings.end(),
+        [&](const auto& binding){return binding.id==bundle_.host.runtime_avatar_id;});
+    if(primary==bindings.end())throw FormatError("household primary execution binding is absent");
+    const auto& primary_owners=dynamic_action_owners(bundle_.host.runtime_avatar_id);
+    if(!primary_owners.empty()&&(!dynamic_owners_verified_||dynamic_owner_resident_!=primary->id||dynamic_owner_vm_!=primary->vm))
+        throw FormatError("primary dynamic action resources were not verified and installed into this VM");
     for(std::size_t n=0;n<bindings.size();++n){const auto& b=bindings[n];const auto& state=bundle_.runtime_entities[n];
         if(!b.vm->restore_snapshot(state.vm))throw FormatError("household VM does not match fresh programs and bindings");
         if(!b.controllers->restore_snapshot(state.controllers))throw FormatError("household controllers do not match fresh VM and world");
