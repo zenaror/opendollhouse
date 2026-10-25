@@ -8,6 +8,14 @@ O retrato atual por recurso e a ordem proposta para ligar as peças estão em
 [playable-feature-matrix.md](playable-feature-matrix.md). A matriz é um mapa
 de trabalho, não reduz os critérios de conclusão deste documento.
 
+Direção autorizada em 2026-10-25: obter a base funcional Linux a partir de
+Simitone e sua revisão FreeSO, corrigindo diferenças rumo à experiência original.
+O [plano vigente](architecture.md#direção-vigente--base-simitone-experiência-original-2026-10-25)
+substitui a estratégia de reescrita independente como caminho principal.
+Paridade Simitone é um marco intermediário; interface, controles e comportamento
+do original continuam sendo o destino. Limitações herdadas não removem os
+requisitos abaixo. A primeira execução dessa base ainda está pendente.
+
 ## Definição
 
 A build candidata deve oferecer, no Linux, o ciclo principal de The Sims 1 com

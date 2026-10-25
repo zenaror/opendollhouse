@@ -5,6 +5,14 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Alterado
+
+- O caminho principal passa a ser avaliar uma base Simitone/FreeSO no Linux e
+  aproximá-la da experiência original, aproveitando os sistemas já integrados.
+  O motor próprio e as pesquisas ficam preservados como apoio. A nova base
+  ainda não foi compilada ou executada no projeto; os portáteis continuam
+  planejados e dependem de avaliação própria. Veja [o plano](docs/architecture.md).
+
 ### Adicionado
 
 - Salvar durante uma caminhada Go Here local agora inclui o outro Sim

@@ -1,5 +1,41 @@
 # Continuidade atual
 
+## Direção vigente: Simitone como base, original como destino (2026-10-25)
+
+O usuário autorizou ajustar o objetivo após avaliar a mudança de estratégia.
+Priorizar a avaliação prática de uma base Simitone com seu FreeSO correspondente
+no Linux, mantendo C# inicialmente. O primeiro candidato é o fork alexjyong.
+Experiência original significa interface, controles, regras e expansões;
+paridade Simitone é um marco intermediário. Não iniciar tradução integral para
+C++ nem manter dois motores completos em desenvolvimento paralelo.
+
+Próximo entregável: checkout de trabalho separado dos clones de consulta,
+licenças/dependências/revisões conferidas, compilação e demonstração de
+vizinhança → casa → interação → compra/posicionamento → salvar/reabrir,
+em perfil e dados/saves isolados. Comparar o resultado com o original desde
+cedo. A avaliação anterior foi estática; nenhum build/runtime Simitone foi
+executado. Clone fork local `e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`,
+FreeSO gitlink `7e76c1960252ddd033d8937d5edb47d326f5b69c` ausente.
+SDK/runtime .NET 10 encontrado, runtime9 não listado; conferir requisitos
+antes da preparação. O script upstream pode instalar pacotes automaticamente.
+
+Preservar C++, ferramentas, evidências e dados comerciais. Há trabalho parcial
+não commitado em `include/odh/vm.hpp`, `tests/vm.cpp`, `tests/routing.cpp` e
+`tools/household_go_here_session.hpp`: API para reutilizar instruções de
+caminhada e casos para 40 pedidos com orçamento pequeno. Não foi compilado,
+executado ou integrado ao host. Não é bloqueador da nova rota nem checkpoint
+validado. Preservar também `Testing/` e os três scripts não rastreados já
+existentes. Limpeza antiga continua aguardando autorização específica.
+
+O objetivo nativo consultado permanece com o texto anterior e status `paused`.
+As ferramentas disponíveis não permitem editar seu texto ou retomá-lo; não
+marcar a meta antiga concluída para contornar isso. O plano vigente está em
+`docs/architecture.md` e no handoff OMM. Atualizar a meta nativa pela interface
+quando possível. A alteração de planejamento não comprova jogo funcional.
+
+As seções seguintes preservam evidências e pendências do motor próprio;
+não devem recolocar suas microetapas à frente do novo plano.
+
 ## Estado atual: House07 Go Here pela janela, save e retomada (2026-10-25)
 
 ### Caminhada do morador adicional salva pela janela

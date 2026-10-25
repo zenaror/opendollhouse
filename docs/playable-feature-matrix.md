@@ -1,5 +1,13 @@
 # Matriz de recursos para a primeira build jogável
 
+Direção vigente de 2026-10-25: avaliar uma base Simitone/FreeSO Linux em vez de
+continuar a reescrita independente como caminho principal. A experiência original
+é o destino; paridade Simitone é um marco intermediário. Ver
+[plano vigente](architecture.md). As evidências abaixo descrevem o motor C++
+preservado e não comprovam os mesmos recursos na futura base C#. A ordem antiga
+de integração abaixo é histórica; a próxima entrega é compilar e demonstrar
+o ciclo completo da base candidata antes de decidir sua adoção.
+
 Esta matriz acompanha evidências de vários checkpoints, incluindo a entrada
 integrada descrita em [linux-session-entry-validation.md](linux-session-entry-validation.md),
 sem alegar equivalência. O alvo é o fluxo funcional do Simitone para The Sims Coleção

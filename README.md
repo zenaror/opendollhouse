@@ -1,11 +1,15 @@
 # OpenDollhouse
 
-Reimplementação independente de The Sims 1 para PC, com suporte progressivo às
-sete expansões e ao conteúdo personalizado clássico. Simitone e a revisão do
-FreeSO usada por ele são as referências técnicas prioritárias; FreeSO principal
-é uma referência secundária. A referência de comportamento é o jogo original.
+Projeto para recuperar a experiência do The Sims 1 para PC, com suporte
+progressivo às sete expansões e ao conteúdo personalizado clássico.
+Direção autorizada em 2026-10-25: partir de uma base Simitone/FreeSO funcional
+no Linux e corrigir suas diferenças em relação ao original, incluindo interface,
+controles e regras do jogo. O primeiro candidato para avaliação é o fork
+comunitário alexjyong, mantendo inicialmente C#. A base ainda não foi compilada
+ou executada neste projeto; a adoção depende da validação prática e da revisão
+das licenças e dependências. O plano está em [docs/architecture.md](docs/architecture.md).
 
-Estado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
+Estado do motor próprio preservado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
 com testes sem janela, traces, rasterização CPU de avatar texturizado e decode
 de sprites de objetos com alpha/Z, com composição de avatar/cadeira em imagens.
@@ -15,8 +19,8 @@ completos de simulação e validação em consoles.
 
 Plataformas planejadas: Linux primeiro; depois New Nintendo 3DS, PlayStation Vita
 e Android; Nintendo Switch, Windows e macOS (Apple Silicon arm64 e Intel x86_64)
-ficam como alvos futuros. O New 3DS continua orientando consumo, carregamento e
-decisões portáveis desde o início. Cada console exige toolchain e validação
+ficam como alvos futuros. A viabilidade dos portáteis será reavaliada para a
+base escolhida, sem bloquear o primeiro candidato Linux. Cada console exige toolchain e validação
 próprias; não há build ou teste de hardware do Switch validado neste projeto.
 Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão
 de CI ou máquinas dedicadas antes de qualquer declaração de suporte.
@@ -63,7 +67,7 @@ receipts e projetos Ghidra únicos ficam retidos em `reports/`; ser ignorado
 pelo Git não os torna descartáveis. Não houve remoção de evidências neste
 checkpoint de organização.
 
-## Compilar e testar
+## Compilar e testar o motor C++ preservado
 
 Requisitos desta etapa: compilador C++17 e CMake 3.16 ou superior. No Linux,
 Iconv converte textos antigos do jogo. A janela jogável precisa dos arquivos de
@@ -74,9 +78,9 @@ faltar, em vez de produzir uma janela sem controles visíveis. Os scripts
 auxiliares usam Python 3.8 ou superior, somente com a biblioteca padrão.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j 2
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/linux-checkpoint -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/linux-checkpoint -j 2
+ctest --test-dir build/linux-checkpoint --output-on-failure
 ```
 
 `-DODH_X11=OFF` compila sem janela e não exige Pango. Com X11 ligado, PangoCairo

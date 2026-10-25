@@ -1,6 +1,58 @@
 # Arquitetura em investigação
 
-ODH pretende manter um núcleo C/C++ compartilhado, com renderizadores e integração
+## Direção vigente — base Simitone, experiência original (2026-10-25)
+
+Decisão humana: mudar o caminho principal para aproveitar o Simitone com sua
+revisão correspondente do FreeSO e ajustar progressivamente a experiência ao
+The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
+controles, simulação e cobertura das expansões continuam tendo o original como
+critério final. Paridade Simitone é um marco intermediário, não a conclusão.
+
+Primeiro avaliar o fork alexjyong, que possui entrada Desktop Linux. Manter
+inicialmente C#/.NET e o motor existente; não iniciar uma tradução integral
+para C++. A inspeção estática encontrou projeto net9.0, MonoGame DesktopGL,
+receita de build Linux e seleção explícita da pasta de dados. Isso não prova
+execução local. O clone de consulta está em
+`e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`; seu FreeSO
+`7e76c1960252ddd033d8937d5edb47d326f5b69c` não está materializado. A máquina
+possui SDK/runtime .NET 10, sem runtime 9 listado na avaliação; conferir o
+ambiente e escolher dependências compatíveis na preparação efetiva.
+
+Sequência de trabalho:
+
+1. Preparar checkout de desenvolvimento separado, com revisões exatas do
+   Simitone e FreeSO, preservando os clones de consulta. Conferir licenças por
+   componente, créditos e requisitos; não executar scripts que instalem pacotes
+   automaticamente. Trabalhar com perfil e cópia de dados/saves isolados.
+2. Compilar e demonstrar no Linux: abrir vizinhança, entrar numa casa, controlar
+   Sims, concluir interação, comprar/colocar objeto, salvar e reabrir. Registrar
+   falhas por fluxo, logs e término das telas virtuais. Só então confirmar ou
+   rever a escolha da base; download ou sucesso de compilação não bastam.
+3. Comparar desde cedo os fluxos com o original, usando dados e observação do
+   jogo; investigar o executável quando necessário. Separar diferença visual,
+   comportamento incorreto e recurso ausente. Restaurar a interface clássica
+   e corrigir regras por cenários completos, preservando regressões úteis.
+4. Cobrir famílias, construção/compra, idioma, logs e as sete expansões conforme
+   [linux-playable-scope.md](linux-playable-scope.md). Falhas conhecidas herdadas
+   não viram exclusões automáticas do escopo. Substituir sistemas maiores apenas
+   quando a evidência justificar, evitando dois motores completos em paralelo.
+5. Reavaliar recursos e execução nos portáteis depois da base Linux demonstrada.
+   New 3DS, Vita, Android, Switch, Windows e macOS Intel/Apple Silicon permanecem
+   alvos planejados, sem promessa de compatibilidade da nova base.
+
+O C++ existente, as ferramentas, testes e descobertas ficam preservados como
+apoio técnico. Não presumir integração direta C++/C#, equivalência dos saves
+próprios ou fidelidade de comportamentos herdados. A correção parcial de reuso
+de código de caminhada permanece pendente e não é requisito para iniciar esta
+avaliação. Não publicar esse código como validado sem compilação e testes.
+
+## Histórico técnico do motor próprio
+
+As decisões e descrições abaixo registram a implementação C++ preservada.
+A estratégia acima prevalece sobre sua antiga prioridade de reescrita e sobre
+restrições de portáteis que atrasem a avaliação Linux.
+
+O planejamento anterior previa um núcleo C/C++ compartilhado, com renderizadores e integração
 de sistema específicos por plataforma. C++17 é a escolha do primeiro protótipo;
 toolchains e orçamentos dos consoles ainda não foram validados.
 

@@ -2,8 +2,14 @@
 
 FreeSO, Simitone e seus autores/contribuidores oferecem investigação e
 implementações importantes de formatos, SimAntics e integração TS1. ODH usa esses
-trabalhos como conhecimento e inspiração. O código versionado do ODH não inclui
-nem depende do runtime ou implementação C# desses projetos.
+trabalhos como conhecimento e inspiração. Até o checkpoint desta decisão, o
+código versionado do ODH não inclui nem depende do runtime C# desses projetos.
+Em 2026-10-25, o usuário autorizou mudar o caminho principal para uma base
+derivada do Simitone/FreeSO, com o original como destino de fidelidade.
+A entrada Linux do fork alexjyong será avaliada primeiro em checkout de trabalho
+separado. Adoção, revisões e licenças ainda precisam ser verificadas na prática;
+os clones abaixo continuam sendo referências preservadas, não dependências
+automaticamente incorporadas. Ver [plano vigente](architecture.md).
 
 ## Prioridade para The Sims Complete Collection
 

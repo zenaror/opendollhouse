@@ -11,8 +11,9 @@
   em `build/` como diretório de compilação.
 - Meta ativa: primeira versão funcional e testável no Linux antes dos ports
   New 3DS/Vita/Android (decisão humana de 2026-10-13). Seguir autonomamente em
-  milestones, com testes e checkpoints. New 3DS segue orientando restrições
-  arquiteturais; resultados Linux não validam consoles.
+  milestones, com testes e checkpoints. Pela direção de 2026-10-25 abaixo,
+  restrições de New 3DS serão reavaliadas sem bloquear a base Linux;
+  resultados Linux não validam consoles.
 - Nintendo Switch também é um possível alvo futuro de build, depois do Linux e
   dos ports prioritários; toolchain, requisitos de distribuição e validação em
   hardware ainda não foram confirmados. Windows e macOS (Apple Silicon e Intel)
@@ -29,9 +30,21 @@
   formatos compartilhados e correções; não importar comportamentos de TSO
   como se fossem do TS1. As referências antigas mantêm sua proveniência;
   não relabelar evidência anterior sem comparar as implementações.
-- Simitone/FreeSO são inspiração e referências. ODH tem implementação própria.
-  Identificar revisão e licença de referências; não afirmar equivalência ao
-  original apenas porque uma implementação de terceiros se comporta assim.
+- Direção autorizada em 2026-10-25: priorizar uma base Linux derivada do
+  Simitone e de sua revisão correspondente do FreeSO, mantendo inicialmente C#.
+  Avaliar primeiro o fork alexjyong com entrada Linux, em checkout de trabalho
+  separado dos clones de consulta. Compilar e validar o ciclo de jogo antes de
+  confirmar a base; identificar revisões, licenças e dependências. O destino é
+  a experiência do The Sims 1 original, incluindo aparência, controles e regras,
+  não reproduzir permanentemente as escolhas ou limitações do Simitone.
+- Preservar o motor C++, ferramentas, descobertas e alterações pendentes como
+  apoio; não manter duas implementações completas em desenvolvimento paralelo
+  nem traduzir todo o Simitone para C++ como primeira etapa. Novos testes devem
+  desbloquear fluxos completos ou corrigir diferenças demonstradas do original.
+  Os portáteis continuam planejados, com viabilidade a reavaliar para a nova
+  base; as restrições do New 3DS não devem bloquear o primeiro candidato Linux.
+  Esta decisão substitui a estratégia anterior de reescrita independente como
+  caminho principal. Não declarar equivalência por herdar código de terceiros.
 - Fontes FreeSO/Simitone locais em `refs/upstream/`, ignoradas no Git ODH,
   com revisões fixadas em `docs/references.md`. Consultar primeiro com `rg` e
   leitura de trechos; conector/web quando faltar material ou para nova revisão.
