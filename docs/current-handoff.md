@@ -30,9 +30,27 @@ animação `a2o-eatloop-stand` no frame 20.2/31, fila ainda ativa e relógio 7:4
 A captura
 `launcher-house07-snack-after-35s.png` (SHA256
 `6c0be5dedc30e10c6066b77187ca245e1a47392b8bbbcac704cc9230e00cb92d`) mostra
-o Sim comendo. O retorno do BHAV está confirmado; o fim da animação, o
-esvaziamento da fila e os efeitos finais da refeição permanecem pendentes. As execuções
-saíram após Escape, `xvfb-run` encerrou a tela e nenhum processo ficou aberto.
+o Sim comendo. Na captura de 35s, o retorno do BHAV estava confirmado, mas o
+fim da animação e da fila ainda não; a atualização seguinte resolve esse ponto
+para a ação headless. As execuções da janela saíram após Escape, `xvfb-run`
+encerrou a tela e nenhum processo ficou aberto.
+
+## Atualização: ação de lanche até a fila esvaziar (2026-10-25)
+
+Um probe headless separado avançou a House07 por 4096 ticks. O BHAV4103
+`Have A Snack` retornou `true`, a fila do ator105 ficou vazia (`queue_size=0`,
+`queue_active=false`) e ele já estava na animação de repouso
+`a2o-idle-neutral-lcrossed-breathe-1d`. O trace confirmou o ramo de criação
+OutOfWorld esperado para `Food`; não restaram objetos temporários no mundo.
+O recibo local ignorado pelo Git é
+`reports/pie-menu-window/launcher-house07-snack-after-4096-ticks.json`, SHA256
+`e9f20a522d09fc3b25f3c32dfa4f78065c7c8bd5c3d3a11823d6d941419aa3a2`.
+
+Limite: o processo atingiu o teto de 4096 ticks (código3) enquanto as VMs
+Main estavam `waiting`. Isso prova que a ação do lanche terminou e a fila
+esvaziou neste percurso; não prova que toda a simulação autônoma da casa
+terminaria nem que o efeito visual/comportamental da refeição corresponde ao
+jogo original. Não foi aberta tela virtual neste probe.
 
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
@@ -45,9 +63,10 @@ e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
 passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
 prova paridade visual com o Simitone ou com o jogo original.
 
-Próximo: observar o fim da animação e da fila após o retorno `true` e continuar a
-reconstrução visual do menu/HUD conforme Simitone e dados locais, mantendo cada
-resultado limitado ao que a captura ou o trace demonstra.
+Próximo: comparar início frio e repetição quente do launcher com idioma
+explícito e medir os custos; depois continuar a reconstrução visual do menu/HUD
+conforme Simitone e dados locais, mantendo cada resultado limitado ao que a
+captura ou o trace demonstra.
 
 ## Atualização: BCON privado e retorno da Pizza (2026-10-24)
 
