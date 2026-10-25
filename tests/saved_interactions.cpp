@@ -28,7 +28,9 @@ std::string call_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(b,1,2);
 std::string write_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(0);b.push_back(0);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(5);b.push_back(3);b.push_back(7);return b;}
-std::string inventory_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+std::string inventory_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,2,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+    put(b,2,2);b.push_back(1);b.push_back(static_cast<char>(255));
+    b.push_back(20);b.push_back(0);b.push_back(8);b.push_back(0);b.push_back(0);b.push_back(8);b.push_back(6);b.push_back(7);
     put(b,51,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(3);b.push_back(7);b.push_back(0);b.push_back(0);put(b,guid,4);return b;}
 void write(const std::filesystem::path& path,const std::string& bytes){std::ofstream f(path,std::ios::binary);f.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));if(!f)throw std::runtime_error("fixture write failed");}
@@ -227,18 +229,26 @@ int main(){try{
     constexpr std::uint32_t token_guid=0x12345678;
     data=iff(chunk("BHAV",4098,inventory_test_bhav(token_guid)));write(path,data);
     check(world.set_person_data(1,31,7),"inventory probe actor neighbor id initialized");
+    const auto no_edition=[](std::int16_t index)->std::optional<std::int16_t>{
+        return index==20?std::optional<std::int16_t>{0}:std::nullopt;};
+    const auto all_editions=[](std::int16_t index)->std::optional<std::int16_t>{
+        return index==20?std::optional<std::int16_t>{255}:std::nullopt;};
     const auto inventory_missing=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(inventory_missing[0].state==SavedTestFunctionResult::State::unsupported,
-        "inventory TestFunction remains unsupported when the neighborhood inventory is unavailable");
+        "edition TestFunction remains unsupported when runtime globals are unavailable");
+    const auto edition_disabled=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,no_edition);
+    check(edition_disabled[0].state==SavedTestFunctionResult::State::ineligible,
+        "game edition without expansion bit rejects the magic interaction");
     odh::Ngbh empty_inventory{};empty_inventory.inventory_present=true;
     const auto inventory_empty=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
-        4096,128,{0},nullptr,{},nullptr,&empty_inventory);
+        4096,128,{0},nullptr,{},nullptr,&empty_inventory,all_editions);
     check(inventory_empty[0].state==SavedTestFunctionResult::State::ineligible,
-        "known-empty neighborhood inventory makes FindToken return false");
+        "all expansion bits allow the test to reach FindToken and known-empty inventory returns false");
     odh::Ngbh matching_inventory{};matching_inventory.inventory_present=true;
     matching_inventory.inventory_by_id[7].push_back({7,token_guid,1});
     const auto inventory_match=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
-        4096,128,{0},nullptr,{},nullptr,&matching_inventory);
+        4096,128,{0},nullptr,{},nullptr,&matching_inventory,all_editions);
     check(inventory_match[0].state==SavedTestFunctionResult::State::eligible,
         "read-only TestFunction sees a matching saved-neighborhood inventory token");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;

@@ -240,6 +240,18 @@ inventário da vizinhança que foi realmente carregado. Inventário conhecido e
 vazio faz o teste retornar falso; inventário não carregado continua
 `unsupported`; um token correspondente pode tornar o teste elegível. Nenhuma
 rotina de adicionar ou remover itens é habilitada por esse caminho.
+O avaliador recebe também os três valores globais de ativação TS1 que o perfil
+Simitone define (`17=4`, `20=255`, `25=4`). Os demais valores globais continuam
+desconhecidos nesse avaliador se nenhuma fonte explícita os fornece.
+
+No probe do lote House07 com os dados locais, o teste real da linha
+`Cast.../Enchant` agora passa pela leitura de `Global[20]` e chega às buscas de
+inventário. O NGBH selecionado não tem itens; BHAV4144 retorna falso na primeira
+busca (`FindToken`, PC2), então essa opção permanece corretamente fora do menu
+para o morador atual. O processo estava `waiting`, com host sem falha, após 16
+ticks; o código de saída 3 é o limite curto da sessão, não um erro do teste.
+Essa leitura real confirma por que a categoria não aparece neste save; a busca
+com token presente continua coberta apenas por fixture sintética.
 O recurso exato
 `source`/`asset` fornece o banco BHAV privado; sua identidade recebe um CodeOwner
 de alta faixa, instalado na VM Main já viva. A fila valida novamente actor,

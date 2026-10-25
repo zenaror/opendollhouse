@@ -5,25 +5,29 @@
 O avaliador isolado das ações agora considera as permissões de idade do TTAB:
 `TS1NoChild` bloqueia crianças e `TS1NoAdult` bloqueia adultos. O bit
 `TS1NoDemoChild` é preservado sem filtro, como na checagem TS1 consultada no
-Simitone para o jogo completo. A busca `FindToken` (opcode51, modo3) pode ler o
-inventário da vizinhança já carregado: inventário conhecido e vazio retorna
-falso; sem inventário disponível, o teste permanece `unsupported`. A rotina é
-somente de leitura.
+Simitone para o jogo completo. O teste isolado também lê os valores de
+ativação TS1 `Global[17]=4`, `Global[20]=255` e `Global[25]=4` definidos pelo
+Simitone. `FindToken` (opcode51, modo3) consulta o inventário sem modificá-lo.
 
 O teste sintético cobre ator adulto/criança e inventário ausente, vazio e com
-token correspondente. Build de `odh-saved-interactions-tests` e `odh-person`
-passou; CTest focal passou 4/4 e `git diff --check` passou. A tentativa visual
-de novo probe da geladeira House07 terminou com código 3 durante a espera do
-Main; portanto não confirmou se a ação categorizada ficou visível nem se o
-teste de inventário real passou. A captura criada ficou em
-`reports/pie-menu-window/house07-fridge-inventory-probe.ppm` como evidência
-local ainda não interpretada. Os seis arquivos temporários aprovados para
-limpeza já estavam ausentes; nenhum arquivo foi removido nesta retomada.
+token correspondente, além de exigir a máscara de expansão para a ação mágica.
+Build de `odh-saved-interactions-tests` e `odh-person` passou; CTest focal
+passou 4/4 e `git diff --check` passou. No probe real, House07 selecionou a
+geladeira112 e leu a TTAB128 de `Fridges.iff`: `Have A Snack` ficou elegível;
+`Cast.../Enchant` (ação4145/teste4144/flags0x31) passou pelo filtro de idade e
+edição, mas retornou falso em `FindToken`, PC2. O NGBH carregado não tem itens,
+então a categoria realmente não aparece para o morador atual. O status `waiting`
+após16 ticks, com `host_failed=false`, explica o código de saída3 como limite
+curto da sessão. O PPM gerado foi transitório dentro de `TemporaryDirectory`
+e removido ao fim; não há processo Xvfb nem `odh-person` persistente. Os seis
+arquivos temporários aprovados para limpeza já estavam ausentes; nenhum foi
+removido nesta retomada.
 
-Próximo: extrair o diagnóstico do probe salvo sem substituir a captura,
-identificar qual token (se algum) habilita a linha categorizada da geladeira,
-e então validar menu/submenu com uma ação realmente elegível. Não alegar
-paridade da UI original a partir do menu provisório.
+Próximo: identificar outra ação categorizada real elegível com os dados atuais
+ou preparar uma fixture externa temporária com os dois tokens exigidos pela
+geladeira, sem editar o save original; validar abrir/voltar do submenu e
+despachar a linha TTAB. Não alegar paridade da UI original a partir do menu
+provisório.
 
 ## Atualização: primeira composição com arte original local (2026-10-24)
 

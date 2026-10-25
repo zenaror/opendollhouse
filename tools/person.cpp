@@ -3056,8 +3056,13 @@ struct PlacementCandidateProbe {
         std::vector<std::vector<std::int16_t>> groups;
         if(restored_world){groups.reserve(restored_world->multitile_groups.size());
             for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
+        const auto read_saved_test_global=[&](std::int16_t index)->std::optional<std::int16_t>{
+            // Exact TS1 activation defaults in the pinned Simitone profile:
+            // runtime version, all expansion packs, and idle-interaction state.
+            return bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
+        };
         return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
-            linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr);
+            linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr,read_saved_test_global);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);

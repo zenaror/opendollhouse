@@ -9,6 +9,7 @@
 #include "resource.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -267,7 +268,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const odh::RoutineSet* linked_semiglobal=nullptr,
     const std::vector<std::vector<std::int16_t>>& multitile_groups={},
     const odh::RelationshipState* relationship_state=nullptr,
-    const odh::Ngbh* neighborhood_inventory=nullptr) {
+    const odh::Ngbh* neighborhood_inventory=nullptr,
+    const std::function<std::optional<std::int16_t>(std::int16_t)>& read_global={}) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -288,7 +290,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             return result;
         }
     odh::VmLimits limits;limits.stack_depth=16;limits.frame_variables=256;limits.code_owners=2;
-    odh::VmMemory memory;memory.read=[&world](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
+    odh::VmMemory memory;memory.read=[&world,&read_global](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
+        if(scope==6&&read_global)return read_global(index);
         const auto value=world.read(frame,scope,index);
         // Simitone initializes every declared attribute to zero and reads
         // beyond the declared length as zero. Preserve that read-only rule.
