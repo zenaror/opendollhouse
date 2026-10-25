@@ -1,5 +1,25 @@
 # Continuidade atual
 
+## Atualização: BHAV global ligado no avaliador de ações (2026-10-24)
+
+`evaluate_saved_test_functions` agora separa o código global explicitamente
+fornecido do código privado do objeto/semiglobal, colocando-o no programa
+compartilhado da VM. Uma fixture sintética chama o global 321: sem o arquivo
+global explicitamente ligado, a chamada permanece sem suporte; com o banco
+ligado, retorna elegível após duas instruções. O host só passa `Global.iff`
+quando esse recurso foi carregado para a sessão.
+
+Se o teste headless não encontra nenhuma ação elegível, agora emite status
+`no_eligible_action` em JSON em vez de encerrar sem diagnóstico. A tentativa de
+abrir as ações categorizadas do telefone 136 em House07 não chegou ao menu
+porque o objeto estava fora da área clicável daquela captura. Ainda não há
+validação do submenu real do telefone.
+
+Build Release e CTest completo: 244/244 passaram; `git diff --check` passou.
+Ainda falta um caso categorizado real elegível, abrir/voltar do submenu e
+despachar a ação escolhida. O painel atual continua uma ferramenta de
+depuração; não é a interface final do jogo.
+
 ## Atualização: permissões TS1 e busca de item nos testes das ações (2026-10-25)
 
 O avaliador isolado das ações agora considera as permissões de idade do TTAB:

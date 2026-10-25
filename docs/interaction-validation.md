@@ -895,3 +895,23 @@ The Sims nem a interface final do Simitone; outros objetos, vários idiomas e
 paridade visual continuam pendentes. No build Release, os CTests focados
 `linux_window_backend`, `saved_interaction_discovery` e `person_cli` passaram
 3/3 sob Xvfb.
+### Chamadas globais durante a leitura de ações — 2026-10-24
+
+O avaliador isolado de `TestFunction` agora recebe os BHAVs globais somente
+quando o chamador forneceu explicitamente `Global.iff`. A VM coloca esse banco
+no espaço global compartilhado, separado do código privado do objeto e do
+semiglobal. Isso corrige uma incompatibilidade entre o empacotamento do avaliador
+e a separação de código que a VM já exige. A fixture sintética confirma que uma
+ação pode chamar um BHAV global ligado e retornar elegível; sem esse banco, a
+chamada continua `unsupported`.
+
+O relatório headless agora representa um objeto sem ação elegível como
+`no_eligible_action`, em vez de abortar antes de emitir o diagnóstico. A tentativa
+de inspecionar o telefone 136 da House07 ainda não chegou ao menu: o alvo não
+estava dentro da área clicável da imagem capturada. Portanto, não há evidência
+de execução das categorias reais do telefone neste checkpoint.
+
+Build Release `build/linux-checkpoint` e CTest completo passaram, 244/244;
+`git diff --check` também passou. Os testes de chamada global são sintéticos;
+isso não demonstra ainda uma ação categorizada do save real nem paridade com a
+interface do jogo.

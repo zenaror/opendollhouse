@@ -426,6 +426,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::array<std::int32_t,2>> headless_window_object_click_pixel;
     bool headless_window_object_click_queued=false;
     std::size_t headless_window_menu_click_count=0;
+    bool headless_window_menu_empty=false;
     struct HeadlessGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
     struct HeadlessResidentGoHere {
         std::int16_t actor;std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;bool applied=false;
@@ -3057,12 +3058,16 @@ struct PlacementCandidateProbe {
         if(restored_world){groups.reserve(restored_world->multitile_groups.size());
             for(const auto& group:restored_world->multitile_groups)groups.push_back(group.members);}
         const auto read_saved_test_global=[&](std::int16_t index)->std::optional<std::int16_t>{
-            // Exact TS1 activation defaults in the pinned Simitone profile:
-            // runtime version, all expansion packs, and idle-interaction state.
-            return bootstrap_globals?bootstrap_globals->read(index):std::nullopt;
+            // Match Main's read-only precedence: clock, active family, TS1
+            // activation defaults, then static selected-lot globals.
+            if(simulation_clock)if(const auto value=simulation_clock->global(index))return value;
+            if(index==9&&family_global)return family_global;
+            if(bootstrap_globals)if(const auto value=bootstrap_globals->read(index))return value;
+            return lot?lot->read(index):std::nullopt;
         };
         return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
-            linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr,read_saved_test_global);
+            linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr,read_saved_test_global,
+            globals?&shared.routines:nullptr);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
@@ -5045,7 +5050,7 @@ struct PlacementCandidateProbe {
     profile_mark("first-main-execution");
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
-        if(!headless_window_interaction||headless_window_input_index<headless_window_inputs.size()||
+        if(!headless_window_interaction||headless_window_menu_empty||headless_window_input_index<headless_window_inputs.size()||
            !render_lot||!render_lot_evidence||render_interaction_enqueued)return;
         if(!headless_window_object_click_queued){
             const auto& picks=render_lot_evidence->object_pick_ids;
@@ -5067,7 +5072,14 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("headless pie-menu interaction exceeded 32 selections");
         const auto model=current_interaction_pie_menu();
         const auto* items=active_pie_menu_items(model);
-        if(!items||items->empty())throw odh::FormatError("headless pie menu has no eligible visible action");
+        if(!items||items->empty()){
+            headless_window_menu_empty=true;
+            render_interaction_requested=true;
+            render_interaction_status="no_eligible_action";
+            render_interaction_diagnostic="selected object has no eligible visible interaction";
+            if(render_window_host)render_window_host->set_title(interaction_window_title());
+            return;
+        }
         const auto layout=odh::layout_pie_menu(render_camera.width,render_camera.height,
             render_menu_anchor.value_or(headless_window_object_click_pixel.value_or(std::array<std::int32_t,2>{8,8})),
             items->size(),!render_pie_menu_path.empty());

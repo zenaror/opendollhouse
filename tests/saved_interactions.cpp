@@ -33,6 +33,11 @@ std::string inventory_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2
     b.push_back(20);b.push_back(0);b.push_back(8);b.push_back(0);b.push_back(0);b.push_back(8);b.push_back(6);b.push_back(7);
     put(b,51,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(3);b.push_back(7);b.push_back(0);b.push_back(0);put(b,guid,4);return b;}
+std::string call_global_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+    put(b,callee,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));b.append(8,'\0');return b;}
+std::string constant_true_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+    put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    b.push_back(1);b.push_back(0);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(7);b.push_back(7);return b;}
 void write(const std::filesystem::path& path,const std::string& bytes){std::ofstream f(path,std::ios::binary);f.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));if(!f)throw std::runtime_error("fixture write failed");}
 }
 int main(){try{
@@ -251,5 +256,17 @@ int main(){try{
         4096,128,{0},nullptr,{},nullptr,&matching_inventory,all_editions);
     check(inventory_match[0].state==SavedTestFunctionResult::State::eligible,
         "read-only TestFunction sees a matching saved-neighborhood inventory token");
+    data=iff(chunk("BHAV",4098,call_global_bhav(321))+chunk("BHAV",321,constant_true_bhav()));write(path,data);
+    odh::RoutineSet global_bank;bool global_routine_found=false;
+    with_iff_file(path.string(),[&](const odh::View& view){odh::iff_chunks(view,[&](const odh::Chunk& c){
+        if(c.type=="BHAV"&&c.id==321){global_bank.emplace(odh::routine_key(c.id),odh::read_bhav(c.payload));global_routine_found=true;}});});
+    check(global_routine_found,"synthetic linked global TestFunction owner decoded");
+    const auto missing_global=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
+    check(missing_global[0].state==SavedTestFunctionResult::State::unsupported,
+        "TestFunction global calls remain unsupported without their explicit bank");
+    const auto linked_global=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,{},&global_bank);
+    check(linked_global[0].state==SavedTestFunctionResult::State::eligible&&linked_global[0].steps==2,
+        "TestFunction can call a routine from its explicitly linked global bank");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

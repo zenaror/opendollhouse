@@ -257,9 +257,10 @@ inline std::optional<std::size_t> first_eligible_saved_interaction(
 }
 
 // Run TestFunction in an isolated VM, against live entities and a read-only
-// World memory view. Only private routines from the exact object resource are
-// supplied; external owners, writes, primitives and exhausted budgets remain
-// unsupported. This is an ODH VM result, not a claim about the original EXE.
+// World memory view. Code is limited to the exact object's private routines and
+// explicitly linked semiglobal/global banks; writes, unknown primitives and
+// exhausted budgets remain unsupported. This is an ODH VM result, not a claim
+// about the original EXE.
 inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const odh::DefinitionCandidate& definition,const odh::World& world,
     std::int16_t caller,std::int16_t target,const std::vector<std::uint16_t>& tests,
@@ -269,7 +270,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const std::vector<std::vector<std::int16_t>>& multitile_groups={},
     const odh::RelationshipState* relationship_state=nullptr,
     const odh::Ngbh* neighborhood_inventory=nullptr,
-    const std::function<std::optional<std::int16_t>(std::int16_t)>& read_global={}) {
+    const std::function<std::optional<std::int16_t>(std::int16_t)>& read_global={},
+    const odh::RoutineSet* linked_global=nullptr) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -287,6 +289,12 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     if(linked_semiglobal)for(const auto& [key,routine]:*linked_semiglobal)
         if(key.scope==odh::RoutineScope::semiglobal&&!routines.emplace(key,routine).second){
             for(const auto test:tests)result.push_back({SavedTestFunctionResult::State::unsupported,test,0,"private and linked semiglobal routine keys collide"});
+            return result;
+        }
+    odh::RoutineSet global_routines;
+    if(linked_global)for(const auto& [key,routine]:*linked_global)
+        if(key.scope==odh::RoutineScope::global&&!global_routines.emplace(key,routine).second){
+            for(const auto test:tests)result.push_back({SavedTestFunctionResult::State::unsupported,test,0,"duplicate key in linked global routine bank"});
             return result;
         }
     odh::VmLimits limits;limits.stack_depth=16;limits.frame_variables=256;limits.code_owners=2;
@@ -329,7 +337,7 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
         }
         return entity_next(frame,instruction,temps,dispatch);
     };
-    odh::Vm probe({},std::move(memory),limits,std::move(primitive),std::move(owners));
+    odh::Vm probe(std::move(global_routines),std::move(memory),limits,std::move(primitive),std::move(owners));
     std::uint64_t spent=0;
     for(const auto test:tests){
         SavedTestFunctionResult item;item.routine=test;
