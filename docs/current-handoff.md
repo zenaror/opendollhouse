@@ -1,5 +1,29 @@
 # Continuidade atual
 
+## Atualização: origem dos nomes do painel de motivos (2026-10-25)
+
+O Simitone organiza oito motivos em duas fileiras de quatro; posições e
+valores vêm de `UIMotiveSubpanel.cs`. Os rótulos são lidos da tabela `f102`,
+que o próprio Simitone/FreeSO fornece como tabela customizada em inglês.
+Verifiquei `GameData/UIText.iff` da instalação e da Legacy Collection: nenhuma
+contém essa tabela. Não devemos usar posições fixas da tabela de ajuda `0xa6`
+como tradução: em português, por exemplo, o índice que em inglês diz
+“Hunger” diz “Paredes/Cômodo”.
+
+A instalação original inclui arte útil do painel em `UIGraphics.far`:
+`cpanel\\Greenbars.BMP` (27×25), `cpanel\\Buttons\\Housebars.bmp` (63×26),
+`cpanel\\Buttons\\Mood.bmp` (128×39),
+`cpanel\\Backgrounds\\PanelBack.bmp` (804×100) e
+`cpanel\\Backgrounds\\LivePatch.bmp` (213×153). `odh-bitmap` conseguiu ler
+esses cinco recursos. Isso confirma que há peças originais para reconstruir a
+aparência, mas ainda não determina como compô-las nem prova paridade visual.
+
+Próximo passo do painel: manter o HUD numérico como ferramenta de diagnóstico;
+montar o painel jogável separado, guiado pelo arranjo do Simitone e pelas
+peças originais. Como os oito nomes não vêm traduzidos nos dados do jogo,
+resolver a origem dos rótulos sem associar traduções por índices incompatíveis
+e validar ao menos inglês e um idioma não inglês antes de ampliar cobertura.
+
 ## Atualização: captura do menu com raio Simitone (2026-10-25)
 
 O preview direto de `odh-person --saved-world-main --render-window`, em Xvfb
