@@ -54,6 +54,14 @@ visível confirmada.
    observados na referência; a primeira versão ODH deve priorizar nomes corretos,
    categorias, seleção, fechamento e limites da tela antes de efeitos visuais.
 
+O cálculo ODH agora usa o raio de 60 pixels e a mesma ordem de posições de
+`UIPieMenu.RenderMenu` para as oito primeiras opções. Os itens excedentes
+alternam acima e abaixo do centro, como na referência. O centro continua sendo
+limitado ao quadro e cada botão é ajustado às bordas; o teste cobre os quatro
+pontos cardeais, dez opções e uma âncora no canto de um quadro 320×240. Isso
+aproxima a geometria, mas não confirma a aparência final dos botões, texto,
+animação, cabeça do Sim ou composição no jogo original.
+
 ## Limite atual do ODH
 
 O leitor ODH de TTAB já preserva índice do rótulo, flags e rotinas de ação/teste,

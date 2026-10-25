@@ -1,5 +1,21 @@
 # Continuidade atual
 
+## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
+
+O layout do menu agora posiciona as oito primeiras opções a 60 pixels do
+centro, conforme `UIPieMenu.RenderMenu` da revisão Simitone fixada. O teste
+sintético confere topo/direita/base/esquerda e dez opções junto à borda de um
+quadro 320×240; todas permanecem dentro da tela. Build de `odh-pie-menu-tests`
+e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
+`ui_bitmap_color_key_blit`, `linux_game_entry_cli`) passaram. O CTest completo
+passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
+prova paridade visual com o Simitone ou com o jogo original.
+
+Próximo: capturar o mesmo menu em Xvfb para conferir a nova posição e a
+legibilidade em 320×240 e 800×600; encerrar a tela virtual ao fim. Depois,
+seguir para outra lacuna visual ou de interação sem incluir arte comercial no
+Git.
+
 ## Atualização: BCON privado e retorno da Pizza (2026-10-24)
 
 O avaliador read-only de `TestFunction` agora recebe os BCON privados do objeto

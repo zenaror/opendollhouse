@@ -42,7 +42,7 @@ struct PieMenuLayout {
     std::optional<PieMenuRect> back_button;
 };
 
-// Places up to eight choices around the pointer like the Simitone/TS1 pie;
+// Places up to eight choices 60 pixels around the pointer like Simitone's pie;
 // additional choices alternate in columns above and below its center.
 std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
     std::uint32_t frame_height, std::array<std::int32_t, 2> anchor,

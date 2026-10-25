@@ -36,10 +36,21 @@ int main() {
     const auto layout = odh::layout_pie_menu(320, 240, {160, 120}, 4, true);
     assert(layout && layout->items.size() == 4 && layout->back_button);
     assert(layout->center[0] == 160 && layout->center[1] == 120);
+    assert(layout->items[0].x == layout->center[0] - layout->items[0].width / 2);
+    assert(layout->items[0].y == layout->center[1] - 60 - layout->items[0].height);
+    assert(layout->items[1].x == layout->center[0] + 60);
+    assert(layout->items[2].y == layout->center[1] + 60);
+    assert(layout->items[3].x + layout->items[3].width == layout->center[0] - 60);
     for (const auto& item : layout->items) {
         assert(item.x >= 0 && item.y >= 0);
         assert(item.x + item.width <= 320 && item.y + item.height <= 240);
         assert(!item.contains(layout->back_button->x + 1, layout->back_button->y + 1));
+    }
+    const auto edge_layout = odh::layout_pie_menu(320, 240, {0, 0}, 10, true);
+    assert(edge_layout && edge_layout->center[0] == 160 && edge_layout->center[1] == 88);
+    for (const auto& item : edge_layout->items) {
+        assert(item.x >= 4 && item.y >= 4);
+        assert(item.x + item.width <= 316 && item.y + item.height <= 236);
     }
     assert(!odh::layout_pie_menu(96, 80, {48, 40}, 1, false));
 }

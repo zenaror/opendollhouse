@@ -64,7 +64,9 @@ std::optional<PieMenuLayout> layout_pie_menu(std::uint32_t frame_width,
         return std::nullopt;
 
     constexpr std::int32_t button_height = 24;
-    constexpr std::int32_t radius = 40;
+    // Simitone's UIPieMenu places its first eight buttons 60 pixels from the
+    // center. Keep the original radial spacing while clamping to this frame.
+    constexpr std::int32_t radius = 60;
     const auto frame_w = static_cast<std::int32_t>(frame_width);
     const auto frame_h = static_cast<std::int32_t>(frame_height);
     const auto max_radial_width = (frame_w - 2 * radius - 8) / 2;
