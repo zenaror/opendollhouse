@@ -29,6 +29,12 @@ odh::Instruction next(unsigned scope = 10, unsigned index = 0, unsigned flags = 
     return {31, 1, 1, {0xBE,0xEF,0xA1,0x5C,static_cast<std::uint8_t>(flags),
             static_cast<std::uint8_t>(scope),0xF9,static_cast<std::uint8_t>(index)}};
 }
+odh::Instruction next_guid(std::uint32_t guid,unsigned scope=10,unsigned index=0) {
+    return {31,1,1,{static_cast<std::uint8_t>(guid),static_cast<std::uint8_t>(guid>>8),
+        static_cast<std::uint8_t>(guid>>16),static_cast<std::uint8_t>(guid>>24),
+        static_cast<std::uint8_t>(7|(scope==10?0:128)),static_cast<std::uint8_t>(scope),0,
+        static_cast<std::uint8_t>(index)}};
+}
 odh::VmFrame frame(std::int16_t current = 11) {
     return {odh::routine_key(4096), 0, {101,202,current,0}, {0,current,0,0}, {0,current,0,0}};
 }
@@ -64,6 +70,25 @@ void ordering() {
     rejects(catalog({entry(11),entry(11)}));
     odh::NeighborContext empty(catalog({}));
     require(empty.next(-32768) == -1 && empty.active_count() == 0, "empty provider ends");
+    auto match_a=entry(19);match_a.record->guid=0xC61931DC;
+    auto match_b=entry(15);match_b.record->guid=0xC61931DC;
+    auto other=entry(11);other.record->guid=0x11223344;
+    odh::NeighborContext typed(catalog({match_a,other,{0,{}},match_b}));
+    require(typed.next_of_guid(0,0xC61931DC)==15&&typed.next_of_guid(15,0xC61931DC)==19&&
+            typed.next_of_guid(19,0xC61931DC)==-1&&typed.next_of_guid(0,0x11223344)==11,
+            "typed neighbor scan skips other GUIDs and continues in signed ID order");
+    unsigned typed_observations=0;
+    const auto typed_primitive=typed.primitive({},[&](const auto& result){
+        require(result.current==0&&result.result==15&&result.success,"typed scan observation records matching neighbor");
+        ++typed_observations;
+    });
+    const auto typed_result=dispatch(typed_primitive,frame(0),next_guid(0xC61931DC));
+    require(typed_result.disposition==odh::PrimitiveDisposition::goto_true&&typed_result.stack_object_write&&
+            typed_result.stack_object_write->value==15&&typed_observations==1,
+            "opcode31 mode7 writes the next neighbor matching its GUID");
+    const auto missing_type=dispatch(typed.primitive(),frame(19),next_guid(0xC61931DC));
+    require(missing_type.disposition==odh::PrimitiveDisposition::goto_false&&no_output(missing_type),
+            "typed neighbor scan with no later match takes the false branch without writing");
 }
 void person_data() {
     auto old = entry(11); auto raw = entry(15,10); auto absent = entry(19,4,false);

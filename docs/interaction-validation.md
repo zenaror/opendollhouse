@@ -215,6 +215,25 @@ e `linux_household_session_resume_cli` (2/2). Isto localiza a recusa no perfil
 de avaliação ODH antes do roteamento; não demonstra a semântica do executável
 original nem uma interação de cama funcional.
 
+O perfil read-only do avaliador agora também liga opcode25 `TS1 Budget` a uma
+cópia do saldo FAMI ativo, sem writer: `JustTest` pode decidir elegibilidade,
+saldo negativo retorna falso e qualquer tentativa de mudar o saldo fica
+`unsupported`. Para opcode31, os modos de busca de entidades continuam com o
+handler do World; modo7 usa `NeighborContext::next_of_guid` e grava apenas o
+próximo ID de vizinho com o GUID indicado. Isso segue
+`TS1NeighbourProvider.SetToNext(current, guid)` na revisão fixa do Simitone
+`docs/references.md`; fixtures sintéticas cobrem correspondência, continuação e
+ausência de resultado.
+
+Em 2026-10-24, o probe isolado da House07 focou o telefone136 e decodificou
+`phones.iff` TTAB129. `Services.../Pizza` (BHAV8303), `Call Neighbor` (BHAV8310)
+e `Services.../Butler` (BHAV8331) ficaram elegíveis; algumas outras linhas ainda
+retornam `unsupported` por leituras nos scopes24/26. O teste automático chegou a
+enfileirar Pizza (BHAV8312), mas o host parou em `GotoRelativePosition`, sem
+concluir a ação. Isto não confirma abrir/voltar visualmente do submenu nem o
+resultado do serviço no jogo. A instalação e os saves originais permaneceram
+fora de escrita; o PPM do probe foi temporário e removido ao final.
+
 Na janela Main, um clique agora relata no JSON a elegibilidade calculada por
 essa VM isolada junto de owner, ação, teste, rótulo, instruções e diagnóstico.
 No preview de lote salvo, Tab/Shift+Tab percorre as linhas elegíveis com perfil

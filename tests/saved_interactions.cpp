@@ -20,6 +20,9 @@ std::string test_bhav(unsigned opcode=2){std::string b;put(b,0x8002,2);put(b,1,2
     put(b,opcode,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     if(opcode==2){b.push_back(0);b.push_back(0);b.push_back(11);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(16);b.push_back(3);}
     else b.append(8,'\0');return b;}
+std::string budget_test_bhav(std::uint16_t amount,std::uint8_t flags){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
+    put(b,25,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    b.push_back(0);b.push_back(7);put(b,amount,2);b.push_back(static_cast<char>(flags));b.push_back(0);b.push_back(3);b.push_back(0);return b;}
 std::string object_type_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,32,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     put(b,guid,4);put(b,0,2);b.push_back(10);b.push_back(0);return b;}
@@ -38,6 +41,12 @@ std::string call_global_bhav(unsigned callee){std::string b;put(b,0x8002,2);put(
 std::string constant_true_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
     put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(1);b.push_back(0);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(7);b.push_back(7);return b;}
+std::string zone_test_global_bhav(){std::string b;put(b,0x8002,2);put(b,3,2);b.push_back(0);b.push_back(0);b.append(6,'\0');
+    put(b,2,2);b.push_back(1);b.push_back(static_cast<char>(253));
+    b.push_back(0);b.push_back(0);b.push_back(10);b.push_back(0);b.push_back(0);b.push_back(5);b.push_back(8);b.push_back(6);
+    put(b,1,2);b.push_back(2);b.push_back(static_cast<char>(253));b.push_back(28);b.append(7,'\0');
+    const auto finish=constant_true_bhav();put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    b+=finish.substr(16,8);return b;}
 void write(const std::filesystem::path& path,const std::string& bytes){std::ofstream f(path,std::ios::binary);f.write(bytes.data(),static_cast<std::streamsize>(bytes.size()));if(!f)throw std::runtime_error("fixture write failed");}
 }
 int main(){try{
@@ -220,7 +229,9 @@ int main(){try{
         "fresh TestFunction result supersedes an earlier eligible click-time result");
     data=iff(chunk("BHAV",4098,test_bhav(49)));write(path,data);
     auto unsupported=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
-    check(unsupported[0].state==SavedTestFunctionResult::State::unsupported&&!unsupported[0].diagnostic.empty(),"unsupported primitive never becomes eligible");
+    check(unsupported[0].state==SavedTestFunctionResult::State::unsupported&&
+        unsupported[0].diagnostic.find("BHAV 4098 PC 0 opcode 49")!=std::string::npos,
+        "unsupported primitive includes the exact routine and instruction");
     data=iff(chunk("BHAV",4098,write_bhav()));write(path,data);
     auto write_attempt=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098});
     check(write_attempt[0].state==SavedTestFunctionResult::State::unsupported&&write_attempt[0].diagnostic.find("write")!=std::string::npos,"TestFunction write rejected by read-only memory view");
@@ -268,5 +279,33 @@ int main(){try{
         4096,128,{0},nullptr,{},nullptr,nullptr,{},&global_bank);
     check(linked_global[0].state==SavedTestFunctionResult::State::eligible&&linked_global[0].steps==2,
         "TestFunction can call a routine from its explicitly linked global bank");
+    data=iff(chunk("BHAV",4098,call_bhav(321))+chunk("BHAV",321,zone_test_global_bhav()));write(path,data);
+    global_bank.clear();with_iff_file(path.string(),[&](const odh::View& view){odh::iff_chunks(view,[&](const odh::Chunk& c){
+        if(c.type=="BHAV"&&c.id==321)global_bank.emplace(odh::routine_key(c.id),odh::read_bhav(c.payload));});});
+    const auto selected_lot_global=[](std::int16_t index)->std::optional<std::int16_t>{return index==10?std::optional<std::int16_t>{7}:std::nullopt;};
+    odh::LotContext selected_lot(7,std::vector<std::int16_t>(32,0),odh::LotZoning{{7,1}});
+    const auto zoning_without_context=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,selected_lot_global,&global_bank);
+    check(zoning_without_context[0].state==SavedTestFunctionResult::State::unsupported&&
+        zoning_without_context[0].diagnostic.find("BHAV 321 PC 1 opcode 1")!=std::string::npos,
+        "lot zoning GenericCall remains unsupported without its selected LotContext");
+    const auto zoning_with_context=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,selected_lot_global,&global_bank,&selected_lot);
+    check(zoning_with_context[0].state==SavedTestFunctionResult::State::eligible,
+        "read-only lot zoning GenericCall uses the selected lot resource context");
+    data=iff(chunk("BHAV",4098,budget_test_bhav(20,1)));write(path,data);
+    const auto budget_available=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,500);
+    const auto budget_unavailable=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,-1);
+    check(budget_available[0].state==SavedTestFunctionResult::State::eligible&&
+          budget_unavailable[0].state==SavedTestFunctionResult::State::ineligible,
+        "read-only TS1 Budget TestFunction checks the active family's available balance");
+    data=iff(chunk("BHAV",4098,budget_test_bhav(20,0)));write(path,data);
+    const auto budget_write=evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+        4096,128,{0},nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,500);
+    check(budget_write[0].state==SavedTestFunctionResult::State::unsupported&&
+          budget_write[0].diagnostic.find("writer")!=std::string::npos,
+        "read-only TS1 Budget rejects attempts to change the family's balance");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

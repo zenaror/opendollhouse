@@ -2957,6 +2957,7 @@ struct PlacementCandidateProbe {
         return found==household_runtime.end()||!(*found)->controllers?nullptr:&(*found)->controllers->interactions();
     };
     std::optional<SavedObjectInteractions> render_interactions;
+    std::optional<SavedSemiglobalCodeBank> render_interaction_semiglobal;
     std::optional<std::size_t> render_selected_interaction_row;
     std::vector<std::size_t> render_pie_menu_path;
     std::size_t render_pie_menu_selected=0;
@@ -3067,12 +3068,15 @@ struct PlacementCandidateProbe {
         };
         return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
             linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr,read_saved_test_global,
-            globals?&shared.routines:nullptr);
+            globals?&shared_program->routines():nullptr,lot?&*lot:nullptr,
+            neighbors?&*neighbors:nullptr,
+            active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
         render_menu_anchor.reset();
-        render_interactions.reset();render_test_results.clear();render_selected_interaction_row.reset();
+        render_interactions.reset();render_interaction_semiglobal.reset();
+        render_test_results.clear();render_selected_interaction_row.reset();
         render_pie_menu_path.clear();render_pie_menu_selected=0;
         if(!render_selection||!definition_index)return;
         const auto* candidate=definition_index->unique(render_selection->guid);
@@ -3084,15 +3088,15 @@ struct PlacementCandidateProbe {
         tests.reserve(std::min<std::size_t>(rows.size(),32));
         for(std::size_t n=0;n<std::min<std::size_t>(rows.size(),32);++n)tests.push_back(rows[n].test);
         const auto* actor=world.find(active_household_actor);
-        std::optional<SavedSemiglobalCodeBank> linked_bank;
-        try{linked_bank=load_interaction_semiglobal(*candidate);}
+        try{render_interaction_semiglobal=load_interaction_semiglobal(*candidate);}
         catch(const std::exception& error){
             render_test_results.assign(tests.size(),{SavedTestFunctionResult::State::unsupported,0,0,error.what()});
         }
         if(render_test_results.empty())render_test_results=evaluate_interaction_tests(*candidate,
-            active_household_actor,render_selection->id,tests,linked_bank?&linked_bank->routines:nullptr);
+            active_household_actor,render_selection->id,tests,
+            render_interaction_semiglobal?&render_interaction_semiglobal->routines:nullptr);
         const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            actor,linked_bank?&linked_bank->routines:nullptr);
+            actor,render_interaction_semiglobal?&render_interaction_semiglobal->routines:nullptr);
         if(!eligible.empty())render_selected_interaction_row=eligible.front();
         for(std::size_t n=render_test_results.size();n<rows.size();++n)
             render_test_results.push_back({SavedTestFunctionResult::State::unsupported,rows[n].test,0,
@@ -3335,7 +3339,8 @@ struct PlacementCandidateProbe {
         if(!render_selection||!render_interactions||!render_interactions->table)
             return std::vector<odh::PieMenuItem>{};
         const auto eligible=eligible_saved_interaction_rows(*render_interactions,render_test_results,
-            world.find(active_household_actor));
+            world.find(active_household_actor),
+            render_interaction_semiglobal?&render_interaction_semiglobal->routines:nullptr);
         choices.reserve(eligible.size());
         for(const auto row:eligible){
             std::optional<std::string> label;
@@ -4727,6 +4732,14 @@ struct PlacementCandidateProbe {
                 const auto anchor=render_lot->entity_graphics(headless_portal->id);
                 render_camera.center_tile={anchor.tile_position[0],anchor.tile_position[1],
                                            anchor.tile_position[2]+0.75f};
+            }
+            // A headless click probe may target an object far from the saved
+            // avatar. Focus its diagnostic frame on that object so the same
+            // production pick path can select it without changing the World.
+            if(headless_window_interaction){
+                const auto target=render_lot->entity_graphics(*headless_window_interaction);
+                render_camera.center_tile={target.tile_position[0],target.tile_position[1],
+                                           target.tile_position[2]+0.75f};
             }
         }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;

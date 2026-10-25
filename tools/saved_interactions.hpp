@@ -3,8 +3,11 @@
 #include "odh/definition_index.hpp"
 #include "odh/entity_next.hpp"
 #include "odh/inventory_find.hpp"
+#include "odh/lot_context.hpp"
+#include "odh/neighbor_context.hpp"
 #include "odh/object_type.hpp"
 #include "odh/relationship.hpp"
+#include "odh/ts1_budget.hpp"
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
@@ -271,7 +274,9 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const odh::RelationshipState* relationship_state=nullptr,
     const odh::Ngbh* neighborhood_inventory=nullptr,
     const std::function<std::optional<std::int16_t>(std::int16_t)>& read_global={},
-    const odh::RoutineSet* linked_global=nullptr) {
+    const odh::RoutineSet* linked_global=nullptr,const odh::LotContext* linked_lot=nullptr,
+    const odh::NeighborContext* linked_neighbors=nullptr,
+    std::optional<std::int32_t> family_budget=std::nullopt) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -317,11 +322,24 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     auto relationship=relationship_probe?relationship_probe->primitive(world,memory):odh::VmPrimitive{};
     auto entity_next=odh::entity_next_primitive(world,memory,{},multitile_groups);
     auto object_type=odh::object_type_primitive(world);
+    auto lot=linked_lot?linked_lot->primitive():odh::VmPrimitive{};
+    auto neighbor=linked_neighbors?linked_neighbors->primitive(memory):odh::VmPrimitive{};
+    auto budget=odh::ts1_budget_primitive(memory,[family_budget](const odh::VmFrame&){return family_budget;});
     auto inventory_find=neighborhood_inventory
         ?odh::inventory_find_primitive(*neighborhood_inventory,world):odh::VmPrimitive{};
     odh::VmPrimitive primitive=[entity_next=std::move(entity_next),object_type=std::move(object_type),
-        relationship=std::move(relationship),inventory_find=std::move(inventory_find)](
+        relationship=std::move(relationship),inventory_find=std::move(inventory_find),
+        lot=std::move(lot),neighbor=std::move(neighbor),budget=std::move(budget)](
         const odh::VmFrame& frame,const odh::Instruction& instruction,const auto& temps,const auto& dispatch) {
+        if(instruction.opcode==25)return budget(frame,instruction,temps,dispatch);
+        if(instruction.opcode==1&&instruction.operands[0]==28&&lot)
+            return lot(frame,instruction,temps,dispatch);
+        if(instruction.opcode==31){
+            const auto mode=instruction.operands[4]&127U;
+            if(mode<=4||mode==8||mode==9||mode==12)
+                return entity_next(frame,instruction,temps,dispatch);
+            if(neighbor)return neighbor(frame,instruction,temps,dispatch);
+        }
         if(instruction.opcode==32)return object_type(frame,instruction,temps,dispatch);
         if(instruction.opcode==51&&inventory_find)
             return inventory_find(frame,instruction,temps,dispatch);
@@ -361,7 +379,12 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             if(last_trace)item.diagnostic="returned false at BHAV PC "+std::to_string(last_trace->pc)+
                 " opcode "+std::to_string(last_trace->instruction.opcode);
         }
-        else item.diagnostic=probe.diagnostic().empty()?std::string("TestFunction did not return within the supported profile"):probe.diagnostic();
+        else {
+            item.diagnostic=probe.diagnostic().empty()?std::string("TestFunction did not return within the supported profile"):probe.diagnostic();
+            if(last_trace)item.diagnostic+=" at BHAV "+std::to_string(last_trace->key.id)+
+                " PC "+std::to_string(last_trace->pc)+" opcode "+
+                std::to_string(last_trace->instruction.opcode);
+        }
         const auto* live_actor=world.find(caller);const auto* live_object=world.find(target);
         if(!live_actor||!live_object||live_actor->generation!=generation_actor||live_object->generation!=generation_object){
             item.state=SavedTestFunctionResult::State::unsupported;item.diagnostic="live actor/target identity changed during TestFunction evaluation";

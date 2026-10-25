@@ -1,5 +1,30 @@
 # Continuidade atual
 
+## Atualização: testes do telefone e vizinhos tipados (2026-10-24)
+
+O avaliador isolado de `TestFunction` agora lê o saldo da família sem poder
+alterá-lo e interpreta `SetToNext` mode7 como busca do próximo vizinho com o
+GUID pedido. Fixtures sintéticas verificam saldo disponível/negativo, recusa de
+tentativa de escrita, ordem por ID, filtro por GUID e resultado sem vizinho.
+Release compilou e o CTest completo passou 244/244.
+
+No probe com dados originais da House07, a câmera de diagnóstico alcançou o
+telefone136; TTAB129 foi decodificada. O teste `Services.../Pizza` (BHAV8303)
+ficou elegível após a leitura read-only do orçamento. `Call Neighbor` (BHAV8310)
+e `Services.../Butler` (BHAV8331) também ficaram elegíveis; outras linhas ainda
+param em escopos sem suporte. A seleção automática enfileirou a ação Pizza
+(BHAV8312), mas a execução parou com falha do host em `GotoRelativePosition`,
+que ainda não está implementada. Isso prova que a seleção chegou ao alvo e que
+os testes passaram no perfil ODH; não prova a ação concluída nem o abre/volta
+visual do submenu. O probe usou um PPM dentro de pasta temporária, removida ao
+fim; nenhum Xvfb ou janela virtual foi iniciado. Os arquivos temporários
+autorizados para limpeza já estavam ausentes.
+
+Próximo: completar a navegação do menu por categoria e o caminho de rota usado
+pela ação de serviço, sem editar os saves originais; manter status e resultado
+da VM separados. A UI final ainda deve seguir os recursos e o comportamento do
+jogo original, com Simitone como referência; este painel continua provisório.
+
 ## Atualização: BHAV global ligado no avaliador de ações (2026-10-24)
 
 `evaluate_saved_test_functions` agora separa o código global explicitamente

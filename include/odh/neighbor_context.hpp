@@ -17,6 +17,9 @@ public:
     // Raw provider result; -1 means end. Negative results also branch false in
     // SetToNext, even if they came from a serialized signed neighbor ID.
     std::int16_t next(std::int16_t current) const;
+    // TS1 SetToNext/NeighborOfType (mode 7): next signed neighbor ID carrying
+    // the requested object GUID, or -1 when no matching record remains.
+    std::int16_t next_of_guid(std::int16_t current,std::uint32_t guid) const;
     std::optional<NeighborDataValue> person_data(std::int16_t neighbor,std::int16_t index) const;
     VmPrimitive primitive(VmMemory memory={},std::function<void(const NeighborNext&)> observed={}) const;
 private:

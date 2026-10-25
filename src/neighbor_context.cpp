@@ -37,6 +37,15 @@ std::int16_t NeighborContext::next(std::int16_t current) const {
     const auto next=std::upper_bound(ordered_.begin(),ordered_.end(),current,[](auto id,const auto& entry){return id<entry.id;});
     return next==ordered_.end()?std::int16_t{-1}:next->id;
 }
+std::int16_t NeighborContext::next_of_guid(std::int16_t current,std::uint32_t guid) const {
+    const auto next=std::upper_bound(ordered_.begin(),ordered_.end(),current,
+        [](auto id,const auto& entry){return id<entry.id;});
+    for(auto candidate=next;candidate!=ordered_.end();++candidate){
+        const auto& entry=source_.entries[candidate->serialized_index];
+        if(entry.record&&entry.record->guid==guid)return candidate->id;
+    }
+    return -1;
+}
 std::optional<NeighborDataValue> NeighborContext::person_data(std::int16_t neighbor,std::int16_t index) const {
     const auto active=active_.find(neighbor);
     if(active==active_.end())return NeighborDataValue{neighbor,index,0,NeighborDataSource::missing_neighbor_zero};
@@ -66,12 +75,18 @@ std::optional<std::int16_t> target(const VmFrame& f,const std::array<std::int16_
 }
 VmPrimitive NeighborContext::primitive(VmMemory memory,std::function<void(const NeighborNext&)> observed) const {
     return [this,memory=std::move(memory),observed=std::move(observed)](const VmFrame& frame,const Instruction& i,const auto& temps,const VmDispatch&)->PrimitiveOutcome {
-        if(i.opcode!=31||(i.operands[4]&127)!=5)return {};
+        if(i.opcode!=31)return {};
+        const auto mode=static_cast<std::uint8_t>(i.operands[4]&127);
+        if(mode!=5&&mode!=7)return {};
         const auto scope=static_cast<std::uint8_t>((i.operands[4]&128)?i.operands[5]:10);
         const auto index=static_cast<std::int16_t>((i.operands[4]&128)?i.operands[7]:0);
         const auto current=target(frame,temps,memory,scope,index);
         if(!current)return {PrimitiveDisposition::unsupported,"neighbor enumeration target unavailable"};
-        const auto result=next(*current);
+        const auto guid=static_cast<std::uint32_t>(i.operands[0])|
+            (static_cast<std::uint32_t>(i.operands[1])<<8)|
+            (static_cast<std::uint32_t>(i.operands[2])<<16)|
+            (static_cast<std::uint32_t>(i.operands[3])<<24);
+        const auto result=mode==7?next_of_guid(*current,guid):next(*current);
         PrimitiveOutcome outcome{result<0?PrimitiveDisposition::goto_false:PrimitiveDisposition::goto_true,{}};
         if(result>=0){switch(scope){
             case 7:return {PrimitiveDisposition::unsupported,"neighbor enumeration literal target is not writable"};
