@@ -36,6 +36,10 @@ int main(){try{
         check(text.find("session started")!=std::string::npos&&text.find("stage=resource-load")!=std::string::npos,
               "session header and stage are written");
         check(text.find("language=14")!=std::string::npos,"diagnostic event is written");
+        log.stage(std::string(90,'s'));
+        const auto bounded_stage_text=read(log_path);
+        check(bounded_stage_text.find("stage="+std::string(48,'s')+"\n")!=std::string::npos,
+              "stage labels are capped at 48 safe bytes");
         const auto child=::fork();
         if(child<0)throw std::runtime_error("fork for concurrent logger test failed");
         if(child==0){odh_host::LinuxSessionLog second;const bool separate=second.enabled()&&second.path()!=log_path;

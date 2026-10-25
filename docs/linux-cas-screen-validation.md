@@ -35,8 +35,27 @@ Xvfb foi parado ao fim de cada execução e nenhuma tela virtual ficou ativa.
 ## Limites e próximo gate
 
 Esta verificação confirma a tela, entrada de texto, gravação privada e retorno
-ao mapa. Ainda não confirma que a família recém-criada pode ser escolhida num
-lote vago, entrar na casa, jogar, salvar e continuar em outro processo. Os
-rótulos da tela CAS estão em inglês; escolher o idioma já controla a codificação
+ao mapa. O gate real de criação até entrada está documentado abaixo; ele ainda
+não confirma janela gráfica, execução do lote, save/retomada ou gameplay. Os
+rótulos da tela CAS estão em inglês; escolher o idioma controla a codificação
 dos nomes e biografias, mas a localização visual do CAS ainda falta. Editar ou
-excluir uma família também não está ligado.
+renomear uma família também não está ligado. A remoção lógica de famílias
+desocupadas elegíveis foi ligada separadamente no seletor; seus limites estão
+em [family-overlay-linux-validation.md](family-overlay-linux-validation.md).
+
+## Gate real de família criada até entrada do lote
+
+Em 2026-10-25, o gate opt-in `tests/cas_movein_e2e.py` usou a instalação externa
+`../referencias/The Sims` com perfil XDG temporário. Leu o catálogo CAS e
+`People\\TemplatePerson.iff`, criou uma família privada com um adulto, escolheu
+o primeiro lote vago válido (House01, preço SIMI 10.500), gravou a mudança no
+overlay privado e resolveu a entrada com `load_session_entry`. Em seguida,
+`odh-person --plan-only` retornou `ready`, o GUID esperado e 132 arquivos de
+recursos. O gate calculou SHA-256 de 2.699 arquivos comerciais antes/depois;
+nenhum mudou. O perfil temporário foi removido ao terminar.
+
+Isso fecha o caminho de dados CAS → compra → overlay → plano de entrada. Ainda
+não testa a tela CAS ou a seleção com mouse/teclado, não executa o runtime da
+casa, e não valida save/retomada nem uma família com vários moradores. O teste
+é opt-in porque precisa de uma instalação externa e não entra no CTest comum.
+Como executar: ver o comando `tests/cas_movein_e2e.py` no README.

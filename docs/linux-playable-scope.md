@@ -98,9 +98,12 @@ detalhados quando o jogador quiser reproduzir um problema. Captura de stack ou
 core dump nativo pode ser opcional, pois precisa de limites e consentimento
 explícitos de armazenamento.
 
-A prévia Linux já tem um logger inicial com caminho local, rotação, limite de
-tamanho, identificação de build e etapa de inicialização, exceções e falhas por
-sinal. A indicação de encerramento inesperado e a gravação da última etapa são
-checadas no próximo início. Ligar o logger a todos os fluxos do jogo e registrar
-idioma/expansões detectadas ainda é trabalho pendente; esta implementação não
-significa que exista um jogo completo ou captura de stack nativa.
+A prévia Linux já liga um logger à entrada do launcher e ao runtime, com caminho
+local, rotação, limite de tamanho, identificação de build, idioma, expansões
+detectadas, etapas, exceções e falhas por sinal. Se a sessão termina sem
+encerramento normal, a próxima execução registra isso e a última etapa conhecida.
+Testes verificam também permissões privadas, sessões concorrentes e o limite de
+tamanho. Ainda falta mostrar o caminho do log em todos os erros da interface e
+confirmar que as mensagens dão contexto suficiente para os bugs que surgirem
+durante o jogo. Isso não significa que exista um jogo completo nem captura de
+stack nativa.

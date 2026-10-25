@@ -11,6 +11,7 @@
 
 namespace odh_host {
 class LinuxWindow;
+class LinuxSessionLog;
 using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>;
 
 struct NeighborhoodTransitionRequest {
@@ -58,8 +59,9 @@ struct IntegratedSessionContext {
 // render-window is requested, an optional shared host window is reused.
 odh_host::PersonRunResult odh_person_run(int argc, char** argv, odh_host::LinuxWindow* shared_window,
                     odh_host::NeighborhoodResumeCallback neighborhood_resume = {},
-                    std::optional<odh_host::IntegratedSessionContext> session_context = std::nullopt);
+                    std::optional<odh_host::IntegratedSessionContext> session_context = std::nullopt,
+                    odh_host::LinuxSessionLog* session_log = nullptr);
 
 // Integrated Linux entry point selected by the executable wrapper when the
 // user supplies --game-root.
-int odh_linux_game_entry(int argc, char** argv);
+int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* session_log = nullptr);

@@ -10,6 +10,9 @@
 #endif
 #endif
 #include "resource.hpp"
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+#include "linux_session_log.hpp"
+#endif
 
 #include "odh/session_entry.hpp"
 #include "odh/animation.hpp"
@@ -755,14 +758,26 @@ void append(std::vector<std::string>& target, std::initializer_list<std::string>
 
 } // namespace
 
-int odh_linux_game_entry(int argc, char** argv) {
+int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* session_log) {
     try {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        if(session_log)session_log->stage("launcher-startup");
+#endif
         auto options = parse_options(argc, argv);
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        if(session_log) {
+            session_log->stage("launcher-options-ready");
+            session_log->event("language="+std::to_string(options.language));
+        }
+#endif
         std::error_code error;
         const auto game = std::filesystem::canonical(options.game_root, error);
         if (error || !std::filesystem::is_directory(game))
             throw odh::FormatError("game root is not an accessible directory: " + options.game_root.string());
         options.game_root = game;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        if(session_log)session_log->stage("game-root-ready");
+#endif
         const auto userdata = require_directory(game, game / "UserData");
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
         const auto player_character_directory=odh_host::linux_player_character_directory();
@@ -805,6 +820,9 @@ int odh_linux_game_entry(int argc, char** argv) {
         std::string neighborhood_title = "Neighborhood";
         std::string neighborhood_cancel = "Cancel";
         if (!options.plan_only && !options.headless_ticks) {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            if(session_log)session_log->stage("neighborhood-ui");
+#endif
             ui_string_catalog = std::make_unique<odh_host::GameUiStrings>(game);
             auto& ui_strings = *ui_string_catalog;
             window = std::make_unique<odh_host::LinuxWindow>(options.load_session ? 320 : 800,
@@ -817,6 +835,9 @@ int odh_linux_game_entry(int argc, char** argv) {
                     return 0;
                 }
                 options.language = *selected;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(session_log)session_log->event("language="+std::to_string(options.language));
+#endif
             }
             present_loading_screen(*window,static_cast<std::uint8_t>(options.language));
             move_in_title = ui_strings.get(132, 0,
@@ -873,6 +894,9 @@ int odh_linux_game_entry(int argc, char** argv) {
         unsigned house = options.house.value_or(0);
 #ifdef ODH_HAVE_X11
         if (map && !options.house) {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+          if(session_log)session_log->stage("neighborhood-picker");
+#endif
           for (;;) {
 #ifdef ODH_HAVE_LINUX_CAS_SCREEN
             constexpr bool allow_create_family = true;
@@ -898,6 +922,9 @@ int odh_linux_game_entry(int argc, char** argv) {
             }
 #ifdef ODH_HAVE_LINUX_CAS_SCREEN
             if (selected->action == odh_host::NeighborhoodPickerAction::create_family) {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(session_log)session_log->stage("cas");
+#endif
                 const auto draft = odh_host::show_linux_cas_family_creator(*window,
                     odh_host::scan_linux_cas_catalog(game),
                     static_cast<std::uint8_t>(options.language));
@@ -1095,6 +1122,9 @@ int odh_linux_game_entry(int argc, char** argv) {
                         // Keep the action unavailable when source ownership or roster links are uncertain.
                     }
                 }
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(session_log)session_log->stage("move-in");
+#endif
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
                     map->effective_families, static_cast<std::uint16_t>(house), purchase_price,
                     static_cast<std::uint8_t>(options.language), family_picker_action,
@@ -1290,6 +1320,13 @@ int odh_linux_game_entry(int argc, char** argv) {
 #endif
                 auto plan = build_runtime_arguments(options, game, house, session, *resident,
                     graphics_resource, player_character_directory);
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(session_log) {
+                    session_log->stage("runtime-plan-ready");
+                    session_log->event("language="+std::to_string(options.language)+
+                        " expansion_mask="+std::to_string(plan.expansion_mask));
+                }
+#endif
                 if (headless_travel_index < options.headless_travel_houses.size())
                     append(plan.arguments, {"--headless-window-neighborhood-tick", "1",
                         "--headless-window-neighborhood-house",
@@ -1374,6 +1411,9 @@ int odh_linux_game_entry(int argc, char** argv) {
                 session_context.family_number = session.family_number;
                 session_context.resident_guid = resident->guid;
                 session_context.resident_neighbor_id = resident->neighbor_id;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                if(session_log)session_log->stage("lot-runtime");
+#endif
 #ifdef ODH_HAVE_X11
                 if (window) window->resize(800, 600);
                 odh_host::NeighborhoodResumeCallback neighborhood_resume;
@@ -1392,10 +1432,10 @@ int odh_linux_game_entry(int argc, char** argv) {
                     };
                 }
                 const auto result = odh_person_run(static_cast<int>(pointers.size()), pointers.data(), window.get(),
-                                      std::move(neighborhood_resume),std::move(session_context));
+                                      std::move(neighborhood_resume),std::move(session_context),session_log);
 #else
                 const auto result = odh_person_run(static_cast<int>(pointers.size()), pointers.data(), nullptr,{},
-                                      std::move(session_context));
+                                      std::move(session_context),session_log);
 #endif
                 if (result.exit_code != 0) {
                     if (!rollback_options) return result.exit_code;
@@ -1439,6 +1479,9 @@ int odh_linux_game_entry(int argc, char** argv) {
             }
         }
     } catch (const std::exception& error) {
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        if(session_log)session_log->stage("launcher-failed");
+#endif
         std::cerr << "odh-person: " << error.what() << '\n';
         return 2;
     }

@@ -91,6 +91,19 @@ limites estão em
 
 Os testes geram fixtures sintéticas na memória; não dependem dos dados comerciais.
 
+O gate de integração CAS para lote vago é explicitamente opt-in e não faz parte
+do CTest. Ele cria um único membro com o catálogo CAS e `TemplatePerson.iff`,
+compra um lote base vago pelo preço SIMI, salva apenas no perfil temporário e
+confere `load_session_entry` e o plano real do `odh-person`. Os dados instalados
+são verificados por SHA-256 antes/depois.
+
+```sh
+cmake --build build --target odh-cas-movein-e2e odh-person
+python3 tests/cas_movein_e2e.py \
+  --runner build/odh-cas-movein-e2e --person build/odh-person \
+  --game-root '../referencias/The Sims'
+```
+
 ## Inspecionar uma instalação fornecida pelo usuário
 
 Mantenha a instalação fora deste checkout. O exemplo abaixo pressupõe uma pasta

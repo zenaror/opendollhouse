@@ -362,9 +362,12 @@ std::string bytes_hex(const std::vector<std::uint8_t>& bytes){
 }
 odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWindow* shared_window,
                    odh_host::NeighborhoodResumeCallback neighborhood_resume,
-                   std::optional<odh_host::IntegratedSessionContext> session_context) {
+                   std::optional<odh_host::IntegratedSessionContext> session_context,
+                   odh_host::LinuxSessionLog* shared_session_log) {
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
- odh_host::LinuxSessionLog session_log;
+ std::optional<odh_host::LinuxSessionLog> owned_session_log;
+ if(!shared_session_log)owned_session_log.emplace();
+ auto& session_log=shared_session_log?*shared_session_log:*owned_session_log;
 #endif
  try {
     const bool profile_startup=std::getenv("ODH_PROFILE_STARTUP")!=nullptr;
@@ -8083,13 +8086,14 @@ struct PlacementCandidateProbe {
         session_log.event("runtime session failed tick="+std::to_string(ticks)+" diagnostic="+
             (host_failed?host_diagnostic:vm.diagnostic()));
     if(diagnostics.truncated())session_log.event("runtime diagnostic retention truncated; see diagnostics_dropped in result JSON");
-    session_log.finish(exit_code);
+    if(owned_session_log)session_log.finish(exit_code);
 #endif
     return {exit_code,std::move(neighborhood_transition)};
  }catch(const std::exception& e){
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
     const bool log_available=session_log.enabled();const auto log_path=session_log.path();
-    session_log.event(std::string("fatal exception: ")+e.what());session_log.finish(2);
+    session_log.event(std::string("fatal exception: ")+e.what());
+    if(owned_session_log)session_log.finish(2);
     if(log_available)std::cerr<<"odh-person: log saved to "<<log_path<<'\n';
 #endif
     std::cerr<<"odh-person: "<<e.what()<<'\n';return {2,std::nullopt};
@@ -8099,6 +8103,22 @@ struct PlacementCandidateProbe {
 int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)
         if(argv[i]&&(std::string(argv[i])=="--game-root"||std::string(argv[i])=="--mode"||std::string(argv[i])=="--load-session"))
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        {
+            odh_host::LinuxSessionLog session_log;
+            const int exit_code=odh_linux_game_entry(argc,argv,&session_log);
+            session_log.finish(exit_code);
+            return exit_code;
+        }
+#else
             return odh_linux_game_entry(argc,argv);
+#endif
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    odh_host::LinuxSessionLog session_log;
+    const int exit_code=odh_person_run(argc,argv,nullptr,{},std::nullopt,&session_log).exit_code;
+    session_log.finish(exit_code);
+    return exit_code;
+#else
     return odh_person_run(argc,argv,nullptr).exit_code;
+#endif
 }

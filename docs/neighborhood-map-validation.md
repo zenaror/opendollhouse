@@ -113,9 +113,11 @@ as escolhas já existentes de entrada ou mudança.
   `reports/linux-lot-details-panel-20261024/`. O perfil XDG temporário e o
   display virtual foram encerrados ao fim.
 - Os testes sintéticos verificam Escape, botão de cancelar, botão de escolher e
-  clique numa família. Eles não verificam retratos, edição de nomes nem criação
-  e exclusão completa de famílias. O seletor ainda não tem paridade integral com
-  o original/Simitone.
+  clique numa família. Eles não verificam retratos ou edição de nomes. A remoção
+  lógica de famílias desocupadas elegíveis tem cobertura separada de sidecar e
+  integração sintética em
+  [family-overlay-linux-validation.md](family-overlay-linux-validation.md);
+  edição e paridade visual integral do seletor continuam pendentes.
 
 ## Validação
 

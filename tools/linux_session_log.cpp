@@ -39,7 +39,8 @@ void fatal_signal_handler(int signal) {
     const int fd=signal_log_fd;
     if(fd>=0) {
         constexpr char message[]="FATAL: process terminated by signal\n";
-        (void)::write(fd,message,sizeof(message)-1);
+        const auto written=::write(fd,message,sizeof(message)-1);
+        (void)written;
     }
     ::_exit(128+signal);
 }
@@ -98,6 +99,21 @@ std::string clean(std::string_view value) {
         if(byte=='\n'||byte=='\r'||byte=='\t')result.push_back(' ');
         else if(byte>=32)result.push_back(static_cast<char>(byte));
     }
+    return result;
+}
+
+std::string bounded_stage_name(std::string_view value) {
+    constexpr std::size_t maximum_stage_bytes=48;
+    std::string result;
+    result.reserve(std::min(value.size(),maximum_stage_bytes));
+    for(const auto character:value) {
+        if(result.size()==maximum_stage_bytes)break;
+        const auto byte=static_cast<unsigned char>(character);
+        const bool safe=(byte>='a'&&byte<='z')||(byte>='A'&&byte<='Z')||
+            (byte>='0'&&byte<='9')||byte=='-'||byte=='_';
+        result.push_back(safe?static_cast<char>(byte):'_');
+    }
+    if(result.empty())result="unknown";
     return result;
 }
 }
@@ -208,11 +224,13 @@ void LinuxSessionLog::append(std::string_view message) noexcept {
 
 void LinuxSessionLog::stage(std::string_view name) {
     if(!enabled())return;
-    const auto bounded=clean(name);
+    const auto bounded=bounded_stage_name(name);
     const auto content="pid="+std::to_string(static_cast<long long>(::getpid()))+
         "\nstage="+bounded+"\n";
-    if(::ftruncate(marker_fd_,0)==0&&::lseek(marker_fd_,0,SEEK_SET)>=0)
-        (void)::write(marker_fd_,content.data(),content.size());
+    if(::ftruncate(marker_fd_,0)==0&&::lseek(marker_fd_,0,SEEK_SET)>=0) {
+        const auto written=::write(marker_fd_,content.data(),content.size());
+        (void)written;
+    }
     event("stage="+bounded);
 }
 

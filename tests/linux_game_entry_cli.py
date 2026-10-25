@@ -91,6 +91,8 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(base / "config")
     env["XDG_DATA_HOME"] = str(base / "data")
+    env["XDG_STATE_HOME"] = str(base / "state")
+    env.pop("ODH_STATE_DIR", None)
 
     command = [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
                "--language", "15", "--plan-only"]
@@ -101,6 +103,18 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-game-entry-") as directory:
           "synthetic family and lot resolve")
     check(result["resident_execution"] == "whole_household",
           "normal integrated launch selects the full household runtime")
+    session_log_dir = base / "state" / "opendollhouse" / "logs"
+    session_logs = list(session_log_dir.glob("*.log"))
+    check(len(session_logs) == 1 and session_logs[0].name == "odh-person.log",
+          "integrated plan uses one local session log")
+    session_log = session_logs[0].read_text()
+    check("stage=launcher-startup" in session_log and "stage=runtime-plan-ready" in session_log and
+          "language=15" in session_log and "expansion_mask=127" in session_log and
+          "session ended exit_code=0" in session_log and "Sim0" not in session_log and
+          "family" not in session_log.lower(),
+          "headless plan log records bounded launcher stage, selected locale, known expansion mask, and clean finish")
+    check(not list(session_log_dir.glob("active-*")),
+          "integrated plan removes its active marker on clean finish")
     budget_without_ticks = subprocess.run(
         [binary, "--game-root", str(root), "--mode", "1", "--house", "7",
          "--instruction-budget", "25000"], capture_output=True, text=True, env=env)

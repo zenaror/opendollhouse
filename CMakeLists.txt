@@ -526,6 +526,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     tools/linux_cas_catalog.cpp)
   target_include_directories(odh_linux_simitone_cas_member PUBLIC tools)
   target_link_libraries(odh_linux_simitone_cas_member PUBLIC odh_linux_private_family)
+  # Real-data CAS -> move-in integration gate. Intentionally not registered
+  # with CTest: it requires an external installed game and is invoked explicitly.
+  add_executable(odh-cas-movein-e2e tests/cas_movein_e2e.cpp)
+  target_include_directories(odh-cas-movein-e2e PRIVATE tools)
+  target_link_libraries(odh-cas-movein-e2e PRIVATE odh_linux_simitone_cas_member
+    odh_session_entry odh_lot_locations odh_family odh_family_overlay odh_formats)
   if(TARGET odh_neighborhood_screen AND TARGET odh_linux_user_config AND ODH_LINUX_TEXT_TARGET)
     add_library(odh_linux_cas_screen tools/linux_cas_screen.cpp)
     target_include_directories(odh_linux_cas_screen PUBLIC tools)
