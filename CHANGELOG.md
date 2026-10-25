@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Erros ao salvar uma sessão experimental agora mostram o estado do Main, os
+  quadros ativos da VM e suas instruções recentes. Isso facilita localizar uma
+  ação que ainda não chegou a um ponto seguro para salvar; a retomada de uma
+  caminhada real da House07 continua pendente. Veja
+  [`current-handoff.md`](docs/current-handoff.md).
+
 - O scheduler agora adia o callback de uma interrupção até a VM que pediu a
   notificação chegar ao próximo ponto seguro. Isso evita tentar acordar o mesmo
   fio enquanto ele ainda está dentro de uma chamada BHAV; um teste confirma que

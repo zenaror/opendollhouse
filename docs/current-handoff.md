@@ -30,10 +30,35 @@ as mudanças: Sit no tick 512, load em outro processo, Stand até o tick 1024 e
 save final passaram. Os seis arquivos comerciais monitorados mantiveram os
 hashes. Isso confirma o perfil Sit/Stand; não substitui o gate de rota.
 
-Próxima ação: fazer o Main de House07 chegar a um ponto que aceite uma ordem do
-jogador, respondendo ao diálogo bloqueante quando necessário, e pedir Go Here
-quando a rota estiver realmente ativa. Salvar e retomar em outro processo,
-comparar com execução contínua e conferir os hashes dos dados comerciais.
+### Diagnóstico adicional do Main e da fila (2026-10-25)
+
+O erro ao salvar agora inclui o estado do Main, os últimos quadros da VM e as
+últimas instruções, para que o próximo bloqueio seja investigável pelo log. O
+build Release de `odh-person` passou; `linux_game_entry_cli` passou (1/1) e o
+gate real `tests/house07_session_resume_cli.py` passou novamente, com os seis
+arquivos comerciais inalterados.
+
+O pedido Go Here no tick 1025, depois de pedir Stand no tick 512, permaneceu na
+fila. O rastro terminou no Main `PersonGlobals:8333`, chamando repetidamente
+`281`; essa rotina usa `IdleForInput` com `AllowPush=0`. Não houve diálogo
+registrado no log de uma tentativa anterior de rota. Assim, a hipótese de que
+um diálogo bloqueava o Sim não está confirmada. Em uma tentativa separada, com
+Go Here no primeiro tick e 1024 ticks totais, o owner dinâmico apareceu na pilha,
+mas nenhuma Route45
+estava ativa; o pacote recusou salvar esse estado. Nenhuma dessas tentativas
+criou um arquivo de save da caminhada.
+
+Os pedidos nos ticks 513 e 530 foram cedo demais: Main ainda executava a ação
+Stand. O pedido no tick 550 também não chegou a uma Route45 salvável. A
+próxima investigação deve acompanhar o Main e a ordem normal do jogador até
+uma chamada `AllowPush=1` ou outro caminho de despacho de ação, sem marcar a
+fila ativa artificialmente. Os dados do jogo continuam fora do Git e seus
+hashes permaneceram iguais.
+
+Próxima ação: acompanhar o Main de House07 até um ponto em que ele aceite uma
+ordem normal do jogador, pedir Go Here e confirmar que a Route45 está ativa.
+Salvar e retomar em outro processo, comparar com execução contínua e conferir
+os hashes dos dados comerciais.
 Manter caminhos entre cômodos/andares e portais recusados. A janela Linux já
 contém bairro, CAS e controles provisórios do lote e pode servir de base; sua
 aparência e cobertura ainda não são a UI final, que deve seguir o The Sims 1 e

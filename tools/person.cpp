@@ -4989,10 +4989,26 @@ struct PlacementCandidateProbe {
             throw odh::FormatError("wait until every household Sim finishes walking and acting before saving");
         if((queue.size()!=0||queue.active())&&
            !(resumable_primary_route&&queue.active()&&queue.size()==1))
+        {
+            std::string trace_tail;
+            const auto first=trace.size()>12?trace.size()-12:0;
+            for(std::size_t n=first;n<trace.size();++n){
+                const auto& item=trace[n];
+                trace_tail+=(trace_tail.empty()?"":", ")+trace_phases[n]+":"+
+                    std::to_string(item.key.id)+"/"+std::to_string(item.pc)+"/"+
+                    std::to_string(item.instruction.opcode)+"["+
+                    std::to_string(item.instruction.operands[0])+":"+
+                    std::to_string(item.instruction.operands[1])+":"+
+                    std::to_string(item.instruction.operands[2])+":"+
+                    std::to_string(item.instruction.operands[3])+"]";
+            }
             throw odh::FormatError("wait until the primary resident finishes acting before saving (route="+
                 std::string(resumable_primary_route?"resumable":"not_resumable")+", queue_size="+
                 std::to_string(queue.size())+", active="+(queue.active()?"true":"false")+
-                ", waiting="+(queue.waiting()?"true":"false")+")");
+                ", waiting="+(queue.waiting()?"true":"false")+", main="+
+                std::string(odh::vm_status_name(vm.status()))+", last_main="+
+                (trace_tail.empty()?"unavailable":trace_tail)+")");
+        }
         if(!saved_portal_code_owners.empty()||std::any_of(household_runtime.begin(),
             household_runtime.end(),[](const auto& member){
                 return !member->room_portals.code_owners.empty();
@@ -5249,7 +5265,36 @@ struct PlacementCandidateProbe {
                 [](const auto& a,const auto& b){return a.owner<b.owner;});
             bundle.seated_continuation=std::move(continuation);
         }
-        const auto encoded=odh::encode_session_bundle(bundle);
+        std::vector<std::uint8_t> encoded;
+        try{
+            encoded=odh::encode_session_bundle(bundle);
+        }catch(const std::exception& error){
+            std::string stack_tail;
+            const auto& frames=vm.stack();
+            const auto first_frame=frames.size()>8?frames.size()-8:0;
+            for(std::size_t n=first_frame;n<frames.size();++n){
+                const auto& frame=frames[n];
+                stack_tail+=(stack_tail.empty()?"":", ")+std::to_string(frame.key.id)+"/"+
+                    std::to_string(frame.pc)+"/"+std::to_string(frame.context.code_owner);
+            }
+            std::string trace_tail;
+            const auto first_trace=trace.size()>12?trace.size()-12:0;
+            for(std::size_t n=first_trace;n<trace.size();++n){
+                const auto& item=trace[n];
+                trace_tail+=(trace_tail.empty()?"":", ")+trace_phases[n]+":"+
+                    std::to_string(item.key.id)+"/"+std::to_string(item.pc)+"/"+
+                    std::to_string(item.instruction.opcode)+"["+
+                    std::to_string(item.instruction.operands[0])+":"+
+                    std::to_string(item.instruction.operands[1])+":"+
+                    std::to_string(item.instruction.operands[2])+":"+
+                    std::to_string(item.instruction.operands[3])+"]";
+            }
+            throw odh::FormatError(std::string(error.what())+" (main="+
+                std::string(odh::vm_status_name(vm.status()))+", route="+
+                (runtime_routing&&runtime_routing->active()?"active":"inactive")+", stack="+
+                (stack_tail.empty()?"empty":stack_tail)+", trace="+
+                (trace_tail.empty()?"unavailable":trace_tail)+")");
+        }
         // Apply the loader's complete supported-profile validation before any
         // filesystem mutation. A previous usable save must survive rejection.
         try{
