@@ -48,7 +48,14 @@ extraídos diferem em dados não relacionados, mas têm o mesmo OBJD, TTAB129 e
 BHAV4123, byte a byte. Repeti a auditoria do fio 136 apontando para todos os 85
 FARs de conteúdo de cada instalação, além dos dois IFFs de personagens; ambas
 falham no mesmo BHAV privado ausente, sem encontrar outro candidato de definição
-para o GUID.
+para o GUID. A House07 em `Legacy Collection/UserData/Houses` tem o mesmo SHA256
+da House07 em `The Sims/UserData/Houses` (`5b162c81…de5133`), então não é uma
+segunda amostra independente do save. Já `Legacy Collection/UserData2/Houses/House07`
+é diferente (`a5e7734e…080e187`): nele o ID 136 é GUID `246996066` (OBJT 45), e
+seu fio BHAV4096 resolve para `ExpansionPack.far!windows2.iff`, enquanto BHAV280
+resolve para `Global.iff`. Isso confirma que IDs de objeto só identificam algo
+dentro daquele lote e demonstra que a auditoria consegue resolver um dono
+privado válido; não altera a conclusão sobre o telefone do outro save.
 
 Simitone carrega IDs 4096–8191 de `ScopeResource`, que é o recurso privado do
 dono salvo do código (`VMStackFrame.Load`). Portanto, arquivos de expansão com

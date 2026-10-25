@@ -2590,3 +2590,22 @@ caracteres sem suporte. Uma prévia sintética foi inspecionada e as letras fica
 legíveis. Isso explica e corrige os rótulos ausentes nos painéis, mas ainda não
 confirma a imagem real da vizinhança ou a janela do jogo; validação visual em
 X11 permanece pendente.
+
+## House07 alternativo e fio de objeto privado — 2026-10-25
+
+A pasta padrão `Legacy Collection/UserData/Houses` contém a mesma House07 que a
+instalação original (SHA256 `5b162c81…de5133`), portanto não é uma segunda
+amostra independente. `Legacy Collection/UserData2/Houses/House07` é diferente
+(`a5e7734e…080e187`): ali o objeto salvo 136 é GUID `246996066`, OBJT 45, e
+seu BHAV4096 resolve para `ExpansionPack.far!windows2.iff`; BHAV280 resolve
+para `Global.iff`. Isso confirma que IDs de objeto são locais ao lote e que a
+auditoria encontra um dono privado válido nesse outro save. Não muda a
+conclusão do telefone 136 da House07 padrão, que permanece sem BHAV4096/4113
+no recurso privado indicado pelo próprio save. A causa da divergência ainda
+está em aberto; não se deve associar rotinas de outro GUID.
+
+A janela de diálogo, o seletor de ações e os outros painéis Linux atuais são
+ferramentas provisórias de teste. A versão jogável deve apresentar a interface
+do The Sims original, com Simitone como referência de implementação e fluxo;
+essa interface final ainda não foi construída. A comparação e os limites da
+auditoria estão em [interaction-validation.md](interaction-validation.md).
