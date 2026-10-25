@@ -72,6 +72,8 @@
 #include "saved_tail_json.hpp"
 #include "saved_appearance.hpp"
 #include "saved_resources.hpp"
+#include "saved_thread_plan_audit.hpp"
+#include "saved_object_subroutine.hpp"
 #include "saved_interactions.hpp"
 #include "saved_wall_appearance.hpp"
 #include "saved_portal.hpp"
@@ -1823,6 +1825,22 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::deque<PendingCreateObject> pending_create_objects;
     std::deque<PendingRemoveObject> pending_remove_objects;
     std::map<std::int16_t,std::unique_ptr<RuntimeObjectThread>> runtime_object_threads;
+    // Only the audited PhoneLine update tree may use this dormant saved Main.
+    // It is deliberately not registered with the entity scheduler.
+    std::unique_ptr<odh::Vm> saved_phone_thread;
+    std::int16_t saved_phone_id=0;
+    std::uint64_t saved_phone_generation=0;
+    std::optional<Resource> saved_phone_resource;
+    std::vector<SavedObjectSubroutineReport> saved_phone_calls;
+    struct SavedPhoneWrite {
+        odh::VmContext context;
+        std::uint16_t routine,pc;
+        std::uint8_t scope;
+        std::int16_t index,value;
+        std::optional<std::int16_t> before;
+        bool applied=false;
+    };
+    std::vector<SavedPhoneWrite> saved_phone_writes;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
     std::set<std::pair<odh::CodeOwner,std::uint16_t>> tree_name_local_string_attempted;
@@ -2303,8 +2321,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto destination=instruction.operands[5];
         if(string_scope>1||destination>2)
             return {odh::PrimitiveDisposition::unsupported,"RunTreeByName scope/destination is invalid"};
-        if(destination!=2)
-            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName currently supports destination2 subroutines only"};
+        if(destination==0)
+            return {odh::PrimitiveDisposition::unsupported,"RunTreeByName destination0 is not supported"};
         if(string_id==0)return {odh::PrimitiveDisposition::goto_false,{}};
 
         const odh::StringTable* table=nullptr;
@@ -2360,6 +2378,89 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(named!=bank.named_routines.end())routine=odh::routine_key(named->second);
         }
         if(!routine)return {odh::PrimitiveDisposition::goto_false,{}};
+        if(destination==1){
+            constexpr odh::CodeOwner phone_owner=2933422533U;
+            if(!saved_world_main||!restored_world||!objt||!definition_index||!globals||globals->standalone||
+               target->kind!=odh::EntityKind::object||target->definition->guid!=phone_owner||
+               string_scope!=1||table_id!=303||string_id!=58||name->value!="update phones"||
+               routine->scope!=odh::RoutineScope::private_object||routine->id!=4097)
+                return {odh::PrimitiveDisposition::unsupported,
+                    "RunTreeByName destination1 is restricted to the audited saved PhoneLine update"};
+            // The audited entry begins with PhoneLine attribute0 zero. The
+            // tree itself replaces argument0 with category1 before searching.
+            if(target->attributes.empty()||target->attributes[0]!=0)
+                return {odh::PrimitiveDisposition::unsupported,
+                    "saved PhoneLine update requires initial attribute0 zero"};
+            if(saved_phone_calls.size()>=64)
+                return {odh::PrimitiveDisposition::unsupported,"saved PhoneLine subroutine call limit reached"};
+            try{
+                if(!saved_phone_thread){
+                    const auto record=std::find_if(restored_world->records.begin(),restored_world->records.end(),
+                        [&](const auto& item){return item.saved.object_id==static_cast<std::uint16_t>(target->id);});
+                    if(record==restored_world->records.end()||record->common.stack.empty())
+                        throw odh::FormatError("PhoneLine target has no saved Main stack");
+                    auto plan=odh::make_simitone_saved_thread_plan(*record,*objt);
+                    if(plan.frames.size()!=2||plan.frames[0].routine_id!=4096||plan.frames[1].routine_id!=280)
+                        throw odh::FormatError("PhoneLine saved Main is outside the audited two-frame profile");
+                    for(const auto& saved:plan.frames)
+                        if(saved.code_owner_guid!=phone_owner||saved.caller!=target->id||saved.callee!=target->id||
+                           saved.saved_primitive_state!=0)
+                            throw odh::FormatError("PhoneLine saved Main has a different code owner or context");
+                    const auto checks=audit_saved_thread_plan(plan,*definition_index,std::nullopt,
+                        SavedThreadCodeResource{globals->archive,globals->entry});
+                    auto banks=load_saved_thread_routine_banks(plan,checks);
+                    const auto* definition=definition_index->unique(phone_owner);
+                    if(!definition)throw odh::FormatError("PhoneLine exact definition is unavailable");
+                    const Resource resource{definition->source,definition->asset,definition->asset.empty()};
+                    std::set<std::uint16_t> found;
+                    with_resource(resource,[&](const auto& view){
+                        odh::Limits limits;limits.iff_chunks=4096;
+                        odh::iff_chunks(view,[&](const auto& chunk){
+                            if(chunk.type!="BHAV"||(chunk.id!=4097&&chunk.id!=4098))return;
+                            auto tree=odh::read_bhav(chunk.payload);
+                            if(!found.insert(chunk.id).second||!saved_phone_update_closure(tree,chunk.id))
+                                throw odh::FormatError("PhoneLine update tree is invalid or ambiguous");
+                            banks.owners.at(phone_owner).emplace(odh::routine_key(chunk.id),std::move(tree));
+                        },limits);
+                    });
+                    if(found.size()!=2)throw odh::FormatError("PhoneLine update tree dependency is absent from its exact owner");
+                    const odh::VmPrimitive primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+                        if(i.opcode==31&&(i.operands[4]&127)==6&&
+                           ((i.operands[4]&128)==0||i.operands[5]==10))return entity_handler(f,i,t,d);
+                        if(i.opcode==26&&i.operands==std::array<std::uint8_t,8>{0,0,1,0,8,0,0,0}&&relationship_handler)
+                            return relationship_handler(f,i,t,d);
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                            i.opcode==49?"saved PhoneLine NotifyOutOfIdle requires a scheduled Main":
+                            "primitive outside the synchronous saved PhoneLine update profile"};
+                    };
+                    auto phone_memory=memory;
+                    // Subroutine execution is not transactional. Keep every
+                    // external write visible even if a later opcode faults.
+                    phone_memory.write=[&](const auto& f,std::uint8_t scope,std::int16_t index,std::int16_t value){
+                        if(saved_phone_writes.size()>=4096)return false;
+                        saved_phone_writes.push_back({f.context,f.key.id,f.pc,scope,index,value,memory.read(f,scope,index),false});
+                        const auto applied=memory.write(f,scope,index,value);
+                        saved_phone_writes.back().applied=applied;
+                        return applied;
+                    };
+                    phone_memory.set_dynamic_sprite_flag={};
+                    auto imported=std::make_unique<odh::Vm>(std::move(banks.global),std::move(phone_memory),odh::VmLimits{},
+                        primitive,std::move(banks.owners));
+                    odh::restore_simitone_saved_thread_plan(*imported,plan);
+                    saved_phone_id=target->id;saved_phone_generation=target->generation;
+                    saved_phone_resource=resource;saved_phone_thread=std::move(imported);
+                }
+                if(saved_phone_id!=target->id||saved_phone_generation!=target->generation||
+                   saved_phone_thread->status()!=odh::VmStatus::dormant)
+                    throw odh::FormatError("saved PhoneLine Main binding changed");
+                saved_phone_calls.emplace_back();
+                return run_saved_object_subroutine(*saved_phone_thread,target->id,phone_owner,
+                    *routine,temps,saved_phone_calls.back());
+            }catch(const std::exception& error){
+                return {odh::PrimitiveDisposition::unsupported,
+                    std::string("saved PhoneLine update could not run: ")+error.what()};
+            }
+        }
         const auto target_thread=runtime_object_threads.find(frame.context.stack_object);
         if(target_thread==runtime_object_threads.end()||!target_thread->second||!target_thread->second->owner)
             return {odh::PrimitiveDisposition::unsupported,"RunTreeByName target has no loaded runtime code owner"};
@@ -5022,6 +5123,7 @@ struct PlacementCandidateProbe {
         auto steps=startup_steps+vm.steps()-resumed_steps+(second_main_vm?second_main_vm->steps():0);
         for(const auto& member:household_runtime)steps+=member->vm->steps();
         for(const auto& [id,runtime]:runtime_object_threads){(void)id;steps+=runtime->vm->steps();}
+        for(const auto& call:saved_phone_calls)steps+=call.result.steps;
         return steps-resumed_household_steps;
     };
     const auto process_pending_create_objects=[&]{
@@ -6698,7 +6800,60 @@ struct PlacementCandidateProbe {
             <<",\"opcode\":"<<t.instruction.opcode<<",\"true\":"<<static_cast<unsigned>(t.instruction.on_true)<<",\"false\":"<<static_cast<unsigned>(t.instruction.on_false)<<",\"operands\":[";
         for(std::size_t j=0;j<8;++j){if(j)std::cout<<',';std::cout<<static_cast<unsigned>(t.instruction.operands[j]);}std::cout<<"]}";
     }
-    std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
+    std::cout<<"],\"saved_phone_subroutines\":{\"profile\":\"saved_PhoneLine_update_initial_attribute0_zero\""
+        <<",\"main_scheduled\":false,\"instruction_budget_per_call\":4096,\"call_limit\":64"
+        <<",\"maximum_subroutine_steps\":262144,\"private_code_closure\":[4097,4098],\"target_id\":";
+    if(saved_phone_thread)std::cout<<saved_phone_id;else std::cout<<"null";
+    std::cout<<",\"archive\":"<<(saved_phone_resource?json_bytes(saved_phone_resource->archive):"null")
+        <<",\"entry\":"<<(saved_phone_resource?json_bytes(saved_phone_resource->entry):"null")
+        <<",\"main_status\":"<<(saved_phone_thread?json_bytes(odh::vm_status_name(saved_phone_thread->status())):"null")
+        <<",\"main_steps\":"<<(saved_phone_thread?saved_phone_thread->steps():0)<<",\"main_frames\":[";
+    if(saved_phone_thread)for(std::size_t n=0;n<saved_phone_thread->stack().size();++n){
+        if(n)std::cout<<',';
+        const auto& frame=saved_phone_thread->stack()[n];
+        std::cout<<"{\"routine\":"<<frame.key.id<<",\"pc\":"<<frame.pc<<",\"owner\":"<<frame.context.code_owner
+            <<",\"caller\":"<<frame.context.caller<<",\"callee\":"<<frame.context.callee
+            <<",\"stack_object\":"<<frame.context.stack_object<<'}';
+    }
+    std::cout<<"],\"calls\":[";
+    for(std::size_t n=0;n<saved_phone_calls.size();++n){
+        if(n)std::cout<<',';
+        const auto& call=saved_phone_calls[n];
+        std::cout<<"{\"caller\":"<<call.context.caller<<",\"callee\":"<<call.context.callee
+            <<",\"stack_object\":"<<call.context.stack_object<<",\"owner\":"<<call.context.code_owner
+            <<",\"arguments\":[";
+        for(std::size_t j=0;j<call.arguments.size();++j){if(j)std::cout<<',';std::cout<<call.arguments[j];}
+        std::cout<<"],\"temps_before\":[";
+        for(std::size_t j=0;j<call.temps_before.size();++j){if(j)std::cout<<',';std::cout<<call.temps_before[j];}
+        std::cout<<"],\"temps_after\":[";
+        for(std::size_t j=0;j<call.temps_after.size();++j){if(j)std::cout<<',';std::cout<<call.temps_after[j];}
+        std::cout<<"],\"started\":"<<(call.result.started?"true":"false")
+            <<",\"status\":"<<json_bytes(odh::vm_status_name(call.result.status))<<",\"steps\":"<<call.result.steps
+            <<",\"diagnostic\":"<<json_bytes(call.result.diagnostic)<<",\"trace\":[";
+        for(std::size_t j=0;j<call.trace.size();++j){
+            if(j)std::cout<<',';
+            const auto& event=call.trace[j];
+            std::cout<<"{\"step\":"<<event.step<<",\"depth\":"<<event.depth<<",\"owner\":"<<event.code_owner
+                <<",\"routine\":"<<event.key.id<<",\"pc\":"<<event.pc<<",\"opcode\":"<<event.instruction.opcode<<'}';
+        }
+        std::cout<<"]}";
+    }
+    std::cout<<"],\"memory_writes\":[";
+    for(std::size_t n=0;n<saved_phone_writes.size();++n){
+        if(n)std::cout<<',';
+        const auto& write=saved_phone_writes[n];
+        std::cout<<"{\"caller\":"<<write.context.caller<<",\"callee\":"<<write.context.callee
+            <<",\"stack_object\":"<<write.context.stack_object<<",\"routine\":"<<write.routine
+            <<",\"pc\":"<<write.pc<<",\"scope\":"<<unsigned(write.scope)
+            <<",\"index\":"<<write.index<<",\"attribute_entity_id\":";
+        if(write.scope==0)std::cout<<write.context.caller;
+        else if(write.scope==1)std::cout<<write.context.stack_object;
+        else std::cout<<"null";
+        std::cout<<",\"before\":";
+        if(write.before)std::cout<<*write.before;else std::cout<<"null";
+        std::cout<<",\"value\":"<<write.value<<",\"applied\":"<<(write.applied?"true":"false")<<'}';
+    }
+    std::cout<<"]},\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"create_object_instance\":{\"pending_requests\":"<<pending_create_objects.size()
         <<",\"last_diagnostic\":"<<json_bytes(last_create_object_diagnostic)<<",\"runtime_objects\":[";

@@ -6,8 +6,9 @@
 #include <utility>
 
 int main(int argc,char** argv){try{
-    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--verify-saved-threads [--import-saved-threads-dormant] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
+    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
     const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
+    std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false;
     std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
         if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
@@ -18,6 +19,14 @@ int main(int argc,char** argv){try{
         else if(option=="--global"&&!global&&n+2<argc){global=SavedThreadCodeResource{argv[n+1],argv[n+2]};n+=2;}
         else if(option=="--verify-saved-threads"&&!verify_saved_threads)verify_saved_threads=true;
         else if(option=="--import-saved-threads-dormant"&&!import_saved_threads_dormant)import_saved_threads_dormant=true;
+        else if(option=="--include-object-threads"&&!include_object_threads)include_object_threads=true;
+        else if(option=="--saved-thread-entity"&&!saved_thread_entity&&n+1<argc){
+            const std::string value=argv[++n];std::size_t consumed=0;
+            const auto parsed=std::stoul(value,&consumed);
+            if(consumed!=value.size()||parsed==0||parsed>32767)
+                throw odh::FormatError("saved thread entity ID is outside the runtime identity range");
+            saved_thread_entity=static_cast<std::uint16_t>(parsed);
+        }
         else throw odh::FormatError("invalid saved World option");
     }
     if(sources.empty())throw odh::FormatError("explicit definition source required");
@@ -32,8 +41,12 @@ int main(int argc,char** argv){try{
     auto* loaded=&session.saved_world();
     std::vector<std::optional<odh::SimitoneSavedThreadPlan>> thread_plans(records.size());
     std::vector<std::vector<SavedThreadCodeCheck>> thread_checks(records.size());
+    bool selected_saved_thread_found=false;
     for(std::size_t n=0;n<records.size();++n){
-        if(!records[n].tail.person)continue;
+        if(records[n].common.stack.empty())continue;
+        if(!records[n].tail.person&&!include_object_threads)continue;
+        if(saved_thread_entity&&records[n].saved.object_id!=*saved_thread_entity)continue;
+        selected_saved_thread_found=true;
         thread_plans[n]=odh::make_simitone_saved_thread_plan(records[n],object_types);
         if(verify_saved_threads){
             thread_checks[n]=audit_saved_thread_plan(*thread_plans[n],*index,semiglobal,global);
@@ -46,6 +59,8 @@ int main(int argc,char** argv){try{
             }
         }
     }
+    if(saved_thread_entity&&!selected_saved_thread_found)
+        throw odh::FormatError("selected saved thread is absent, has no stack, or needs --include-object-threads");
     if(!session.all_dormant_bindings_valid())
         throw odh::FormatError("saved World session lost a dormant thread entity binding");
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
@@ -80,7 +95,7 @@ int main(int argc,char** argv){try{
         std::cout<<",\"raw_extras\":";odh_tools::saved_bank(std::cout,entity->saved_object_banks->extras);
         std::cout<<",\"raw_tail\":";odh_tools::saved_tail(std::cout,raw.tail);
         std::cout<<",\"simitone_thread_plan\":";
-        if(raw.tail.person){
+        if(thread_plans[n]){
             const auto& plan=*thread_plans[n];
             std::cout<<"{\"profile\":\"pinned_simitone_frame_mapping\",\"executable\":false,\"code_verified\":"<<(verify_saved_threads?"true":"false")<<",\"entity_id\":"<<plan.entity_id
                 <<",\"temp_registers\":";odh_tools::saved_bank(std::cout,plan.temp_registers);

@@ -1,5 +1,31 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## PhoneLine destino1: chamada parcial em House07 (2026-10-25)
+
+O host agora só permite a rota destination1 de `Global.iff STR#303` texto
+“update phones” para o PhoneLine GUID 2933422533, recurso privado exato e Main
+salva 4096/280. Uma checagem estrutural limita o código privado às árvores
+4097/4098, às primitivas previstas e à chamada 4097→4098. A Main não entra no
+Scheduler; opcode49 segue bloqueado.
+
+No probe headless real, 4097 chamou 4098 duas vezes e retornou `true` em23
+passos. O trace confirma `caller=207`, `callee=207`, `StackObject=207` na
+entrada; a relação consultada dentro de 4098 usou `StackObject=136`. O resultado
+gravou `PhoneLine207.attr0` de0 para2 e mudou `Temp0` do fio do objeto de0 para1.
+As frames salvas 4096/280 permaneceram em IP0, dormentes, com zero passos. O
+avatar avançou além de `BHAV8197/IP4`, mas a sessão falhou em `BHAV8206/IP3`,
+opcode41, no tick515. A chamada do telefone não alcançou opcode49. A Pizza não
+foi entregue e o jogo não foi validado como funcional.
+
+O teto atual é 64 chamadas×4096 instruções; escritas anteriores a fault ou
+esgotamento do limite permanecem no mundo em memória. O teste sintético confirma
+isso e que não há retorno de sucesso falso. A integração headless verifica o
+trace, os relacionamentos, a escrita, a Main dormente e a falha final esperada.
+CTest focado passou 6/6 e os hashes dos cinco arquivos comerciais ficaram
+iguais. Relatório:
+[`house07-phone-pizza-destination1-validated.json`](../reports/phone-pizza-path/house07-phone-pizza-destination1-validated.json), SHA256
+`0f26269daa611cbd9d60135d34634853428cb1dfe07c83413a8e6ad547b82a6a`.
+
 ## Base para chamadas síncronas em outro fio (2026-10-25)
 
 O núcleo VM agora oferece `run_subroutine_in_temporary_stack`. Ele roda uma
@@ -14,8 +40,19 @@ opcode49. `odh-person` compilou e CTest `vm`, `entity_next` e `person_cli`
 passaram (3/3). Isso valida o mecanismo no VM; não executou PhoneLine com dados
 reais. A função não desfaz gravações externas se uma árvore não retornar, por
 isso o host ainda precisa auditar que a árvore e suas chamadas são síncronas
-antes de usá-la. O fio Main salvo do objeto207 ainda não é restaurado, e o
-probe House07 continua parando em `RunTreeByName` destino1.
+antes de usá-la. Naquele checkpoint, o fio Main salvo do objeto207 ainda não
+era restaurado e o probe House07 parava em `RunTreeByName` destino1. A etapa
+seguinte importou essa Main em estado dormente, conforme descrito abaixo; o
+probe de gameplay continua parado no mesmo destino1.
+
+### Importação dormente do PhoneLine
+
+O leitor de save agora seleciona explicitamente o objeto207 e importa suas duas
+frames Main (BHAV4096 e 280) em uma VM dormente. As rotinas e endereços foram
+encontrados no código privado do PhoneLine. A execução continua desligada; o
+resultado não valida BHAV4097/4098 nem qualquer efeito de `NotifyOutOfIdle`.
+Build de `odh-saved-world` e dois CTests focados passaram. Passos e comando
+reproduzível estão em [`saved-thread-plan-validation.md`](saved-thread-plan-validation.md).
 
 ## Busca por categoria de PhoneLine (2026-10-25)
 
@@ -29,11 +66,12 @@ ela.
 
 O runtime agora implementa modo6 pela palavra `ObjectData[59]`, em ordem
 crescente de ID e sem wrap, com a saída de StackObject aplicada pelo núcleo VM.
-O teste sintético `entity_next` passou 305 verificações e CTest passou 1/1. O
-probe House07 permanece parado em `RunTreeByName` destino1: ainda falta restaurar
-o fio do objeto comum e chamar a rotina dentro dele, preservando seu estado e o
-efeito condicional de opcode49. Ainda não há Scheduler nem entregador neste
-probe.
+O teste sintético `entity_next` passou 305 verificações e CTest passou 1/1. No
+checkpoint desta busca, o probe House07 permanecia parado em `RunTreeByName`
+destino1: ainda faltava restaurar o fio do objeto comum e chamar a rotina dentro
+dele, preservando seu estado e o efeito condicional de opcode49. A Main agora
+foi importada dormente, mas a chamada destino1 e o Scheduler continuam
+pendentes.
 
 ## Telefone: relação salva e chamada ao controlador (2026-10-25)
 

@@ -1,5 +1,46 @@
 # Continuidade atual
 
+## Progresso: primeira chamada salva do PhoneLine executada (2026-10-25)
+
+O teste headless de House07 agora executa a chamada de `RunTreeByName` destino1
+para o `PhoneLine` 207. O BHAV 4097 chamou o 4098 duas vezes e retornou `true`
+em 23 passos. A leitura da relação usou `caller=207` e `StackObject=136`; a
+escrita foi em `PhoneLine 207.attr0`, de 0 para 2. `Temp0` da VM do objeto foi
+de 0 para 1, enquanto a Main 4096/280 continuou dormente, com zero passos.
+
+O avatar passou pelo ponto anterior e avançou até `BHAV8206/IP3`, onde a sessão
+terminou em falha controlada por `unsupported primitive 41`, no tick 515. Isso
+é uma execução parcial, não a entrega de Pizza nem gameplay completo. O opcode
+49 não apareceu na chamada do telefone; ele continua bloqueado sem Scheduler.
+Os limites são 64 chamadas de até 4096 instruções cada, e uma escrita feita
+antes de uma falha não é desfeita. O teste sintético cobre esse caso. Os cinco
+arquivos comerciais tiveram hashes iguais antes/depois.
+
+Validação independente: build existente, 6/6 CTests focados e o probe
+`tests/house07_phone_subroutine_integration.py` passaram. Relatório:
+[`house07-phone-pizza-destination1-validated.json`](../reports/phone-pizza-path/house07-phone-pizza-destination1-validated.json), SHA256
+`0f26269daa611cbd9d60135d34634853428cb1dfe07c83413a8e6ad547b82a6a`.
+Nenhuma tela virtual foi aberta; as seis capturas temporárias aprovadas já não
+existiam.
+
+## Progresso: importação dormente da Main salva do PhoneLine (2026-10-25)
+
+O conversor agora pode manter pilhas salvas de objetos junto das pilhas dos
+Sims. A CLI continua incluindo apenas Sims por padrão; `--include-object-threads`
+e `--saved-thread-entity ID` permitem escolher um objeto específico. Em
+House07, o PhoneLine 207 (GUID 2933422533) teve as rotinas 4096 e 280 conferidas
+no recurso privado correto e foi mantido dormente com as duas frames; o JSON
+marca `executed:false`. O teste sintético também cobre frames de objeto sem
+`ObjectUses`, que seguem o padrão Normal documentado no ativador Simitone.
+
+Build de `odh-saved-world` e `odh-saved-thread-plan-tests` passou; CTest
+`saved_thread_restore_plan` e `saved_thread_resource_import` passou (2/2), e
+`git diff --check` não encontrou problemas. Isso só restaura a pilha inicial em
+memória. As futuras BHAVs chamadas pelo telefone continuam sem auditoria; não
+ligar destino1 até verificar chamadas e possíveis efeitos que não retornam.
+Capturas temporárias autorizadas foram conferidas e já não existiam; nenhuma
+tela virtual permaneceu aberta.
+
 ## Progresso: busca por categoria do telefone (2026-10-25)
 
 A busca estática do alvo da chamada confirmou que `Global.iff` STR#303, índice

@@ -20,24 +20,24 @@ void SavedWorldSession::retain_dormant_thread(std::int16_t id, std::unique_ptr<V
     if (threads_.count(id) || threads_.size() >= thread_limit_)
         throw FormatError("saved World session has a duplicate thread or reached its thread limit");
     const auto* entity = saved_->world->find(id);
-    const auto saved_person = std::find_if(saved_->records.begin(), saved_->records.end(),
+    const auto saved_entity = std::find_if(saved_->records.begin(), saved_->records.end(),
         [id](const SavedWorldEntity& record) {
             return record.saved.object_id == static_cast<std::uint16_t>(id) &&
-                record.tail.person.has_value();
+                !record.common.stack.empty();
         });
-    if (!entity || entity->kind != EntityKind::avatar ||
-        saved_person == saved_->records.end())
-        throw FormatError("saved thread actor is absent or is not a saved avatar");
+    if (!entity || saved_entity == saved_->records.end())
+        throw FormatError("saved thread entity is absent or has no saved stack");
+    if (saved_entity->common.stack.size() != vm->stack().size())
+        throw FormatError("saved thread VM frame count differs from its saved entity");
     if (std::any_of(vm->stack().begin(), vm->stack().end(),
             [id](const VmFrame& frame) { return frame.context.caller != id; }))
-        throw FormatError("saved thread frames do not belong to the saved avatar");
+        throw FormatError("saved thread frames do not belong to their saved entity");
     threads_.emplace(id, Thread{entity->generation, std::move(vm)});
 }
 
 bool SavedWorldSession::valid_binding(std::int16_t id, const Thread& thread) const {
     const auto* entity = saved_->world->find(id);
-    return entity && entity->kind == EntityKind::avatar &&
-        entity->generation == thread.entity_generation && thread.vm &&
+    return entity && entity->generation == thread.entity_generation && thread.vm &&
         thread.vm->status() == VmStatus::dormant && thread.vm->steps() == 0;
 }
 
@@ -55,8 +55,26 @@ bool SavedWorldSession::all_dormant_bindings_valid() const {
 void restore_simitone_saved_thread_plan(Vm& vm, const SimitoneSavedThreadPlan& plan) {
     std::vector<VmFrame> frames;
     frames.reserve(plan.frames.size());
-    for (const auto& saved : plan.frames) {
-        if (saved.return_state != SimitoneSavedReturnState::normal || saved.action_tree)
+    std::vector<bool> requires_return_mapping(plan.frames.size(),false);
+    for(const auto& use:plan.object_uses){
+        if(use.stack_length<=0||static_cast<std::size_t>(use.stack_length)>plan.frames.size()||use.target_id<=0)
+            throw FormatError("saved thread ObjectUses entry does not identify a frame and target");
+        // A one-frame ObjectUses entry names the Main entity but has no caller
+        // frame whose opcode could override Simitone's Normal default.
+        if(use.stack_length>1)
+            requires_return_mapping[static_cast<std::size_t>(use.stack_length-1)]=true;
+    }
+    for (std::size_t n=0;n<plan.frames.size();++n) {
+        const auto& saved=plan.frames[n];
+        // Simitone initializes every imported frame to Normal. The saved
+        // ObjectUses records may override that state for person threads after
+        // the caller opcode is audited. Object threads have no PersonData
+        // ObjectUses bank, so their unannotated frames retain that default.
+        // A frame referenced at depth > 1 must be audited before Normal can be
+        // distinguished from Retry or Interaction.
+        const auto return_state=saved.return_state==SimitoneSavedReturnState::unresolved&&
+            !requires_return_mapping[n]?SimitoneSavedReturnState::normal:saved.return_state;
+        if (return_state != SimitoneSavedReturnState::normal || saved.action_tree)
             throw FormatError("saved thread return/action state is not supported by VM import");
         frames.push_back({routine_key(saved.routine_id), saved.instruction_pointer,
             {saved.caller, saved.callee, saved.stack_object, saved.code_owner_guid},

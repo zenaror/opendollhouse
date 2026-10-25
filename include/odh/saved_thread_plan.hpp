@@ -57,9 +57,9 @@ void apply_simitone_saved_return_mapping(SimitoneSavedThreadPlan&,
 // dormant and does not execute Main. The caller supplies the intended resources.
 void restore_simitone_saved_thread_plan(Vm&, const SimitoneSavedThreadPlan&);
 
-// Owns a decoded saved World and the imported VM state of its saved avatars.
-// Admission binds each dormant VM to the World entity generation. Only const
-// VM views are exposed; this session offers no activation or scheduler path.
+// Owns a decoded saved World and imported VM states for entities with saved
+// stacks. Admission binds each dormant VM to the World entity generation. Only
+// const VM views are exposed; this session offers no activation or scheduler path.
 class SavedWorldSession {
 public:
     explicit SavedWorldSession(std::unique_ptr<SavedWorld>, std::size_t thread_limit = 64);

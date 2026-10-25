@@ -59,6 +59,7 @@ int main() {
                 odh::Bhav::Metadata{0,4,2,0}}}};
         odh::RoutineOwners owner_code{{0x12345678,std::move(private_code)},
                                        {0x87654321,std::move(semiglobal_code)}};
+        auto partial_owner_code=owner_code;
         odh::Vm restored_vm({}, {}, {}, {}, std::move(owner_code));
         auto normal_plan=plan;
         for (auto& frame : normal_plan.frames)
@@ -77,6 +78,40 @@ int main() {
                 restored_vm.stack()[1].context.callee==13 &&
                 restored_vm.temps()==normal_plan.temp_registers,
                 "normal-return saved plan imports owner-resolved frames and temps into dormant VM");
+        auto partially_mapped_plan=plan;
+        partially_mapped_plan.object_uses.push_back({105,1});
+        partially_mapped_plan.frames[1].return_state=odh::SimitoneSavedReturnState::normal;
+        odh::Vm partially_mapped_vm({}, {}, {}, {}, std::move(partial_owner_code));
+        odh::restore_simitone_saved_thread_plan(partially_mapped_vm,partially_mapped_plan);
+        require(partially_mapped_vm.status()==odh::VmStatus::dormant&&
+                partially_mapped_vm.stack().size()==2&&
+                partially_mapped_vm.stack()[0].return_mode==odh::VmCallReturnMode::ordinary,
+                "unmapped depth-one ObjectUses keeps Simitone Normal default beside an audited frame");
+        bool unresolved_use_rejected=false;
+        try { odh::restore_simitone_saved_thread_plan(partially_mapped_vm,plan); }
+        catch (const odh::FormatError&) { unresolved_use_rejected=true; }
+        require(unresolved_use_rejected&&partially_mapped_vm.stack().size()==2&&
+                partially_mapped_vm.stack()[0].key.id==4096,
+                "frame with unaudited caller opcode remains rejected without changing its VM");
+        auto object_entity=entity;
+        object_entity.saved.object_id=207;
+        object_entity.tail.person.reset();
+        const auto object_plan=odh::make_simitone_saved_thread_plan(object_entity,types);
+        odh::RoutineOwners object_owners{{0x12345678,{{odh::routine_key(4096),
+            odh::Bhav{0x8002,std::vector<odh::Instruction>(10,odh::Instruction{2,0xFE,0xFF,{}}),{},
+                odh::Bhav::Metadata{0,4,2,0}}}}},
+            {0x87654321,{{odh::routine_key(8192),
+            odh::Bhav{0x8002,std::vector<odh::Instruction>(10,odh::Instruction{2,0xFE,0xFF,{}}),{},
+                odh::Bhav::Metadata{0,4,2,0}}}}}};
+        odh::Vm restored_object({}, {}, {}, {}, std::move(object_owners));
+        odh::restore_simitone_saved_thread_plan(restored_object,object_plan);
+        require(object_plan.object_uses.empty()&&
+                object_plan.frames[0].return_state==odh::SimitoneSavedReturnState::unresolved&&
+                restored_object.status()==odh::VmStatus::dormant&&restored_object.stack().size()==2&&
+                restored_object.stack()[0].context.caller==207&&
+                restored_object.stack()[1].context.callee==207&&
+                restored_object.temps()==object_plan.temp_registers,
+                "saved object thread defaults unannotated frames to Simitone Normal and remains dormant");
         auto special_plan=normal_plan;
         special_plan.frames[1].return_state=odh::SimitoneSavedReturnState::retry;
         bool special_state_rejected=false;
@@ -151,11 +186,17 @@ int main() {
             odh::SavedWorldEntity actor{};
             actor.saved.object_id=static_cast<std::uint16_t>(id);
             actor.tail.person.emplace();
+            odh::ObjmStackFrame frame{};frame.tree_id=280;frame.node_id=0;
+            actor.common.stack.push_back(frame);
             saved_world->records.push_back(std::move(actor));
         }
         require(saved_world->world->create(103,odh::EntityKind::object),
                 "synthetic saved session non-avatar exists");
-        odh::SavedWorldSession session(std::move(saved_world),2);
+        odh::SavedWorldEntity saved_object{};saved_object.saved.object_id=103;
+        odh::ObjmStackFrame object_frame{};object_frame.tree_id=280;object_frame.node_id=0;
+        saved_object.common.stack.push_back(object_frame);
+        saved_world->records.push_back(std::move(saved_object));
+        odh::SavedWorldSession session(std::move(saved_world),3);
         auto dormant_for=[&](std::int16_t id){
             odh::RoutineSet global{{odh::routine_key(280),
                 odh::Bhav{0x8002,{odh::Instruction{2,0xFE,0xFF,{}}},{},
@@ -175,29 +216,30 @@ int main() {
                         "duplicate saved avatar VM rejected");
         session_rejects([&]{session.retain_dormant_thread(999,dormant_for(999));},
                         "missing saved avatar rejected");
-        session_rejects([&]{session.retain_dormant_thread(103,dormant_for(103));},
-                        "non-avatar saved thread rejected");
         session_rejects([&]{session.retain_dormant_thread(104,dormant_for(101));},
                         "wrong frame caller rejected");
         session_rejects([&]{session.retain_dormant_thread(104,std::make_unique<odh::Vm>(odh::RoutineSet{}));},
                         "ready VM rejected as saved dormant thread");
         session.retain_dormant_thread(102,dormant_for(102));
-        require(session.thread_count()==2 && session.all_dormant_bindings_valid() &&
+        session.retain_dormant_thread(103,dormant_for(103));
+        require(session.thread_count()==3 && session.all_dormant_bindings_valid() &&
                 session.dormant_thread(101) && session.dormant_thread(102) &&
+                session.dormant_thread(103) &&
                 session.dormant_thread(101)->status()==odh::VmStatus::dormant &&
                 session.dormant_thread(101)->steps()==0 &&
                 session.dormant_thread(102)->stack()[0].context.caller==102,
-                "two saved avatar VMs retained independently without execution");
+                "saved avatar and object VMs retained independently without execution");
         session_rejects([&]{session.retain_dormant_thread(104,dormant_for(104));},
                         "saved thread capacity enforced");
-        require(session.thread_count()==2 && session.all_dormant_bindings_valid(),
-                "rejected thread imports leave the two valid saved VMs intact");
+        require(session.thread_count()==3 && session.all_dormant_bindings_valid(),
+                "rejected thread imports leave the valid saved VMs intact");
         require(session.world().remove(101) &&
                 session.world().create(101,odh::EntityKind::avatar),
                 "synthetic actor can be replaced at the same ID");
         require(!session.dormant_thread(101) && session.dormant_thread(102) &&
+                session.dormant_thread(103) &&
                 !session.all_dormant_bindings_valid(),
-                "generation change invalidates only the replaced avatar's saved VM");
+                "generation change invalidates only the replaced entity's saved VM");
         std::cout << "saved Simitone thread plan and session checks passed\n";
         return 0;
     } catch (const std::exception& e) {

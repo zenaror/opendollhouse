@@ -52,15 +52,25 @@ Isso não executa a VM nem substitui a restauração das filas e do relógio.
 
 `odh-saved-world --verify-saved-threads --import-saved-threads-dormant` repete
 a auditoria e carrega, de cada fonte exata aprovada, somente as BHAVs citadas
-pela pilha. A sessão possui o World restaurado e mantém uma VM por Sim salvo,
-ligada ao ID e à geração da entidade. O banco de leitura/escrita da VM aponta
-para esse mesmo World. A admissão exige avatar salvo, pilha não vazia, quadros
-com o mesmo chamador e estado `dormant` sem instruções executadas; o limite é
-64 VMs. Se a entidade for substituída sob o mesmo ID, a consulta à VM falha
-pela geração diferente. O JSON informa quantas VMs continuam guardadas,
-`all_retained_bindings_valid:true` e `executed:false`; `saved_threads_restored`
-continua `false`. Nenhuma VM é ativada. O carregador não traz as chamadas
-futuras dessas BHAVs nem fornece controladores de rota, animação ou fila.
+pela pilha. A sessão possui o World restaurado e mantém uma VM por entidade
+salva com pilha não vazia, ligada ao ID e à geração da entidade. O banco de
+leitura/escrita da VM aponta para esse mesmo World. A admissão exige pilha não
+vazia, quadros com o mesmo chamador e estado `dormant` sem instruções executadas;
+o limite é 64 VMs. Se a entidade for substituída sob o mesmo ID, a consulta à VM
+falha pela geração diferente. Por padrão, a CLI ainda seleciona apenas Sims;
+para auditar objetos, use `--include-object-threads`, de preferência junto com
+`--saved-thread-entity ID` para limitar a leitura a um objeto. O JSON informa
+quantas VMs continuam guardadas, `all_retained_bindings_valid:true` e
+`executed:false`; `saved_threads_restored` continua `false`. Nenhuma VM é
+ativada. O carregador não traz as chamadas futuras dessas BHAVs nem fornece
+controladores de rota, animação ou fila.
+
+Na House07 local, o PhoneLine 207 (GUID 2933422533) foi selecionado dessa forma.
+Os quadros salvos 4096 e 280 apontam para a rotina proprietária esperada e seus
+endereços foram encontrados. Uma VM foi guardada como dormente, com as duas
+frames e sem passos executados. Isso apenas prepara a Main salva do objeto;
+BHAVs chamados depois, como a rotina escolhida por `RunTreeByName`, ainda não
+foram executados nem auditados como uma cadeia síncrona.
 
 Essa conferência não executa os quadros. Ainda não restaura o estado especial
 de retorno entre frames nem retoma o relógio, a fila de interações ou os
@@ -189,3 +199,39 @@ recusa de opcode chamador ausente. Neste checkpoint de retenção, a build Linux
 `odh-saved-thread-plan-tests` concluiu, e os três testes focados passaram.
 A conferência do diff (`git diff --check`) também passou. Esses testes
 não executam as pilhas salvas nem provam gameplay.
+
+## PhoneLine 207 salvo como objeto
+
+O importador também aceita uma pilha salva de objeto quando pedimos sua
+inclusão explicitamente. Em vez de importar as pilhas de todos os objetos da
+casa, o seletor limita a auditoria ao ID informado. No save House07, o objeto
+207 é `PhoneLine` (GUID 2933422533); sua Main tem as rotinas 4096 e 280, ambas
+localizadas no banco privado do dono e com o endereço salvo dentro da rotina.
+As duas frames foram mantidas em uma VM dormente, ainda com zero instruções
+executadas.
+
+Reprodução com a build existente, sem alterar o save:
+
+```sh
+./build/linux-checkpoint/odh-saved-world \
+  '../referencias/The Sims/UserData/Houses/House07.iff' \
+  --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
+  --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
+  --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff \
+  --verify-saved-threads --import-saved-threads-dormant \
+  --include-object-threads --saved-thread-entity 207
+```
+
+Resultado: `requested:true`, `executed:false`, uma VM carregada e retida,
+`all_retained_bindings_valid:true`; as duas verificações de código retornaram
+`present_and_in_range`. A primeira tentativa sem as definições User00000 e
+User00001 falhou porque a casa também contém os Sims 105 e 137; isso é uma
+exigência do leitor da casa, mesmo que a seleção final seja só o objeto 207.
+Uma tentativa de auditar todos os objetos com fontes incompletas também não é
+válida: vários objetos apontam para recursos ainda não fornecidos. Portanto,
+esse resultado isolado não habilitava `RunTreeByName` destino1 nem provava que a
+rotina seguinte do telefone fosse síncrona. Uma etapa posterior acrescentou uma
+rota bem limitada para 4097/4098 e a executou em House07; ela retornou `true`,
+mas o restante do pedido de Pizza ainda falha no avatar. O trace e os limites
+atuais estão em [`interaction-validation.md`](interaction-validation.md).

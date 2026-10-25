@@ -7,6 +7,19 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O probe headless de House07 agora executa o caminho específico `PhoneLine`
+  207 → BHAV4097 → BHAV4098, registra a escrita em memória e falha de modo
+  explícito ao chegar a opcode41 no avatar. Não entrega a Pizza nem representa
+  gameplay completo; a Main do telefone permanece dormente e opcode49 continua
+  bloqueado sem Scheduler. Veja [`interaction-validation.md`](docs/interaction-validation.md).
+
+- A leitura de fios salvos agora pode incluir a Main de um objeto, limitada por
+  `--saved-thread-entity ID`; por padrão, continua selecionando Sims. House07
+  confirmou que as duas frames da Main do PhoneLine 207 apontam para rotinas
+  existentes e podem ser guardadas sem execução. Isso ainda não autoriza a
+  chamada seguinte de `RunTreeByName` nem constitui gameplay. Veja
+  [`saved-thread-plan-validation.md`](docs/saved-thread-plan-validation.md).
+
 - O opcode `SetToNext` agora cobre a busca por categoria usada pelo objeto
   `PhoneLine`: compara `ObjectData[59]` com o argumento0 e avança pelos IDs sem
   voltar ao início. O teste sintético valida busca, retorno falso e escrita
