@@ -1863,7 +1863,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::RelationshipState> original_relationships;
     if(neighbors&&!restoring_session)original_relationships.emplace(*neighbors);
     auto* relationships=household_restore?&household_restore->relationships():session_restore?&session_restore->relationships():
-        original_relationships?&*original_relationships:nullptr;
+        restored_world?restored_world->relationships.get():original_relationships?&*original_relationships:nullptr;
     std::vector<odh::RelationshipRecord> relationship_records;
     const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
         if(diagnostics.retain(Diagnostic::relationship,relationship_records.size(),10000))relationship_records.push_back(value);
@@ -7123,7 +7123,7 @@ struct PlacementCandidateProbe {
     std::cout<<']';
     const auto* actor=world.find(runtime_avatar_id);
     std::cout<<",\"relationship_state\":";
-    if(relationships)std::cout<<"{\"profile\":\"TS1 runtime copy; multiplier1; original NBRS unchanged; object matrices are not restored from ObjM\",\"sources\":"<<relationships->source_count()
+    if(relationships)std::cout<<"{\"profile\":\"TS1 runtime copy; multiplier1; original NBRS unchanged; saved OBJM object relationships restored for lot runtime\",\"sources\":"<<relationships->source_count()
         <<",\"pairs\":"<<relationships->pair_count()<<",\"values\":"<<relationships->value_count()<<'}';
     else std::cout<<"null";
     std::cout<<",\"relationship_records\":[";

@@ -212,6 +212,13 @@ validação indicados por versão.
 
 ### Corrigido
 
+- A simulação de lote agora usa as relações entre objetos carregadas do `OBJM`,
+  além das relações de moradores do `NBRS`. Na House07, isso deixa a rotina do
+  telefone ler a relação salva entre o controlador e o aparelho. A execução
+  avança até `RunTreeByName` destino1, que ainda não é suportado; o pedido de
+  Pizza continua sem criar o entregador. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
+
 - O atalho `C` da vizinhança agora é reconhecido antes de o método de entrada
   do sistema filtrar teclas de texto; a verificação fica limitada à tela da
   vizinhança, para não interceptar nomes no CAS. Cancelar o CAS com Escape

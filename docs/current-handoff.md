@@ -1,26 +1,37 @@
 # Continuidade atual
 
-## Progresso: trace do fluxo de Pizza sem agendamento (2026-10-25)
+## Progresso: relação do telefone restaurada; próximo limite é RunTreeByName (2026-10-25)
 
-Um probe novo clicou o telefone136 pelo picker lógico da janela e enfileirou a
-ação 8312. Ela retornou true após 454 instruções; Main ficou aguardando até o
-limite de 640 ticks e `host_failed=false`. O vizinho `pizzadude` foi encontrado
-como ID40. Mesmo assim `create_object_instance.runtime_objects` ficou vazio.
+O objeto controlador207 salva no OBJM uma relação com o telefone136, índice0,
+valor1. `SavedWorld` já decodificava esse vínculo, mas o host da simulação do
+lote usava apenas as relações NBRS dos moradores. `tools/person.cpp` agora
+seleciona as relações do mundo restaurado para lotes e mantém a precedência dos
+estados de sessões salvas. No trace da ação real do picker, opcode26 consultou
+`object 207 → object 136` e retornou true, fazendo BHAV8203 prosseguir pela
+animação normal.
 
-O trace mostra a saída antecipada: 8312 chama 8258, depois 8203 (`anim - pick
-up`). A animação14 é executada e emite eventos, mas a comparação `Local[0]==2`
-em 8203/IP6 falha. A rotina passa por 8196 e retorna false; 8312 segue pelo
-ramo de som de parada e retorna true sem chamar 8254 nem Global307/369. Portanto
-o retorno true anterior não demonstra nem que o scheduler foi pedido. Falta
-rastrear quem deveria preencher Local0 e o estado de slot/telefone antes de
-alterar esse comportamento.
+Com isso, a ação chega a `PhoneGlobals.iff:BHAV8197/IP4`, opcode28 com destino1,
+e falha de modo controlado: o host só suporta destino2. Simitone executa essa
+chamada sincronamente na VM do objeto apontado por StackObject. O host ainda não
+restaura VMs de Main para objetos comuns do lote; portanto, não basta redirecionar
+a chamada para um runtime object thread existente. A entrega de Pizza e a criação
+do Scheduler seguem pendentes. Não foi injetado Scheduler nem alterada a lógica
+do BHAV.
 
-A instalação e os saves comerciais foram somente lidos. House07, LotZoning,
-Neighborhood e os dois personagens tiveram os mesmos SHA256 antes/depois. O
-teste usou XDG/TMP temporários e não abriu display virtual. Detalhes em
-[`interaction-validation.md`](interaction-validation.md). Relatório local,
-ignorado pelo Git: `reports/phone-pizza-path/house07-phone-pizza-trace.json`,
-SHA256 `310b5998ba30ef6d0db959efa474a30403e7bd052f2482ee1ccd7c09567e7c2e`.
+Build `odh-person` e CTest direcionado passaram: `person_cli`,
+`saved_object_relationships`, `saved_world_factory`, `relationship`,
+`relationship_snapshot` e `relationship_snapshot_codec` (6/6). No trace de
+House07, a leitura da relação retornou1; a sessão falhou depois em
+`RunTreeByName currently supports destination2 subroutines only` no tick160.
+Os cinco arquivos House07/LotZoning/Neighborhood/personagens mantiveram hashes.
+Foi uma execução headless sem display virtual. Detalhes e relatório local estão
+em [`interaction-validation.md`](interaction-validation.md) e
+`reports/phone-pizza-path/house07-phone-pizza-object-relationship-retrace.json`
+(SHA256 `64acd875a24cf5a60879750a5c25d767e3bd3f5cb5d3e91f69b0148124830667`).
+
+Próximo: especificar um contexto síncrono fiel para destino1 e os VMs dos
+objetos salvos do lote; preservar a pilha/temps do objeto durante a chamada,
+validar o retorno, e só então repetir o pedido de Pizza.
 
 ## Progresso: retratos reais nos cartões do seletor (2026-10-25)
 
