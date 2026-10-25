@@ -45,8 +45,10 @@ da instalação original e no da Legacy Collection, o OBJD 16808 tem hash idênt
 aponta para `PhoneGlobals`, e o único BHAV privado é 4123. Os demais BHAVs de
 `PhoneGlobals.iff` são semiglobais (8192 ou maiores). Os dois `phones.iff`
 extraídos diferem em dados não relacionados, mas têm o mesmo OBJD, TTAB129 e
-BHAV4123, byte a byte. Repetir a auditoria do fio 136 com o `Objects.far` de
-Legacy também falha no mesmo BHAV ausente.
+BHAV4123, byte a byte. Repeti a auditoria do fio 136 apontando para todos os 85
+FARs de conteúdo de cada instalação, além dos dois IFFs de personagens; ambas
+falham no mesmo BHAV privado ausente, sem encontrar outro candidato de definição
+para o GUID.
 
 Simitone carrega IDs 4096–8191 de `ScopeResource`, que é o recurso privado do
 dono salvo do código (`VMStackFrame.Load`). Portanto, arquivos de expansão com
@@ -58,8 +60,8 @@ do PhoneLine 207 para em `no_thread`, sem inventar execução.
 
 O perfil foi repetido com `odh-saved-world --include-object-threads
 --saved-thread-entity 136 --verify-saved-threads`, apontando para os `Global.far`
-e `Objects.far` de cada instalação. A inspeção é somente leitura; nenhuma rotina
-de outro objeto foi associada ao telefone 136.
+e todos os FARs de conteúdo das duas instalações. A inspeção é somente leitura;
+nenhuma rotina de outro objeto foi associada ao telefone 136.
 
 ## Diálogo privado bloqueante e resposta do jogador — checkpoint anterior (2026-10-25)
 

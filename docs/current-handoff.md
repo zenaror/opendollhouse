@@ -29,13 +29,15 @@ Próxima etapa: identificar o recurso exato e a rotina executável do objeto 136
 cujos frames salvos pedem BHAV 4096/4113, mas cujo dono GUID 1797669432 resolve
 para `Objects.far!phones.iff`, onde não há essas rotinas. O mesmo OBJD16808 e a
 mesma lista privada (só BHAV4123) aparecem no jogo original e na Legacy
-Collection. O parser OBJM do ODH bate com a ordem do leitor Simitone/FreeSO; a
-causa da pilha incompatível ainda não está determinada. Não conectar rotinas de
-outro arquivo por coincidência de número. Só depois de confirmar o recurso que
-o jogo realmente usa para esse dono, repetir até `NotifyOutOfIdle` encontrar um
-fio válido; a Pizza continua sem entrega comprovada. A janela de mensagem é
-provisória; a interface final deve usar os recursos e a organização visual do
-The Sims, com Simitone como referência.
+Collection. A verificação com todos os 85 FARs de conteúdo de cada instalação
+falha no mesmo BHAV privado ausente. O parser OBJM do ODH bate com a ordem do
+leitor Simitone/FreeSO; a causa da pilha incompatível ainda não está determinada.
+Não conectar rotinas de outro arquivo por coincidência de número. Próximo:
+auditar a instalação/save e o modo como o objeto 136 recebeu esse fio; até achar
+um dono e uma rotina verificáveis, `NotifyOutOfIdle` não pode acordar um fio
+válido e a Pizza não está comprovada. A janela de mensagem é provisória; a
+interface final deve usar os recursos e a organização visual do The Sims, com
+Simitone como referência.
 
 ## Ponto seguro do NotifyOutOfIdle no scheduler (2026-10-25)
 
