@@ -14,6 +14,12 @@ validação indicados por versão.
   completa do Simitone/The Sims 1 ainda faltam. Veja
   [`current-handoff.md`](docs/current-handoff.md).
 
+- O botão “Sims” abre uma faixa para escolher outro morador já carregado no
+  lote. A House07 confirmou a troca do Sim 105 para o 137 e atualizou as
+  necessidades mostradas. Os cartões ainda usam IDs porque nomes e retratos
+  não têm uma fonte confirmada; a interface continua provisória. Veja
+  [`current-handoff.md`](docs/current-handoff.md).
+
 - A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e
   os conserva em sessões novas; sessões antigas continuam abrindo com esses
   valores zerados. O `TS1 Budget` agora lê quantias TempXL completas, incluindo

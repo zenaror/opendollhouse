@@ -41,6 +41,8 @@ int main(){try{
           "panel adds visible labels and bars to the scene");
     check(frame.pixels[239U*320U+1]==std::array<std::uint8_t,4>{20,80,120,255},
           "original panel artwork appears and its color key stays transparent");
+    for(const auto& pixel:frame.pixels)
+        check(pixel[3]==255,"motive panel preserves the opaque window pixel rule");
     check(result.bar_pixels>0,"available motive values produce filled bars");
     bool invalid_frame=false;
     try{odh::RasterFrame tiny{159,240,{}, {},0,0,{}};(void)odh_host::draw_motive_panel(tiny,state,14);}

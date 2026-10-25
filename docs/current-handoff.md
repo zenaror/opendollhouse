@@ -1,5 +1,27 @@
 # Continuidade atual
 
+## Atualização: seletor de moradores no lote Linux (2026-10-24)
+
+O botão “Sims” no rodapé abre uma faixa com cartões dos moradores já carregados
+na família. Clicar em um cartão muda o Sim ativo e atualiza o painel de
+necessidades. Na House07, a validação integrada mostrou os cartões 105 e 137;
+clicar no segundo mudou o título da janela de “Sim 105” para “Sim 137” e
+atualizou Bexiga de 70 para 75 e Diversão de 20 para 23. O registro de sessão
+confirmou `UI active Sim changed to 137`. A captura em
+`reports/household-selector/selector-final-sim-137.png` (SHA256
+`b1a844d1f91a12edd9b4f686e9b2c5fc82f5fc39be5119f095177f874c660d6e`) mostra o
+segundo cartão selecionado e os valores daquele Sim. O teste usou dados do jogo
+somente para leitura; o perfil de jogador foi temporário. A janela terminou com
+status 0 e não restou processo Xvfb.
+
+Os cartões mostram IDs internos porque ainda não temos uma fonte confirmada
+para nomes e retratos. Essa faixa e o painel de motivos continuam provisórios;
+o objetivo segue sendo reconstruir a interface original/Simitone em partes
+funcionais, usando arte original quando couber. `odh-person` e os testes de UI
+compilaram; `linux_household_selector`, `linux_motive_panel`, `status_hud` e
+`linux_text_renderer` passaram (4/4). Ainda faltam categorias reais, retratos,
+nomes e comparação visual do conjunto com o jogo/Simitone.
+
 ## Atualização: origem dos nomes do painel de motivos (2026-10-25)
 
 O Simitone organiza oito motivos em duas fileiras de quatro; posições e

@@ -91,6 +91,7 @@
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
 #include "linux_text_renderer.hpp"
 #include "linux_motive_panel.hpp"
+#include "linux_household_selector.hpp"
 #endif
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
 #include "linux_session_log.hpp"
@@ -2977,6 +2978,7 @@ struct PlacementCandidateProbe {
     std::optional<SavedGroundSelection> render_ground_selection;
     std::optional<std::array<std::int32_t,2>> render_menu_anchor;
     std::int16_t active_household_actor=runtime_avatar_id;
+    bool household_selector_open=false;
     const auto selected_household_member=[&]() -> HouseholdRuntime* {
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
             [&](const auto& member){return member->id==active_household_actor;});
@@ -4879,6 +4881,15 @@ struct PlacementCandidateProbe {
                                                   std::to_string(text_result.missing_glyphs));
             }
             draw_interaction_menu(frame.image);
+            if(saved_world_main&&captured_status_hud){
+                odh_host::draw_household_selector_button(frame.image,game_language);
+                if(household_selector_open){
+                    std::vector<std::int16_t> resident_ids{runtime_avatar_id};
+                    resident_ids.reserve(household_runtime.size()+1);
+                    for(const auto& member:household_runtime)resident_ids.push_back(member->id);
+                    odh_host::draw_household_selector(frame.image,resident_ids,active_household_actor,game_language);
+                }
+            }
 #endif
             render_window_host->present(frame.image);
         }
@@ -5243,6 +5254,7 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_X11
         if(render_window_host && (ticks==1 || ticks%30==0)){
             std::string title="OpenDollhouse | "+std::to_string(time.hour)+":"+(time.minute<10?"0":"")+std::to_string(time.minute);
+            title+=" | Sim "+std::to_string(active_household_actor);
             if(const auto* actor=world.find(active_household_actor);actor&&actor->motives.size()>=16)
                 title+=" | Hunger "+std::to_string(actor->motives[7])+" Comfort "+std::to_string(actor->motives[6])+
                     " Hygiene "+std::to_string(actor->motives[8])+" Bladder "+std::to_string(actor->motives[9])+
@@ -5432,13 +5444,49 @@ struct PlacementCandidateProbe {
                     if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
                 }
             }
-            const bool interaction_menu_click_consumed=input.primary_click&&
-                handle_interaction_menu_click((*input.primary_click)[0],(*input.primary_click)[1]);
-            if(input.primary_click&&!interaction_menu_click_consumed&&render_lot&&render_lot_evidence){
+            bool household_selector_click_consumed=false;
+            std::optional<std::int16_t> selector_resident_pick;
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+            if(input.primary_click&&saved_world_main&&render_lot&&render_lot_evidence){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
-                std::optional<std::int16_t> picked_resident;
+                if(odh_host::household_selector_button_hit(render_lot_evidence?render_lot_evidence->pick_width:0,
+                                                           render_lot_evidence?render_lot_evidence->pick_height:0,
+                                                           click_x,click_y)){
+                    household_selector_open=!household_selector_open;
+                    household_selector_click_consumed=true;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                    session_log.event(std::string("UI household selector ")+
+                        (household_selector_open?"opened":"closed"));
+#endif
+                }else if(household_selector_open){
+                    const auto panel=odh_host::household_selector_panel_rect(render_lot_evidence->pick_width,
+                                                                             render_lot_evidence->pick_height);
+                    if(click_x>=panel.x&&click_y>=panel.y&&click_x<panel.x+panel.width&&
+                       click_y<panel.y+panel.height){
+                        std::vector<std::int16_t> resident_ids{runtime_avatar_id};
+                        resident_ids.reserve(household_runtime.size()+1);
+                        for(const auto& member:household_runtime)resident_ids.push_back(member->id);
+                        selector_resident_pick=odh_host::household_selector_pick(resident_ids,
+                            render_lot_evidence->pick_width,render_lot_evidence->pick_height,click_x,click_y);
+                        household_selector_open=false;
+                        household_selector_click_consumed=true;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                        session_log.event(std::string("UI household selector click x=")+std::to_string(click_x)+
+                            " y="+std::to_string(click_y)+" residents="+std::to_string(resident_ids.size())+
+                            " selected="+(selector_resident_pick?std::to_string(*selector_resident_pick):"none"));
+#endif
+                    }else household_selector_open=false;
+                }
+            }
+#endif
+            const bool interaction_menu_click_consumed=!household_selector_click_consumed&&input.primary_click&&
+                handle_interaction_menu_click((*input.primary_click)[0],(*input.primary_click)[1]);
+            if(input.primary_click&&render_lot&&render_lot_evidence&&
+               (selector_resident_pick||(!household_selector_click_consumed&&!interaction_menu_click_consumed))){
+                const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
+                std::optional<std::int16_t> picked_resident=selector_resident_pick;
                 const auto& avatar_picks=render_lot_evidence->avatar_pick_ids;
-                if(click_x>=0&&click_y>=0&&
+                if(!picked_resident&&click_x>=0&&click_y>=0&&
                    static_cast<std::uint32_t>(click_x)<render_lot_evidence->pick_width&&
                    static_cast<std::uint32_t>(click_y)<render_lot_evidence->pick_height){
                     const auto index=static_cast<std::size_t>(click_y)*render_lot_evidence->pick_width+
@@ -5454,6 +5502,10 @@ struct PlacementCandidateProbe {
                     const bool manual_action_pending=(render_interaction_enqueued&&
                         render_interaction_status=="queued")||headless_stand_status=="queued";
                     if(!manual_action_pending)active_household_actor=*picked_resident;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                    if(selector_resident_pick)
+                        session_log.event("UI active Sim changed to "+std::to_string(active_household_actor));
+#endif
                     if(manual_action_pending&&*picked_resident!=active_household_actor){
                         if(render_window_host)render_window_host->set_title(
                             "OpenDollhouse: finish the current resident action before changing Sims");

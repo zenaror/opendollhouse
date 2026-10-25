@@ -64,7 +64,7 @@ MotivePanelResult draw_motive_panel(odh::RasterFrame& frame,const StatusHud& sta
 
     constexpr std::int32_t panel_height=96;
     const auto panel_y=static_cast<std::int32_t>(frame.height)-panel_height;
-    fill_rect(frame,0,panel_y,static_cast<std::int32_t>(frame.width),panel_height,{17,22,29,238});
+    fill_rect(frame,0,panel_y,static_cast<std::int32_t>(frame.width),panel_height,{17,22,29,255});
     if(original_panel_art){
         const auto art_y=static_cast<std::int32_t>(frame.height)-
             static_cast<std::int32_t>(std::min<std::uint32_t>(100,original_panel_art->height));
