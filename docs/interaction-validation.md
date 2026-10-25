@@ -30,7 +30,38 @@ headless continua reproduzível pelo comando abaixo.
 
 Fontes: [VMNotifyOutOfIdle.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Primitives/VMNotifyOutOfIdle.cs), [VMScheduler.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Engine/VMScheduler.cs), [VM.Load](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/VM.cs) e [VMEntity.Init](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Entities/VMEntity.cs).
 
-## Diálogo privado bloqueante e resposta do jogador (2026-10-25)
+## Auditoria do fio salvo do telefone 136 (2026-10-25)
+
+House07 salva o objeto 136 com GUID `1797669432`, tipo OBJT 43, e três frames:
+BHAV 4096/IP1, BHAV 4113/IP0 e BHAV 280/IP0. O leitor ODH obtém esses campos
+na mesma ordem do leitor OBJM do Simitone/FreeSO (`OBJMStackFrame` em
+`tso.files/Formats/IFF/Chunks/OBJM.cs`). A conferência explícita de código falha
+em ambos os conjuntos comerciais com `saved thread BHAV is absent from its
+explicit code resource`.
+
+O dono desse código resolve para `Objects.far!phones.iff`, OBJD 16808. No recurso
+da instalação original e no da Legacy Collection, o OBJD 16808 tem hash idêntico
+(`92ac00972c5268d1f106b6e73844058bf20b8fdaeb21bc93aa4db764131ce8d2`), o GLOB
+aponta para `PhoneGlobals`, e o único BHAV privado é 4123. Os demais BHAVs de
+`PhoneGlobals.iff` são semiglobais (8192 ou maiores). Os dois `phones.iff`
+extraídos diferem em dados não relacionados, mas têm o mesmo OBJD, TTAB129 e
+BHAV4123, byte a byte. Repetir a auditoria do fio 136 com o `Objects.far` de
+Legacy também falha no mesmo BHAV ausente.
+
+Simitone carrega IDs 4096–8191 de `ScopeResource`, que é o recurso privado do
+dono salvo do código (`VMStackFrame.Load`). Portanto, arquivos de expansão com
+BHAVs 4096/4113, mas com outros GUIDs, não são substitutos válidos para esse fio.
+A evidência indica uma pilha salva sem essas rotinas no recurso privado que o
+save aponta; ainda não determina se o save está inconsistente ou se falta outra
+regra de resolução. ODH não registra esse fio como válido: o `NotifyOutOfIdle`
+do PhoneLine 207 para em `no_thread`, sem inventar execução.
+
+O perfil foi repetido com `odh-saved-world --include-object-threads
+--saved-thread-entity 136 --verify-saved-threads`, apontando para os `Global.far`
+e `Objects.far` de cada instalação. A inspeção é somente leitura; nenhuma rotina
+de outro objeto foi associada ao telefone 136.
+
+## Diálogo privado bloqueante e resposta do jogador — checkpoint anterior (2026-10-25)
 
 `DialogPrivateStrings` agora lê o texto e o título do `STR#301` do recurso
 privado que contém o código chamado, aplica a referência `$Local:n` usada pelo
@@ -54,15 +85,15 @@ O teste sintético `linux_vm_dialog` verifica o painel, o texto, a substituiçã
 de `$Local`, a rejeição de marcadores desconhecidos, a espera da VM, o retorno
 do ticket correto e os ramos verdadeiro/falso. A integração externa de House07
 verifica a mensagem inglesa real: sem resposta, a VM permanece em `waiting` no
-tick645; com um Enter de teste pela mesma entrada de janela, a BHAV8312 avança e
-o fluxo chega ao pedido de acordar a Main do telefone. Nesse ponto ainda falha
-de forma explícita, em 823 ticks, porque a Main do PhoneLine não está no
-Scheduler. A fila continua ativa; a Pizza não é entregue.
+tick645; com um Enter de teste pela mesma entrada de janela, a BHAV8312 avançou e
+o fluxo chegou ao pedido de acordar a Main do telefone. Naquele checkpoint,
+falhava de forma explícita em 823 ticks porque a Main do PhoneLine ainda não
+estava no Scheduler. A fila continuava ativa; a Pizza não foi entregue.
 
 O opcode15 (`BreakPoint`) foi tratado como Simitone: retorna pelo ramo verdadeiro
 sem efeito, conforme `VMBreakPoint.cs`. A segunda chamada à rotina do PhoneLine
-alcança opcode49 (`NotifyOutOfIdle`), que exige agendar e interromper a Main
-salva do objeto. O host ainda não faz isso, então não simula um agendamento.
+alcançava opcode49 (`NotifyOutOfIdle`), que exige agendar e interromper a Main
+salva do objeto. O host ainda não fazia isso e não simulava o agendamento.
 Além disso, a chamada parcial deixou escritas visíveis somente no World em
 memória; a execução da integração não grava esses valores nos arquivos
 comerciais. Os hashes dos cinco saves/personagens verificados ficaram iguais.

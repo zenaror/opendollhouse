@@ -26,12 +26,16 @@ ignorado `reports/phone-pizza-path/house07-phone-pizza-response.json`. Build e
 integração foram headless; nenhuma tela virtual ficou aberta.
 
 Próxima etapa: identificar o recurso exato e a rotina executável do objeto 136,
-cuja pilha salva menciona BHAV 4096/4113 mas ainda não foi associada a código
-carregável. Não conectar rotinas de outro arquivo por coincidência de número.
-Depois, repetir a chamada até que `NotifyOutOfIdle` encontre um fio real e seguir
-o fluxo até observar um resultado verificável; a Pizza continua sem entrega
-comprovada. A janela de mensagem é provisória; a interface final deve usar os
-recursos e a organização visual do The Sims, com Simitone como referência.
+cujos frames salvos pedem BHAV 4096/4113, mas cujo dono GUID 1797669432 resolve
+para `Objects.far!phones.iff`, onde não há essas rotinas. O mesmo OBJD16808 e a
+mesma lista privada (só BHAV4123) aparecem no jogo original e na Legacy
+Collection. O parser OBJM do ODH bate com a ordem do leitor Simitone/FreeSO; a
+causa da pilha incompatível ainda não está determinada. Não conectar rotinas de
+outro arquivo por coincidência de número. Só depois de confirmar o recurso que
+o jogo realmente usa para esse dono, repetir até `NotifyOutOfIdle` encontrar um
+fio válido; a Pizza continua sem entrega comprovada. A janela de mensagem é
+provisória; a interface final deve usar os recursos e a organização visual do
+The Sims, com Simitone como referência.
 
 ## Ponto seguro do NotifyOutOfIdle no scheduler (2026-10-25)
 
@@ -49,8 +53,9 @@ scheduler. O teste `entity_vm_scheduler` verifica uma notificação do objeto pa
 si mesmo que encontra `Sleep`: não há reentrada no callback, o sono é liberado no
 ponto seguro e a Main prossegue no ciclo seguinte. Também passaram `vm`,
 `interaction_queue` e `person_cli` (4/4 no conjunto direcionado), além da
-integração House07, que ainda para em opcode49 porque a Main real do PhoneLine
-não está registrada. Isso valida o mecanismo genérico, não a chamada de Pizza.
+integração House07. Naquele checkpoint, ela ainda parava em opcode49 porque a
+Main real do PhoneLine não estava registrada. Isso validava o mecanismo
+genérico, não a chamada de Pizza.
 
 Referências primárias: [VMNotifyOutOfIdle.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Primitives/VMNotifyOutOfIdle.cs), [VMScheduler.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Engine/VMScheduler.cs), [VM.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/VM.cs) e [VMEntity.cs](https://github.com/riperiperi/FreeSO/blob/f86bbd34b2112296ed786741f640a0535886d180/TSOClient/tso.simantics/Entities/VMEntity.cs).
 
