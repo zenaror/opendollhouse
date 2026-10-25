@@ -163,6 +163,19 @@ struct VmSnapshot {
     std::uint64_t run_generation = 0;
 };
 
+// Result of running a short BHAV on an existing entity thread's temporary
+// stack. The entity's Main frames/status are restored; the thread's Temps and
+// TempXL remain shared with the called tree, matching Simitone's same-thread
+// subroutine model. A non-return status must be treated as an unsupported call
+// by the host; callers must pre-audit the tree for synchronous behavior. This
+// does not roll back World or service writes made before a non-return status.
+struct VmSubroutineResult {
+    bool started = false;
+    VmStatus status = VmStatus::ready;
+    std::uint64_t steps = 0;
+    std::string diagnostic;
+};
+
 // Host-independent, resumable instruction kernel. Owns immutable routine sets.
 // No scheduler, entities, queue, routing, animation, or clock is implied.
 class Vm {
@@ -187,6 +200,14 @@ public:
     bool activate_dormant_state();
     VmStatus run(std::uint64_t instruction_budget,
                  const std::function<void(const VmTrace&)>& trace = {});
+    // Run a synchronous child tree using this thread's code owners, memory,
+    // primitive handlers, and Temp registers, while saving/restoring its Main
+    // stack and status. Requires an idle safe point with a live dormant or
+    // runnable Main stack and no pending asynchronous service.
+    VmSubroutineResult run_subroutine_in_temporary_stack(
+        RoutineKey, VmContext, const std::vector<std::int16_t>& arguments,
+        std::uint64_t instruction_budget,
+        const std::function<void(const VmTrace&)>& trace = {});
     // Append one private/semiglobal resource owner at a host safe point. Existing
     // owners and active VM state are preserved. Rejects owner zero, duplicates,
     // invalid keys, capacity overflow, or calls made from inside run/callbacks.

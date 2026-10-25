@@ -594,6 +594,59 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
     if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
     return status_;
 }
+VmSubroutineResult Vm::run_subroutine_in_temporary_stack(
+    RoutineKey key, VmContext context, const std::vector<std::int16_t>& arguments,
+    std::uint64_t instruction_budget, const std::function<void(const VmTrace&)>& trace) {
+    VmSubroutineResult result;
+    const bool live_main = !stack_.empty() &&
+        (status_ == VmStatus::dormant || status_ == VmStatus::running ||
+         status_ == VmStatus::budget_exhausted);
+    if (executing_ || !live_main || pending_ || !suspended_pending_.empty() ||
+        interaction_return_ || external_frame_return_) {
+        result.status = status_;
+        result.diagnostic = "temporary subroutine requires a live Main at a safe point";
+        return result;
+    }
+
+    // Capture everything that identifies the suspended Main. Temps and TempXL
+    // deliberately stay live: Simitone runs named trees on the entity's thread,
+    // so their register changes belong to that thread after the call returns.
+    auto main = snapshot();
+    stack_.clear();
+    status_ = VmStatus::running;
+    diagnostic_.clear();
+    steps_ = 0;
+    try {
+        push(key, context, arguments);
+        result.started = true;
+        result.status = run(instruction_budget, trace);
+        result.steps = steps_;
+        result.diagnostic = diagnostic_;
+    } catch (const std::exception& error) {
+        result.started = !stack_.empty();
+        result.status = VmStatus::fault;
+        result.steps = steps_;
+        result.diagnostic = error.what();
+    } catch (...) {
+        result.started = !stack_.empty();
+        result.status = VmStatus::fault;
+        result.steps = steps_;
+        result.diagnostic = "temporary subroutine raised a non-standard exception";
+    }
+
+    // Keep the called tree's registers and consumed dispatch-ticket sequence,
+    // but restore every field that describes the suspended Main.
+    stack_.swap(main.stack);
+    diagnostic_ = std::move(main.diagnostic);
+    suspended_pending_.swap(main.suspended_pending);
+    status_ = main.status;
+    steps_ = main.steps;
+    pending_.swap(main.pending);
+    interaction_return_.swap(main.interaction_return);
+    external_frame_return_.swap(main.external_frame_return);
+    run_generation_ = main.run_generation;
+    return result;
+}
 bool Vm::update_pending(std::uint64_t ticket, VmFrameWrite output) {
     if (executing_) throw std::logic_error("VM callbacks must not reenter pending update");
     if (status_ != VmStatus::waiting || !pending_ || pending_->ticket != ticket) return false;

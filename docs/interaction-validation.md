@@ -1,5 +1,22 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Base para chamadas síncronas em outro fio (2026-10-25)
+
+O núcleo VM agora oferece `run_subroutine_in_temporary_stack`. Ele roda uma
+árvore limitada no mesmo VM do objeto-alvo, guarda e recompõe a pilha/status da
+Main e mantém os registradores do fio para a árvore chamada. O resultado traz
+retorno verdadeiro/falso, falha ou esgotamento do orçamento e o total de passos.
+O contexto da rotina chamada continua encaminhando os efeitos ao objeto certo.
+
+O teste sintético `vm` cobre os dois retornos, argumentos vindos dos Temps do
+chamador, preservação da Main/TempXL, orçamento e passagem do contexto do
+opcode49. `odh-person` compilou e CTest `vm`, `entity_next` e `person_cli`
+passaram (3/3). Isso valida o mecanismo no VM; não executou PhoneLine com dados
+reais. A função não desfaz gravações externas se uma árvore não retornar, por
+isso o host ainda precisa auditar que a árvore e suas chamadas são síncronas
+antes de usá-la. O fio Main salvo do objeto207 ainda não é restaurado, e o
+probe House07 continua parando em `RunTreeByName` destino1.
+
 ## Busca por categoria de PhoneLine (2026-10-25)
 
 A busca estática confirma que `Global.iff` STR#303, índice57, resolve para

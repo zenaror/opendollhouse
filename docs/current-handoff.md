@@ -11,18 +11,18 @@ atualiza valores do próprio objeto e pode emitir `NotifyOutOfIdle` (opcode49).
 Isso é leitura estática da rotina; não prova que House07 já executa esses
 efeitos.
 
-O modo6 agora procura o próximo objeto pelo `ObjectData[59]` salvo, no mesmo
-sentido crescente de IDs do Simitone, sem voltar ao início. O resultado fica
-preparado para a VM publicar no StackObject. `odh-person` compilou e o teste
-`entity_next` passou (305 verificações internas; CTest 1/1). O probe real ainda
-para antes dessa rotina, em `RunTreeByName` destino1. Continuam pendentes o fio
-Main salvo do telefone, a chamada síncrona com seu orçamento e a interrupção
-opcode49; não houve injeção do Scheduler nem alegação de entrega.
+O modo6 procura o próximo objeto pelo `ObjectData[59]` salvo, no mesmo sentido
+crescente de IDs do Simitone, sem voltar ao início. O núcleo VM agora também
+roda uma rotina em pilha temporária e restaura a Main do objeto, mantendo os
+Temps do fio. Os testes cobrem retorno true/false, argumentos, limite e contexto
+do opcode49; CTest `vm`, `entity_next` e `person_cli` passou (3/3), e
+`odh-person` compilou. Isso ainda não executou BHAV4097 com dados reais.
 
-Próximo: carregar o BHAV Main existente do objeto salvo num fio próprio,
-executar4097 dentro desse fio com orçamento limitado, preservar pilha e
-registradores e encaminhar `NotifyOutOfIdle` apenas se o alvo e o efeito forem
-válidos. Cobrir o contexto com testes sintéticos antes de repetir House07.
+O probe real ainda para em `RunTreeByName` destino1. Próximo: restaurar o fio
+Main salvo de PhoneLine 207 e os recursos privados corretos, comprovar que a
+cadeia chamada só usa efeitos síncronos, então ligar o destino1 e encaminhar
+`NotifyOutOfIdle` ao fio válido. Repetir House07 sem injetar Scheduler ou
+alegar entrega antes de observar o fluxo real.
 
 ## Progresso: relação do telefone restaurada; próximo limite é RunTreeByName (2026-10-25)
 

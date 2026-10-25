@@ -116,6 +116,62 @@ int main() {
                 restored_stack.stack()[0].pc==1,
                 "restored two-frame stack runs its saved top frame then returns to its saved parent");
 
+        std::optional<odh::VmContext> temporary_effect_context;
+        odh::Vm temporary({{key(),routine({expr(2,0,37,9,7)})},
+                           {key(4097),routine({expr(5,1,0,8,9)})},
+                           {key(4098),routine({expr(16,0,0,9,7)})},
+                           {key(4099),routine({expr(5,2,7,8,7,1),expr(2,0,0,7,7)})},
+                           {key(4100),routine({{49,254,255,{}}})}}, {}, {},
+            [&](const auto& frame,const auto& instruction,const auto&,const auto&) {
+                if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                temporary_effect_context=frame.context;
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            });
+        temporary.restore_dormant_state({saved_frame},saved_temps);
+        temporary.temp_xl()[0]=123456;
+        const auto suspended_main=temporary.snapshot();
+        const auto child_true=temporary.run_subroutine_in_temporary_stack(
+            key(4097),{14,14,14,0},{55,66,77,88},8);
+        require(child_true.started&&child_true.status==odh::VmStatus::returned_true&&
+                child_true.steps==1&&child_true.diagnostic.empty(),
+                "temporary named tree reports synchronous true and its bounded step count");
+        require(temporary.status()==suspended_main.status&&temporary.steps()==suspended_main.steps&&
+                temporary.stack().size()==suspended_main.stack.size()&&
+                temporary.stack()[0].pc==suspended_main.stack[0].pc&&
+                temporary.stack()[0].arguments==suspended_main.stack[0].arguments&&
+                temporary.stack()[0].locals==suspended_main.stack[0].locals&&
+                temporary.stack()[0].context.caller==suspended_main.stack[0].context.caller&&
+                temporary.stack()[0].context.callee==suspended_main.stack[0].context.callee&&
+                temporary.stack()[0].context.stack_object==suspended_main.stack[0].context.stack_object&&
+                temporary.run_generation()==suspended_main.run_generation,
+                "temporary named tree restores the suspended Main frame and status exactly");
+        require(temporary.temps()[0]==saved_temps[0]&&temporary.temps()[1]==55&&
+                temporary.temp_xl()[0]==123456,
+                "temporary named tree receives caller arguments while retaining target thread registers");
+        const auto child_false=temporary.run_subroutine_in_temporary_stack(
+            key(4098),{14,14,14,0},{0,0,0,0},8);
+        require(child_false.started&&child_false.status==odh::VmStatus::returned_false&&
+                temporary.status()==suspended_main.status&&temporary.stack()[0].pc==suspended_main.stack[0].pc,
+                "temporary named tree returns false without advancing Main");
+        const auto child_notify=temporary.run_subroutine_in_temporary_stack(
+            key(4100),{31,32,33,0},{},8);
+        require(child_notify.started&&child_notify.status==odh::VmStatus::returned_true&&
+                temporary_effect_context&&temporary_effect_context->caller==31&&
+                temporary_effect_context->callee==32&&temporary_effect_context->stack_object==33,
+                "temporary named tree sends opcode effects through the target thread context");
+        const auto child_budget=temporary.run_subroutine_in_temporary_stack(
+            key(4099),{14,14,14,0},{},1);
+        require(child_budget.started&&child_budget.status==odh::VmStatus::budget_exhausted&&
+                child_budget.steps==1&&temporary.status()==suspended_main.status&&
+                temporary.stack().size()==suspended_main.stack.size()&&temporary.stack()[0].pc==0&&
+                temporary.temps()[2]==7,
+                "budgeted child restores Main even when its own tree does not finish");
+        const auto missing_temporary=temporary.run_subroutine_in_temporary_stack(
+            key(4101),{14,14,14,0},{},8);
+        require(!missing_temporary.started&&missing_temporary.status==odh::VmStatus::fault&&
+                temporary.status()==suspended_main.status&&temporary.stack()[0].pc==0,
+                "missing temporary routine leaves the suspended Main untouched");
+
         odh::RoutineOwners restored_owners{{42,{{key(),routine({expr(2,0,37,9,7)})}}}};
         odh::Vm restored_owner({{key(0),routine({expr(2,0,0)})}}, {}, {}, {},
                                std::move(restored_owners));
