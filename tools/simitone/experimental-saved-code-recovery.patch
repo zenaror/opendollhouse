@@ -1,3 +1,156 @@
+diff --git a/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs b/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs
+index df06b0f..08f4813 100644
+--- a/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs
++++ b/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs
+@@ -30,6 +30,7 @@ namespace FSO.Content.TS1
+         public Content ContentManager;
+         public TS1GameState GameState = new TS1GameState();
+         public string UserPath;
++        public int CurrentNeighborhoodID { get; private set; }
+         public int NextSim;
+ 
+         public HashSet<uint> DirtyAvatars = new HashSet<uint>();
+@@ -45,6 +46,23 @@ namespace FSO.Content.TS1
+         /// </summary>
+         /// <param name="id"></param>
+         public void InitSpecific(int id)
++        {
++            InitSpecific(id, null);
++        }
++
++        /// <summary>
++        /// Discard unsaved neighborhood and character changes after the active
++        /// VM has been closed. Retain the selected UserData slot and profile path;
++        /// the frontend's neighborhood map mode is not a UserData slot number.
++        /// </summary>
++        public void ReloadCurrent()
++        {
++            if (string.IsNullOrEmpty(UserPath))
++                throw new InvalidOperationException("No neighborhood has been initialized.");
++            InitSpecific(CurrentNeighborhoodID, UserPath);
++        }
++
++        private void InitSpecific(int id, string retainedUserPath)
+         {
+             DirtyAvatars.Clear();
+             ZoningDictionary.Clear();
+@@ -54,7 +72,7 @@ namespace FSO.Content.TS1
+             //simitone shouldn't modify existing ts1 data, since our house saves are incompatible.
+             //therefore we should copy to the simitone user data.
+             
+-            var userPath = Path.Combine(FSOEnvironment.UserDir, udName + "/");
++            var userPath = retainedUserPath ?? Path.Combine(FSOEnvironment.UserDir, udName + "/");
+             
+             if (!Directory.Exists(userPath))
+             {
+@@ -136,7 +154,10 @@ namespace FSO.Content.TS1
+             }
+ 
+             LoadCharacters(true);
+-            //todo: manage avatar iffs here
++            // Commit selection metadata only after the reload has succeeded.
++            // Cross-lot state can otherwise retain the discarded FAMI instance.
++            CurrentNeighborhoodID = id;
++            GameState = new TS1GameState();
+         }
+ 
+         public void AddMissingNeighbors()
+@@ -162,21 +183,14 @@ namespace FSO.Content.TS1
+         {
+             var objs = (TS1ObjectProvider)ContentManager.WorldObjects;
+             if (objs.Entries == null) return;
+-            if (clearLast)
+-            {
+-                foreach (var obj in objs.Entries.Where(x => x.Value.Source == GameObjectSource.User))
+-                {
+-                    objs.RemoveObject((uint)obj.Key);
+-                    objs.PersonGUIDs.Add((uint)obj.Key);
+-                }
+-            }
++            if (clearLast) objs.ClearUserCharacters();
+ 
+             NextSim = 0;
+             var path = Path.Combine(UserPath, "Characters/");
+             var files = Directory.EnumerateFiles(path);
+             foreach (var filename in files)
+             {
+-                if (Path.GetExtension(filename) != ".iff") return;
++                if (!string.Equals(Path.GetExtension(filename), ".iff", StringComparison.OrdinalIgnoreCase)) continue;
+ 
+                 int userID;
+                 var name = Path.GetFileName(filename);
+diff --git a/TSOClient/tso.content/TS1/TS1ObjectProvider.cs b/TSOClient/tso.content/TS1/TS1ObjectProvider.cs
+index d82dc14..69e4a16 100644
+--- a/TSOClient/tso.content/TS1/TS1ObjectProvider.cs
++++ b/TSOClient/tso.content/TS1/TS1ObjectProvider.cs
+@@ -22,6 +22,31 @@ namespace FSO.Content.TS1
+             GameObjects = new TS1SubProvider<IffFile>(provider, ".iff");
+         }
+ 
++        /// <summary>
++        /// Evict only user-character definitions before neighborhood reload.
++        /// Removing GUID wrappers alone leaves their mutable IFF resources in
++        /// ProcessedFiles, so a later Get could resurrect discarded changes.
++        /// Global/FAR/download objects and catalog indexes remain registered.
++        /// </summary>
++        public void ClearUserCharacters()
++        {
++            if (Entries == null) return;
++            KeyValuePair<ulong, GameObjectReference>[] characters;
++            lock (Entries)
++                characters = Entries.Where(entry => entry.Value.Source == GameObjectSource.User).ToArray();
++
++            foreach (var character in characters)
++            {
++                RemoveObject((uint)character.Key);
++                PersonGUIDs.Remove((uint)character.Key);
++            }
++            foreach (var filename in characters.Select(character => character.Value.FileName).Distinct(StringComparer.Ordinal))
++            {
++                GameObjectResource removed;
++                ProcessedFiles.TryRemove(filename, out removed);
++            }
++        }
++
+         public void Init()
+         {
+             GameObjects.Init();
+diff --git a/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs b/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs
+index c8b8f14..f70aa02 100644
+--- a/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs
++++ b/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs
+@@ -82,15 +82,17 @@ namespace FSO.Files.Formats.IFF.Chunks
+             using (var io = IoWriter.FromStream(stream, ByteOrder.LITTLE_ENDIAN))
+             {
+                 io.WriteInt32(0);
+-                io.WriteInt32(0x3E);
++                // The 32-word layout through 0x3F cannot hold the runtime's
++                // 38 globals. Select the supported 64-word layout without
++                // changing the live version or globals (which may alias VM state).
++                var outputVersion = System.Math.Max(Version, 0x40u);
++                io.WriteUInt32(outputVersion);
+                 io.WriteCString("IMIS", 4);
+-                var items = (Version > 0x3E) ? 0x40 : 0x20;
+-
+-                GlobalData = new short[38];
++                var items = (outputVersion > 0x3F) ? 0x40 : 0x20;
+ 
+                 for (int i = 0; i < items; i++)
+                 {
+-                    if (i < GlobalData.Length)
++                    if (GlobalData != null && i < GlobalData.Length)
+                         io.WriteInt16(GlobalData[i]);
+                     else
+                         io.WriteInt16(0);
+@@ -156,7 +158,7 @@ namespace FSO.Files.Formats.IFF.Chunks
+                 io.WriteInt32(ServiceExpense);
+                 io.WriteInt32(FoodExpense);
+                 io.WriteInt32(BillsExpense);
+-                io.WriteInt32(MiscIncome);
++                io.WriteInt32(MiscExpense);
+                 io.WriteInt32(HouseholdExpense);
+                 io.WriteInt32(ArchitectureExpense);
+             }
 diff --git a/TSOClient/tso.simantics/Entities/VMAvatar.cs b/TSOClient/tso.simantics/Entities/VMAvatar.cs
 index 2c82435..b9b6e46 100644
 --- a/TSOClient/tso.simantics/Entities/VMAvatar.cs
@@ -37,10 +190,10 @@ index 2c82435..b9b6e46 100644
              base.LoadCrossRef(input, context);
              foreach (var obj in Contained)
 diff --git a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
-index 3e89a2d..24287e9 100644
+index 3e89a2d..273dad0 100644
 --- a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
 +++ b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
-@@ -41,6 +41,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+@@ -41,29 +41,45 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                  }
  
                  var fsov = iff.List<FSOV>()?.FirstOrDefault();
@@ -48,7 +201,15 @@ index 3e89a2d..24287e9 100644
  
                  if (fsov != null)
                  {
-@@ -54,13 +55,22 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+                     var marshal = new VMMarshal();
+                     using (var read = new BinaryReader(new MemoryStream(fsov.Data)))
+                         marshal.Deserialize(read);
++                    VMTS1SaveDiagnostics.Log(marshal, "deserialize_before_load", fsov.Data);
+                     vm.Load(marshal);
++                    VMTS1SaveDiagnostics.Log(vm, "after_vm_load");
+                 }
+                 else
+                 {
                      //var activator = new VMTS1Activator(vm, vm.Context.World, JobLevel);
                      var activator = new VMTS1ActivatorNew(vm, JobLevel);
                      activator.LoadFromIff(iff);
@@ -65,13 +226,20 @@ index 3e89a2d..24287e9 100644
                  {
 -                    nobj.ExecuteEntryPoint(2, vm.Context, true);
 +                    if (nativeCodeCompatibility != null && nobj.Dead) continue;
-+                    // Preserve FSOV behavior; native TS1 Load skips person-type objects.
-+                    if (nativeCodeCompatibility == null || !(nobj is VMAvatar))
++                    // TS1 post-load skips people, including FSOV restores.
++                    // Running their Load tree again randomizes saved interests.
++                    // Other game modes retain their existing Load behavior.
++                    if (!vm.TS1 || !(nobj is VMAvatar))
 +                        nobj.ExecuteEntryPoint(2, vm.Context, true);
 +                    if (!nobj.Dead) nativeRecovery?.RecoverAfterLoad(nobj);
                  }
  
++                if (fsov != null) VMTS1SaveDiagnostics.Log(vm, "after_ep2");
                  vm.TS1State.VerifyFamily(vm);
++                if (fsov != null) VMTS1SaveDiagnostics.Log(vm, "after_family_verification");
+             }
+             else
+             {
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
 index 007e875..0867340 100644
 --- a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
@@ -1394,6 +1562,249 @@ index 0000000..a1daede
 +        {
 +            return new NotSupportedException("TS1 portal recovery unsupported for entity "
 +                + target.ObjectID + ": " + reason);
++        }
++    }
++}
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1SaveDiagnostics.cs b/TSOClient/tso.simantics/Utils/VMTS1SaveDiagnostics.cs
+new file mode 100644
+index 0000000..68179bc
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1SaveDiagnostics.cs
+@@ -0,0 +1,237 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.IO;
++using System.Linq;
++using System.Security.Cryptography;
++using System.Text.Json;
++using FSO.Files.Formats.IFF.Chunks;
++using FSO.LotView.Model;
++using FSO.SimAntics.Marshals;
++using FSO.SimAntics.Marshals.Threads;
++using FSO.SimAntics.Model.TS1Platform;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// Opt-in save/load samples taken synchronously on the simulation owner
++    /// thread. No BHAV execution, resource loading, save writes or VM restore.
++    /// Component digests cover serialized fields omitted from the readable
++    /// projection (routing, animation, outfits, asynchronous state, architecture).
++    /// Never serialize the whole snapshot here: SIMI.Write is not read-only.
++    /// </summary>
++    public static class VMTS1SaveDiagnostics
++    {
++        private const string Prefix = "TS1 save state: ";
++
++        private static bool Enabled => Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1";
++
++        public static void Log(VM vm, string phase)
++        {
++            if (!Enabled || vm == null || !vm.TS1) return;
++            try { Log(vm.Save(), phase); }
++            catch (Exception error) { LogError(phase, error); }
++        }
++
++        public static void Log(VMMarshal snapshot, string phase, byte[] serializedPayload = null)
++        {
++            if (!Enabled || snapshot == null || !snapshot.TS1) return;
++            try
++            {
++                var platform = snapshot.PlatformState as VMTS1LotState;
++                var clock = snapshot.Context.Clock;
++                var architecture = snapshot.Context.Architecture;
++                var state = new
++                {
++                    Clock = new
++                    {
++                        clock.Ticks, clock.MinuteFractions, clock.TicksPerMinute,
++                        clock.Hours, clock.Minutes, clock.DayOfMonth, clock.Month, clock.Year,
++                        clock.FirePercent, clock.UTCStart
++                    },
++                    snapshot.Context.RandomSeed,
++                    AmbientBits = snapshot.Context.Ambience?.ActiveBits,
++                    Architecture = new
++                    {
++                        architecture.Width, architecture.Height, architecture.Stories,
++                        architecture.RoofStyle, architecture.RoofPitch, architecture.BuildBuyEnabled,
++                        BinarySHA256 = BinaryDigest(writer => architecture.SerializeInto(writer))
++                    },
++                    snapshot.GlobalState,
++                    NextObjectID = snapshot.ObjectId,
++                    Family = DescribeFamily(platform?.CurrentFamily),
++                    SIMI = DescribeSIMI(platform?.SimulationInfo),
++                    Entities = snapshot.Entities.Select((entity, index) => new { Entity = entity, Index = index })
++                        .OrderBy(item => item.Entity.ObjectID)
++                        .Select(item => DescribeEntity(item.Entity,
++                            item.Index < snapshot.Threads.Length ? snapshot.Threads[item.Index] : null)).ToArray(),
++                    EntityCount = snapshot.Entities.Length,
++                    ThreadCount = snapshot.Threads.Length,
++                    UnpairedThreads = snapshot.Threads.Skip(snapshot.Entities.Length)
++                        .Select(thread => BinaryDigest(writer => thread.SerializeInto(writer))).ToArray(),
++                    Groups = snapshot.MultitileGroups
++                        .OrderBy(group => group.Objects.Length == 0 ? short.MaxValue : group.Objects.Min())
++                        .Select(group => new
++                        {
++                            group.MultiTile, group.Name, group.Price, group.SalePrice, group.Objects,
++                            Offsets = group.Offsets.Select(Position).ToArray(),
++                            BinarySHA256 = BinaryDigest(writer => group.SerializeInto(writer))
++                        }).ToArray(),
++                    TuningSHA256 = snapshot.Tuning == null ? null
++                        : BinaryDigest(writer => snapshot.Tuning.SerializeInto(writer))
++                };
++                // Only primitive projections and scoped, read-only serializers
++                // participate. Do not call PlatformState.SerializeInto/SIMI.Write.
++                var stateBytes = JsonSerializer.SerializeToUtf8Bytes(state);
++                Console.Error.WriteLine(Prefix + JsonSerializer.Serialize(new
++                {
++                    SchemaVersion = 1,
++                    Phase = phase,
++                    SnapshotVersion = snapshot.Version,
++                    snapshot.Compressed,
++                    SerializedPayloadLength = serializedPayload?.Length,
++                    SerializedPayloadSHA256 = serializedPayload == null ? null : Digest(serializedPayload),
++                    StateSHA256 = Digest(stateBytes),
++                    RuntimeFamilySubset = platform?.CurrentFamily?.RuntimeSubset,
++                    State = state
++                }));
++            }
++            catch (Exception error) { LogError(phase, error); }
++        }
++
++        private static object DescribeEntity(VMEntityMarshal entity, VMThreadMarshal thread)
++        {
++            var avatar = entity as VMAvatarMarshal;
++            var gameObject = entity as VMGameObjectMarshal;
++            return new
++            {
++                Kind = avatar == null ? "object" : "avatar",
++                entity.ObjectID, entity.PersistID, entity.GUID, entity.MasterGUID,
++                Position = Position(entity.Position),
++                entity.ObjectData, entity.Attributes, entity.MyList,
++                entity.Container, entity.ContainerSlot, entity.Contained,
++                entity.MainParam, entity.MainStackOBJ,
++                entity.DynamicSpriteFlags, entity.DynamicSpriteFlags2,
++                entity.TimestampLockoutCount,
++                LightColor = entity.LightColor.PackedValue,
++                Relations = entity.MeToObject?.Select(relation => new { relation.Target, relation.Values }).ToArray(),
++                PersistRelations = entity.MeToPersist?.Select(relation => new { relation.Target, relation.Values }).ToArray(),
++                Direction = gameObject == null ? (byte?)null : (byte)gameObject.Direction,
++                Disabled = gameObject == null ? (byte?)null : (byte)gameObject.Disabled,
++                Avatar = avatar == null ? null : new
++                {
++                    avatar.PersonData, avatar.MotiveData,
++                    avatar.RadianDirection, avatar.HandObjectOld, avatar.KillTimeout,
++                    AnimationCount = avatar.Animations?.Length,
++                    HasCarryAnimation = avatar.CarryAnimationState != null,
++                    avatar.BoundAppearances,
++                    SkinTone = (byte)avatar.SkinTone,
++                    // BinarySHA256 below includes motives' fractional changes,
++                    // motive decay, outfits and every animation event/frame.
++                    MotiveChanges = avatar.MotiveChanges?.Select(change => new
++                    {
++                        Motive = (int)change.Motive, change.PerHourChange, change.MaxValue
++                    }).ToArray()
++                },
++                BinarySHA256 = BinaryDigest(writer => entity.SerializeInto(writer)),
++                Thread = DescribeThread(thread)
++            };
++        }
++
++        private static object DescribeThread(VMThreadMarshal thread)
++        {
++            if (thread == null) return null;
++            return new
++            {
++                thread.ActiveQueueBlock, thread.TempRegisters, thread.TempXL,
++                LastStackExitCode = (byte)thread.LastStackExitCode,
++                thread.Interrupt, thread.ActionUID, thread.DialogCooldown, thread.ScheduleIdleStart,
++                BlockingKind = thread.BlockingState?.GetType().Name,
++                HasEODConnection = thread.EODConnection != null,
++                Queue = thread.Queue.Select(action => new
++                {
++                    action.UID, action.RoutineID, action.CheckRoutineID,
++                    action.Callee, action.StackObject, action.IconOwner, action.CodeOwnerGUID,
++                    action.Args, action.InteractionNumber, action.NotifyIdle, action.Priority,
++                    Mode = (byte)action.Mode, Flags = (uint)action.Flags, Flags2 = (uint)action.Flags2,
++                    action.InteractionResult, action.ResultCheckCounter,
++                    HasCallback = action.Callback != null
++                }).ToArray(),
++                Stack = thread.Stack.Select(frame => new
++                {
++                    Kind = frame.GetType().Name,
++                    frame.RoutineID, frame.InstructionPointer,
++                    frame.Caller, frame.Callee, frame.StackObject, frame.CodeOwnerGUID,
++                    frame.Locals, frame.Args, frame.ActionTree,
++                    SpecialResult = (byte)frame.SpecialResult,
++                    BinarySHA256 = BinaryDigest(writer => frame.SerializeInto(writer))
++                }).ToArray(),
++                // Covers queues' names/callbacks, async/dialog state and all
++                // specialized routing/direct-control fields without traversing
++                // arbitrary engine objects through the JSON serializer.
++                BinarySHA256 = BinaryDigest(writer => thread.SerializeInto(writer))
++            };
++        }
++
++        private static object DescribeFamily(FAMI family)
++        {
++            if (family == null) return null;
++            return new
++            {
++                ID = family.ChunkID,
++                family.HouseNumber, family.FamilyNumber, family.Budget,
++                family.ValueInArch, family.FamilyFriends, family.Unknown, family.FamilyGUIDs
++                // RuntimeSubset is deliberately outside StateSHA256: FAMI.Write
++                // does not persist it. The frontend reactivates the whole family.
++            };
++        }
++
++        private static object DescribeSIMI(SIMI simi)
++        {
++            if (simi == null) return null;
++            return new
++            {
++                simi.Version, simi.GlobalData,
++                simi.Unknown1, simi.Unknown2, simi.Unknown3, simi.GUID1, simi.GUID2, simi.Unknown4,
++                simi.LotValue, simi.ObjectsValue, simi.ArchitectureValue,
++                BudgetDays = simi.BudgetDays?.Select(day => new
++                {
++                    day.Valid, day.MiscIncome, day.JobIncome, day.ServiceExpense,
++                    day.FoodExpense, day.BillsExpense, day.MiscExpense,
++                    day.HouseholdExpense, day.ArchitectureExpense
++                }).ToArray()
++            };
++        }
++
++        private static object Position(LotTilePos position)
++        {
++            return new { position.x, position.y, position.Level };
++        }
++
++        private static string BinaryDigest(Action<BinaryWriter> serialize)
++        {
++            using (var stream = new MemoryStream())
++            {
++                using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
++                    serialize(writer);
++                return Digest(stream.ToArray());
++            }
++        }
++
++        private static string Digest(byte[] bytes)
++        {
++            return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
++        }
++
++        private static void LogError(string phase, Exception error)
++        {
++            // Diagnostics must not turn a successful Save/Load into a failure.
++            Console.Error.WriteLine(Prefix + JsonSerializer.Serialize(new
++            {
++                SchemaVersion = 1, Phase = phase, DiagnosticError = error.GetType().Name
++            }));
 +        }
 +    }
 +}

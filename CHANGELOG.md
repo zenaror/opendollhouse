@@ -7,24 +7,21 @@ validação indicados por versão.
 
 ### Adicionado
 
-- O candidato Simitone Linux abriu a casa de Bob/Betty e executou Go Here sem
-  erros; Bob também chegou ao pátio e concluiu um lanche, com melhora de fome.
-  A recuperação preserva dados de objetos
-  e pessoas, incluindo campos ausentes em casas antigas. O checkpoint passou
-  em 27 testes de política/portais/snapshots. Ainda faltam os demais fluxos para
-  uma build jogável. Veja [a avaliação](docs/simitone-linux-evaluation.md).
+- O candidato Linux salvou com Bob comendo, voltou à vizinhança e reabriu em
+  outro processo, mantendo a ação, comida, necessidades e dinheiro. Bob terminou
+  de comer. Isso valida esse ciclo, sem aprovar o jogo completo.
+- A casa de Bob/Betty abre e responde ao Go Here; Bob chegou ao pátio e concluiu
+  um lanche. A recuperação preserva dados de objetos e pessoas, incluindo campos
+  ausentes em casas antigas. Veja [a avaliação](docs/simitone-linux-evaluation.md).
+- Diagnósticos de código salvo, erros, ações e necessidades ajudam a investigar
+  falhas usando cópias isoladas dos dados. As telas virtuais são encerradas após
+  os testes. Ainda faltam os demais sistemas para a build jogável completa.
 
-- Diagnóstico identifica a diferença entre o código guardado no save e o
-  instalado nos objetos. O cálculo nativo dessas assinaturas passou em 17
-  casos; a recuperação dos objetos ainda precisa ser integrada e a casa
-  continua apresentando erros. Veja
-  [o contrato](docs/simitone-save-code-signatures.md).
+### Corrigido
 
-- Primeira avaliação da base Simitone no Linux: compilação, vizinhança e seleção
-  da família Newbie em tela isolada. A entrada na casa ainda apresenta falhas
-  de simulação; não é uma build jogável. O teste usa cópias dos dados e saves,
-  registra capturas/logs e encerra a tela virtual. Veja
-  [a avaliação](docs/simitone-linux-evaluation.md).
+- Salvar não zera mais os globais da casa nem troca despesas por receitas no
+  histórico. Reabrir preserva os interesses dos Sims. Sair sem salvar recupera
+  o estado gravado, inclusive o dinheiro gasto na partida descartada.
 
 ### Alterado
 
@@ -36,7 +33,7 @@ validação indicados por versão.
 - O caminho principal passa a ser avaliar uma base Simitone/FreeSO no Linux e
   aproximá-la da experiência original, aproveitando os sistemas já integrados.
   O motor próprio e as pesquisas ficam preservados como apoio. A nova base
-  ainda não foi compilada ou executada no projeto; os portáteis continuam
+  já compila e executa os fluxos Linux registrados acima; os portáteis continuam
   planejados e dependem de avaliação própria. Veja [o plano](docs/architecture.md).
 
 ### Adicionado

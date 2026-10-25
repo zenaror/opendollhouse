@@ -1,64 +1,60 @@
 # Continuidade atual
 
-## Casa aberta e primeiro comando no Simitone (2026-10-25)
+## Salvar, voltar à vizinhança e retomar (2026-10-25)
 
 Meta ACTIVE conferida nesta retomada; objetivo completo continua incompleto.
-O candidato Linux já abre a House07 com Bob/Betty, sem diálogo de erro. O teste
-`house07-recovery-avatar-slots` durou 40 s e passou com zero exceções de VM/fatais.
-Houve 150 registros de recuperação de objetos e 2 de pessoas: os oito frames
-antigos não resolvidos foram substituídos por frames válidos, IDs preservados.
-O diagnóstico de reset das pessoas manteve a mesma instância/thread, necessidades
-e palavras de personalidade; ele ocorre antes do Init final de post-load.
+O candidato Linux agora salvou durante Eat, voltou à vizinhança, reentrou na
+mesma casa e reabriu em outro processo. Bob manteve a comida 192, ação Eat (ID 1),
+posição, necessidades, dinheiro §660 e relógio no tick 889 (7:30); depois terminou de comer.
+Gate final `house07-saved-return-and-resume`:80 s no primeiro processo + 60 s no segundo,
+mesmo perfil/cópia/Xvfb, zero erros de VM/fatais/diagnóstico e seis hashes
+protegidos iguais. Processos e tela virtual encerrados; cópia/perfil removidos.
 
-`house07-first-command` mostrou o menu Go Here; `house07-first-go-here` de 45 s
-mostrou Bob em outra posição após selecionar o comando, sem erros. No teste
-`house07-first-door-walk` de 55 s, o destino no pátio fez Bob sair da cozinha e
-chegar à área externa, novamente sem erros. As capturas não registram cada
-passo nem comprovam isoladamente a animação/momento da passagem pela porta.
-Todos preservaram seis hashes dos originais, encerraram game/Xvfb e removeram
-as cópias/perfis temporários. Evidência em `reports/simitone-linux-evaluation/`
-nesses diretórios, com result/source-manifest JSON, capturas e logs. O runner
-continua `gameplay_verified=false`: não representa aprovação do jogo completo.
+A comparação do estado inteiro registrado não encontrou mudanças durante a
+serialização. O arquivo lido manteve o mesmo conteúdo salvo; o estado restaurado
+pela VM coincidiu integralmente antes dos callbacks Load. A única normalização
+foi SIMI.Version62→64, necessária para representar os 38 globais. Os três bancos
+de pessoa/necessidades continuaram iguais após Load;39 mudanças de objetos
+nos callbacks continuam visíveis no relatório, sem aprovação genérica de equivalência.
+Eat retomou no segundo processo, fome 94→100, depois mãos e ações vazias.
+`final-review.json` registra a conferência independente dos logs brutos.
 
-Patch `tools/simitone/experimental-saved-code-recovery.patch`, incremental após
-0003/0004/0005, agora reproduz onze arquivos; SHA256
-`68af1a94478a0a95ce18cf4d319399df2cd1d383876349bc44cf842618809162`.
-Replay exato e reverse-apply conferidos. Revisão independente aprovou a entrada
-e Go Here local, com 22 testes de política/portais ligados às fontes e 5 de
-snapshots com tipos reais FSO.Files; não são BHAV comercial nem hardware.
-Saída e hashes em `house07-recovery-avatar-slots/policy-tests.json`.
+Correções desta etapa: SIMI.Write não apaga mais os globais e grava versão/tamanho
+coerentes, além de MiscExpense; Load deixa de reinicializar interesses de pessoas
+TS1 também em FSOV; No→ExitLot(true) recarrega o perfil atual após fechar o mundo.
+`ReloadCurrent()` mantém ID/caminho reais, recarrega famílias/vizinhos e invalida
+somente personagens de usuário nos dois níveis de cache. FAR, Downloads, catálogo
+não são reinicializados. Caso real `house07-discard-budget-before`: gastar §5 e
+Não salvar deixava §660 ao reentrar. `...-after`: voltou a §665. Já uma partida gravada
+com §660 continua com §660 após Não salvar/reentrar: não recopia o jogo original.
 
-A recuperação agora coordena notificações, pessoas e grupos de portas. Preserva
-os usos/ações nativos, desenrola referências, mantém necessidades/personalidade,
-reinicia Main/EP3 e faz a colocação por validação seguida de um único commit.
-Os portais reconciliam passagens/obstáculos ao terminar, inclusive após exclusão
-por callback. O preflight inclui todas as pessoas notificadas e suas referências,
-mesmo quando o código da própria pessoa não mudou. Casas antigas também recebem
-bancos de pessoa com pelo menos 101 campos e os três pontos de objetos carregados
-esperados pelo motor, sem perder os dados que já existiam. A leitura de vizinhos
-usa a mesma extensão do banco, preservando registros maiores. Isso corrigiu dois
-erros reais surgidos depois da migração: campos de magia e GetSlot em pessoas.
+Patches reproduzidos exatamente: FreeSO experimental após 0003/0004/0005, 15 arquivos,
+SHA256 `9bf5a556667378ce04dc5e6907acd42d01dccfaaf106adfb2350e85c5922dbd6`;
+frontend `0006-save-and-discard.patch` após 0001/0002, um arquivo,
+SHA256 `dd62711a37ce989e181a072870861097fb85c44886309972fdb7f6ba056d0284`.
+Build atual `build/simitone-linux`; fonte ignorada `refs/work/Simitone-linux`,
+revisões fixas e originais preservados. Aplicar ambos os incrementos antes de
+compilar; 0006 depende do helper incluído no experimental. Build passou.
 
-A base segue experimental, não paridade do original: UseCount nativo aninhado,
-ordem da busca de colocação, detalhes de cache de paredes e tipo especial cursor
-continuam pendências. Não generalizar estes resultados a outros lotes/expansões.
-RSS/HWM de cerca de 750 MiB no teste Linux com renderização por software é uma
-medida deste ambiente, não orçamento nem viabilidade para os portáteis.
+Testes novos: sete casos do serializador real (baseline 0/7→7/7), dois de provedores
+reais/cache e 14 do comparador puro. Os 27 testes anteriores não foram repetidos
+sem necessidade. Fontes/hashes/saídas estão nos testes e reports. Runner novo
+`tools/simitone/session_smoke.py` exige arquivo alterado, FSOV, processos/perfil,
+hashes de conteúdo e comparação completa antes de Load; comparação após callbacks
+é reportada separadamente. `compare_save_states.py --strict` não oculta campos.
 
-O gate `house07-snack-state` de 60 s concluiu uma interação completa: Bob escolheu
-Have A Snack (ação 2), carregou a comida 192, executou Eat (ação 3), melhorou a fome
-de 94 para 100 e terminou sem ações ou objetos carregados. Zero exceções e seis
-hashes protegidos iguais. `snack-summary.json` contém as transições; o log opt-in
-registra posição, ambiente, fome, ações e objetos carregados a cada 30 ticks, na
-mesma thread da simulação. A amostragem não executa BHAV nem muda o estado.
-O patch anterior de nove fontes foi preservado no report de entrada como
-`recovery-source.patch`; os manifests distinguem essa versão da atual de onze.
+Evidências em `reports/simitone-linux-evaluation/house07-saved-return-and-resume/`,
+`house07-save-mid-snack/`, primeiros testes de save/discard e menus. `source-manifest.json`
+identifica as 15+1 fontes atuais; wrappers FSOV e dados internos têm hashes separados.
+Encerramento dos processos é feito pelo harness após Save, não prova de Quit normal.
 
-Próximo: salvar/reabrir a mesma partida e voltar
-à vizinhança; validar compra/construção/famílias e viagens das sete expansões,
-idioma e logs. Preservar arquitetura multiplataforma, sem declarar consoles
-funcionais. Manter quatro arquivos C++ WIP listados abaixo e scripts antigos
-não rastreados fora dos commits desta frente.
+Próximo: compra/colocação/uso de objeto e persistência; criar/excluir/mudar famílias;
+viagens e atividades das sete expansões; idioma/áudio/CC e UI original. A meta
+não foi concluída nem a build jogável completa aprovada. Pendências: save
+multiarquivo ainda não é transação atômica, weather sidecar global, RuntimeSubset
+em viagens não validado; UseCount aninhado, busca/caches nativos e cursor especial.
+Portabilidade permanece planejada, sem testes de hardware. Preservar quatro
+arquivos C++ WIP e scripts antigos fora dos commits desta frente.
 
 ## Causa confirmada e assinaturas nativas (2026-10-25)
 

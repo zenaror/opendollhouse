@@ -1,0 +1,55 @@
+diff --git a/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs b/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs
+index ea94c34..de0c6d3 100644
+--- a/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs
++++ b/Client/Simitone/Simitone.Client/UI/Screens/TS1GameScreen.cs
+@@ -948,7 +948,7 @@ namespace Simitone.Client.UI.Screens
+                     Buttons =
+                     UIAlertButton.YesNoCancel(
+                         (b) => { Save(); ExitLot(); CloseAlert.Close(); CloseAlert = null; },
+-                        (b) => { ExitLot(); CloseAlert.Close(); CloseAlert = null; },
++                        (b) => { ExitLot(true); CloseAlert.Close(); CloseAlert = null; },
+                         (b) => { CloseAlert.Close(); CloseAlert = null; }
+                         )
+                 });
+@@ -962,6 +962,7 @@ namespace Simitone.Client.UI.Screens
+             var iff = new IffFile();
+             vm.TS1State.UpdateSIMI(vm);
+             var marshal = vm.Save();
++            VMTS1SaveDiagnostics.Log(marshal, "before_save");
+             var fsov = new FSOV();
+             fsov.ChunkLabel = "Simitone Lot Data";
+             fsov.ChunkID = 1;
+@@ -974,6 +975,7 @@ namespace Simitone.Client.UI.Screens
+                 marshal.SerializeInto(new BinaryWriter(stream));
+                 fsov.Data = stream.ToArray();
+             }
++            VMTS1SaveDiagnostics.Log(marshal, "after_serialize", fsov.Data);
+ 
+             iff.AddChunk(fsov);
+ 
+@@ -1001,6 +1003,7 @@ namespace Simitone.Client.UI.Screens
+             var weatherData = vm.Context.Blueprint?.Weather?.WeatherData ?? (short)(1 << 8);
+             Directory.CreateDirectory(Path.Combine(FSOEnvironment.UserDir, "LocalHouse/"));
+             File.WriteAllBytes(Path.Combine(FSOEnvironment.UserDir, "LocalHouse/cas.weather"), BitConverter.GetBytes(weatherData));
++            VMTS1SaveDiagnostics.Log(marshal, "save_complete", fsov.Data);
+         }
+ 
+         public PNG GeneratePNG(Texture2D data)
+@@ -1020,9 +1023,16 @@ namespace Simitone.Client.UI.Screens
+             return png;
+         }
+ 
+-        public void ExitLot()
++        public void ExitLot(bool discardUnsavedChanges = false)
+         {
+             CleanupLastWorld();
++            if (discardUnsavedChanges)
++            {
++                // Family and character resources are shared with the
++                // neighborhood provider. Drop unsaved in-memory changes.
++                Content.Get().Neighborhood.ReloadCurrent();
++                ActiveFamily = null;
++            }
+             NeighSelection(CurrentNeighborhoodMode);
+             Downtown = false;
+             SavedLot = null;

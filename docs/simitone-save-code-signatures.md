@@ -271,3 +271,16 @@ verificar uma interação completa com comida: Have A Snack→comida carregada�
 fome 94→100, depois ações vazias e mãos livres, sem exceções. São observações na
 thread da simulação, sem execução auxiliar de BHAV. O ciclo salvar/reabrir e a
 cobertura das expansões continuam pendentes.
+
+
+## Continuidade FSOV e callbacks de pessoas
+
+O ciclo real de save/reopen mostrou que o snapshot completo chegava intacto à
+VM, mas o Load/EP2 em pessoas alterava interesses após a restauração. A condição
+agora pula VMAvatar em qualquer carga TS1, nativa ou FSOV, preservando os callbacks
+dos outros modos/objetos. Isso segue a distinção nativa de `0x431edd`; não é uma
+restauração posterior de dados para esconder efeitos do callback errado.
+O caso salvo durante Eat retomou com UID/comida/posição/necessidades/orçamento/
+relógio preservados e terminou no outro processo. Campos de objetos modificados
+por Load permanecem registrados separadamente. O resultado não cobre salvamento
+arbitrário durante viagens ou todas as rotinas do original.

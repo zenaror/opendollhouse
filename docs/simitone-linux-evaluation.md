@@ -263,3 +263,80 @@ desaparecimento de uma ação não seria prova suficiente, pois poderia ser canc
 A revisão independente anterior cobriu a entrada e o Go Here local. O novo
 resultado da comida é separado e não valida todos os objetos, o ciclo salvar/
 reabrir, áudio, conteúdo personalizado ou qualquer expansão completa.
+
+
+## Salvar, sair, voltar e continuar
+
+O gate final `house07-saved-return-and-resume` usa o novo
+`tools/simitone/session_smoke.py`: uma cópia dos dados, um perfil e uma tela
+virtual para dois processos distintos. Primeiro escolhe o lanche, salva com Eat
+em andamento, volta à vizinhança e reentra sem gravar novamente; depois encerra
+o processo pelo harness e abre a mesma partida em outro processo. Não é uma
+validação da interface Quit normal.
+
+Resultado: 80 s + 60 s, zero exceções de VM/fatais ou erros de diagnóstico, seis hashes
+dos originais preservados e limpeza dos processos/perfil/cópia. O arquivo da casa
+mudou, continha FSOV e permaneceu com o mesmo hash nas duas fases. O conteúdo
+interno FSOV salvo e lido nas duas reentradas coincidiu. Estado salvo: relógio no tick 889
+(7:30), orçamento §660, Bob na mesma posição com comida 192 e Eat (ação 1). O estado inteiro
+registrado foi restaurado sem diferenças antes de Load, exceto a normalização
+de versão SIMI 62→64 ao ler o formato gravado. Os bancos de pessoa/necessidades
+dos três Sims continuaram idênticos após Load. As 39 mudanças de objetos feitas
+pelos callbacks não foram apagadas do relatório ou promovidas a prova de paridade.
+No segundo processo Eat continuou, fome 94→100, terminou e liberou as mãos/fila.
+
+Conferência independente: `final-review.json` nesse report, com hashes dos logs,
+artefatos, fontes e amostras brutas. `source-manifest.json` registra o replay
+exato das 15 fontes FreeSO e uma frontend. `gameplay_verified` continua falso
+porque estes fluxos não validam todo o jogo.
+
+### Problemas descobertos e corrigidos
+
+- SIMI.Write substituía os globais por zeros, escrevia cabeçalho antigo com
+  quantidade incoerente de palavras e confundia MiscExpense com MiscIncome.
+  Agora preserva os 38 globais, não modifica a instância e escreve o layout
+  coerente de versão mínima 0x40. Versões maiores são mantidas. Sete casos ligados
+  à fonte e aos tipos reais de arquivo falharam antes e passaram depois.
+- O post-load de FSOV executava Load em pessoas TS1, sorteando novamente seus
+  interesses. A condição agora segue o fluxo nativo que pula pessoas; os objetos
+  comuns e os modos não TS1 mantêm seus callbacks. O primeiro teste expôs 62
+  diferenças, incluindo interesses; o teste corrigido preserva os bancos de pessoa.
+- Não salvar deixava o orçamento alterado no cache:665→660 por um lanche e ainda
+  660 ao reentrar sem salvar. O reload do perfil recuperou §665. A correção conserva
+  ID/caminho do UserData atual e limpa apenas personagens de usuário, incluindo
+  seus arquivos processados; preserva objetos globais, Downloads e catálogo.
+  O teste combinado mostrou que uma gravação anterior de §660 também é respeitada,
+  sem restaurar equivocadamente os §665 da instalação original.
+
+A promoção de SIMI é uma normalização do formato aceito por este leitor, não
+prova de compatibilidade com todas as revisões do executável original. O modelo
+continua conservando 38 palavras do layout que comporta 64; palavras adicionais
+não modeladas não ganharam suporte neste checkpoint.
+
+### Reprodução e comparação
+
+Aplicar o experimental na raiz do FreeSO após 0003/0004/0005. Depois aplicar o
+incremento frontend, dependente do helper do experimental, após 0001/0002:
+
+```sh
+git -C refs/work/Simitone-linux apply ../../../tools/simitone/0006-save-and-discard.patch
+dotnet run --project tools/simitone/save-tests/SimiTests.csproj -c Release
+dotnet run --project tools/simitone/save-tests/DiscardTests.csproj -c Release
+python3 -m unittest discover -s tools/simitone/save-tests -p test_compare_save_states.py
+```
+
+Os testes são 7 de SIMI, 2 de provedores reais com IFF sintéticos e 14 de comparação.
+A coleta `VMTS1SaveDiagnostics` não executa BHAV nem serializa novamente a plataforma
+inteira; amostra o estado e hashes de componentes. O runner com
+`--require-save-state --require-clean-vm --vm-diagnostics` exige comparação completa
+até a restauração e preservação dos bancos de pessoa após Load. Todos os demais
+campos após callbacks continuam no relatório. `compare_save_states.py --strict`
+compara explicitamente os estágios escolhidos, sem tolerância de relógio e sem
+filtrar atores, globais ou grupos. Apenas SIMI.Version 0..63→64 recebe a classificação
+de normalização de formato, sempre visível.
+
+Pendências: salvar o conjunto casa/vizinhança/personagens ainda não é uma transação
+atômica; o arquivo cas.weather é global; salvar durante viagens e RuntimeSubset
+não foi validado. Esses limites não impedem o ciclo observado, mas impedem declarar
+confiabilidade geral ou equivalência ao original. Compra/construção, famílias,
+expansões, áudio/idioma e conteúdo personalizado continuam como próximos fluxos.

@@ -1,0 +1,24 @@
+{
+  "kind": "fixed serializer verification",
+  "recorded_at_utc": "2026-10-25T15:42:20.808248+00:00",
+  "hashes_sha256": {
+    "refs/work/Simitone-linux/FreeSO/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs": "84041de7f9390e82206ce313e046e3753f86410d63053c62d1c6444fd7390f90",
+    "build/simitone-linux/FSO.Files.dll": "0b7dccc96d2e86edd4c5b84b41d488368ad7c5b67f84065dd7a5166260849699",
+    "tools/simitone/save-tests/SimiProgram.cs": "37fcc5f5142fda9b915d4a417a5c9be451014952ad291beaf5bb7f4941e07164",
+    "tools/simitone/save-tests/SimiTests.csproj": "4dc8e9804a3be8393674d473f23ac5cfe7ce6b5e95e97c6681a40314cfd0c101"
+  },
+  "hashes_unchanged_during_run": true,
+  "command": [
+    "dotnet",
+    "run",
+    "--project",
+    "tools/simitone/save-tests/SimiTests.csproj",
+    "-c",
+    "Release"
+  ],
+  "exit_code": 0,
+  "stdout": "PASS real SIMI roundtrip input version0x00: globals38/budget/alignment/immutability/repeat\nPASS real SIMI roundtrip input version0x3e: globals38/budget/alignment/immutability/repeat\nPASS real SIMI roundtrip input version0x3f: globals38/budget/alignment/immutability/repeat\nPASS real SIMI roundtrip input version0x40: globals38/budget/alignment/immutability/repeat\nPASS real SIMI roundtrip input version0x45: globals38/budget/alignment/immutability/repeat\nPASS budget writer keeps MiscExpense distinct from MiscIncome\nPASS writer pads absent optional globals without changing source reference\nSIMI serializer: 7 passed, 0 failed. Synthetic records; actual linked SIMI reader/writer and real FSO.Files base/IO types.\n",
+  "stderr": "",
+  "synthetic": true,
+  "scope": "Actual source-linked SIMI payload reader/writer with real FSO.Files base and IO types. Not full save/reopen or native parity."
+}

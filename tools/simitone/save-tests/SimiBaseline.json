@@ -1,0 +1,18 @@
+{
+  "kind": "baseline before serializer fix",
+  "recorded_at_utc": "2026-10-25T15:05:23.264936+00:00",
+  "source_sha256": "70b933d738239b779c90fe4a4b25e4dc320b803eb4743eb89633eb152305896a",
+  "real_files_sha256": "faa47fb02be43dd4a92578ed95d190542a7cb67b3ba40a6929338d0ef0ca1d36",
+  "command": [
+    "dotnet",
+    "run",
+    "--project",
+    "tools/simitone/save-tests/SimiTests.csproj",
+    "-c",
+    "Release"
+  ],
+  "exit_code": 1,
+  "stdout": "FAIL real SIMI roundtrip input version0x00: globals38/budget/alignment/immutability/repeat: Write replaced the live GlobalData array\nFAIL real SIMI roundtrip input version0x3e: globals38/budget/alignment/immutability/repeat: Write replaced the live GlobalData array\nFAIL real SIMI roundtrip input version0x3f: globals38/budget/alignment/immutability/repeat: Write replaced the live GlobalData array\nFAIL real SIMI roundtrip input version0x40: globals38/budget/alignment/immutability/repeat: Write replaced the live GlobalData array\nFAIL real SIMI roundtrip input version0x45: globals38/budget/alignment/immutability/repeat: Write replaced the live GlobalData array\nFAIL budget writer keeps MiscExpense distinct from MiscIncome: MiscExpense was replaced by MiscIncome\nFAIL writer pads absent optional globals without changing source reference: writer allocated live globals or changed version\nSIMI serializer: 0 passed, 7 failed. Synthetic records; actual linked SIMI reader/writer and real FSO.Files base/IO types.\n",
+  "stderr": "",
+  "synthetic": true
+}

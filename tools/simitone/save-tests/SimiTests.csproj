@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+    <SimitoneSourceRoot Condition="'$(SimitoneSourceRoot)' == ''">$(MSBuildThisFileDirectory)../../../refs/work/Simitone-linux</SimitoneSourceRoot>
+    <SimitoneRuntimeRoot Condition="'$(SimitoneRuntimeRoot)' == ''">$(MSBuildThisFileDirectory)../../../build/simitone-linux</SimitoneRuntimeRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SimiProgram.cs" />
+    <Compile Include="$(SimitoneSourceRoot)/FreeSO/TSOClient/tso.files/Formats/IFF/Chunks/SIMI.cs" Link="SIMI.cs" />
+    <Reference Include="FSO.Files"><HintPath>$(SimitoneRuntimeRoot)/FSO.Files.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

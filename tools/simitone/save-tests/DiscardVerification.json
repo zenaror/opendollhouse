@@ -1,0 +1,28 @@
+{
+  "recorded_at_utc": "2026-10-25T15:38:39.085601+00:00",
+  "scope": "Actual source-linked TS1 user-cache eviction and disk neighborhood reload using synthetic IFFs and real cache/base/IO types; not full UI discard behavior.",
+  "synthetic": true,
+  "command": [
+    "dotnet",
+    "run",
+    "--project",
+    "tools/simitone/save-tests/DiscardTests.csproj",
+    "-c",
+    "Release"
+  ],
+  "exit_code": 0,
+  "passed_cases": 2,
+  "stdout": "PASS ClearUserCharacters evicts user GUID/resource caches while retaining FAR, standalone and catalog\nPASS ReloadCurrent restores disk budget, current slot/exact path, and newly indexed user GUID\nDiscard reload: 2 passed. Actual source-linked providers, real cache/base/IFF types, synthetic records; no full UI or commercial data.\n",
+  "stderr": "",
+  "hashes_sha256": {
+    "refs/work/Simitone-linux/FreeSO/TSOClient/tso.content/TS1/TS1NeighbourProvider.cs": "3d100b2057e5cb0efc2047989d257097ae6b78ce6351cd5ac18ef4962dd59f16",
+    "refs/work/Simitone-linux/FreeSO/TSOClient/tso.content/TS1/TS1ObjectProvider.cs": "0c26731c0c984cb409d7af2b5608ac8175cdb60752dfa7a244549da537bd8c25",
+    "tools/simitone/save-tests/DiscardProgram.cs": "945ae8e1ef4f931e6f23b728f2fa88c35d7caaed94424a14a053916f5fbf0e15",
+    "tools/simitone/save-tests/DiscardTests.csproj": "af0737f7b7c3a5904cb97dd533d29a39a89011019ae3df0acc8f593cc26e0ab9",
+    "build/simitone-linux/FSO.Content.dll": "8804bf23fc26db8d0b768f2c415caef0f0d35203287718e279573cb8f03bc998",
+    "build/simitone-linux/FSO.Files.dll": "0b7dccc96d2e86edd4c5b84b41d488368ad7c5b67f84065dd7a5166260849699",
+    "build/simitone-linux/FSO.Common.dll": "a0fdecbc112d0777777f8e914c6ef957e7088541aa746d7ec183aeebec63e2c9"
+  },
+  "hashes_unchanged_during_run": true,
+  "service_fixture": "Real Content allocated without its resource-loading constructor only as WorldObjects service holder; provider subclass ordinary constructor(null,null), GameObjectResource ordinary null-IFF constructor."
+}
