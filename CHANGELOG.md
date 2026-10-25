@@ -7,11 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
-- O probe headless de House07 agora executa o caminho específico `PhoneLine`
-  207 → BHAV4097 → BHAV4098, registra a escrita em memória e falha de modo
-  explícito ao chegar a opcode41 no avatar. Não entrega a Pizza nem representa
-  gameplay completo; a Main do telefone permanece dormente e opcode49 continua
-  bloqueado sem Scheduler. Veja [`interaction-validation.md`](docs/interaction-validation.md).
+- O probe headless de House07 agora registra o pedido de balão do avatar e
+  avança até a mensagem de confirmação da Pizza em BHAV8312. Ele para porque a
+  mensagem espera uma resposta que a janela final ainda não fornece. Não entrega
+  a Pizza nem representa gameplay completo; a Main do telefone permanece
+  dormente e opcode49 continua bloqueado sem Scheduler. Veja
+  [`interaction-validation.md`](docs/interaction-validation.md).
 
 - A leitura de fios salvos agora pode incluir a Main de um objeto, limitada por
   `--saved-thread-entity ID`; por padrão, continua selecionando Sims. House07

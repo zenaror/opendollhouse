@@ -13,9 +13,9 @@ passos. O trace confirma `caller=207`, `callee=207`, `StackObject=207` na
 entrada; a relação consultada dentro de 4098 usou `StackObject=136`. O resultado
 gravou `PhoneLine207.attr0` de0 para2 e mudou `Temp0` do fio do objeto de0 para1.
 As frames salvas 4096/280 permaneceram em IP0, dormentes, com zero passos. O
-avatar avançou além de `BHAV8197/IP4`, mas a sessão falhou em `BHAV8206/IP3`,
-opcode41, no tick515. A chamada do telefone não alcançou opcode49. A Pizza não
-foi entregue e o jogo não foi validado como funcional.
+avatar avançou além de `BHAV8197/IP4`; o registro atualizado do fluxo está
+abaixo. A chamada do telefone não alcançou opcode49. A Pizza não foi entregue e
+o jogo não foi validado como funcional.
 
 O teto atual é 64 chamadas×4096 instruções; escritas anteriores a fault ou
 esgotamento do limite permanecem no mundo em memória. O teste sintético confirma
@@ -25,6 +25,29 @@ CTest focado passou 6/6 e os hashes dos cinco arquivos comerciais ficaram
 iguais. Relatório:
 [`house07-phone-pizza-destination1-validated.json`](../reports/phone-pizza-path/house07-phone-pizza-destination1-validated.json), SHA256
 `0f26269daa611cbd9d60135d34634853428cb1dfe07c83413a8e6ad547b82a6a`.
+
+### Próximos dois limites do caminho da Pizza
+
+No perfil headless de diagnóstico, a chamada em `BHAV8206/IP3` (opcode41,
+`SetBalloonHeadline`) agora é reconhecida apenas para os operandos e contexto
+observados em House07. O registro confirma o Sim 105 como alvo e o ID 40 como
+ícone. Isso só guarda o pedido para inspeção; não desenha o balão na tela.
+
+O fluxo prossegue até `BHAV8312/IP11`, opcode36 (`DialogPrivateStrings`), e
+para no tick645. Os operandos pedem `STR#301` do recurso privado, texto 44 e
+título 45; na tabela inglesa local, esses textos são a confirmação de pedido de
+Pizza e “SimCity Pizza”. A flag 4 não ativa `Continue`: segundo o código
+Simitone consultado em `VMDialogPrivateStrings`, essa mensagem deve aguardar a
+resposta do jogador. O host ainda não tem essa janela e não deve confirmar a
+mensagem por conta própria. Portanto, este checkpoint termina com falha
+explícita no opcode36 e fila de ação ainda ativa; não comprova entrega.
+
+A integração `tests/house07_phone_subroutine_integration.py` exige o evento
+41, os operandos exatos do pedido 36, o tick e a falha esperados, além de
+conferir os hashes dos cinco arquivos comerciais antes e depois. Relatório
+atual: `reports/phone-pizza-path/house07-phone-pizza-dialog-boundary.json`.
+SHA256 `7d8bd61122b21b14f41e259df7218a28915ed63957ab5874dd1cf24d774d4793`.
+Nenhuma tela virtual é aberta para este teste.
 
 ## Base para chamadas síncronas em outro fio (2026-10-25)
 

@@ -1841,6 +1841,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         bool applied=false;
     };
     std::vector<SavedPhoneWrite> saved_phone_writes;
+    struct HeadlessHeadlineEvent {
+        std::int16_t target,icon;
+        odh::VmContext context;
+        std::uint16_t routine,pc;
+        std::uint8_t index,group,type,flags;
+        std::int16_t duration;
+    };
+    // Debug evidence only: the final world UI has not been integrated yet.
+    std::vector<HeadlessHeadlineEvent> headless_headline_events;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
     std::set<std::pair<odh::CodeOwner,std::uint16_t>> tree_name_local_string_attempted;
@@ -2629,6 +2638,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             // AddChangeActionString only renames the active queue label. This
             // headless runner has no action-list UI to update; Simitone returns
             // true even when the requested string table is unavailable.
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+        }
+        if(i.opcode==41){
+            // Simitone maps opcode 41 to SetBalloonHeadline. This probe accepts
+            // only House07 Global BHAV8206/IP3's exact caller/icon request and
+            // records it for the headless trace; it does not render the icon.
+            constexpr std::array<std::uint8_t,8> phone_headline_operands{0,0,1,7,40,0,2,1};
+            if(!headless_main||f.context.code_owner!=0x80000000U||f.key.id!=8206||f.pc!=3||
+               i.operands!=phone_headline_operands)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "SetBalloonHeadline is outside the exact headless House07 profile"};
+            const auto* target=world.find(f.context.caller);
+            const auto* icon=world.find(f.context.stack_object);
+            if(!target||target->kind!=odh::EntityKind::avatar||!icon)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "House07 SetBalloonHeadline caller or StackObject is unavailable"};
+            if(headless_headline_events.size()>=256)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                    "headless SetBalloonHeadline event limit reached"};
+            headless_headline_events.push_back({target->id,icon->id,f.context,f.key.id,f.pc,
+                i.operands[2],i.operands[3],i.operands[6],
+                i.operands[7],static_cast<std::int16_t>(i.operands[4]|(i.operands[5]<<8))});
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
         if(i.opcode==48){
@@ -6853,7 +6884,18 @@ struct PlacementCandidateProbe {
         if(write.before)std::cout<<*write.before;else std::cout<<"null";
         std::cout<<",\"value\":"<<write.value<<",\"applied\":"<<(write.applied?"true":"false")<<'}';
     }
-    std::cout<<"]},\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
+    std::cout<<"]},\"headless_headline_events\":[";
+    for(std::size_t n=0;n<headless_headline_events.size();++n){
+        if(n)std::cout<<',';
+        const auto& event=headless_headline_events[n];
+        std::cout<<"{\"target\":"<<event.target<<",\"icon\":"<<event.icon
+            <<",\"caller\":"<<event.context.caller<<",\"stack_object\":"<<event.context.stack_object
+            <<",\"owner\":"<<event.context.code_owner<<",\"routine\":"<<event.routine<<",\"pc\":"<<event.pc
+            <<",\"index\":"<<unsigned(event.index)<<",\"group\":"<<unsigned(event.group)
+            <<",\"duration\":"<<event.duration<<",\"type\":"<<unsigned(event.type)
+            <<",\"flags\":"<<unsigned(event.flags)<<'}';
+    }
+    std::cout<<"],\"status\":"<<json_bytes(odh::vm_status_name(status))<<",\"diagnostic\":"<<json_bytes(vm.diagnostic())
         <<",\"host_failed\":"<<(host_failed?"true":"false")<<",\"host_diagnostic\":"<<json_bytes(host_diagnostic)<<",\"steps\":"<<total_steps()<<",\"vm_steps\":"<<vm.steps()<<",\"ticks\":"<<ticks
         <<",\"create_object_instance\":{\"pending_requests\":"<<pending_create_objects.size()
         <<",\"last_diagnostic\":"<<json_bytes(last_create_object_diagnostic)<<",\"runtime_objects\":[";

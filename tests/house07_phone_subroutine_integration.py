@@ -32,7 +32,7 @@ def main():
         "--object-definition-file", str(protected[3]), "--object-definition-file", str(protected[4]),
         "--animation-source", str(game / "GameData/Animation/Animation.far"),
         "--animation-source", str(game / "ExpansionShared/ExpansionShared.far"),
-        "--headless-main", "--render-saved-avatar", "105", "--ticks", "640",
+        "--headless-main", "--render-saved-avatar", "105", "--ticks", "1200",
         "--instruction-budget", "1000000", "--render-floors", str(game / "GameData/floors.iff"),
         "--render-walls", str(game / "GameData/walls.iff"),
         "--headless-window-interaction", "136", "--headless-window-menu-open", "0",
@@ -81,10 +81,22 @@ def main():
     if (call_index is None or call_index + 1 >= len(report["trace"]) or
             (report["trace"][call_index + 1]["routine"], report["trace"][call_index + 1]["pc"]) != (8203, 7)):
         raise RuntimeError("calling avatar did not advance beyond RunTreeByName")
+    headline = report["headless_headline_events"]
+    expected_headline = [{"target": 105, "icon": 40, "caller": 105,
+        "stack_object": 40, "owner": 2147483648, "routine": 8206, "pc": 3,
+        "index": 1, "group": 7, "duration": 40, "type": 2, "flags": 1}]
+    if headline != expected_headline:
+        raise RuntimeError("House07 SetBalloonHeadline context or parameters differ")
+    dialog = next((event for event in report["trace"]
+        if event["routine"] == 8312 and event["pc"] == 11), None)
+    if (dialog is None or dialog["opcode"] != 36 or
+            dialog["operands"] != [0, 0, 44, 0, 0, 0, 45, 4]):
+        raise RuntimeError("House07 Pizza private-message request differs")
     # Deliberately assert the next unsupported boundary, never call this a
     # completed interaction or suppress the host fault in the emitted evidence.
     if (result.returncode != 3 or not report["host_failed"] or report["status"] != "fault" or
-            report["ticks"] != 515 or "unsupported primitive 41" not in report["host_diagnostic"]):
+            report["ticks"] != 645 or "unsupported primitive 36" not in report["host_diagnostic"] or
+            not report["queue_active"] or report["queue_size"] != 1):
         raise RuntimeError("partial Pizza boundary changed; review the complete trace")
     print(json.dumps({"evidence": "House07_saved_PhoneLine_subroutine_partial_Pizza",
         "full_gameplay": False, "command": command, "process_exit": result.returncode,
@@ -92,6 +104,7 @@ def main():
         "game_files_unchanged": True, "status": report["status"], "ticks": report["ticks"],
         "host_failed": report["host_failed"], "host_diagnostic": report["host_diagnostic"],
         "saved_phone_subroutines": phone, "phone_relationship_reads": relations,
+        "headless_headline_events": headline, "private_message_request": dialog,
         "phone_trace": [event for event in report["trace"] if 8192 <= event["routine"] <= 8400]}, indent=2))
 
 
