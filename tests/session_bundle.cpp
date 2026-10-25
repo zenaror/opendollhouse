@@ -307,8 +307,24 @@ int main() {
     rejects([&]{odh::encode_session_bundle(bad_route);},"unverified cross-room route cannot be saved");
     bad_route=route_bundle;bad_route.runtime_entities[0].route->target_position.level=2;
     rejects([&]{odh::encode_session_bundle(bad_route);},"cross-floor Route45 state cannot be saved as a local route");
+    bad_route=route_bundle;bad_route.runtime_entities[0].vm.pending->instruction.instruction.operands[2]=3;
+    rejects([&]{odh::encode_session_bundle(bad_route);},"unsupported Route45 scope cannot be paired with a local route");
+    bad_route=route_bundle;bad_route.runtime_entities[0].vm.pending->instruction.instruction.operands[4]=2;
+    rejects([&]{odh::encode_session_bundle(bad_route);},"unsupported Route45 flags cannot be paired with a local route");
     bad_route=route_bundle;bad_route.world.entities[0].static_footprint=true;
     rejects([&]{odh::encode_session_bundle(bad_route);},"route footprint must match walking progress");
+    auto go_here_route=route_bundle;
+    auto& go_here_vm=go_here_route.runtime_entities[0].vm;
+    go_here_vm.pending->instruction.instruction={27,254,255,{10,0,254,255,10,0,5,0}};
+    go_here_route.runtime_entities[0].route->entry_flags=0;
+    go_here_route.runtime_entities[0].route->call_failure_trees=true;
+    const auto go_here_bytes=odh::encode_session_bundle(go_here_route);
+    const auto go_here_restored=odh::decode_session_bundle(go_here_bytes,go_here_route.resources);
+    require(go_here_restored.runtime_entities[0].route&&
+            go_here_restored.runtime_entities[0].route->call_failure_trees&&
+            go_here_restored.runtime_entities[0].route->entry_flags==0&&
+            odh::encode_session_bundle(go_here_restored)==go_here_bytes,
+            "Go Here local route and its failure behavior round-trip");
     const auto dynamic_route=dynamic_action_route_fixture();
     const auto dynamic_bytes=odh::encode_session_bundle(dynamic_route);
     const auto dynamic_restored=odh::decode_session_bundle(dynamic_bytes,dynamic_route.resources);
@@ -317,6 +333,39 @@ int main() {
                 dynamic_route.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal&&
             odh::encode_session_bundle(dynamic_restored)==dynamic_bytes,
             "dynamic route owner target, exact resource, GLOB link and closure hash round-trip");
+    auto legacy_route_archive=odh::decode_session_archive(route_bytes);
+    auto legacy_route_section=std::find_if(legacy_route_archive.sections.begin(),legacy_route_archive.sections.end(),
+        [](const auto& section){return section.id==std::array<char,4>{{'R','O','U','T'}};});
+    require(legacy_route_section!=legacy_route_archive.sections.end(),"encoded dynamic route section exists");
+    auto& legacy_route_data=legacy_route_section->data;
+    constexpr std::size_t route_payload_offset=2+2+2+4+1;
+    require(legacy_route_data.size()>route_payload_offset+2&&legacy_route_data[route_payload_offset]==2,
+            "local route uses the version-2 payload");
+    legacy_route_data[route_payload_offset]=1;legacy_route_data[route_payload_offset+1]=0;
+    const auto legacy_record_size=static_cast<std::uint32_t>(legacy_route_data[6])|
+        (static_cast<std::uint32_t>(legacy_route_data[7])<<8)|
+        (static_cast<std::uint32_t>(legacy_route_data[8])<<16)|
+        (static_cast<std::uint32_t>(legacy_route_data[9])<<24);
+    require(legacy_record_size>0,"legacy route roster record has a payload");
+    legacy_route_data.erase(legacy_route_data.begin()+10+legacy_record_size-1);
+    const auto patched_record_size=legacy_record_size-1;
+    for(unsigned n=0;n<4;++n)legacy_route_data[6+n]=static_cast<std::uint8_t>(patched_record_size>>(8*n));
+    const auto legacy_route_bytes=odh::encode_session_archive(legacy_route_archive);
+    const auto legacy_route_bundle=odh::decode_session_bundle(legacy_route_bytes,route_bundle.resources);
+    require(legacy_route_bundle.runtime_entities[0].route&&
+            !legacy_route_bundle.runtime_entities[0].route->call_failure_trees,
+            "version-1 local routes load with their historical false failure-tree policy");
+    auto bad_route_archive=odh::decode_session_archive(go_here_bytes);
+    auto bad_route_section=std::find_if(bad_route_archive.sections.begin(),bad_route_archive.sections.end(),
+        [](const auto& section){return section.id==std::array<char,4>{{'R','O','U','T'}};});
+    require(bad_route_section!=bad_route_archive.sections.end(),"encoded route section exists for flag validation");
+    const auto bad_route_record_size=static_cast<std::uint32_t>(bad_route_section->data[6])|
+        (static_cast<std::uint32_t>(bad_route_section->data[7])<<8)|
+        (static_cast<std::uint32_t>(bad_route_section->data[8])<<16)|
+        (static_cast<std::uint32_t>(bad_route_section->data[9])<<24);
+    bad_route_section->data[10+bad_route_record_size-1]=2;
+    rejects([&]{(void)odh::decode_session_bundle(odh::encode_session_archive(bad_route_archive),
+        go_here_route.resources);},"non-boolean Go Here route failure flag is rejected");
     auto bad_dynamic=dynamic_route;bad_dynamic.runtime_entities[0].dynamic_action_owners.clear();
     rejects([&]{odh::encode_session_bundle(bad_dynamic);},
             "Route45 VM reference to an absent dynamic action owner is rejected");

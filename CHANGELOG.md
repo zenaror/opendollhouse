@@ -7,10 +7,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Uma caminhada Go Here local da House07 pode ser salva enquanto o Sim está
+  andando e retomada em outro processo. O gate confirmou a chegada ao destino e
+  preservou os arquivos originais do jogo; o teste de continuidade compara os
+  primeiros dois passos depois do restore. Rotas entre cômodos e portais
+  continuam pendentes. Veja [`interaction-validation.md`](docs/interaction-validation.md).
+
 - Erros ao salvar uma sessão experimental agora mostram o estado do Main, os
-  quadros ativos da VM e suas instruções recentes. Isso facilita localizar uma
-  ação que ainda não chegou a um ponto seguro para salvar; a retomada de uma
-  caminhada real da House07 continua pendente. Veja
+  quadros ativos da VM e suas instruções recentes, facilitando localizar uma
+  ação que ainda não chegou a um ponto seguro para salvar. Veja
   [`current-handoff.md`](docs/current-handoff.md).
 
 - O scheduler agora adia o callback de uma interrupção até a VM que pediu a

@@ -81,9 +81,12 @@ void validate_runtime(const SessionBundle& bundle) {
     }
     const auto pending=[&](const VmPending& wait){
         validate_owner(wait.context,state.id);
+        const auto& instruction=wait.instruction.instruction;
+        const bool saved_go_here=state.route&&state.route->call_failure_trees&&instruction.opcode==27&&
+            instruction.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
         if(wait.instruction.instruction.opcode!=0&&wait.instruction.instruction.opcode!=17&&
            wait.instruction.instruction.opcode!=44&&
-           !(wait.instruction.instruction.opcode==45&&state.route.has_value()))
+           !(instruction.opcode==45&&state.route.has_value())&&!saved_go_here)
             throw FormatError("session pending route or external service is unsupported");
     };
     if(state.vm.pending)pending(*state.vm.pending);

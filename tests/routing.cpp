@@ -1186,6 +1186,8 @@ int main() {
          odh::Vm vm{goto_relative(go_here),world.vm_memory(),{},routing.primitive()};
          world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
          world.set_position(1,{4,12,1,2});world.set_position(2,{12,12,1,5});
+         routing.set_room_pair_provider([](const auto&,const auto&){
+             return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{3,3}};});
          routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p) {
              const auto* actor=world.find(frame.context.caller);const auto* target=world.find(frame.context.stack_object);
              return actor&&target&&actor->position&&target->position&&
@@ -1194,6 +1196,10 @@ int main() {
          });routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
          require(vm.run(4)==odh::VmStatus::waiting&&routing.active(),
                  "saved Destination Go Here GotoRelativePosition schedules the exact selected point");
+         std::string capture_rejection;
+         const auto route_state=routing.capture_local_session_route(odh::CodeOwner{0},&capture_rejection);
+         if(!route_state||!route_state->call_failure_trees)
+             throw std::runtime_error("saved Go Here route snapshot retains failure behavior: "+capture_rejection);
          for(std::uint64_t tick=1;tick<=8&&routing.active();++tick)routing.tick(tick);
          require(vm.status()==odh::VmStatus::returned_true&&!routing.active()&&
                  world.find(1)->position->x==12&&world.find(1)->position->y==12&&
@@ -1921,6 +1927,12 @@ int main() {
          const auto route_state=routing.capture_local_session_route();
          require(route_state&&route_state->next==3&&route_state->path[route_state->next-1]==
                  odh::RoutePoint{6,12},"local route snapshot records the selected path and current progress");
+         std::string capture_rejection;
+         world.set_position(2,{29,12,1,0});
+         require(!routing.capture_local_session_route(std::nullopt,&capture_rejection)&&
+                 capture_rejection=="actor or destination changed since the route movement checkpoint",
+                 "unsafe local route capture reports the changed destination");
+         world.set_position(2,{28,12,1,0});
          const auto world_state=world.snapshot();const auto vm_state=vm.snapshot();
          odh::World resumed_world;require(resumed_world.restore_snapshot(world_state),
                  "restored route World snapshot is accepted");

@@ -1,5 +1,28 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## House07 Go Here salvo durante a caminhada (2026-10-25)
+
+O gate `tests/house07_route_save_resume.py` agora cobre a rota local de um
+cômodo com dados reais da House07, sem alterar os arquivos do jogo. Depois de
+Sit na cadeira 128 e Stand, o Go Here solicitado no tile `[27,26]` inicia uma
+Route45. O processo salva no tick 1188 enquanto a rota segue ativa (34 passos
+de movimento já registrados). Um processo novo carrega esse arquivo e, em 14
+ticks, completa a ação: retorno `true`, fila vazia, rota inativa e posição
+`[440,424,1,1]`.
+
+Para uma checagem de continuidade, os dois primeiros passos depois do restore
+foram comparados aos dois últimos de uma execução contínua até o tick 1190; eles
+coincidiram. O teste também compara os hashes de seis arquivos comerciais antes
+e depois. Isso valida apenas esta caminhada local em House07. Não cobre outros
+lotes, salas, andares, portais, sessões household com owner dinâmico nem
+equivalência geral com TS1/Simitone.
+
+```sh
+python3 tests/house07_route_save_resume.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+```
+
 ## Entrega de interrupções em ponto seguro (2026-10-25)
 
 O Simitone/FreeSO restaura cada fio salvo do lote e o agenda para o próximo

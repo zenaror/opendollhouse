@@ -4962,9 +4962,9 @@ struct PlacementCandidateProbe {
            candidate->asset!=std::get<1>(binding->first))return {};
         return go_here_owner;
     };
-    const auto capture_primary_route=[&]()->std::optional<odh::LocalRouteSnapshot>{
+    const auto capture_primary_route=[&](std::string* rejection_reason=nullptr)->std::optional<odh::LocalRouteSnapshot>{
         return runtime_routing?runtime_routing->capture_local_session_route(
-            primary_route_dynamic_owner()):std::nullopt;
+            primary_route_dynamic_owner(),rejection_reason):std::nullopt;
     };
     const auto save_live_session=[&]()->std::string {
 #ifdef __linux__
@@ -4973,10 +4973,15 @@ struct PlacementCandidateProbe {
         if(second_main_vm)throw odh::FormatError("diagnostic second-Main sessions cannot be saved");
         if(!session_context->single_resident_session&&session_context->household_members.empty())
             throw odh::FormatError("household saving requires the complete integrated FAMI roster");
+        std::string route_capture_rejection;
         const bool resumable_primary_route=runtime_routing&&runtime_routing->active()&&
-            capture_primary_route().has_value();
-        if(runtime_routing&&runtime_routing->active()&&!resumable_primary_route)
-            throw odh::FormatError("this route cannot yet be saved safely; finish walking before saving");
+            capture_primary_route(&route_capture_rejection).has_value();
+        if(runtime_routing&&runtime_routing->active()&&!resumable_primary_route){
+            const auto route_diagnostic=runtime_routing->diagnostic();
+            if(!route_diagnostic.empty())route_capture_rejection+="; route: "+route_diagnostic;
+            throw odh::FormatError("this route cannot yet be saved safely; finish walking before saving ("+
+                (route_capture_rejection.empty()?"route capture did not identify the cause":route_capture_rejection)+")");
+        }
         if(go_here_status=="queued"&&!headless_go_here_same_room_only&&!resumed_go_here_route)
             throw odh::FormatError("wait until Go Here finishes before saving");
         if(std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){

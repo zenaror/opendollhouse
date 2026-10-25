@@ -285,33 +285,74 @@ std::optional<RouteFrameContext> Routing::active_frame_context() const {
     if(!job_) return {};
     return job_->frame;
 }
-bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> verified_dynamic_owner) const {
-    if(!vm_||executing_||!job.same_room_verified||job.external_frame_active||
-       job.external_frame_call||job.deferred_room_route||job.room_context_open||
-       job.replay_frame||job.replay_instruction||job.portal_steps||job.portal_retries||
-       job.portal_replan_required||job.call_failure_trees||job.failure_tree_invoked||
-       job.failure_pending||job.interrupt_pending||job.selected_sitting_object||
-       job.external_frame_sitting||!suspended_jobs_.empty())
+bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> verified_dynamic_owner,
+    std::string* rejection_reason) const {
+    const auto reject=[&](const char* reason){
+        if(rejection_reason)*rejection_reason=reason;
         return false;
+    };
+    if(rejection_reason)rejection_reason->clear();
+    if(!vm_)return reject("route controller is not bound to a VM");
+    if(executing_)return reject("route callback is still running");
+    if(!job.same_room_verified)return reject("route has no verified same-room proof");
+    if(job.external_frame_active||job.external_frame_call)
+        return reject("route is inside an external BHAV call");
+    if(job.deferred_room_route||job.room_context_open||job.portal_steps||job.portal_retries||
+       job.portal_replan_required)
+        return reject("route uses a room portal");
+    if(job.replay_frame||job.replay_instruction)
+        return reject("route is replaying a saved instruction");
+    if(job.failure_tree_invoked||job.failure_pending){
+        if(rejection_reason){
+            *rejection_reason=job.failure_tree_invoked?"route already entered a failure branch":
+                "route is waiting for a failure branch";
+            if(!job.failure_reason.empty())*rejection_reason+=" : "+job.failure_reason;
+        }
+        return false;
+    }
+    if(job.interrupt_pending)
+        return reject("route has a pending interruption");
+    if(job.selected_sitting_object||job.external_frame_sitting)
+        return reject("route is attached to a sitting action");
+    if(!suspended_jobs_.empty())
+        return reject("route has a suspended parent route");
     if(job.frame.state!=RouteFrameState::initial&&job.frame.state!=RouteFrameState::walking&&
        job.frame.state!=RouteFrameState::turn_only)
-        return false;
+        return reject("route is outside a supported walking frame");
     if(job.frame.portal_turns||job.frame.wait_time||job.frame.retries_remaining||
        job.actor==job.target||job.path.empty()||job.path.size()-1>limits_.expanded||
-       job.next==0||job.next>job.path.size()||job.facing>7||job.entry_flags<=0||
+       job.next==0||job.next>job.path.size()||job.facing>7||
+       (job.entry_flags<=0&&!(job.call_failure_trees&&job.entry_flags==0))||
        !std::isfinite(job.expected_radian_direction))
-        return false;
+        return reject("route progress or destination data is incomplete");
     const auto& stack=vm_->stack();
     const auto& pending=vm_->pending();
-    if(vm_->status()!=VmStatus::waiting||!pending||pending->ticket!=job.ticket||
-       pending->instruction.instruction.opcode!=45||pending->instruction.depth!=stack.size()||
-       stack.empty()||pending->context.caller!=job.actor||pending->context.stack_object!=job.target||
-       (pending->context.code_owner!=static_cast<CodeOwner>(job.actor)&&
-        (!verified_dynamic_owner||pending->context.code_owner!=*verified_dynamic_owner))||
-       stack.back().context.caller!=job.actor||stack.back().context.stack_object!=job.target||
-       stack.back().context.code_owner!=pending->context.code_owner||
-       job.run_generation!=vm_->run_generation()||!room_pair_)
-        return false;
+    if(vm_->status()!=VmStatus::waiting)return reject("VM is not waiting on Route45");
+    if(!pending)return reject("VM has no pending instruction for the route");
+    if(pending->ticket!=job.ticket)return reject("pending VM ticket does not match the active route");
+    const auto& pending_instruction=pending->instruction.instruction;
+    const bool saved_go_here_instruction=job.call_failure_trees&&pending_instruction.opcode==27&&
+        pending_instruction.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
+    const auto route_scope=static_cast<std::uint16_t>(pending_instruction.operands[2]|(
+        static_cast<std::uint16_t>(pending_instruction.operands[3])<<8));
+    const bool supported_route45=pending_instruction.opcode==45&&route_scope<=2&&
+        (pending_instruction.operands[4]&0xFEU)==0&&pending_instruction.operands[5]==0&&
+        pending_instruction.operands[6]==0&&pending_instruction.operands[7]==0;
+    if((job.call_failure_trees&&!saved_go_here_instruction)||
+       (!job.call_failure_trees&&!supported_route45))
+        return reject("VM is waiting on an instruction that does not match this route");
+    if(pending->instruction.depth!=stack.size())return reject("Route45 frame depth changed");
+    if(stack.empty())return reject("Route45 has no active VM frame");
+    if(pending->context.caller!=job.actor||pending->context.stack_object!=job.target)
+        return reject("Route45 caller or target changed");
+    if(pending->context.code_owner!=static_cast<CodeOwner>(job.actor)&&
+       (!verified_dynamic_owner||pending->context.code_owner!=*verified_dynamic_owner))
+        return reject("Route45 dynamic code owner is not verified");
+    if(stack.back().context.caller!=job.actor||stack.back().context.stack_object!=job.target||
+       stack.back().context.code_owner!=pending->context.code_owner)
+        return reject("active VM frame does not match the Route45 call");
+    if(job.run_generation!=vm_->run_generation())return reject("route belongs to an earlier VM run");
+    if(!room_pair_)return reject("route has no room lookup for save validation");
     const auto* actor=world_.find(job.actor);
     const auto* target=world_.find(job.target);
     if(!actor||!target||actor->kind!=EntityKind::avatar||actor->generation!=job.actor_generation||
@@ -319,25 +360,30 @@ bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> ve
        actor->position->level!=target->position->level||
        !(*actor->position==job.expected)||actor->radian_direction!=job.expected_radian_direction||
        !(*target->position==job.target_position)||actor->static_footprint==job.walking_started)
-        return false;
+        return reject("actor or destination changed since the route movement checkpoint");
     try {
         const auto rooms=room_pair_(*actor->position,*target->position);
-        if(!rooms||rooms->first!=rooms->second)return false;
-    } catch(...) {return false;}
+        if(!rooms||rooms->first!=rooms->second)
+            return reject("actor and destination are no longer in the same verified room");
+    } catch(...) {return reject("room lookup failed while checking the route checkpoint");}
     if(!(job.path[job.next-1]==RoutePoint{job.expected.x,job.expected.y})||
        !grid_.contains(job.path[job.next-1])||!grid_.walkable(job.path[job.next-1]))
-        return false;
+        return reject("current route point is outside the walkable grid");
     for(std::size_t n=job.next;n<job.path.size();++n)
-        if(!grid_.can_step(job.path[n-1],job.path[n]))return false;
+        if(!grid_.can_step(job.path[n-1],job.path[n]))
+            return reject("remaining route is no longer walkable");
     return true;
 }
 std::optional<LocalRouteSnapshot> Routing::capture_local_session_route(
-    std::optional<CodeOwner> verified_dynamic_owner) const {
-    if(!job_||!valid_local_session_job(*job_,verified_dynamic_owner))return {};
+    std::optional<CodeOwner> verified_dynamic_owner,std::string* rejection_reason) const {
+    if(rejection_reason)rejection_reason->clear();
+    if(!job_){if(rejection_reason)*rejection_reason="no route is active";return {};}
+    if(!valid_local_session_job(*job_,verified_dynamic_owner,rejection_reason))return {};
     const auto& j=*job_;
     return LocalRouteSnapshot{j.ticket,j.actor_generation,j.target_generation,j.run_generation,
         j.actor,j.target,j.expected,j.target_position,j.expected_radian_direction,j.frame,
-        j.path,j.next,j.entry_flags,j.facing,j.face_anywhere,j.walking_started,j.same_room_verified};
+        j.path,j.next,j.entry_flags,j.facing,j.face_anywhere,j.walking_started,
+        j.call_failure_trees,j.same_room_verified};
 }
 bool Routing::restore_local_session_route(const LocalRouteSnapshot& snapshot,
     std::optional<CodeOwner> verified_dynamic_owner) {
@@ -359,6 +405,7 @@ bool Routing::restore_local_session_route(const LocalRouteSnapshot& snapshot,
     candidate.facing=snapshot.facing;
     candidate.face_anywhere=snapshot.face_anywhere;
     candidate.walking_started=snapshot.walking_started;
+    candidate.call_failure_trees=snapshot.call_failure_trees;
     candidate.run_generation=snapshot.run_generation;
     candidate.same_room_verified=true;
     if(!valid_local_session_job(candidate,verified_dynamic_owner))return false;

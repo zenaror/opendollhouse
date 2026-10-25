@@ -498,14 +498,27 @@ void decode_dynamic_owners(const std::vector<std::uint8_t>& bytes,std::vector<Se
     });
 }
 
+bool supported_route45_instruction(const Instruction& instruction) {
+    const auto scope=static_cast<std::uint16_t>(instruction.operands[2]|(
+        static_cast<std::uint16_t>(instruction.operands[3])<<8));
+    return instruction.opcode==45&&scope<=2&&(instruction.operands[4]&0xFEU)==0&&
+        instruction.operands[5]==0&&instruction.operands[6]==0&&instruction.operands[7]==0;
+}
 void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity& actor,
                                 const std::vector<Entity>& world,const SessionBundleLimits& limits) {
     const auto& vm=entity.vm;
-    const bool pending_route=vm.pending&&vm.pending->instruction.instruction.opcode==45;
+    const auto* pending_instruction=vm.pending?&vm.pending->instruction.instruction:nullptr;
+    const bool saved_go_here_route=entity.route&&entity.route->call_failure_trees&&pending_instruction&&
+        pending_instruction->opcode==27&&
+        pending_instruction->operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
+    const bool route45=pending_instruction&&supported_route45_instruction(*pending_instruction);
+    const bool pending_route=route45||saved_go_here_route;
     if(pending_route!=entity.route.has_value())
-        throw FormatError("session Route45 wait and local route continuation do not match");
+        throw FormatError("session route wait and local route continuation do not match");
     if(!entity.route)return;
     const auto& route=*entity.route;
+    if((route.call_failure_trees&&!saved_go_here_route)||(!route.call_failure_trees&&!route45))
+        throw FormatError("session local route does not match its Route45 or Go Here instruction");
     if(vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=route.ticket||
        !route.ticket||route.ticket>vm.ticket_sequence||route.actor!=entity.id||
        route.target==entity.id||route.actor_generation!=actor.generation||
@@ -552,7 +565,7 @@ void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity&
        (route.frame.state!=RouteFrameState::initial&&route.frame.state!=RouteFrameState::walking&&
         route.frame.state!=RouteFrameState::turn_only)||route.path.empty()||
        route.path.size()>limits.max_route_points||route.next==0||route.next>route.path.size()||
-       route.facing>7||route.entry_flags<=0||
+       route.facing>7||(route.entry_flags<=0&&!(route.call_failure_trees&&route.entry_flags==0))||
        !(route.path[route.next-1]==RoutePoint{route.expected.x,route.expected.y}))
         throw FormatError("session local Route45 path or arrival state is invalid");
     const auto target=std::find_if(world.begin(),world.end(),[&](const auto& value){
@@ -879,7 +892,7 @@ std::vector<std::uint8_t> encode_local_route(const LocalRouteSnapshot& route,
        route.path.size()>UINT32_MAX||route.next>UINT32_MAX)
         throw FormatError("local route snapshot exceeds path limits");
     Writer w(limits.archive.max_section_bytes);
-    w.u16(1);w.u64(route.ticket);w.u64(route.actor_generation);w.u64(route.target_generation);
+    w.u16(2);w.u64(route.ticket);w.u64(route.actor_generation);w.u64(route.target_generation);
     w.u64(route.run_generation);w.i16(route.actor);w.i16(route.target);
     const auto position=[&](const EntityPosition& value){
         w.i32(value.x);w.i32(value.y);w.i16(value.level);w.u8(value.direction);
@@ -893,11 +906,13 @@ std::vector<std::uint8_t> encode_local_route(const LocalRouteSnapshot& route,
     for(const auto& point:route.path){w.i32(point.x);w.i32(point.y);}
     w.u32(static_cast<std::uint32_t>(route.next));w.i16(route.entry_flags);w.u8(route.facing);
     w.u8(route.face_anywhere?1:0);w.u8(route.walking_started?1:0);w.u8(route.same_room_verified?1:0);
+    w.u8(route.call_failure_trees?1:0);
     return w.take();
 }
 LocalRouteSnapshot decode_local_route(const std::vector<std::uint8_t>& bytes,
                                        const SessionBundleLimits& limits) {
-    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported local route snapshot version");
+    Reader r(bytes);const auto version=r.u16();
+    if(version!=1&&version!=2)throw FormatError("unsupported local route snapshot version");
     LocalRouteSnapshot route;route.ticket=r.u64();route.actor_generation=r.u64();
     route.target_generation=r.u64();route.run_generation=r.u64();route.actor=r.i16();route.target=r.i16();
     const auto position=[&](){return EntityPosition{r.i32(),r.i32(),r.i16(),r.u8()};};
@@ -917,10 +932,11 @@ LocalRouteSnapshot decode_local_route(const std::vector<std::uint8_t>& bytes,
     route.path.reserve(count);for(std::uint32_t n=0;n<count;++n)route.path.push_back({r.i32(),r.i32()});
     route.next=r.u32();route.entry_flags=r.i16();route.facing=r.u8();
     const auto face_anywhere=r.u8(),walking_started=r.u8(),same_room=r.u8();
-    if(face_anywhere>1||walking_started>1||same_room>1||!r.done())
+    const auto call_failure_trees=version>=2?r.u8():0;
+    if(face_anywhere>1||walking_started>1||same_room>1||call_failure_trees>1||!r.done())
         throw FormatError("invalid saved route flags or trailing bytes");
     route.face_anywhere=face_anywhere!=0;route.walking_started=walking_started!=0;
-    route.same_room_verified=same_room!=0;
+    route.same_room_verified=same_room!=0;route.call_failure_trees=call_failure_trees!=0;
     return route;
 }
 std::vector<std::uint8_t> encode_routes(const std::vector<SessionRuntimeEntity>& entities,

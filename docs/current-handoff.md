@@ -1,6 +1,6 @@
 # Continuidade atual
 
-## Estado atual: retomada local Route45 ainda sem gate real (2026-10-25)
+## Estado atual: House07 Go Here salva e retomada (2026-10-25)
 
 O pacote de sessão carrega a seção opcional `ROUT`, com o caminho local Route45
 já escolhido e a posição atual do Sim. `OBVM` registra o Main do PhoneLine 207;
@@ -10,27 +10,35 @@ confere GLOB e fingerprint e instala o owner antes de restaurar o VM. A revisão
 independente não encontrou erro nessa ordem. Restore household ainda não aceita
 owners dinâmicos.
 
-Testes construídos cobrem captura, arquivo, retomada, ação ativa no mesmo VM,
-caminho bloqueado e níveis diferentes mesmo quando o ID do cômodo coincide.
-Build de `odh-person`, `odh-session-bundle-tests` e `odh-routing-tests` passou;
-o CTest completo passou 248/248 após as mudanças de codec, restore e rota.
-Isso cobre testes unitários/processo sintéticos, mas ainda não prova a retomada
-de uma caminhada real.
+O teste opt-in `tests/house07_route_save_resume.py` agora percorre House07 com
+dados comerciais somente para leitura. Sit na cadeira 128 (tick 1), Stand
+(tick 512) e Go Here agendado (tick 1025) iniciam uma Route45 local. No tick
+1188 a rota ainda está ativa, com 34 callbacks de movimento, e o save fica no
+perfil temporário XDG. Um processo novo restaura o tick 1188; após 14 ticks,
+Go Here retorna `true`, a fila fica vazia, a rota termina e o Sim está em
+`[440,424,1,1]`, no tile solicitado `[27,26]`.
 
-O contrato de snapshot/restore para o Main da PhoneLine 207 existe, mas o gate
-real de rota ainda falha antes de criar um arquivo. Com Go Here agendado no
-começo de House07, a ação fica na fila (`queue_size=1`, sem ação ativa) e a
-rota não inicia; após muitos ticks, o owner dinâmico já não pertence a uma rota
-ativa e o save é recusado. Sit → Stand → Go Here no mesmo perfil também deixou
-a ação enfileirada até o limite. Nenhum load em outro processo foi possível,
-portanto o save/resume da rota real não está validado.
+Uma execução contínua até o tick 1190 produz os mesmos dois passos de movimento
+que os dois primeiros passos após o restore. Isso verifica a continuidade nesse
+trecho, não uma comparação completa de todos os 14 passos com um percurso
+contínuo. O gate confirmou que seis arquivos originais (House07, Neighborhood,
+User00000, Animation.far, Global.far e Objects.far) mantiveram seus hashes.
+O comando é:
 
-Em paralelo, o gate `tests/house07_session_resume_cli.py` foi reexecutado após
-as mudanças: Sit no tick 512, load em outro processo, Stand até o tick 1024 e
-save final passaram. Os seis arquivos comerciais monitorados mantiveram os
-hashes. Isso confirma o perfil Sit/Stand; não substitui o gate de rota.
+```sh
+python3 tests/house07_route_save_resume.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+```
 
-### Diagnóstico adicional do Main e da fila (2026-10-25)
+Build dos alvos `odh-person`, `odh-routing-tests` e
+`odh-session-bundle-tests`, CTest focado `routing`/`session_bundle` (2/2) e o
+gate real acima passaram. A retomada real de rota local de um cômodo está
+validada nesse caso; rotas entre cômodos/andares, portais e retomada por
+household com owner dinâmico continuam sem validação. Isso também não demonstra
+paridade geral com o The Sims ou Simitone.
+
+### Diagnóstico anterior do Main e da fila (2026-10-25)
 
 O erro ao salvar agora inclui o estado do Main, os últimos quadros da VM e as
 últimas instruções, para que o próximo bloqueio seja investigável pelo log. O
