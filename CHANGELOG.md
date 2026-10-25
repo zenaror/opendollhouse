@@ -26,8 +26,9 @@ validação indicados por versão.
   lote. A House07 confirmou a troca do Sim 105 para o 137 e atualizou as
   necessidades mostradas. Os cartões buscam o nome da tabela OBJT do lote pelo
   GUID do Sim e mostram o ID interno quando não encontram um nome válido. Agora
-  também mostram retratos; Bob (105) e Betty (137) foram vistos na janela. A
-  interface continua provisória, sem paridade visual comprovada. Veja
+  também mostram retratos; Bob (105) e Betty (137) foram vistos na janela. Os
+  cartões se ajustam à altura disponível, inclusive no tamanho mínimo de
+  160×120. A interface continua provisória, sem paridade visual comprovada. Veja
   [`current-handoff.md`](docs/current-handoff.md).
 
 - A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e

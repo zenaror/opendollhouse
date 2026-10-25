@@ -8,6 +8,9 @@ os recursos comerciais continuam externos e somente lidos. O cache guarda só
 pixels RGBA e tem teto de oito retratos (175.232 bytes de pixels), renovando
 quando identidade, corpo, cabeça, renderer ou acessórios ativos mudam. Os
 renderers dos moradores secundários agora recebem os acessórios ativos também.
+Os cartões se ajustam à altura disponível: em uma janela 160×120, os 1–4
+moradores usam uma linha e os 5–8 usam duas fileiras compactas; cartões muito
+estreitos mostram o nome sem miniatura para não ocultar o texto.
 
 Na House07 com dados reais, a captura Xvfb mostra Bob e Betty com rostos em
 seus cartões. O relatório registrou `host_failed=false`, 61 ticks e a família
@@ -23,8 +26,10 @@ terminou pelo `xvfb-run`; não restou processo do jogo.
 `scene_cfp_provider`, `reusable_scene_host`, `saved_scene_cli` e `raster`
 passaram (7/7). Isso prova que os rostos chegaram à faixa provisória usando
 dados reais; não valida semelhança com a arte da UI original/Simitone. Ainda
-faltam categorias/painéis, cache após mudanças de roupa mais amplas e comparação
-visual com uma referência correspondente.
+faltam categorias/painéis, validar todos os caminhos de mudança de roupa e
+comparar visualmente com uma referência correspondente. Um teste novo percorre
+1–8 moradores no tamanho mínimo, confirmando seleção do último cartão dentro
+do painel.
 
 ## Progresso: primeiro caminho de retrato 74×74 (2026-10-25)
 

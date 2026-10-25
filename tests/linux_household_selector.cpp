@@ -59,6 +59,26 @@ int main(){try{
     const std::vector<odh_host::HouseholdSelectorResident> too_many(9);
     check(!odh_host::household_selector_pick(too_many,width,height,20,35),
           "selector refuses a household larger than its visible card layout");
+    const std::vector<odh_host::HouseholdSelectorResident> eight_residents{
+        {101,"One"},{102,"Two"},{103,"Three"},{104,"Four"},
+        {105,"Five"},{106,"Six"},{107,"Seven"},{108,"Eight"}};
+    for(std::size_t count=1;count<=eight_residents.size();++count){
+        const auto panel=odh_host::household_selector_panel_rect(160,120,count);
+        check(panel.height<=108,"compact selector panel stays inside the available window height");
+        const auto rows=(count+3)/4;
+        const auto card_height=rows==1?54:38;
+        const auto row=(count-1)/4,column=(count-1)%4;
+        const auto x=10+static_cast<std::int32_t>(column)*35+1;
+        const auto y=6+panel.height-4-static_cast<std::int32_t>(rows)*(card_height+3)+
+                     static_cast<std::int32_t>(row)*(card_height+3)+card_height-1;
+        const auto picked=odh_host::household_selector_pick(
+            std::vector<odh_host::HouseholdSelectorResident>(eight_residents.begin(),
+                eight_residents.begin()+static_cast<std::ptrdiff_t>(count)),160,120,x,y);
+        check(picked&&*picked==eight_residents[count-1].runtime_id,
+              "last resident remains visible and selectable in a minimum-size window");
+        check(!odh_host::household_selector_pick(eight_residents,160,120,x,114),
+              "compact resident cards do not extend beyond the panel bottom");
+    }
 
     odh::RasterFrame frame{width,height,
         std::vector<std::array<std::uint8_t,4>>(width*height,{1,2,3,255}),{},0,0,{}};
