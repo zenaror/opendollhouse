@@ -1,5 +1,41 @@
 # Continuidade atual
 
+## WIP experimental de recuperação de saves (2026-10-25)
+
+Meta ACTIVE conferida nesta retomada; objetivo completo permanece incompleto.
+Checkpoint experimental preservado em `tools/simitone/experimental-saved-code-recovery.patch`,
+incremental sobre 0003/0004/0005, com replay exato dos cinco arquivos. O patch não entra
+na receita básica até completar a migração. Fontes continuam no clone de trabalho
+ignorado `refs/work/Simitone-linux`, publicação atual em `build/simitone-linux`.
+O candidato compilou/publicou. Foram aprovados 13 testes sintéticos de política
+ligados ao adaptador real e 5 de snapshots de pessoa com tipos FSO.Files reais;
+não são execução de BHAV, prova de colocação real ou jogabilidade.
+
+A importação completa 68 para 80 palavras sem tocar OBJM, planeja todos os 82 tipos não nulos
+(61 diferenças) e captura usos/ações nativos de pessoas antes da conversão.
+Implementação WIP cobre objetos comuns, grupos não portal e filhos diretos com
+links nativos coerentes, preservando IDs. Revisão corrigiu categoria indexada,
+temporários do ramo EP3 e snapshot após notificações/EP10. SlotHierNumber é
+slot+1; 0x432a70 chama 0x432771 antes de 0x4327d9, comprovando a conversão. O runner tem gate opcional
+`--require-clean-vm` que falha com exceções mesmo que o processo permaneça vivo.
+
+Último gate real: `reports/simitone-linux-evaluation/house07-recovery-direct/`,
+28s planejados, encerrado antes por exceção fatal de preflight: 14 instâncias
+não suportadas (portas 17–22, 25–28, 57–58 e pessoas 105/137). **Nenhuma migração foi
+executada**; não declarar que grupos/filhos foram recuperados no motor. Captura
+confirma Bob/Betty em 7 Sim Lane e log house=7. Os seis hashes comerciais permaneceram
+iguais; game/Xvfb encerrados e cópia/perfil removidos. Resumos JSON e capturas
+no diretório do gate, exports nativos pessoa/container com manifests em
+`reports/ghidra/person-recovery-audit/` e `container-recovery-audit/`.
+
+Próximo: implementar recuperação de pessoas com usos ordenados/UseCount/EP4,
+controle de recursão, aparência e busca de posição; mapear operações próprias
+de porta ao registro de ocupação/rotas do motor. Depois rodar o gate completo
+sem atalhos por GUID nem silenciar erros, e validar interação/compra/salvar/reabrir.
+Os guardas atuais não substituem esses caminhos nem a paridade do jogo original.
+Preservar os quatro arquivos C++ WIP listados abaixo e scripts antigos não rastreados.
+
+
 ## Causa confirmada e assinaturas nativas (2026-10-25)
 
 Meta active conferida na retomada. A hipótese de simples versão foi refinada

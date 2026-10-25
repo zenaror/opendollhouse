@@ -53,11 +53,15 @@ def main():
     parser.add_argument('--seconds', type=float, default=30)
     parser.add_argument('--vm-diagnostics', action='store_true',
                         help='record complete VM exception traces in the temporary profile log')
+    parser.add_argument('--require-clean-vm', action='store_true',
+                        help='fail on VM/fatal errors in the log; screenshots still require inspection')
     parser.add_argument('--click', action='append', default=[], metavar='SECOND:X:Y',
                         help='send a scheduled click only inside the isolated display')
     args = parser.parse_args()
     if not 1 <= args.seconds <= 60:
         parser.error('--seconds must be between 1 and 60')
+    if args.require_clean_vm and not args.vm_diagnostics:
+        parser.error('--require-clean-vm requires --vm-diagnostics')
     clicks = []
     for spec in args.click:
         try:
@@ -158,6 +162,16 @@ def main():
                     result['profile_isolated'] = (
                         'User data directory: ' + str(root / 'profile')
                         in (out / 'startup.log').read_text())
+                    lines = (out / 'startup.log').read_text().splitlines()
+                    result['vm_error_count'] = sum('SimAntics exception:' in line for line in lines)
+                    result['fatal_error_count'] = sum(
+                        'Unhandled exception.' in line or '=== FATAL ERROR ===' in line for line in lines)
+                    result['native_recoveries'] = [json.loads(line.split(': ', 1)[1])
+                        for line in lines if line.startswith('Native object recovery: ')]
+                    result['compatibility_summaries'] = [record for line in lines
+                        if line.startswith('Saved code compatibility: ')
+                        for record in [json.loads(line.split(': ', 1)[1])]
+                        if record.get('Kind') == 'summary']
             finally:
                 stop(process)
                 stop(xvfb)
@@ -168,8 +182,10 @@ def main():
     print(json.dumps({key: value for key, value in result.items()
                       if key not in ('protected_before', 'protected_after',
                                      'managed_sha256', 'windows')}, indent=2))
+    clean = not args.require_clean_vm or (
+        result.get('vm_error_count') == 0 and result.get('fatal_error_count') == 0)
     return 0 if (result.get('process_alive') and result.get('profile_isolated')
-                 and result['protected_files_unchanged']) else 1
+                 and result['protected_files_unchanged'] and clean) else 1
 
 
 if __name__ == '__main__':

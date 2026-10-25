@@ -114,7 +114,8 @@ Todas as seis entradas Reset/EP3 atuais são zero.
 `0x431edd` executa Load/EP2 quando aplicável. Com diferença de assinatura e
 controle global habilitado (byte `0x6c2972` inicialmente 1 na imagem), notifica
 as demais entidades, recupera o objeto e executa Init/EP0. Há também um caso
-especial para o tipo cursor, independente de diferença, que não deve ser perdido.
+especial para o GUID exato `0x3c08965f`, independente de diferença; não equivale
+a selecionar todo OBJD cujo tipo seja Cursor.
 
 `0x444346` recebe o mundo em ECX e o alvo como argumento: visita as outras
 entidades e chama seu método de reset com esse alvo. **Não reinicia filhos.**
@@ -146,3 +147,88 @@ multitile e colocação antes de declará-los cobertos. Não desativar diálogos
 inventar retorno de BHAV ou manter frames cujo código não existe para passar
 no teste. A prova final continua sendo abrir e jogar o lote, interagir,
 comprar, salvar e reabrir sem essas falhas.
+
+
+## Adaptação em andamento: fases e limites (2026-10-25)
+
+A leitura de OBJM fornece 68 palavras por objeto, enquanto o modelo em memória
+usa 80. A importação passa a completar as palavras restantes com zero, sem
+alterar o OBJM original. Isso permite aplicar a regra nativa de limpar 72
+palavras, preservando os campos demonstrados acima. O plano considera os 82
+tipos não nulos da House07: 61 têm assinaturas diferentes, sem definições ou
+raízes obrigatórias ausentes. Não se limita aos seis tipos cujos frames falham.
+
+A implementação de recuperação ainda é **experimental e incompleta**. O teste
+`house07-recovery-padded` compila, mas falha antes da migração por classes ainda
+não mapeadas. Essa rejeição não prova recuperação funcional. Ela confirmou que
+árvores, portas/janelas, móveis, Bob e Betty também precisam ser tratados.
+O runner agora oferece `--require-clean-vm` com `--vm-diagnostics`: processo
+vivo, sozinho, não aprova um teste que registrou exceção de simulação ou fatal.
+
+### Objetos comuns e grupos
+
+Para o caminho sem EP3, posição/identidade são capturadas antes da retirada;
+as palavras retidas são capturadas na reinicialização, **depois** dos callbacks
+de retirada. As notificações às pessoas vêm antes de ambos. A categoria também
+precisa sair do índice do motor antes de limpar a palavra59. A versão inicial
+da adaptação tinha esses pontos incorretos; a revisão independente os apontou.
+No caminho com EP3, reiniciar Main não deve zerar os temporários: a limpeza
+explícita deles pertence ao caminho sem EP3.
+
+O grupo nativo usa `0x422db9`: EP10 em todas as peças, depois retirada de todas.
+`0x4231a8` reinicializa todas, recompõe os deslocamentos e executa Init em cada
+peça. `0x422c62` recoloca as peças e executa EP9 em cada uma. Por fim `0x431edd`
+executa Init no alvo original. O chamador continua por entidade; não foi
+introduzida uma deduplicação por grupo sem evidência de que o original o faça.
+A ordem nativa entre peças além da principal ainda precisa ser comparada com
+a lista importada pelo Simitone. Esses callbacks podem alterar o grupo.
+
+Portal usa sobrescritas de retirada `0x463648` e colocação `0x46322f`, que fazem
+trabalho adicional de ocupação/cache antes/depois das operações do grupo.
+Aplicar apenas o caminho comum a uma porta não demonstra equivalência.
+O snapshot `0x432664` consulta ParentId26/SlotHierNumber14, que não devem
+ser confundidos sem prova com ContainerId2/SlotNumber3. Há suporte experimental
+restrito a um filho direto, sem filhos próprios, cujos dois pares de campos e
+o slot recíproco do pai coincidam. A regra é estrutural, sem lista de GUIDs.
+Ela cobre os quatro registros observados na House07; cadeias gerais continuam
+rejeitadas. A colocação `0x4333ef` passa por `0x432a70`, que chama `0x432771`
+para somar um ao slot solicitado antes de `0x4327d9` escrever o campo14.
+Assim, o slot0 termina com SlotNumber3=0 e SlotHierNumber14=1. Não basta ler
+apenas a subtração feita no snapshot e concluir que os dois campos usam zero.
+Exportações adicionais: `reports/ghidra/container-recovery-audit/manifest.json`.
+A tabela de slots do próprio objeto fica fora do bloco de palavras limpo;
+isso não é justificativa para resetar filhos.
+
+### Pessoas
+
+O reset de pessoa `0x45e8fd` não chama a limpeza comum `0x431c90`. Preserva
+motivos e os demais dados salvos, desenrola usos de objetos, limpa controles
+visuais, ajusta colocação, reinicia Main e executa EP3 também para humanos.
+Depois limpa campos específicos: Posture0, WalkingUpStairs40 e
+InteractionStatus59 de PersonData, Hidden34 e RoutePreference9 de ObjectData.
+Não há limpeza explícita dos temporários nesse caminho. `VMAvatar.Init` não
+serve como substituto, pois redefine motivos, personalidade e outros campos.
+
+A notificação reinicia uma pessoa quando o alvo consta dos usos ativos ou é
+o IconOwner da ação ativa (`0x45e974` compara o ponteiro diretamente, sem
+testar TTAIndex); não basta encontrar uma referência arbitrária de
+StackObject. Nos demais casos, remove ações cujo alvo ou ícone coincide,
+executando os callbacks EP4 e preservando a ordem das ações restantes.
+A importação atual perde limites/flags de `OBJMPerson.ObjectUses` ao convertê-los
+em frames; o adaptador precisa preservar os registros ordenados originais.
+`0x45e769` decrementa UseCount ao desenrolar cada uso e atualiza a ação ativa.
+
+Exportação adicional, somente leitura: `reports/ghidra/person-recovery-audit/`.
+`0x45fc43` destrói itens de uma coleção visual; `0x46e15e(0)` limpa controles
+por item, sem apagar os motivos. `0x43270d` constrói um snapshot de colocação;
+`0x432644` consulta se ele está no mundo. `0x434895` implementa busca de posição
+com restrições de sala/colisão; usar apenas SetIndivPosition não reproduz isso.
+As conclusões continuam estáticas, específicas ao perfil identificado acima.
+
+
+Os metadados nativos de pessoa agora são capturados antes da conversão: usos
+ordenados com limites/flags, ação ativa, última ação e fila, incluindo os
+argumentos copiados para coleções somente leitura. Esse estado é conservado
+no plano de compatibilidade; ainda não executa o reset de pessoa. A seleção
+pura por alvo segue o uso ativo ou o ícone ativo, sem inferir validade por
+TTAIndex; a última ação não participa desse teste.

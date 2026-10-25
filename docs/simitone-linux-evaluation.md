@@ -115,8 +115,8 @@ O objeto 136 coincide com a pendência PhoneLine do motor próprio; mudar de bas
 não resolveu automaticamente essa questão. A investigação seguinte confirmou
 os arquivos carregados e as assinaturas completas de Init/Main, incluindo
 dependências, e encontrou o tratamento nativo de incompatibilidade. O cálculo
-foi implementado e validado em 17 casos, mas a recuperação ainda não foi
-adaptada ao Simitone. Os campos baixos do OBJT não são contagens de instruções;
+foi implementado e validado em 17 casos. A recuperação tem agora um adaptador
+experimental incompleto; o gate integrado abaixo ainda falha antes da migração. Os campos baixos do OBJT não são contagens de instruções;
 comparar apenas `BHAV.Version` é insuficiente. Ver
 [contrato de assinaturas e recuperação](simitone-save-code-signatures.md).
 Não esconder erros, escolher outro dono por aproximação, descartar frames ou
@@ -151,3 +151,43 @@ O FreeSO inclui MPL 2.0 e componentes com notices próprios. Há cabeçalhos MPL
 em arquivos do frontend, mas não foi encontrada uma licença geral na raiz do
 Simitone. Essa procedência precisa ser esclarecida por componente antes de
 distribuir uma base derivada; não presumir uma licença única por associação.
+
+
+## Recuperação de saves: candidato experimental (2026-10-25)
+
+`tools/simitone/experimental-saved-code-recovery.patch` é um incremento aplicado
+**depois** dos patches0003/0004/0005 na raiz do FreeSO de trabalho. Não faz parte
+da receita básica acima: é um checkpoint incompleto da migração de saves,
+sem aprovação de jogabilidade. O replay em árvore temporária com os patches
+anteriores reproduziu exatamente os cinco arquivos de trabalho.
+
+```sh
+git -C refs/work/Simitone-linux/FreeSO apply ../../../../tools/simitone/experimental-saved-code-recovery.patch
+dotnet run --project tools/simitone/recovery-tests/RecoveryTests.csproj -c Release
+dotnet run --project tools/simitone/recovery-tests/person-state/PersonStateTests.csproj -c Release
+```
+
+Os testes ligados ao código real passaram em 13 casos de política de recuperação,
+com serviços simulados, e cinco casos dos snapshots de pessoa com tipos da DLL
+FSO.Files real. Nenhum desses casos executa BHAV comercial nem prova colocação
+no motor ou recuperação completa. O projeto desktop foi compilado e publicado
+com as adaptações; os avisos antigos de dependências permanecem.
+
+Teste integrado separado: `reports/simitone-linux-evaluation/house07-recovery-direct/`.
+A captura antes do segundo clique mostra Bob/Betty, 7 Sim Lane; o log confirma
+house=7. O plano compara 82 tipos (61 diferentes), todos com definições e raízes
+obrigatórias disponíveis. A validação para **antes de migrar qualquer entidade**:
+14 instâncias ainda exigem suporte, 12 peças de portas e dois Sims. Portanto,
+nenhuma recuperação real de objeto foi validada nesse teste, e a casa não abriu.
+`--require-clean-vm --vm-diagnostics` retorna falha quando há exceções fatais ou
+de simulação. O gate de28s terminou antecipadamente com erro fatal da validação,
+preservou os seis hashes protegidos e encerrou aplicação/Xvfb; a cópia dos dados
+e o perfil temporários foram removidos. Não houve acesso ao teclado ou mouse físico.
+
+Os caminhos implementados são objetos comuns, grupos não portal e um vínculo
+direto de objeto apoiado em outro móvel, com verificações estruturais. A rotina
+de pessoa ainda precisa desenrolar usos/ações e restaurar aparência/colocação;
+as portas precisam das operações específicas de ocupação e rotas. Preservaram-se
+os registros ordenados dos usos e ações da pessoa antes da conversão para que
+a próxima implementação não dependa de reconstrução incompleta dos frames.
+Contrato e limites em [simitone-save-code-signatures.md](simitone-save-code-signatures.md).
