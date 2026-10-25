@@ -24,6 +24,11 @@
   e dependências substituíveis. Conferir riscos de C#/.NET para os consoles
   antes de consolidar a base; não presumir viabilidade nem adiar toda a análise
   de portabilidade para depois do Linux.
+- Reforço humano: o código deve visar os ports desde agora. Não tratar consoles
+  como problema posterior à build Linux. O conjunto atual net9/DesktopGL não
+  está aprovado como núcleo universal. Aplicar `docs/portability.md`: extrair
+  componentes usados, identificar bloqueios de runtime e provar os ambientes
+  prioritários antes de consolidar a base ou ampliar dependências desktop.
 - Nintendo Switch também é um possível alvo futuro de build, depois do Linux e
   dos ports prioritários; toolchain, requisitos de distribuição e validação em
   hardware ainda não foram confirmados. Windows e macOS (Apple Silicon e Intel)

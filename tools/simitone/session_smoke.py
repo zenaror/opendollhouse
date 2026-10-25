@@ -22,7 +22,7 @@ from compare_save_states import walk_differences
 
 
 MANAGED = (
-    'Simitone.dll', 'Simitone.Client.dll', 'FSO.SimAntics.dll',
+    'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'FSO.SimAntics.dll',
     'FSO.HIT.dll', 'FSO.Content.dll', 'FSO.Files.dll',
     'Simitone.runtimeconfig.json',
 )

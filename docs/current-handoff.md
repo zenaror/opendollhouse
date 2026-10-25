@@ -1,5 +1,58 @@
 # Continuidade atual
 
+## Prioridade humana: código visando ports agora (2026-10-25)
+
+A meta está ACTIVE. O usuário corrigiu explicitamente a interpretação de ports
+como trabalho a resolver depois do Linux. Antes de ampliar famílias/expansões,
+resolver a arquitetura e os experimentos de runtime descritos em
+`docs/portability.md`. O Simitone é referência/candidato funcional;
+net9/DesktopGL NÃO está aprovado como núcleo universal obrigatório dos consoles.
+Inspeção anterior à extração encontrou dez projetos na simulação e 29 no
+aplicativo; depois são 11 e 30, incluindo o novo módulo. O motor completo ainda
+tem dependência direta de gráficos/áudio; runtimeconfig inclui
+.NETCore.App e ASP.NETCore.App 9.0.21. Não confundir componente separado,
+propriedade AOT ou suporte desktop com prova de execução num portátil.
+
+Fontes primárias consultadas e limites estão em `reports/portability/`.
+3DS: ARMv6K/nanoCLR experimental não fornece net9/MonoGame; Vita: loader Mono
+legado WIP não estabelece perfil moderno; Switch: caminho oficial MonoGame
+privado/licenciado distinto de homebrew; Wii U: toolchain nativa PowerPC não
+fornece runtime net9. Não são provas de impossibilidade, nem ports demonstrados.
+Desktop/Android têm caminhos publicados pelos frameworks, mas só os fluxos Linux
+registrados foram executados. Nenhuma instalação ou build de console realizada.
+
+Primeiro corte IMPLEMENTADO e usado: `managed/OpenDollhouse.Simulation`, fila
+`WakeQueue<T>` netstandard2.0/C#7.3, sem pacotes explícitos/FSO/XNA/IO/reflexão.
+O scheduler real referencia o módulo; execução das entidades, RNG, remoção e
+atualização gráfica continuam no adaptador. Conserva referências e listas vivas,
+ordenação/deduplicação por ID, migração do tick zero, interrupções e reentrância.
+12 testes diferenciais contra fonte upstream fixada passaram; usam tipos de VM
+sintéticos, não o jogo. MPL/proveniência/licença completas em `managed/`.
+
+Build real passou com restore do novo projeto e avisos herdados, mantendo net9
+no aplicativo. Gate real `reports/simitone-linux-evaluation/house07-shared-scheduler/`
+compra cadeira, Bob senta, salva e reabre em dois processos (74+40 s): objeto,
+posição/direção, preço 80 e saldo 585 persistem, comparação pré-Load passa, bancos
+de pessoa/necessidades também após Load. Zero VM/fatal/diagnóstico, seis hashes
+comerciais iguais, oito hashes de assemblies/config incluindo o módulo novo;
+processos/cópia/perfil/Xvfb encerrados. Isso NÃO valida outros saves ou consoles.
+`source-manifest.json`, `purchase-proof.json`, `lifecycle-summary.json` registram
+fontes/artefatos. FreeSO experimental agora20 arquivos, após0003/0004/0005,
+SHA256 `f62a775d0f6f8c75d88037e442a4bb5f2c6960248fdadbbf4ac8edcade9a3d26`.
+Exige também o diretório `managed/` deste checkout; a referência relativa não é
+uma dependência de Linux. Frontend0006 inalterado. Patch anterior18 arquivado
+junto da evidência `house07-chair-save-before-notice/recovery-source.patch`.
+
+`audit_dependencies.py` reprova o motor completo por dependências desktop/server;
+o módulo separado passa somente a inspeção conhecida de dependências. Quatro
+testes sintéticos incluem rejeição de pacotes transitivos e frameworks importados.
+O relatório mantém `shared_console_runtime_proven=false`, inclusive no módulo.
+Próxima decisão obrigatória: experimentar o perfil de runtime/API dos portáteis
+com esse componente real; um resultado só no PC não resolve o bloqueio. Se não
+houver caminho viável, remover a obrigatoriedade do runtime antes de ampliar o
+núcleo, sem iniciar dois motores completos nem uma tradução integral às cegas.
+Preservar C++ WIP e objetivo integral. UI original continua para a etapa final.
+
 ## Comprar, usar e conservar uma cadeira (2026-10-25)
 
 Meta ACTIVE. A interface original fica para a etapa final, como solicitado.

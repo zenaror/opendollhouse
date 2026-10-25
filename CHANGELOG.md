@@ -29,6 +29,10 @@ validação indicados por versão.
 
 ### Alterado
 
+- Os ports passam a condicionar a arquitetura atual, antes de ampliar os recursos
+  do candidato Linux. A fila de execução agora fica num módulo sem gráficos/áudio,
+  usado pelo jogo e verificado contra o comportamento anterior. Isso ainda não
+  fornece compatibilidade com os consoles; veja [os limites](docs/portability.md).
 - O planejamento passa a considerar os outros sistemas desde a avaliação
   inicial da base, separando o jogo dos serviços de cada plataforma. Wii U
   entra como alvo desejado, sem suporte confirmado. A execução acompanha o

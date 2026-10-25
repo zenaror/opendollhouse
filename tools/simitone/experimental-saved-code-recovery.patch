@@ -151,6 +151,112 @@ index c8b8f14..f70aa02 100644
                  io.WriteInt32(HouseholdExpense);
                  io.WriteInt32(ArchitectureExpense);
              }
+diff --git a/TSOClient/tso.simantics/Engine/VMScheduler.cs b/TSOClient/tso.simantics/Engine/VMScheduler.cs
+index a74a3e5..aec5557 100644
+--- a/TSOClient/tso.simantics/Engine/VMScheduler.cs
++++ b/TSOClient/tso.simantics/Engine/VMScheduler.cs
+@@ -1,11 +1,12 @@
+ ﻿using System.Collections.Generic;
++using OpenDollhouse.Simulation;
+ 
+ namespace FSO.SimAntics.Engine
+ {
+     public class VMScheduler
+     {
+         private VM vm;
+-        private Dictionary<uint, List<VMEntity>> TickSchedule = new Dictionary<uint, List<VMEntity>>();
++        private readonly WakeQueue<VMEntity> wakeQueue = new WakeQueue<VMEntity>(ent => ent.ObjectID);
+         private List<VMEntity> TickThisFrame;
+         public HashSet<VMEntity> PendingDeletion = new HashSet<VMEntity>();
+         public uint CurrentTickID;
+@@ -27,20 +28,14 @@ namespace FSO.SimAntics.Engine
+         public void ScheduleTick(VMEntity ent, uint tick)
+         {
+             if (ent.Dead) return;
+-            List<VMEntity> targEnts;
+-            if (!TickSchedule.TryGetValue(tick, out targEnts))
+-            {
+-                targEnts = new List<VMEntity>();
+-                TickSchedule[tick] = targEnts;
+-            }
+             ent.Thread.ScheduleIdleEnd = tick;
+-            VM.AddToObjList(targEnts, ent);
++            wakeQueue.Schedule(ent, tick);
+         }
+ 
+         public void ScheduleCurrentTick(VMEntity ent)
+         {
+             ent.Thread.ScheduleIdleEnd = CurrentTickID;
+-            VM.AddToObjList(TickThisFrame, ent);
++            wakeQueue.ScheduleCurrentTick(ent);
+         }
+ 
+         public void DescheduleTick(VMEntity ent)
+@@ -48,31 +43,22 @@ namespace FSO.SimAntics.Engine
+             //on delete or interrupt.
+             if (ent.Thread != null && ent.Thread.ScheduleIdleEnd > CurrentTickID)
+             {
+-                TickSchedule[ent.Thread.ScheduleIdleEnd].Remove(ent);
++                wakeQueue.Deschedule(ent, ent.Thread.ScheduleIdleEnd, CurrentTickID);
+             }
+         }
+ 
+         public void RescheduleInterrupt(VMEntity ent)
+         {
+             //on interrupt.
+-            if (ent.Thread == null || ent.Thread.ScheduleIdleEnd == CurrentTickID || ent.Thread.ScheduleIdleEnd == 0) return;
+-            DescheduleTick(ent);
+-            if (ent.ObjectID > CurrentObjectID && TickThisFrame != null) ScheduleCurrentTick(ent);
+-            else ScheduleTickIn(ent, 1);
++            if (ent.Thread == null) return;
++            var target = wakeQueue.PrepareInterrupt(ent, ent.Thread.ScheduleIdleEnd, CurrentTickID, CurrentObjectID);
++            if (target == WakeTarget.CurrentTick) ScheduleCurrentTick(ent);
++            else if (target == WakeTarget.NextTick) ScheduleTickIn(ent, 1);
+         }
+ 
+         public void BeginTick(uint tickID)
+         {
+-            if (CurrentTickID == 0)
+-            {
+-                //if we were on tick 0 it's likely we just resynced. Migrate ticks to the the correct tick id.
+-                List<VMEntity> firstTick;
+-                if (TickSchedule.TryGetValue(1, out firstTick))
+-                {
+-                    TickSchedule[tickID] = firstTick; //new objects are queued on next tick.
+-                    if (tickID != 1) TickSchedule.Remove(1);
+-                }
+-            }
++            wakeQueue.BeginTick(tickID, CurrentTickID);
+             CurrentTickID = tickID;
+         }
+ 
+@@ -80,7 +66,7 @@ namespace FSO.SimAntics.Engine
+         {
+             if (vm.Aborting) return;
+             RunningNow = true;
+-            if (TickSchedule.TryGetValue(CurrentTickID, out TickThisFrame))
++            if (wakeQueue.TryGetCurrentTick(CurrentTickID, out TickThisFrame))
+             {
+                 //Console.WriteLine(TickThisFrame.Count + " entities ticked out of " + Entities.Count);
+                 for (int i = 0; i < TickThisFrame.Count; i++)
+@@ -89,7 +75,7 @@ namespace FSO.SimAntics.Engine
+                     CurrentObjectID = ent.ObjectID;
+                     ent.Tick();
+                 }
+-                TickSchedule.Remove(CurrentTickID);
++                wakeQueue.CompleteCurrentTick(CurrentTickID);
+             }
+ 
+             vm.Context.RandomSeed += (ulong)vm.Entities.Count; // some "entropy" based on the number of entities present. forces a more strict sync
+@@ -111,7 +97,7 @@ namespace FSO.SimAntics.Engine
+ 
+         public void Reset()
+         {
+-            TickSchedule.Clear();
++            wakeQueue.Reset();
+             CurrentTickID = 0;
+             CurrentObjectID = short.MaxValue;
+         }
 diff --git a/TSOClient/tso.simantics/Engine/VMThread.cs b/TSOClient/tso.simantics/Engine/VMThread.cs
 index f449b52..4dc5d98 100644
 --- a/TSOClient/tso.simantics/Engine/VMThread.cs
@@ -204,6 +310,18 @@ index 2c82435..b9b6e46 100644
              }
              base.LoadCrossRef(input, context);
              foreach (var obj in Contained)
+diff --git a/TSOClient/tso.simantics/FSO.SimAntics.csproj b/TSOClient/tso.simantics/FSO.SimAntics.csproj
+index 5bd1295..e91d36c 100644
+--- a/TSOClient/tso.simantics/FSO.SimAntics.csproj
++++ b/TSOClient/tso.simantics/FSO.SimAntics.csproj
+@@ -29,6 +29,7 @@
+   </ItemGroup>
+ 
+   <ItemGroup>
++    <ProjectReference Include="..\..\..\..\..\..\managed\OpenDollhouse.Simulation\OpenDollhouse.Simulation.csproj" />
+     <ProjectReference Include="..\tso.files\FSO.Files.csproj" />
+     <ProjectReference Include="..\tso.sound\FSO.HIT.csproj" />
+     <ProjectReference Include="..\tso.world\FSO.LotView.csproj" />
 diff --git a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs
 index 3e89a2d..273dad0 100644
 --- a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMBlueprintRestoreCmd.cs

@@ -29,6 +29,14 @@ processamento e carregamento de dados para permitir perfis por plataforma,
 sem descartar simulação fora da tela como otimização. Essas são diretrizes de
 projeto, não camadas já implementadas.
 
+Reforço humano: visar os ports é requisito do código atual, não uma etapa a ser
+resolvida após concluir o Linux. A avaliação concreta encontrou acoplamento
+simulação/gráficos/áudio e nenhum runtime deste motor comprovado nos consoles.
+O conjunto net9/DesktopGL não está aprovado como núcleo universal obrigatório.
+Seguir a [decisão de portabilidade](portability.md), separar componentes usados e
+resolver os experimentos de runtime antes de ampliar as funcionalidades desktop.
+A biblioteca livre de gráficos não substitui a prova de execução do runtime.
+
 C#/.NET e bibliotecas herdadas são escolhas iniciais da avaliação, não garantias
 para consoles. Investigar cedo restrições de runtime, geração de código em
 execução, bibliotecas nativas e gráficos dos alvos mais limitados. Se uma escolha
