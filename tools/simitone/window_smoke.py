@@ -78,7 +78,8 @@ def main():
               'binary_sha256': digest(binary), 'actions': [],
               'managed_sha256': {name: digest(binary.parent / name) for name in (
                   'Simitone.dll', 'Simitone.Client.dll', 'FSO.SimAntics.dll',
-                  'FSO.HIT.dll', 'FSO.Content.dll', 'Simitone.runtimeconfig.json')},
+                  'FSO.HIT.dll', 'FSO.Content.dll', 'FSO.Files.dll',
+                  'Simitone.runtimeconfig.json')},
               'runtime': str(binary), 'gameplay_verified': False}
     try:
         with tempfile.TemporaryDirectory(prefix='odh-simitone-window-') as temporary:

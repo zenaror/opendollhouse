@@ -1,0 +1,164 @@
+diff --git a/TSOClient/tso.content/Framework/TS1Provider.cs b/TSOClient/tso.content/Framework/TS1Provider.cs
+index ce8b08a..7d46edd 100644
+--- a/TSOClient/tso.content/Framework/TS1Provider.cs
++++ b/TSOClient/tso.content/Framework/TS1Provider.cs
+@@ -145,6 +145,10 @@ namespace FSO.Content.Framework
+             IContentReference result = null;
+             if (Entries.TryGetValue(name, out result))
+             {
++                if (Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1"
++                    && result is Far1ProviderEntry<object> archiveEntry)
++                    Console.Error.WriteLine("Resource source: entry=" + name
++                        + " archive=" + archiveEntry.Archive.SourcePath);
+                 return Converter(result.GetGeneric());
+             }
+ 
+diff --git a/TSOClient/tso.files/FAR1/FAR1Archive.cs b/TSOClient/tso.files/FAR1/FAR1Archive.cs
+index f2d227a..ad96dd3 100644
+--- a/TSOClient/tso.files/FAR1/FAR1Archive.cs
++++ b/TSOClient/tso.files/FAR1/FAR1Archive.cs
+@@ -18,6 +18,9 @@ namespace FSO.Files.FAR1
+         private List<FarEntry> m_Entries = new List<FarEntry>();
+         private bool V1b = true;
+ 
++        /// <summary>The source path used to open this read-only archive.</summary>
++        public string SourcePath => m_Path;
++
+         /// <summary>
+         /// The offset into the archive of the manifest.
+         /// </summary>
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
+index f15409e..007e875 100644
+--- a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
++++ b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
+@@ -7,6 +7,7 @@ using FSO.SimAntics.Model;
+ using System;
+ using System.Collections.Generic;
+ using System.Linq;
++using System.Text.Json;
+ using FSO.SimAntics.Marshals;
+ using FSO.SimAntics.Model.TS1Platform;
+ using FSO.SimAntics.Marshals.Threads;
+@@ -87,6 +88,114 @@ namespace FSO.SimAntics.Utils
+             return routine;
+         }
+ 
++        private FSO.Content.GameIffResource DiagnosticRoutineResource(FSO.Content.GameIffResource owner, ushort id)
++        {
++            if (id >= 8192) return owner?.SemiGlobal;
++            if (id >= 4096) return owner;
++            return VM?.Context?.Globals?.Resource;
++        }
++
++        private VMRoutine DiagnosticRoutine(FSO.Content.GameIffResource resource, ushort id)
++        {
++            if (resource?.RoutineCache == null) return null;
++            object routine;
++            return resource.RoutineCache.TryGetValue(id, out routine) ? routine as VMRoutine : null;
++        }
++
++        private static object DiagnosticSavedType(OBJTEntry type)
++        {
++            if (type == null) return null;
++            return new
++            {
++                type.GUID,
++                type.Name,
++                type.TypeID,
++                type.Unknown1a,
++                type.InitTreeVersion,
++                type.Unknown2a,
++                type.MainTreeVersion
++            };
++        }
++
++        private object DiagnosticEntry(FSO.Content.GameIffResource owner, ushort? id)
++        {
++            var resource = id.HasValue ? DiagnosticRoutineResource(owner, id.Value) : null;
++            var routine = id.HasValue ? DiagnosticRoutine(resource, id.Value) : null;
++            return new
++            {
++                ID = id,
++                Scope = !id.HasValue ? null : id >= 8192 ? "semiglobal" : id >= 4096 ? "private" : "global",
++                IffFilename = resource?.MainIff?.Filename,
++                RoutinePresent = routine != null,
++                InstructionCount = routine?.Instructions?.Length,
++                NativeVersionWord = routine?.Chunk?.NativeVersionWord,
++                Signature = !id.HasValue ? (uint?)null : VMTS1CodeSignature.Compute(id.Value,
++                    calledID => DiagnosticRoutine(DiagnosticRoutineResource(owner, calledID), calledID)?.Chunk),
++                BHAVVersion = routine?.Chunk?.Version
++            };
++        }
++
++        private void DiagnoseSavedFrame(OBJMInstance inst, OBJMStackFrame frame, OBJTEntry ownerType, int frameIndex)
++        {
++            if (Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") != "1") return;
++            try
++            {
++                var codeOwner = Content.Content.Get().WorldObjects.Get(ownerType.GUID);
++                var resource = codeOwner?.Resource;
++                var routineID = (ushort)frame.TreeID;
++                if (DiagnosticRoutine(DiagnosticRoutineResource(resource, routineID), routineID) != null) return;
++
++                var objd = codeOwner?.OBJ;
++                var functions = objd != null && objd.UsesFnTable != 0
++                    ? resource?.Get<OBJf>(objd.ChunkID)?.functions : null;
++                ushort? initID = objd == null ? (ushort?)null : objd.UsesFnTable == 0
++                    ? objd.BHAV_Init : functions != null && functions.Length > 0 ? functions[0].ActionFunction : (ushort?)null;
++                ushort? mainID = objd == null ? (ushort?)null : objd.UsesFnTable == 0
++                    ? objd.BHAV_MainID : functions != null && functions.Length > 1 ? functions[1].ActionFunction : (ushort?)null;
++                ushort? resetID = objd == null ? (ushort?)null : objd.UsesFnTable == 0
++                    ? objd.BHAV_Cleanup : functions != null && functions.Length > 3 ? functions[3].ActionFunction : (ushort?)null;
++
++                Console.Error.WriteLine("Saved frame resolution: " + JsonSerializer.Serialize(new
++                {
++                    HouseNumber,
++                    EntityID = inst.ObjectData != null && inst.ObjectData.Length > 11 ? (short?)inst.ObjectData[11] : null,
++                    FrameIndex = frameIndex,
++                    SavedObjectType = DiagnosticSavedType(inst.OBJT),
++                    SavedCodeOwnerType = DiagnosticSavedType(ownerType),
++                    SavedFrame = new { frame.TreeID, frame.NodeID, frame.PrimitiveState, frame.CodeOwnerObjType, frame.StackObjectID },
++                    InstanceObjectVersion = inst.ObjectData != null && inst.ObjectData.Length > 58 ? (short?)inst.ObjectData[58] : null,
++                    CurrentCodeOwner = new
++                    {
++                        GUID = codeOwner?.GUID,
++                        OBJDID = objd?.ChunkID,
++                        ObjectVersion = objd?.ObjectVersion,
++                        UsesFnTable = objd?.UsesFnTable,
++                        ResourceName = resource?.Name,
++                        IffFilename = resource?.Iff?.Filename,
++                        MainIffFilename = resource?.MainIff?.Filename,
++                        GLOBName = resource?.List<GLOB>()?.FirstOrDefault()?.Name,
++                        SemiGlobalIffFilename = resource?.SemiGlobal?.MainIff?.Filename,
++                        Init = DiagnosticEntry(resource, initID),
++                        Main = DiagnosticEntry(resource, mainID),
++                        Reset = DiagnosticEntry(resource, resetID)
++                    }
++                }));
++            }
++            catch (Exception e)
++            {
++                // Diagnostics must not alter the imported state or its resolution behavior.
++                Console.Error.WriteLine("Saved frame resolution: " + JsonSerializer.Serialize(new
++                {
++                    HouseNumber,
++                    FrameIndex = frameIndex,
++                    frame.TreeID,
++                    frame.NodeID,
++                    CodeOwnerGUID = ownerType?.GUID,
++                    DiagnosticError = e.ToString()
++                }));
++            }
++        }
++
+         private VMArchitectureMarshal ConvertArchitecture(IffFile iff, HOUS hous, int size)
+         {
+             var arch = new VMArchitectureMarshal();
+@@ -241,6 +350,7 @@ namespace FSO.SimAntics.Utils
+                     ActionTree = false, // This is restored later for person type objects.
+                     SpecialResult = Engine.VMSpecialResult.Normal,
+                 };
++                DiagnoseSavedFrame(inst, frame, ownerType, i);
+             }
+ 
+             if (inst.PersonData != null)

@@ -1,5 +1,39 @@
 # Continuidade atual
 
+## Causa confirmada e assinaturas nativas (2026-10-25)
+
+Meta active conferida na retomada. A hipótese de simples versão foi refinada
+com análise estática do perfil fornecido SHA6e598c...29f2: ObjectSaveTypeTable
+0x43a5fb compara dois DWORDs completos de Init/Main; diferença marca bit2 do
+tipo. O cálculo 0x402741 percorre todas as chamadas `(opcode & 0x7fff)>255`,
+deduplica IDs e retorna `(DWORD header+8 da raiz <<16)+soma dos DWORDs de todas
+as rotinas visitadas`, uint32 com overflow. Campos baixos OBJT não são número
+de instruções; comparar só Version também é errado.
+
+Patches novos: 0004 diagnóstico de fonte/OBJT/frame/Init/Main/Reset e
+0005 BHAV.NativeVersionWord + helper puro VMTS1CodeSignature. Preserva parser
+8000/8001/8002 e Version anterior; 8003 não é aceito como header nativo.
+17 casos passaram (12 grafo, 5 parser real da DLL publicada), build/publish
+Simitone passou e gate House07 de28s confirmou os oito frames ausentes com
+assinaturas atuais diferentes das salvas em todos os seis tipos. Todos os
+privados vieram de Objects.far; auditoria OBJD independente: tipo4, MasterID0,
+SubIndex0, sem EP3/Reset para os seis. Seis hashes comerciais iguais, cópia/perfil
+temporários removidos, aplicação/Xvfb encerrados. Diálogos continuam: recuperação
+não implementada. Evidência `house07-native-signatures/`, JSON resumido e logs;
+exports nativos em `reports/ghidra/objt-version-audit/manifest.json`.
+
+Próximo: adaptar post-load, não simplesmente chamar VMEntity.Reset. Native
+0x431edd faz Load quando aplicável, notifica outras entidades (0x444346),
+recupera o alvo e Init. cXObject semEP3 desanexa, reinicializa seletivamente,
+reinicia Main e recoloca. Mantém ID/tipo, preserva palavras ObjectData
+1,21,24,29,41,45,46,47,67, normaliza direção, escreve ID em11 e versão em58;
+limpa outras0..71, array próprio e temporários. Multitile usa wrappers; portal,
+cursor e pessoas têm sobrescritas. Notificação aos Sims pode reiniciar a ação
+ou remover referências/fila (com EP4), não reinicia filhos. O caso especial
+cursor e a ordem Load/Init devem ser preservados. Planejar todos os tipos com
+diferença, inclusive aqueles cujos frames ainda resolvem. Contrato e endereços:
+[simitone-save-code-signatures.md](simitone-save-code-signatures.md).
+
 ## Retomada: primeira compilação e entrada Simitone (2026-10-25)
 
 A instrução humana posterior manda respeitar o status real da meta. `get_goal`

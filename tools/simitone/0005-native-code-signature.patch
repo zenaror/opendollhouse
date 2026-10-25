@@ -1,0 +1,117 @@
+diff --git a/TSOClient/tso.files/Formats/IFF/Chunks/BHAV.cs b/TSOClient/tso.files/Formats/IFF/Chunks/BHAV.cs
+index 1b2d5a0..10acb5c 100644
+--- a/TSOClient/tso.files/Formats/IFF/Chunks/BHAV.cs
++++ b/TSOClient/tso.files/Formats/IFF/Chunks/BHAV.cs
+@@ -15,6 +15,11 @@ namespace FSO.Files.Formats.IFF.Chunks
+         public ushort Locals;
+         public ushort Version;
+ 
++        // Raw header DWORD at +8 used by the native TS1 save signature.
++        // The high word also contributes to the dependency sum. TSO 0x8003
++        // has a different layout and must not be silently treated as TS1.
++        public uint? NativeVersionWord;
++
+         public uint RuntimeVer;
+ 
+         /// <summary>
+@@ -27,17 +32,20 @@ namespace FSO.Files.Formats.IFF.Chunks
+             using (var io = IoBuffer.FromStream(stream, ByteOrder.LITTLE_ENDIAN))
+             {
+                 var filetypeVersion = io.ReadUInt16();
++                NativeVersionWord = null;
+                 uint count = 0;
+ 
+                 if (filetypeVersion == 0x8000)
+                 {
+                     count = io.ReadUInt16();
+-                    io.Skip(8);
++                    io.Skip(4);
++                    NativeVersionWord = io.ReadUInt32();
+                 }
+                 else if (filetypeVersion == 0x8001)
+                 {
+                     count = io.ReadUInt16();
+-                    var unknown = io.ReadBytes(8);
++                    io.Skip(4);
++                    NativeVersionWord = io.ReadUInt32();
+                 }
+                 else if (filetypeVersion == 0x8002)
+                 {
+@@ -45,8 +53,8 @@ namespace FSO.Files.Formats.IFF.Chunks
+                     this.Type = io.ReadByte();
+                     this.Args = io.ReadByte();
+                     this.Locals = io.ReadUInt16();
+-                    this.Version = io.ReadUInt16();
+-                    io.Skip(2);
++                    NativeVersionWord = io.ReadUInt32();
++                    this.Version = (ushort)NativeVersionWord.Value;
+                 }
+                 else if (filetypeVersion == 0x8003)
+                 {
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1CodeSignature.cs b/TSOClient/tso.simantics/Utils/VMTS1CodeSignature.cs
+new file mode 100644
+index 0000000..e22ebbf
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1CodeSignature.cs
+@@ -0,0 +1,61 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Collections.Generic;
++using FSO.Files.Formats.IFF.Chunks;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>
++    /// Computes the code closure signature observed at VA 0x00402741 in the
++    /// supplied native profile with SHA256
++    /// 6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2.
++    /// The native algorithm reads the full uint32 header word at +8, including
++    /// its reserved high 16 bits, represented by BHAV.NativeVersionWord.
++    /// This helper defines no saved-object reset or migration policy.
++    /// </summary>
++    public static class VMTS1CodeSignature
++    {
++        /// <summary>
++        /// Resolves each reachable tree ID once, including missing dependencies.
++        /// The caller supplies the global/private/semiglobal resolution context.
++        /// </summary>
++        public static uint Compute(ushort rootId, Func<ushort, BHAV> resolve)
++        {
++            if (resolve == null) throw new ArgumentNullException(nameof(resolve));
++            var root = resolve(rootId);
++            if (root == null) return 0;
++
++            var pending = new Stack<ushort>();
++            var visited = new HashSet<ushort>();
++            pending.Push(rootId);
++            if (!root.NativeVersionWord.HasValue)
++                throw new NotSupportedException("The root BHAV has no supported native version word.");
++            uint signature = root.NativeVersionWord.Value << 16;
++
++            unchecked
++            {
++                while (pending.Count != 0)
++                {
++                    var id = pending.Pop();
++                    if (!visited.Add(id)) continue;
++                    var tree = id == rootId ? root : resolve(id);
++                    if (tree == null) continue;
++
++                    if (!tree.NativeVersionWord.HasValue)
++                        throw new NotSupportedException("A reachable BHAV has no supported native version word: " + id);
++                    signature += tree.NativeVersionWord.Value;
++                    foreach (var instruction in tree.Instructions)
++                    {
++                        var opcode = (ushort)(instruction.Opcode & 0x7fff);
++                        if (opcode > 255) pending.Push(opcode);
++                    }
++                }
++            }
++
++            return signature;
++        }
++    }
++}

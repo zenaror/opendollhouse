@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+    <SimitoneSourceRoot Condition="'$(SimitoneSourceRoot)' == ''">$(MSBuildThisFileDirectory)../../../refs/work/Simitone-linux</SimitoneSourceRoot>
+    <SimitoneRuntimeRoot Condition="'$(SimitoneRuntimeRoot)' == ''">$(MSBuildThisFileDirectory)../../../build/simitone-linux</SimitoneRuntimeRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(SimitoneSourceRoot)/FreeSO/TSOClient/tso.simantics/Utils/VMTS1CodeSignature.cs" Link="VMTS1CodeSignature.cs" />
+    <Reference Include="FSO.Files">
+      <HintPath>$(SimitoneRuntimeRoot)/FSO.Files.dll</HintPath>
+      <Aliases>RealFiles</Aliases>
+    </Reference>
+  </ItemGroup>
+</Project>

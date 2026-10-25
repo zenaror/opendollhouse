@@ -7,6 +7,12 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Diagnóstico identifica a diferença entre o código guardado no save e o
+  instalado nos objetos. O cálculo nativo dessas assinaturas passou em 17
+  casos; a recuperação dos objetos ainda precisa ser integrada e a casa
+  continua apresentando erros. Veja
+  [o contrato](docs/simitone-save-code-signatures.md).
+
 - Primeira avaliação da base Simitone no Linux: compilação, vizinhança e seleção
   da família Newbie em tela isolada. A entrada na casa ainda apresenta falhas
   de simulação; não é uma build jogável. O teste usa cópias dos dados e saves,

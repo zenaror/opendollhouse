@@ -62,6 +62,8 @@ São adaptações pequenas de avaliação, não uma incorporação do runtime ao
 git -C refs/work/Simitone-linux apply ../../../tools/simitone/0001-isolated-profile.patch
 git -C refs/work/Simitone-linux apply ../../../tools/simitone/0002-optional-neighborhood-audio.patch
 git -C refs/work/Simitone-linux/FreeSO apply ../../../../tools/simitone/0003-vm-diagnostics.patch
+git -C refs/work/Simitone-linux/FreeSO apply ../../../../tools/simitone/0004-saved-frame-resolution-audit.patch
+git -C refs/work/Simitone-linux/FreeSO apply ../../../../tools/simitone/0005-native-code-signature.patch
 
 dotnet publish refs/work/Simitone-linux/Client/Simitone/Simitone.Desktop/Simitone.Desktop.csproj \
   -c Release -r linux-x64 --self-contained true \
@@ -110,13 +112,16 @@ ler a instrução do pai ausente. Foram registrados oito frames não resolvidos:
 | 157 | 4096 e 4109 | 3127372498 |
 
 O objeto 136 coincide com a pendência PhoneLine do motor próprio; mudar de base
-não resolveu automaticamente essa questão de procedência. Próximas verificações:
-arquivo/archive efetivamente escolhido para cada GUID, versões salvas OBJT e
-versões atuais Init/Main/OBJD. O comentário de `OBJT.cs` associa essas versões
-ao reset de tipos incompatíveis, mas o conversor `VMTS1ActivatorNew` não as
-consulta. Isso é uma hipótese de migração ainda por confirmar nos dados e no
-original, não autorização para resetar objetos. Não esconder erros, escolher
-outro dono por aproximação, descartar frames ou simular retorno de sucesso.
+não resolveu automaticamente essa questão. A investigação seguinte confirmou
+os arquivos carregados e as assinaturas completas de Init/Main, incluindo
+dependências, e encontrou o tratamento nativo de incompatibilidade. O cálculo
+foi implementado e validado em 17 casos, mas a recuperação ainda não foi
+adaptada ao Simitone. Os campos baixos do OBJT não são contagens de instruções;
+comparar apenas `BHAV.Version` é insuficiente. Ver
+[contrato de assinaturas e recuperação](simitone-save-code-signatures.md).
+Não esconder erros, escolher outro dono por aproximação, descartar frames ou
+simular retorno de sucesso. O próximo trabalho é adaptar a recuperação nativa,
+preservando identidade, dados escolhidos, colocação e notificações aos Sims.
 
 Captura de entrada com exceção:
 `house07-stable-input/startup.png`, SHA256
