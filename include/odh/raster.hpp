@@ -24,6 +24,7 @@ struct RasterOptions {
     bool vertex_colors = false;
     bool directional_up_light = false; // With lighting: (dot(normal,up)+1)/2.
     bool record_owner_ids = false; // Allocate/write one token per pixel only when requested.
+    bool perspective_correct = false; // Correct depth and varyings; vertex depth must be positive.
 };
 struct RasterLimits {
     std::uint32_t width = 2048, height = 2048, pixels = 1048576;
@@ -39,10 +40,12 @@ struct RasterFrame {
     std::vector<std::uint16_t> owner_ids;
 };
 
-// Pure orthographic CPU rasterizer. Both windings use pixel centers and the
-// top-left edge rule. Depth starts at +infinity; ties retain the first fragment.
-// Affine UVs wrap in both axes, without a V flip; bilinear filtering uses texel
-// centers. Output is opaque RGBA with rounded RGB, without gamma, alpha or mips.
+// CPU rasterizer. Both windings use pixel centers and the top-left edge rule.
+// Depth starts at +infinity; ties retain the first fragment. By default depth
+// and UVs are affine. perspective_correct instead uses positive camera-space
+// vertex depths for reciprocal-depth testing and perspective-correct varyings.
+// UVs wrap in both axes, without a V flip; bilinear filtering uses texel centers.
+// Output is opaque RGBA with rounded RGB, without gamma, alpha or mips.
 // Optional lighting normalizes interpolated normals (zero chooses up), then
 // applies sqrt((dot(normal, up)+1)/2)*0.5+0.5, a simple FreeSO shader profile.
 // directional_up_light instead uses (dot(normal,up)+1)/2. vertex_colors enables

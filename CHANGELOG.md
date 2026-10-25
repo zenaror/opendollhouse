@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O renderizador agora calcula retratos de cabeça em perspectiva numa imagem
+  própria de 74×74 pixels e recorta partes da malha que cruzam o limite próximo
+  da câmera, com texturas e profundidade corrigidas para perspectiva. A saída
+  do lote isométrico não mudou. A validação usa malha sintética; integração ao
+  seletor e comparação visual ainda faltam. Veja
+  [`head-portrait-validation.md`](docs/head-portrait-validation.md).
+
 - A janela do lote agora mostra as sete necessidades e a pontuação de cômodo
   (oito barras) em um painel 2×4 com nomes no idioma escolhido. Usa
   `PanelBack.bmp` dos dados do jogo quando disponível; as traduções em inglês

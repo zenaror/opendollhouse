@@ -1,6 +1,31 @@
 # Continuidade atual
 
-## Progresso: deformação somente da cabeça no renderizador (2026-10-25)
+## Progresso: primeiro caminho de retrato 74×74 (2026-10-25)
+
+`SceneRenderer` agora oferece uma câmera em perspectiva própria para retratos:
+74×74 pixels, centralizada na posição do osso HEAD, com uma pose que conserva
+HEAD e zera os outros ossos. Ela não altera a câmera isométrica do lote. O
+triângulo que atravessa o limite próximo é recortado, em vez de cancelar o
+retrato. O rasterizador usa profundidade recíproca e UV corrigida para essa
+perspectiva. O teste sintético cobre imagem visível e repetível, independência da
+posição/direção no lote, limite próximo e câmera inválida.
+
+Os valores iniciais de campo de visão, zoom, distância e ângulos foram
+transcritos de `UIIconCache.GenHeadTex` no checkout local do Simitone; a regra
+de pose vem de `StripAllButHead`. A projeção/pintura é nossa. Não há comparação
+visual com o Simitone nem retratos exibidos na UI; isto é uma base técnica, não
+uma afirmação de paridade. Detalhes e limites em
+[`head-portrait-validation.md`](head-portrait-validation.md).
+
+Build de `odh-person`, `odh-scene-hand-gesture-tests`,
+`odh-scene-cfp-provider-tests`, `odh-scene-renderer-driver` e
+`odh-saved-scene` passou; CTest
+`scene_hand_gestures`, `scene_cfp_provider`, `reusable_scene_host`,
+`saved_scene_cli` e `raster` passaram (5/5). Retratos ainda não estão
+conectados ao seletor; cache, conferência com dados reais e ajuste visual
+permanecem pendentes.
+
+## Progresso anterior: deformação somente da cabeça no renderizador (2026-10-25)
 
 O renderizador agora tem um modo de pose que mantém a matriz absoluta do osso
 HEAD e zera as matrizes dos demais ossos, seguindo a regra de
@@ -12,10 +37,8 @@ aparência do jogo.
 Build de `odh-person`, `odh-scene-hand-gesture-tests`,
 `odh-scene-cfp-provider-tests`, `odh-scene-renderer-driver` e
 `odh-saved-scene` passou. CTest `scene_hand_gestures`, `scene_cfp_provider`,
-`reusable_scene_host` e `saved_scene_cli` passou (4/4). Ainda falta uma câmera
-de retrato própria de 74×74; `WorldProjection` foi feita para o lote
-isométrico, não para enquadrar uma cabeça. Retratos ainda não aparecem no
-seletor e não houve comparação visual com o Simitone.
+`reusable_scene_host` e `saved_scene_cli` passou (4/4). Naquele checkpoint ainda
+faltava a câmera própria; `WorldProjection` é para o lote isométrico.
 
 ## Atualização: nomes dos moradores no seletor (2026-10-25)
 

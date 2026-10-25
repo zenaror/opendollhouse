@@ -130,6 +130,8 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 throw FormatError("raster normal must be finite");
             for(const auto x:vertex.color)if(!std::isfinite(x)||x<0||x>1)
                 throw FormatError("raster vertex color outside finite unit range");
+            if(options.perspective_correct&&vertex.position[2]<=0)
+                throw FormatError("perspective raster depth must be positive");
         }
         const auto candidates=bounds(triangle,width,height).samples;
         if(candidates>limits.samples-tested_samples)
@@ -159,28 +161,39 @@ RasterFrame rasterize(std::uint32_t width, std::uint32_t height,
                 const double total=weights[0]+weights[1]+weights[2];
                 if(total==0)continue;
                 for(auto& w:weights)w/=total;
-                const double z=blend(vertices,weights,2);
+                auto varying_weights=weights;
+                double z=blend(vertices,weights,2);
+                if(options.perspective_correct){
+                    double reciprocal_depth=0;
+                    for(unsigned i=0;i<3;++i)
+                        reciprocal_depth+=weights[i]/vertices[i].position[2];
+                    if(!std::isfinite(reciprocal_depth)||reciprocal_depth<=0)
+                        throw FormatError("perspective raster reciprocal depth is invalid");
+                    z=1.0/reciprocal_depth;
+                    for(unsigned i=0;i<3;++i)
+                        varying_weights[i]=(weights[i]/vertices[i].position[2])/reciprocal_depth;
+                }
                 // Clamp tiny rounding drift to the finite convex vertex range.
                 const float depth=static_cast<float>(std::clamp(z,
                     double(std::min({vertices[0].position[2],vertices[1].position[2],vertices[2].position[2]})),
                     double(std::max({vertices[0].position[2],vertices[1].position[2],vertices[2].position[2]}))));
                 const auto index=static_cast<std::size_t>(y*width+x);
                 if(!(depth<frame.depth[index]))continue;
-                const double u=blend(vertices,weights,0,false,true);
-                const double v=blend(vertices,weights,1,false,true);
+                const double u=blend(vertices,varying_weights,0,false,true);
+                const double v=blend(vertices,varying_weights,1,false,true);
                 if(!std::isfinite(u) || !std::isfinite(v))
                     throw FormatError("raster interpolated UV overflow");
                 auto color=sample(textures[triangle.texture],u,v,options.filter);
                 if(options.vertex_colors)for(unsigned c=0;c<3;++c){
                     double modulation=0;
-                    for(unsigned i=0;i<3;++i)modulation+=weights[i]*vertices[i].color[c];
+                    for(unsigned i=0;i<3;++i)modulation+=varying_weights[i]*vertices[i].color[c];
                     color[c]*=std::clamp(modulation,0.0,1.0);
                 }
                 double shade=1;
                 if(options.lighting) {
-                    const double nx=blend(vertices,weights,0,true);
-                    const double ny=blend(vertices,weights,1,true);
-                    const double nz=blend(vertices,weights,2,true);
+                    const double nx=blend(vertices,varying_weights,0,true);
+                    const double ny=blend(vertices,varying_weights,1,true);
+                    const double nz=blend(vertices,varying_weights,2,true);
                     const double length=std::sqrt(nx*nx+ny*ny+nz*nz);
                     const double up=length==0?1:std::clamp(ny/length,-1.0,1.0);
                     shade=options.directional_up_light?(up+1)*0.5:std::sqrt((up+1)*0.5)*0.5+0.5;

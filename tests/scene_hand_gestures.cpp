@@ -1,5 +1,7 @@
 #include "scene_renderer.hpp"
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,17 +30,17 @@ std::string rig(bool include_head=true){
         for(float n:{0.f,y,0.f,0.f,0.f,0.f,1.f})scalar(b,n);
         for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);
     };
-    bone("ROOT","NULL",0.f);if(include_head)bone("HEAD","ROOT",0.f);
+    bone("ROOT","NULL",0.f);if(include_head)bone("HEAD","ROOT",1.2f);
     word(b,0);word(b,0);return b;
 }
 std::string appearance(const std::string& name,const std::string& bone="ROOT"){
     std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,1);text(b,bone);text(b,name);word(b,0);word(b,0);word(b,0);return b;
 }
-std::string mesh(const std::string& name,float x,const std::string& bone="ROOT"){
+std::string mesh(const std::string& name,float x,const std::string& bone="ROOT",float scale=1.f,float y_offset=0.f){
     std::string b;text(b,name);text(b,"x");word(b,1);text(b,bone);
     for(auto n:{1U,0U,1U,2U,1U,0U,0U,3U,0U,0U,3U})word(b,n);
     for(int i=0;i<6;++i)scalar(b,.25f);word(b,0);word(b,3);
-    for(const auto& position:std::array<std::array<float,3>,3>{{{x-.7f,2,0},{x+.7f,2,0},{x,4,0}}}){
+    for(const auto& position:std::array<std::array<float,3>,3>{{{x-.7f*scale,(2+y_offset)*scale,0},{x+.7f*scale,(2+y_offset)*scale,0},{x,(4+y_offset)*scale,0}}}){
         for(float n:position)scalar(b,n);for(float n:{0.f,1.f,0.f})scalar(b,n);
     }
     return b;
@@ -67,7 +69,7 @@ int main(){try{
         config.parts.push_back(part);
     }
     animations.push_back({"head.bcf",appearance("head","HEAD")});
-    animations.push_back({"head.bmf",mesh("head",0.f,"HEAD")});
+    animations.push_back({"head.bmf",mesh("head",0.f,"HEAD",.4f,-3.f)});
     textures.push_back({"head.bmp",bitmap(230)});
     config.parts.push_back({"head.bcf","head","head.bmf","head.bmp"});
     far(a,animations);far(t,textures);SceneRenderer renderer(config);
@@ -86,6 +88,23 @@ int main(){try{
     const auto head_control_frame=head_control.render(SceneState{},camera);
     check(head_only.image.pixels==head_control_frame.image.pixels&&
           head_only.image.depth==head_control_frame.image.depth);
+    const auto portrait=renderer.render_head_portrait(SceneState{});
+    const auto portrait_repeat=renderer.render_head_portrait(SceneState{});
+    check(portrait.image.width==74&&portrait.image.height==74&&portrait.image.shaded_samples>0);
+    check(portrait.image.pixels==portrait_repeat.image.pixels&&portrait.image.depth==portrait_repeat.image.depth);
+    check(std::any_of(portrait.image.depth.begin(),portrait.image.depth.end(),
+        [](float depth){return std::isfinite(depth)&&depth>0.0f;}));
+    auto moved_avatar=SceneState{};moved_avatar.avatar_tile={8,-3,5};moved_avatar.avatar_direction=7;
+    const auto moved_portrait=renderer.render_head_portrait(moved_avatar);
+    check(portrait.image.pixels==moved_portrait.image.pixels&&portrait.image.depth==moved_portrait.image.depth);
+    check(renderer.render(SceneState{},camera).image.pixels==defaults.image.pixels);
+    auto invalid_portrait_camera=HeadPortraitCamera{};invalid_portrait_camera.zoom=0;
+    rejects([&]{renderer.render_head_portrait(SceneState{},invalid_portrait_camera);});
+    auto near_clipping_camera=HeadPortraitCamera{};near_clipping_camera.near_plane=13.4;
+    const auto clipped_portrait=renderer.render_head_portrait(SceneState{},near_clipping_camera);
+    check(clipped_portrait.image.width==74&&clipped_portrait.image.height==74&&
+          clipped_portrait.image.shaded_samples>0);
+    check(clipped_portrait.image.pixels!=portrait.image.pixels);
     for(unsigned left=0;left<4;++left)for(unsigned right=0;right<4;++right){
         state.hands={static_cast<odh::HandGesture>(left),static_cast<odh::HandGesture>(right)};
         auto subset=config;subset.parts.clear();

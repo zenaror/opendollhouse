@@ -110,6 +110,21 @@ int main() {try {
     auto slope=square();for(auto& tri:slope)for(auto& v:tri.vertices)v.position[2]=v.position[0];
     require(odh::rasterize(2,2,slope,solids).depth==std::vector<float>{.5F,1.5F,.5F,1.5F},
             "depth interpolates affinely at pixel centers");
+    {
+        auto perspective_triangle=triangle();
+        perspective_triangle.vertices={vertex(0,0,1,0,0),vertex(2,0,2,1,0),vertex(0,2,4,0,0)};
+        const std::vector<odh::BitmapImage> gradient{texture(4,1,{red,green,blue,white})};
+        auto options=nearest();
+        const auto affine=odh::rasterize(1,1,{perspective_triangle},gradient,options);
+        options.perspective_correct=true;
+        const auto corrected=odh::rasterize(1,1,{perspective_triangle},gradient,options);
+        require(affine.pixels[0]==green&&corrected.pixels[0]==red,
+                "perspective-correct UVs differ from the affine profile at analytic weights");
+        require(std::abs(corrected.depth[0]-1.0F/0.6875F)<1e-6F&&corrected.depth[0]<affine.depth[0],
+                "perspective depth uses reciprocal interpolation and keeps nearer surfaces first");
+        for(auto& v:perspective_triangle.vertices)v.position[2]=0;
+        rejects([&]{odh::rasterize(1,1,{perspective_triangle},gradient,options);});
+    }
     auto outside=triangle();for(auto& v:outside.vertices){v.position[0]-=10;v.position[1]-=10;}
     require(odh::rasterize(2,2,{outside},solids).tested_samples==0,"fully clipped triangle costs zero candidates");
     auto clipped=triangle();clipped.vertices={vertex(-10,-10),vertex(10,-10),vertex(0,10)};

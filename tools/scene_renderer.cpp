@@ -1,6 +1,7 @@
 #include "scene_renderer.hpp"
 #include "odh/skinning.hpp"
 #include "odh/mesh.hpp"
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +27,112 @@ std::array<float, 3> rotate_avatar(std::array<float, 3> point, std::uint8_t dire
     const double c = std::cos(angle), s = std::sin(angle);
     return {finite_float(point[0] * c + point[2] * s), point[1],
             finite_float(-point[0] * s + point[2] * c)};
+}
+
+using Vector3d = std::array<double,3>;
+Vector3d add(Vector3d a,Vector3d b){return {a[0]+b[0],a[1]+b[1],a[2]+b[2]};}
+Vector3d subtract(Vector3d a,Vector3d b){return {a[0]-b[0],a[1]-b[1],a[2]-b[2]};}
+Vector3d multiply(Vector3d a,double scale){return {a[0]*scale,a[1]*scale,a[2]*scale};}
+double dot(Vector3d a,Vector3d b){return (a[0]*b[0]+a[1]*b[1])+a[2]*b[2];}
+Vector3d cross(Vector3d a,Vector3d b){return {a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};}
+Vector3d normalized(Vector3d value,const char* error){
+    const auto length=std::sqrt(dot(value,value));
+    if(!std::isfinite(length)||length<=1e-12)throw odh::FormatError(error);
+    return multiply(value,1.0/length);
+}
+void validate_portrait_camera(const HeadPortraitCamera& camera){
+    constexpr auto pi=3.14159265358979323846;
+    if(!std::isfinite(camera.vertical_fov_radians)||camera.vertical_fov_radians<=0.05||
+       camera.vertical_fov_radians>=pi-0.05||!std::isfinite(camera.zoom)||
+       camera.zoom<=0.0||camera.zoom>64.0||!std::isfinite(camera.distance)||
+       camera.distance<=camera.near_plane||camera.distance>1000.0||
+       !std::isfinite(camera.yaw_radians)||std::abs(camera.yaw_radians)>2*pi||
+       !std::isfinite(camera.pitch_radians)||std::abs(camera.pitch_radians)>2*pi||
+       !std::isfinite(camera.target_y_offset)||std::abs(camera.target_y_offset)>1000.0||
+       !std::isfinite(camera.near_plane)||camera.near_plane<0.01||camera.near_plane>1000.0)
+        throw odh::FormatError("scene renderer portrait camera is outside its bounded profile");
+}
+struct PortraitView {
+    Vector3d position,right,up,forward;
+    double focal,near_plane;
+};
+PortraitView portrait_view(const HeadPortraitCamera& camera,const std::array<float,3>& head){
+    const Vector3d target{head[0],double(head[1])+camera.target_y_offset,head[2]};
+    // Simitone rotates the camera offset around Y and then X before looking
+    // toward HEAD with world-up Y.
+    const auto cy=std::cos(camera.yaw_radians),sy=std::sin(camera.yaw_radians);
+    const auto cx=std::cos(camera.pitch_radians),sx=std::sin(camera.pitch_radians);
+    const Vector3d offset{camera.distance*sy,-camera.distance*cy*sx,camera.distance*cy*cx};
+    const auto position=add(target,offset);
+    const auto forward=normalized(subtract(target,position),"scene renderer portrait forward vector is invalid");
+    const auto right=normalized(cross(forward,{0.0,1.0,0.0}),"scene renderer portrait up vector is parallel to view");
+    const auto up=normalized(cross(right,forward),"scene renderer portrait up vector is invalid");
+    const auto focal=(74.0/2.0)/std::tan(camera.vertical_fov_radians/2.0)*camera.zoom;
+    if(!std::isfinite(focal)||focal>1e7)throw odh::FormatError("scene renderer portrait focal length exceeds limit");
+    return {position,right,up,forward,focal,camera.near_plane};
+}
+std::array<float,3> project_portrait_vertex(const PortraitView& camera,const std::array<float,3>& point){
+    const Vector3d relative{double(point[0])-camera.position[0],
+        double(point[1])-camera.position[1],double(point[2])-camera.position[2]};
+    const auto measured_depth=dot(relative,camera.forward);
+    const auto tolerance=1e-5*std::max(1.0,camera.near_plane);
+    if(!std::isfinite(measured_depth)||measured_depth<camera.near_plane-tolerance)
+        throw odh::FormatError("scene renderer portrait vertex is behind the near plane");
+    const auto depth=std::max(measured_depth,camera.near_plane);
+    const auto x=37.0+camera.focal*dot(relative,camera.right)/depth;
+    const auto y=37.0-camera.focal*dot(relative,camera.up)/depth;
+    return {finite_float(x),finite_float(y),finite_float(depth)};
+}
+std::array<float,3> portrait_normal(const PortraitView& camera,const std::array<float,3>& normal){
+    const Vector3d value{normal[0],normal[1],normal[2]};
+    return {finite_float(dot(value,camera.right)),finite_float(dot(value,camera.up)),
+            finite_float(dot(value,camera.forward))};
+}
+struct PortraitVertex {
+    std::array<float,3> position;
+    std::array<float,2> texcoord;
+    std::array<float,3> normal;
+};
+double portrait_depth(const PortraitView& camera,const std::array<float,3>& point){
+    const Vector3d relative{double(point[0])-camera.position[0],
+        double(point[1])-camera.position[1],double(point[2])-camera.position[2]};
+    const auto depth=dot(relative,camera.forward);
+    if(!std::isfinite(depth))throw odh::FormatError("scene renderer portrait depth is nonfinite");
+    return depth;
+}
+PortraitVertex interpolate(const PortraitVertex& a,const PortraitVertex& b,double t){
+    PortraitVertex result;
+    for(std::size_t i=0;i<3;++i){
+        result.position[i]=finite_float(double(a.position[i])+(double(b.position[i])-a.position[i])*t);
+        result.normal[i]=finite_float(double(a.normal[i])+(double(b.normal[i])-a.normal[i])*t);
+    }
+    for(std::size_t i=0;i<2;++i)
+        result.texcoord[i]=finite_float(double(a.texcoord[i])+(double(b.texcoord[i])-a.texcoord[i])*t);
+    return result;
+}
+struct PortraitPolygon {
+    std::array<PortraitVertex,4> vertices{};
+    std::size_t size=0;
+};
+PortraitPolygon clip_portrait_triangle(const PortraitView& camera,
+    const std::array<PortraitVertex,3>& triangle){
+    PortraitPolygon polygon;
+    auto previous=triangle.back();
+    auto previous_depth=portrait_depth(camera,previous.position);
+    auto previous_inside=previous_depth>=camera.near_plane;
+    for(const auto& current:triangle){
+        const auto current_depth=portrait_depth(camera,current.position);
+        const auto current_inside=current_depth>=camera.near_plane;
+        if(current_inside!=previous_inside){
+            const auto t=(camera.near_plane-previous_depth)/(current_depth-previous_depth);
+            polygon.vertices[polygon.size++]=interpolate(previous,current,t);
+        }
+        if(current_inside)polygon.vertices[polygon.size++]=current;
+        previous=current;
+        previous_depth=current_depth;
+        previous_inside=current_inside;
+    }
+    return polygon;
 }
 
 // Every View is consumed while this owning stream remains alive. No Views are
@@ -248,16 +355,20 @@ struct SceneRenderer::Impl {
         return inserted.first->second.planes;
     }
 
-    odh::CompositeFrame render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options) {
+    odh::CompositeFrame render(const SceneState& state, const odh::WorldProjection& camera,
+                               odh::RasterOptions options,const HeadPortraitCamera* portrait=nullptr) {
         if (state.avatar_direction > 7 || state.object_direction > 7)
             throw odh::FormatError("scene renderer direction must be 0..7");
         if (!odh::valid_hand_gesture(state.hands.left) || !odh::valid_hand_gesture(state.hands.right))
             throw odh::FormatError("scene renderer invalid hand gesture");
         if (!std::isfinite(state.frame)) throw odh::FormatError("scene renderer frame must be finite");
-        // Validate the camera and both tile coordinates before decoding any CFP.
-        odh::project_tile(camera, state.avatar_tile);
+        // Validate the camera before decoding any CFP. Portraits deliberately
+        // use a separate perspective camera and never the lot's tile projection.
+        if(portrait)validate_portrait_camera(*portrait);
+        else odh::project_tile(camera, state.avatar_tile);
         const odh::DgrpImage* image=nullptr;
         if (group) {
+            if(portrait)throw odh::FormatError("scene renderer portrait does not include an object graphic");
             odh::project_tile(camera, state.object_tile);
             image = odh::dgrp_image(*group, static_cast<std::uint8_t>(1U << state.object_direction), camera.zoom, camera.rotation);
             if (!image) throw odh::FormatError("scene renderer drawing direction/zoom missing");
@@ -275,6 +386,7 @@ struct SceneRenderer::Impl {
             } else cfp = &planes(*state.animation);
         }
         auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
+        std::optional<std::array<float,3>> head_position;
         if(state.head_only) {
             std::optional<std::size_t> head;
             for(std::size_t i=0;i<pose.bones.size();++i)if(fold(pose.bones[i].name)=="head") {
@@ -282,6 +394,7 @@ struct SceneRenderer::Impl {
                 head=i;
             }
             if(!head)throw odh::FormatError("scene renderer head-only pose has no HEAD bone");
+            head_position=pose.bones[*head].absolute_position;
             // Simitone's StripAllButHead zeros the absolute matrices of every
             // bone other than HEAD. Keep the same deformation rule here; the
             // portrait camera can be added independently from lot projection.
@@ -290,12 +403,35 @@ struct SceneRenderer::Impl {
                 pose.bones[i].absolute_position.fill(0.0f);
             }
         }
+        std::optional<PortraitView> view;
+        if(portrait) {
+            if(!head_position)throw odh::FormatError("scene renderer portrait requires head-only pose");
+            view=portrait_view(*portrait,*head_position);
+        }
         std::vector<odh::RasterTriangle> triangles;
-        triangles.reserve(static_cast<std::size_t>(triangle_count));
+        triangles.reserve(static_cast<std::size_t>(triangle_count)*(portrait?2U:1U));
         for (std::size_t index = 0; index < meshes.size(); ++index) {
             if (hands[index] && hands[index]->gesture != (hands[index]->right ? state.hands.right : state.hands.left))
                 continue;
             const auto mesh = odh::skin_mesh(meshes[index], pose);
+            if(view) {
+                for(const auto& face:mesh.faces) {
+                    const std::array<PortraitVertex,3> source{{
+                        {mesh.vertices[face[0]].position,mesh.vertices[face[0]].texcoord,mesh.vertices[face[0]].normal},
+                        {mesh.vertices[face[1]].position,mesh.vertices[face[1]].texcoord,mesh.vertices[face[1]].normal},
+                        {mesh.vertices[face[2]].position,mesh.vertices[face[2]].texcoord,mesh.vertices[face[2]].normal}}};
+                    const auto polygon=clip_portrait_triangle(*view,source);
+                    if(polygon.size<3)continue;
+                    std::array<odh::RasterVertex,4> projected{};
+                    for(std::size_t i=0;i<polygon.size;++i)
+                        projected[i]={project_portrait_vertex(*view,polygon.vertices[i].position),polygon.vertices[i].texcoord,
+                                      portrait_normal(*view,polygon.vertices[i].normal)};
+                    for(std::size_t i=1;i+1<polygon.size;++i)
+                        triangles.push_back({{projected[0],projected[i],projected[i+1]},index,
+                            state.owner_id?state.owner_id:static_cast<std::uint16_t>(index)});
+                }
+                continue;
+            }
             std::vector<odh::RasterVertex> projected;
             projected.reserve(mesh.vertices.size());
             for (const auto& vertex : mesh.vertices) {
@@ -310,7 +446,9 @@ struct SceneRenderer::Impl {
                 triangles.push_back({{projected[face[0]], projected[face[1]], projected[face[2]]}, index,
                     state.owner_id?state.owner_id:static_cast<std::uint16_t>(index)});
         }
-        const auto base = odh::rasterize(camera.width, camera.height, triangles, textures, options);
+        if(portrait)options.perspective_correct=true;
+        const auto base = portrait ? odh::rasterize(74,74,triangles,textures,options)
+                                   : odh::rasterize(camera.width,camera.height,triangles,textures,options);
         if (!image) return {base};
         std::vector<odh::SpriteLayer> layers;
         layers.reserve(image->sprites.size());
@@ -332,6 +470,16 @@ SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
 odh::CompositeFrame SceneRenderer::render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options) {
     if (!impl_) throw odh::FormatError("scene renderer used after move");
     return impl_->render(state, camera, options);
+}
+
+odh::CompositeFrame SceneRenderer::render_head_portrait(const SceneState& state,
+    HeadPortraitCamera camera,odh::RasterOptions options) {
+    if(!impl_)throw odh::FormatError("scene renderer used after move");
+    auto portrait_state=state;
+    portrait_state.avatar_tile={0,0,0};
+    portrait_state.avatar_direction=0;
+    portrait_state.head_only=true;
+    return impl_->render(portrait_state,odh::WorldProjection{},options,&camera);
 }
 std::uint64_t SceneRenderer::cache_samples() const { return impl_ ? impl_->sample_count : 0; }
 std::size_t SceneRenderer::cache_clips() const { return impl_ ? impl_->clips.size() : 0; }

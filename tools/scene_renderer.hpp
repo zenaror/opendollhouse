@@ -42,6 +42,19 @@ struct SceneState {
     bool head_only = false;
 };
 
+// CPU portrait profile based on Simitone's UIIconCache defaults. Projection is
+// independent of the lot's isometric WorldProjection; visual calibration is
+// not implied by matching these camera settings.
+struct HeadPortraitCamera {
+    double vertical_fov_radians = 1.0471975511965976; // PI/3
+    double zoom = 13.0;
+    double distance = 13.5;
+    double yaw_radians = 0.4636476090008061;  // atan(0.5)
+    double pitch_radians = -0.4636476090008061; // atan(-0.5)
+    double target_y_offset = 0.1;
+    double near_plane = 1.0;
+};
+
 // Must resolve the exact selected header, not merely an equal animation name.
 // The owned planes remain alive through the draw. An AnimationCatalog adapter
 // can return an aliasing shared_ptr over decode(selected)->planes, without a
@@ -66,6 +79,9 @@ public:
 
     odh::CompositeFrame render(const SceneState&, const odh::WorldProjection&,
                                odh::RasterOptions = {});
+    // Fixed 74x74 portrait view around HEAD; always applies the head-only pose.
+    odh::CompositeFrame render_head_portrait(const SceneState&,
+        HeadPortraitCamera = {}, odh::RasterOptions = {});
     // Renderer-owned legacy cache only. An external resolver owns/accounts its
     // cache; resolved planes are borrowed with shared ownership for each draw.
     std::uint64_t cache_samples() const;
