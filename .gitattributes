@@ -1,0 +1,2 @@
+# Unified patch context includes significant single-space blank lines.
+tools/simitone/*.patch -whitespace
