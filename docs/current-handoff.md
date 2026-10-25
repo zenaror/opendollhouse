@@ -1,5 +1,27 @@
 # Continuidade atual
 
+## Progresso: trace do fluxo de Pizza sem agendamento (2026-10-25)
+
+Um probe novo clicou o telefone136 pelo picker lógico da janela e enfileirou a
+ação 8312. Ela retornou true após 454 instruções; Main ficou aguardando até o
+limite de 640 ticks e `host_failed=false`. O vizinho `pizzadude` foi encontrado
+como ID40. Mesmo assim `create_object_instance.runtime_objects` ficou vazio.
+
+O trace mostra a saída antecipada: 8312 chama 8258, depois 8203 (`anim - pick
+up`). A animação14 é executada e emite eventos, mas a comparação `Local[0]==2`
+em 8203/IP6 falha. A rotina passa por 8196 e retorna false; 8312 segue pelo
+ramo de som de parada e retorna true sem chamar 8254 nem Global307/369. Portanto
+o retorno true anterior não demonstra nem que o scheduler foi pedido. Falta
+rastrear quem deveria preencher Local0 e o estado de slot/telefone antes de
+alterar esse comportamento.
+
+A instalação e os saves comerciais foram somente lidos. House07, LotZoning,
+Neighborhood e os dois personagens tiveram os mesmos SHA256 antes/depois. O
+teste usou XDG/TMP temporários e não abriu display virtual. Detalhes em
+[`interaction-validation.md`](interaction-validation.md). Relatório local,
+ignorado pelo Git: `reports/phone-pizza-path/house07-phone-pizza-trace.json`,
+SHA256 `310b5998ba30ef6d0db959efa474a30403e7bd052f2482ee1ccd7c09567e7c2e`.
+
 ## Progresso: retratos reais nos cartões do seletor (2026-10-25)
 
 A faixa provisória do seletor agora chama o renderizador de cada morador e

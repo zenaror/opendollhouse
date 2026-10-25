@@ -1,5 +1,36 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Trace da ligação de Pizza e ramo sem agendamento (2026-10-25)
+
+Com House07 e recursos de animação/arquitetura ligados, o caminho de entrada
+headless clicou no telefone136 pelo picker usado pela janela. A TTAB129 mostrou
+`Services.../Pizza` elegível e enfileirou BHAV8312. A ação retornou true após
+454 instruções; Main continuou aguardando até o limite de 640 ticks e
+`host_failed=false`.
+
+O trace explica por que esse retorno não cria o entregador: BHAV8312 chamou
+8258, que encontrou o vizinho `pizzadude` (ID40), e depois 8203 (`anim - pick
+up`). Essa rotina executou opcode44 para a animação14 e recebeu eventos, mas a
+comparação Local0==2 em seu IP6 foi falsa. O fluxo passou pelo BHAV8196 de
+falha; BHAV8312 seguiu IP2→BHAV8210→IP3 e retornou true, sem alcançar IP27/
+BHAV8254, Global307/369 ou CreateObjectInstance. `runtime_objects` ficou vazio.
+Portanto, o probe anterior não demonstrava falha na criação do NPC; ele não
+chegava a pedir o agendamento.
+
+O mesmo resultado ocorreu pelo picker de janela do harness com
+`--headless-window-interaction 136`, que clicou o telefone no pixel `(199,47)` e selecionou Pizza.
+É entrada simulada pelo dispatcher de produção, não clique físico. Os arquivos
+House07, LotZoning, Neighborhood e os dois personagens foram hasheados antes e
+depois e permaneceram idênticos. Não houve display virtual.
+
+Relatório JSON local, ignorado pelo Git: `reports/phone-pizza-path/
+house07-phone-pizza-trace.json`, SHA256
+`310b5998ba30ef6d0db959efa474a30403e7bd052f2482ee1ccd7c09567e7c2e`.
+
+Próximo: rastrear quem deve preencher Local0 com 2 no fluxo do telefone e quais
+condições de Slot/objeto essa animação exige; só então avaliar o runtime de slot
+ou ajustar o probe. Não forçar o ramo nem criar o scheduler manualmente.
+
 ## Navegação headless do menu de categoria (2026-10-24)
 
 O harness `--headless-window-interaction` aceita agora passos repetidos
