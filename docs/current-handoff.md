@@ -17,7 +17,7 @@ visual com o Simitone nem retratos exibidos na UI; isto é uma base técnica, n�
 uma afirmação de paridade. Detalhes e limites em
 [`head-portrait-validation.md`](head-portrait-validation.md).
 
-Build de `odh-person`, `odh-scene-hand-gesture-tests`,
+Build de `odh-person`, `odh-raster-tests`, `odh-scene-hand-gesture-tests`,
 `odh-scene-cfp-provider-tests`, `odh-scene-renderer-driver` e
 `odh-saved-scene` passou; CTest
 `scene_hand_gestures`, `scene_cfp_provider`, `reusable_scene_host`,

@@ -34,7 +34,7 @@ interpolação de perspectiva e a recusa de profundidade não positiva.
 CTest 5/5 no total. Os cinco alvos
 `odh-person`, `odh-scene-hand-gesture-tests`, `odh-scene-cfp-provider-tests`,
 `odh-scene-renderer-driver` e `odh-saved-scene` compilaram em
-`build/linux-checkpoint`.
+`build/linux-checkpoint`; `odh-raster-tests` também compilou.
 
 ## Limites e próximos passos
 
