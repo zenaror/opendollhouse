@@ -379,13 +379,16 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     diagnostic_.clear();
     const bool saved_go_here_relative=goto_relative&&
         i.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0};
-    const bool bounded_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
+    const bool bounded_goto_relative=goto_relative&&
         i.operands[2]==254&&(i.operands[3]==0||i.operands[3]==4)&&i.operands[4]==0&&
         i.operands[5]==0&&i.operands[6]==2&&i.operands[7]==0;
     // Relative interaction routes use Location=InFrontOf (0), Direction=Facing
     // (-2), and no route count. Some commercial actions set NoFailureTrees
     // (flag 0x02); that changes failure-tree handling, not the route geometry.
-    const bool in_front_goto_relative=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
+    // Simitone reads OldTrapCount as an operand field but does not use it in
+    // Execute. Commercial phone BHAVs set it to5, so keep geometry/flags
+    // bounded while accepting the ignored 16-bit field.
+    const bool in_front_goto_relative=goto_relative&&
         i.operands[2]==0&&i.operands[3]==254&&i.operands[4]==0&&i.operands[5]==0&&
         (i.operands[6]==0||i.operands[6]==2)&&i.operands[7]==0;
     const bool stair_goto_relative_shape=goto_relative&&i.operands[0]==0&&i.operands[1]==0&&
@@ -425,7 +428,9 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
         if(!selected_slots)
             return unsupported("StackObject StackVariable/Literal SLOT table missing or ambiguous");
     }
-    auto slot_index=static_cast<std::size_t>(data);
+    // GotoRelativePosition's first word is OldTrapCount, not a SLOT index.
+    // The temporary relative SLOT is always entry zero.
+    auto slot_index=in_front_goto_relative?std::size_t{0}:static_cast<std::size_t>(data);
     if(!goto_relative && scope==0) {
         if(data>=frame.arguments.size())
             return unsupported("StackObject StackVariable SLOT argument unavailable");

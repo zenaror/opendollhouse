@@ -1,5 +1,28 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Navegação headless do menu de categoria (2026-10-24)
+
+O harness `--headless-window-interaction` aceita agora passos repetidos
+`--headless-window-menu-open INDEX`, `--headless-window-menu-back` e
+`--headless-window-menu-select INDEX`. Os passos passam pelo mesmo tratamento
+de clique da janela e o JSON informa conclusão, passos, caminho do menu e se
+uma interação entrou na fila. Sem esses passos, o comportamento automático
+anterior continua ativo.
+
+Com a House07 original, o telefone136 abriu `Services...` e voltou à lista.
+O relatório marcou dois passos completos, caminho final vazio, `enqueued=false`
+e `host_failed=false`. O processo terminou com código3 porque esse harness
+usa o limite de ticks como saída; não houve falha do host. O PPM temporário foi
+apagado. Isso confirma o abrir/voltar lógico com os dados comerciais, não uma
+comparação visual com a interface original. A janela de gameplay ainda é
+provisória.
+
+No serviço Pizza, o avatar percorreu32 callbacks de rota usando a forma de
+`GotoRelativePosition` da House07. Em seguida, a avaliação parou em scope26,
+índice261. Simitone identifica scope26 como leitura Tuning e o índice aponta
+para BCON4098, constante5, pertencente ao recurso privado do telefone. O
+avaliador isolado ainda não fornece esse BCON; Pizza não foi concluído.
+
 ## TS1 Budget — primeiro perfil de orçamento familiar
 
 Opcode25 no runtime TS1 do Simitone é `VMTS1Budget` (no TSO, o mesmo número

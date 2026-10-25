@@ -403,6 +403,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<HeadlessEntityMove> headless_entity_move;
     bool headless_entity_move_applied=false;
     struct HeadlessInteraction {std::int16_t id;std::uint64_t tick;};
+    struct HeadlessWindowMenuStep {
+        enum class Kind {open_category,back,select_action};
+        Kind kind;std::size_t index=0;
+    };
+    std::vector<HeadlessWindowMenuStep> headless_window_menu_steps;
+    std::size_t headless_window_menu_step_index=0;
+    bool headless_window_menu_script_complete=false;
+    std::vector<std::vector<std::string>> headless_window_menu_path_history;
     std::optional<std::int16_t> headless_window_interaction;
     std::optional<std::uint64_t> headless_window_stand_tick;
     struct HeadlessWindowGoHere {std::uint32_t x,y;std::uint8_t level;std::uint64_t tick;};
@@ -627,6 +635,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
             headless_window_interaction=static_cast<std::int16_t>(id);
         }
+        else if((option=="--headless-window-menu-open"||option=="--headless-window-menu-select")&&n+1<argc){
+            const auto index=selector(argv[++n]);
+            if(index>31||headless_window_menu_steps.size()>=32)
+                throw odh::FormatError("headless menu script exceeds its bounded 32-step/index profile");
+            headless_window_menu_steps.push_back({option=="--headless-window-menu-open"?
+                HeadlessWindowMenuStep::Kind::open_category:HeadlessWindowMenuStep::Kind::select_action,
+                static_cast<std::size_t>(index)});
+        }
+        else if(option=="--headless-window-menu-back"){
+            if(headless_window_menu_steps.size()>=32)
+                throw odh::FormatError("headless menu script exceeds its bounded 32-step profile");
+            headless_window_menu_steps.push_back({HeadlessWindowMenuStep::Kind::back,0});
+        }
         else if(option=="--headless-window-stand-tick"&&!headless_window_stand_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
             if(!tick)throw odh::FormatError("headless window Stand tick must be positive");
@@ -762,6 +783,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(headless_window_interaction&&(!headless_main||!render_saved_id||!render_output||!render_floors||
        headless_interaction||headless_stand||headless_go_here||headless_portal||render_tick||ticks_limit<2))
         throw odh::FormatError("--headless-window-interaction requires a saved-avatar rendered Main session, a lot pick buffer and at least two ticks; other scheduled actions are not allowed");
+    if(!headless_window_menu_steps.empty()&&!headless_window_interaction)
+        throw odh::FormatError("headless window menu steps require --headless-window-interaction");
     if(headless_window_stand_tick&&(!headless_window_interaction||*headless_window_stand_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-stand-tick requires --headless-window-interaction and a tick below the limit");
     if(headless_window_go_here&&(!headless_window_interaction||!headless_window_stand_tick||
@@ -3371,8 +3394,20 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_LINUX_TEXT_CODEC
         label=odh_host::legacy_text_to_utf8(label,item.label_language,2048);
 #endif
-        if(indicate_category)label+="...";
+        if(indicate_category&&(label.size()<3||label.compare(label.size()-3,3,"...")!=0))label+="...";
         return label;
+    };
+    const auto current_pie_menu_path_labels=[&]{
+        std::vector<std::string> labels;
+        const auto model=current_interaction_pie_menu();
+        const std::vector<odh::PieMenuItem>* items=&model;
+        for(const auto index:render_pie_menu_path){
+            if(index>=items->size())break;
+            const auto& item=(*items)[index];
+            labels.push_back(pie_menu_item_label(item,item.interaction_row==std::nullopt&&!item.children.empty()));
+            items=&item.children;
+        }
+        return labels;
     };
     const auto activate_pie_menu_selection=[&]{
         auto model=current_interaction_pie_menu();
@@ -5064,7 +5099,7 @@ struct PlacementCandidateProbe {
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
         if(!headless_window_interaction||headless_window_menu_empty||headless_window_input_index<headless_window_inputs.size()||
-           !render_lot||!render_lot_evidence||render_interaction_enqueued)return;
+           !render_lot||!render_lot_evidence)return;
         if(!headless_window_object_click_queued){
             const auto& picks=render_lot_evidence->object_pick_ids;
             if(!render_lot_evidence->pick_width||picks.empty())
@@ -5081,6 +5116,16 @@ struct PlacementCandidateProbe {
             return;
         }
         if(!render_selection||!render_interactions)return;
+        if(!headless_window_menu_steps.empty()){
+            const auto path=current_pie_menu_path_labels();
+            if(headless_window_menu_path_history.empty()||headless_window_menu_path_history.back()!=path)
+                headless_window_menu_path_history.push_back(path);
+            if(headless_window_menu_step_index>=headless_window_menu_steps.size()){
+                headless_window_menu_script_complete=true;
+                return;
+            }
+        }
+        if(render_interaction_enqueued)return;
         if(headless_window_menu_click_count>=32)
             throw odh::FormatError("headless pie-menu interaction exceeded 32 selections");
         const auto model=current_interaction_pie_menu();
@@ -5098,8 +5143,28 @@ struct PlacementCandidateProbe {
             items->size(),!render_pie_menu_path.empty());
         if(!layout)throw odh::FormatError("headless pie menu has no visible choice");
         odh_host::WindowInput click;
-        const auto& item=layout->items[render_pie_menu_selected];
-        click.primary_click=std::array<std::int32_t,2>{item.x+item.width/2,item.y+item.height/2};
+        if(!headless_window_menu_steps.empty()){
+            const auto& step=headless_window_menu_steps[headless_window_menu_step_index];
+            if(step.kind==HeadlessWindowMenuStep::Kind::back){
+                if(render_pie_menu_path.empty()||!layout->back_button)
+                    throw odh::FormatError("headless menu script back step has no open category");
+                click.primary_click=std::array<std::int32_t,2>{layout->back_button->x+layout->back_button->width/2,
+                    layout->back_button->y+layout->back_button->height/2};
+            }else{
+                if(step.index>=items->size())throw odh::FormatError("headless menu script index is outside the active menu");
+                const auto& selected=(*items)[step.index];
+                if(step.kind==HeadlessWindowMenuStep::Kind::open_category&&selected.children.empty())
+                    throw odh::FormatError("headless menu open step selected an item without a submenu");
+                if(step.kind==HeadlessWindowMenuStep::Kind::select_action&&!selected.interaction_row)
+                    throw odh::FormatError("headless menu select step selected a category instead of an action");
+                const auto& item=layout->items[step.index];
+                click.primary_click=std::array<std::int32_t,2>{item.x+item.width/2,item.y+item.height/2};
+            }
+            ++headless_window_menu_step_index;
+        }else{
+            const auto& item=layout->items[render_pie_menu_selected];
+            click.primary_click=std::array<std::int32_t,2>{item.x+item.width/2,item.y+item.height/2};
+        }
         headless_window_inputs.push_back(click);
         ++headless_window_menu_click_count;
     };
@@ -7342,6 +7407,30 @@ struct PlacementCandidateProbe {
                         <<",\"test_steps\":"<<test->steps<<",\"test_diagnostic\":"<<json_bytes(test->diagnostic);
                 }
                 std::cout<<'}';
+            }
+            std::cout<<"]}";
+        }
+        std::cout<<",\"menu_script\":";
+        if(headless_window_menu_steps.empty())std::cout<<"null";
+        else {
+            const auto current_path=current_pie_menu_path_labels();
+            std::cout<<"{\"complete\":"<<(headless_window_menu_script_complete?"true":"false")
+                <<",\"steps_completed\":"<<headless_window_menu_step_index
+                <<",\"enqueued\":"<<(render_interaction_enqueued?"true":"false")
+                <<",\"path_history\":[";
+            for(std::size_t path=0;path<headless_window_menu_path_history.size();++path){
+                if(path)std::cout<<',';
+                std::cout<<'[';
+                for(std::size_t item=0;item<headless_window_menu_path_history[path].size();++item){
+                    if(item)std::cout<<',';
+                    std::cout<<json_bytes(headless_window_menu_path_history[path][item]);
+                }
+                std::cout<<']';
+            }
+            std::cout<<"],\"current_path\":[";
+            for(std::size_t item=0;item<current_path.size();++item){
+                if(item)std::cout<<',';
+                std::cout<<json_bytes(current_path[item]);
             }
             std::cout<<"]}";
         }

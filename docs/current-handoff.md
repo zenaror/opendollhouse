@@ -1,5 +1,30 @@
 # Continuidade atual
 
+## Atualização: menu de serviços e primeira rota relativa (2026-10-24)
+
+O harness headless agora aceita passos explícitos para abrir uma categoria,
+voltar ou escolher uma ação, usando o mesmo tratamento de clique da janela.
+Com os dados originais da House07, o telefone136 abriu `Services...` e voltou
+à lista principal. O JSON registrou `complete=true`, dois passos concluídos,
+histórico `[[],["Services..."],[]]` e `enqueued=false`. O processo terminou no
+limite do harness (código3), com `host_failed=false`; não abriu tela virtual e
+removeu o PPM temporário.
+
+O Simitone lê `OldTrapCount` de `GotoRelativePosition`, mas não o usa para
+escolher o destino. O ODH agora aceita o valor5 nos perfis relativos usados
+pela ação de serviço e continua usando o primeiro SLOT temporário. O teste de
+rota passou com esse valor. No teste integrado de Pizza, o avatar andou por32
+callbacks; depois a ação parou em `unsupported read scope 26 index 261`.
+No Simitone, scope26 é Tuning: índice261 aponta para BCON4098, constante5 do
+recurso privado do telefone. O avaliador isolado ainda não conecta essa fonte,
+então a ação não foi concluída. A implementação de rota é parcial e não prova
+que o serviço Pizza terminou.
+
+Build de `odh-person` e `odh-routing-tests` passou; o teste `routing` passou.
+O CTest completo passou 244/244. Próximo: ligar ao avaliador
+isolado a leitura read-only do BCON privado do objeto dono do código e testar a
+ação do telefone até o próximo bloqueio real. A UI atual segue provisória.
+
 ## Atualização: testes do telefone e vizinhos tipados (2026-10-24)
 
 O avaliador isolado de `TestFunction` agora lê o saldo da família sem poder
@@ -8,22 +33,22 @@ GUID pedido. Fixtures sintéticas verificam saldo disponível/negativo, recusa d
 tentativa de escrita, ordem por ID, filtro por GUID e resultado sem vizinho.
 Release compilou e o CTest completo passou 244/244.
 
-No probe com dados originais da House07, a câmera de diagnóstico alcançou o
+No probe anterior com dados originais da House07, a câmera de diagnóstico alcançou o
 telefone136; TTAB129 foi decodificada. O teste `Services.../Pizza` (BHAV8303)
 ficou elegível após a leitura read-only do orçamento. `Call Neighbor` (BHAV8310)
 e `Services.../Butler` (BHAV8331) também ficaram elegíveis; outras linhas ainda
 param em escopos sem suporte. A seleção automática enfileirou a ação Pizza
 (BHAV8312), mas a execução parou com falha do host em `GotoRelativePosition`,
-que ainda não está implementada. Isso prova que a seleção chegou ao alvo e que
-os testes passaram no perfil ODH; não prova a ação concluída nem o abre/volta
-visual do submenu. O probe usou um PPM dentro de pasta temporária, removida ao
+antes da correção parcial documentada abaixo, a ação parou em `GotoRelativePosition`.
+Isso prova que a seleção chegou ao alvo e que os testes passaram no perfil ODH;
+não prova a ação concluída nem o abre/volta visual do submenu. O probe usou um PPM dentro de pasta temporária, removida ao
 fim; nenhum Xvfb ou janela virtual foi iniciado. Os arquivos temporários
 autorizados para limpeza já estavam ausentes.
 
-Próximo: completar a navegação do menu por categoria e o caminho de rota usado
-pela ação de serviço, sem editar os saves originais; manter status e resultado
-da VM separados. A UI final ainda deve seguir os recursos e o comportamento do
-jogo original, com Simitone como referência; este painel continua provisório.
+Próximo: completar a leitura de tuning usada pelo telefone e continuar a ação
+de serviço, sem editar os saves originais; manter status e resultado da VM
+separados. A UI final ainda deve seguir os recursos e o comportamento do jogo
+original, com Simitone como referência; este painel continua provisório.
 
 ## Atualização: BHAV global ligado no avaliador de ações (2026-10-24)
 
