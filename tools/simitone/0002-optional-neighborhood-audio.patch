@@ -1,0 +1,22 @@
+diff --git a/Client/Simitone/Simitone.Client/UI/Panels/UINeighbourhoodSelectionPanel.cs b/Client/Simitone/Simitone.Client/UI/Panels/UINeighbourhoodSelectionPanel.cs
+index b1ee980..7badbfb 100644
+--- a/Client/Simitone/Simitone.Client/UI/Panels/UINeighbourhoodSelectionPanel.cs
++++ b/Client/Simitone/Simitone.Client/UI/Panels/UINeighbourhoodSelectionPanel.cs
+@@ -201,7 +201,7 @@ namespace Simitone.Client.UI.Panels
+             if (config.BGSound != null)
+             {
+                 BgSound = HITVM.Get().PlaySoundEvent(config.BGSound);
+-                BgSound.AddOwner(-25);
++                BgSound?.AddOwner(-25);
+             }
+             Mode = mode;
+             Zoom = Zoom;
+@@ -366,6 +366,8 @@ namespace Simitone.Client.UI.Panels
+                     switch (evt)
+                     {
+                         case UIMouseEventType.MouseUp:
++                            Console.WriteLine("Neighborhood selection: house=" + houseNumber
++                                + " mouse=" + state.MouseState.X + "," + state.MouseState.Y);
+                             HITVM.Get().PlaySoundEvent(FSO.Client.UI.Model.UISounds.NeighborhoodClick);
+                             selectionCallback(houseNumber); break;
+                         case UIMouseEventType.MouseOver:

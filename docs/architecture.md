@@ -8,9 +8,11 @@ The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
 controles, simulação e cobertura das expansões continuam tendo o original como
 critério final. Paridade Simitone é um marco intermediário, não a conclusão.
 
-Complemento humano de 2026-10-25: recriar a meta, mas mantê-la pausada até
-nova autorização. Os passos abaixo são planejamento, não ordem para iniciar
-checkout, instalação, implementação ou testes agora. Linux é o primeiro ambiente
+Complemento humano de 2026-10-25: a meta foi recriada e inicialmente pausada;
+a instrução posterior determina respeitar seu status real, inclusive retomadas.
+Nesta retomada, `get_goal` confirmou active. Uma pausa futura impede execução;
+o texto histórico da pausa não deve cancelar uma retomada na interface.
+Linux é o primeiro ambiente
 para validar a experiência; a arquitetura deve considerar os demais alvos desde
 o início. Wii U entra como alvo desejado adicional, sem viabilidade confirmada.
 
@@ -35,7 +37,12 @@ para C++. A inspeção estática encontrou projeto net9.0, MonoGame DesktopGL,
 receita de build Linux e seleção explícita da pasta de dados. Isso não prova
 execução local. O clone de consulta está em
 `e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`; seu FreeSO
-`7e76c1960252ddd033d8937d5edb47d326f5b69c` não está materializado. A máquina
+`7e76c1960252ddd033d8937d5edb47d326f5b69c` não estava materializado na inspeção
+inicial; agora está no checkout de trabalho separado `refs/work/Simitone-linux`.
+A avaliação inicial compilou o Desktop e mostrou vizinhança/seleção de House07,
+mas encontrou exceções de simulação após entrar no lote. A base continua em
+avaliação, com reprodução e riscos em [simitone-linux-evaluation.md](simitone-linux-evaluation.md).
+A máquina
 possui SDK/runtime .NET 10, sem runtime 9 listado na avaliação; conferir o
 ambiente e escolher dependências compatíveis na preparação efetiva.
 

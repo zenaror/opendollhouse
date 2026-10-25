@@ -5,9 +5,12 @@ progressivo às sete expansões e ao conteúdo personalizado clássico.
 Direção autorizada em 2026-10-25: partir de uma base Simitone/FreeSO funcional
 no Linux e corrigir suas diferenças em relação ao original, incluindo interface,
 controles e regras do jogo. O primeiro candidato para avaliação é o fork
-comunitário alexjyong, mantendo inicialmente C#. A base ainda não foi compilada
-ou executada neste projeto; a adoção depende da validação prática e da revisão
-das licenças e dependências. O plano está em [docs/architecture.md](docs/architecture.md).
+comunitário alexjyong, mantendo inicialmente C#. A primeira avaliação já
+compilou o Desktop, abriu a vizinhança e entrou na House07 em tela isolada,
+mas encontrou exceções de simulação no lote. A base ainda não está aprovada
+como jogável nem adotada definitivamente. Evidências e reprodução em
+[avaliação Simitone](docs/simitone-linux-evaluation.md); plano em
+[docs/architecture.md](docs/architecture.md).
 
 Estado do motor próprio preservado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
@@ -28,8 +31,10 @@ próprias; não há build ou teste de hardware do Switch validado neste projeto.
 Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão
 de CI ou máquinas dedicadas antes de qualquer declaração de suporte.
 
-Desenvolvimento pausado por solicitação humana em 2026-10-25: a meta será
-recriada com essa direção, sem iniciar a execução até nova autorização.
+O desenvolvimento segue o status atual da meta na interface. A meta foi
+recriada e inicialmente pausada; uma retomada posterior autoriza continuar.
+Consultar a meta e a OMM antes de executar, sem usar o texto histórico da pausa
+para sobrepor seu status atual.
 
 ## Dados do jogo
 

@@ -5,12 +5,20 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Adicionado
+
+- Primeira avaliação da base Simitone no Linux: compilação, vizinhança e seleção
+  da família Newbie em tela isolada. A entrada na casa ainda apresenta falhas
+  de simulação; não é uma build jogável. O teste usa cópias dos dados e saves,
+  registra capturas/logs e encerra a tela virtual. Veja
+  [a avaliação](docs/simitone-linux-evaluation.md).
+
 ### Alterado
 
 - O planejamento passa a considerar os outros sistemas desde a avaliação
   inicial da base, separando o jogo dos serviços de cada plataforma. Wii U
-  entra como alvo desejado, sem suporte confirmado. A execução permanece
-  pausada por solicitação do usuário.
+  entra como alvo desejado, sem suporte confirmado. A execução acompanha o
+  status atual da meta; a pausa inicial pode ser substituída por uma retomada.
 
 - O caminho principal passa a ser avaliar uma base Simitone/FreeSO no Linux e
   aproximá-la da experiência original, aproveitando os sistemas já integrados.

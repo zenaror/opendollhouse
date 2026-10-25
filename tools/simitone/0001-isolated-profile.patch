@@ -1,0 +1,22 @@
+diff --git a/Client/Simitone/Simitone.Desktop/Program.cs b/Client/Simitone/Simitone.Desktop/Program.cs
+index f40ce46..2924c1c 100644
+--- a/Client/Simitone/Simitone.Desktop/Program.cs
++++ b/Client/Simitone/Simitone.Desktop/Program.cs
+@@ -65,8 +65,17 @@ namespace Simitone.Windows
+                 }
+             }
+             userDir = userDir.Replace('\\', '/');
++            // Allow hosts and test runners to isolate saves without changing HOME.
++            var explicitUserDir = Environment.GetEnvironmentVariable("ODH_USER_DIR");
++            if (!string.IsNullOrWhiteSpace(explicitUserDir))
++            {
++                if (!Path.IsPathFullyQualified(explicitUserDir))
++                    throw new ArgumentException("ODH_USER_DIR must be an absolute path.");
++                userDir = Path.GetFullPath(explicitUserDir);
++            }
+             FSOEnvironment.UserDir = userDir;
+             Directory.CreateDirectory(FSOEnvironment.UserDir);
++            Console.WriteLine("User data directory: " + FSOEnvironment.UserDir);
+ 
+             ILocator gameLocator;
+             if (linux && Directory.Exists("/Users"))

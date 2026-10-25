@@ -1,0 +1,49 @@
+diff --git a/TSOClient/tso.simantics/Engine/VMStackFrame.cs b/TSOClient/tso.simantics/Engine/VMStackFrame.cs
+index 29bb420..f0ebf8c 100644
+--- a/TSOClient/tso.simantics/Engine/VMStackFrame.cs
++++ b/TSOClient/tso.simantics/Engine/VMStackFrame.cs
+@@ -161,6 +161,11 @@ namespace FSO.SimAntics.Engine
+             else if (input.RoutineID >= 4096) Routine = (VMRoutine)ScopeResource.GetRoutine(input.RoutineID);
+             else Routine = (VMRoutine)Global.Resource.GetRoutine(input.RoutineID);
+ 
++            if (Routine == null && Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1")
++                Console.Error.WriteLine("Unresolved saved routine: id=" + input.RoutineID
++                    + " owner=" + input.CodeOwnerGUID + " ip=" + input.InstructionPointer
++                    + " caller=" + input.Caller + " callee=" + input.Callee);
++
+             InstructionPointer = (byte)input.InstructionPointer;
+             Caller = context.VM.GetObjectById(input.Caller);
+             Callee = context.VM.GetObjectById(input.Callee);
+diff --git a/TSOClient/tso.simantics/Engine/VMThread.cs b/TSOClient/tso.simantics/Engine/VMThread.cs
+index 6e81989..f449b52 100644
+--- a/TSOClient/tso.simantics/Engine/VMThread.cs
++++ b/TSOClient/tso.simantics/Engine/VMThread.cs
+@@ -359,6 +359,21 @@ namespace FSO.SimAntics.Engine
+             }
+             catch (Exception e)
+             {
++                if (Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1")
++                {
++                    Console.Error.WriteLine("SimAntics exception: " + e);
++                    for (var frameIndex = 0; frameIndex < Stack.Count; frameIndex++)
++                    {
++                        var diagnosticFrame = Stack[frameIndex];
++                        Console.Error.WriteLine("  frame=" + frameIndex
++                            + " type=" + diagnosticFrame?.GetType().Name
++                            + " routine=" + diagnosticFrame?.Routine?.ID
++                            + " instructions=" + diagnosticFrame?.Routine?.Instructions?.Length
++                            + " ip=" + diagnosticFrame?.InstructionPointer
++                            + " caller=" + diagnosticFrame?.Caller?.ObjectID
++                            + " callee=" + diagnosticFrame?.Callee?.ObjectID);
++                    }
++                }
+ #if IDE_COMPAT
+                 if (!IsCheck && VM.SignalBreaks)
+                 {
+@@ -1166,4 +1181,4 @@ namespace FSO.SimAntics.Engine
+         Immediate = 7,
+         Reset = 8
+     }
+-}
+\ No newline at end of file
++}

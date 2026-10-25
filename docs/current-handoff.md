@@ -1,5 +1,45 @@
 # Continuidade atual
 
+## Retomada: primeira compilação e entrada Simitone (2026-10-25)
+
+A instrução humana posterior manda respeitar o status real da meta. `get_goal`
+retornou active nesta retomada; isso substitui a pausa inicial registrada abaixo.
+O texto histórico de pausa ainda está na meta, cuja API não permite edição;
+não usá-lo para cancelar uma retomada na interface. Pausar novamente se o status
+voltar a paused. Objetivo completo continua incompleto, sem alteração de escopo.
+
+Checkout de trabalho `refs/work/Simitone-linux` ignorado, frontend e36e83f e
+FreeSO7e76c196 exatos; referências originais preservadas. Desktop Release sem
+adaptações compilou (788 avisos, zero erros). Saída de build direta faltava Eto;
+publicação autossuficiente em `build/simitone-linux`, runtime9.0.21, resolve a
+cópia das bibliotecas. Receita upstream conserva avisos de dependências antigas;
+não é aprovação para distribuição. Não foram inicializados submódulos extras
+nem executados instaladores automáticos.
+
+Patches em `tools/simitone/`: perfil absoluto `ODH_USER_DIR`, verificação opcional
+do som de fundo que impedia abrir com `-nosound`, identificação da casa no log
+e diagnóstico opt-in das exceções de VM/rotinas salvas não resolvidas.
+`window_smoke.py` copia os dados para pasta temporária, isola perfil/Xvfb e
+registra hashes de seis arquivos comerciais, executáveis/assemblies e capturas.
+A UI usa alvos do quadro anterior; esperar após mover o mouse evita selecionar
+um alvo anterior durante a automação. Clique estável selecionou House07 e
+mostrou Bob/Betty; Enter Lot entrou, mas exibiu exceções de objetos, incluindo
+uma lâmpada. A base não foi declarada jogável. O diagnóstico confirmou oito
+frames importados com Routine null: objeto110/4109/GUID2564857523,
+133/4109/3749178898,136/4096+4113/1797669432,152/4109/744145731,
+153/4096/2099284406,157/4096+4109/3127372498. O retorno de filho tenta ler o
+pai sem rotina e falha em VMStackFrame.GetCurrentInstruction/Pop. Próximo:
+conferir recurso/archive escolhido e versões OBJT/Init/Main/OBJD. O conversor
+não consulta versões OBJT, cujo comentário menciona reset por incompatibilidade;
+essa hipótese exige confirmação no original antes de implementar migração.
+Não esconder diálogos, remover objetos, descartar frames ou simular sucesso.
+O gate final durou28s, preservou seis hashes e encerrou aplicação/Xvfb, removendo
+perfil e cópia temporária. Evidência em `house07-unresolved-routines/`.
+
+Ver [simitone-linux-evaluation.md](simitone-linux-evaluation.md) para comandos,
+evidência, portabilidade e limites de licença. Os quatro arquivos C++ pendentes
+abaixo continuam fora deste checkpoint, sem novas alterações ou validação.
+
 ## Pausa e planejamento multiplataforma (2026-10-25)
 
 Instrução humana mais recente: a meta anterior foi removida; recriar com a nova

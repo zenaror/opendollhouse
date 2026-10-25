@@ -14,9 +14,11 @@
   milestones, com testes e checkpoints. Pela direção de 2026-10-25 abaixo,
   restrições de New 3DS serão reavaliadas sem bloquear a base Linux;
   resultados Linux não validam consoles.
-- Instrução humana vigente de 2026-10-25: recriar a meta e mantê-la pausada;
-  não iniciar desenvolvimento, preparação de checkouts ou builds até nova
-  autorização. Linux é o primeiro ambiente de validação, não o único alvo.
+- Instrução humana vigente de 2026-10-25: respeitar o status real da meta.
+  Conferir `get_goal` antes de continuar: paused impede execução; active após
+  retomada permite seguir. A pausa inicial não deve sobrepor uma retomada
+  posterior na interface. Na última consulta desta retomada, status active.
+  Linux é o primeiro ambiente de validação, não o único alvo.
   Planejar desde já separação de simulação/dados e serviços de plataforma,
   gráficos, áudio, entrada e armazenamento, com consumo de recursos explícito
   e dependências substituíveis. Conferir riscos de C#/.NET para os consoles

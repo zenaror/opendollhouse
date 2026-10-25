@@ -35,6 +35,17 @@ Revisões de referência identificadas em 2026-10-13:
 
 ## Checkouts locais de consulta
 
+### Checkout de avaliação separado
+
+Após a retomada da meta em 2026-10-25, a avaliação usa
+`refs/work/Simitone-linux`, com frontend alexjyong
+`e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab` e FreeSO
+`7e76c1960252ddd033d8937d5edb47d326f5b69c`. Essa cópia pode receber patches
+de desenvolvimento; não altera as revisões ou arquivos dos clones de consulta
+abaixo. Patches reproduzíveis ficam em `tools/simitone/`. A avaliação e os
+limites de atribuição por componente estão em
+[simitone-linux-evaluation.md](simitone-linux-evaluation.md).
+
 ### Referência comercial adicional: Legacy Collection
 
 Em 2026-10-15, o usuário adicionou `../referencias/The Sims Legacy Collection`
