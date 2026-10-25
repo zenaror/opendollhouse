@@ -138,8 +138,11 @@ escolher a ação, o morador foi até a geladeira e a abriu. A captura após dez
 segundos é `reports/pie-menu-window/launcher-house07-snack-click.png` (SHA256
 `cf9a93d2e4b90c50f47cfba03b812634c71b05e99838801425b8594d0f9147bf`). Ela
 comprova início visível da ação, sem confirmar seu retorno ou a refeição
-completa. A carga inicial levou cerca de 78 segundos neste perfil temporário.
-O launcher e a janela Xvfb foram encerrados depois da captura.
+completa. Uma medição controlada posterior marcou o lote pronto em 8,23s num
+perfil temporário novo e 8,22s na repetição, com o cache de arquivos do Linux
+já aquecido. A estimativa antiga de 78s incluía espera até a captura e não
+marcava o instante de abertura. O launcher e a janela Xvfb foram encerrados
+depois da captura.
 
 Em outra execução com o mesmo caminho integrado, o recibo JSON após 35 segundos
 da seleção registrou `returned_true` para BHAV4103. O ator estava em

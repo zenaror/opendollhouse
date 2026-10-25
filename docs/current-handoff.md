@@ -12,13 +12,15 @@ texto/destaque e outras partes continuam provisórios. Não é comparação com 
 captura Simitone/original.
 
 Correção do diagnóstico anterior: os primeiros perfis temporários não tinham
-idioma salvo e abriram o seletor de idioma. O clique feito aos 78s selecionou
-uma língua e só então começou o carregamento do lote; as capturas preta e
-"Carregamento..." foram transições dessa tentativa, não prova de travamento.
-Repeti com `tools/play_linux.py --mode 1 --house 7 --resident-id 48
---language 1`. House07 apareceu aos 78s com os dois moradores e o HUD. O clique na
-geladeira abriu `Have A Snack`; selecionar a opção iniciou a ação e, dez
-segundos depois, a captura mostrou o morador diante da geladeira aberta.
+idioma salvo e abriram o seletor de idioma. O clique feito depois de esperar
+cerca de 78s selecionou uma língua; esse intervalo não foi uma medida do tempo
+de carga do lote. As capturas preta e "Carregamento..." eram transições, não
+prova de travamento. Uma captura posterior com `--language 1` foi feita após
+espera semelhante, mas também não marcou o instante exato em que o lote ficou
+pronto. A medição controlada mais recente abaixo substitui essa estimativa.
+Com `tools/play_linux.py --mode 1 --house 7 --resident-id 48 --language 1`, o
+clique na geladeira abriu `Have A Snack`; selecionar a opção iniciou a ação e,
+dez segundos depois, a captura mostrou o morador diante da geladeira aberta.
 Capturas locais ignoradas pelo Git:
 `launcher-house07-explicit-language.png` (SHA256
 `06d9f22ce81c943a77593c69eae7afad9d0e4bb28eb50bac8755ee4f80646f4d`) e
@@ -52,6 +54,23 @@ esvaziou neste percurso; não prova que toda a simulação autônoma da casa
 terminaria nem que o efeito visual/comportamental da refeição corresponde ao
 jogo original. Não foi aberta tela virtual neste probe.
 
+## Atualização: tempo de abertura do lote medido (2026-10-25)
+
+Com `xvfb-run`, perfil XDG temporário, idioma 1 e House07/residente48, usei o
+título com relógio e necessidades (por exemplo, `OpenDollhouse | 7:01 |
+Hunger ...`) como sinal de que o lote já estava jogável. A primeira abertura
+com perfil novo levou 8,23s; a repetição no mesmo perfil levou 8,22s. Ambas
+fecharam com Escape e código0. O cache de arquivos do Linux já estava aquecido
+por execuções anteriores, então esses números não medem um início após
+reinicialização ou com cache frio. O perfil temporário foi removido e nenhum
+processo Xvfb ou do jogo permaneceu.
+
+Um probe anterior esperou pelo título incorreto `OpenDollhouse Main preview`.
+O launcher integrado troca o título para o relógio/necessidades quando o lote
+abre; por isso, o probe esperou até ser fechado e pareceu um carregamento de
+mais de quatro minutos. A janela já estava no lote. Esse resultado anterior
+não é evidência de lentidão nem de travamento.
+
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
 O layout do menu agora posiciona as oito primeiras opções a 60 pixels do
@@ -63,10 +82,10 @@ e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
 passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
 prova paridade visual com o Simitone ou com o jogo original.
 
-Próximo: comparar início frio e repetição quente do launcher com idioma
-explícito e medir os custos; depois continuar a reconstrução visual do menu/HUD
-conforme Simitone e dados locais, mantendo cada resultado limitado ao que a
-captura ou o trace demonstra.
+Próximo: continuar a reconstrução visual do menu/HUD conforme Simitone e dados
+locais; fazer uma medição após reinicialização apenas quando isso puder ser
+feito sem confundir o tempo de espera por um erro de título. Manter cada
+resultado limitado ao que a captura ou o trace demonstra.
 
 ## Atualização: BCON privado e retorno da Pizza (2026-10-24)
 
