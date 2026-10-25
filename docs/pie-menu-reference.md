@@ -124,6 +124,16 @@ captura do jogo original antes de definir sua composição.
 
 ## Captura da janela ODH
 
+Depois de ajustar o raio para 60 px, `odh-person --saved-world-main
+--render-window` abriu House07 em Xvfb 800×600; um clique na geladeira exibiu
+`Have A Snack`. A captura
+`reports/pie-menu-window/house07-fridge-menu-assets-radius60.png` (SHA256
+`adfcabfa525f40d2b5d1f08de81eb33cfb0ccf75b322aa25ab6431ca2ceb75de`) mostra
+PieBack/PieButt carregados do `UIGraphics.far` externo. Ela não demonstra
+paridade visual; o launcher integrado ainda não chegou ao lote na tentativa
+isolada registrada em [current-handoff.md](current-handoff.md). O wrapper
+`xvfb-run` encerrou a tela ao final.
+
 Uma janela X11 isolada com os dados House07 abriu a casa e o HUD de diagnóstico.
 Clique real pela janela na geladeira mostrou `Have A Snack`; clicar na opção
 fez o avatar se mover até a geladeira e o programa permaneceu sem falha. O

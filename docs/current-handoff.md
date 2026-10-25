@@ -1,5 +1,22 @@
 # Continuidade atual
 
+## Atualização: captura do menu com raio Simitone (2026-10-25)
+
+O preview direto de `odh-person --saved-world-main --render-window`, em Xvfb
+800×600, mostrou House07 e a ação `Have A Snack` ao clicar na geladeira. A
+captura local ignorada pelo Git é
+`reports/pie-menu-window/house07-fridge-menu-assets-radius60.png`, SHA256
+`adfcabfa525f40d2b5d1f08de81eb33cfb0ccf75b322aa25ab6431ca2ceb75de`. Ela
+confirma a arte PieBack/PieButt do `UIGraphics.far` e a posição ajustada; o HUD,
+texto/destaque e outras partes continuam provisórios. Não é comparação com uma
+captura Simitone/original.
+
+No mesmo teste, o caminho integrado `tools/play_linux.py` alcançou a seleção de
+morador, mas a execução com morador48 mostrou "Carregamento..." aos18s e uma
+captura preta aos68s. O limite de78s encerrou o processo. Isso não explica a
+causa nem valida entrada jogável pelo launcher. `xvfb-run` terminou e não há
+processo de tela virtual ou `odh-person` persistente.
+
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
 O layout do menu agora posiciona as oito primeiras opções a 60 pixels do
