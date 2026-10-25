@@ -58,12 +58,12 @@ bool household_selector_button_hit(std::uint32_t width,std::uint32_t height,
     return x>=rect.x&&y>=rect.y&&x<rect.x+rect.width&&y<rect.y+rect.height;
 }
 
-std::optional<std::int16_t> household_selector_pick(const std::vector<std::int16_t>& residents,
+std::optional<std::int16_t> household_selector_pick(const std::vector<HouseholdSelectorResident>& residents,
     std::uint32_t width,std::uint32_t height,std::int32_t x,std::int32_t y) {
     if(residents.size()>8||width<160||height<120)return std::nullopt;
     for(std::size_t i=0;i<residents.size();++i){
         const auto rect=card_rect(i,residents.size(),width);
-        if(x>=rect.x&&y>=rect.y&&x<rect.x+rect.width&&y<rect.y+rect.height)return residents[i];
+        if(x>=rect.x&&y>=rect.y&&x<rect.x+rect.width&&y<rect.y+rect.height)return residents[i].runtime_id;
     }
     return std::nullopt;
 }
@@ -79,7 +79,7 @@ void draw_household_selector_button(odh::RasterFrame& frame,std::uint8_t languag
     (void)draw_text_overlay(frame,kButtonLabels[language-1],language,style);
 }
 
-void draw_household_selector(odh::RasterFrame& frame,const std::vector<std::int16_t>& residents,
+void draw_household_selector(odh::RasterFrame& frame,const std::vector<HouseholdSelectorResident>& residents,
     std::int16_t selected,std::uint8_t language) {
     if(language<1||language>kPanelLabels.size()||residents.empty()||residents.size()>8||
        frame.width<160||frame.height<120||
@@ -92,12 +92,12 @@ void draw_household_selector(odh::RasterFrame& frame,const std::vector<std::int1
     (void)draw_text_overlay(frame,kPanelLabels[language-1],language,heading);
     for(std::size_t i=0;i<residents.size();++i){
         const auto rect=card_rect(i,residents.size(),frame.width);
-        const bool active=residents[i]==selected;
+        const bool active=residents[i].runtime_id==selected;
         fill(frame,rect,active?Color{54,108,133,255}:Color{45,52,58,255});
         TextOverlayStyle style;style.x=rect.x;style.y=rect.y;style.width=rect.width;
         style.height=rect.height;style.font_size_px=11;style.padding=1;
         style.foreground={250,248,230,255};style.background=active?Color{54,108,133,0}:Color{45,52,58,0};
-        (void)draw_text_overlay(frame,"Sim "+std::to_string(residents[i]),language,style);
+        (void)draw_text_overlay(frame,residents[i].label,language,style);
     }
 }
 

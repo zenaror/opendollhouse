@@ -4752,6 +4752,33 @@ struct PlacementCandidateProbe {
 #endif
     };
     std::optional<odh_host::StatusHud> captured_status_hud;
+    const auto household_selector_residents=[&] {
+        std::vector<odh_host::HouseholdSelectorResident> residents;
+        if(!saved_world_main)return residents;
+        residents.reserve(household_runtime.size()+1);
+        const auto append=[&](std::int16_t runtime_id,std::uint32_t guid) {
+            std::string label;
+            if(neighbors) {
+                const auto neighbor_id=neighbors->id_for_guid(guid);
+                const auto* record=neighbor_id?neighbors->by_id(*neighbor_id):nullptr;
+                if(record&&!record->name.empty()) {
+#ifdef ODH_HAVE_LINUX_TEXT_CODEC
+                    try { label=odh_host::legacy_text_to_utf8(record->name,game_language,256); }
+                    catch(const std::exception&) { label.clear(); }
+#endif
+                    label.erase(std::remove_if(label.begin(),label.end(),[](unsigned char byte) {
+                        return byte<0x20||byte==0x7f;
+                    }),label.end());
+                }
+            }
+            if(label.empty())label="Sim "+std::to_string(runtime_id);
+            residents.push_back({runtime_id,std::move(label)});
+        };
+        append(runtime_avatar_id,person.binding->guid);
+        for(const auto& member:household_runtime)
+            append(member->id,member->data.binding->guid);
+        return residents;
+    };
     std::vector<std::string> rendered_bound_appearances;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
@@ -4884,10 +4911,8 @@ struct PlacementCandidateProbe {
             if(saved_world_main&&captured_status_hud){
                 odh_host::draw_household_selector_button(frame.image,game_language);
                 if(household_selector_open){
-                    std::vector<std::int16_t> resident_ids{runtime_avatar_id};
-                    resident_ids.reserve(household_runtime.size()+1);
-                    for(const auto& member:household_runtime)resident_ids.push_back(member->id);
-                    odh_host::draw_household_selector(frame.image,resident_ids,active_household_actor,game_language);
+                    const auto residents=household_selector_residents();
+                    odh_host::draw_household_selector(frame.image,residents,active_household_actor,game_language);
                 }
             }
 #endif
@@ -5463,16 +5488,14 @@ struct PlacementCandidateProbe {
                                                                              render_lot_evidence->pick_height);
                     if(click_x>=panel.x&&click_y>=panel.y&&click_x<panel.x+panel.width&&
                        click_y<panel.y+panel.height){
-                        std::vector<std::int16_t> resident_ids{runtime_avatar_id};
-                        resident_ids.reserve(household_runtime.size()+1);
-                        for(const auto& member:household_runtime)resident_ids.push_back(member->id);
-                        selector_resident_pick=odh_host::household_selector_pick(resident_ids,
+                        const auto residents=household_selector_residents();
+                        selector_resident_pick=odh_host::household_selector_pick(residents,
                             render_lot_evidence->pick_width,render_lot_evidence->pick_height,click_x,click_y);
                         household_selector_open=false;
                         household_selector_click_consumed=true;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
                         session_log.event(std::string("UI household selector click x=")+std::to_string(click_x)+
-                            " y="+std::to_string(click_y)+" residents="+std::to_string(resident_ids.size())+
+                            " y="+std::to_string(click_y)+" residents="+std::to_string(residents.size())+
                             " selected="+(selector_resident_pick?std::to_string(*selector_resident_pick):"none"));
 #endif
                     }else household_selector_open=false;

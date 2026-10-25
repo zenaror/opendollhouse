@@ -1,5 +1,19 @@
 # Continuidade atual
 
+## Atualização: nomes dos moradores no seletor (2026-10-24)
+
+O seletor agora usa o GUID de cada Sim para localizar seu registro em NBRS e
+mostrar o nome da vizinhança, convertido conforme o idioma selecionado. Se o
+registro ou a conversão falhar, aparece o ID interno. O ID continua sendo a
+chave que troca o Sim ativo. O teste confirma que trocar o texto do cartão não
+muda o destino da seleção e que o desenho exibe o nome recebido.
+
+Build de `odh-person` e `odh-linux-household-selector-tests` passou. CTest dos
+casos `linux_household_selector`, `linux_motive_panel`, `linux_text_renderer`
+e `neighbor_context` passou (4/4). Isso valida o vínculo e a renderização do
+rótulo em testes; ainda falta conferir os nomes na janela com os dados reais e
+criar retratos. A interface segue provisória.
+
 ## Atualização: seletor de moradores no lote Linux (2026-10-24)
 
 O botão “Sims” no rodapé abre uma faixa com cartões dos moradores já carregados
@@ -14,13 +28,13 @@ segundo cartão selecionado e os valores daquele Sim. O teste usou dados do jogo
 somente para leitura; o perfil de jogador foi temporário. A janela terminou com
 status 0 e não restou processo Xvfb.
 
-Os cartões mostram IDs internos porque ainda não temos uma fonte confirmada
-para nomes e retratos. Essa faixa e o painel de motivos continuam provisórios;
+Os cartões mostram IDs internos porque ainda não tínhamos ligado a fonte de
+nomes e retratos. Essa faixa e o painel de motivos continuam provisórios;
 o objetivo segue sendo reconstruir a interface original/Simitone em partes
 funcionais, usando arte original quando couber. `odh-person` e os testes de UI
 compilaram; `linux_household_selector`, `linux_motive_panel`, `status_hud` e
 `linux_text_renderer` passaram (4/4). Ainda faltam categorias reais, retratos,
-nomes e comparação visual do conjunto com o jogo/Simitone.
+validação visual dos nomes e comparação visual do conjunto com o jogo/Simitone.
 
 ## Atualização: origem dos nomes do painel de motivos (2026-10-25)
 
