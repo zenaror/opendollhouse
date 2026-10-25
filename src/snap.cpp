@@ -67,7 +67,8 @@ VmPrimitive Snap::primitive() {
         const auto index=static_cast<std::uint16_t>(i.operands[0]|(i.operands[1]<<8));
         const auto mode=static_cast<std::uint16_t>(i.operands[2]|(i.operands[3]<<8));
         if((mode!=3&&!(global_slot_table_&&mode==4)) ||
-           (i.operands[4]!=0 && i.operands[4]!=2 && i.operands[4]!=4) || i.operands[5] || i.operands[6] || i.operands[7])
+           (i.operands[4]!=0 && i.operands[4]!=2 && i.operands[4]!=4 && i.operands[4]!=6) ||
+           i.operands[5] || i.operands[6] || i.operands[7])
             return fail("snap operand profile not implemented");
         const auto* object=world_.find(object_);const auto* actor=world_.find(frame.context.caller);
         if(!object || object->generation!=generation_ || frame.context.stack_object!=object_ ||
@@ -109,9 +110,8 @@ VmPrimitive Snap::primitive() {
                 return {world_.place_on_floor(actor_id,destination)?PrimitiveDisposition::goto_true:
                     PrimitiveDisposition::goto_false,{}};
             }
-            if(i.operands[4]==2) {
-                if(slots_.version!=10 || binding_.slot_table!=128 || index!=1 || !shoo_sitting_exit(*route))
-                    return fail("Snap Shoo flag outside the exact sitting-exit profile");
+            if(i.operands[4]==2&&slots_.version==10&&binding_.slot_table==128&&index==1&&
+               shoo_sitting_exit(*route)) {
                 if(object->position->direction&1) return fail("sitting-exit Snap diagonal object geometry not implemented");
                 if(actor->position->level!=object->position->level)
                     return fail("sitting-exit Snap floor level unsupported");
@@ -140,6 +140,8 @@ VmPrimitive Snap::primitive() {
                 return {world_.place_on_floor(actor_id,destination)?PrimitiveDisposition::goto_true:
                     PrimitiveDisposition::goto_false,{}};
             }
+            if(i.operands[4]==2&&!floor_exit(*route))
+                return fail("Snap Shoo flag outside the supported sitting or floor-exit profiles");
             const auto exit=floor_exit(*route);
             if(slots_.version!=10 || !exit) return fail("snap floor SLOT profile not implemented");
             if(!placement_validator_) return fail("snap floor placement validator missing");

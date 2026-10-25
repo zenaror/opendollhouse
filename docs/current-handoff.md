@@ -1,5 +1,44 @@
 # Continuidade atual
 
+## Estado atual: retomada local Route45 ainda sem gate real (2026-10-25)
+
+O pacote de sessão carrega a seção opcional `ROUT`, com o caminho local Route45
+já escolhido e a posição atual do Sim. `OBVM` registra o Main do PhoneLine 207;
+`DYNO` registra owners dinâmicos com alvo, definição, rotina-raiz, vínculo GLOB
+e fingerprint da closure. O restore single-resident recompõe o recurso exato,
+confere GLOB e fingerprint e instala o owner antes de restaurar o VM. A revisão
+independente não encontrou erro nessa ordem. Restore household ainda não aceita
+owners dinâmicos.
+
+Testes construídos cobrem captura, arquivo, retomada, ação ativa no mesmo VM,
+caminho bloqueado e níveis diferentes mesmo quando o ID do cômodo coincide.
+Build de `odh-person`, `odh-session-bundle-tests` e `odh-routing-tests` passou;
+o CTest completo passou 248/248 após as mudanças de codec, restore e rota.
+Isso cobre testes unitários/processo sintéticos, mas ainda não prova a retomada
+de uma caminhada real.
+
+O contrato de snapshot/restore para o Main da PhoneLine 207 existe, mas o gate
+real de rota ainda falha antes de criar um arquivo. Com Go Here agendado no
+começo de House07, a ação fica na fila (`queue_size=1`, sem ação ativa) e a
+rota não inicia; após muitos ticks, o owner dinâmico já não pertence a uma rota
+ativa e o save é recusado. Sit → Stand → Go Here no mesmo perfil também deixou
+a ação enfileirada até o limite. Nenhum load em outro processo foi possível,
+portanto o save/resume da rota real não está validado.
+
+Em paralelo, o gate `tests/house07_session_resume_cli.py` foi reexecutado após
+as mudanças: Sit no tick 512, load em outro processo, Stand até o tick 1024 e
+save final passaram. Os seis arquivos comerciais monitorados mantiveram os
+hashes. Isso confirma o perfil Sit/Stand; não substitui o gate de rota.
+
+Próxima ação: fazer o Main de House07 chegar a um ponto que aceite uma ordem do
+jogador, respondendo ao diálogo bloqueante quando necessário, e pedir Go Here
+quando a rota estiver realmente ativa. Salvar e retomar em outro processo,
+comparar com execução contínua e conferir os hashes dos dados comerciais.
+Manter caminhos entre cômodos/andares e portais recusados. A janela Linux já
+contém bairro, CAS e controles provisórios do lote e pode servir de base; sua
+aparência e cobertura ainda não são a UI final, que deve seguir o The Sims 1 e
+o Simitone.
+
 ## Estado mais recente: família CAS no lote com save/retomada headless (2026-10-25)
 
 O gate opt-in `tests/cas_movein_e2e.py` agora cria dois adultos via catálogo CAS
@@ -22,11 +61,11 @@ para os perfis de um e vários moradores. Build de `odh-person` e o gate real
 passaram; CTest focal: 12/12. Esse trabalho ainda está local e precisa de
 revisão, commit e push.
 
-Próxima fatia recomendada: permitir save/resume durante uma caminhada local no
-mesmo cômodo. O bundle atual recusa frames/esperas de rota; isso exige capturar
-o progresso, destino, frame e contexto da caminhada, e reconstruí-los com
-callbacks novos no processo de retomada. Manter portal e chamadas externas
-recusados até terem um contrato próprio. Em paralelo, o fio salvo inválido do
+Na ocasião, a próxima fatia recomendada era permitir save/resume durante uma
+caminhada local no mesmo cômodo; esse primeiro suporte limitado foi adicionado
+no checkpoint acima, mas ainda aguarda comprovação pelo host em dois processos.
+Manter portal e chamadas externas recusados até terem um contrato próprio. Em
+paralelo, o fio salvo inválido do
 telefone 136 continua pedindo auditoria somente de leitura de como OBJM codifica
 o dono do código; não associar BHAVs pelo número. Os arquivos não rastreados
 `Testing/` e três scripts auxiliares permanecem preservados.

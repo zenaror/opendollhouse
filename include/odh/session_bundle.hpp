@@ -6,6 +6,8 @@
 #include "odh/session_archive.hpp"
 #include "odh/session_resource_identity.hpp"
 #include "odh/playback.hpp"
+#include "odh/routing.hpp"
+#include "odh/sleep.hpp"
 #include "odh/ts1_simulation.hpp"
 #include "odh/vm_snapshot_codec.hpp"
 #include "odh/world_snapshot_codec.hpp"
@@ -33,11 +35,35 @@ struct SessionHostState {
     std::vector<SessionGlobalValue> global_values; // Strictly ascending indices.
 };
 
+// Provenance for a semiglobal code bank linked by the exact object's GLOB.
+// archive is canonical and relative to the selected game root; entry is the
+// exact FAR entry selected from that archive.
+struct SessionLinkedSemiglobal {
+    std::string name, archive, entry;
+    bool operator==(const SessionLinkedSemiglobal& other) const {
+        return name==other.name&&archive==other.archive&&entry==other.entry;
+    }
+    bool operator!=(const SessionLinkedSemiglobal& other) const { return !(*this==other); }
+};
+
+struct SessionDynamicActionOwner {
+    CodeOwner owner = 0;
+    std::int16_t target_id = 0;
+    std::uint64_t target_generation = 0;
+    std::uint32_t target_guid = 0;
+    std::string source, asset;
+    std::uint16_t definition_chunk_id = 0, tree_table_id = 0, root_routine = 0;
+    std::optional<SessionLinkedSemiglobal> linked_semiglobal;
+    std::array<std::uint8_t,32> routine_fingerprint{};
+};
+
 struct SessionRuntimeEntity {
     std::int16_t id = 0;
     VmSnapshot vm;
     EntityThreadControllersSnapshot controllers;
     PlaybackSnapshot playback;
+    std::optional<LocalRouteSnapshot> route;
+    std::vector<SessionDynamicActionOwner> dynamic_action_owners; // Strictly ascending owner IDs.
 };
 
 // A process-local owner is meaningful only with its exact resource provenance
@@ -49,15 +75,18 @@ struct SessionActionCodeOwner {
     std::array<std::uint8_t,32> routine_fingerprint{};
 };
 
-// Provenance for a semiglobal code bank linked by the exact object's GLOB.
-// archive is canonical and relative to the selected game root; entry is the
-// exact FAR entry selected from that archive.
-struct SessionLinkedSemiglobal {
-    std::string name, archive, entry;
-    bool operator==(const SessionLinkedSemiglobal& other) const {
-        return name==other.name&&archive==other.archive&&entry==other.entry;
-    }
-    bool operator!=(const SessionLinkedSemiglobal& other) const { return !(*this==other); }
+// Value-only continuation for a non-avatar object Main thread. The host must
+// rebuild this object's exact private/linked code owners and bind a fresh VM
+// and Sleep controller before applying these values. It is deliberately kept
+// separate from SessionRuntimeEntity: objects do not own avatar interaction
+// queues or Playback state.
+struct SessionObjectThread {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+    std::vector<SessionActionCodeOwner> code_owners; // Strictly ascending owner IDs.
+    VmSnapshot vm;
+    SleepSnapshot sleep;
 };
 
 // The seated continuation describes only the stable, completed Sit -> Stand
@@ -109,6 +138,7 @@ struct SessionBundle {
     WorldSnapshot world;
     RelationshipSnapshot relationships;
     std::vector<SessionRuntimeEntity> runtime_entities; // Strictly ascending IDs.
+    std::vector<SessionObjectThread> object_threads; // Strictly ascending IDs, disjoint from avatars.
     EntityVmSchedulerSnapshot scheduler;
     std::optional<SessionSeatedContinuation> seated_continuation;
 };
@@ -126,6 +156,8 @@ struct SessionBundleLimits {
     std::uint32_t max_playback_frames = 1048576;
     std::uint64_t max_playback_ticks = 1048576;
     std::size_t max_runtime_entities = 64;
+    std::size_t max_route_points = 262145;
+    std::size_t max_object_threads = 64;
     std::size_t max_host_globals = 256;
 };
 

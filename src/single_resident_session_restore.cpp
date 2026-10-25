@@ -1,4 +1,5 @@
 #include "odh/single_resident_session_restore.hpp"
+#include "odh/seated_session_continuation.hpp"
 #include <algorithm>
 
 namespace odh {
@@ -18,10 +19,32 @@ bool same_banks(const std::optional<SavedObjectBanks>& a,const std::optional<Sav
 void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original) {
     if(bundle.world.attribute_policy!=original.attribute_policy)
         throw FormatError("session World attribute policy differs from the original lot");
-    if(bundle.world.entities.size()!=original.entities.size())
-        throw FormatError("session entity roster differs from the original lot");
-    for(std::size_t n=0;n<original.entities.size();++n) {
-        const auto& a=bundle.world.entities[n];const auto& b=original.entities[n];
+    const Entity* route_marker=nullptr;
+    for(const auto& runtime:bundle.runtime_entities)if(runtime.route){
+        for(const auto& owner:runtime.dynamic_action_owners){
+            if(owner.target_id!=runtime.route->target||owner.target_guid!=0x7c4||owner.root_routine!=4096)continue;
+            const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+                [&](const auto& entity){return entity.id==owner.target_id;});
+            if(route_marker||found==bundle.world.entities.end()||found->kind!=EntityKind::object||
+               !found->definition||found->definition->guid!=0x7c4||found->generation!=owner.target_generation||
+               !found->ui_ghost||found->static_footprint||!found->position||
+               !(*found->position==runtime.route->target_position))
+                throw FormatError("saved Go Here route marker is not the exact temporary Destination object");
+            route_marker=&*found;
+        }
+    }
+    if(bundle.world.entities.size()!=original.entities.size()+(route_marker?1u:0u))
+        throw FormatError("session entity roster differs from the original lot and optional Go Here marker");
+    for(const auto& b:original.entities) {
+        const auto found_entity=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+            [&](const auto& entity){return entity.id==b.id;});
+        if(found_entity==bundle.world.entities.end())throw FormatError("session entity roster lost an original lot entity");
+        const auto& a=*found_entity;
+        const auto route=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+            [&](const auto& runtime){return runtime.id==a.id&&runtime.route.has_value();});
+        const bool route_actor=route!=bundle.runtime_entities.end();
+        const bool route_footprint_change=route_actor&&b.static_footprint&&
+            !a.static_footprint&&route->route->walking_started;
         std::string changed;
         const auto mark=[&](const char* name){if(!changed.empty())changed+=',';changed+=name;};
         if(a.id!=b.id)mark("id");
@@ -38,11 +61,17 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         if(a.person_data.size()!=b.person_data.size())mark("person_data_count");
         if(a.motives.size()!=b.motives.size())mark("motive_count");
         if(a.ui_ghost!=b.ui_ghost)mark("ghost_flag_changed");
-        if(a.static_footprint!=b.static_footprint)mark("footprint_flag_changed");
+        if(a.static_footprint!=b.static_footprint&&!route_footprint_change)mark("footprint_flag_changed");
         if(a.ui_ghost)mark("ghost_entity");
-        if(!a.static_footprint)mark("dynamic_footprint_entity");
+        if(!a.static_footprint&&!route_actor)mark("dynamic_footprint_entity");
         if(!changed.empty())
             throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
+    }
+    for(const auto& entity:bundle.world.entities){
+        const auto original_entity=std::find_if(original.entities.begin(),original.entities.end(),
+            [&](const auto& value){return value.id==entity.id;});
+        if(original_entity==original.entities.end()&&(&entity!=route_marker))
+            throw FormatError("session added an entity other than its exact active Go Here marker");
     }
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});
@@ -52,9 +81,13 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
        (!actor->person_data.empty()&&actor->person_data[0]!=0))))
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
-void validate_owner(const VmContext& context,std::int16_t actor) {
-    if(context.code_owner!=static_cast<CodeOwner>(actor))
-        throw FormatError("session requires an unserialized dynamic code owner");
+void validate_owner(const VmContext& context,std::int16_t actor,
+                    const std::vector<SessionDynamicActionOwner>& owners,bool local_route) {
+    if(context.code_owner==static_cast<CodeOwner>(actor))return;
+    if(local_route&&std::any_of(owners.begin(),owners.end(),[&](const auto& owner){
+        return owner.owner==context.code_owner;
+    }))return;
+    throw FormatError("session requires an unserialized dynamic code owner");
 }
 void validate_runtime(const SessionBundle& bundle) {
     if(bundle.seated_continuation){validate_seated_session_continuation(bundle);return;}
@@ -62,33 +95,35 @@ void validate_runtime(const SessionBundle& bundle) {
        bundle.scheduler.faulted)
         throw FormatError("restore supports exactly one nonfaulted resident thread");
     const auto& state=bundle.runtime_entities[0];
+    const bool local_route=state.route.has_value();
     if(state.vm.status==VmStatus::fault||state.vm.status==VmStatus::dormant)
         throw FormatError("session VM is faulted or dormant");
     for(const auto& frame:state.vm.stack) {
-        validate_owner(frame.context,state.id);
+        validate_owner(frame.context,state.id,state.dynamic_action_owners,local_route);
         if(frame.return_mode==VmCallReturnMode::external_frame_next_tick)
             throw FormatError("session external portal frames are unsupported");
     }
     const auto pending=[&](const VmPending& wait){
-        validate_owner(wait.context,state.id);
+        validate_owner(wait.context,state.id,state.dynamic_action_owners,local_route);
         if(wait.instruction.instruction.opcode!=0&&wait.instruction.instruction.opcode!=17&&
-           wait.instruction.instruction.opcode!=44)
+           wait.instruction.instruction.opcode!=44&&
+           !(wait.instruction.instruction.opcode==45&&state.route.has_value()))
             throw FormatError("session pending route or external service is unsupported");
     };
     if(state.vm.pending)pending(*state.vm.pending);
     for(const auto& wait:state.vm.suspended_pending)pending(wait);
     if(state.vm.external_frame_return)
         throw FormatError("session external portal return is unsupported");
-    if(state.vm.interaction_return&&state.vm.interaction_return->code_owner!=static_cast<CodeOwner>(state.id))
-        throw FormatError("session interaction return requires a dynamic owner");
+    if(state.vm.interaction_return)validate_owner({state.id,state.id,state.id,
+        state.vm.interaction_return->code_owner},state.id,state.dynamic_action_owners,local_route);
     for(const auto& action:state.controllers.interactions.actions) {
-        validate_owner(action.call.context,state.id);
+        validate_owner(action.call.context,state.id,state.dynamic_action_owners,local_route);
         if(action.call.return_mode==VmCallReturnMode::external_frame_next_tick)
             throw FormatError("session queued portal action is unsupported");
     }
     const auto playback_key=[&](const PlaybackResourceKey& key){
-        if(key.code_owner!=static_cast<CodeOwner>(state.id))
-            throw FormatError("session animation requires a dynamic owner");
+        validate_owner({key.caller,key.callee,key.stack_object,key.code_owner},state.id,
+            state.dynamic_action_owners,local_route);
     };
     if(state.playback.state)playback_key(state.playback.state->resource);
     if(state.playback.carry)playback_key(*state.playback.carry);
@@ -169,6 +204,26 @@ void SingleResidentSessionRestore::install_seated_continuation_owners(Vm& vm,
     seated_owners_verified_=true;seated_vm_=&vm;
 }
 
+void SingleResidentSessionRestore::install_dynamic_action_owners(Vm& vm,
+    const DynamicActionLoader& load) {
+    const auto& owners=bundle_.runtime_entities.front().dynamic_action_owners;
+    if(attempted_||dynamic_owners_verified_||owners.empty()||!load)
+        throw FormatError("dynamic action owners can only be installed once before execution restore");
+    std::vector<std::pair<CodeOwner,RoutineSet>> resolved;resolved.reserve(owners.size());
+    for(const auto& owner:owners){
+        auto source=load(owner);
+        if(source.second!=owner.linked_semiglobal||
+           !source.first.count(routine_key(owner.root_routine))||
+           session_action_routine_fingerprint(source.first)!=owner.routine_fingerprint)
+            throw FormatError("dynamic action owner resource, GLOB link or routine closure changed");
+        resolved.emplace_back(owner.owner,std::move(source.first));
+    }
+    for(auto& owner:resolved)if(!vm.install_owner(owner.first,std::move(owner.second))){
+        attempted_=true;throw FormatError("fresh VM rejected verified dynamic action owner");
+    }
+    dynamic_owners_verified_=true;dynamic_vm_=&vm;
+}
+
 void SingleResidentSessionRestore::restore_execution(Vm& vm,EntityThreadControllers& controllers,
     Playback& playback,EntityVmScheduler& scheduler,const PlaybackRestoreResolver& resolver,
     RandomState& random,std::uint64_t& tick) {
@@ -177,6 +232,8 @@ void SingleResidentSessionRestore::restore_execution(Vm& vm,EntityThreadControll
     if(bundle_.seated_continuation&&(!seated_owners_verified_||seated_vm_!=&vm))
         throw FormatError("seated action resources were not verified and installed into this VM");
     const auto& state=bundle_.runtime_entities.front();
+    if(!state.dynamic_action_owners.empty()&&(!dynamic_owners_verified_||dynamic_vm_!=&vm))
+        throw FormatError("dynamic action resources were not verified and installed into this VM");
     if(!vm.restore_snapshot(state.vm))throw FormatError("session VM does not match fresh programs and bindings");
     if(!controllers.restore_snapshot(state.controllers))throw FormatError("session controllers do not match fresh VM and world");
     std::string why;

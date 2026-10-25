@@ -285,6 +285,88 @@ std::optional<RouteFrameContext> Routing::active_frame_context() const {
     if(!job_) return {};
     return job_->frame;
 }
+bool Routing::valid_local_session_job(const Job& job,std::optional<CodeOwner> verified_dynamic_owner) const {
+    if(!vm_||executing_||!job.same_room_verified||job.external_frame_active||
+       job.external_frame_call||job.deferred_room_route||job.room_context_open||
+       job.replay_frame||job.replay_instruction||job.portal_steps||job.portal_retries||
+       job.portal_replan_required||job.call_failure_trees||job.failure_tree_invoked||
+       job.failure_pending||job.interrupt_pending||job.selected_sitting_object||
+       job.external_frame_sitting||!suspended_jobs_.empty())
+        return false;
+    if(job.frame.state!=RouteFrameState::initial&&job.frame.state!=RouteFrameState::walking&&
+       job.frame.state!=RouteFrameState::turn_only)
+        return false;
+    if(job.frame.portal_turns||job.frame.wait_time||job.frame.retries_remaining||
+       job.actor==job.target||job.path.empty()||job.path.size()-1>limits_.expanded||
+       job.next==0||job.next>job.path.size()||job.facing>7||job.entry_flags<=0||
+       !std::isfinite(job.expected_radian_direction))
+        return false;
+    const auto& stack=vm_->stack();
+    const auto& pending=vm_->pending();
+    if(vm_->status()!=VmStatus::waiting||!pending||pending->ticket!=job.ticket||
+       pending->instruction.instruction.opcode!=45||pending->instruction.depth!=stack.size()||
+       stack.empty()||pending->context.caller!=job.actor||pending->context.stack_object!=job.target||
+       (pending->context.code_owner!=static_cast<CodeOwner>(job.actor)&&
+        (!verified_dynamic_owner||pending->context.code_owner!=*verified_dynamic_owner))||
+       stack.back().context.caller!=job.actor||stack.back().context.stack_object!=job.target||
+       stack.back().context.code_owner!=pending->context.code_owner||
+       job.run_generation!=vm_->run_generation()||!room_pair_)
+        return false;
+    const auto* actor=world_.find(job.actor);
+    const auto* target=world_.find(job.target);
+    if(!actor||!target||actor->kind!=EntityKind::avatar||actor->generation!=job.actor_generation||
+       target->generation!=job.target_generation||actor->attachment||!actor->position||!target->position||
+       actor->position->level!=target->position->level||
+       !(*actor->position==job.expected)||actor->radian_direction!=job.expected_radian_direction||
+       !(*target->position==job.target_position)||actor->static_footprint==job.walking_started)
+        return false;
+    try {
+        const auto rooms=room_pair_(*actor->position,*target->position);
+        if(!rooms||rooms->first!=rooms->second)return false;
+    } catch(...) {return false;}
+    if(!(job.path[job.next-1]==RoutePoint{job.expected.x,job.expected.y})||
+       !grid_.contains(job.path[job.next-1])||!grid_.walkable(job.path[job.next-1]))
+        return false;
+    for(std::size_t n=job.next;n<job.path.size();++n)
+        if(!grid_.can_step(job.path[n-1],job.path[n]))return false;
+    return true;
+}
+std::optional<LocalRouteSnapshot> Routing::capture_local_session_route(
+    std::optional<CodeOwner> verified_dynamic_owner) const {
+    if(!job_||!valid_local_session_job(*job_,verified_dynamic_owner))return {};
+    const auto& j=*job_;
+    return LocalRouteSnapshot{j.ticket,j.actor_generation,j.target_generation,j.run_generation,
+        j.actor,j.target,j.expected,j.target_position,j.expected_radian_direction,j.frame,
+        j.path,j.next,j.entry_flags,j.facing,j.face_anywhere,j.walking_started,j.same_room_verified};
+}
+bool Routing::restore_local_session_route(const LocalRouteSnapshot& snapshot,
+    std::optional<CodeOwner> verified_dynamic_owner) {
+    if(executing_||job_||!suspended_jobs_.empty()||!vm_||!snapshot.same_room_verified)
+        return false;
+    Job candidate{};
+    candidate.ticket=snapshot.ticket;
+    candidate.actor_generation=snapshot.actor_generation;
+    candidate.target_generation=snapshot.target_generation;
+    candidate.actor=snapshot.actor;
+    candidate.target=snapshot.target;
+    candidate.expected=snapshot.expected;
+    candidate.target_position=snapshot.target_position;
+    candidate.expected_radian_direction=snapshot.expected_radian_direction;
+    candidate.frame=snapshot.frame;
+    candidate.path=snapshot.path;
+    candidate.next=snapshot.next;
+    candidate.entry_flags=snapshot.entry_flags;
+    candidate.facing=snapshot.facing;
+    candidate.face_anywhere=snapshot.face_anywhere;
+    candidate.walking_started=snapshot.walking_started;
+    candidate.run_generation=snapshot.run_generation;
+    candidate.same_room_verified=true;
+    if(!valid_local_session_job(candidate,verified_dynamic_owner))return false;
+    job_=std::move(candidate);
+    last_tick_.reset();
+    diagnostic_.clear();
+    return true;
+}
 std::optional<float> Routing::incoming_direction(float caller_radian_direction) const noexcept {
     if(!job_) return {};
     const auto* parent=suspended_jobs_.empty()?nullptr:&suspended_jobs_.back().frame;
@@ -507,6 +589,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             return unsupported("entity changed during child-shy sitting SLOT preflight");
         if(preflight_diagnostic)return unsupported(*preflight_diagnostic);
     }
+    bool same_room_verified=false;
     if((!goto_relative||saved_go_here_relative)&&room_pair_) {
         const auto actor_id=actor->id,target_id=target->id;
         const auto actor_generation=actor->generation,target_generation=target->generation;
@@ -540,6 +623,8 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
             job_->replay_instruction=i;
             return {PrimitiveDisposition::wait,{}};
         }
+        same_room_verified=rooms->first==rooms->second&&
+            actor->position->level==target->position->level;
     }
     const RoutePoint start{actor->position->x,actor->position->y};
     const auto allow_goal=[&](RoutePoint point) {
@@ -717,6 +802,7 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     job_->fallback_goals=std::move(fallback_goals);
     job_->run_generation=vm_->run_generation();
     job_->call_failure_trees=saved_go_here_relative&&!nested_request;
+    job_->same_room_verified=same_room_verified;
     return {PrimitiveDisposition::wait,{}};
 }
 void Routing::end_room_context(Job& job) {

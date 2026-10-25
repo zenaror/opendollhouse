@@ -457,6 +457,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::int16_t> headless_interaction_actor;
     bool headless_interaction_applied=false;
     std::optional<HeadlessGoHere> headless_go_here;
+    bool headless_go_here_same_room_only=false;
     bool headless_go_here_applied=false;
     std::optional<HeadlessInteraction> headless_portal;
     bool headless_portal_applied=false;
@@ -691,6 +692,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             headless_go_here=HeadlessGoHere{static_cast<std::uint32_t>(x),static_cast<std::uint32_t>(y),
                 static_cast<std::uint8_t>(level),tick};
         }
+        else if(option=="--headless-go-here-same-room-only"&&!headless_go_here_same_room_only)
+            headless_go_here_same_room_only=true;
         else if(option=="--headless-resident-go-here"&&n+5<argc){
             const auto id=selector(argv[++n]);
             const auto x=coordinate_selector(argv[++n]),y=coordinate_selector(argv[++n]);
@@ -770,6 +773,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(headless_go_here&&(!headless_main||headless_go_here->tick>ticks_limit||
        (!go_here_after_stand&&!standalone_go_here)))
         throw odh::FormatError("--headless-go-here requires an idle action probe or a later tick after Sit/Stand");
+    if(headless_go_here_same_room_only&&!headless_go_here)
+        throw odh::FormatError("same-room-only Go Here requires a scheduled Go Here request");
     if(!headless_resident_go_here.empty()){
         if(!headless_main||!saved_world_main||!session_context||session_context->single_resident_session||
            session_context->household_members.empty()||headless_interaction||headless_stand||headless_portal)
@@ -1732,6 +1737,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("age fixture construction failed");
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     std::map<odh::CodeOwner,odh::TuningTables> saved_action_tuning;
+    std::map<odh::CodeOwner,Resource> saved_action_resources;
+    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
+    odh::CodeOwner next_saved_code_owner=0x80000000U;
+    bool saved_owner_ids_exhausted=false;
     // Saved object VMs use the object's resource identity as CodeOwner. The
     // House07 PhoneLine Main therefore needs its own private BCON bank even
     // though its runtime VM is hosted alongside the avatar simulation.
@@ -1854,6 +1863,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::uint64_t saved_phone_generation=0;
     bool saved_phone_main_scheduled=false;
     std::optional<Resource> saved_phone_resource;
+    std::optional<std::array<std::uint8_t,32>> saved_phone_code_fingerprint;
     std::function<void()> ensure_saved_phone_thread;
     std::vector<SavedObjectSubroutineReport> saved_phone_calls;
     struct SavedPhoneWrite {
@@ -1868,6 +1878,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     struct SavedPhoneInterruptEvent {std::uint64_t tick;bool accepted;odh::VmStatus status;bool sleep_active;};
     std::vector<SavedPhoneInterruptEvent> saved_phone_interrupts;
     std::vector<std::pair<std::int16_t,std::string>> idle_notify_events;
+    const auto saved_object_thread_for=[&](std::int16_t id)->const odh::SessionObjectThread* {
+        const auto find=[&](const auto& values)->const odh::SessionObjectThread*{
+            const auto item=std::find_if(values.begin(),values.end(),[&](const auto& value){return value.id==id;});
+            return item==values.end()?nullptr:&*item;
+        };
+        if(session_restore)if(const auto* thread=find(session_restore->object_threads()))return thread;
+        if(household_restore)if(const auto* thread=find(household_restore->object_threads()))return thread;
+        return nullptr;
+    };
     struct HeadlessHeadlineEvent {
         std::int16_t target,icon;
         odh::VmContext context;
@@ -1886,7 +1905,6 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     std::optional<PendingVmDialog> pending_vm_dialog;
     std::size_t vm_dialog_response_count=0;
-    std::map<odh::CodeOwner,Resource> saved_action_resources;
     std::map<std::pair<odh::CodeOwner,std::uint16_t>,odh::StringTable> tree_name_local_strings;
     std::set<std::pair<odh::CodeOwner,std::uint16_t>> tree_name_local_string_attempted;
     auto tree_name_global_strings=saved_world_main?load_strings(*globals,{303}):
@@ -2796,6 +2814,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto* definition=definition_index->unique(phone_owner);
         if(!definition)throw odh::FormatError("PhoneLine exact definition is unavailable");
         const Resource resource{definition->source,definition->asset,definition->asset.empty()};
+        const auto code_fingerprint=odh::session_action_routine_fingerprint(private_bank->second);
+        const auto* resume_state=saved_object_thread_for(phone_id);
+        if(resume_state){
+            if(resume_state->guid!=phone_owner||resume_state->generation!=target->generation||
+               resume_state->code_owners.size()!=1)
+                throw odh::FormatError("saved PhoneLine thread identity or owner roster changed");
+            const auto& owner=resume_state->code_owners.front();
+            if(owner.owner!=phone_owner||owner.root_routine!=4096||owner.source!=resource.archive||
+               owner.asset!=resource.entry||owner.routine_fingerprint!=code_fingerprint)
+                throw odh::FormatError("saved PhoneLine code provenance no longer matches its exact resource");
+        }
         auto phone_memory=memory;
         phone_memory.write=[&](const auto& f,std::uint8_t scope,std::int16_t index,std::int16_t value){
             if(saved_phone_writes.size()>=4096)return false;
@@ -2814,12 +2843,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         };
         auto imported=std::make_unique<odh::Vm>(std::move(banks.global),std::move(phone_memory),
             odh::VmLimits{},primitive,std::move(banks.owners));
-        odh::restore_simitone_saved_thread_plan(*imported,plan);
-        if(!saved_phone_sleep->bind(*imported)||!imported->activate_dormant_state()||
-           !saved_phone_sleep->join_at(ticks))
-            throw odh::FormatError("PhoneLine saved Main could not join the current lot clock");
+        if(resume_state){
+            if(!imported->restore_snapshot(resume_state->vm)||!saved_phone_sleep->bind(*imported)||
+               !saved_phone_sleep->restore_snapshot(resume_state->sleep))
+                throw odh::FormatError("PhoneLine saved Main or Sleep state does not match rebuilt resources");
+        }else{
+            odh::restore_simitone_saved_thread_plan(*imported,plan);
+            if(!saved_phone_sleep->bind(*imported)||!imported->activate_dormant_state()||
+               !saved_phone_sleep->join_at(ticks))
+                throw odh::FormatError("PhoneLine saved Main could not join the current lot clock");
+        }
         saved_phone_id=phone_id;saved_phone_generation=target->generation;
-        saved_phone_resource=resource;saved_phone_thread=std::move(imported);
+        saved_phone_resource=resource;saved_phone_code_fingerprint=code_fingerprint;
+        saved_phone_thread=std::move(imported);
         if(!entity_scheduler.add(saved_phone_id,*saved_phone_thread,
             [&](std::uint64_t now){return saved_phone_sleep->tick(now);}, {},
             [&]{
@@ -2986,6 +3022,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(!restoring_session)prepare_household_bodies();
     if(session_restore){
         if(!playback)throw odh::FormatError("session restore needs the matching animation catalog");
+        if(!session_restore->object_threads().empty()){
+            if(session_restore->object_threads().size()!=1||session_restore->object_threads().front().id!=207)
+                throw odh::FormatError("this host can currently rebuild only the saved PhoneLine object thread 207");
+            ensure_saved_phone_thread();
+            if(!saved_phone_main_scheduled)
+                throw odh::FormatError("saved PhoneLine object thread was not registered before scheduler restore");
+        }
         random.reset(session_restore->host().random_seed);
         body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
         if(const auto& seated=session_restore->seated_continuation();seated){
@@ -3011,6 +3054,41 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                         session_context->game_root,globals,definition_index?&*definition_index:nullptr);
                 });
         }
+        if(!session_restore->dynamic_action_owners().empty()){
+            if(!definition_index||!session_context)
+                throw odh::FormatError("dynamic action restore needs the selected game's exact definition catalog");
+            session_restore->install_dynamic_action_owners(vm,[&](const auto& binding){
+                const auto* target=world.find(binding.target_id);
+                if(!target||target->kind!=odh::EntityKind::object||!target->definition||
+                   target->generation!=binding.target_generation||target->definition->guid!=binding.target_guid)
+                    throw odh::FormatError("dynamic action target identity changed before restore");
+                const auto* candidates=definition_index->candidates(binding.target_guid);
+                if(!candidates)throw odh::FormatError("dynamic action object definition is absent");
+                const odh::DefinitionCandidate* exact=nullptr;
+                for(const auto& candidate:*candidates){
+                    if(candidate.source==binding.source&&candidate.asset==binding.asset&&
+                       candidate.chunk_id==binding.definition_chunk_id&&
+                       candidate.definition.tree_table_id==binding.tree_table_id){
+                        if(exact)throw odh::FormatError("dynamic action object definition is ambiguous");
+                        exact=&candidate;
+                    }
+                }
+                if(!exact)throw odh::FormatError("dynamic action object provenance no longer matches selected resources");
+                auto source=load_session_action_source(*exact,binding.root_routine,binding.linked_semiglobal,
+                    session_context->game_root,globals,definition_index?&*definition_index:nullptr);
+                const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
+                if(!saved_code_owners.emplace(key,binding.owner).second)
+                    throw odh::FormatError("dynamic action owner resource key is duplicated");
+                saved_action_resources.emplace(binding.owner,Resource{binding.source,binding.asset,
+                    binding.asset.empty()});
+                saved_action_tuning.emplace(binding.owner,load_saved_action_tuning(*exact));
+                if(binding.owner>=next_saved_code_owner){
+                    if(binding.owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
+                    else next_saved_code_owner=binding.owner+1;
+                }
+                return std::make_pair(std::move(source.routines),std::move(source.linked_semiglobal));
+            });
+        }
         const odh::PlaybackRestoreResolver resolver=[&](const odh::PlaybackResourceKey& key){
             odh::VmFrame frame;frame.context={key.caller,key.callee,key.stack_object,key.code_owner};
             return resolve_animation(frame,key.source,key.id,key.kind==odh::PlaybackResourceKey::Kind::posture_reset
@@ -3024,6 +3102,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     }
     if(household_restore){
         if(!playback)throw odh::FormatError("household restore needs the matching animation catalog");
+        if(!household_restore->object_threads().empty()){
+            if(household_restore->object_threads().size()!=1||household_restore->object_threads().front().id!=207)
+                throw odh::FormatError("this host can currently rebuild only the saved PhoneLine object thread 207");
+            ensure_saved_phone_thread();
+            if(!saved_phone_main_scheduled)
+                throw odh::FormatError("saved PhoneLine object thread was not registered before scheduler restore");
+        }
         random.reset(household_restore->host().random_seed);
         body_state=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
         prepare_household_bodies();
@@ -3286,7 +3371,7 @@ struct PlacementCandidateProbe {
     std::size_t render_pie_menu_selected=0;
     std::vector<SavedTestFunctionResult> render_test_results;
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
-    bool render_interaction_requested=false,render_interaction_enqueued=false,saved_owner_ids_exhausted=false;
+    bool render_interaction_requested=false,render_interaction_enqueued=false;
     std::string render_interaction_status="not_requested",render_interaction_diagnostic;
     std::optional<std::uint16_t> render_interaction_action;
     std::optional<odh::CodeOwner> render_interaction_owner;
@@ -3300,10 +3385,8 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> seated_action_actor_generation;
     std::optional<std::uint16_t> seated_action_code;
     std::optional<bool> render_interaction_result;
-    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
     std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_portal_code_owners;
     std::set<odh::CodeOwner> saved_stair_portal_code_owners;
-    odh::CodeOwner next_saved_code_owner=0x80000000U;
     if(session_restore&&session_restore->seated_continuation()){
         const auto& seated=*session_restore->seated_continuation();
         const auto* target=world.find(seated.target_id);
@@ -3343,6 +3426,7 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> go_here_marker_generation,go_here_previous_completion_uid;
     std::optional<odh::EntityPosition> go_here_position,go_here_start_position;
     std::optional<bool> go_here_result;
+    bool resumed_go_here_route=false;
     if(session_restore&&session_restore->seated_continuation()){
         for(const auto& binding:session_restore->seated_continuation()->code_owners){
             const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
@@ -4595,6 +4679,29 @@ struct PlacementCandidateProbe {
             *runtime.vm,*runtime.controllers,*runtime.routing);
         runtime.route_reason.clear();
     }
+    const auto restore_local_route=[&](std::int16_t id,odh::Routing* routing,
+        const odh::LocalRouteSnapshot* saved){
+        if(!saved)return;
+        std::optional<odh::CodeOwner> verified_dynamic_owner;
+        if(id==runtime_avatar_id&&session_restore){
+            for(const auto& owner:session_restore->dynamic_action_owners()){
+                if(owner.target_id!=saved->target||owner.target_guid!=0x7c4||
+                   owner.root_routine!=4096||owner.linked_semiglobal)continue;
+                if(verified_dynamic_owner)throw odh::FormatError("saved route has multiple Destination code owners");
+                verified_dynamic_owner=owner.owner;
+            }
+        }
+        if(!routing||!routing->restore_local_session_route(*saved,verified_dynamic_owner))
+            throw odh::FormatError("saved local Route45 path no longer matches its resident, room or walkable grid");
+    };
+    if(session_restore)restore_local_route(runtime_avatar_id,runtime_routing.get(),
+        session_restore->local_route(runtime_avatar_id));
+    if(household_restore){
+        restore_local_route(runtime_avatar_id,runtime_routing.get(),
+            household_restore->local_route(runtime_avatar_id));
+        for(auto& member:household_runtime)
+            restore_local_route(member->id,member->routing.get(),household_restore->local_route(member->id));
+    }
     for(const auto& action:headless_resident_go_here){
         const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
             [&](const auto& item){return item->id==action.actor;});
@@ -4754,6 +4861,28 @@ struct PlacementCandidateProbe {
         const auto* marker=world.find(*go_here_marker_id);
         if(marker&&marker->generation==*go_here_marker_generation)world.remove(*go_here_marker_id);
     };
+    if(session_restore){
+        const auto* route=session_restore->local_route(runtime_avatar_id);
+        if(route){
+            for(const auto& owner:session_restore->dynamic_action_owners()){
+                if(owner.target_id!=route->target||owner.target_guid!=0x7c4||owner.root_routine!=4096)continue;
+                const auto* marker=world.find(owner.target_id);const auto* actor=world.find(runtime_avatar_id);
+                if(!marker||marker->kind!=odh::EntityKind::object||!marker->definition||
+                   marker->definition->guid!=0x7c4||marker->generation!=owner.target_generation||
+                   !marker->ui_ghost||marker->static_footprint||!marker->position||
+                   !(*marker->position==route->target_position)||!actor||!actor->position)
+                    throw odh::FormatError("restored Go Here route marker is not its exact temporary Destination");
+                if(go_here_marker_id)throw odh::FormatError("restored route has multiple Go Here marker owners");
+                go_here_marker_id=marker->id;go_here_marker_generation=marker->generation;
+                go_here_position=marker->position;go_here_start_position=actor->position;
+                go_here_owner=owner.owner;go_here_action=owner.root_routine;
+                go_here_previous_completion_uid=queue.completion()?
+                    std::optional<std::uint64_t>{queue.completion()->uid}:std::nullopt;
+                go_here_status="queued";go_here_route_status="pending";go_here_diagnostic.clear();
+                resumed_go_here_route=true;
+            }
+        }
+    }
     snap_placement_validator=[&](std::int16_t actor_id,const odh::EntityPosition& destination){
         const auto* actor=world.find(actor_id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||destination.level<1||destination.level>2||
@@ -4815,6 +4944,28 @@ struct PlacementCandidateProbe {
         return odh::Snap::StairPlacementStatus::accepted;
     };
     bool session_save_requested=false;
+    const auto primary_route_dynamic_owner=[&]()->std::optional<odh::CodeOwner>{
+        if(go_here_status!="queued"||!go_here_marker_id||!go_here_marker_generation||!go_here_owner)
+            return {};
+        const auto* marker=world.find(*go_here_marker_id);
+        const auto& pending=vm.pending();
+        if(!marker||marker->generation!=*go_here_marker_generation||!marker->definition||
+           marker->definition->guid!=0x7c4||!marker->ui_ghost||marker->static_footprint||!pending||
+           pending->context.caller!=runtime_avatar_id||pending->context.stack_object!=marker->id||
+           pending->context.code_owner!=*go_here_owner)
+            return {};
+        const auto binding=std::find_if(saved_code_owners.begin(),saved_code_owners.end(),
+            [&](const auto& item){return item.second==*go_here_owner&&std::get<2>(item.first)==4096;});
+        if(binding==saved_code_owners.end())return {};
+        const auto* candidate=definition_index?definition_index->unique(0x7c4):nullptr;
+        if(!candidate||candidate->source!=std::get<0>(binding->first)||
+           candidate->asset!=std::get<1>(binding->first))return {};
+        return go_here_owner;
+    };
+    const auto capture_primary_route=[&]()->std::optional<odh::LocalRouteSnapshot>{
+        return runtime_routing?runtime_routing->capture_local_session_route(
+            primary_route_dynamic_owner()):std::nullopt;
+    };
     const auto save_live_session=[&]()->std::string {
 #ifdef __linux__
         if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
@@ -4822,19 +4973,26 @@ struct PlacementCandidateProbe {
         if(second_main_vm)throw odh::FormatError("diagnostic second-Main sessions cannot be saved");
         if(!session_context->single_resident_session&&session_context->household_members.empty())
             throw odh::FormatError("household saving requires the complete integrated FAMI roster");
-        if(runtime_routing&&runtime_routing->active())
-            throw odh::FormatError("wait until the Sim finishes walking before saving");
-        if(go_here_status=="queued")
+        const bool resumable_primary_route=runtime_routing&&runtime_routing->active()&&
+            capture_primary_route().has_value();
+        if(runtime_routing&&runtime_routing->active()&&!resumable_primary_route)
+            throw odh::FormatError("this route cannot yet be saved safely; finish walking before saving");
+        if(go_here_status=="queued"&&!headless_go_here_same_room_only&&!resumed_go_here_route)
             throw odh::FormatError("wait until Go Here finishes before saving");
         if(std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
-            return (member->routing&&member->routing->active())||
+            return (member->routing&&member->routing->active()&&
+                    !member->routing->capture_local_session_route())||
                 (member->go_here&&member->go_here->status()=="queued")||
                 (member->controllers&&(member->controllers->interactions().size()!=0||
                     member->controllers->interactions().active()));
         }))
             throw odh::FormatError("wait until every household Sim finishes walking and acting before saving");
-        if(queue.size()!=0||queue.active())
-            throw odh::FormatError("wait until the primary resident finishes acting before saving");
+        if((queue.size()!=0||queue.active())&&
+           !(resumable_primary_route&&queue.active()&&queue.size()==1))
+            throw odh::FormatError("wait until the primary resident finishes acting before saving (route="+
+                std::string(resumable_primary_route?"resumable":"not_resumable")+", queue_size="+
+                std::to_string(queue.size())+", active="+(queue.active()?"true":"false")+
+                ", waiting="+(queue.waiting()?"true":"false")+")");
         if(!saved_portal_code_owners.empty()||std::any_of(household_runtime.begin(),
             household_runtime.end(),[](const auto& member){
                 return !member->room_portals.code_owners.empty();
@@ -4937,22 +5095,97 @@ struct PlacementCandidateProbe {
         bundle.world=world.snapshot();
         if(relationships)bundle.relationships=relationships->snapshot();
         const auto capture_runtime_entity=[&](std::int16_t id,const odh::Vm& resident_vm,
-            const odh::EntityThreadControllers& controllers,const std::optional<odh::Playback>& resident_playback){
+            const odh::EntityThreadControllers& controllers,const std::optional<odh::Playback>& resident_playback,
+            const odh::Routing* route){
             odh::SessionRuntimeEntity entity;entity.id=id;
             entity.vm=resident_vm.snapshot();entity.controllers=controllers.snapshot();
+            if(route&&route->active()){
+                const auto owner=route==runtime_routing.get()?primary_route_dynamic_owner():std::nullopt;
+                entity.route=route->capture_local_session_route(owner);
+                if(!entity.route)throw odh::FormatError("active route changed before session capture");
+            }
             if(resident_playback){std::string why;
                 if(!resident_playback->capture_snapshot(entity.playback,&why))
                     throw odh::FormatError("cannot save animation state: "+why);}
+            std::map<odh::CodeOwner,std::int16_t> dynamic_targets;
+            const auto observe_owner=[&](const odh::VmContext& context){
+                if(context.code_owner<0x80000000U)return;
+                const auto target=context.callee>0?context.callee:context.stack_object;
+                const auto inserted=dynamic_targets.emplace(context.code_owner,target);
+                if(!target||( !inserted.second&&inserted.first->second!=target))
+                    throw odh::FormatError("dynamic action owner has ambiguous target identity at save");
+            };
+            for(const auto& frame:entity.vm.stack)observe_owner(frame.context);
+            if(entity.vm.pending)observe_owner(entity.vm.pending->context);
+            for(const auto& pending:entity.vm.suspended_pending)observe_owner(pending.context);
+            for(const auto& action:entity.controllers.interactions.actions)observe_owner(action.call.context);
+            if(entity.playback.state)observe_owner({entity.playback.state->resource.caller,
+                entity.playback.state->resource.callee,entity.playback.state->resource.stack_object,
+                entity.playback.state->resource.code_owner});
+            if(entity.playback.carry)observe_owner({entity.playback.carry->caller,
+                entity.playback.carry->callee,entity.playback.carry->stack_object,
+                entity.playback.carry->code_owner});
+            if(!dynamic_targets.empty()&&!entity.route)
+                throw odh::FormatError("dynamic action code owners can only be saved with a local Route45 snapshot");
+            for(const auto& [owner_id,target_id]:dynamic_targets){
+                const auto binding=std::find_if(saved_code_owners.begin(),saved_code_owners.end(),
+                    [&](const auto& item){return item.second==owner_id;});
+                if(binding==saved_code_owners.end())
+                    throw odh::FormatError("dynamic action owner has no exact resource/action registry entry");
+                const auto* target=world.find(target_id);
+                if(!target||target->kind!=odh::EntityKind::object||!target->definition)
+                    throw odh::FormatError("dynamic action owner target is not a defined World object");
+                const auto root=std::get<2>(binding->first);
+                const auto* candidates=definition_index?definition_index->candidates(target->definition->guid):nullptr;
+                if(!candidates)throw odh::FormatError("dynamic action target definition is not uniquely indexed");
+                const odh::DefinitionCandidate* exact=nullptr;
+                for(const auto& candidate:*candidates){
+                    if(candidate.source==std::get<0>(binding->first)&&candidate.asset==std::get<1>(binding->first)){
+                        if(exact)throw odh::FormatError("dynamic action target resource is ambiguous");
+                        exact=&candidate;
+                    }
+                }
+                if(!exact||exact->definition.guid!=target->definition->guid)
+                    throw odh::FormatError("dynamic action target does not match its installed resource owner");
+                const auto source=load_session_action_source(*exact,root,{},session_context->game_root,
+                    globals,definition_index?&*definition_index:nullptr);
+                odh::SessionDynamicActionOwner record;record.owner=owner_id;record.target_id=target_id;
+                record.target_generation=target->generation;record.target_guid=target->definition->guid;
+                record.source=exact->source;record.asset=exact->asset;record.definition_chunk_id=exact->chunk_id;
+                record.tree_table_id=exact->definition.tree_table_id;record.root_routine=root;
+                record.linked_semiglobal=source.linked_semiglobal;
+                record.routine_fingerprint=odh::session_action_routine_fingerprint(source.routines);
+                entity.dynamic_action_owners.push_back(std::move(record));
+            }
             bundle.runtime_entities.push_back(std::move(entity));
         };
-        capture_runtime_entity(runtime_avatar_id,vm,thread_controllers,playback);
+        capture_runtime_entity(runtime_avatar_id,vm,thread_controllers,playback,runtime_routing.get());
         if(second_main_vm&&second_main_thread)
             capture_runtime_entity(static_cast<std::int16_t>(headless_second_main->avatar.id),
-                *second_main_vm,*second_main_thread,second_main_playback);
+                *second_main_vm,*second_main_thread,second_main_playback,nullptr);
         for(const auto& member:household_runtime)
-            capture_runtime_entity(member->id,*member->vm,*member->controllers,member->playback);
+            capture_runtime_entity(member->id,*member->vm,*member->controllers,member->playback,
+                member->routing.get());
         std::sort(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [](const auto& a,const auto& b){return a.id<b.id;});
+        if(saved_phone_thread||saved_phone_sleep){
+            if(!saved_phone_thread||!saved_phone_sleep||!saved_phone_main_scheduled||
+               !saved_phone_resource||!saved_phone_code_fingerprint||saved_phone_id<=0)
+                throw odh::FormatError("PhoneLine object thread is missing its controller or exact resource identity");
+            const auto* phone=world.find(saved_phone_id);
+            if(!phone||phone->kind!=odh::EntityKind::object||phone->generation!=saved_phone_generation||
+               !phone->definition||phone->definition->guid!=2933422533U)
+                throw odh::FormatError("PhoneLine object thread no longer matches its World entity");
+            odh::SessionObjectThread object_thread;object_thread.id=saved_phone_id;
+            object_thread.generation=saved_phone_generation;object_thread.guid=phone->definition->guid;
+            odh::SessionActionCodeOwner owner;owner.owner=object_thread.guid;
+            owner.source=saved_phone_resource->archive;owner.asset=saved_phone_resource->entry;
+            owner.root_routine=4096;owner.routine_fingerprint=*saved_phone_code_fingerprint;
+            object_thread.code_owners.push_back(std::move(owner));
+            object_thread.vm=saved_phone_thread->snapshot();
+            object_thread.sleep=saved_phone_sleep->snapshot();
+            bundle.object_threads.push_back(std::move(object_thread));
+        }
         bundle.scheduler=entity_scheduler.snapshot();
         if(seated){
             const auto& selected=*seated_action_target;
@@ -6156,6 +6389,16 @@ struct PlacementCandidateProbe {
             if(go_here_after_stand&&(!headless_stand_result||!*headless_stand_result)){
                 go_here_status="unsupported";
                 go_here_diagnostic="chained Go Here requires the preceding Sit and Stand actions to return true";
+            }else if(headless_go_here_same_room_only){
+                const auto* actor=world.find(runtime_avatar_id);
+                const auto actor_room=actor&&actor->position&&render_lot?
+                    render_lot->runtime_room_at(*actor->position):std::nullopt;
+                const auto destination_room=render_lot?render_lot->runtime_room_at(destination):std::nullopt;
+                if(!actor||!actor->position||actor->position->level!=destination.level||
+                   !actor_room||!destination_room||*actor_room!=*destination_room){
+                    go_here_status="unsupported";go_here_route_status="failed";
+                    go_here_diagnostic="single-resident Go Here gate requires the destination to stay on the same floor and in the same room";
+                }else request_go_here(destination);
             }else request_go_here(destination);
         }
         for(auto& scheduled:headless_resident_go_here){
@@ -6507,7 +6750,11 @@ struct PlacementCandidateProbe {
             member->go_here->finish_incomplete(terminal,reason);
         }
     }
-    if(go_here_status=="queued"){
+    const bool save_pending_local_go_here=session_context&&session_context->save_on_exit&&
+        !host_failed&&!window_closed&&(headless_go_here_same_room_only||resumed_go_here_route)&&
+        runtime_routing&&runtime_routing->active()&&
+        capture_primary_route().has_value();
+    if(go_here_status=="queued"&&!save_pending_local_go_here){
         if(host_failed){
             go_here_status="host_failed";
             go_here_route_status="host_failed";

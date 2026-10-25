@@ -1897,6 +1897,87 @@ int main() {
          f.routing.tick(1,[&](const auto&){was_dynamic=!f.world.find(1)->static_footprint;f.vm.start(odh::routine_key(4096),{1,2,2});});
          require(was_dynamic&&!f.routing.tick(2) && f.world.find(1)->position->x==5&&
                  f.world.find(1)->static_footprint,"restart cancellation stops movement and restores static membership");}
+        {odh::World world;odh::RouteGrid grid{64,32};auto slots=slot();std::size_t ranked_calls=0;
+         auto& ranged=slots.records[1];ranged.flags=0xA0FF;
+         ranged.proximity=std::array<std::int32_t,3>{16,64,16};ranged.gradient_bits=0;
+         ranged.facing=-3;ranged.resolution=8;
+         const auto make_goals=[&](const auto&,std::size_t,const auto&,const auto&){
+             ++ranked_calls;return std::vector<odh::PreRankedSlotGoal>{{{12,12},
+                 odh::reference_slot_entry_flags({28,12},0,{12,12},0xFF),2}};};
+         odh::Routing routing{world,grid,slots,make_goals};
+         routing.set_ranged_slot_goal_provider(make_goals);
+         routing.set_room_pair_provider([](const auto&,const auto&){
+             return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{3,3}};});
+         routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point){
+             return grid.contains(point)&&grid.walkable(point);});
+         odh::Vm vm{{},world.vm_memory(),{},routing.primitive(),{{1,routines()}}};
+         world.create(1,odh::EntityKind::avatar,{0,88,0});world.create(2,odh::EntityKind::object,{0,0,1});
+         world.set_position(1,{4,12,1,0});world.set_position(2,{28,12,1,0});
+         routing.bind(vm);vm.start(odh::routine_key(4096),{1,2,2,1});
+         require(vm.run(10)==odh::VmStatus::waiting&&routing.active()&&ranked_calls==1,
+                 "local Route45 creates one already-ranked path before save");
+         require(routing.tick(1)&&routing.tick(2)&&world.find(1)->position->x==6&&
+                 !world.find(1)->static_footprint,"local route advances to a save-safe mid-walk boundary");
+         const auto route_state=routing.capture_local_session_route();
+         require(route_state&&route_state->next==3&&route_state->path[route_state->next-1]==
+                 odh::RoutePoint{6,12},"local route snapshot records the selected path and current progress");
+         const auto world_state=world.snapshot();const auto vm_state=vm.snapshot();
+         odh::World resumed_world;require(resumed_world.restore_snapshot(world_state),
+                 "restored route World snapshot is accepted");
+         odh::RouteGrid resumed_grid{64,32};odh::Routing resumed_routing{resumed_world,resumed_grid,slots,
+             [&](const auto&,std::size_t,const auto&,const auto&){++ranked_calls;
+                 return std::vector<odh::PreRankedSlotGoal>{{{12,12},0x04,2}};}};
+         resumed_routing.set_ranged_slot_goal_provider([&](const auto&,std::size_t,const auto&,const auto&){
+             ++ranked_calls;return std::vector<odh::PreRankedSlotGoal>{{{12,12},
+                 odh::reference_slot_entry_flags({28,12},0,{12,12},0xFF),2}};});
+         resumed_routing.set_room_pair_provider([](const auto&,const auto&){
+             return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{3,3}};});
+         resumed_routing.set_route_goal_validator([&](const odh::VmFrame&,odh::RoutePoint point){
+             return resumed_grid.contains(point)&&resumed_grid.walkable(point);});
+         odh::Vm resumed_vm{{},resumed_world.vm_memory(),{},resumed_routing.primitive(),{{1,routines()}}};
+         require(resumed_routing.bind(resumed_vm)&&resumed_vm.restore_snapshot(vm_state)&&
+                 resumed_routing.restore_local_session_route(*route_state)&&ranked_calls==1,
+                 "route resumes from its saved path without rerunning randomized SLOT ranking");
+         odh::World blocked_world;require(blocked_world.restore_snapshot(world_state),
+                 "blocked-route fixture restores the same saved World");
+         odh::RouteGrid blocked_grid{64,32};blocked_grid.block(route_state->path[route_state->next]);
+         odh::Routing blocked_routing{blocked_world,blocked_grid,slots};
+         blocked_routing.set_room_pair_provider([](const auto&,const auto&){
+             return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{3,3}};});
+         odh::Vm blocked_vm{{},blocked_world.vm_memory(),{},blocked_routing.primitive(),{{1,routines()}}};
+         require(blocked_routing.bind(blocked_vm)&&blocked_vm.restore_snapshot(vm_state)&&
+                 !blocked_routing.restore_local_session_route(*route_state)&&!blocked_routing.active()&&
+                 blocked_world.find(1)->position->x==6,
+                 "restoring a route fails closed when the saved remaining path is now blocked");
+         auto cross_floor_world_state=world_state;
+         auto target_state=std::find_if(cross_floor_world_state.entities.begin(),
+             cross_floor_world_state.entities.end(),[](const auto& entity){return entity.id==2;});
+         require(target_state!=cross_floor_world_state.entities.end()&&target_state->position.has_value(),
+                 "cross-floor route fixture retains its target");
+         target_state->position->level=2;
+         odh::World cross_floor_world;require(cross_floor_world.restore_snapshot(cross_floor_world_state),
+                 "cross-floor route fixture restores its altered target level");
+         odh::RouteGrid cross_floor_grid{64,32};odh::Routing cross_floor_routing{
+             cross_floor_world,cross_floor_grid,slots};
+         cross_floor_routing.set_room_pair_provider([](const auto&,const auto&){
+             return std::optional<std::pair<std::uint16_t,std::uint16_t>>{{3,3}};});
+         odh::Vm cross_floor_vm{{},cross_floor_world.vm_memory(),{},cross_floor_routing.primitive(),
+             {{1,routines()}}};
+         require(cross_floor_routing.bind(cross_floor_vm)&&cross_floor_vm.restore_snapshot(vm_state)&&
+                 !cross_floor_routing.restore_local_session_route(*route_state),
+                 "restoring a local route rejects different actor and target floors even with the same room ID");
+         for(std::uint64_t tick=3;tick<=16&&(routing.active()||resumed_routing.active());++tick){
+             if(routing.active())routing.tick(tick);
+             if(resumed_routing.active())resumed_routing.tick(tick);
+         }
+         const auto* original_actor=world.find(1);const auto* resumed_actor=resumed_world.find(1);
+         require(!routing.active()&&!resumed_routing.active()&&vm.status()==odh::VmStatus::returned_true&&
+                 resumed_vm.status()==vm.status()&&original_actor&&resumed_actor&&
+                 original_actor->position&&resumed_actor->position&&
+                 *original_actor->position==*resumed_actor->position&&
+                 original_actor->person_data==resumed_actor->person_data&&
+                 original_actor->static_footprint&&resumed_actor->static_footprint,
+                 "continued and restored local routes reach identical position and arrival state");}
         {Fixture f;require(!f.world.set_position(1,{-1,0,1,0}) && !f.world.set_position(1,{0,0,0,0}) &&
                             !f.world.set_position(1,{0,0,1,8}),"position profile bounds");}
         std::cout<<checks<<" routing checks passed (constructed world only)\n";return 0;

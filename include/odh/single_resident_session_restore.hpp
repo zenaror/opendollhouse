@@ -6,6 +6,8 @@
 #include "odh/session_bundle.hpp"
 #include "odh/seated_session_continuation.hpp"
 #include <memory>
+#include <functional>
+#include <utility>
 
 namespace odh {
 
@@ -16,6 +18,8 @@ namespace odh {
 // requires exact resource/owner verification before execution restoration.
 class SingleResidentSessionRestore {
 public:
+    using DynamicActionLoader = std::function<std::pair<RoutineSet,
+        std::optional<SessionLinkedSemiglobal>>(const SessionDynamicActionOwner&)>;
     static std::unique_ptr<SingleResidentSessionRestore> prepare(
         const std::vector<std::uint8_t>& archive,
         const SessionResourceIdentity& expected_resources,
@@ -44,9 +48,18 @@ public:
     const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
+    const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
+    const std::vector<SessionDynamicActionOwner>& dynamic_action_owners() const {
+        return bundle_.runtime_entities.front().dynamic_action_owners;
+    }
+    const LocalRouteSnapshot* local_route(std::int16_t id) const {
+        const auto& runtime=bundle_.runtime_entities.front();
+        return runtime.id==id&&runtime.route?&*runtime.route:nullptr;
+    }
     const std::optional<SessionSeatedContinuation>& seated_continuation() const {return bundle_.seated_continuation;}
     void install_seated_continuation_owners(Vm&, const DefinitionCandidate&,
         const std::vector<EntryPoint>&, const SessionActionRoutineLoader&);
+    void install_dynamic_action_owners(Vm&, const DynamicActionLoader&);
 
     // Bind fresh VM/controllers/Playback and register equivalent scheduler hooks
     // against this candidate first. Never start Main. On any exception discard
@@ -68,6 +81,8 @@ private:
     bool attempted_ = false;
     bool seated_owners_verified_ = false;
     const Vm* seated_vm_ = nullptr;
+    bool dynamic_owners_verified_ = false;
+    const Vm* dynamic_vm_ = nullptr;
 };
 
 } // namespace odh

@@ -187,6 +187,19 @@ int main(){try{
         require(f.world.find(1)->person_data[0]==1 && f.world.find(1)->generation==generation && f.world.word_count()==words,"floor snap leaves posture, identity and word budget unchanged");
         vm.start(odh::routine_key(4096),{1,2,2});require(vm.run(1)==odh::VmStatus::returned_true && *f.world.find(1)->position==expected,"free actor floor snap is idempotent");
     }
+    {FloorFixture f;seat(f);auto routines=routine(3,2);routines.begin()->second.instructions[0].operands[4]=6;
+     odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true&&*f.world.find(1)->position==odh::EntityPosition{30,4,1,0}&&
+             f.world.find(1)->person_data[0]==1,"Snap accepts the observed Shoo plus FootprintExtension flags on an open floor exit");}
+    {FloorFixture f;seat(f);auto routines=routine(3,2);routines.begin()->second.instructions[0].operands[4]=2;
+     odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_true&&*f.world.find(1)->position==odh::EntityPosition{30,4,1,0},
+             "Snap accepts Shoo on a verified floor exit outside the sitting-exit-only profile");}
+    {FloorFixture f([](auto,const auto&){return false;});seat(f);auto routines=routine(3,2);
+     routines.begin()->second.instructions[0].operands[4]=6;const auto pose=*f.world.find(1)->position;
+     odh::Vm vm(routines,{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});
+     require(vm.run(1)==odh::VmStatus::returned_false&&*f.world.find(1)->position==pose&&f.world.find(1)->attachment&&
+             f.world.find(2)->slots[0]==1,"blocked Snap with Shoo flags keeps the actor seated and takes the false branch");}
     {FloorFixture f([](auto,const auto&){return false;});seat(f);
      const auto pose=*f.world.find(1)->position;
      odh::Vm vm(routine(3,2),{}, {},f.snap->primitive());f.snap->bind(vm);vm.start(odh::routine_key(4096),{1,2,2});

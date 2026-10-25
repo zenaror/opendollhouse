@@ -22,6 +22,11 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         throw FormatError("session entity roster differs from the original lot");
     for(std::size_t n=0;n<original.entities.size();++n) {
         const auto& a=bundle.world.entities[n];const auto& b=original.entities[n];
+        const auto route=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+            [&](const auto& runtime){return runtime.id==a.id&&runtime.route.has_value();});
+        const bool route_actor=route!=bundle.runtime_entities.end();
+        const bool route_footprint_change=route_actor&&b.static_footprint&&
+            !a.static_footprint&&route->route->walking_started;
         std::string changed;
         const auto mark=[&](const char* name){if(!changed.empty())changed+=',';changed+=name;};
         if(a.id!=b.id)mark("id");
@@ -40,9 +45,9 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         if(a.person_data.size()!=b.person_data.size())mark("person_data_count");
         if(a.motives.size()!=b.motives.size())mark("motive_count");
         if(a.ui_ghost!=b.ui_ghost)mark("ghost_flag_changed");
-        if(a.static_footprint!=b.static_footprint)mark("footprint_flag_changed");
+        if(a.static_footprint!=b.static_footprint&&!route_footprint_change)mark("footprint_flag_changed");
         if(a.ui_ghost)mark("ghost_entity");
-        if(!a.static_footprint)mark("dynamic_footprint_entity");
+        if(!a.static_footprint&&!route_actor)mark("dynamic_footprint_entity");
         if(!changed.empty())
             throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
     }
@@ -77,7 +82,8 @@ void validate_runtime(const SessionBundle& bundle) {
     const auto pending=[&](const VmPending& wait){
         validate_owner(wait.context,state.id);
         if(wait.instruction.instruction.opcode!=0&&wait.instruction.instruction.opcode!=17&&
-           wait.instruction.instruction.opcode!=44)
+           wait.instruction.instruction.opcode!=44&&
+           !(wait.instruction.instruction.opcode==45&&state.route.has_value()))
             throw FormatError("session pending route or external service is unsupported");
     };
     if(state.vm.pending)pending(*state.vm.pending);

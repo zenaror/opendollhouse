@@ -106,6 +106,85 @@ odh::SessionBundle live_playback_wait_fixture() {
     return bundle;
 }
 
+odh::SessionBundle local_route_fixture() {
+    auto bundle=fixture();odh::World world;
+    require(world.create(1,odh::EntityKind::avatar,{0,88,1})&&
+            world.create(2,odh::EntityKind::avatar,{0,88,1}),"create local-route actors");
+    require(world.set_person_data(1,0,0)&&world.set_position(1,{5,12,1,2})&&
+            world.set_position(2,{28,12,1,0})&&
+            world.set_static_footprint(1,false),"place the walking actor and target");
+    bundle.world=world.snapshot();
+    const odh::VmContext context{1,2,2,1};
+    const auto key=odh::routine_key(4096);
+    const odh::Instruction instruction{45,254,255,{1,0,2,0,0,0,0,0}};
+    odh::VmSnapshot vm;vm.status=odh::VmStatus::waiting;vm.ticket_sequence=1;
+    vm.stack.push_back({key,0,context,{},{},odh::VmCallReturnMode::interaction_next_tick,1});
+    vm.pending=odh::VmPending{1,odh::VmTrace{0,1,key,0,instruction,1},context};
+    auto& runtime=bundle.runtime_entities[0];runtime.vm=vm;
+    odh::LocalRouteSnapshot route;route.ticket=1;route.actor=1;route.target=2;
+    route.actor_generation=world.find(1)->generation;route.target_generation=world.find(2)->generation;
+    route.expected={5,12,1,2};route.target_position={28,12,1,0};
+    route.expected_radian_direction=world.find(1)->radian_direction;
+    route.frame.state=odh::RouteFrameState::walking;
+    route.path={{4,12},{5,12},{6,12},{7,12}};route.next=2;route.entry_flags=4;
+    route.facing=2;route.walking_started=true;route.same_room_verified=true;runtime.route=route;
+    auto& interactions=runtime.controllers.interactions;
+    interactions.actor_id=1;interactions.capacity=32;
+    interactions.actor_generation=world.find(1)->generation;
+    interactions.run_generation=vm.run_generation;interactions.sequence=1;
+    interactions.actions.push_back({1,world.find(2)->generation,
+        {key,context,{},odh::VmCallReturnMode::interaction_next_tick}});
+    interactions.active=odh::InteractionActiveSnapshot{1,1};
+    bundle.scheduler.entities[0].status=odh::VmStatus::waiting;
+    bundle.scheduler.entities[0].steps=0;bundle.scheduler.entities[0].run_generation=0;
+    return bundle;
+}
+
+odh::SessionBundle dynamic_action_route_fixture() {
+    auto bundle=fixture();odh::World world;
+    require(world.create(1,odh::EntityKind::avatar,{0,88,1})&&
+            world.create(2,odh::EntityKind::object,{0,0,1})&&world.define_type(2,0x12345678u)&&
+            world.set_position(2,{28,12,1,0}),
+            "create actor and dynamic action target");
+    require(world.set_person_data(1,0,0)&&world.set_position(1,{5,12,1,2})&&
+            world.set_static_footprint(1,false),"place dynamic-route actor");
+    bundle.world=world.snapshot();
+    bundle.runtime_entities.resize(1);bundle.scheduler.entities.resize(1);
+    constexpr odh::CodeOwner owner=0x80000000U;
+    const odh::VmContext dynamic_context{1,2,2,owner};
+    const odh::VmContext route_context{1,2,2,1};
+    const auto dynamic_key=odh::routine_key(8213),key=odh::routine_key(4097);
+    const odh::Instruction instruction{45,254,255,{1,0,2,0,0,0,0,0}};
+    odh::VmSnapshot vm;vm.status=odh::VmStatus::waiting;vm.ticket_sequence=1;
+    vm.stack.push_back({dynamic_key,0,dynamic_context,{},{},odh::VmCallReturnMode::interaction_next_tick,1});
+    vm.stack.push_back({key,0,route_context,{},{},odh::VmCallReturnMode::ordinary,1});
+    vm.pending=odh::VmPending{1,odh::VmTrace{0,2,key,0,instruction,1},route_context};
+    auto& runtime=bundle.runtime_entities[0];runtime.vm=vm;
+    odh::LocalRouteSnapshot route;route.ticket=1;route.actor=1;route.target=2;
+    route.actor_generation=world.find(1)->generation;route.target_generation=world.find(2)->generation;
+    route.expected={5,12,1,2};route.target_position={28,12,1,0};
+    route.expected_radian_direction=world.find(1)->radian_direction;
+    route.frame.state=odh::RouteFrameState::walking;
+    route.path={{4,12},{5,12},{6,12},{7,12}};route.next=2;route.entry_flags=4;
+    route.facing=2;route.walking_started=true;route.same_room_verified=true;runtime.route=route;
+    runtime.controllers.interactions.actor_id=1;runtime.controllers.interactions.capacity=32;
+    runtime.controllers.interactions.actor_generation=world.find(1)->generation;
+    runtime.controllers.interactions.run_generation=vm.run_generation;
+    runtime.controllers.interactions.sequence=1;
+    runtime.controllers.interactions.actions.push_back({1,world.find(2)->generation,
+        {dynamic_key,dynamic_context,{},odh::VmCallReturnMode::interaction_next_tick}});
+    runtime.controllers.interactions.active=odh::InteractionActiveSnapshot{1,1};
+    odh::SessionDynamicActionOwner binding;binding.owner=owner;binding.target_id=2;
+    binding.target_generation=world.find(2)->generation;binding.target_guid=0x12345678u;
+    binding.source="Objects.far";binding.asset="fridge.iff";binding.definition_chunk_id=16807;
+    binding.tree_table_id=3;binding.root_routine=8213;binding.linked_semiglobal=odh::SessionLinkedSemiglobal{
+        "Appliance","GameData/Global/Global.far","Appliance.iff"};binding.routine_fingerprint.fill(0x37);
+    runtime.dynamic_action_owners.push_back(binding);
+    bundle.scheduler.entities[0].status=odh::VmStatus::waiting;
+    bundle.scheduler.entities[0].steps=0;bundle.scheduler.entities[0].run_generation=0;
+    return bundle;
+}
+
 void u16(std::vector<std::uint8_t>& bytes,std::uint16_t value) {
     bytes.push_back(static_cast<std::uint8_t>(value));
     bytes.push_back(static_cast<std::uint8_t>(value>>8));
@@ -155,6 +234,37 @@ void replace_runtime_sections(odh::SessionArchive& archive,const odh::SessionBun
 
 }
 
+odh::SessionBundle object_thread_fixture() {
+    auto bundle=fixture();odh::World world;
+    require(world.restore_snapshot(bundle.world),"restore base world for object thread");
+    constexpr std::int16_t id=207;constexpr std::uint32_t guid=2933422533u;
+    require(world.create_runtime_object(id,guid,{},{}),"create PhoneLine-shaped object");
+    odh::Sleep sleep(world);
+    odh::Bhav main{0x8002,{{0,254,255,{0,0,0,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,1,0,0}};
+    odh::RoutineOwners owners{{guid,{{odh::routine_key(4096),main}}}};
+    odh::Vm vm({},world.vm_memory(),{},
+        [&](const auto& frame,const auto& instruction,const auto& temps,const auto& dispatch){
+            return sleep.primitive()(frame,instruction,temps,dispatch);
+        },std::move(owners));
+    require(sleep.bind(vm),"bind object Sleep to fresh VM");
+    require(sleep.join_at(0),"join object Sleep to initial host tick");
+    require(vm.start(odh::routine_key(4096),{id,id,id,guid},{4})==odh::VmStatus::running,
+            "start object Main");
+    require(vm.run(1)==odh::VmStatus::waiting,"object Main reaches Sleep wait");
+    auto object_bundle=std::move(bundle);object_bundle.world=world.snapshot();
+    auto& object=object_bundle.world.entities.back();
+    require(object.id==id&&object.definition&&object.definition->guid==guid,"object identity is present");
+    odh::SessionObjectThread thread;thread.id=id;thread.generation=object.generation;thread.guid=guid;
+    odh::SessionActionCodeOwner owner;owner.owner=guid;owner.source="private";
+    owner.asset="Objects.far!PhoneLine.iff#16807";owner.root_routine=4096;
+    owner.routine_fingerprint.fill(0x71);thread.code_owners.push_back(owner);
+    thread.vm=vm.snapshot();thread.sleep=sleep.snapshot();object_bundle.object_threads.push_back(thread);
+    object_bundle.scheduler.entities.push_back({id,thread.vm.run_generation,thread.vm.steps,
+        thread.vm.status,false,false,false});
+    object_bundle.scheduler.entity_limit=4;
+    return object_bundle;
+}
+
 int main() {
     const auto source=fixture();
     const auto bytes=odh::encode_session_bundle(source);
@@ -169,6 +279,53 @@ int main() {
             !restored.runtime_entities[0].playback.hands,
             "empty Playback state round-trips for each resident");
     require(!restored.simulation,"legacy archive without SIMS stays decodable");
+    const auto object_bundle=object_thread_fixture();
+    const auto object_bytes=odh::encode_session_bundle(object_bundle);
+    const auto object_restored=odh::decode_session_bundle(object_bytes,object_bundle.resources);
+    require(object_restored.object_threads.size()==1&&object_restored.object_threads[0].id==207&&
+            object_restored.object_threads[0].guid==2933422533u&&object_restored.object_threads[0].sleep.job&&
+            object_restored.object_threads[0].vm.pending&&
+            odh::encode_session_bundle(object_restored)==object_bytes,
+            "object Main VM, Sleep wait, resource identity and scheduler roster round-trip");
+    auto bad_object=object_bundle;bad_object.scheduler.entities.back().id=208;
+    rejects([&]{(void)odh::encode_session_bundle(bad_object);},
+            "object VM missing from scheduler roster is rejected");
+    bad_object=object_bundle;bad_object.object_threads[0].code_owners.clear();
+    rejects([&]{(void)odh::encode_session_bundle(bad_object);},
+            "object thread without exact code provenance is rejected");
+    const auto route_bundle=local_route_fixture();
+    const auto route_bytes=odh::encode_session_bundle(route_bundle);
+    const auto route_restored=odh::decode_session_bundle(route_bytes,route_bundle.resources);
+    require(route_restored.runtime_entities[0].route&&
+            route_restored.runtime_entities[0].route->path==route_bundle.runtime_entities[0].route->path&&
+            route_restored.runtime_entities[0].route->next==2&&
+            odh::encode_session_bundle(route_restored)==route_bytes,
+            "local Route45 continuation is bounded and canonical in a session archive");
+    auto bad_route=route_bundle;bad_route.runtime_entities[0].route.reset();
+    rejects([&]{odh::encode_session_bundle(bad_route);},"Route45 pending wait without path state is rejected");
+    bad_route=route_bundle;bad_route.runtime_entities[0].route->same_room_verified=false;
+    rejects([&]{odh::encode_session_bundle(bad_route);},"unverified cross-room route cannot be saved");
+    bad_route=route_bundle;bad_route.runtime_entities[0].route->target_position.level=2;
+    rejects([&]{odh::encode_session_bundle(bad_route);},"cross-floor Route45 state cannot be saved as a local route");
+    bad_route=route_bundle;bad_route.world.entities[0].static_footprint=true;
+    rejects([&]{odh::encode_session_bundle(bad_route);},"route footprint must match walking progress");
+    const auto dynamic_route=dynamic_action_route_fixture();
+    const auto dynamic_bytes=odh::encode_session_bundle(dynamic_route);
+    const auto dynamic_restored=odh::decode_session_bundle(dynamic_bytes,dynamic_route.resources);
+    require(dynamic_restored.runtime_entities[0].dynamic_action_owners.size()==1&&
+            dynamic_restored.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal==
+                dynamic_route.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal&&
+            odh::encode_session_bundle(dynamic_restored)==dynamic_bytes,
+            "dynamic route owner target, exact resource, GLOB link and closure hash round-trip");
+    auto bad_dynamic=dynamic_route;bad_dynamic.runtime_entities[0].dynamic_action_owners.clear();
+    rejects([&]{odh::encode_session_bundle(bad_dynamic);},
+            "Route45 VM reference to an absent dynamic action owner is rejected");
+    bad_dynamic=dynamic_route;bad_dynamic.runtime_entities[0].dynamic_action_owners[0].target_guid++;
+    rejects([&]{odh::encode_session_bundle(bad_dynamic);},
+            "dynamic action owner with a changed target GUID is rejected");
+    bad_dynamic=dynamic_route;bad_dynamic.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal->entry="other.iff";
+    rejects([&]{odh::encode_session_bundle(bad_dynamic);},
+            "dynamic action owner with a mismatched GLOB entry is rejected");
     auto without_family_budget=source;without_family_budget.host.family_budget.reset();
     const auto legacy_bytes=odh::encode_session_bundle(without_family_budget);
     const auto legacy=odh::decode_session_bundle(legacy_bytes,source.resources);

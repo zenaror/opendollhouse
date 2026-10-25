@@ -4,6 +4,7 @@
 #include "odh/lot_context.hpp"
 #include "odh/random.hpp"
 #include "odh/session_bundle.hpp"
+#include <algorithm>
 #include <memory>
 
 namespace odh {
@@ -51,6 +52,12 @@ public:
     const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
+    const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
+    const LocalRouteSnapshot* local_route(std::int16_t id) const {
+        const auto found=std::find_if(bundle_.runtime_entities.begin(),bundle_.runtime_entities.end(),
+            [&](const auto& entity){return entity.id==id&&entity.route.has_value();});
+        return found==bundle_.runtime_entities.end()?nullptr:&*found->route;
+    }
     // Every binding is an unpublished fresh execution graph against this World.
     // Failure invalidates all candidate graphs; discard them without publication.
     // Tick/RNG are committed only after the entire roster and scheduler succeed.

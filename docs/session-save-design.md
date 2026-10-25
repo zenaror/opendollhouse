@@ -76,9 +76,21 @@ and Playback's animation wait, and rejects malformed or unsupported states. Real
 IdleForInput waits round-trip through the bundle tests. The Linux live host now
 has an experimental S-key capture path between ticks. It records the current
 bundle values, hashes the selected resource manifest only on request, and stores
-the archive atomically in the user data directory. Saves are rejected while
-a route is active, Go Here is queued, any dynamic object/portal code owner exists,
-or a seated action requires an unserialized binding. The loader applies the corresponding supported profile before publishing a candidate session.
+the archive atomically in the user data directory. The optional `ROUT` section
+stores a local Route45 walk's already selected path and current progress; restore
+checks the remaining path against the rebuilt room grid without selecting a new
+destination. `OBVM` stores a value-only object Main/Sleep thread, currently
+reconstructed by the host only for PhoneLine object 207. `DYNO` stores a dynamic
+action owner's exact target identity, resource, root routine, linked GLOB and
+routine-closure fingerprint. The single-resident restore rebuilds and checks
+that resource before restoring a VM that refers to it. Household restore still
+rejects dynamic owners. Cross-room/floor walks, portal calls, unsupported route
+frames and seated actions without a verified binding remain rejected.
+
+The unit/process tests cover these codecs and restore checks. A real House07
+save/resume while Go Here is walking has not passed: attempts either left the
+action queued without starting Route45 or reached the save boundary after the
+route was no longer active. No fresh-process route restore has been observed.
 
 The seated continuation profile now supports a completed Sit whose EntryPoint26
 and EntryPoint27 actions are in the object's exact GLOB-linked semiglobal bank.
@@ -129,11 +141,22 @@ or a file changes while being read, the launch/save path fails before writing
 the session archive. This limit covers the bounded resident-resource snapshot;
 it is not a measurement of total process memory.
 
+Every VM in the host scheduler must also be represented in the bundle. The
+optional `OBVM` section now records object 207's identity, VM and Sleep state;
+the host verifies the exact PhoneLine definition/resource and restores it before
+the Scheduler snapshot. Other object threads are not yet supported by this host
+profile. The real House07 Sit/Stand gate was rerun after the current code
+changes: Sit at tick 512, fresh-process load, Stand through tick 1024, both
+processes succeeded, and six original input hashes remained unchanged. This
+does not prove a saved Go Here route.
+
 The supported profile requires the household roster and resident resources to
-match the saved World. Additional-resident posture/accessory state, an active
-route, live dynamic object-code references or portal code owners, and residents
-absent from the saved World remain unsupported. Installed action banks without
-references in the captured VM/controller/Playback state no longer block saving.
+match the saved World. Additional-resident posture/accessory state, routes other
+than the bounded same-room Route45 profile, portal code owners, and residents
+absent from the saved World remain unsupported. Dynamic action owners are
+currently permitted only for the single-resident local-route profile; the real
+House07 process gate is still pending. Installed action banks without references
+in the captured VM/controller/Playback state no longer block saving.
 The complete household restore validator still runs before writing, including
 checks on Playback carry. The real House07 gate verifies additional-resident
 Sit/Stand, save at tick512 and fresh-process continuation to tick1024 against

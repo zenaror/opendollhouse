@@ -12,6 +12,22 @@
 
 namespace odh {
 struct RouteMovement {std::uint64_t tick;std::int16_t entity;EntityPosition position;};
+// Value-only continuation for one verified local Route45 walk. It deliberately
+// omits callbacks, portal state, sitting fallbacks and pointers; restore must
+// revalidate the remaining path against the newly prepared room grid.
+struct LocalRouteSnapshot {
+    std::uint64_t ticket=0,actor_generation=0,target_generation=0,run_generation=0;
+    std::int16_t actor=0,target=0;
+    EntityPosition expected{},target_position{};
+    float expected_radian_direction=0;
+    RouteFrameContext frame{};
+    std::vector<RoutePoint> path;
+    std::size_t next=0;
+    std::int16_t entry_flags=0;
+    std::uint8_t facing=0;
+    bool face_anywhere=false,walking_started=false;
+    bool same_room_verified=false;
+};
 // Enumerates the bounded offset lattice used by the pinned FreeSO
 // VMSlotParser for ranged type-3 SLOTs. This is only candidate generation:
 // it does not filter by distance, room, direction, floor, walls, occupancy,
@@ -171,6 +187,10 @@ public:
     bool call_external_frame(const VmCall&);
     bool tick(std::uint64_t tick,const std::function<void(const RouteMovement&)>& moved={});
     bool active() const {return job_.has_value();}
+    std::optional<LocalRouteSnapshot> capture_local_session_route(
+        std::optional<CodeOwner> verified_dynamic_owner={}) const;
+    bool restore_local_session_route(const LocalRouteSnapshot&,
+        std::optional<CodeOwner> verified_dynamic_owner={});
     bool external_frame_active() const {return job_&&job_->external_frame_active;}
     // The selected chair remains attached to this Route45 ticket until it ends.
     std::optional<std::int16_t> active_sitting_object() const noexcept {
@@ -219,11 +239,13 @@ private:
         std::optional<std::int16_t> selected_sitting_object{};
         std::vector<PreRankedSlotGoal> fallback_goals{};
         bool external_frame_sitting=false;
+        bool same_room_verified=false;
     };
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool advance_room_route(const std::optional<VmCall>&,const std::optional<bool>&);
     bool schedule_external_frame(const VmCall&,bool sitting);
     bool try_next_sitting_goal();
+    bool valid_local_session_job(const Job&,std::optional<CodeOwner> verified_dynamic_owner={}) const;
     void end_room_context(Job&);
     bool finish(bool result,std::string reason);
     void cancel_chain(const std::string& reason);
