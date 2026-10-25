@@ -32,6 +32,8 @@ def main():
     parser.add_argument('--timeout', type=float, default=40)
     parser.add_argument('--save-resume', action='store_true',
                         help='press S during the walk and resume the whole household in a new process')
+    parser.add_argument('--select-additional', action='store_true',
+                        help='select the second Sim through the window before ordering Go Here')
     parser.add_argument('--report-movements', action='store_true',
                         help='include the bounded movement trace for a continuous-run comparison')
     args = parser.parse_args()
@@ -46,6 +48,29 @@ def main():
     if any(not path.is_file() for path in protected):
         parser.error('game-root is missing one or more required original game files')
     before = {path: digest(path) for path in protected}
+    actor_id = 137 if args.select_additional else 105
+
+    def actor_report(report):
+        if not args.select_additional:
+            return report.get('go_here_runtime') or {}, report.get('route_runtime') or {}
+        members = report.get('household_main', {}).get('additional_residents', [])
+        member = next((item for item in members if item['entity_id'] == actor_id), None)
+        if member is None:
+            raise RuntimeError('the selected additional resident is missing from the household report')
+        go = dict(member.get('go_here') or {})
+        target = go.get('target_position')
+        go['tile'] = [target[0] // 16, target[1] // 16] if target else None
+        route = dict(member.get('routing') or {})
+        route['end_position'] = member.get('position')
+        return go, route
+
+    def require_primary_still(report):
+        if not args.select_additional:
+            return
+        route = report.get('route_runtime') or {}
+        if (route.get('movement_callbacks') != 0 or
+                route.get('start_position', [])[:3] != route.get('end_position', [])[:3]):
+            raise RuntimeError('the primary Sim moved while the selected additional resident walked')
 
     with tempfile.TemporaryDirectory(prefix='odh-house07-window-go-here-') as temporary:
         root = Path(temporary)
@@ -95,11 +120,12 @@ def main():
 
             log_path = root / 'state/opendollhouse/logs/odh-person.log'
 
-            def wait_log(message):
+            def wait_log(message, actor=None):
                 deadline = time.monotonic() + args.timeout
                 while time.monotonic() < deadline:
                     contents = log_path.read_text(errors='replace') if log_path.exists() else ''
-                    if message in contents:
+                    if any(message in line and (actor is None or f" actor={actor}" in line)
+                           for line in contents.splitlines()):
                         return contents
                     if 'experimental session save failed' in contents:
                         raise RuntimeError(f'window save failed: {contents[-3000:]}')
@@ -110,6 +136,11 @@ def main():
 
             wait_log('lot frame presented tick=')
             xdotool('windowfocus', '--sync', window)
+            if args.select_additional:
+                xdotool('mousemove', '--window', window, '30', '588', 'click', '1')
+                time.sleep(0.5)
+                xdotool('mousemove', '--window', window, '300', '58', 'click', '1')
+                wait_log('UI active Sim changed to 137')
 
             # This is a known walkable ground pixel in the initial House07
             # camera. The resulting report identifies the selected tile.
@@ -117,19 +148,11 @@ def main():
             time.sleep(0.5)
             xdotool('windowfocus', '--sync', window, 'key', '--clearmodifiers', 'space')
             if args.save_resume:
-                wait_log('Go Here walking tick=')
+                wait_log('Go Here walking tick=', actor_id)
                 xdotool('key', '--clearmodifiers', 's')
                 wait_log('experimental session save written tick=')
             else:
-                completion_deadline = time.monotonic() + args.timeout
-                while time.monotonic() < completion_deadline:
-                    if game_process.poll() is not None:
-                        break
-                    title = xdotool('getwindowname', window, check=False).stdout
-                    if ('Go Here arrived' in title or 'could not reach the selected ground' in title or
-                            'Go Here cancelled by player' in title):
-                        break
-                    time.sleep(0.1)
+                wait_log(f'Go Here completed actor={actor_id} ')
             if game_process.poll() is None:
                 xdotool('key', '--clearmodifiers', 'Escape')
             stdout, stderr = game_process.communicate(timeout=30)
@@ -142,7 +165,7 @@ def main():
             save_tick = None
             window_report = report
             full_path_match = None
-            if report.get('host_failed') or (report.get('go_here_runtime') or {}).get('trigger') != 'window_input':
+            if report.get('host_failed') or actor_report(report)[0].get('trigger') != 'window_input':
                 raise RuntimeError('initial Go Here did not come from the live window input path')
             if args.save_resume:
                 archives = list((root / 'data/opendollhouse/saves').glob('*.odhs'))
@@ -152,38 +175,56 @@ def main():
                 if not archive.is_relative_to(root / 'data'):
                     raise RuntimeError('window save escaped the temporary profile')
 
-                def resume(ticks):
+                def resume(ticks, save_on_exit=False):
+                    save_options = ['--save-session-on-exit'] if save_on_exit else []
                     result = subprocess.run(
                         [str(binary), '--game-root', str(game), '--load-session', str(archive),
-                         '--headless-ticks', str(ticks)], env=env, capture_output=True,
+                         '--headless-ticks', str(ticks), *save_options], env=env, capture_output=True,
                         text=True, timeout=args.timeout)
                     if result.returncode:
                         raise RuntimeError(f'household resume failed: {result.stderr[-3000:]}')
                     return json.loads(result.stdout)
 
-                probe = resume(0)
-                probe_route = probe.get('route_runtime') or {}
-                probe_go = probe.get('go_here_runtime') or {}
+                original_archive = archive.read_bytes()
+                probe = resume(0, save_on_exit=True)
+                if archive.read_bytes() != original_archive:
+                    raise RuntimeError('zero-tick load and save changed the active household archive')
+                probe_go, probe_route = actor_report(probe)
                 if not probe.get('session_loaded') or not probe_route.get('active'):
                     raise RuntimeError('window save did not preserve an active local route')
                 save_tick = probe['resumed_tick']
                 start = probe_route['end_position']
                 tile = probe_go['tile']
-                if start[0] != tile[0] * 16 + 8:
-                    raise RuntimeError('expected the fixed House07 target to form a straight vertical walk')
-                remaining = abs(start[1] - (tile[1] * 16 + 8))
-                if not 0 < remaining < 16:
+                baseline_command = [sys.executable, str(Path(__file__).resolve()), '--binary', str(binary),
+                                    '--game-root', str(game), '--timeout', str(args.timeout), '--report-movements']
+                if args.select_additional:
+                    baseline_command.append('--select-additional')
+                baseline_process = subprocess.run(baseline_command, capture_output=True, text=True,
+                                                  timeout=2 * args.timeout + 30)
+                if baseline_process.returncode:
+                    raise RuntimeError(f'continuous window run failed: {baseline_process.stderr[-3000:]}')
+                baseline = json.loads(baseline_process.stdout)
+                continuous_positions = baseline['movement_positions']
+                saved_indices = [i for i, position in enumerate(continuous_positions) if position == start]
+                if len(saved_indices) != 1 or baseline['selected_tile'] != tile:
+                    raise RuntimeError('saved route position is not unique in the continuous trajectory')
+                prefix_count = saved_indices[0] + 1
+                remaining = len(continuous_positions) - prefix_count
+                prefix = actor_report(window_report)[1].get('movement_positions', [])[:prefix_count]
+                if remaining <= 0 or len(prefix) != prefix_count or prefix[-1] != start:
                     raise RuntimeError('S was not captured after movement and before arrival')
                 report = resume(remaining)
                 if (not report.get('session_loaded') or report.get('resumed_tick') != save_tick or
                         report.get('ticks') != save_tick + remaining or
-                        (report.get('route_runtime') or {}).get('movement_callbacks') != remaining or
+                        actor_report(report)[1].get('movement_callbacks') != remaining or
                         len(report.get('household_main', {}).get('additional_residents', [])) != 1):
                     raise RuntimeError('resume lost the saved tick or the second household resident')
-            go_here = report.get('go_here_runtime') or {}
-            route = report.get('route_runtime') or {}
+            require_primary_still(window_report)
+            require_primary_still(report)
+            go_here, route = actor_report(report)
             tile = go_here.get('tile')
-            if (report.get('host_failed') or go_here.get('trigger') != 'window_input' or
+            if (report.get('host_failed') or
+                    go_here.get('trigger') != ('session_restore' if args.save_resume and args.select_additional else 'window_input') or
                     go_here.get('route_status') != 'arrived' or go_here.get('result') is not True or
                     go_here.get('queue_active') or go_here.get('queue_size') != 0):
                 raise RuntimeError(f'window Go Here did not complete: {go_here}; route={route}')
@@ -192,30 +233,20 @@ def main():
                     route.get('end_position', [])[:2] != expected_xy):
                 raise RuntimeError(f'route did not end at the selected ground tile: {route}; tile={tile}')
             if args.save_resume:
-                # A separate invocation starts a fresh normal window and runs
-                # the same click/Space order continuously, without S or load.
-                baseline_process = subprocess.run(
-                    [sys.executable, str(Path(__file__).resolve()), '--binary', str(binary),
-                     '--game-root', str(game), '--timeout', str(args.timeout), '--report-movements'],
-                    capture_output=True, text=True, timeout=2 * args.timeout + 30)
-                if baseline_process.returncode:
-                    raise RuntimeError(f'continuous window run failed: {baseline_process.stderr[-3000:]}')
-                baseline = json.loads(baseline_process.stdout)
-                continuous_positions = baseline['movement_positions']
-                prefix_count = len(continuous_positions) - remaining
-                prefix = (window_report.get('route_runtime') or {}).get('movement_positions', [])[:prefix_count]
-                if (prefix_count <= 0 or baseline['selected_tile'] != tile or
-                        len(prefix) != prefix_count or prefix[-1] != start or
-                        prefix + route['movement_positions'] != continuous_positions):
+                if prefix + route['movement_positions'] != continuous_positions:
                     raise RuntimeError('complete resumed window walk differs from continuous execution')
                 full_path_match = True
             result = {
-                'result': 'passed', 'input': 'X11 ground click then Space',
+                'result': 'passed', 'input': 'X11 ground click then Space', 'actor_id': actor_id,
                 'window': 'Xvfb 800x600, closed after the run', 'selected_tile': tile,
                 'go_here': go_here['route_status'], 'movement_steps': route['movement_callbacks'],
                 'queue_empty': True, 'destination': route['end_position'],
                 'saved_while_walking': args.save_resume, 'saved_tick': save_tick,
+                'zero_tick_resave_unchanged': True if args.save_resume else None,
+                'continuous_steps': len(continuous_positions) if args.save_resume else len(route['movement_positions']),
+                'saved_prefix_steps': prefix_count if args.save_resume else None,
                 'full_continuous_path_match': full_path_match,
+                'primary_remained_in_place': True if args.select_additional else None,
             }
             if args.report_movements:
                 result['movement_positions'] = route['movement_positions']

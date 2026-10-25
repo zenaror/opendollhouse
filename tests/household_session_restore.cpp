@@ -85,42 +85,42 @@ struct Fixture {
 };
 auto prepare(const std::vector<std::uint8_t>& bytes,Fixture& f){return odh::HouseholdSessionRestore::prepare(bytes,f.resources,f.selection,
     f.roster,f.baseline,f.lot,f.bootstrap,21);}
-odh::SessionBundle go_here_bundle(Fixture& f){
+odh::SessionBundle go_here_bundle(Fixture& f,std::int16_t id=1,std::int16_t marker=3){
     auto b=f.snapshot();const odh::CodeOwner owner=0x80000000U;
     odh::World world;require(world.restore_snapshot(b.world),"restore fixture World");
-    require(world.create(3,odh::EntityKind::object,{2,0,1,0}),"create Destination marker");
-    require(world.define_type(3,0x7c4)&&world.set_ui_ghost(3,true)&&
-        world.set_static_footprint(3,false)&&world.set_position(3,{8,88,1,0}),"define exact Destination marker");
-    b.world=world.snapshot();auto& state=b.runtime_entities[0];
+    require(world.create(marker,odh::EntityKind::object,{2,0,1,0}),"create Destination marker");
+    require(world.define_type(marker,0x7c4)&&world.set_ui_ghost(marker,true)&&
+        world.set_static_footprint(marker,false)&&world.set_position(marker,{8,88,1,0}),"define exact Destination marker");
+    b.world=world.snapshot();auto& state=b.runtime_entities[static_cast<std::size_t>(id-1)];
     auto& vm=state.vm;vm.status=odh::VmStatus::waiting;vm.ticket_sequence=1;vm.steps=2;
-    vm.stack={{odh::routine_key(4096),0,{1,1,3,owner},std::vector<std::int16_t>(4),
+    vm.stack={{odh::routine_key(4096),0,{id,id,marker,owner},std::vector<std::int16_t>(4),
         std::vector<std::int16_t>(4),odh::VmCallReturnMode::ordinary,0}};
     const odh::Instruction instruction{27,254,255,{10,0,254,255,10,0,5,0}};
-    vm.pending=odh::VmPending{1,odh::VmTrace{1,vm.stack.size(),odh::routine_key(4096),0,instruction,owner},{1,1,3,owner}};
-    state.route.emplace();auto& route=*state.route;route.ticket=1;route.actor=1;route.target=3;
-    route.actor_generation=world.find(1)->generation;route.target_generation=world.find(3)->generation;
-    route.run_generation=vm.run_generation;route.expected=*world.find(1)->position;
-    route.target_position=*world.find(3)->position;route.expected_radian_direction=world.find(1)->radian_direction;
+    vm.pending=odh::VmPending{1,odh::VmTrace{1,vm.stack.size(),odh::routine_key(4096),0,instruction,owner},{id,id,marker,owner}};
+    state.route.emplace();auto& route=*state.route;route.ticket=1;route.actor=id;route.target=marker;
+    route.actor_generation=world.find(id)->generation;route.target_generation=world.find(marker)->generation;
+    route.run_generation=vm.run_generation;route.expected=*world.find(id)->position;
+    route.target_position=*world.find(marker)->position;route.expected_radian_direction=world.find(id)->radian_direction;
     route.frame.state=odh::RouteFrameState::initial;route.path={{route.expected.x,route.expected.y}};
     route.next=1;route.entry_flags=0;route.facing=2;route.same_room_verified=true;route.call_failure_trees=true;
-    odh::SessionDynamicActionOwner binding;binding.owner=owner;binding.target_id=3;
-    binding.target_generation=world.find(3)->generation;binding.target_guid=0x7c4;
+    odh::SessionDynamicActionOwner binding;binding.owner=owner;binding.target_id=marker;
+    binding.target_generation=world.find(marker)->generation;binding.target_guid=0x7c4;
     binding.source="Objects.far";binding.asset="Destination.iff";binding.definition_chunk_id=1;
     binding.tree_table_id=1;binding.root_routine=4096;
     const auto routines=go_here_program();binding.routine_fingerprint=odh::session_action_routine_fingerprint(routines);
     state.dynamic_action_owners={binding};
-    state.controllers.interactions.actor_generation=world.find(1)->generation;
+    state.controllers.interactions.actor_generation=world.find(id)->generation;
     state.controllers.interactions.run_generation=vm.run_generation;
     for(auto& runtime:b.runtime_entities){const auto* avatar=world.find(runtime.id);
         runtime.controllers.interactions.actor_generation=avatar->generation;
         runtime.controllers.interactions.run_generation=runtime.vm.run_generation;}
-    auto scheduled=std::find_if(b.scheduler.entities.begin(),b.scheduler.entities.end(),[](const auto& e){return e.id==1;});
-    require(scheduled!=b.scheduler.entities.end(),"primary scheduler entry");scheduled->status=odh::VmStatus::waiting;
+    auto scheduled=std::find_if(b.scheduler.entities.begin(),b.scheduler.entities.end(),[&](const auto& e){return e.id==id;});
+    require(scheduled!=b.scheduler.entities.end(),"routed resident scheduler entry");scheduled->status=odh::VmStatus::waiting;
     scheduled->steps=vm.steps;scheduled->run_generation=vm.run_generation;
     require(vm.status==odh::VmStatus::waiting&&vm.pending,"synthetic VM wait exists");
     require(vm.pending->ticket==route.ticket&&route.ticket<=vm.ticket_sequence,"synthetic route ticket matches");
     require(route.actor==state.id&&route.target!=state.id,"synthetic route ids match");
-    require(route.actor_generation==world.find(1)->generation&&route.run_generation==vm.run_generation,
+    require(route.actor_generation==world.find(id)->generation&&route.run_generation==vm.run_generation,
         "synthetic route generations match");
     require(route.same_room_verified&&route.expected.level==route.target_position.level,
         "synthetic route room and level match");
@@ -200,55 +200,126 @@ void tests(){Fixture f;f.start();odh::VmFrame attribute_frame;
     require(candidate->family_budget()==std::optional<std::int32_t>{4321},
         "household session restores the active family's runtime budget");
     for(;f.tick<6;)f.step();resume(*candidate,f.snapshot());
-    {
+    for(const auto routed_id:{std::int16_t{1},std::int16_t{2}}){
+        const auto idle_id=static_cast<std::int16_t>(routed_id==1?2:1);
         Fixture route_fixture;
         require(route_fixture.world.set_position(1,{16,88,1,0})&&
             route_fixture.world.set_position(2,{32,88,1,0}),"position household residents");
         route_fixture.baseline=route_fixture.world.snapshot();route_fixture.start();
         odh::VmFrame frame;frame.context.caller=1;frame.context.stack_object=1;
         require(route_fixture.world.write(frame,0,4,99),"route resident bank grows");
-        auto routed=go_here_bundle(route_fixture);const auto routed_bytes=odh::encode_session_bundle(routed);
+        auto routed=go_here_bundle(route_fixture,routed_id);const auto routed_bytes=odh::encode_session_bundle(routed);
         auto route_candidate=prepare(routed_bytes,route_fixture);
-        require(route_candidate->dynamic_action_owners(1).size()==1&&
-            route_candidate->dynamic_action_owners(2).empty(),"only the primary resident owns Go Here DYNO");
+        require(route_candidate->dynamic_action_owners(routed_id).size()==1&&
+            route_candidate->dynamic_action_owners(idle_id).empty()&&
+            !route_candidate->local_route(idle_id),"only the routed resident owns Go Here DYNO");
         odh::RandomState route_rng{999};std::uint64_t route_tick=999;odh::EntityVmScheduler route_scheduler{4};
         Execution route_a(route_candidate->world(),1,route_rng),route_b(route_candidate->world(),2,route_rng);
         route_a.schedule(route_scheduler,1);route_b.schedule(route_scheduler,2);
         auto loader=[](const odh::SessionDynamicActionOwner&){return std::make_pair(go_here_program(),
             std::optional<odh::SessionLinkedSemiglobal>{});};
-        rejects([&]{route_candidate->install_dynamic_action_owners(2,route_b.vm,loader);},
-            "secondary resident accepted primary dynamic owner installation");
+        rejects([&]{route_candidate->install_dynamic_action_owners(idle_id,routed_id==1?route_b.vm:route_a.vm,loader);},
+            "idle resident accepted routed resident dynamic owner installation");
         rejects([&]{route_candidate->restore_execution({{1,&route_a.vm,&route_a.controllers,&route_a.playback,{}},
             {2,&route_b.vm,&route_b.controllers,&route_b.playback,{}}},route_scheduler,route_rng,route_tick);},
-            "household restore accepted missing primary dynamic owner installation");
+            "household restore accepted missing routed resident dynamic owner installation");
+        require(route_tick==999&&route_rng.seed()==999,"missing owner failure published tick or RNG");
 
         auto bad_fingerprint=prepare(routed_bytes,route_fixture);
-        rejects([&]{bad_fingerprint->install_dynamic_action_owners(1,route_a.vm,
+        rejects([&]{bad_fingerprint->install_dynamic_action_owners(routed_id,routed_id==1?route_a.vm:route_b.vm,
             [](const auto&){auto wrong=program();wrong[odh::routine_key(4096)].instructions[0].opcode=1;
                 return std::make_pair(std::move(wrong),std::optional<odh::SessionLinkedSemiglobal>{});});},
             "household restore accepted changed dynamic routine fingerprint");
-        bad_fingerprint->install_dynamic_action_owners(1,route_a.vm,loader);
+        bad_fingerprint->install_dynamic_action_owners(routed_id,routed_id==1?route_a.vm:route_b.vm,loader);
         Execution wrong_a(route_candidate->world(),1,route_rng),wrong_b(route_candidate->world(),2,route_rng);
         odh::EntityVmScheduler wrong_scheduler{4};wrong_a.schedule(wrong_scheduler,1);wrong_b.schedule(wrong_scheduler,2);
         rejects([&]{bad_fingerprint->restore_execution({{1,&wrong_a.vm,&wrong_a.controllers,&wrong_a.playback,{}},
             {2,&wrong_b.vm,&wrong_b.controllers,&wrong_b.playback,{}}},wrong_scheduler,route_rng,route_tick);},
             "household restore accepted dynamic owner installed into a different VM");
+        require(route_tick==999&&route_rng.seed()==999,"wrong VM failure published tick or RNG");
 
         auto success=prepare(routed_bytes,route_fixture);
         Execution good_a(success->world(),1,route_rng),good_b(success->world(),2,route_rng);
         odh::EntityVmScheduler good_scheduler{4};good_a.schedule(good_scheduler,1);good_b.schedule(good_scheduler,2);
-        success->install_dynamic_action_owners(1,good_a.vm,loader);
+        success->install_dynamic_action_owners(routed_id,routed_id==1?good_a.vm:good_b.vm,loader);
         success->restore_execution({{1,&good_a.vm,&good_a.controllers,&good_a.playback,{}},
             {2,&good_b.vm,&good_b.controllers,&good_b.playback,{}}},good_scheduler,route_rng,route_tick);
 
-        auto extra=routed;auto extra_owner=extra.runtime_entities[0].dynamic_action_owners[0];
-        extra_owner.owner++;extra.runtime_entities[0].vm.stack.back().context.code_owner=extra_owner.owner;
-        extra.runtime_entities[0].vm.pending->context.code_owner=extra_owner.owner;
-        extra.runtime_entities[0].vm.pending->instruction.code_owner=extra_owner.owner;
-        extra.runtime_entities[0].dynamic_action_owners.push_back(extra_owner);
+        const auto routed_index=static_cast<std::size_t>(routed_id-1);
+        const auto idle_index=static_cast<std::size_t>(idle_id-1);
+        require(route_tick==routed.host.tick&&route_rng.seed()==routed.host.random_seed,
+            "Go Here execution restore did not commit saved tick and RNG");
+        auto restored=routed;restored.world=success->world().snapshot();
+        restored.runtime_entities={good_a.snapshot(1),good_b.snapshot(2)};
+        // Execution captures the VM/controller/playback graph. Local routes and
+        // their verified owner descriptors are captured separately by the host.
+        for(std::size_t n=0;n<restored.runtime_entities.size();++n) {
+            restored.runtime_entities[n].route=routed.runtime_entities[n].route;
+            restored.runtime_entities[n].dynamic_action_owners=routed.runtime_entities[n].dynamic_action_owners;
+        }
+        restored.scheduler=good_scheduler.snapshot();
+        require(odh::encode_session_bundle(restored)==routed_bytes,
+            "Go Here restore changed the routed or idle resident execution state");
+
+        // Both continuations are independently coherent and have distinct markers.
+        // Reject the unsupported two-walker profile in HouseholdSessionRestore,
+        // rather than relying on malformed route identity or archive validation.
+        auto mixed=routed;auto ordinary=local_route_bundle(route_fixture,idle_id);
+        mixed.runtime_entities[idle_index]=ordinary.runtime_entities[idle_index];
+        auto& ordinary_route=*mixed.runtime_entities[idle_index].route;
+        const auto& idle_actor=mixed.world.entities[idle_index];
+        const auto& routed_actor=mixed.world.entities[routed_index];
+        ordinary_route.expected=*idle_actor.position;
+        ordinary_route.expected_radian_direction=idle_actor.radian_direction;
+        ordinary_route.target_position=*routed_actor.position;
+        ordinary_route.path={{ordinary_route.expected.x,ordinary_route.expected.y}};
+        mixed.scheduler.entities[idle_index]=ordinary.scheduler.entities[idle_index];
+        auto mixed_candidate=prepare(odh::encode_session_bundle(mixed),route_fixture);
+        require(mixed_candidate->local_route(idle_id)&&mixed_candidate->dynamic_action_owners(idle_id).empty(),
+            "one DYNO owner must preserve another resident's ordinary Route45 profile");
+
+        auto both=routed;auto other=go_here_bundle(route_fixture,idle_id,4);
+        odh::World extra_world;require(extra_world.restore_snapshot(routed.world),"restore extra-marker World");
+        require(extra_world.create(4,odh::EntityKind::object,{2,0,1,0})&&
+            extra_world.define_type(4,0x7c4)&&extra_world.set_ui_ghost(4,true)&&
+            extra_world.set_static_footprint(4,false)&&extra_world.set_position(4,{8,88,1,0}),
+            "create second coherent Destination marker");
+        other.runtime_entities[idle_index].route->target_generation=extra_world.find(4)->generation;
+        other.runtime_entities[idle_index].dynamic_action_owners.front().target_generation=extra_world.find(4)->generation;
+        both.runtime_entities[idle_index]=other.runtime_entities[idle_index];
+        both.world=extra_world.snapshot();
+        both.scheduler.entities[idle_index]=other.scheduler.entities[idle_index];
+        const auto both_bytes=odh::encode_session_bundle(both);
+        require(odh::decode_session_bundle(both_bytes).runtime_entities[idle_index].route.has_value(),
+            "two-walker negative fixture must be a coherent session bundle");
+        rejects([&]{prepare(both_bytes,route_fixture);},
+            "household restore accepted two dynamic Go Here walkers and markers");
+
+        auto extra_marker=routed;
+        extra_marker.world=extra_world.snapshot();
+        extra_marker.world.entities.back().static_footprint=true;
+        const auto extra_marker_bytes=odh::encode_session_bundle(extra_marker);
+        rejects([&]{prepare(extra_marker_bytes,route_fixture);},
+            "household restore accepted an unrelated extra Destination marker");
+        auto missing_marker=routed;missing_marker.world.entities.pop_back();
+        rejects([&]{prepare(odh::encode_session_bundle(missing_marker),route_fixture);},
+            "household restore accepted a missing Destination marker");
+        auto wrong_marker=routed;wrong_marker.world.entities.back().static_footprint=true;
+        const auto wrong_marker_bytes=odh::encode_session_bundle(wrong_marker);
+        rejects([&]{prepare(wrong_marker_bytes,route_fixture);},
+            "household restore accepted a nontemporary Destination marker");
+        auto unrelated=routed;
+        unrelated.runtime_entities[routed_index].dynamic_action_owners.front().owner++;
+        rejects([&]{prepare(odh::encode_session_bundle(unrelated),route_fixture);},
+            "household restore accepted an unrelated dynamic owner");
+        auto extra=routed;auto extra_owner=extra.runtime_entities[routed_index].dynamic_action_owners[0];
+        extra_owner.owner++;extra.runtime_entities[routed_index].vm.stack.back().context.code_owner=extra_owner.owner;
+        extra.runtime_entities[routed_index].vm.pending->context.code_owner=extra_owner.owner;
+        extra.runtime_entities[routed_index].vm.pending->instruction.code_owner=extra_owner.owner;
+        extra.runtime_entities[routed_index].dynamic_action_owners.push_back(extra_owner);
         rejects([&]{prepare(odh::encode_session_bundle(extra),route_fixture);},
-            "household restore accepted additional primary DYNO owner");
-        extra=routed;extra.runtime_entities[1].route=extra.runtime_entities[0].route;
+            "household restore accepted additional resident DYNO owner");
+        extra=routed;extra.runtime_entities[idle_index].route=extra.runtime_entities[routed_index].route;
         rejects([&]{prepare(odh::encode_session_bundle(extra),route_fixture);},
             "household restore accepted a route copied to the wrong resident identity");
         extra=routed;extra.world.entities.back().position->x++;

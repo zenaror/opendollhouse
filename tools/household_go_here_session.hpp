@@ -2,6 +2,7 @@
 
 #include "odh/entity_thread_controllers.hpp"
 #include "odh/routing.hpp"
+#include "odh/session_bundle.hpp"
 
 namespace odh_host {
 
@@ -54,6 +55,51 @@ public:
         destination_=destination;start_=actor->position;owner_=owner;action_=action;
         previous_completion_=queue_.completion()?std::optional<std::uint64_t>{queue_.completion()->uid}:std::nullopt;
         status_="queued";route_status_="pending";diagnostic_.clear();return true;
+    }
+
+    // Rebind host-side Go Here bookkeeping to a route, marker, VM and action
+    // queue which have already been restored from a session. This is strictly
+    // observational: every check completes before this object takes ownership
+    // of the marker, so rejection leaves the restored World and VM untouched.
+    bool restore(const odh::LocalRouteSnapshot& route,
+                 const odh::SessionDynamicActionOwner& binding) {
+        if(status_!="not_requested")return false;
+        const auto* actor=world_.find(actor_);
+        const auto* marker=world_.find(route.target);
+        const auto& q=queue_.snapshot();
+        const auto& pending=vm_.pending();
+        const auto& stack=vm_.stack();
+        const auto context_matches=[&](const odh::VmContext& c) {
+            return c.caller==actor_&&c.callee==route.target&&c.stack_object==route.target&&
+                c.code_owner==binding.owner;
+        };
+        const bool valid=actor&&actor->kind==odh::EntityKind::avatar&&actor->generation==route.actor_generation&&
+           actor->position&&*actor->position==route.expected&&route.actor==actor_&&
+           route.target>0&&route.target!=actor_&&marker&&marker->generation==route.target_generation&&
+           marker->kind==odh::EntityKind::object&&marker->definition&&marker->definition->guid==0x7c4&&
+           marker->ui_ghost&&!marker->static_footprint&&marker->position&&
+           *marker->position==route.target_position&&binding.owner!=0&&binding.target_id==route.target&&
+           binding.target_generation==route.target_generation&&binding.target_guid==0x7c4&&
+           binding.root_routine==4096&&!binding.linked_semiglobal&&route.ticket!=0&&
+           route.call_failure_trees&&route.entry_flags==0&&route.same_room_verified&&routing_.active()&&
+           route.run_generation==vm_.run_generation()&&
+           vm_.status()==odh::VmStatus::waiting&&pending&&pending->ticket==route.ticket&&
+           pending->instruction.instruction.opcode==27&&
+           pending->instruction.instruction.operands==std::array<std::uint8_t,8>{10,0,254,255,10,0,5,0}&&
+           context_matches(pending->context)&&!stack.empty()&&context_matches(stack.back().context)&&
+           q.actor_id==actor_&&q.actions.size()==1&&q.active&&!q.wait&&!q.interrupted&&
+           q.actions.front().uid==q.active->uid&&q.active->ticket!=0&&
+           q.actions.front().call.key.id==binding.root_routine&&
+           q.actions.front().call.key.scope==odh::routine_key(binding.root_routine).scope&&
+           context_matches(q.actions.front().call.context)&&
+           q.actions.front().target_generation==route.target_generation;
+        if(!valid){diagnostic_="restored resident Go Here route, marker, owner, VM ticket or active action does not match";return false;}
+        marker_id_=route.target;marker_generation_=route.target_generation;
+        destination_=route.target_position;start_=actor->position;owner_=binding.owner;
+        action_=binding.root_routine;
+        previous_completion_=q.completion?std::optional<std::uint64_t>{q.completion->uid}:std::nullopt;
+        status_="queued";route_status_="pending";diagnostic_.clear();result_.reset();
+        return true;
     }
 
     void observe(bool host_failed=false,const std::string& host_diagnostic={}) {

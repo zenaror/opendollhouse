@@ -1,5 +1,45 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Caminhada do morador adicional salva pela janela
+
+O gate `tests/house07_window_go_here.py --select-additional --save-resume`
+selecionou o segundo Sim pelo botão da janela, pediu Go Here no chão e apertou
+S após o primeiro movimento. O morador 137 permaneceu um membro adicional; o
+morador principal 105 não mudou de posição nem executou uma rota. O save foi
+feito no tick 104. Um processo novo carregou e salvou novamente sem avançar o
+tempo, preservando o arquivo byte a byte. Outro processo completou os 31 passos
+restantes até `[392,424,1,7]`, com fila vazia e a família inteira presente.
+O prefixo real antes do save somado a todos os passos retomados coincidiu com
+uma execução contínua independente, incluindo direção e posição.
+
+O gate do morador principal também passou novamente: 15 passos retomados,
+trajeto contínuo completo de 16 passos igual, e resave zero-tick idêntico. Os
+seis arquivos comerciais monitorados mantiveram os hashes nos dois casos.
+Os perfis temporários foram removidos pelo teste e todos os jogos/Xvfb encerrados.
+A regressão CLI agendada para o adicional também passou: 32 movimentos até o
+mesmo destino, sem alterar os seis arquivos protegidos. Os 13 CTests focados de
+rota, bundle, seleção, filas e retomada passaram;
+a revisão independente não encontrou bloqueio após corrigir o tratamento de
+save-on-exit do membro adicional.
+
+O contrato aceita um único morador com Go Here local dinâmico por save,
+validando o destino temporário, o código de origem e o VM daquele morador.
+As rotas Route45 anteriores sem DYNO continuam aceitas. O estado temporário da
+ação é recomposto por `HouseholdGoHereSession::restore` sem reiniciar a Main;
+rejeições não adotam nem removem um marcador desconhecido. O diagnóstico de
+movimentos de cada morador é limitado a 128 posições. A entrada é X11 sintética
+no preview ODH; não há prova de UI final ou paridade geral com TS1/Simitone.
+
+```sh
+python3 tests/house07_window_go_here.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --select-additional --save-resume
+```
+
+Próximos recursos pendentes: saves com vários Go Here simultâneos ou através de
+portais/andares, além da paridade de interação, frontend de lote e build/buy.
+
 ## Save pela janela durante Go Here com household (2026-10-25)
 
 O gate `tests/house07_window_go_here.py --save-resume` usa clique X11 no chão,
@@ -13,17 +53,16 @@ retomado), incluindo a direção. Os seis arquivos comerciais monitorados
 mantiveram os hashes. Jogo, processos de retomada e Xvfb foram encerrados.
 
 O restore household recompõe somente o owner dinâmico exato da Destination do
-morador primário, antes de restaurar o VM. Exige alvo/geração/GUID, identidade do
+morador que possui a rota (primário no gate acima), antes de restaurar o VM. Exige alvo/geração/GUID, identidade do
 recurso, vínculo semiglobal e fingerprint da closure consistentes; referências
 extras, instalação ausente ou no VM errado continuam recusadas. O teste
 sintético também mantém a aceitação das rotas locais Route45 sem DYNO dos dois
 moradores. O novo log de primeiro quadro apresentado remove a espera fixa da
-checagem de janela. Build e CTests focados passaram (9/9). O gate anterior
+checagem de janela. Os CTests focados atuais passaram (13/13). O gate anterior
 `house07_route_save_resume.py` também passou após a integração, mantendo o save
 single-resident no tick 1188 e a chegada no tick 1202.
 
-Esta cobertura vale para o caso local da House07. Save de Go Here de moradores
-adicionais, vários caminhantes e retomada entre cômodos/andares ainda não estão
+Esta cobertura vale para o caso local da House07. Save com vários caminhantes e retomada entre cômodos/andares ainda não estão
 validados. A interface final TS1/Simitone permanece pendente.
 
 ```sh

@@ -2,6 +2,27 @@
 
 ## Estado atual: House07 Go Here pela janela, save e retomada (2026-10-25)
 
+### Caminhada do morador adicional salva pela janela
+
+`tests/house07_window_go_here.py --select-additional --save-resume` passou:
+seleção X11 do ator 137, clique no chão, Espaço e S após o primeiro movimento.
+O ator principal 105 ficou no lugar. Save no tick 104; load/save zero-tick em
+processo novo manteve o arquivo byte a byte, e a retomada completou 31 passos
+até `[392,424,1,7]`, com fila vazia e a família inteira presente. Prefixo e
+trajeto retomado coincidiram integralmente com uma janela contínua independente.
+O gate primário também passou (15 passos retomados de 16, resave idêntico).
+Seis arquivos comerciais mantiveram hashes em ambos; perfis e telas encerrados.
+A regressão CLI agendada do adicional também passou, em 32 movimentos locais.
+
+O contrato agora aceita uma única rota Go Here DYNO de qualquer morador,
+instalada no VM e registro de código dele; Route45 sem DYNO permanece aceito.
+O estado host da ação é reconstituído sem reiniciar Main nem trocar o ator por
+primário. Diagnóstico por morador limitado a 128 posições. Os 13 CTests focados
+passaram e a revisão independente não encontrou bloqueio após as correções.
+Detalhes e comando: [interaction-validation.md](interaction-validation.md).
+Ainda faltam saves com várias rotas dinâmicas, portais/andares e paridade de
+frontend, build/buy e interações. A evidência X11 é sintética no preview ODH.
+
 ### Identificação da build nos logs
 
 A biblioteca do log deixou de fixar a revisão na configuração inicial do CMake.
@@ -54,10 +75,10 @@ python3 tests/house07_window_go_here.py \
   --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' --save-resume
 ```
 
-O suporte novo exige uma única rota local Go Here do morador primário e verifica
+O suporte exige uma única rota local Go Here de um morador e verifica
 a identidade do destino temporário, o recurso exato e o fingerprint do código
 antes de restaurar o VM. Os perfis Route45 anteriores sem owner dinâmico continuam
-aceitos para ambos os moradores. Go Here salvo do morador adicional, múltiplas
+aceitos para ambos os moradores. Múltiplas
 rotas dinâmicas e retomada entre cômodos/andares continuam pendentes. Esta prova
 usa entrada X11 sintética no preview ODH; não valida a interface final nem a
 fidelidade geral ao TS1/Simitone.
@@ -69,8 +90,8 @@ já escolhido e a posição atual do Sim. `OBVM` registra o Main do PhoneLine 20
 `DYNO` registra owners dinâmicos com alvo, definição, rotina-raiz, vínculo GLOB
 e fingerprint da closure. O restore single-resident recompõe o recurso exato,
 confere GLOB e fingerprint e instala o owner antes de restaurar o VM. A revisão
-independente não encontrou erro nessa ordem. O restore household aceita agora o único owner dinâmico da rota Go Here local
-do morador primário; moradores adicionais continuam sem esse suporte.
+independente não encontrou erro nessa ordem. O restore household aceita agora um único owner dinâmico da rota Go Here local
+de qualquer morador; a retomada usa o VM e o registro de código daquele membro.
 
 O teste opt-in `tests/house07_route_save_resume.py` agora percorre House07 com
 dados comerciais somente para leitura. Sit na cadeira 128 (tick 1), Stand

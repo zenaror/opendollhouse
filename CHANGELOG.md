@@ -7,10 +7,17 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Salvar durante uma caminhada Go Here local agora inclui o outro Sim
+  selecionado pela janela. Na House07, ele retomou a ação em outro processo
+  enquanto o morador principal permaneceu no lugar; o caminho completo coincidiu
+  com uma execução contínua. Carregar e salvar sem avançar o tempo preservou o
+  arquivo idêntico. O limite continua sendo um único Go Here local por save.
+  Veja [`interaction-validation.md`](docs/interaction-validation.md).
+
 - A tecla S pode salvar a família enquanto o morador principal percorre uma
   rota Go Here local. Na House07, reabrir o arquivo completou a caminhada e
   preservou o outro morador; todos os passos coincidiram com uma execução sem
-  interrupção. O suporte ainda não cobre Go Here salvo de moradores adicionais
+  interrupção. O suporte ainda não cobre vários Go Here salvos ao mesmo tempo
   nem retomada entre cômodos. Veja
   [`interaction-validation.md`](docs/interaction-validation.md).
 

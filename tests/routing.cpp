@@ -429,6 +429,8 @@ void household_go_here_session_tests() {
     require(first_threads.bind(first_vm)&&second_threads.bind(second_vm)&&
             first_routing.bind(first_vm)&&second_routing.bind(second_vm),
             "synthetic household Go Here sessions bind queue and route controllers to each resident VM");
+    first_routing.set_room_pair_provider([](const auto&,const auto&)
+        ->std::optional<std::pair<std::uint16_t,std::uint16_t>> {return std::pair{1,1};});
     first_routing.set_route_goal_validator([&](const odh::VmFrame& frame,odh::RoutePoint p){
         return frame.context.caller==11&&frame.context.stack_object!=0&&frame.context.code_owner==501&&
             p==odh::RoutePoint{12,4}&&first_grid.walkable(p);
@@ -443,26 +445,84 @@ void household_go_here_session_tests() {
             "each resident Main waits independently for its own Go Here action");
     odh_host::HouseholdGoHereSession first_session{world,11,first_vm,first_threads,first_routing};
     odh_host::HouseholdGoHereSession second_session{world,21,second_vm,second_threads,second_routing};
-    require(first_session.request({12,4,1,0},501,goto_relative())&&
+    require(first_session.request({12,4,1,0},501,goto_relative({10,0,254,255,10,0,5,0}))&&
             second_session.request({28,20,1,0},502,goto_relative()),
             "each resident queues a Go Here marker and action under its own code owner");
     require(first_session.marker_id()&&second_session.marker_id()&&
             first_session.marker_id()!=second_session.marker_id()&&first_session.marker_alive()&&
             second_session.marker_alive(),"resident Go Here sessions own distinct live World markers");
-    for(std::uint64_t tick=1;tick<=32&&(first_session.status()=="queued"||second_session.status()=="queued");++tick){
+    std::uint64_t checkpoint_tick=0;
+    while(checkpoint_tick<4&&!first_routing.active()){
+        ++checkpoint_tick;first_routing.tick(checkpoint_tick);second_routing.tick(checkpoint_tick);
+        require(first_threads.advance(checkpoint_tick)&&second_threads.advance(checkpoint_tick),
+                "resident checkpoint controllers advance on consecutive ticks");
+        first_vm.run(8);second_vm.run(8);first_threads.observe();second_threads.observe();
+    }
+    require(first_routing.active(),"resident Go Here fixture reaches an active restored-route checkpoint");
+    std::string capture_rejection;
+    const auto saved_route=first_routing.capture_local_session_route(501,&capture_rejection);
+    require(saved_route.has_value(),("active resident Go Here route yields a validated local snapshot: "+capture_rejection).c_str());
+    odh::SessionDynamicActionOwner binding;binding.owner=501;binding.target_id=saved_route->target;
+    binding.target_generation=saved_route->target_generation;binding.target_guid=0x7c4;
+    binding.root_routine=4096;
+    const auto before_restore=world.snapshot();
+    odh_host::HouseholdGoHereSession restored_session{world,11,first_vm,first_threads,first_routing};
+    require(restored_session.restore(*saved_route,binding)&&restored_session.status()=="queued"&&
+            restored_session.marker_id()==saved_route->target&&restored_session.owner()==501&&
+            restored_session.destination()==saved_route->target_position,
+            "already-waiting resident Go Here route rehydrates its marker and action ownership");
+    const auto saved_actor=std::find_if(before_restore.entities.begin(),before_restore.entities.end(),
+        [](const auto& entity){return entity.id==11;});
+    const auto preserves_world=[&]{
+        const auto after=world.snapshot();
+        const auto actor_now=world.find(11);
+        return saved_actor!=before_restore.entities.end()&&after.entities.size()==before_restore.entities.size()&&
+            world.find(saved_route->target)&&world.find(saved_route->target)->generation==saved_route->target_generation&&
+            actor_now&&actor_now->position==saved_actor->position;
+    };
+    auto wrong_actor=*saved_route;wrong_actor.actor=21;
+    odh_host::HouseholdGoHereSession reject_actor{world,11,first_vm,first_threads,first_routing};
+    require(!reject_actor.restore(wrong_actor,binding)&&preserves_world(),
+            "Go Here restore rejects a route for another actor without changing restored World");
+    auto wrong_marker=*saved_route;++wrong_marker.target_generation;
+    odh_host::HouseholdGoHereSession reject_marker{world,11,first_vm,first_threads,first_routing};
+    require(!reject_marker.restore(wrong_marker,binding)&&preserves_world(),
+            "Go Here restore rejects a different marker generation without changing restored World");
+    auto wrong_owner=binding;wrong_owner.owner=999;
+    odh_host::HouseholdGoHereSession reject_owner{world,11,first_vm,first_threads,first_routing};
+    require(!reject_owner.restore(*saved_route,wrong_owner)&&preserves_world(),
+            "Go Here restore rejects an unbound dynamic owner without changing restored World");
+    auto wrong_profile=*saved_route;wrong_profile.call_failure_trees=false;
+    odh_host::HouseholdGoHereSession reject_profile{world,11,first_vm,first_threads,first_routing};
+    require(!reject_profile.restore(wrong_profile,binding)&&preserves_world(),
+            "Go Here restore rejects a non-Go Here route profile without adopting its marker");
+    auto wrong_ticket=*saved_route;++wrong_ticket.ticket;
+    odh_host::HouseholdGoHereSession reject_ticket{world,11,first_vm,first_threads,first_routing};
+    require(!reject_ticket.restore(wrong_ticket,binding)&&preserves_world(),
+            "Go Here restore rejects a nonmatching pending VM ticket without changing restored World");
+    for(std::uint64_t tick=checkpoint_tick+1;tick<=checkpoint_tick+32&&
+        (first_session.status()=="queued"||second_session.status()=="queued");++tick){
         if(first_routing.active())first_routing.tick(tick);
         if(second_routing.active())second_routing.tick(tick);
-        first_threads.advance(tick);second_threads.advance(tick);
+        require(first_threads.advance(tick)&&second_threads.advance(tick),
+                "resident continuation controllers advance on consecutive ticks");
         first_vm.run(8);second_vm.run(8);
         first_threads.observe();second_threads.observe();
-        first_session.observe();second_session.observe();
+        restored_session.observe();first_session.observe();second_session.observe();
     }
     require(first_session.status()=="returned_true"&&second_session.status()=="returned_true"&&
             first_session.owner()==501&&second_session.owner()==502&&first_session.result()==true&&
-            second_session.result()==true&&!first_session.marker_alive()&&!second_session.marker_alive()&&
+            second_session.result()==true&&restored_session.status()=="returned_true"&&
+            !first_session.marker_alive()&&!restored_session.marker_alive()&&!second_session.marker_alive()&&
             world.find(11)->position->x==12&&world.find(11)->position->y==4&&
             world.find(21)->position->x==28&&world.find(21)->position->y==20,
-            "interleaved resident Go Here sessions complete only their own VM, owner, marker, and destination");
+            (std::string("interleaved resident Go Here completion: first=")+first_session.status()+
+                " restored="+restored_session.status()+" second="+second_session.status()+
+                " firstVM="+odh::vm_status_name(first_vm.status())+" secondVM="+odh::vm_status_name(second_vm.status())+
+                " firstRoute="+first_routing.diagnostic()+" secondRoute="+second_routing.diagnostic()+
+                " firstPosition="+std::to_string(world.find(11)->position->x)+","+
+                std::to_string(world.find(11)->position->y)+" secondPosition="+
+                std::to_string(world.find(21)->position->x)+","+std::to_string(world.find(21)->position->y)).c_str());
     world.create(31,odh::EntityKind::avatar,{0,88,0});world.set_position(31,{4,28,1,0});
     odh::EntityThreadControllers failed_threads{world,31};
     odh::Routing failed_routing{world,second_grid,globals};

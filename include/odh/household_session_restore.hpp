@@ -14,7 +14,7 @@ namespace odh {
 // An unpublished candidate. Prepare restores owned World/relationship/global
 // values before the caller constructs VM primitives and controllers against
 // them. The live session must remain intact until restore_execution succeeds.
-// Only the primary resident's verified local Go Here dynamic owner is supported.
+// Exactly one runtime resident may own a verified local Go Here dynamic route.
 struct SessionExecutionBinding {
     std::int16_t id = 0;
     Vm* vm = nullptr;
