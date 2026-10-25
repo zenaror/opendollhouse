@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A janela do lote agora mostra as sete necessidades e a pontuação de cômodo
+  (oito barras) em um painel 2×4 com nomes no idioma escolhido. Usa
+  `PanelBack.bmp` dos dados do jogo quando disponível; as traduções em inglês
+  e português foram verificadas nesta etapa. Os outros painéis e a aparência
+  completa do Simitone/The Sims 1 ainda faltam. Veja
+  [`current-handoff.md`](docs/current-handoff.md).
+
 - A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e
   os conserva em sessões novas; sessões antigas continuam abrindo com esses
   valores zerados. O `TS1 Budget` agora lê quantias TempXL completas, incluindo

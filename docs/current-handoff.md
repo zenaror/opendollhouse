@@ -18,11 +18,33 @@ A instalação original inclui arte útil do painel em `UIGraphics.far`:
 esses cinco recursos. Isso confirma que há peças originais para reconstruir a
 aparência, mas ainda não determina como compô-las nem prova paridade visual.
 
-Próximo passo do painel: manter o HUD numérico como ferramenta de diagnóstico;
-montar o painel jogável separado, guiado pelo arranjo do Simitone e pelas
-peças originais. Como os oito nomes não vêm traduzidos nos dados do jogo,
-resolver a origem dos rótulos sem associar traduções por índices incompatíveis
-e validar ao menos inglês e um idioma não inglês antes de ampliar cobertura.
+## Atualização: primeiro painel de motivos na janela (2026-10-25)
+
+A janela do lote agora desenha um painel separado do HUD numérico de
+diagnóstico: oito barras em duas fileiras, nomes do idioma selecionado e
+`PanelBack.bmp` original quando o arquivo `UIGraphics.far` é carregado. Os
+rótulos são fornecidos pelo OpenDollhouse para os 20 códigos de idioma; inglês
+e português foram verificados nesta etapa, mas as outras traduções ainda
+precisam de revisão. O painel segue o arranjo do `UIMotiveSubpanel` do Simitone;
+isso é uma primeira peça da interface, não paridade visual nem uma UI completa.
+
+Build de `odh-person` e `odh-linux-motive-panel-tests` passou. Os testes
+`linux_motive_panel`, `status_hud` e `linux_text_renderer` passaram (3/3). A
+verificação real `tests/house07_status_hud_cli.py` também passou para sessão
+nova e retomada, confirmando que o HUD numérico de diagnóstico continua
+disponível sem aparecer como a interface da janela. A
+execução integrada `tools/play_linux.py --mode 1 --house 7 --resident-id 48
+--language 14` mostrou a House07 em 800×600 com os nomes “Fome”, “Conforto”,
+“Higiene”, “Bexiga”, “Energia”, “Diversão”, “Social” e “Cômodo”. A captura
+local ignorada pelo Git está em
+`reports/motive-panel/house07-pt.png` (SHA256
+`da50cc0e0eb176d2e9d38b9fc4536b30f777fd6536aa14683cb9f520a74d6c13`). Os sete
+arquivos originais monitorados tiveram hashes iguais antes e depois. A janela
+foi fechada com Escape e o Xvfb encerrou.
+
+Ainda faltam os demais painéis, a navegação e a seleção visual do Sim ativo,
+além de comparação com capturas confiáveis do Simitone ou do jogo. O HUD
+numérico continua disponível para quadros de diagnóstico.
 
 ## Atualização: captura do menu com raio Simitone (2026-10-25)
 

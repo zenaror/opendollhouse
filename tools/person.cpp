@@ -90,6 +90,7 @@
 #endif
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
 #include "linux_text_renderer.hpp"
+#include "linux_motive_panel.hpp"
 #endif
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
 #include "linux_session_log.hpp"
@@ -830,6 +831,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
     std::optional<odh::BitmapImage> pie_menu_background,pie_menu_button;
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    std::optional<odh::BitmapImage> motive_panel_background;
+#endif
     if(ui_graphics_far){
         odh::Limits far_limits;far_limits.far_entries=16384;far_limits.far_name_length=512;
         far_limits.far_name_bytes=1024*1024;
@@ -841,6 +845,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         with_far_entry(*ui_graphics_far,"Shared\\Sys\\PieButt.bmp",[&](const auto& view){
             pie_menu_button=odh::read_bmp(view,bitmap_limits);
         },far_limits);
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        odh::BitmapLimits panel_bitmap_limits;
+        panel_bitmap_limits.width=1024;panel_bitmap_limits.height=128;
+        panel_bitmap_limits.pixels=131072;panel_bitmap_limits.rle_bytes=1024*1024;
+        with_far_entry(*ui_graphics_far,"cpanel\\Backgrounds\\PanelBack.bmp",[&](const auto& view){
+            motive_panel_background=odh::read_bmp(view,panel_bitmap_limits);
+        },far_limits);
+#endif
         if(!pie_menu_background||!pie_menu_button)
             throw odh::FormatError("UI graphics archive did not provide both pie menu images");
     }
@@ -4850,12 +4862,16 @@ struct PlacementCandidateProbe {
                     (*hud.needs)[i]=active->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))];
                 hud.room_score=active->motives[13];
             }
-            odh_host::draw_status_hud(frame.image,hud);captured_status_hud=hud;
+            captured_status_hud=hud;
+            if(!render_window)odh_host::draw_status_hud(frame.image,hud);
         }
 #ifdef ODH_HAVE_X11
         if(render_window_host){
             (void)interaction_window_title();
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+            if(saved_world_main&&captured_status_hud)
+                (void)odh_host::draw_motive_panel(frame.image,*captured_status_hud,game_language,
+                    motive_panel_background?&*motive_panel_background:nullptr);
             if(current_overlay_text){
                 const auto text_result=odh_host::draw_text_overlay(frame.image,*current_overlay_text,current_overlay_language);
                 if(text_result.missing_glyphs)
