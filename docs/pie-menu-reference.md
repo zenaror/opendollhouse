@@ -130,9 +130,16 @@ Depois de ajustar o raio para 60 px, `odh-person --saved-world-main
 `reports/pie-menu-window/house07-fridge-menu-assets-radius60.png` (SHA256
 `adfcabfa525f40d2b5d1f08de81eb33cfb0ccf75b322aa25ab6431ca2ceb75de`) mostra
 PieBack/PieButt carregados do `UIGraphics.far` externo. Ela não demonstra
-paridade visual; o launcher integrado ainda não chegou ao lote na tentativa
-isolada registrada em [current-handoff.md](current-handoff.md). O wrapper
-`xvfb-run` encerrou a tela ao final.
+paridade visual.
+
+O caminho integrado `tools/play_linux.py` também abriu House07 com idioma 1 e
+morador 48. Em Xvfb 800×600, o clique na geladeira mostrou `Have A Snack`; ao
+escolher a ação, o morador foi até a geladeira e a abriu. A captura após dez
+segundos é `reports/pie-menu-window/launcher-house07-snack-click.png` (SHA256
+`cf9a93d2e4b90c50f47cfba03b812634c71b05e99838801425b8594d0f9147bf`). Ela
+comprova início visível da ação, sem confirmar seu retorno ou a refeição
+completa. A carga inicial levou cerca de 78 segundos neste perfil temporário.
+O launcher e a janela Xvfb foram encerrados depois da captura.
 
 Uma janela X11 isolada com os dados House07 abriu a casa e o HUD de diagnóstico.
 Clique real pela janela na geladeira mostrou `Have A Snack`; clicar na opção

@@ -11,11 +11,22 @@ confirma a arte PieBack/PieButt do `UIGraphics.far` e a posição ajustada; o HU
 texto/destaque e outras partes continuam provisórios. Não é comparação com uma
 captura Simitone/original.
 
-No mesmo teste, o caminho integrado `tools/play_linux.py` alcançou a seleção de
-morador, mas a execução com morador48 mostrou "Carregamento..." aos18s e uma
-captura preta aos68s. O limite de78s encerrou o processo. Isso não explica a
-causa nem valida entrada jogável pelo launcher. `xvfb-run` terminou e não há
-processo de tela virtual ou `odh-person` persistente.
+Correção do diagnóstico anterior: os primeiros perfis temporários não tinham
+idioma salvo e abriram o seletor de idioma. O clique feito aos 78s selecionou
+uma língua e só então começou o carregamento do lote; as capturas preta e
+"Carregamento..." foram transições dessa tentativa, não prova de travamento.
+Repeti com `tools/play_linux.py --mode 1 --house 7 --resident-id 48
+--language 1`. House07 apareceu aos 78s com os dois moradores e o HUD. O clique na
+geladeira abriu `Have A Snack`; selecionar a opção iniciou a ação e, dez
+segundos depois, a captura mostrou o morador diante da geladeira aberta.
+Capturas locais ignoradas pelo Git:
+`launcher-house07-explicit-language.png` (SHA256
+`06d9f22ce81c943a77593c69eae7afad9d0e4bb28eb50bac8755ee4f80646f4d`) e
+`launcher-house07-snack-click.png` (SHA256
+`cf9a93d2e4b90c50f47cfba03b812634c71b05e99838801425b8594d0f9147bf`).
+Isso verifica entrada integrada e início visível dessa ação em House07; não
+confirma o retorno/fim da refeição nem paridade geral. O processo saiu após
+Escape, `xvfb-run` encerrou a tela e nenhum processo ficou aberto.
 
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
@@ -28,10 +39,9 @@ e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
 passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
 prova paridade visual com o Simitone ou com o jogo original.
 
-Próximo: capturar o mesmo menu em Xvfb para conferir a nova posição e a
-legibilidade em 320×240 e 800×600; encerrar a tela virtual ao fim. Depois,
-seguir para outra lacuna visual ou de interação sem incluir arte comercial no
-Git.
+Próximo: verificar o retorno e o fim da refeição pela janela e continuar a
+reconstrução visual do menu/HUD conforme Simitone e dados locais, mantendo cada
+resultado limitado ao que a captura ou o trace demonstra.
 
 ## Atualização: BCON privado e retorno da Pizza (2026-10-24)
 
