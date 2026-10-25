@@ -1,5 +1,24 @@
 # AllowPush, fila limitada e retorno ao Main
 
+## Go Here pela janela em House07 (2026-10-25)
+
+`tests/house07_window_go_here.py` inicia o jogo integrado numa janela Xvfb vazia,
+sem os comandos headless de interação. Um clique X11 no chão seleciona o tile
+`[24,26]`; Espaço envia a ação pela janela. O relatório final marca
+`trigger=window_input`, Go Here retorna `true`, a rota faz 16 movimentos e
+termina no centro do tile (`[392,424,1,0]`), com a fila vazia. Os seis arquivos
+originais monitorados mantêm os mesmos hashes. O teste encerra jogo e Xvfb.
+
+Esta é uma entrada sintética X11 pela janela real do ODH, não input físico nem
+prova de fidelidade à interface do The Sims/Simitone. Ainda não há pie menu
+original nem validação de outros lotes ou andares.
+
+```sh
+python3 tests/house07_window_go_here.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+```
+
 ## House07 Go Here salvo durante a caminhada (2026-10-25)
 
 O gate `tests/house07_route_save_resume.py` agora cobre a rota local de um

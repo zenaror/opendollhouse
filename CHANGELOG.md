@@ -13,6 +13,11 @@ validação indicados por versão.
   primeiros dois passos depois do restore. Rotas entre cômodos e portais
   continuam pendentes. Veja [`interaction-validation.md`](docs/interaction-validation.md).
 
+- Na janela Linux, clicar no chão e apertar Espaço agora tem um gate integrado:
+  Go Here percorreu 16 passos na House07, chegou ao tile escolhido e esvaziou a
+  fila. O teste usa eventos X11 sintéticos em Xvfb isolado, não input físico nem
+  a interface final. Veja [`interaction-validation.md`](docs/interaction-validation.md).
+
 - Erros ao salvar uma sessão experimental agora mostram o estado do Main, os
   quadros ativos da VM e suas instruções recentes, facilitando localizar uma
   ação que ainda não chegou a um ponto seguro para salvar. Veja

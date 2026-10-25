@@ -1,6 +1,6 @@
 # Continuidade atual
 
-## Estado atual: House07 Go Here salva e retomada (2026-10-25)
+## Estado atual: House07 Go Here pela janela, save e retomada (2026-10-25)
 
 O pacote de sessão carrega a seção opcional `ROUT`, com o caminho local Route45
 já escolhido e a posição atual do Sim. `OBVM` registra o Main do PhoneLine 207;
@@ -37,6 +37,26 @@ gate real acima passaram. A retomada real de rota local de um cômodo está
 validada nesse caso; rotas entre cômodos/andares, portais e retomada por
 household com owner dinâmico continuam sem validação. Isso também não demonstra
 paridade geral com o The Sims ou Simitone.
+
+### Go Here por clique no chão e Espaço (2026-10-25)
+
+O teste opt-in `tests/house07_window_go_here.py` abriu a interface integrada da
+House07 em Xvfb 800×600, sem opções headless de interação. Um clique X11 no chão
+selecionou o tile `[24,26]`; Espaço pediu a caminhada pela janela. O relatório
+final marcou `trigger=window_input`, BHAV 4096 retornou `true`, a rota terminou
+após 16 passos no centro do tile (`[392,424,1,0]`) e a fila ficou vazia. Seis
+arquivos comerciais mantiveram seus hashes. O teste encerrou a janela do jogo e
+o Xvfb; não ficou nenhum processo virtual ativo.
+
+Isso valida o caminho de input do ODH nesta janela Linux de teste, não uma
+interface final fiel ao TS1/Simitone nem input físico do desktop. O gate é
+reproduzível com:
+
+```sh
+python3 tests/house07_window_go_here.py \
+  --binary build/linux-checkpoint/odh-person \
+  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+```
 
 ### Diagnóstico anterior do Main e da fila (2026-10-25)
 
