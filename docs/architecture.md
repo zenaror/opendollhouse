@@ -8,6 +8,27 @@ The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
 controles, simulação e cobertura das expansões continuam tendo o original como
 critério final. Paridade Simitone é um marco intermediário, não a conclusão.
 
+Complemento humano de 2026-10-25: recriar a meta, mas mantê-la pausada até
+nova autorização. Os passos abaixo são planejamento, não ordem para iniciar
+checkout, instalação, implementação ou testes agora. Linux é o primeiro ambiente
+para validar a experiência; a arquitetura deve considerar os demais alvos desde
+o início. Wii U entra como alvo desejado adicional, sem viabilidade confirmada.
+
+Ao retomar, avaliar antes de consolidar a base como separar o jogo dos serviços
+de cada sistema: janela/gráficos, áudio, teclado/mouse/controles/toque, arquivos,
+configurações e logs. Evitar caminhos Linux fixos no núcleo e dependências de
+desktop espalhadas pela simulação. Identificar consumo de memória, tempo de
+processamento e carregamento de dados para permitir perfis por plataforma,
+sem descartar simulação fora da tela como otimização. Essas são diretrizes de
+projeto, não camadas já implementadas.
+
+C#/.NET e bibliotecas herdadas são escolhas iniciais da avaliação, não garantias
+para consoles. Investigar cedo restrições de runtime, geração de código em
+execução, bibliotecas nativas e gráficos dos alvos mais limitados. Se uma escolha
+impedir um alvo importante, registrar a consequência e avaliar substituição de
+componentes ou adaptação antes de consolidá-la. Não pressupor que uma tradução
+integral seja necessária nem que a base desktop possa ser portada diretamente.
+
 Primeiro avaliar o fork alexjyong, que possui entrada Desktop Linux. Manter
 inicialmente C#/.NET e o motor existente; não iniciar uma tradução integral
 para C++. A inspeção estática encontrou projeto net9.0, MonoGame DesktopGL,
@@ -36,9 +57,11 @@ Sequência de trabalho:
    [linux-playable-scope.md](linux-playable-scope.md). Falhas conhecidas herdadas
    não viram exclusões automáticas do escopo. Substituir sistemas maiores apenas
    quando a evidência justificar, evitando dois motores completos em paralelo.
-5. Reavaliar recursos e execução nos portáteis depois da base Linux demonstrada.
-   New 3DS, Vita, Android, Switch, Windows e macOS Intel/Apple Silicon permanecem
-   alvos planejados, sem promessa de compatibilidade da nova base.
+5. Desde a avaliação inicial, manter um mapa de dependências e riscos por alvo;
+   separar o código compartilhável das adaptações necessárias. Implementação
+   e validação dos ports vêm por etapas após o primeiro ciclo Linux demonstrado.
+   New 3DS, Vita, Android, Switch, Windows, macOS Intel/Apple Silicon e o desejo
+   adicional Wii U permanecem no planejamento, sem promessa de compatibilidade.
 
 O C++ existente, as ferramentas, testes e descobertas ficam preservados como
 apoio técnico. Não presumir integração direta C++/C#, equivalência dos saves

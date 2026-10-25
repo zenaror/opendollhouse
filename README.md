@@ -17,13 +17,19 @@ O probe da cadeira tem preview X11 opcional ligado ao World/playback. Ainda
 faltam inicialização/encerramento fiel das poses, lote, persistência, serviços
 completos de simulação e validação em consoles.
 
-Plataformas planejadas: Linux primeiro; depois New Nintendo 3DS, PlayStation Vita
-e Android; Nintendo Switch, Windows e macOS (Apple Silicon arm64 e Intel x86_64)
-ficam como alvos futuros. A viabilidade dos portáteis será reavaliada para a
-base escolhida, sem bloquear o primeiro candidato Linux. Cada console exige toolchain e validação
+Plataformas planejadas: Linux como primeiro ambiente de validação; New Nintendo
+3DS, PlayStation Vita, Android, Nintendo Switch, Windows e macOS (Apple Silicon
+arm64 e Intel x86_64) também são alvos futuros; Wii U é um desejo adicional.
+O código deve ser planejado desde o início para separar regras do jogo de
+gráficos, áudio, controles e arquivos de cada plataforma. A viabilidade da base
+C# nos consoles precisa ser investigada cedo, antes de consolidar dependências.
+Cada console exige toolchain e validação
 próprias; não há build ou teste de hardware do Switch validado neste projeto.
 Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão
 de CI ou máquinas dedicadas antes de qualquer declaração de suporte.
+
+Desenvolvimento pausado por solicitação humana em 2026-10-25: a meta será
+recriada com essa direção, sem iniciar a execução até nova autorização.
 
 ## Dados do jogo
 

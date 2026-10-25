@@ -7,6 +7,11 @@ validação indicados por versão.
 
 ### Alterado
 
+- O planejamento passa a considerar os outros sistemas desde a avaliação
+  inicial da base, separando o jogo dos serviços de cada plataforma. Wii U
+  entra como alvo desejado, sem suporte confirmado. A execução permanece
+  pausada por solicitação do usuário.
+
 - O caminho principal passa a ser avaliar uma base Simitone/FreeSO no Linux e
   aproximá-la da experiência original, aproveitando os sistemas já integrados.
   O motor próprio e as pesquisas ficam preservados como apoio. A nova base

@@ -1,5 +1,20 @@
 # Continuidade atual
 
+## Pausa e planejamento multiplataforma (2026-10-25)
+
+Instrução humana mais recente: a meta anterior foi removida; recriar com a nova
+direção e mantê-la pausada, sem iniciar desenvolvimento. Linux continua sendo
+o primeiro ambiente para validar o jogo, mas planejar desde já os outros alvos:
+New 3DS, Vita, Android, Switch, Windows, macOS Intel/Apple Silicon e Wii U como
+desejo adicional. Investigar cedo dependências/runtime C# nos consoles,
+memória e gráficos, e separar simulação/dados dos serviços de cada plataforma.
+Não deixar toda a análise de portabilidade para depois do Linux.
+
+Nenhuma preparação de checkout, instalação, build ou implementação Simitone
+foi iniciada para atender a este pedido. Os próximos passos técnicos abaixo
+ficam aguardando autorização explícita de retomada. O trabalho C++ pendente
+permanece preservado sem mudança.
+
 ## Direção vigente: Simitone como base, original como destino (2026-10-25)
 
 O usuário autorizou ajustar o objetivo após avaliar a mudança de estratégia.
@@ -27,11 +42,10 @@ executado ou integrado ao host. Não é bloqueador da nova rota nem checkpoint
 validado. Preservar também `Testing/` e os três scripts não rastreados já
 existentes. Limpeza antiga continua aguardando autorização específica.
 
-O objetivo nativo consultado permanece com o texto anterior e status `paused`.
-As ferramentas disponíveis não permitem editar seu texto ou retomá-lo; não
-marcar a meta antiga concluída para contornar isso. O plano vigente está em
-`docs/architecture.md` e no handoff OMM. Atualizar a meta nativa pela interface
-quando possível. A alteração de planejamento não comprova jogo funcional.
+A antiga limitação de editar o texto da meta foi superada pela remoção manual
+da meta anterior pelo usuário. A nova meta deve ser criada e pausada conforme
+a instrução mais recente acima. O plano vigente está em `docs/architecture.md`
+e no handoff OMM. A alteração de planejamento não comprova jogo funcional.
 
 As seções seguintes preservam evidências e pendências do motor próprio;
 não devem recolocar suas microetapas à frente do novo plano.

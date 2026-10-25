@@ -14,10 +14,20 @@
   milestones, com testes e checkpoints. Pela direção de 2026-10-25 abaixo,
   restrições de New 3DS serão reavaliadas sem bloquear a base Linux;
   resultados Linux não validam consoles.
+- Instrução humana vigente de 2026-10-25: recriar a meta e mantê-la pausada;
+  não iniciar desenvolvimento, preparação de checkouts ou builds até nova
+  autorização. Linux é o primeiro ambiente de validação, não o único alvo.
+  Planejar desde já separação de simulação/dados e serviços de plataforma,
+  gráficos, áudio, entrada e armazenamento, com consumo de recursos explícito
+  e dependências substituíveis. Conferir riscos de C#/.NET para os consoles
+  antes de consolidar a base; não presumir viabilidade nem adiar toda a análise
+  de portabilidade para depois do Linux.
 - Nintendo Switch também é um possível alvo futuro de build, depois do Linux e
   dos ports prioritários; toolchain, requisitos de distribuição e validação em
   hardware ainda não foram confirmados. Windows e macOS (Apple Silicon e Intel)
   também permanecem alvos futuros de build.
+- Wii U é um alvo desejado adicional (2026-10-25), sujeito à investigação de
+  runtime, ferramentas, gráficos, memória e execução real; sem suporte prometido.
 - Consultar OMM no escopo `OpenDollhouse` nas retomadas. Ler o handoff antes de
   atualizar; usar o SHA atual em `expected_sha256`. Registrar revisão, checks,
   pendências e referências. Notas históricas de planejamento não revogam a
