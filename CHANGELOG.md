@@ -7,6 +7,9 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O candidato Linux agora usa o mesmo leitor nativo de constantes testado no 3DS
+  emulado. Comprar, usar a cadeira e salvar/reabrir continuaram funcionando no
+  cenário observado. O restante do motor e os ports completos continuam pendentes.
 - O leitor de dados existente passou num teste sintético executado no 3DS emulado,
   além do PC. Isso verifica esse leitor; ainda não é uma build do jogo para 3DS.
 - Compra de uma cadeira pela janela, uso por Bob e conservação do objeto,

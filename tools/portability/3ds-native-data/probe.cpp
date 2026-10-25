@@ -1,6 +1,9 @@
 #include "odh/formats.hpp"
+#include "odh_data.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -89,17 +92,94 @@ bool check_valid(const std::vector<std::uint8_t>& bytes) {
     return version == "2.5" && visited == 1;
 }
 
+bool check_bcon_abi() {
+    if (odh_data_abi_version() != 1) return false;
+    const std::array<std::uint8_t, 7> data{{2, 0xA5, 0x34, 0x12, 0xDC, 0xFE, 0x99}};
+    std::array<std::uint16_t, 3> words{{0x7777, 0x7777, 0x7777}};
+    std::uint32_t count = 9, flags = 9, remaining = 9;
+    if (odh_bcon_decode_v1(data.data(), data.size(), words.data(), 2,
+                           &count, &flags, &remaining) != ODH_DATA_OK ||
+        count != 2 || flags != 0xA5 || remaining != 1 ||
+        words[0] != 0x1234 || words[1] != 0xFEDC || words[2] != 0x7777)
+        return false;
+
+    words.fill(0x7777);
+    count = flags = remaining = 9;
+    if (odh_bcon_decode_v1(data.data(), data.size(), words.data(), 1,
+                           &count, &flags, &remaining) != ODH_DATA_BUFFER_TOO_SMALL ||
+        count != 2 || flags != 0xA5 || remaining != 1 || words[0] != 0x7777)
+        return false;
+
+    count = flags = remaining = 9;
+    if (odh_bcon_decode_v1(data.data(), data.size(), nullptr, 0,
+                           &count, &flags, &remaining) != ODH_DATA_BUFFER_TOO_SMALL ||
+        count != 2 || flags != 0xA5 || remaining != 1)
+        return false;
+    count = flags = remaining = 9;
+    if (odh_bcon_decode_v1(data.data(), data.size(), nullptr, 1,
+                           &count, &flags, &remaining) != ODH_DATA_INVALID_ARGUMENT ||
+        count != 0 || flags != 0 || remaining != 0)
+        return false;
+
+    if (sizeof(std::ptrdiff_t) == 4) {
+        count = flags = remaining = 9;
+        if (odh_bcon_decode_v1(data.data(), 0x80000000U, words.data(), 3,
+                               &count, &flags, &remaining) != ODH_DATA_INVALID_ARGUMENT ||
+            count != 0 || flags != 0 || remaining != 0 || words[0] != 0x7777)
+            return false;
+    }
+
+    count = flags = remaining = 9;
+    if (odh_bcon_decode_v1(nullptr, 0, words.data(), 3,
+                           &count, &flags, &remaining) != ODH_DATA_INVALID_ARGUMENT ||
+        count != 0 || flags != 0 || remaining != 0 || words[0] != 0x7777)
+        return false;
+
+    const std::array<std::uint8_t, 3> truncated{{2, 0xA5, 0x34}};
+    count = flags = remaining = 9;
+    if (odh_bcon_decode_v1(truncated.data(), truncated.size(), words.data(), 3,
+                           &count, &flags, &remaining) != ODH_DATA_INVALID_FORMAT ||
+        count != 0 || flags != 0 || remaining != 0 || words[0] != 0x7777)
+        return false;
+
+    const std::array<std::uint8_t, 2> empty{{0, 0x5A}};
+    if (odh_bcon_decode_v1(empty.data(), empty.size(), nullptr, 0,
+                           &count, &flags, &remaining) != ODH_DATA_OK ||
+        count != 0 || flags != 0x5A || remaining != 0)
+        return false;
+
+    std::vector<std::uint8_t> maximum(2 + 255 * 2);
+    maximum[0] = 255;
+    maximum[1] = 0x7E;
+    for (std::size_t i = 0; i < 255; ++i) {
+        maximum[2 + i * 2] = static_cast<std::uint8_t>(i);
+        maximum[3 + i * 2] = 0;
+    }
+    std::vector<std::uint16_t> many(255, 0x7777);
+    if (odh_bcon_decode_v1(maximum.data(), maximum.size(), many.data(), 254,
+                           &count, &flags, &remaining) != ODH_DATA_BUFFER_TOO_SMALL ||
+        count != 255 || flags != 0x7E || remaining != 0 ||
+        many[0] != 0x7777 || many[254] != 0x7777)
+        return false;
+    if (odh_bcon_decode_v1(maximum.data(), maximum.size(), many.data(), 255,
+                           &count, &flags, &remaining) != ODH_DATA_OK ||
+        count != 255 || many[0] != 0 || many[254] != 254)
+        return false;
+    return true;
+}
+
 bool run_probe() {
     const auto good = synthetic_far_iff_bcon();
     if (!check_valid(good)) return false;
     auto invalid = good;
     invalid[8] = 2; // Unsupported FAR version must be rejected, not guessed.
+    bool rejected = false;
     try {
         check_valid(invalid);
-        return false;
     } catch (const odh::FormatError&) {
-        return true;
+        rejected = true;
     }
+    return rejected && check_bcon_abi();
 }
 
 } // namespace

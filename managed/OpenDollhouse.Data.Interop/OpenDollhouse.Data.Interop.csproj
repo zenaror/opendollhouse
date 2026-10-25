@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ODHNativeDataFileName Condition="'$(ODHNativeDataLibrary)' != ''">$([System.IO.Path]::GetFileName('$(ODHNativeDataLibrary)'))</ODHNativeDataFileName>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ODHNativeDataLibrary)' != ''">
+    <None Include="$(ODHNativeDataLibrary)" Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireODHNativeDataLibrary" BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(ODHNativeDataLibrary)' == ''"
+           Text="Set ODHNativeDataLibrary to the full path of the target platform's odh_data native library. No managed BCON fallback is provided." />
+    <Error Condition="'$(ODHNativeDataLibrary)' != '' and !Exists('$(ODHNativeDataLibrary)')"
+           Text="ODHNativeDataLibrary does not exist: $(ODHNativeDataLibrary)" />
+    <Error Condition="'$(ODHNativeDataLibrary)' != '' and !$([System.IO.Path]::IsPathRooted('$(ODHNativeDataLibrary)'))"
+           Text="ODHNativeDataLibrary must be an absolute path." />
+    <Error Condition="'$(ODHNativeDataLibrary)' != '' and '$(ODHNativeDataFileName)' != 'libodh_data.so' and '$(ODHNativeDataFileName)' != 'libodh_data.dylib' and '$(ODHNativeDataFileName)' != 'odh_data.dll'"
+           Text="ODHNativeDataLibrary must use its loader basename: libodh_data.so, libodh_data.dylib or odh_data.dll. Pass the unversioned alias rather than a versioned filename." />
+  </Target>
+</Project>

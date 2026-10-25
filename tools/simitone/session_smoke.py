@@ -22,7 +22,7 @@ from compare_save_states import walk_differences
 
 
 MANAGED = (
-    'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'FSO.SimAntics.dll',
+    'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'OpenDollhouse.Data.Interop.dll', 'FSO.SimAntics.dll',
     'FSO.HIT.dll', 'FSO.Content.dll', 'FSO.Files.dll',
     'Simitone.runtimeconfig.json',
 )
@@ -154,6 +154,7 @@ def log_facts(log_path, profile):
         'fatal_error_count': sum('Unhandled exception.' in line or
                                  '=== FATAL ERROR ===' in line for line in lines),
         'avatar_samples': records('TS1 avatar state: '),
+        'native_bcon_decodes': records('ODH native BCON decode: '),
         'save_states': records('TS1 save state: '),
         'native_recoveries': records('Native object recovery: '),
         'native_person_recoveries': records('Native person recovery: '),
@@ -268,6 +269,9 @@ def observe_phase(name, seconds, actions, argv, env, display, profile, out):
                     result['memory_status'] = [line for line in
                                                status.read_text().splitlines()
                                                if line.startswith(('VmRSS:', 'VmHWM:'))]
+            maps = Path('/proc') / str(process.pid) / 'maps'
+            result['native_library_mappings'] = ([line for line in maps.read_text().splitlines()
+                if 'libodh_data.so' in line] if maps.exists() else [])
             result['capture_sha256'] = capture(display, out / result['capture'])
     finally:
         stop(process)
@@ -329,6 +333,7 @@ def main():
         'protected_before': protected_before,
         'binary_sha256': digest(binary),
         'managed_sha256': {name: digest(binary.parent / name) for name in MANAGED},
+        'native_sha256': {'libodh_data.so': digest(binary.parent / 'libodh_data.so')},
         'runtime': str(binary),
         'audio': 'disabled',
         'vm_diagnostics': args.vm_diagnostics,

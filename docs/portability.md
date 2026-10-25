@@ -131,9 +131,9 @@ do release oficial com hash conferido, sem instalação de aplicativo no sistema
 Não houve teste em aparelho físico.
 
 Isso demonstra uma opção de implementação para um componente de dados, não o
-motor do jogo. O leitor ainda não é chamado pelo Simitone. O próximo corte deve
-fornecer uma API nativa pequena, com inteiros/tamanhos explícitos, memória e erros
-bem definidos, e fazê-la ser usada pelo candidato Linux e pelo teste 3DS. Não
+motor do jogo. A etapa seguinte já ligou BCON ao Simitone por uma API C pequena, com tipos,
+memória e erros definidos, e repetiu a execução no 3DS emulado. A ligação e seus
+limites estão em [integração nativa](native-data-integration.md). Não
 transportar objetos CLR ou tipos internos de STL pela fronteira. A fila C# fica
 como implementação funcional/oráculo enquanto seu caminho de execução no alvo
 não for demonstrado; não ampliar uma obrigação universal de CLR.

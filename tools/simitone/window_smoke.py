@@ -81,9 +81,10 @@ def main():
     result = {'protected_before': before, 'audio': 'disabled',
               'binary_sha256': digest(binary), 'actions': [],
               'managed_sha256': {name: digest(binary.parent / name) for name in (
-                  'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'FSO.SimAntics.dll',
+                  'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'OpenDollhouse.Data.Interop.dll', 'FSO.SimAntics.dll',
                   'FSO.HIT.dll', 'FSO.Content.dll', 'FSO.Files.dll',
                   'Simitone.runtimeconfig.json')},
+              'native_sha256': {'libodh_data.so': digest(binary.parent / 'libodh_data.so')},
               'runtime': str(binary), 'gameplay_verified': False}
     try:
         with tempfile.TemporaryDirectory(prefix='odh-simitone-window-') as temporary:

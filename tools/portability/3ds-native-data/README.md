@@ -19,7 +19,7 @@ a supplied libretro core, with this script's private Xvfb/configuration paths:
 ```sh
 python3 tools/portability/3ds-native-data/run_emulator.py \
   --core refs/tools/azahar-libretro-2126.2/azahar_libretro.so \
-  --probe reports/portability/3ds-native-data/odh-data-probe.3dsx \
+  --probe reports/portability/3ds-native-data-abi/odh-data-probe.3dsx \
   --report-dir reports/portability/3ds-native-execution-new
 ```
 
@@ -55,8 +55,9 @@ the recorded result without another emulator run.
 The host fixture passed, and the ARM guest emitted `ODH_3DS_NATIVE_DATA_V1:PASS`
 and displayed PASS on its console. This proves only this native reader path.
 It does not run Simitone, the managed queue, a saved household or the full game,
-and it is not a physical New 3DS test. This parser is not yet called by the
-current Simitone candidate; a bounded shared native data API is the next step.
+and it is not a physical New 3DS test. The subsequent BCON C ABI is now used by the Simitone candidate and by this
+probe. This does not establish a shared complete game engine. The earlier
+pre-ABI probe remains archived separately; new outputs use `3ds-native-data-abi`.
 
 The installed toolchain selects `armv6k/fpu`. The linked ELF reports an aggregate
 ARMv7 attribute from a discarded libgcc barrier member; the preserved link map,

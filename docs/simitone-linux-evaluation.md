@@ -1,5 +1,9 @@
 # Avaliação da base Simitone no Linux
 
+Receita atual: [integração do leitor nativo](native-data-integration.md).
+Ela exige também `managed/`, `native/`, experimental22 e ODHNativeDataLibrary.
+Receitas de checkpoints anteriores abaixo permanecem históricas.
+
 ## Estado e alcance
 
 Retomada em 2026-10-25 após `get_goal` retornar `active`. A instrução humana

@@ -37,8 +37,9 @@ Seguir a [decisão de portabilidade](portability.md), separar componentes usados
 resolver os experimentos de runtime antes de ampliar as funcionalidades desktop.
 A biblioteca livre de gráficos não substitui a prova de execução do runtime.
 O experimento 3DS seguinte rejeitou a fila C# inalterada no ReSharp fixado e
-executou o leitor C++ de dados em emulador. O próximo corte é uma API nativa
-pequena usada também pelo candidato Linux, antes de ampliar obrigações de CLR.
+executou o leitor C++ de dados em emulador. Esse corte agora fornece uma API nativa
+BCON usada pelo candidato Linux e pelo teste ARM emulado, antes de ampliar
+obrigações de CLR. Receita e limites em [integração nativa](native-data-integration.md).
 Isso não inicia outro motor nem aprova o jogo completo no 3DS.
 
 C#/.NET e bibliotecas herdadas são escolhas iniciais da avaliação, não garantias

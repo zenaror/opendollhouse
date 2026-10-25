@@ -1,5 +1,64 @@
 # Continuidade atual
 
+## Leitor nativo usado pelo candidato Linux e pelo 3DS emulado (2026-10-25)
+
+Meta ACTIVE. O próximo corte do checkpoint anterior foi implementado:
+`native/data` fornece ABI C1 para BCON, chamando `odh::read_bcon` de
+`src/formats.cpp` INALTERADO. `managed/OpenDollhouse.Data.Interop` fornece a
+ligação netstandard2.0/C#7.3, e o verdadeiro FSO BCON.Read agora a utiliza;
+Write permanece igual. Nenhum segundo motor foi iniciado. O restante da simulação
+continua gerenciado: não declarar o jogo completo portado nem CLR universal.
+
+ABI: dois exports, tipos/tamanhos uint32/uint16 explícitos, buffers do chamador,
+sem ponteiros retidos nem exceções atravessando C. Leitura emprestada sem copiar
+o pacote inteiro, no máximo 255 palavras. Status e metadados de erro definidos;
+campos de saída sem escrita parcial. A ponte lê só 2+2*count bytes, deixa trailer
+e stream aberto; truncamento mantém EndOfStreamException. Diferença limitada:
+Read inválido não reproduz mutações parciais antigas de Flags/Constants.
+Não há fallback que esconda biblioteca ausente. Build exige ODHNativeDataLibrary
+absoluto, com basename do loader, e copia o arquivo para build/publish.
+
+Native CTest2/2 (14 verificações C++ + header C); ponte12 grupos e2052 comparações
+contra BCON/IoBuffer antigos reais (65536 valores, flags/counts, streams, erros,
+pacote/publish, writer de log que falha). Testes .NET9 executados no host.NET10
+com roll-forward explícito, sem instalação. Build do candidato Linux passou
+`/tmp/odh-simitone-native-bcon-final-build.log`, após rebuild do Files corrigido;
+avisos antigos permanecem. Runtime selfcontained9.0.21.
+
+Gate real `reports/simitone-linux-evaluation/house07-native-bcon/`:74+40 s,
+compra/sentar/salvar/reabrir, objeto139/GUID26BFBB29/posição/direção/grupoPrice80
+saldo585 conservados nas seis fases. SitUID0 em570+ com postura sentada. Estado
+pré-Load igual salvo promoção SIMI62→64; bancos de pessoa/motivos também apósLoad.
+0VM/fatal/diag,6hashescomerciais iguais. Nos DOIS processos, diagnóstico nativo
+ABI1 count19 flags0 e cinco mapeamentos da biblioteca do publish. Hash nativo
+`7e39611e8099144df46a33ea06b09cc478a5e003e4f59a3566bbe067fc8588f6`
+igual ao CTest/ponte;9hashes gerenciados, incluindo Interop. Processo/perfil/Xvfb
+encerrados; rawresult intacto e resumo separado. Snapshot da biblioteca/Interop
+em binary/, fontes em source-manifest.json. Não é prova de todos os fluxos.
+
+Probe 3DS agora chama a MESMA ABI e o parser: host PASS, ARMv6K ELF/3DSX com
+novos casos de capacidade/null/truncamento/255/limite32. Novo output separado
+`reports/portability/3ds-native-data-abi/`. 3DSX SHA
+`c7a5154b76219eedb21ae1a234e7677d98352ae2e87f3eed9f2a63ae70b5c5a6`.
+Execução `reports/portability/3ds-native-abi-execution/` mostra PASS SVC+captura,
+147 configurações iguais, instância própria/perfil/Xvfb encerrados e loghash final.
+Não há prova de jogo/CLR/fila/save nem hardware nesse teste. Wrapper/parser têm
+os mesmos hashes nos dois ambientes. Binário anterior7c6b foi reconstruído
+EXATAMENTE de eea8a5b e arquivado rotulado rebuilt-exact, restaurando seu caminho
+original; manifest em 3ds-native-execution-final/binary/. Não sobrescrever de novo.
+
+FreeSO experimental agora22arquivos APÓS0003/0004/0005, SHA
+`e060618445d70291f7f3516f56ee6e697774eabb9509cb50fb818a81fabe0dfc`.
+Requer managed/ e native/ deste checkout + biblioteca correta por plataforma.
+Frontend0006 permanece com o mesmo hash anterior. Patch20 arquivado no relatório
+house07-shared-scheduler. Receita atual em docs/native-data-integration.md.
+
+Próximo: avaliar a fila/estado de simulação como corte compartilhado maior, usando
+os oráculos existentes e prova no alvo, antes de consolidar o runtime da simulação.
+Famílias, construção e sete expansões, idioma/CC/áudio/UIoriginalfinal seguem
+obrigatórios. C++WIP4 e scripts antigos preservados. Sem novo cleanup externo;
+a autorização humana para os dois arquivos RetroArch foi reconfirmada, já cumprida.
+
 ## 3DS: restrição gerenciada e leitor nativo executado (2026-10-25)
 
 Meta ACTIVE; ports condicionam o código agora. ReSharp3DS9ddfe53... rejeita tipos
