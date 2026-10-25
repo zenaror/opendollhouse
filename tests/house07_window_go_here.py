@@ -89,6 +89,7 @@ def main():
             env = os.environ.copy()
             env['DISPLAY'] = f':{display_number}'
             env.pop('WAYLAND_DISPLAY', None)
+            env.pop('ODH_STATE_DIR', None)
             for key, folder in (('XDG_CONFIG_HOME', 'config'),
                                 ('XDG_DATA_HOME', 'data'),
                                 ('XDG_STATE_HOME', 'state')):
