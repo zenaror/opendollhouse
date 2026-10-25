@@ -247,15 +247,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(odh-linux-text-codec-tests PRIVATE odh_linux_text_codec)
   add_library(odh_linux_session_log tools/linux_session_log.cpp)
   target_include_directories(odh_linux_session_log PUBLIC tools)
-  execute_process(COMMAND git rev-parse --short=12 HEAD
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE ODH_GIT_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET RESULT_VARIABLE ODH_GIT_REVISION_RESULT)
-  if(NOT ODH_GIT_REVISION_RESULT EQUAL 0)
-    set(ODH_GIT_REVISION unknown)
-  endif()
+  include(cmake/OdhBuildRevision.cmake)
+  odh_attach_build_revision(odh_linux_session_log "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_definitions(odh_linux_session_log PRIVATE
-    ODH_BUILD_VERSION="${PROJECT_VERSION}" ODH_BUILD_REVISION="${ODH_GIT_REVISION}")
+    ODH_BUILD_VERSION="${PROJECT_VERSION}")
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(odh_linux_session_log PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
   endif()
@@ -1650,6 +1645,13 @@ if(BUILD_TESTING)
   add_test(NAME animation_resources COMMAND odh-animation-tests)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME build_revision COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/build_revision.py
+        --cmake ${CMAKE_COMMAND} --module ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OdhBuildRevision.cmake
+        --compiler ${CMAKE_CXX_COMPILER} --generator "${CMAKE_GENERATOR}")
+      set_tests_properties(build_revision PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
     add_test(NAME session_entry_cli COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/session_entry_cli.py $<TARGET_FILE:odh-session-entry>)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

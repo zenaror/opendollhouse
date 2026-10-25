@@ -1,5 +1,9 @@
 #include "linux_session_log.hpp"
 
+#ifdef ODH_HAVE_BUILD_REVISION_HEADER
+#include "odh_build_revision.hpp"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cerrno>

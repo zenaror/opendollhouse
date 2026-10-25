@@ -268,6 +268,11 @@ validação indicados por versão.
 
 ### Corrigido
 
+- Os logs passam a mostrar a revisão Git completa da compilação atual, com
+  indicação de alterações locais versionadas, em vez de conservar a revisão
+  da primeira configuração do CMake. Recompilar sem mudanças não reescreve o
+  cabeçalho nem força nova compilação do logger.
+
 - A simulação de lote agora usa as relações entre objetos carregadas do `OBJM`,
   além das relações de moradores do `NBRS`. Na House07, isso deixa a rotina do
   telefone ler a relação salva entre o controlador e o aparelho. A execução

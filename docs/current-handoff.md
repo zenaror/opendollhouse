@@ -2,6 +2,30 @@
 
 ## Estado atual: House07 Go Here pela janela, save e retomada (2026-10-25)
 
+### Identificação da build nos logs
+
+A biblioteca do log deixou de fixar a revisão na configuração inicial do CMake.
+`cmake/OdhBuildRevision.cmake` adiciona uma sondagem a cada build e atualiza um
+cabeçalho somente quando SHA/estado versionado mudam. O log usa SHA completo,
+`-dirty` para mudanças em arquivos versionados e `unknown` num pacote sem seu
+próprio `.git`. Worktrees e diretórios com espaços são cobertos; overrides de
+repositório, índice e configuração Git herdados do ambiente são descartados na
+sondagem. Arquivos não rastreados preservados do checkout não marcam dirty.
+
+Build de `odh-person` e do teste de log passou. CTests `linux_session_log` e
+`build_revision` passaram (2/2), e a regressão adicional de configuração Git
+passou após revisão independente. Uma inicialização curta do binário, com
+pasta de jogo ausente e perfil temporário, confirmou no log
+`e640220b85e3410c3d61db2ae343ff51b5940f3f-dirty`; o erro de entrada era esperado
+sem carregar dados comerciais. O teste sintético também comprova que novo
+commit é detectado sem reconfigurar e que o build idêntico não recompila.
+
+Usar somente `build/linux-checkpoint` para o build incremental; `AGENTS.md`
+agora explicita esse caminho. O cache legado `build/` foi identificado e não
+serviu à validação. `build-revision-check/` (23 MB), criado durante a preparação,
+foi preservado como saída gerada sem autorização específica de remoção.
+
+
 ### Salvar pela janela durante a caminhada da família
 
 O gate `tests/house07_window_go_here.py --save-resume` passou com House07 real.

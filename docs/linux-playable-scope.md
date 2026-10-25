@@ -107,3 +107,20 @@ tamanho. Ainda falta mostrar o caminho do log em todos os erros da interface e
 confirmar que as mensagens dão contexto suficiente para os bugs que surgirem
 durante o jogo. Isso não significa que exista um jogo completo nem captura de
 stack nativa.
+
+A identificação Git do logger é atualizada em cada build, sem exigir nova
+configuração do CMake. Ela usa o SHA completo e acrescenta `-dirty` quando há
+alterações em arquivos versionados; arquivos não rastreados não mudam esse
+rótulo. O cabeçalho só muda quando a identificação muda, evitando recompilar o
+logger numa compilação idêntica. Checkouts com `.git` em arquivo (worktrees)
+são aceitos; um pacote de fontes sem seu próprio `.git` usa `unknown`, mesmo
+que esteja dentro de outro repositório. Variáveis Git herdadas de hooks não
+podem redirecionar o repositório, índice ou regras de detecção das mudanças.
+
+O CTest `build_revision` usa um repositório sintético e configura sua aplicação
+mínima somente uma vez. Confere SHA limpo, mudanças versionadas preparadas ou
+não, novo commit, preservação dos timestamps no build sem mudanças, diretórios
+com espaços, worktree, arquivo de fontes sem Git e overrides Git de ambiente.
+Git ausente marca esse teste como ignorado. O teste do logger e uma inicialização
+real curta em perfil temporário também conferem o registro da identificação.
+Esses checks verificam o diagnóstico da build; não ampliam a cobertura de jogo.
