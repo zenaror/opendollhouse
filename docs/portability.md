@@ -44,7 +44,7 @@ específico e não acrescenta automaticamente uma plataforma. Veja a
 | Windows | DesktopGL/.NET | Caminho publicado pelo framework; build deste candidato ainda não validada. |
 | macOS Intel e Apple Silicon | .NET x64/Arm64 e DesktopGL | Bibliotecas nativas e aplicação ainda não validadas em cada arquitetura. |
 | Android | .NET Android e backend MonoGame Android | Exige alvo/aplicativo próprio; o projeto DesktopGL atual não é o port Android. |
-| New Nintendo 3DS | Ferramentas nativas ARM11/ARMv6K; experimentos com nanoCLR | Nenhuma cadeia demonstrada para este motor net9/MonoGame. Bloqueio de escolha de runtime. |
+| New Nintendo 3DS | Ferramentas nativas ARM11/ARMv6K; experimentos com nanoCLR | Leitor nativo executado em emulador. O módulo C# inalterado é incompatível com o ReSharp fixado; runtime do motor continua sem prova. |
 | PlayStation Vita | Ferramentas nativas ARMv7; loader Mono legado experimental | O perfil antigo não estabelece compatibilidade com este motor net9. Bloqueio de runtime/API. |
 | Nintendo Switch | MonoGame oficial por acesso licenciado; ferramentas homebrew distintas | Não confundir suporte privado com DesktopGL público nem prometer build homebrew. Caminho ainda não demonstrado. |
 | Wii U, alvo desejado | Ferramentas nativas PowerPC/Espresso | Nenhuma cadeia .NET9/MonoGame demonstrada. Requer decisão de runtime e atenção à ordem dos bytes. |
@@ -110,6 +110,48 @@ aplicativo. A verificação conhecida de dependências aprova somente o módulo 
 fila, enquanto o relatório continua declarando runtime de console não provado.
 O próximo experimento precisa usar esse componente no ambiente real do alvo.
 
+## Experimento concreto no 3DS (2026-10-25)
+
+O ReSharp3DS fixado em `9ddfe53fc0900a0b561aebeec5ff1e66527edef6` marca
+`DATATYPE_VAR`, `DATATYPE_GENERICINST` e `DATATYPE_MVAR` como não suportados.
+Isso bloqueia `WakeQueue<T>`, `Dictionary<uint,List<T>>` e `Func<T,short>`
+inalterados nesse candidato. O build recompila contra CoreLibrary 1.9/nanoFramework,
+não fornece compatibilidade com a DLL netstandard existente. Veja o
+[código fixado](https://github.com/saiitanaa/ReSharp3DS/blob/9ddfe53fc0900a0b561aebeec5ff1e66527edef6/source/clr/TypeSystemLookup.cpp#L90).
+O nanoFramework atual tem uma prévia de genéricos; atualizar firmware, ferramentas
+e bibliotecas seria trabalho de runtime, não uma simples mudança de projeto.
+Não concluir que toda implementação C# para 3DS seja impossível.
+
+A alternativa nativa teve uma execução limitada bem-sucedida: o mesmo
+`src/formats.cpp` já existente leu FAR→IFF→BCON sintéticos no host e em um
+programa ARMv6K executado por Azahar/RetroArch. Marcador SVC do convidado e
+captura mostram PASS. Nenhum parser ou código do motor C++ foi alterado.
+Ferramentas devkitARM/libctru já estavam instaladas; o core de teste foi obtido
+do release oficial com hash conferido, sem instalação de aplicativo no sistema.
+Não houve teste em aparelho físico.
+
+Isso demonstra uma opção de implementação para um componente de dados, não o
+motor do jogo. O leitor ainda não é chamado pelo Simitone. O próximo corte deve
+fornecer uma API nativa pequena, com inteiros/tamanhos explícitos, memória e erros
+bem definidos, e fazê-la ser usada pelo candidato Linux e pelo teste 3DS. Não
+transportar objetos CLR ou tipos internos de STL pela fronteira. A fila C# fica
+como implementação funcional/oráculo enquanto seu caminho de execução no alvo
+não for demonstrado; não ampliar uma obrigação universal de CLR.
+
+Continuam faltando execução de simulação e save/retomada no alvo, gráficos,
+áudio, entrada e orçamento de recursos. A estratégia é substituir componentes
+usados e compartilhar código, sem criar outro motor completo nem começar uma
+tradução integral. A cadeia do jogo completo continua reprovada/não demonstrada.
+
+A primeira tentativa do emulador escreveu dois arquivos no perfil real do
+RetroArch por causa das regras XDG do Flatpak. Eles foram preservados no relatório
+e removidos com autorização humana exata. A repetição final manteve iguais os
+147 arquivos de configuração acompanhados e encerrou instância própria/Xvfb.
+Não transformar isso em afirmação sobre todo o estado interno do Flatpak.
+Evidência: `reports/portability/3ds-managed-probe/report.json`,
+`3ds-native-data/report.json` e `3ds-native-execution-final/final-review.json`.
+Receita e limites em [tools/portability/3ds-native-data/README.md](../tools/portability/3ds-native-data/README.md).
+
 ## Verificações antes de consolidar a arquitetura
 
 1. Definir, para cada alvo, compilador, runtime/API, bibliotecas nativas e método
@@ -122,8 +164,9 @@ O próximo experimento precisa usar esse componente no ambiente real do alvo.
    alvo, preservando a mesma simulação. Medir custos; não reduzir a simulação
    fora da tela para fazer o teste caber.
 4. Registrar separadamente compilação, execução em ambiente de teste e hardware.
-   Não há execução de console aprovada nesta revisão. Instalação de SDKs,
-   mudanças de runtime e builds dos consoles não aconteceram nesta investigação.
+   Há execução emulada aprovada somente para o leitor sintético 3DS; não há
+   execução física nem motor de console aprovado. Não foram instalados SDKs ou
+   runtimes. Os demais alvos ainda não tiveram build/executável neste projeto.
 
 Não adiar essas verificações até o jogo inteiro estar pronto no desktop. Antes
 de retomar a ampliação das funcionalidades, iniciar a separação usada do núcleo

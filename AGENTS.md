@@ -91,5 +91,6 @@
   alterar projetos e configurações do Open-GBP.
 - Rodar os checks adequados ao código alterado e atualizar a documentação de
   cobertura. Não instalar dependências sem necessidade técnica demonstrada.
-- Nesta etapa não há testes de 3DS, Vita, Android ou Switch. Não declarar esses
-  ports funcionais a partir do build Linux.
+- Há somente um leitor sintético nativo executado no 3DS emulado; não é teste
+  do jogo nem de hardware. Vita, Android e Switch ainda não foram executados.
+  Não declarar esses ports funcionais a partir do build Linux ou desse probe.

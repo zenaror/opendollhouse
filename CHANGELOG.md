@@ -7,6 +7,8 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O leitor de dados existente passou num teste sintético executado no 3DS emulado,
+  além do PC. Isso verifica esse leitor; ainda não é uma build do jogo para 3DS.
 - Compra de uma cadeira pela janela, uso por Bob e conservação do objeto,
   posição, preço e dinheiro ao salvar/reabrir passaram no candidato Linux.
   Diagnósticos e um comparador distinguem uso real de uma ação apenas na fila.

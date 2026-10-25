@@ -27,3 +27,6 @@ __pycache__/
 
 # Isolated development experiments; revisions and reproducible changes go in docs/tools.
 /refs/work/
+
+# Reproducible external testing tools; provenance remains in reports/docs.
+/refs/tools/

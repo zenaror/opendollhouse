@@ -1,5 +1,47 @@
 # Continuidade atual
 
+## 3DS: restrição gerenciada e leitor nativo executado (2026-10-25)
+
+Meta ACTIVE; ports condicionam o código agora. ReSharp3DS9ddfe53... rejeita tipos
+genéricos usados por WakeQueue<T>/Dictionary/List/Func; recompila contra nano BCL
+1.9/metadata próprio. Fonte primária fixada e sete hashes em
+`reports/portability/3ds-managed-probe/report.json`. A prévia atual nano-v2 tem
+genéricos, mas não está nesse port: não dizer que todo C# é impossível ou que
+alterar TFM resolve. O módulo C# atual NÃO está aprovado no 3DS.
+
+`tools/portability/3ds-native-data/` compila o leitor existente `src/formats.cpp`
+INALTERADO (View/FAR1/IFF/BCON), com fixture sintética. Host passou; devkitARM
+r67.1/GCC15.2/libctru2.7/3dstools1.3.1 já instalados produziram ELF/3DSX ARMv6K.
+3DSX atual SHA256 `7c6b0a127d3dafd314b32d0a24683c66a8c4771f85d1cf533eb2beeecbdf7ab8`.
+O atributo agregado v7 do ELF foi auditado: multilib armv6k/fpu/inputsv6K, membro
+libgcc sync-dmb descartado no mapa, nenhuma instrução dmb final; não ocultar isso.
+Código de debug/flush existe só no novo probe, nenhum motor/arquivo comercial mudou.
+
+Azahar-libretro2126.2 oficial (ZIP SHA2223444b74de2c922bae1efcfed60002f696b3c2aaf4fc73fc03e66a395dc26e),
+cache ignorado refs/tools, frontend RetroArchFlatpak1.22.2 existente, execução Xvfb.
+Caso `reports/portability/3ds-native-execution-final/`: SVCguestPASS + capturaPASS,
+mesmo3DSX/hashcore/log/captura; 147configurações pessoais iguais, instância727317074
+(PIDs2433275/2433295) e Xvfb encerrados, perfil temporário removido. É execução
+EMULADA do leitor, não hardware, não jogo, não fila gerenciada e não save de família.
+Raw result.json preservado; aprovação manual em final-review.json. Runner da
+execução arquivado; o atual adiciona hash próprio e três flags de cleanup ao
+exit0, já verdadeiras no resultado registrado/reavaliadas, sem novo teste UI.
+
+Primeira execução escreveu Azahar.opt/core_info.cache na área real RetroArch
+porque Flatpak substitui XDG. Cópias/hashes/datas preservados em
+`3ds-native-execution/external-side-effects`; usuário autorizou esses DOIS caminhos
+exatos e ambos foram apagados, sem ampliar a limpeza. Repetição intermediária
+manteve configs iguais mas gate de cleanup confundiu wrapper zombie não reapado.
+Caso final corrige dirs explícitos/RO/snapshot/instância própria/reap/loghash final.
+Não afirmar isolamento completo de todo estado Flatpak só pelos 147 arquivos.
+
+PRÓXIMO: usar esse leitor nativo no candidato Linux por API pequena (BCON é
+candidato), tipos/tamanhos/memória/erros explícitos, fixtures equivalentes e prova
+PC+3DS. O leitor ainda não integra o Simitone; não desenvolver dois motores ou
+traduzir o jogo inteiro. Depois avançar simulação/save no alvo antes de consolidar
+runtime universal. Famílias/expansões/idioma/CC/UIoriginalfinal permanecem no escopo.
+C++ WIP4 e scripts antigos preservados; nenhum build do motor C++ foi executado.
+
 ## Prioridade humana: código visando ports agora (2026-10-25)
 
 A meta está ACTIVE. O usuário corrigiu explicitamente a interpretação de ports
@@ -19,7 +61,8 @@ legado WIP não estabelece perfil moderno; Switch: caminho oficial MonoGame
 privado/licenciado distinto de homebrew; Wii U: toolchain nativa PowerPC não
 fornece runtime net9. Não são provas de impossibilidade, nem ports demonstrados.
 Desktop/Android têm caminhos publicados pelos frameworks, mas só os fluxos Linux
-registrados foram executados. Nenhuma instalação ou build de console realizada.
+registrados foram executados. Na investigação anterior não houve instalação ou build de console; o probe 3DS
+posterior está no topo deste handoff.
 
 Primeiro corte IMPLEMENTADO e usado: `managed/OpenDollhouse.Simulation`, fila
 `WakeQueue<T>` netstandard2.0/C#7.3, sem pacotes explícitos/FSO/XNA/IO/reflexão.
