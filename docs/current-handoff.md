@@ -2609,3 +2609,11 @@ ferramentas provisórias de teste. A versão jogável deve apresentar a interfac
 do The Sims original, com Simitone como referência de implementação e fluxo;
 essa interface final ainda não foi construída. A comparação e os limites da
 auditoria estão em [interaction-validation.md](interaction-validation.md).
+
+Uma busca nos nove arquivos House07 da Legacy Collection, usando as 85 fontes
+FAR sem áudio e os IFFs de personagens de cada slot, encontrou o GUID do
+telefone (`1797669432`) somente no `UserData` padrão. Ele está ausente em
+`TemplateUserData` e `UserData2` a `UserData8`; portanto não há outra pilha salva
+desse telefone disponível nessa coleção. O objeto 136 de `UserData2` tem outro
+GUID e não serve como comparação do telefone. Esta é uma leitura estática com
+`odh-saved-world`; nenhuma VM ou dado comercial foi alterado.

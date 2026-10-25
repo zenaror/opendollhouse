@@ -57,6 +57,14 @@ resolve para `Global.iff`. Isso confirma que IDs de objeto só identificam algo
 dentro daquele lote e demonstra que a auditoria consegue resolver um dono
 privado válido; não altera a conclusão sobre o telefone do outro save.
 
+Também examinei os nove arquivos House07 disponíveis na instalação Legacy
+(`TemplateUserData` e `UserData` a `UserData8`), com as 85 fontes FAR que não
+são de áudio e as definições de personagens de cada slot. O GUID do telefone
+`1797669432` aparece somente no `UserData` padrão, com o fio acima. Ele está
+ausente nos outros oito saves; portanto ainda não há uma segunda pilha salva
+desse telefone para comparar. O objeto 136 de `UserData2` é uma entidade
+diferente, como mostra seu GUID.
+
 Simitone carrega IDs 4096–8191 de `ScopeResource`, que é o recurso privado do
 dono salvo do código (`VMStackFrame.Load`). Portanto, arquivos de expansão com
 BHAVs 4096/4113, mas com outros GUIDs, não são substitutos válidos para esse fio.
