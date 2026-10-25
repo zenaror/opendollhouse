@@ -37,6 +37,9 @@ struct SceneState {
     double frame = 0;
     odh::AvatarHands hands{};
     std::uint16_t owner_id = 0; // Optional pixel-ownership token for scene diagnostics.
+    // Simitone's head icon leaves the HEAD bone intact and collapses every
+    // other absolute bone transform to zero. Camera framing remains caller-owned.
+    bool head_only = false;
 };
 
 // Must resolve the exact selected header, not merely an equal animation name.

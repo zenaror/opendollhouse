@@ -274,7 +274,22 @@ struct SceneRenderer::Impl {
                 cfp = external.get();
             } else cfp = &planes(*state.animation);
         }
-        const auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
+        auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
+        if(state.head_only) {
+            std::optional<std::size_t> head;
+            for(std::size_t i=0;i<pose.bones.size();++i)if(fold(pose.bones[i].name)=="head") {
+                if(head)throw odh::FormatError("scene renderer head-only pose has ambiguous HEAD bone");
+                head=i;
+            }
+            if(!head)throw odh::FormatError("scene renderer head-only pose has no HEAD bone");
+            // Simitone's StripAllButHead zeros the absolute matrices of every
+            // bone other than HEAD. Keep the same deformation rule here; the
+            // portrait camera can be added independently from lot projection.
+            for(std::size_t i=0;i<pose.bones.size();++i)if(i!=*head) {
+                pose.bones[i].absolute_matrix.fill(0.0f);
+                pose.bones[i].absolute_position.fill(0.0f);
+            }
+        }
         std::vector<odh::RasterTriangle> triangles;
         triangles.reserve(static_cast<std::size_t>(triangle_count));
         for (std::size_t index = 0; index < meshes.size(); ++index) {

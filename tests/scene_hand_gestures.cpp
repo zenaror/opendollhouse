@@ -7,7 +7,7 @@
 
 namespace {
 int checks=0;
-void check(bool ok){++checks;if(!ok)throw std::runtime_error("scene hand gesture assertion failed");}
+void check(bool ok){++checks;if(!ok)throw std::runtime_error("scene hand gesture assertion failed at check "+std::to_string(checks));}
 template<class F> void rejects(F f){bool caught=false;try{f();}catch(const odh::FormatError&){caught=true;}check(caught);}
 void word(std::string& b,std::uint32_t n){for(int i=0;i<4;++i)b.push_back(static_cast<char>((n>>(i*8))&255));}
 void scalar(std::string& b,float n){std::uint32_t bits;std::memcpy(&bits,&n,4);word(b,bits);}
@@ -21,16 +21,21 @@ void far(const std::filesystem::path& p,const std::vector<Entry>& entries){
     for(std::size_t i=0;i<entries.size();++i){auto size=static_cast<std::uint32_t>(entries[i].second.size());word(b,size);word(b,size);word(b,offsets[i]);word(b,static_cast<std::uint32_t>(entries[i].first.size()));b+=entries[i].first;}
     std::ofstream out(p,std::ios::binary);out.write(b.data(),static_cast<std::streamsize>(b.size()));
 }
-std::string rig(){
-    std::string b;word(b,1);text(b,"rig");b.push_back(1);b.push_back(0);text(b,"ROOT");text(b,"NULL");word(b,0);
-    for(float n:{0.f,0.f,0.f,0.f,0.f,0.f,1.f})scalar(b,n);
-    for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);word(b,0);word(b,0);return b;
+std::string rig(bool include_head=true){
+    std::string b;word(b,1);text(b,"rig");word(b,include_head?2:1);
+    const auto bone=[&](const char* name,const char* parent,float y){
+        text(b,name);text(b,parent);word(b,0);
+        for(float n:{0.f,y,0.f,0.f,0.f,0.f,1.f})scalar(b,n);
+        for(auto n:{1U,1U,0U})word(b,n);scalar(b,0);scalar(b,0);
+    };
+    bone("ROOT","NULL",0.f);if(include_head)bone("HEAD","ROOT",0.f);
+    word(b,0);word(b,0);return b;
 }
-std::string appearance(const std::string& name){
-    std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,1);text(b,"ROOT");text(b,name);word(b,0);word(b,0);word(b,0);return b;
+std::string appearance(const std::string& name,const std::string& bone="ROOT"){
+    std::string b;word(b,0);word(b,1);text(b,name);word(b,0);word(b,0);word(b,1);text(b,bone);text(b,name);word(b,0);word(b,0);word(b,0);return b;
 }
-std::string mesh(const std::string& name,float x){
-    std::string b;text(b,name);text(b,"x");word(b,1);text(b,"ROOT");
+std::string mesh(const std::string& name,float x,const std::string& bone="ROOT"){
+    std::string b;text(b,name);text(b,"x");word(b,1);text(b,bone);
     for(auto n:{1U,0U,1U,2U,1U,0U,0U,3U,0U,0U,3U})word(b,n);
     for(int i=0;i<6;++i)scalar(b,.25f);word(b,0);word(b,3);
     for(const auto& position:std::array<std::array<float,3>,3>{{{x-.7f,2,0},{x+.7f,2,0},{x,4,0}}}){
@@ -61,12 +66,26 @@ int main(){try{
         if(i)part.hand=SceneHandPart{(i%2)==0,static_cast<odh::HandGesture>((i-1)/2)};
         config.parts.push_back(part);
     }
+    animations.push_back({"head.bcf",appearance("head","HEAD")});
+    animations.push_back({"head.bmf",mesh("head",0.f,"HEAD")});
+    textures.push_back({"head.bmp",bitmap(230)});
+    config.parts.push_back({"head.bcf","head","head.bmf","head.bmp"});
     far(a,animations);far(t,textures);SceneRenderer renderer(config);
     odh::WorldProjection camera;camera.width=160;camera.height=160;
     SceneState state;const auto defaults=renderer.render(state,camera);
     check(defaults.image.shaded_samples>0);
     const auto resident_vertices=renderer.vertices(),resident_triangles=renderer.triangles(),resident_textures=renderer.texture_bytes();
-    check(resident_vertices==21&&resident_triangles==7&&resident_textures==28);
+    check(resident_vertices==24&&resident_triangles==8&&resident_textures==32);
+    SceneState head_state;head_state.head_only=true;
+    const auto head_only=renderer.render(head_state,camera);
+    check(head_only.image.shaded_samples>0);
+    check(head_only.image.pixels!=defaults.image.pixels&&
+          head_only.image.shaded_samples<defaults.image.shaded_samples);
+    auto head_control_config=config;head_control_config.parts={config.parts.back()};
+    SceneRenderer head_control(head_control_config);
+    const auto head_control_frame=head_control.render(SceneState{},camera);
+    check(head_only.image.pixels==head_control_frame.image.pixels&&
+          head_only.image.depth==head_control_frame.image.depth);
     for(unsigned left=0;left<4;++left)for(unsigned right=0;right<4;++right){
         state.hands={static_cast<odh::HandGesture>(left),static_cast<odh::HandGesture>(right)};
         auto subset=config;subset.parts.clear();
@@ -84,6 +103,15 @@ int main(){try{
     // Untagged legacy parts remain visible even with both gestures None.
     auto legacy=config;for(auto& part:legacy.parts)part.hand.reset();SceneRenderer always(legacy);
     check(always.render(state,camera).image.pixels==always.render(SceneState{},camera).image.pixels);
+    const auto no_head_archive=dir.path/"no-head.far";
+    far(no_head_archive,{{"rig.bcf",rig(false)},{"part0.bcf",appearance("part0")},
+                         {"part0.bmf",mesh("part0",0.f)}});
+    SceneConfig no_head_config;no_head_config.animation_far=no_head_archive.string();
+    no_head_config.textures_far=t.string();no_head_config.skeleton_entry="rig.bcf";
+    no_head_config.skeleton_name="rig";no_head_config.parts.push_back(config.parts.front());
+    SceneRenderer no_head_renderer(no_head_config);
+    auto invalid_head_state=SceneState{};invalid_head_state.head_only=true;
+    rejects([&]{no_head_renderer.render(invalid_head_state,camera);});
     state.hands.left=static_cast<odh::HandGesture>(4);odh::AnimationHeader missing{};missing.xskill="missing";state.animation=&missing;
     rejects([&]{renderer.render(state,camera);});check(renderer.cache_clips()==0);
     state.hands={};state.hands.right=static_cast<odh::HandGesture>(255);rejects([&]{renderer.render(state,camera);});

@@ -1,5 +1,22 @@
 # Continuidade atual
 
+## Progresso: deformação somente da cabeça no renderizador (2026-10-25)
+
+O renderizador agora tem um modo de pose que mantém a matriz absoluta do osso
+HEAD e zera as matrizes dos demais ossos, seguindo a regra de
+`StripAllButHead` do Simitone. No fixture sintético, as partes ligadas aos
+outros ossos colapsam e a parte ligada a HEAD continua visível; uma estrutura
+sem o osso HEAD é recusada. Os testes cobrem essa deformação, não a câmera nem a
+aparência do jogo.
+
+Build de `odh-person`, `odh-scene-hand-gesture-tests`,
+`odh-scene-cfp-provider-tests`, `odh-scene-renderer-driver` e
+`odh-saved-scene` passou. CTest `scene_hand_gestures`, `scene_cfp_provider`,
+`reusable_scene_host` e `saved_scene_cli` passou (4/4). Ainda falta uma câmera
+de retrato própria de 74×74; `WorldProjection` foi feita para o lote
+isométrico, não para enquadrar uma cabeça. Retratos ainda não aparecem no
+seletor e não houve comparação visual com o Simitone.
+
 ## Atualização: nomes dos moradores no seletor (2026-10-25)
 
 O seletor usa o GUID do Sim para encontrar o objeto salvo, resolve seu tipo na
