@@ -70,7 +70,9 @@ esquerdo, depois da composição do lote e antes dos sinks de janela/PPM. O pain
 mostra relógio HH:MM, ID do morador ativo e sete linhas com índice, valor assinado
 e barra. As linhas 1–7 correspondem a fome, conforto, higiene, bexiga, energia,
 diversão e social, nessa ordem (`Ts1Need`, índices de motivo 7, 6, 8, 9, 5, 15,
-14). A barra limita visualmente -100..100; o número preserva o valor bruto.
+14). Uma oitava linha mostra separadamente Room, índice de motivo 13; ela não é
+um dos sete valores do enum `Ts1Need`. A barra limita visualmente -100..100; o
+número preserva o valor bruto.
 Valores indisponíveis aparecem como traços, inclusive o relógio de uma sessão
 antiga sem `SIMS`; não se inventa estado para preencher o painel.
 
@@ -95,6 +97,16 @@ O gate real reproduzível usa a instalação externa, sem abrir GUI:
 ```sh
 python3 tests/house07_status_hud_cli.py build/linux-checkpoint/odh-person "../referencias/The Sims"
 ```
+
+### Room no painel — 2026-10-25
+
+O perfil de captura `numeric_portable_v2` acrescenta a pontuação Room que o
+Simitone também exibe como oitavo motivo. O valor é lido do motivo TS1 13 na
+entidade ativa; a mudança não o calcula nem altera a simulação. O teste sintético
+confere a oitava linha e a barra. O gate House07 confere o mesmo valor no JSON
+e nos pixels tanto numa sessão nova como após save/retomada, além de confirmar
+que a captura não altera o estado nem os arquivos originais do jogo. Isso não
+transforma o HUD numérico de diagnóstico na interface final nem valida a GUI.
 
 A opção integrada `--headless-status-frame PATH --headless-status-tick N` é
 explícita e restrita a `--headless-ticks`, com N em 1..limite; plano, viagem,

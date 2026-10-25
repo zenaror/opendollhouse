@@ -34,6 +34,8 @@ def verify_pixels(path, hud):
     for row,value in enumerate(hud['needs']):
         number(str(row+1),9,28+row*10)
         number(str(value),20,28+row*10)
+    number('8',9,98)
+    number(str(hud['room_score']),20,98)
     return hashlib.sha256(pixels).hexdigest()
 
 def main():
@@ -65,16 +67,19 @@ def main():
             capture=['--headless-status-frame',str(temp/'new.ppm'),'--headless-status-tick','31']
             new=run(fresh+['--headless-ticks','31','--save-session-on-exit']+capture)
             hud=new['status_hud'];sim=new['simulation']
-            assert hud['profile']=='numeric_portable_v1' and hud['actor']==105
+            assert hud['profile']=='numeric_portable_v2' and hud['actor']==105
             assert hud['clock']=={key:sim['clock'][key] for key in ('hour','minute')}
             assert hud['needs']==next(a['needs'] for a in sim['avatars'] if a['id']==hud['actor'])
+            assert hud['room_score']==next(a['room_score'] for a in sim['avatars'] if a['id']==hud['actor'])
             first_hash=verify_pixels(temp/'new.ppm',hud)
             restored=run(['--load-session',new['saved_session_path'],'--headless-ticks','30',
                 '--headless-status-frame',str(temp/'live.ppm'),'--headless-status-tick','30'])
             assert restored['session_loaded'] and restored['render']['tick']==61
             live=restored['status_hud'];sim=restored['simulation']
+            assert live['profile']=='numeric_portable_v2' and live['actor']==105
             assert live['clock']=={key:sim['clock'][key] for key in ('hour','minute')}
             assert live['needs']==next(a['needs'] for a in sim['avatars'] if a['id']==live['actor'])
+            assert live['room_score']==next(a['room_score'] for a in sim['avatars'] if a['id']==live['actor'])
             live_hash=verify_pixels(temp/'live.ppm',live)
             direct=run(fresh+['--headless-ticks','61'])
             assert direct['simulation']==restored['simulation'], 'capture altered simulation state'

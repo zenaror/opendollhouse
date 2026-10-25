@@ -71,6 +71,18 @@ abre; por isso, o probe esperou até ser fechado e pareceu um carregamento de
 mais de quatro minutos. A janela já estava no lote. Esse resultado anterior
 não é evidência de lentidão nem de travamento.
 
+## Atualização: Room no HUD numérico (2026-10-25)
+
+O HUD diagnóstico agora mostra oito linhas: as sete necessidades da simulação
+e a pontuação Room separada, usando o motivo TS1 13 já presente no World. O
+JSON foi versionado como `numeric_portable_v2`. Build de `odh-status-hud-tests`
+e `odh-person` passou; CTest `status_hud` passou 1/1. O gate real
+`tests/house07_status_hud_cli.py` passou na House07 para uma sessão nova e uma
+retomada: os valores Room do HUD e do World coincidiram em -10, os pixels
+contêm a oitava linha, a captura não alterou o estado e os hashes dos arquivos
+originais monitorados permaneceram iguais. É validação headless do HUD diagnóstico, não
+validação da GUI nem da aparência final Simitone/TS1.
+
 ## Atualização: raio do menu alinhado ao Simitone (2026-10-25)
 
 O layout do menu agora posiciona as oito primeiras opções a 60 pixels do
@@ -82,9 +94,9 @@ e `odh-person` passou. Os três gates focados (`pie_menu_data_model`,
 passou 244/244. A janela ainda usa texto e destaque provisórios e isso não
 prova paridade visual com o Simitone ou com o jogo original.
 
-Próximo: continuar a reconstrução visual do menu/HUD conforme Simitone e dados
-locais; fazer uma medição após reinicialização apenas quando isso puder ser
-feito sem confundir o tempo de espera por um erro de título. Manter cada
+Próximo: reconstruir o painel visual de motivos com rótulos localizados e
+estrutura baseada no Simitone; fazer uma medição de cache realmente frio apenas
+quando puder ser distinguida da repetição com cache aquecido. Manter cada
 resultado limitado ao que a captura ou o trace demonstra.
 
 ## Atualização: BCON privado e retorno da Pizza (2026-10-24)

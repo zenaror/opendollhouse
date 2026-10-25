@@ -4848,6 +4848,7 @@ struct PlacementCandidateProbe {
                 hud.needs.emplace();
                 for(std::size_t i=0;i<odh::ts1_need_count;++i)
                     (*hud.needs)[i]=active->motives[odh::ts1_motive_index(static_cast<odh::Ts1Need>(i))];
+                hud.room_score=active->motives[13];
             }
             odh_host::draw_status_hud(frame.image,hud);captured_status_hud=hud;
         }
@@ -7339,12 +7340,13 @@ struct PlacementCandidateProbe {
         <<json_bytes(placement_candidate_probe_unavailable)<<'}';
     std::cout<<",\"status_hud\":";
     if(captured_status_hud){const auto& hud=*captured_status_hud;
-        std::cout<<"{\"profile\":\"numeric_portable_v1\",\"actor\":"<<hud.actor<<",\"clock\":";
+        std::cout<<"{\"profile\":\"numeric_portable_v2\",\"actor\":"<<hud.actor<<",\"clock\":";
         if(hud.clock)std::cout<<"{\"hour\":"<<unsigned(hud.clock->hour)<<",\"minute\":"<<unsigned(hud.clock->minute)<<'}';
         else std::cout<<"null";
         std::cout<<",\"needs\":";
         if(hud.needs){std::cout<<'[';for(std::size_t i=0;i<odh::ts1_need_count;++i){if(i)std::cout<<',';std::cout<<(*hud.needs)[i];}std::cout<<']';}
         else std::cout<<"null";
+        std::cout<<",\"room_score\":"<<(hud.room_score?std::to_string(*hud.room_score):"null");
         std::cout<<'}';
     }else std::cout<<"null";
     std::cout<<",\"render\":";
