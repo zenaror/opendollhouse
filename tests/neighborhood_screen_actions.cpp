@@ -317,7 +317,7 @@ int main(int argc, char** argv) {
         }, std::chrono::milliseconds(300));
         require(family_selection && family_selection->family_chunk_id == affordable_entry.chunk_id &&
                 family_selection->action == odh_host::MoveInFamilySelection::Action::archive,
-                "delete button returns a logical archive action for a player-created family");
+                "delete button returns a logical deletion action for an eligible family");
         run_with_click_after_showing(family_picker_window.native_id(), 580, 560, [&] {
             const auto confirmed = odh_host::show_family_archive_confirmation(
                 family_picker_window, affordable_entry, 14, "Excluir Família?",
@@ -328,7 +328,7 @@ int main(int argc, char** argv) {
                     odh_host::MoveInFamilySelection::Action::archive}} : std::nullopt;
         }, std::chrono::milliseconds(300));
         require(family_selection.has_value(),
-                "archive confirmation yes button accepts the selected family");
+                "delete confirmation yes button accepts the selected family");
         run_with_click_after_showing(family_picker_window.native_id(), 460, 560, [&] {
             const auto confirmed = odh_host::show_family_archive_confirmation(
                 family_picker_window, affordable_entry, 14, "Excluir Família?",
@@ -339,7 +339,7 @@ int main(int argc, char** argv) {
                     odh_host::MoveInFamilySelection::Action::archive}} : std::nullopt;
         }, std::chrono::milliseconds(300));
         require(!family_selection,
-                "archive confirmation no button cancels without a family selection");
+                "delete confirmation no button cancels without a family selection");
         const std::vector<odh::FamilyEntry> no_families;
         run_with_keys_after_showing(family_picker_window.native_id(), {XK_Escape}, [&] {
             family_selection = odh_host::show_move_in_family_picker(family_picker_window, no_families,

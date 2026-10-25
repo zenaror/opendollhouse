@@ -1064,28 +1064,35 @@ int odh_linux_game_entry(int argc, char** argv) {
             }
             if (!marker->occupied) {
                 const auto purchase_price = selected_lot_price;
-                std::vector<std::uint16_t> archivable_family_ids;
-                if (family_overlay) {
-                    for (const auto& creation : family_overlay->creations) {
-                        const bool already_archived = std::any_of(
-                            family_overlay->archives.begin(), family_overlay->archives.end(),
-                            [&](const auto& archive) {
-                                return archive.family_chunk_id == creation.family_chunk_id;
-                            });
-                        const bool has_move_history = std::any_of(
-                            family_overlay->assignments.begin(), family_overlay->assignments.end(),
-                            [&](const auto& assignment) {
-                                return assignment.family_chunk_id == creation.family_chunk_id;
-                            });
-                        const auto visible = std::find_if(map->effective_families.begin(),
-                            map->effective_families.end(), [&](const auto& entry) {
-                                return entry.chunk_id == creation.family_chunk_id;
-                            });
-                        if (!already_archived && !has_move_history &&
-                            visible != map->effective_families.end() &&
-                            (static_cast<std::uint32_t>(visible->family.house_number) & 0xffffU) == 0 &&
-                            !visible->family.member_guids.empty())
-                            archivable_family_ids.push_back(creation.family_chunk_id);
+                std::optional<odh::Nbrs> picker_neighbors;
+                with_iff_file(userdata / "Neighborhood.iff", [&](const auto& view) {
+                    odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+                        if (chunk.type != "NBRS" || chunk.id != 1) return;
+                        if (picker_neighbors) throw odh::FormatError("ambiguous NBRS1 neighbor table");
+                        picker_neighbors = odh::read_nbrs(chunk.payload);
+                    });
+                });
+                const auto picker_neighborhood_identity = odh_host::linux_neighborhood_identity(
+                    userdata / "Neighborhood.iff");
+                std::vector<std::uint16_t> deletable_family_ids;
+                if (picker_neighbors) for (const auto& visible : map->effective_families) {
+                    if ((static_cast<std::uint32_t>(visible.family.house_number) & 0xffffU) != 0 ||
+                        visible.family.member_guids.empty()) continue;
+                    try {
+                        const bool player_created = family_overlay && std::any_of(
+                            family_overlay->creations.begin(), family_overlay->creations.end(),
+                            [&](const auto& creation) { return creation.family_chunk_id == visible.chunk_id; });
+                        if (player_created)
+                            (void)odh::plan_family_archive_overlay(map->source_families,
+                                *picker_neighbors, picker_neighborhood_identity,
+                                family_overlay ? &*family_overlay : nullptr, visible.chunk_id);
+                        else
+                            (void)odh::plan_family_delete_overlay(map->source_families,
+                                *picker_neighbors, picker_neighborhood_identity,
+                                family_overlay ? &*family_overlay : nullptr, visible.chunk_id);
+                        deletable_family_ids.push_back(visible.chunk_id);
+                    } catch (const odh::FormatError&) {
+                        // Keep the action unavailable when source ownership or roster links are uncertain.
                     }
                 }
                 const auto family_choice = odh_host::show_move_in_family_picker(*window,
@@ -1093,7 +1100,7 @@ int odh_linux_game_entry(int argc, char** argv) {
                     static_cast<std::uint8_t>(options.language), family_picker_action,
                     family_picker_title, no_family_title, no_family_message, family_picker_cancel,
                     graphics, family_picker_net_worth, family_picker_friends,
-                    family_picker_archive, archivable_family_ids);
+                    family_picker_archive, deletable_family_ids);
                 if (!family_choice) {
                     const auto reason = window->quit_reason();
                     if (reason == odh_host::WindowQuitReason::window_manager_close ||
@@ -1150,10 +1157,20 @@ int odh_linux_game_entry(int argc, char** argv) {
                     });
                     if (!latest_neighbors)
                         throw odh::FormatError("Neighborhood.iff has no readable NBRS1 table");
-                    const auto next_overlay = odh::plan_family_archive_overlay(
-                        latest_map.source_families, *latest_neighbors,
-                        neighborhood_identity, latest_overlay ? &*latest_overlay : nullptr,
-                        family_choice->family_chunk_id);
+                    const bool player_created = latest_overlay && std::any_of(
+                        latest_overlay->creations.begin(), latest_overlay->creations.end(),
+                        [&](const auto& creation) {
+                            return creation.family_chunk_id == family_choice->family_chunk_id;
+                        });
+                    const auto next_overlay = player_created ?
+                        odh::plan_family_archive_overlay(latest_map.source_families,
+                            *latest_neighbors, neighborhood_identity,
+                            latest_overlay ? &*latest_overlay : nullptr,
+                            family_choice->family_chunk_id) :
+                        odh::plan_family_delete_overlay(latest_map.source_families,
+                            *latest_neighbors, neighborhood_identity,
+                            latest_overlay ? &*latest_overlay : nullptr,
+                            family_choice->family_chunk_id);
                     odh_host::compare_exchange_linux_family_overlay_atomic(
                         odh_host::linux_family_overlay_path(neighborhood_identity),
                         latest_overlay, next_overlay);

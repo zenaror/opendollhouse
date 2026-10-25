@@ -98,7 +98,9 @@ void validate_overlay(const FamilyOverlay& overlay) {
     if (overlay.assignments.size() > max_assignments ||
         overlay.creations.size() > max_assignments - overlay.assignments.size() ||
         overlay.archives.size() > max_assignments - overlay.assignments.size() -
-            overlay.creations.size())
+            overlay.creations.size() ||
+        overlay.deletions.size() > max_assignments - overlay.assignments.size() -
+            overlay.creations.size() - overlay.archives.size())
         throw FormatError("family overlay exceeds assignment limit");
     std::set<std::uint16_t> created_ids;
     std::set<std::uint32_t> created_guids;
@@ -157,6 +159,24 @@ void validate_overlay(const FamilyOverlay& overlay) {
             throw FormatError("family archive identity does not match its creation record");
         if (families.count(archive.family_chunk_id))
             throw FormatError("family with move history cannot be archived");
+    }
+    std::set<std::uint16_t> deleted_ids;
+    std::set<std::uint32_t> deleted_guids;
+    std::set<std::int16_t> deleted_neighbor_ids;
+    for (const auto& deletion : overlay.deletions) {
+        if (!deleted_ids.insert(deletion.family_chunk_id).second ||
+            archived_ids.count(deletion.family_chunk_id) || created_ids.count(deletion.family_chunk_id))
+            throw FormatError("family overlay deletes the same family more than once");
+        if (deletion.members.empty() || deletion.members.size() > 8)
+            throw FormatError("family deletion roster is empty or exceeds the eight-member limit");
+        if (families.count(deletion.family_chunk_id))
+            throw FormatError("family with move history cannot be deleted");
+        for (const auto& member : deletion.members) {
+            if (!member.guid || member.neighbor_id <= 0 ||
+                !deleted_guids.insert(member.guid).second ||
+                !deleted_neighbor_ids.insert(member.neighbor_id).second)
+                throw FormatError("family deletion contains an invalid or duplicate member");
+        }
     }
 }
 }
@@ -272,13 +292,14 @@ FamilyOverlay plan_family_move_out_overlay(const std::vector<FamilyEntry>& sourc
 
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
     validate_overlay(overlay);
-    if (!overlay.archives.empty() || !overlay.creations.empty()) {
-        const auto version = overlay.archives.empty() ? 3U : 4U;
+    if (!overlay.archives.empty() || !overlay.creations.empty() || !overlay.deletions.empty()) {
+        const auto version = !overlay.deletions.empty() ? 5U :
+            (overlay.archives.empty() ? 3U : 4U);
         std::vector<std::uint8_t> out{'O','D','H','F'};
         put16(out, static_cast<std::uint16_t>(version)); put16(out, 0);
         out.insert(out.end(), overlay.neighborhood_identity.begin(), overlay.neighborhood_identity.end());
         put32(out, static_cast<std::uint32_t>(overlay.creations.size() +
-            overlay.assignments.size() + overlay.archives.size()));
+            overlay.assignments.size() + overlay.archives.size() + overlay.deletions.size()));
         const auto append = [&](std::uint16_t tag, const std::vector<std::uint8_t>& payload) {
             if (tag == 2 && payload.size() > max_creation_bytes)
                 throw FormatError("family creation record exceeds byte limit");
@@ -309,6 +330,17 @@ std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay& overlay) {
             payload.insert(payload.end(), archive.family_identity.begin(), archive.family_identity.end());
             append(3, payload);
         }
+        for (const auto& deletion : overlay.deletions) {
+            std::vector<std::uint8_t> payload;
+            put16(payload, deletion.family_chunk_id);
+            payload.insert(payload.end(), deletion.family_identity.begin(), deletion.family_identity.end());
+            put16(payload, static_cast<std::uint16_t>(deletion.members.size()));
+            for (const auto& member : deletion.members) {
+                put32(payload, member.guid);
+                put16(payload, static_cast<std::uint16_t>(member.neighbor_id));
+            }
+            append(4, payload);
+        }
         return out;
     }
     std::vector<std::uint8_t> out;
@@ -334,18 +366,19 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
     if (bytes[0] != 'O' || bytes[1] != 'D' || bytes[2] != 'H' || bytes[3] != 'F')
         throw FormatError("invalid family overlay signature");
     const auto version = get16(bytes, 4);
-    if ((version != 1 && version != 2 && version != 3 && version != 4) || get16(bytes, 6) != 0)
+    if ((version != 1 && version != 2 && version != 3 && version != 4 && version != 5) || get16(bytes, 6) != 0)
         throw FormatError("unsupported family overlay version or flags");
     const auto count = get32(bytes, 40);
-    if (count > max_assignments || ((version != 3 && version != 4) &&
+    if (count > max_assignments || ((version == 1 || version == 2) &&
         bytes.size() != header_size + record_size * count))
         throw FormatError("family overlay record count or extent is invalid");
     FamilyOverlay result;
     std::copy_n(bytes.begin() + 8, result.neighborhood_identity.size(), result.neighborhood_identity.begin());
-    if (version == 3 || version == 4) {
+    if (version == 3 || version == 4 || version == 5) {
         std::size_t at = header_size;
         bool saw_assignment = false;
         bool saw_archive = false;
+        bool saw_deletion = false;
         for (std::uint32_t i = 0; i < count; ++i) {
             if (bytes.size() - at < 6) throw FormatError("truncated tagged family overlay record header");
             const auto tag = get16(bytes, at);
@@ -353,7 +386,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
             if (length > bytes.size() - at) throw FormatError("truncated tagged family overlay record");
             const auto end = at + length;
             if (tag == 1) {
-                if (saw_archive) throw FormatError("family assignments must precede archives");
+                if (saw_archive || saw_deletion) throw FormatError("family assignments must precede archives and deletions");
                 if (length != record_size) throw FormatError("invalid v3 assignment extent");
                 saw_assignment = true;
                 std::vector<std::uint8_t> legacy(bytes.begin(), bytes.begin() + header_size);
@@ -362,7 +395,7 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                     bytes.begin() + static_cast<std::ptrdiff_t>(end));
                 result.assignments.push_back(decode_family_overlay(legacy).assignments.front());
             } else if (tag == 2) {
-                if (saw_assignment || saw_archive || length > max_creation_bytes || length < 8)
+                if (saw_assignment || saw_archive || saw_deletion || length > max_creation_bytes || length < 8)
                     throw FormatError("invalid v3 creation ordering or extent");
                 FamilyOverlayCreation creation;
                 creation.family_chunk_id = get16(bytes, at);
@@ -386,14 +419,30 @@ FamilyOverlay decode_family_overlay(const std::vector<std::uint8_t>& bytes) {
                     creation.members.push_back(*entry.record);
                 }
                 result.creations.push_back(std::move(creation));
-            } else if (tag == 3 && version == 4) {
-                if (length != 34) throw FormatError("invalid v4 family archive extent");
+            } else if (tag == 3 && (version == 4 || version == 5)) {
+                if (saw_deletion || length != 34) throw FormatError("invalid family archive ordering or extent");
                 saw_archive = true;
                 FamilyOverlayArchive archive;
                 archive.family_chunk_id = get16(bytes, at);
                 std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at + 2),
                     archive.family_identity.size(), archive.family_identity.begin());
                 result.archives.push_back(archive);
+            } else if (tag == 4 && version == 5) {
+                if (length < 36) throw FormatError("truncated v5 family deletion");
+                saw_deletion = true;
+                FamilyOverlayDeletion deletion;
+                deletion.family_chunk_id = get16(bytes, at);
+                std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(at + 2),
+                    deletion.family_identity.size(), deletion.family_identity.begin());
+                const auto member_count = get16(bytes, at + 34);
+                if (member_count > 8 || length != 36 + static_cast<std::size_t>(member_count) * 6)
+                    throw FormatError("invalid v5 family deletion member extent");
+                deletion.members.reserve(member_count);
+                std::size_t member_at = at + 36;
+                for (std::uint16_t member = 0; member < member_count; ++member, member_at += 6)
+                    deletion.members.push_back({get32(bytes, member_at),
+                        static_cast<std::int16_t>(get16(bytes, member_at + 4))});
+                result.deletions.push_back(std::move(deletion));
             } else throw FormatError("unknown v3 record tag");
             at = end;
         }
@@ -509,8 +558,22 @@ std::vector<FamilyEntry> apply_family_overlay(const std::vector<FamilyEntry>& so
     }
     std::set<std::uint16_t> archived_ids;
     for (const auto& archive : overlay.archives) archived_ids.insert(archive.family_chunk_id);
+    for (const auto& deletion : overlay.deletions) {
+        const auto original = std::find_if(source.begin(), source.end(), [&](const auto& entry) {
+            return entry.chunk_id == deletion.family_chunk_id;
+        });
+        if (original == source.end() ||
+            family_overlay_identity(*original) != deletion.family_identity ||
+            original->family.member_guids.size() != deletion.members.size())
+            throw FormatError("family deletion identity or roster is stale");
+        for (std::size_t i = 0; i < deletion.members.size(); ++i)
+            if (original->family.member_guids[i] != deletion.members[i].guid)
+                throw FormatError("family deletion roster differs from source FAMI");
+    }
+    std::set<std::uint16_t> deleted_ids;
+    for (const auto& deletion : overlay.deletions) deleted_ids.insert(deletion.family_chunk_id);
     result.erase(std::remove_if(result.begin(), result.end(), [&](const auto& entry) {
-        return archived_ids.count(entry.chunk_id) != 0;
+        return archived_ids.count(entry.chunk_id) != 0 || deleted_ids.count(entry.chunk_id) != 0;
     }), result.end());
     return result;
 }
@@ -563,10 +626,41 @@ Nbrs apply_neighbor_overlay(const Nbrs& source,
             throw FormatError("family archive lost its player-created records");
         for (const auto& member : creation->members) archived_guids.insert(member.guid);
     }
+    std::set<std::int16_t> deleted_neighbor_ids;
+    for (const auto& deletion : overlay.deletions) {
+        for (const auto& member : deletion.members) {
+            const auto found = std::find_if(source.entries.begin(), source.entries.end(),
+                [&](const NeighborEntry& entry) {
+                    return entry.record && entry.record->neighbor_id == member.neighbor_id &&
+                        entry.record->guid == member.guid;
+                });
+            if (found == source.entries.end())
+                throw FormatError("family deletion member is absent from source NBRS");
+            const auto duplicates = std::count_if(source.entries.begin(), source.entries.end(),
+                [&](const NeighborEntry& entry) {
+                    return entry.record && (entry.record->neighbor_id == member.neighbor_id ||
+                        entry.record->guid == member.guid);
+                });
+            if (duplicates != 1)
+                throw FormatError("family deletion member is ambiguous in source NBRS");
+            archived_guids.insert(member.guid);
+            deleted_neighbor_ids.insert(member.neighbor_id);
+        }
+    }
     result.entries.erase(std::remove_if(result.entries.begin(), result.entries.end(),
         [&](const NeighborEntry& entry) {
             return entry.record && archived_guids.count(entry.record->guid) != 0;
         }), result.entries.end());
+    for (auto& entry : result.entries) if (entry.record) {
+        auto& relationships = entry.record->relationships;
+        relationships.erase(std::remove_if(relationships.begin(), relationships.end(),
+            [&](const NeighborRelationship& relationship) {
+                return relationship.key_count == 1 &&
+                    relationship.key >= std::numeric_limits<std::int16_t>::min() &&
+                    relationship.key <= std::numeric_limits<std::int16_t>::max() &&
+                    deleted_neighbor_ids.count(static_cast<std::int16_t>(relationship.key));
+            }), relationships.end());
+    }
     validation = result; validation.remaining_bytes = 0;
     (void)encode_nbrs(validation); // Cumulative source + overlay limits.
     return result;
@@ -622,6 +716,70 @@ FamilyOverlay plan_family_archive_overlay(const std::vector<FamilyEntry>& source
 
     FamilyOverlay result = *current_overlay;
     result.archives.push_back({family_chunk_id, family_overlay_identity(*found)});
+    (void)apply_family_overlay(source, neighborhood_identity, result);
+    (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
+    return result;
+}
+
+FamilyOverlay plan_family_delete_overlay(const std::vector<FamilyEntry>& source,
+        const Nbrs& neighbors, const std::array<std::uint8_t, 32>& neighborhood_identity,
+        const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id) {
+    if (current_overlay) {
+        validate_overlay(*current_overlay);
+        if (current_overlay->neighborhood_identity != neighborhood_identity)
+            throw FormatError("current family overlay belongs to different Neighborhood.iff data");
+        if (current_overlay->assignments.size() + current_overlay->creations.size() +
+            current_overlay->archives.size() + current_overlay->deletions.size() >= max_assignments)
+            throw FormatError("family overlay exceeds operation limit");
+        if (std::any_of(current_overlay->deletions.begin(), current_overlay->deletions.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
+            throw FormatError("family is already deleted");
+        if (std::any_of(current_overlay->assignments.begin(), current_overlay->assignments.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
+            throw FormatError("family with move history cannot be deleted");
+        if (std::any_of(current_overlay->creations.begin(), current_overlay->creations.end(),
+            [&](const auto& value) { return value.family_chunk_id == family_chunk_id; }))
+            throw FormatError("player-created families must use the archive operation");
+    }
+    const FamilyContext source_context(source);
+    const auto* original = source_context.by_id(family_chunk_id);
+    if (!original) throw FormatError("selected source family is absent from Neighborhood.iff");
+    const auto effective = current_overlay ?
+        apply_family_overlay(source, neighborhood_identity, *current_overlay) : source;
+    const FamilyContext effective_context(effective);
+    const auto* family = effective_context.by_id(family_chunk_id);
+    if (!family) throw FormatError("selected family is no longer available");
+    if ((static_cast<std::uint32_t>(family->family.house_number) & 0xffffU) != 0)
+        throw FormatError("only an unhoused family can be deleted from the family picker");
+    if (original->family.member_guids.empty() || original->family.member_guids.size() > 8)
+        throw FormatError("source family roster is empty or exceeds the supported member limit");
+
+    FamilyOverlayDeletion deletion;
+    deletion.family_chunk_id = family_chunk_id;
+    deletion.family_identity = family_overlay_identity(*original);
+    std::set<std::uint32_t> roster;
+    for (const auto guid : original->family.member_guids) {
+        if (!guid || !roster.insert(guid).second)
+            throw FormatError("source family roster has an invalid or duplicate GUID");
+        const auto owners = std::count_if(source.begin(), source.end(), [&](const auto& entry) {
+            return std::find(entry.family.member_guids.begin(), entry.family.member_guids.end(), guid) !=
+                entry.family.member_guids.end();
+        });
+        if (owners != 1) throw FormatError("source family member is shared by another family");
+        const NeighborRecord* member = nullptr;
+        std::size_t matches = 0;
+        for (const auto& entry : neighbors.entries) if (entry.record && entry.record->guid == guid) {
+            member = &*entry.record;
+            ++matches;
+        }
+        if (matches != 1 || !member || member->neighbor_id <= 0)
+            throw FormatError("source family member has no unique positive NBRS identity");
+        deletion.members.push_back({guid, member->neighbor_id});
+    }
+
+    FamilyOverlay result = current_overlay ? *current_overlay :
+        FamilyOverlay{neighborhood_identity, {}, {}, {}};
+    result.deletions.push_back(std::move(deletion));
     (void)apply_family_overlay(source, neighborhood_identity, result);
     (void)apply_neighbor_overlay(neighbors, neighborhood_identity, result);
     return result;

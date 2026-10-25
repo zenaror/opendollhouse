@@ -565,7 +565,7 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         const std::string& localized_net_worth,
         const std::string& localized_family_friends,
         const std::string& localized_archive,
-        const std::vector<std::uint16_t>& archivable_family_ids) {
+        const std::vector<std::uint16_t>& deletable_family_ids) {
     if (!house_number || house_number > 98 || purchase_price < 0 || language < 1 || language > 20)
         throw odh::FormatError("family picker received an invalid move-in request");
     std::vector<const odh::FamilyEntry*> choices;
@@ -584,8 +584,8 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
         return entry.family.budget >= purchase_price;
     };
     const auto can_archive = [&](const odh::FamilyEntry& entry) {
-        return std::find(archivable_family_ids.begin(), archivable_family_ids.end(),
-            entry.chunk_id) != archivable_family_ids.end();
+        return std::find(deletable_family_ids.begin(), deletable_family_ids.end(),
+            entry.chunk_id) != deletable_family_ids.end();
     };
     std::optional<odh::BitmapImage> picker_background;
     std::optional<odh::BitmapImage> family_row_background;
@@ -779,7 +779,7 @@ bool show_family_archive_confirmation(LinuxWindow& window, const odh::FamilyEntr
     if (language < 1 || language > 20 ||
         (static_cast<std::uint32_t>(family.family.house_number) & 0xffffU) != 0 ||
         family.family.member_guids.empty())
-        throw odh::FormatError("family archive confirmation received invalid family data");
+        throw odh::FormatError("family deletion confirmation received invalid family data");
     if (window.width() != 800 || window.height() != 600) window.resize(800, 600);
     odh::RasterFrame frame{};
     frame.width = window.width(); frame.height = window.height();
@@ -827,7 +827,7 @@ bool show_family_archive_confirmation(LinuxWindow& window, const odh::FamilyEntr
     (void)localized_yes;
     (void)localized_no;
 #endif
-    window.set_title("OpenDollhouse | confirm family archive");
+    window.set_title("OpenDollhouse | confirm family deletion");
     window.present(frame);
     for (;;) {
         const auto input = window.poll();

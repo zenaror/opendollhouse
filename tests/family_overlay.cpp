@@ -283,6 +283,65 @@ int main() {
         rejects([&] { (void)odh::encode_family_overlay(forged_archive); },
                 "archive identity must match the retained creation record");
 
+        const auto source_delete = family(30, 0, 8000, {0x20000001U, 0x20000002U});
+        auto delete_first = first; delete_first.neighbor_id = 20;
+        delete_first.guid = 0x20000001U; delete_first.relationships = {{1, 22, {60, -15}}};
+        auto delete_second = first; delete_second.neighbor_id = 21;
+        delete_second.guid = 0x20000002U;
+        auto survivor = original_neighbor; survivor.neighbor_id = 22;
+        survivor.guid = 0x30000001U;
+        survivor.relationships = {{1, 20, {60, -15}}, {1, 21, {55, -25}}, {1, 1, {10, 10}}};
+        odh::Nbrs deletion_neighbors{0, 73,
+            {{1, delete_first}, {1, delete_second}, {1, survivor}}, 0};
+        const auto deletion_source_bytes = odh::encode_nbrs(deletion_neighbors);
+        const auto deleted_overlay = odh::plan_family_delete_overlay(
+            {resident, cas, source_delete}, deletion_neighbors, source_id, nullptr,
+            source_delete.chunk_id);
+        const auto v5 = odh::encode_family_overlay(deleted_overlay);
+        require(v5[4] == 5 && le32(v5, 40) == 1,
+                "source-family deletion uses tagged v5 operation record");
+        const auto deleted_decoded = odh::decode_family_overlay(v5);
+        require(odh::encode_family_overlay(deleted_decoded) == v5 &&
+                deleted_decoded.deletions.size() == 1 &&
+                deleted_decoded.deletions[0].members.size() == 2,
+                "v5 roundtrip preserves source-family tombstone and member identities");
+        auto empty_deletion = deleted_decoded;
+        empty_deletion.deletions[0].members.clear();
+        rejects([&] { (void)odh::encode_family_overlay(empty_deletion); },
+                "source-family deletion requires a nonempty exact member roster");
+        const auto remaining_families = odh::apply_family_overlay(
+            {resident, cas, source_delete}, source_id, deleted_decoded);
+        const auto remaining_neighbors = odh::apply_neighbor_overlay(
+            deletion_neighbors, source_id, deleted_decoded);
+        require(remaining_families.size() == 2 &&
+                std::none_of(remaining_families.begin(), remaining_families.end(),
+                    [&](const auto& entry) { return entry.chunk_id == source_delete.chunk_id; }) &&
+                remaining_neighbors.entries.size() == 1 &&
+                remaining_neighbors.entries[0].record->guid == survivor.guid &&
+                remaining_neighbors.entries[0].record->relationships.size() == 1 &&
+                remaining_neighbors.entries[0].record->relationships[0].key == 1 &&
+                odh::encode_nbrs(deletion_neighbors) == deletion_source_bytes,
+                "delete hides source FAMI/NBRS members and their links without changing source data");
+        rejects([&] { (void)odh::plan_family_delete_overlay(
+                    {resident, cas, source_delete}, deletion_neighbors, source_id,
+                    &deleted_decoded, source_delete.chunk_id); },
+                "already deleted source family cannot be deleted again");
+        rejects([&] { (void)odh::plan_family_delete_overlay(
+                    {resident, cas}, deletion_neighbors, source_id, nullptr, resident.chunk_id); },
+                "housed source family cannot be deleted from the unhoused-family picker");
+        const auto moved_source = odh::plan_family_move_in_overlay(
+            {resident, cas, source_delete}, source_id, nullptr, source_delete.chunk_id, 9, 1000);
+        rejects([&] { (void)odh::plan_family_delete_overlay(
+                    {resident, cas, source_delete}, deletion_neighbors, source_id,
+                    &moved_source, source_delete.chunk_id); },
+                "source family with move history cannot be deleted");
+        auto missing_delete_member = deletion_neighbors;
+        missing_delete_member.entries.erase(missing_delete_member.entries.begin());
+        rejects([&] { (void)odh::plan_family_delete_overlay(
+                    {resident, cas, source_delete}, missing_delete_member, source_id,
+                    nullptr, source_delete.chunk_id); },
+                "source-family deletion requires every member to resolve in NBRS");
+
         std::vector<std::int16_t> cas_person_data(88,0);
         cas_person_data[2]=500;cas_person_data[3]=500;cas_person_data[5]=500;
         const auto built_creation=odh::make_simitone_family_creation(

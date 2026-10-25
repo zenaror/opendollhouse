@@ -2617,3 +2617,25 @@ telefone (`1797669432`) somente no `UserData` padrão. Ele está ausente em
 desse telefone disponível nessa coleção. O objeto 136 de `UserData2` tem outro
 GUID e não serve como comparação do telefone. Esta é uma leitura estática com
 `odh-saved-world`; nenhuma VM ou dado comercial foi alterado.
+
+## Remoção segura de famílias desocupadas — 2026-10-25
+
+O seletor de família em lote vago agora permite remover logicamente uma família
+original desocupada quando o grupo e todos os seus moradores podem ser ligados
+sem ambiguidade aos registros de vizinhos. O registro versão 5 guarda a
+identidade exata do grupo e os GUIDs/IDs dos moradores. Ao recarregar o mapa, o
+ODH esconde esse grupo, seus moradores e as relações que apontavam para eles.
+Famílias com casa, histórico de mudança, roster incompleto ou dados ambíguos
+continuam protegidas. Famílias criadas pelo jogador continuam usando o arquivo
+lógico anterior. Ambos os caminhos mantêm `Neighborhood.iff`, NBRS e arquivos
+de personagem originais intactos; a tela pede confirmação antes de salvar.
+
+Build Linux dos quatro alvos alterados concluída e quatro CTests focados
+passaram sob Xvfb: `family_overlay`, `linux_family_overlay_store`,
+`linux_neighborhood_screen_actions` e `linux_move_out_integration`. O teste
+integrado usou uma vizinhança sintética; a entrada comercial real permaneceu
+intacta. Xvfb encerrou ao final do comando. Isso valida o fluxo de estado do
+ODH, não paridade completa do jogo nem a interface final. A interface atual
+segue provisória; a versão jogável deve usar a interface do The Sims original,
+com Simitone como referência. Arquivos auxiliares não rastreados continuam
+preservados.

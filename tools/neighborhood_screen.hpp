@@ -109,10 +109,9 @@ std::optional<MoveInFamilySelection> show_move_in_family_picker(
     const std::string& localized_net_worth = "Net Worth",
     const std::string& localized_family_friends = "Family Friends",
     const std::string& localized_archive = "Delete Family",
-    const std::vector<std::uint16_t>& archivable_family_ids = {});
+    const std::vector<std::uint16_t>& deletable_family_ids = {});
 
-// Confirm archiving a player-created, unhoused family. The creation metadata
-// and private character files are retained for recovery.
+// Confirm logical deletion of an unhoused family. Source files remain intact.
 bool show_family_archive_confirmation(LinuxWindow& window,
     const odh::FamilyEntry& family, std::uint8_t language,
     const std::string& localized_title, const std::string& localized_question,

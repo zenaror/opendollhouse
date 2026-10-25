@@ -39,6 +39,20 @@ struct FamilyOverlayArchive {
     std::array<std::uint8_t, 32> family_identity{};
 };
 
+struct FamilyOverlayDeletedMember {
+    std::uint32_t guid = 0;
+    std::int16_t neighbor_id = 0;
+};
+
+// Non-destructive deletion of an unhoused source family. FAMI/NBRS entries and
+// links are hidden in the ODH sidecar; commercial neighborhood/character files
+// remain untouched.
+struct FamilyOverlayDeletion {
+    std::uint16_t family_chunk_id = 0;
+    std::array<std::uint8_t, 32> family_identity{};
+    std::vector<FamilyOverlayDeletedMember> members;
+};
+
 struct FamilyCreationMember {
     std::uint32_t guid;
     // The CAS supplies the 88 base words produced from appearance/personality.
@@ -51,6 +65,7 @@ struct FamilyOverlay {
     std::vector<FamilyOverlayAssignment> assignments;
     std::vector<FamilyOverlayCreation> creations{}; // Replayed before assignments.
     std::vector<FamilyOverlayArchive> archives{}; // Applied after assignments.
+    std::vector<FamilyOverlayDeletion> deletions{}; // Source families, applied last.
 };
 
 // Identity covers the FAMI chunk ID, family number, original house, ordered
@@ -111,6 +126,13 @@ FamilyOverlay plan_family_creation_overlay(
 // retaining the creation payload and private characters for recovery.
 FamilyOverlay plan_family_archive_overlay(
     const std::vector<FamilyEntry>&, const Nbrs&,
+    const std::array<std::uint8_t, 32>& neighborhood_identity,
+    const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
+
+// Logically deletes an unhoused source family with no move history, hiding its
+// FAMI/NBRS members and relationship links while preserving the source files.
+FamilyOverlay plan_family_delete_overlay(
+    const std::vector<FamilyEntry>& source, const Nbrs& neighbors,
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 

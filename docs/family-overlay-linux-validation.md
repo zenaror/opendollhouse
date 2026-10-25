@@ -30,16 +30,20 @@ move-in to another house. A household that was first moved in by the player
 cannot be evicted again: the current Simitone source review does not establish
 how `ValueInArch` changes after purchase, so a second refund would be a guess.
 
-The core can also logically archive an unhoused family created by the player.
-The version 4 record hides its family and neighbor entries but retains the
-creation metadata and private character files, reserving their IDs and GUIDs
-for recovery. It refuses original families, families with move history, and
-duplicate archives. The vacant-lot family picker now shows the localized
-`Delete Family` action for eligible player-created families and asks for
+The core can logically archive an unhoused family created by the player. The
+overlay retains its creation record and private character files, reserving its
+IDs and GUIDs for recovery. Source families can also be logically removed from
+the neighborhood when they are unhoused, have no move history, and every member
+matches one unique positive neighbor ID in `NBRS`. The version 5 source-delete
+record binds the family identity and exact member roster; replay hides that
+family and its neighbor records, and removes relationship links keyed by those
+neighbor IDs. Both actions leave the installed `Neighborhood.iff`, `NBRS`, and
+character files untouched. The vacant-lot family picker shows the localized
+`Delete Family` action only when the relevant checks pass and asks for
 confirmation before saving. It rereads the neighborhood and overlay, checks
-family identity, then uses compare-and-write. Original families never receive
-the action, and character files are retained. The action is a logical archive,
-not physical deletion.
+family identity, then uses compare-and-write. A family with move history,
+ambiguous membership, or an incomplete neighbor match stays unavailable. This
+is logical removal in ODH player state, not physical deletion of game files.
 
 When the player selects an occupied lot, the Linux neighborhood window offers
 Enter/click to open it and `E` to move the family out only when the refund is
@@ -104,19 +108,21 @@ still enter their house.
 - `family_overlay` replays move-out and rehome operations, checks exact budget
   refunds, clears `ValueInArch`, rejects new-family refunds, negative values,
   overflow, and stale source data, and reads version 1 saves as move-ins. It
-  also roundtrips version 4 family archives, hides only player-created
-  neighborhood entries, retains source NBRS bytes, and rejects original,
-  already archived, moved, or identity-mismatched families.
+  also roundtrips version 4 player-family archives and version 5 source-family
+  deletions, hides the selected family and neighbor records, removes its
+  relationship links, retains original source bytes, and rejects housed,
+  already deleted, moved, ambiguous, or identity-mismatched families.
 - `linux_neighborhood_screen_actions` now drives family-row selection, the
   `Delete Family` action, and both answers in the archive confirmation through
-  synthetic X11 input. A direct run under `xvfb-run` passed with the original
-  `UIGraphics.far` supplied read-only. The move-out integration also passed
-  against generated synthetic neighborhoods: it refused to archive a source
-  family, archived a created family after confirmation, reopened the saved
-  overlay, and verified the map refresh. No archive write was made to the real
-  installation. The localized captions and click areas for Cancel/Archive/
-  Move In and No/Yes now align with the three button wells in the original
-  `Nbhd\PickBkg.bmp`; both screen tests passed after this adjustment.
+  synthetic X11 input. The move-out integration passed against generated
+  synthetic neighborhoods: it deleted an eligible unhoused source family,
+  archived a created family, confirmed both before saving, reopened the saved
+  overlay, and verified the map refresh. It also confirmed that a family with
+  move history stays unavailable and that source files remain unchanged. The
+  four focused CTests (`family_overlay`, `linux_family_overlay_store`,
+  `linux_neighborhood_screen_actions`, and `linux_move_out_integration`) passed
+  under `xvfb-run`; Xvfb exited with the test command. The fixture used no
+  commercial game files.
 - `linux_family_overlay_store` verifies stale compare-and-write requests leave
   the current save unchanged, and matching snapshots publish successfully.
 - `linux_family_overlay_store`: private atomic file replacement, refusal to

@@ -72,6 +72,20 @@ struct Temp {
     ~Temp() { std::error_code error; fs::remove_all(path, error); }
 };
 
+odh::Nbrs source_neighbors() {
+    odh::NeighborRecord deleted{};
+    deleted.version = 10; deleted.unknown3 = 9; deleted.name = "Unhoused";
+    deleted.name_padding = 0;
+    deleted.mystery_zero = 0; deleted.person_mode = 9;
+    deleted.person_data = std::vector<std::int16_t>(256, 0);
+    deleted.neighbor_id = 1; deleted.guid = 0x34567890U; deleted.unknown_neg_one = -1;
+    deleted.relationships = {{1, 2, {60, 60}}};
+    auto survivor = deleted; survivor.name = "Neighbor"; survivor.neighbor_id = 2;
+    survivor.name_padding = 0;
+    survivor.guid = 0x45678901U; survivor.relationships = {{1, 1, {60, 60}}};
+    return {0, 73, {{1, deleted}, {1, survivor}}, 0};
+}
+
 std::vector<odh::FamilyEntry> make_game(const fs::path& root) {
     std::vector<odh::FamilyEntry> families;
     Bytes neighborhood, locations;
@@ -93,8 +107,16 @@ std::vector<odh::FamilyEntry> make_game(const fs::path& root) {
         // is needed: this test always cancels at the occupied-lot choice.
         write(root / "UserData/Houses" / ("House0" + std::to_string(house) + ".iff"), iff());
     }
-    const odh::Nbrs source_neighbors{0, 73, {}, 0};
-    append(neighborhood, chunk("NBRS", 1, odh::encode_nbrs(source_neighbors)));
+    odh::Family unhoused{};
+    unhoused.version = 9; unhoused.house_number = 0; unhoused.family_number = 1200;
+    unhoused.budget = 8000; unhoused.member_guids = {0x34567890U};
+    families.push_back({300, unhoused, "Unhoused Source Family"});
+    Bytes unhoused_data;
+    for (auto value : {0U, 9U, 0x46414d49U, 0U, 1200U, 8000U, 0U,
+                       0U, 0U, 1U, 0x34567890U}) integer(unhoused_data, value);
+    append(neighborhood, chunk("FAMI", 300, unhoused_data));
+    const auto neighbors = source_neighbors();
+    append(neighborhood, chunk("NBRS", 1, odh::encode_nbrs(neighbors)));
     write(root / "UserData/Neighborhood.iff", iff(neighborhood));
     write(root / "UserData/LotLocations.iff", iff(chunk("STR#", 1, locations)));
 
@@ -223,7 +245,8 @@ void wait_title(Display* display, Window window, const std::string& expected) {
     await([&] { return title(display, window).find(expected) != std::string::npos; }, expected);
 }
 void wait_exact_title(Display* display, Window window, const std::string& expected) {
-    await([&] { return title(display, window) == expected; }, expected);
+    await([&] { return title(display, window) == expected; },
+        expected + " (actual: " + title(display, window) + ")");
 }
 void key(Display* display, Window window, KeySym symbol) {
     for (int type : {KeyPress, KeyRelease}) {
@@ -361,16 +384,16 @@ int main(int argc, char** argv) {
         require(read(neighborhood) == source, "source neighborhood must remain unchanged");
         require(!fs::exists(temp.path / "XDG_DATA_HOME/opendollhouse/saves"), "must cancel before simulation saves");
 
-        const odh::Nbrs source_neighbors{0, 73, {}, 0};
+        const auto neighbors = source_neighbors();
         const auto move_out_overlay = odh_host::read_linux_family_overlay(overlay_path);
         require(move_out_overlay.has_value(), "move-out overlay must remain available for family creation");
         std::vector<std::int16_t> person_data(88, 0);
         person_data[2] = 500;
-        const auto creation = odh::make_simitone_family_creation(families, source_neighbors,
+        const auto creation = odh::make_simitone_family_creation(families, neighbors,
             identity, &*move_out_overlay, "Player Family",
             {{0x76543210U, person_data}}, 20000);
         const auto with_player_family = odh::plan_family_creation_overlay(families,
-            source_neighbors, identity, &*move_out_overlay, creation);
+            neighbors, identity, &*move_out_overlay, creation);
         odh_host::compare_exchange_linux_family_overlay_atomic(
             overlay_path, move_out_overlay, with_player_family);
         const auto family_added_bytes = read(overlay_path);
@@ -383,39 +406,73 @@ int main(int argc, char** argv) {
             key(display, window, XK_Return);
             wait_title(display, window, "choose family for House 7");
 
-            // The first row is a source family. Clicking the delete control
-            // must leave the picker open because that family is not player-created.
-            click_at(display, window, 420, 560);
-            std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            require(title(display, window).find("choose family for House 7") != std::string::npos,
-                "source family must not be deletable from the picker");
+            // Select the second row: the first is House 7's family, which
+            // has move history and must not be deletable.
             key(display, window, XK_Tab);
             click_at(display, window, 420, 560);
-            wait_exact_title(display, window, "OpenDollhouse | confirm family archive");
+            wait_exact_title(display, window, "OpenDollhouse | confirm family deletion");
             require(read(overlay_path) == family_added_bytes,
-                "archive confirmation must not write before Enter");
+                "source-family delete confirmation must not write before Enter");
+            key(display, window, XK_Return);
+            wait_exact_title(display, window,
+                "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
+
+            const auto deleted_overlay = odh_host::read_linux_family_overlay(overlay_path);
+            require(deleted_overlay && deleted_overlay->deletions.size() == 1 &&
+                    deleted_overlay->deletions[0].family_chunk_id == 300 &&
+                    deleted_overlay->creations.size() == 1 && deleted_overlay->archives.empty(),
+                "confirmed UI action must persist the selected source-family deletion");
+            const auto visible_families = odh::apply_family_overlay(families, identity, *deleted_overlay);
+            require(std::none_of(visible_families.begin(), visible_families.end(),
+                    [](const auto& entry) { return entry.chunk_id == 300; }) &&
+                    std::any_of(visible_families.begin(), visible_families.end(),
+                    [](const auto& entry) { return entry.chunk_id == 207; }),
+                "source-family deletion hides only the selected family");
+            const auto visible_neighbors = odh::apply_neighbor_overlay(neighbors, identity, *deleted_overlay);
+            require(std::none_of(visible_neighbors.entries.begin(), visible_neighbors.entries.end(),
+                    [](const auto& entry) { return entry.record && entry.record->guid == 0x34567890U; }) &&
+                    std::any_of(visible_neighbors.entries.begin(), visible_neighbors.entries.end(),
+                    [](const auto& entry) { return entry.record &&
+                        entry.record->guid == 0x45678901U && entry.record->relationships.empty(); }) &&
+                    std::any_of(visible_neighbors.entries.begin(), visible_neighbors.entries.end(),
+                    [](const auto& entry) { return entry.record && entry.record->guid == 0x76543210U; }) &&
+                    odh::encode_nbrs(neighbors) == odh::encode_nbrs(source_neighbors()),
+                "deletion hides family members and relationship links without changing source NBRS");
+
+            const auto deleted_bytes = read(overlay_path);
+            click(display, window, 200);
+            wait_title(display, window, "Enter: OK | Esc: Cancel");
+            key(display, window, XK_Return);
+            wait_title(display, window, "choose family for House 7");
+            // House 7 remains ineligible because it has move history; the
+            // created family is now the second available row.
+            key(display, window, XK_Tab);
+            click_at(display, window, 420, 560);
+            wait_exact_title(display, window, "OpenDollhouse | confirm family deletion");
+            require(read(overlay_path) == deleted_bytes,
+                "player-family deletion confirmation must not write before Enter");
             key(display, window, XK_Return);
             wait_exact_title(display, window,
                 "OpenDollhouse | Neighborhood | Neighborhood | C: Create family | Esc: Cancel");
 
             const auto archived_overlay = odh_host::read_linux_family_overlay(overlay_path);
             require(archived_overlay && archived_overlay->archives.size() == 1 &&
+                    archived_overlay->deletions.size() == 1 &&
                     archived_overlay->creations.size() == 1 &&
                     archived_overlay->archives[0].family_chunk_id == creation.family_chunk_id,
-                "confirmed UI action must persist the version 4 archive for the chosen created family");
-            const auto visible_families = odh::apply_family_overlay(
-                families, identity, *archived_overlay);
-            require(std::none_of(visible_families.begin(), visible_families.end(),
-                    [&](const auto& entry) { return entry.chunk_id == creation.family_chunk_id; }) &&
-                    std::any_of(visible_families.begin(), visible_families.end(),
-                    [&](const auto& entry) { return entry.chunk_id == 207; }),
-                "map replay must hide the archived player family while retaining original families");
-            const auto visible_neighbors = odh::apply_neighbor_overlay(
-                source_neighbors, identity, *archived_overlay);
-            require(std::none_of(visible_neighbors.entries.begin(), visible_neighbors.entries.end(),
-                    [&](const auto& entry) {
-                        return entry.record && entry.record->guid == 0x76543210U;
-                    }), "neighbor replay must hide archived player members");
+                "created-family deletion adds a v5 archive without undoing source-family deletion");
+            const auto final_families = odh::apply_family_overlay(families, identity, *archived_overlay);
+            require(std::none_of(final_families.begin(), final_families.end(),
+                    [&](const auto& entry) { return entry.chunk_id == creation.family_chunk_id ||
+                        entry.chunk_id == 300; }) &&
+                    std::any_of(final_families.begin(), final_families.end(),
+                    [](const auto& entry) { return entry.chunk_id == 207; }),
+                "overlay replay hides both deleted families while preserving other source families");
+            const auto final_neighbors = odh::apply_neighbor_overlay(neighbors, identity, *archived_overlay);
+            require(std::none_of(final_neighbors.entries.begin(), final_neighbors.entries.end(),
+                    [](const auto& entry) { return entry.record &&
+                        (entry.record->guid == 0x76543210U || entry.record->guid == 0x34567890U); }),
+                "neighbor replay hides both source and player-created family members");
             marker(display, window, 200, false); marker(display, window, 600, true);
             key(display, window, XK_Escape);
             app.expect_cancelled("neighborhood");
@@ -423,7 +480,7 @@ int main(int argc, char** argv) {
         require(read(neighborhood) == source, "archive flow must keep Neighborhood.iff unchanged");
         require(!fs::exists(temp.path / "XDG_DATA_HOME/opendollhouse/saves"),
             "archive flow must cancel before simulation saves");
-        std::cout << "Synthetic Linux integration: move-out persisted and reopened; family picker refused source deletion, archived a created family after confirmation, and refreshed the map\n";
+        std::cout << "Synthetic Linux integration: move-out persisted and reopened; source and player-created family deletions were confirmed and replayed without changing Neighborhood.iff\n";
         XCloseDisplay(display); return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n'; XCloseDisplay(display); return 1;
