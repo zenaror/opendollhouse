@@ -27,7 +27,7 @@ std::vector<odh::SessionGlobalValue> capture_globals(const odh::LotContext& lot,
     return values;
 }
 struct Fixture {
-    odh::World world;
+    odh::World world{odh::WorldLimits{},odh::AttributePolicy::ts1_bounded};
     odh::RandomState random{0x12345678};
     odh::EntityThreadControllers controllers{world,1,[&]{random.next(100);}};
     odh::Playback playback{world,{}};
@@ -132,7 +132,12 @@ void restore_carry(odh::SingleResidentSessionRestore& candidate,const odh::Playb
     }
 }
 void unit_tests() {
-    Fixture source;source.start();source.step();const auto saved=source.snapshot();
+    Fixture source;source.start();odh::VmFrame attribute_frame;
+    attribute_frame.context.caller=1;attribute_frame.context.stack_object=1;
+    require(source.world.write(attribute_frame,0,4,99),"TS1 attribute bank grows on write");
+    source.step();const auto saved=source.snapshot();
+    require(saved.world.entities[0].attributes.size()==5&&saved.world.entities[0].attributes[4]==99,
+        "grown TS1 attribute bank is captured");
     const auto bytes=odh::encode_session_bundle(saved);
     {
         auto with_sim=saved;with_sim.simulation.emplace();
@@ -148,6 +153,8 @@ void unit_tests() {
         rejects([&]{prepare(odh::encode_session_bundle(with_sim),source);},"SIMS missing clock global accepted");
     }
     auto candidate=prepare(bytes,source);
+    require(candidate->world().find(1)->attributes.size()==5&&candidate->world().find(1)->attributes[4]==99,
+        "grown TS1 attribute bank is restored");
     require(candidate->family_budget()==std::optional<std::int32_t>{1234},
         "single-resident session restores the active family's runtime budget");
     require(candidate->bootstrap().read(17)==source.bootstrap.read(17)&&
@@ -164,8 +171,6 @@ void unit_tests() {
     rejects([&]{prepare(odh::encode_session_bundle(changed),source);},"wrong lot accepted");
     changed=saved;changed.world.entities[0].definition_words[20]=22;
     rejects([&]{prepare(odh::encode_session_bundle(changed),source);},"modified immutable metadata accepted");
-    changed=saved;changed.world.entities[0].attributes.push_back(0);++changed.world.word_count;
-    rejects([&]{prepare(odh::encode_session_bundle(changed),source);},"modified attribute layout accepted");
     changed=saved;changed.world.entities[0].person_data[0]=1;
     rejects([&]{prepare(odh::encode_session_bundle(changed),source);},"seated posture accepted without resume binding");
     changed=saved;

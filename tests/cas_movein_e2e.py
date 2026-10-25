@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in real-data CAS -> vacant-lot -> session-entry integration gate."""
+"""Opt-in real-data CAS -> vacant-lot -> runtime -> save/resume integration gate."""
 import argparse
 import hashlib
 import json
@@ -68,19 +68,69 @@ def main():
         plan_report = json.loads(plan.stdout)
         if plan_report.get('status') != 'ready' or plan_report.get('resident_guid') != report['guid']:
             raise RuntimeError(f'launcher did not return a successful resource plan: {plan.stdout[:1000]}')
+        selection = [str(person), '--game-root', str(game), '--mode', '1',
+                     '--house', str(report['house']), '--resident-id', str(report['neighbor_id'])]
+
+        def run_session(arguments, expected_ticks, expected_resume):
+            session_result = subprocess.run(arguments, env=env, capture_output=True, text=True,
+                                             timeout=args.timeout)
+            if session_result.returncode:
+                raise RuntimeError(session_result.stderr.strip() or
+                                   f'game session exited {session_result.returncode}')
+            session = json.loads(session_result.stdout)
+            if session.get('host_failed') or session.get('ticks') != expected_ticks:
+                raise RuntimeError(f'bounded game session did not reach tick {expected_ticks}: '
+                                   f'{session_result.stdout[:1200]}')
+            if session.get('session_loaded') is not expected_resume:
+                raise RuntimeError(f'game session resume state was unexpected: {session_result.stdout[:1200]}')
+            if not session.get('tick_budget_exhausted'):
+                raise RuntimeError('bounded game session did not stop at its requested tick budget')
+            household = session.get('household_main', {})
+            if household.get('scheduler_entities') != report['member_count']:
+                raise RuntimeError(f'full CAS household did not enter the runtime: {session_result.stdout[:1600]}')
+            additional = household.get('additional_residents', [])
+            if (len(additional) != report['member_count'] - 1 or
+                    any(member.get('status') != 'waiting' or member.get('diagnostic') or
+                        member.get('position') is None for member in additional)):
+                raise RuntimeError(f'additional CAS resident did not reach its idle Main: {session_result.stdout[:2000]}')
+            return session
+
+        first_session = run_session(selection + ['--headless-ticks', '16', '--save-session-on-exit'],
+                                    16, False)
+        archive = Path(first_session['saved_session_path']).resolve(strict=True)
+        try:
+            archive.relative_to(profile / 'data/opendollhouse/saves')
+        except ValueError as error:
+            raise RuntimeError('session archive escaped the temporary player profile') from error
+        resumed_session = run_session([str(person), '--game-root', str(game), '--load-session', str(archive),
+                                       '--headless-ticks', '16', '--save-session-on-exit'], 32, True)
+        resumed_bytes = archive.read_bytes()
+        direct_session = run_session(selection + ['--headless-ticks', '32', '--save-session-on-exit'],
+                                     32, False)
+        direct_archive = Path(direct_session['saved_session_path']).resolve(strict=True)
+        if direct_archive != archive or direct_archive.read_bytes() != resumed_bytes:
+            raise RuntimeError('fresh-process save/resume differs from uninterrupted 32-tick execution')
         changed = [str(p) for p, sha in before.items() if digest(p) != sha]
         if changed:
             raise RuntimeError('installed game data changed: ' + ', '.join(changed[:8]))
         private = profile / 'data/opendollhouse/Characters'
         overlay_files = list((profile / 'config/opendollhouse/player-state').glob('*.odhp'))
-        if not private.is_dir() or len(list(private.glob('*.iff'))) != 1 or len(overlay_files) != 1:
-            raise RuntimeError('expected exactly one private character and one player overlay in temporary profile')
-        print(json.dumps({**report, 'launcher_plan': 'passed',
+        if (not private.is_dir() or len(list(private.glob('*.iff'))) != report['member_count'] or
+                len(overlay_files) != 1):
+            raise RuntimeError('expected the complete private CAS household and one player overlay in temporary profile')
+        print(json.dumps({'status': 'passed', 'mode': report['mode'], 'house': report['house'],
+                          'purchase_price': report['purchase_price'], 'household_members': report['member_count'],
+                          'launcher_plan': 'passed',
                           'launcher_resource_files': len(plan_report.get('resource_identity', {}).get('files', [])),
+                          'runtime_entry': 'passed', 'runtime_ticks': resumed_session['ticks'],
+                          'additional_resident_statuses': [member['status'] for member in
+                              resumed_session['household_main']['additional_residents']],
+                          'fresh_process_resume': 'passed', 'resume_matches_continuous': True,
                           'commercial_source_files_sha256_checked': len(before),
                           'neighborhood_sha256': before[game / 'UserData/Neighborhood.iff'],
                           'game_data_unchanged': True,
-                          'private_character_count': 1, 'player_overlay_count': 1}, separators=(',', ':')))
+                          'private_character_count': len(list(private.glob('*.iff'))),
+                          'player_overlay_count': 1}, separators=(',', ':')))
 
 
 if __name__ == '__main__':

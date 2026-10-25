@@ -16,19 +16,35 @@ bool same_banks(const std::optional<SavedObjectBanks>& a,const std::optional<Sav
     return a.has_value()==b.has_value()&&(!a||(a->object_data==b->object_data&&a->extras==b->extras));
 }
 void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original) {
-    if(bundle.world.attribute_policy!=original.attribute_policy||
-       bundle.world.entities.size()!=original.entities.size())
+    if(bundle.world.attribute_policy!=original.attribute_policy)
+        throw FormatError("session World attribute policy differs from the original lot");
+    if(bundle.world.entities.size()!=original.entities.size())
         throw FormatError("session entity roster differs from the original lot");
     for(std::size_t n=0;n<original.entities.size();++n) {
         const auto& a=bundle.world.entities[n];const auto& b=original.entities[n];
-        if(a.id!=b.id||a.kind!=b.kind||a.generation!=b.generation||
-           !same_definition(a.definition,b.definition)||a.definition_words!=b.definition_words||
-           !same_entry_points(a.entry_points,b.entry_points)||
-           !same_banks(a.saved_object_banks,b.saved_object_banks)||a.unattached_slot!=b.unattached_slot||
-           a.slots.size()!=b.slots.size()||a.attributes.size()!=b.attributes.size()||a.person_data.size()!=b.person_data.size()||
-           a.motives.size()!=b.motives.size()||a.ui_ghost!=b.ui_ghost||
-           a.static_footprint!=b.static_footprint||a.ui_ghost||!a.static_footprint)
-            throw FormatError("session changed original lot metadata or contains transient routing entities");
+        std::string changed;
+        const auto mark=[&](const char* name){if(!changed.empty())changed+=',';changed+=name;};
+        if(a.id!=b.id)mark("id");
+        if(a.kind!=b.kind)mark("kind");
+        if(a.generation!=b.generation)mark("generation");
+        if(!same_definition(a.definition,b.definition))mark("definition");
+        if(a.definition_words!=b.definition_words)mark("definition_words");
+        if(!same_entry_points(a.entry_points,b.entry_points))mark("entry_points");
+        if(!same_banks(a.saved_object_banks,b.saved_object_banks))mark("saved_object_banks");
+        if(a.unattached_slot!=b.unattached_slot)mark("unattached_slot");
+        if(a.slots.size()!=b.slots.size())mark("slot_count");
+        // TS1 attribute banks grow on demand after an actor's first successful
+        // write. Their values and lengths are part of WorldSnapshot; the
+        // snapshot decoder and World::publish_snapshot enforce the bank and
+        // aggregate word limits when restoring them.
+        if(a.person_data.size()!=b.person_data.size())mark("person_data_count");
+        if(a.motives.size()!=b.motives.size())mark("motive_count");
+        if(a.ui_ghost!=b.ui_ghost)mark("ghost_flag_changed");
+        if(a.static_footprint!=b.static_footprint)mark("footprint_flag_changed");
+        if(a.ui_ghost)mark("ghost_entity");
+        if(!a.static_footprint)mark("dynamic_footprint_entity");
+        if(!changed.empty())
+            throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
     }
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});

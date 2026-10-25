@@ -16,6 +16,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -110,21 +111,25 @@ int main(int argc, char** argv) try {
     const auto& body = bodies.front();
     if (price > std::numeric_limits<std::int32_t>::max() - 20000)
         throw std::runtime_error("selected lot price leaves no safe budget headroom");
-    odh_host::SimitoneCasPersonInput input;
-    input.name_utf8 = "ODH CAS Gate";
-    input.biography_utf8 = "Opt-in integration gate";
-    input.language = 1;
-    input.skin = "lgt";
-    input.body_type = body.body_type;
-    input.body_appearance = body.appearance;
-    input.body_texture = body.texture;
-    input.head_appearance = head.appearance;
-    input.head_texture = head.texture;
-    input.handgroup_texture = body.handgroup_texture.empty() ? head.handgroup_texture : body.handgroup_texture;
-    input.personality_points = {5, 5, 5, 5, 5};
     std::uint32_t cas_random = 0;
-    auto draft = odh_host::make_simitone_cas_member(input,
-        [&cas_random](std::uint32_t upper) { return (cas_random++) % upper; });
+    const auto make_member = [&](std::string name) {
+        odh_host::SimitoneCasPersonInput input;
+        input.name_utf8 = std::move(name);
+        input.biography_utf8 = "Opt-in integration gate";
+        input.language = 1;
+        input.skin = "lgt";
+        input.body_type = body.body_type;
+        input.body_appearance = body.appearance;
+        input.body_texture = body.texture;
+        input.head_appearance = head.appearance;
+        input.head_texture = head.texture;
+        input.handgroup_texture = body.handgroup_texture.empty() ? head.handgroup_texture : body.handgroup_texture;
+        input.personality_points = {5, 5, 5, 5, 5};
+        return odh_host::make_simitone_cas_member(input,
+            [&cas_random](std::uint32_t upper) { return (cas_random++) % upper; });
+    };
+    const auto first_draft = make_member("ODH CAS Gate A");
+    const auto second_draft = make_member("ODH CAS Gate B");
 
     const auto neighborhood = user / "Neighborhood.iff";
     const auto identity = odh_host::linux_neighborhood_identity(neighborhood);
@@ -133,7 +138,7 @@ int main(int argc, char** argv) try {
     const auto characters = profile / "data/opendollhouse/Characters";
     const auto created = odh_host::create_linux_private_family(template_person(game),
         user / "Characters", characters, neighborhood, overlay_path,
-        "ODH CAS Gate", {draft}, price + 20000);
+        "ODH CAS Gate", {first_draft, second_draft}, price + 20000);
     auto overlay = odh_host::read_linux_family_overlay(overlay_path);
     if (!overlay) throw std::runtime_error("CAS creation did not persist a player overlay");
     const auto moved = odh::plan_family_move_in_overlay(families, identity, &*overlay,
@@ -142,13 +147,17 @@ int main(int argc, char** argv) try {
     overlay = moved;
 
     const auto session = odh::load_session_entry(user, 1, house, 1, &*overlay, characters);
-    if (session.members.size() != 1 || session.members.front().guid != created.members.front().guid ||
-        session.members.front().character_source != "PlayerData/Characters")
+    if (session.members.size() != 2 || created.members.size() != 2 ||
+        session.members.front().guid != created.members.front().guid ||
+        session.members.front().character_source != "PlayerData/Characters" ||
+        session.members.back().guid != created.members.back().guid ||
+        session.members.back().character_source != "PlayerData/Characters")
         throw std::runtime_error("load_session_entry did not resolve the created private CAS member");
 
     std::cout << "{\"status\":\"passed\",\"mode\":1,\"house\":" << house
               << ",\"purchase_price\":" << price << ",\"family_chunk_id\":" << created.family_chunk_id
-              << ",\"family_number\":" << created.family_number << ",\"guid\":" << created.members.front().guid
+              << ",\"family_number\":" << created.family_number << ",\"member_count\":" << created.members.size()
+              << ",\"guid\":" << created.members.front().guid
               << ",\"neighbor_id\":" << session.members.front().neighbor_id
               << ",\"member_source\":\"" << session.members.front().character_source
               << "\",\"private_character\":\"" << created.members.front().path.string()

@@ -171,8 +171,11 @@ session is replaced only after every restore step succeeds. Tick and RNG are
 published only after VM, controllers, Playback and scheduler accept their state.
 
 That helper accepts one resident thread and the unchanged original lot entity
-roster and generations, bank layouts, definitions, entry points and saved
-baseline metadata. Resource fingerprint, language, expansions, lot/family/resident
+roster and generations, slot layouts, definitions, entry points and saved
+baseline metadata. TS1 attribute banks may grow on demand after a successful
+write; the snapshot restores their values and their length remains subject to
+the codec and World aggregate memory limits. Resource fingerprint, language,
+expansions, lot/family/resident
 selection and the exact supported global roster must match. Identity globals 9
 (family) and 10 (house) must match the selected household and original lot;
 other supported mutable globals are restored without dropping zero values.
@@ -196,7 +199,7 @@ graph without starting Main, continue six ticks, and compare the recaptured
 World, nonempty relationships, globals (including a mutable value of 321), VM,
 controllers, Playback, scheduler, RNG and tick with uninterrupted execution.
 Two CTest processes separately write and resume the synthetic archive. Rejection
-cases cover changed resources/selection/metadata/layout, missing or extra globals,
+cases cover changed resources/selection/immutable metadata/slot layout, missing or extra globals,
 altered family/house identity, routing footprint, seated posture, dynamic owners,
 truncation, archive limits, missing VM routines/hooks and missing Playback resource
 resolution. This synthetic restart evidence alone does not establish House07,

@@ -92,10 +92,11 @@ limites estão em
 Os testes geram fixtures sintéticas na memória; não dependem dos dados comerciais.
 
 O gate de integração CAS para lote vago é explicitamente opt-in e não faz parte
-do CTest. Ele cria um único membro com o catálogo CAS e `TemplatePerson.iff`,
-compra um lote base vago pelo preço SIMI, salva apenas no perfil temporário e
-confere `load_session_entry` e o plano real do `odh-person`. Os dados instalados
-são verificados por SHA-256 antes/depois.
+do CTest. Ele cria uma família de dois Sims com o catálogo CAS e
+`TemplatePerson.iff`, compra um lote base vago pelo preço SIMI, inicia os dois
+no runtime, salva após 16 ciclos e retoma em outro processo. O save retomado é
+comparado byte a byte com 32 ciclos sem interrupção. O perfil do jogador é
+temporário e os dados instalados são verificados por SHA-256 antes/depois.
 
 ```sh
 cmake --build build --target odh-cas-movein-e2e odh-person

@@ -33,7 +33,7 @@ struct Execution {
         return {id,vm.snapshot(),controllers.snapshot(),p};}
 };
 struct Fixture {
-    odh::World world;
+    odh::World world{odh::WorldLimits{},odh::AttributePolicy::ts1_bounded};
     odh::RandomState rng{0x12345678};
     odh::RelationshipState relationships;
     odh::EntityVmScheduler scheduler{4};
@@ -90,7 +90,10 @@ void resume(odh::HouseholdSessionRestore& candidate,const odh::SessionBundle& ex
     actual.host.global_values=globals(candidate.lot(),candidate.bootstrap());
     require(odh::encode_session_bundle(actual)==odh::encode_session_bundle(expected),"two residents differ from continuous execution");
 }
-void tests(){Fixture f;f.start();f.step();auto saved=f.snapshot();const auto bytes=odh::encode_session_bundle(saved);
+void tests(){Fixture f;f.start();odh::VmFrame attribute_frame;
+    attribute_frame.context.caller=1;attribute_frame.context.stack_object=1;
+    require(f.world.write(attribute_frame,0,4,99),"TS1 attribute bank grows on write");
+    f.step();auto saved=f.snapshot();const auto bytes=odh::encode_session_bundle(saved);
     {
         auto with_sim=saved;with_sim.simulation.emplace();
         odh::Ts1Clock clock;clock.initialize(7,17,4,6,1997);auto time=clock.snapshot();time.ticks=with_sim.host.tick;

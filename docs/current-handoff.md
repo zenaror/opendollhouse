@@ -1,5 +1,36 @@
 # Continuidade atual
 
+## Estado mais recente: família CAS no lote com save/retomada headless (2026-10-25)
+
+O gate opt-in `tests/cas_movein_e2e.py` agora cria dois adultos via catálogo CAS
+e `TemplatePerson.iff`, compra o House01 comercial vago por 10.500 Simoleons,
+grava só no overlay/perfil temporário e resolve os dois membros por
+`load_session_entry`. O plano do launcher contém 132 recursos; os dois Sims
+entram no scheduler do lote e o Main do morador adicional chega a `waiting`.
+Depois de 16 ciclos, o save é retomado por outro processo do tick 16 ao 32; o
+arquivo final coincide byte a byte com uma execução contínua de 32 ciclos. Os
+2.699 arquivos comerciais conferidos mantiveram os hashes. O gate é headless e
+curto: ainda não valida clique pela janela, ações do jogador, sessão longa,
+crianças, rota entre cômodos ou equivalência completa.
+
+Esse caminho encontrou uma recusa falsa ao comparar o tamanho do banco de
+atributos do World: o formato TS1 deixa o banco crescer no primeiro write. O
+restaurador agora aceita esse crescimento dentro dos limites existentes do
+codec/World e continua comparando roster, definições, EntryPoints, bancos
+salvos, slots e footprint. Testes unitários cobrem crescimento e restauração
+para os perfis de um e vários moradores. Build de `odh-person` e o gate real
+passaram; CTest focal: 12/12. Esse trabalho ainda está local e precisa de
+revisão, commit e push.
+
+Próxima fatia recomendada: permitir save/resume durante uma caminhada local no
+mesmo cômodo. O bundle atual recusa frames/esperas de rota; isso exige capturar
+o progresso, destino, frame e contexto da caminhada, e reconstruí-los com
+callbacks novos no processo de retomada. Manter portal e chamadas externas
+recusados até terem um contrato próprio. Em paralelo, o fio salvo inválido do
+telefone 136 continua pedindo auditoria somente de leitura de como OBJM codifica
+o dono do código; não associar BHAVs pelo número. Os arquivos não rastreados
+`Testing/` e três scripts auxiliares permanecem preservados.
+
 ## Estado mais recente: Main do telefone e notificação (2026-10-25)
 
 O host desenha o primeiro diálogo privado bloqueante, lê STR#301 do código
