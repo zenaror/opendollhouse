@@ -1,4 +1,7 @@
-# Native shared wake queue
+# Temporary host bridge for native simulation
+
+The final target is the complete C/C++ game without a managed runtime; this
+project is only a temporary comparison/integration host.
 
 The actual FreeSO `VMScheduler` calls this bridge to the C++ `odh_simulation`
 queue. There is no alternate managed scheduling implementation at runtime.
@@ -98,3 +101,21 @@ Derived code is covered by MPL-2.0; see [LICENSE.FreeSO.md](../LICENSE.FreeSO.md
 `BaselineVMScheduler.cs` retains the original algorithm with a namespace rename
 and import for the synthetic VM types. These tests establish that contract,
 not equivalence to every behavior of the original The Sims executable.
+
+## Native TS1 Expression
+
+`ExpressionExecutor<TContext>` calls the shared native implementation for all
+21 encoded TS1 operators. The real `VMExpression` dispatches TS1 to that bridge;
+the existing managed list behavior is retained only for TSO. There is no TS1
+operator fallback. Read/write/level callbacks temporarily use managed memory;
+that memory and the remaining VM still need migration for the complete port.
+
+The bridge requires a little-endian host for its packed operand, rejects unknown
+ABI versions, and rethrows captured callback exceptions after returning from
+native code. Pooled frames clear VM references in `finally`; first calls and
+nested depth may allocate. Zero allocation was measured only for warmed,
+nonthrowing calls. The C ABI itself consumes explicit little-endian bytes and
+is independent of the managed struct layout.
+
+See [native contract](../../native/simulation/EXPRESSION.md) and
+[actual-source differential tests](../OpenDollhouse.Simulation.Expression.Tests/README.md).

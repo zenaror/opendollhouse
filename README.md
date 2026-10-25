@@ -2,15 +2,19 @@
 
 Projeto para recuperar a experiência do The Sims 1 para PC, com suporte
 progressivo às sete expansões e ao conteúdo personalizado clássico.
-Direção autorizada em 2026-10-25: partir de uma base Simitone/FreeSO funcional
-no Linux e corrigir suas diferenças em relação ao original, incluindo interface,
-controles e regras do jogo. O primeiro candidato para avaliação é o fork
-comunitário alexjyong, mantendo inicialmente C#. A primeira avaliação já
-compilou o Desktop, abriu a vizinhança e entrou na House07 em tela isolada,
-mas encontrou exceções de simulação no lote. A base ainda não está aprovada
-como jogável nem adotada definitivamente. Evidências e reprodução em
-[avaliação Simitone](docs/simitone-linux-evaluation.md); plano em
-[docs/architecture.md](docs/architecture.md).
+Direção vigente: **portar o jogo baseado no Simitone/FreeSO para C/C++**, com
+interface, gráficos, áudio e controles nativos, sem C#/.NET no produto final.
+A interface e o comportamento do The Sims 1 original continuam sendo o destino.
+O fork alexjyong e sua revisão FreeSO são referências executáveis durante a
+migração; o candidato gerenciado é temporário e não satisfaz esse objetivo.
+
+Já foram observados compra e uso de objetos, salvamento/reabertura e um ciclo
+limitado de criar, mudar e excluir uma família. BCON e fila já usam C++;
+as expressões das ações também passaram a executar em C++, com validação
+integrada e no emulador. O jogo completo ainda não está portado ou aprovado como primeira versão jogável.
+Plano completo em [native-port-plan.md](docs/native-port-plan.md), estado atual
+em [current-handoff.md](docs/current-handoff.md) e evidências da referência em
+[avaliação Simitone](docs/simitone-linux-evaluation.md).
 
 Estado do motor próprio preservado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
@@ -24,8 +28,8 @@ Plataformas planejadas: Linux como primeiro ambiente de validação; New Nintend
 3DS, PlayStation Vita, Android, Nintendo Switch, Windows e macOS (Apple Silicon
 arm64 e Intel x86_64) também são alvos futuros; Wii U é um desejo adicional.
 O código deve ser planejado desde o início para separar regras do jogo de
-gráficos, áudio, controles e arquivos de cada plataforma. A viabilidade da base
-C# nos consoles precisa ser investigada cedo, antes de consolidar dependências.
+gráficos, áudio, controles e arquivos de cada plataforma. O núcleo final não
+dependerá de C#/.NET; as limitações da base gerenciada orientam a migração e permanecem registradas como evidência histórica.
 Cada console exige toolchain e validação
 próprias; não há build ou teste de hardware do Switch validado neste projeto.
 Windows/macOS não podem ser testados manualmente pelo usuário atual e precisarão

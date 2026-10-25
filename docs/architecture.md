@@ -2,6 +2,12 @@
 
 ## Direção vigente — base Simitone, experiência original (2026-10-25)
 
+**Direção mais recente:** port completo do jogo baseado no Simitone para C/C++,
+sem C#/.NET no executável final. Inclui todos os sistemas, não apenas o núcleo.
+A antiga restrição à tradução integral foi superada. O [plano integral](native-port-plan.md)
+define as frentes e critérios; C# é apenas referência/ponte temporária durante a
+substituição progressiva. Os registros abaixo conservam a origem da avaliação.
+
 Decisão humana: mudar o caminho principal para aproveitar o Simitone com sua
 revisão correspondente do FreeSO e ajustar progressivamente a experiência ao
 The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
@@ -15,12 +21,12 @@ ponte temporária. As duas correções C# de famílias já testadas são um chec
 de comportamento; não autorizam continuar ampliando um motor dependente de CLR.
 Não manter duas implementações completas: substituir caminhos usados, um por vez.
 
-Próximo corte escolhido: execução dos cálculos e condições das ações dos Sims,
-começando pela primitiva BHAV Expression do TS1, dentro de `native/simulation`.
-O C++ deve decidir os operadores e sua ordem de efeitos; a ponte inicial apenas
-acessa memória e entidades ainda gerenciadas. Não duplicar o cálculo em C# nem
-usar fallback silencioso. Comparar com a implementação herdada, provar chamadas
-nativas em um fluxo real de jogo e executar a mesma fonte nos testes ARM. Só isso
+Etapa já implementada: execução dos cálculos e condições das ações dos Sims,
+pela primitiva BHAV Expression do TS1, dentro de `native/simulation`.
+O C++ decide os operadores e sua ordem de efeitos; a ponte inicial apenas
+acessa memória e entidades ainda gerenciadas, sem cálculo duplicado ou fallback.
+A implementação passou por comparação com a referência, fluxos reais Linux
+e execução da mesma fonte no teste ARM; ver [evidência](native-expression-integration.md). Só isso
 não porta a VM inteira: estados de entidades, demais instruções, salvamento,
 rotas e serviços de plataforma continuam no mapa de migração.
 
@@ -62,12 +68,11 @@ com compra/Sit/save/reabertura e numa fixture ARM emulada. Identidade, referênc
 recursos e limites em [fila nativa](native-simulation-integration.md). O restante
 da VM continua gerenciado; não há runtime universal aprovado.
 
-C#/.NET e bibliotecas herdadas são escolhas iniciais da avaliação, não garantias
-para consoles. Investigar cedo restrições de runtime, geração de código em
-execução, bibliotecas nativas e gráficos dos alvos mais limitados. Se uma escolha
-impedir um alvo importante, registrar a consequência e avaliar substituição de
-componentes ou adaptação antes de consolidá-la. Não pressupor que uma tradução
-integral seja necessária nem que a base desktop possa ser portada diretamente.
+C#/.NET e bibliotecas herdadas foram escolhas provisórias da avaliação. A decisão
+vigente exige portar o jogo inteiro para C/C++, removendo a dependência gerenciada.
+Continuar verificando bibliotecas nativas, gráficos, memória e serviços dos alvos
+mais limitados durante a migração. A troca de linguagem não torna a base desktop
+automaticamente compatível com consoles.
 
 Etapa inicial já executada: avaliar o fork alexjyong, que possui entrada Desktop
 Linux, conservando C#/.NET como base provisória. A prioridade atual de migração

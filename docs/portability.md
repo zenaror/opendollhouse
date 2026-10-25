@@ -2,6 +2,12 @@
 
 ## Decisão vigente
 
+O alvo final agora é o **port completo para C/C++**, sem dependência de C#/.NET,
+incluindo interface, gráficos, áudio e controles. A viabilidade de CLR em console
+não é mais uma decisão pendente para o produto. Os resultados e limitações do
+runtime gerenciado abaixo explicam a avaliação histórica e a ponte temporária.
+Ver [plano integral](native-port-plan.md).
+
 O código deve considerar os demais alvos desde agora, por determinação humana.
 Linux é o ambiente inicial de execução e comparação. Um fluxo funcionando no
 Linux não aprova a arquitetura para os portáteis. Não acrescentar funcionalidades
@@ -14,9 +20,11 @@ obrigatório dos consoles**. Extrair componentes realmente usados, com fronteira
 explícitas, e provar a cadeia de execução dos alvos antes de consolidar essa
 escolha. Após nova cobrança humana, priorizar a migração incremental desse núcleo para
 C++, substituindo execução real e mantendo C# apenas como ponte temporária de
-validação. Próximo corte: operadores BHAV Expression TS1, com acesso a memória
-ainda fornecido pela ponte, sem cálculo duplicado ou fallback. Não manter dois
-motores completos em paralelo. A viabilidade do runtime legado continua aberta;
+validação. Os operadores BHAV Expression TS1 já executam em C++, com acesso à
+memória ainda fornecido pela ponte, sem cálculo duplicado ou fallback. Evidência
+em [expressões nativas](native-expression-integration.md). Próxima etapa: levar
+a propriedade do estado para C/C++. Não manter dois
+motores completos em paralelo. O runtime legado serve somente à comparação temporária;
 interfaces de gráficos/áudio não fornecem um runtime ausente.
 
 ## Evidência atual, conferida em 2026-10-25
@@ -142,9 +150,9 @@ transportar objetos CLR ou tipos internos de STL pela fronteira. O scheduler C# 
 usa a fila nativa descrita abaixo, sem ampliar obrigação universal de CLR.
 
 Continuam faltando execução de simulação e save/retomada no alvo, gráficos,
-áudio, entrada e orçamento de recursos. A estratégia é substituir componentes
-usados e compartilhar código, sem criar outro motor completo nem começar uma
-tradução integral. A cadeia do jogo completo continua reprovada/não demonstrada.
+áudio, entrada e orçamento de recursos. A estratégia atual é portar integralmente o jogo, substituindo componentes
+usados e aproveitando o C++ existente em um único motor. A cadeia do jogo
+completo nos consoles continua não demonstrada.
 
 A primeira tentativa do emulador escreveu dois arquivos no perfil real do
 RetroArch por causa das regras XDG do Flatpak. Eles foram preservados no relatório

@@ -14,7 +14,10 @@ O [plano vigente](architecture.md#direção-vigente--base-simitone-experiência-
 substitui a estratégia de reescrita independente como caminho principal.
 Paridade Simitone é um marco intermediário; interface, controles e comportamento
 do original continuam sendo o destino. Limitações herdadas não removem os
-requisitos abaixo. A primeira execução dessa base ainda está pendente.
+requisitos abaixo. A base já executa fluxos limitados, mas não satisfaz este escopo completo.
+A direção posterior exige port integral para C/C++, sem C#/.NET no produto
+final; ver [plano do port](native-port-plan.md). O executável gerenciado é
+somente referência e ferramenta temporária de comparação.
 
 ## Definição
 

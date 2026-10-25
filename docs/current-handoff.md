@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes desta etapa: `492c4f57fb79886c35c7b2b1875c1ca77647c3ae`.
+Base publicada antes desta etapa: `0e2f6c8881ce84774581fb9e05ae9bdc085c81b8`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -20,19 +20,52 @@ Preservar WIP anterior fora desta frente: `include/odh/vm.hpp`, `tests/routing.c
 `tests/vm.cpp`, `tools/household_go_here_session.hpp`; também `Testing/`,
 `tests/factory_tests_runner.py`, `.sh` e `tests/house07_snack_integration.py`.
 O cache CMake da raiz é legado inválido; `build/linux-checkpoint` é antigo apoio.
-Não desenvolver dois motores completos nem traduzir integralmente o Simitone.
+Convergir para um único jogo nativo; o port integral do Simitone está autorizado
+pela direção mais recente abaixo.
 
-## Prioridade mais recente: migrar o núcleo agora
+## Direção humana mais recente: port completo C/C++
 
-Após esta validação, o usuário cobrou a reescrita para evitar retrabalho nos ports.
-A próxima frente é migrar execução real para C++ em `native/simulation`; não
-continuar ampliando funcionalidades permanentes em C#. Simitone é referência e
-ponte temporária. Próximo corte: VMExpression (opcode BHAV2), decisão dos operadores
-TS1 e ordem de leitura/escrita nativas; VMMemory fornece acesso temporário pelo
-adaptador. Preservar aliases, overflow, exceções, regras TS1/Room1024 e resultados.
-Comparar com fonte original, usar no jogo Linux e executar mesma fonte no ARM.
-A fila e BCON atuais continuam usados; o restante ainda depende de .NET.
-Não recomeçar outro jogo completo nem prometer port só por trocar a linguagem.
+O usuário esclareceu expressamente que TODO o jogo baseado no Simitone deve ser
+portado para C/C++, incluindo interface, gráficos, áudio, controles e plataforma.
+O executável final não terá C#/.NET/CLR. Isto supera a antiga restrição de não
+iniciar tradução integral. `docs/native-port-plan.md` é o mapa completo; C# fica
+como referência e ponte transitória, não arquitetura final. O trabalho acontece
+por etapas, mas a conclusão exige o aplicativo nativo completo. A migração de
+VMExpression abaixo foi implementada e validada; o port completo segue incompleto.
+
+## Etapa nativa concluída: regras das ações
+
+Todos os 21 operadores TS1 VMExpression agora executam em C++ usado pelo jogo.
+Detalhes e reprodução em [native-expression-integration.md](native-expression-integration.md).
+O acesso à memória/entidades ainda passa por VMMemory gerenciado; não é VM inteira.
+Native ABI1 aditiva com dois exports, preservando os 14 exports da fila anterior.
+792 checks nativos, CTest4/4 e ASan/UBSan4/4; 702 diferenciais da ponte contra
+fonte original, também executados pelo revisor no CLR9 real. Política numérica
+foi medida em CLR9/10 frio/aquecido; não é prova do executável original.
+Zero alocações em 10.000 chamadas aquecidas, não nas primeiras/reentrantes.
+
+Linux House07: compra80/saldo665→585, Bob105 SitUID2 na cadeira139, save/reopen
+preservado. Amostras nativas81.920/16.384 chamadas, erros0; logs semVM/fatal.
+SIMI62→64 único delta preEP2, pessoa/motivos conservados depois. Gate
+`reports/simitone-linux-evaluation/house07-native-expression/` aprovado pelo
+revisor. ARM compartilha a MESMA fonte e792checks: PASS real no emulador,147configs
+iguais, perfil/processos encerrados; não jogo/hardware. Gates/source/binaries
+preservados, sem original comercial modificado. Regressão de família concluída
+em `reports/simitone-linux-evaluation/family-native-expression/attempt-2/`:
+118 ações, sete processos; ODHExpr/Alex criado, House09 comprada (20.000→16.500),
+andou/salvou/reabriu, saiu da casa e foi excluído, com reinícios entre etapas.
+FAMI6/GUID1545731141, NBRS49/49→289/289. Dados do Sim preservados; 18 mudanças
+postEP2 em outras entidades não foram ocultadas. Expression nativa registrada,
+zero erros VM/fatais, originais iguais e todos os recursos isolados encerrados.
+Save antigo da casa/NBRS/personagem ainda retidos após exclusão; reutilização
+não testada. Aviso repetido da expansão e valor4.133 continuam pendentes.
+Primeira tentativa falhou no controlador de teste; evidência separada preservada.
+`final-review.json` independente aprova a regressão limitada da família.
+
+Próxima frente: propriedade nativa do estado/memória de simulação, eliminando
+as dependências da ponte aos poucos sem um estado autoritativo duplicado.
+Não voltar a ampliar recursos permanentes em C#. Todos os demais sistemas do
+plano integral continuam exigidos.
 
 ## Fila nativa compartilhada: implementada e validada
 
@@ -73,16 +106,17 @@ agendamento por Reset/tick1, sem novo formato. Detalhes e receita em
   9.680/9.440 bytes nativos, 479/458 ocorrências, 246/229 tokens registrados.
   PIDs/perfil/cópia/Xsocket/lock ausentes ao concluir.
 
-SO da fila: a5c2a6e43c367fb74a500ede6c64c775da31c4ec6bba92a8e4c8d69f1aa3f85a.
+SO anterior da fila: a5c2a6e43c367fb74a500ede6c64c775da31c4ec6bba92a8e4c8d69f1aa3f85a.
+SO atual, com Expression: 3787dea79d4df8e2970b80b5087e50b23c8f59f74c8f00f634206e93b0aded08.
 Fontes, dois SOs e pontes gerenciadas arquivados; ambos os parâmetros
 ODHNativeDataLibrary e ODHNativeSimulationLibrary são obrigatórios no publish.
-Patch experimental atual contém 23 arquivos após0003/4/5, incluindo correção NBRS;
-SHA b465e061fab545dceb65e5ea430d33123b833ac3c949a6a45e76a4d92d8ce64c.
+Patch experimental atual contém 24 arquivos após0003/4/5, incluindo NBRS e Expression;
+SHA 1fe785a5e03ac5a69310250ad1d5a0b8fe2020c8bd8def5fc44ff20e6e9bb112.
 O checkpoint de fila acima usou a revisão anterior de 22 arquivos.
 
 O fluxo limitado de família foi executado; evidência abaixo. Manter próximos cortes
 compartilhados ligados a fluxos reais e continuar investigação dos runtimes/alvos,
-sem traduzir o motor inteiro nem adiar portabilidade para o fim. O orçamento total
+como etapas do port integral, sem adiar portabilidade para o fim. O orçamento total
 e os demais sistemas compartilhados permanecem abertos.
 
 ## Checkpoint BCON anterior, preservado

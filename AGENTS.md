@@ -3,15 +3,13 @@
 - Base comum: papel OMM `project-base`. Mapa local no README; planejamento
   canônico em `docs/architecture.md`, evidência nos documentos de validação
   e em `reports/`. Preservar as particularidades e autorizações abaixo.
-- Direção mais recente (2026-10-25, após o fluxo de famílias): o usuário cobrou
-  que a reescrita necessária aos ports já aconteça, em vez de continuar ampliando
-  o motor em C#. Priorizar migração incremental do núcleo compartilhado para C++,
-  aproveitando componentes nativos já usados. Simitone/C# é referência e ponte
-  temporária de validação, não destino arquitetural. Evitar novas funcionalidades
-  permanentes de jogo em C#; cada migração deve substituir um caminho realmente
-  usado, conservar comportamento e explicitar o que ainda depende de .NET.
-  Não reconstruir um segundo jogo completo em paralelo. Esta prioridade substitui
-  os próximos passos antigos que ampliavam o jogo herdado antes da migração.
+- Direção humana mais recente: portar TODO o jogo baseado no Simitone para
+  C/C++, incluindo simulação, dados, interface, gráficos, áudio e entrada.
+  O produto final não pode depender de C#/.NET/CLR. Isto substitui a restrição
+  antiga de não iniciar tradução integral. Plano: `docs/native-port-plan.md`.
+  A migração é incremental, mas a meta é integral. Simitone/C# serve apenas de
+  referência e ponte temporária de comparação; não ampliar recursos de jogo
+  gerenciados. Aproveitar o C++ existente e convergir para um único motor nativo.
 - O desenvolvimento inicial foi autorizado em 2026-10-13. Avançar em unidades
   pequenas e verificáveis, mantendo as decisões humanas e os limites da evidência.
 - Git de trabalho: https://git.home.zsrv.com.br/zenaror/opendollhouse.
@@ -56,8 +54,9 @@
   formatos compartilhados e correções; não importar comportamentos de TSO
   como se fossem do TS1. As referências antigas mantêm sua proveniência;
   não relabelar evidência anterior sem comparar as implementações.
-- Direção autorizada em 2026-10-25: priorizar uma base Linux derivada do
-  Simitone e de sua revisão correspondente do FreeSO, mantendo inicialmente C#.
+- Etapa inicial já executada em 2026-10-25: avaliar uma base Linux derivada do
+  Simitone e da revisão correspondente do FreeSO, provisoriamente em C#.
+  A direção mais recente acima exige o port integral para C/C++.
   Avaliar primeiro o fork alexjyong com entrada Linux, em checkout de trabalho
   separado dos clones de consulta. Compilar e validar o ciclo de jogo antes de
   confirmar a base; identificar revisões, licenças e dependências. O destino é
@@ -68,8 +67,8 @@
   etapa final. Não iniciar agora uma reformulação visual. A interface original
   continua sendo requisito de conclusão, incluindo menus e controles.
 - Preservar o motor C++, ferramentas, descobertas e alterações pendentes como
-  apoio; não manter duas implementações completas em desenvolvimento paralelo
-  nem traduzir todo o Simitone para C++ como primeira etapa. Novos testes devem
+  apoio; não manter duas implementações completas em desenvolvimento paralelo.
+  A antiga restrição à tradução integral foi superada. Novos testes devem
   desbloquear fluxos completos ou corrigir diferenças demonstradas do original.
   Os portáteis continuam planejados, com viabilidade a reavaliar para a nova
   base; as restrições do New 3DS não devem bloquear o primeiro candidato Linux.

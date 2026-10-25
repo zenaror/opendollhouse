@@ -552,6 +552,213 @@ index b0aee4c..4825130 100644
  
              return false;
          }
+diff --git a/TSOClient/tso.simantics/Primitives/VMExpression.cs b/TSOClient/tso.simantics/Primitives/VMExpression.cs
+index bffeb4d..dc13701 100644
+--- a/TSOClient/tso.simantics/Primitives/VMExpression.cs
++++ b/TSOClient/tso.simantics/Primitives/VMExpression.cs
+@@ -4,11 +4,101 @@ using FSO.SimAntics.Engine.Scopes;
+ using FSO.SimAntics.Engine.Utils;
+ using FSO.SimAntics.Model;
+ using System.IO;
++using System.Threading;
++using OpenDollhouse.Simulation;
+ 
+ namespace FSO.SimAntics.Engine.Primitives
+ {
+     public class VMExpression : VMPrimitiveHandler
+     {
++        private static class TS1Native
++        {
++            internal static readonly ExpressionExecutor<VMStackFrame> Executor =
++                new ExpressionExecutor<VMStackFrame>(Read, Write, Levels);
++
++            private static int Read(VMStackFrame context, byte scope, short data)
++            {
++                return VMMemory.GetBigVariable(context, (VMVariableScope)scope, data);
++            }
++
++            private static bool Write(VMStackFrame context, byte scope, short data, int value)
++            {
++                return VMMemory.SetBigVariable(context, (VMVariableScope)scope, data, value);
++            }
++
++            private static void Levels(VMStackFrame context, out int caller, out int callee, out int offset)
++            {
++                caller = context.Caller.Position.Level;
++                callee = context.Callee.Position.Level;
++                offset = context.Callee.Object.OBJ.LevelOffset;
++            }
++        }
++
++        private static readonly bool TS1Diagnostics = Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1";
++        private static readonly long[] TS1OpcodeCounts = new long[21];
++        private static long TS1Calls;
++        private static long TS1Errors;
++        private static long TS1NegativeSqrt;
++
++        private static VMPrimitiveExitCode ExecuteTS1(VMStackFrame context, VMExpressionOperand operand)
++        {
++            // Decoded BHAV operands are bytes. Preserve the source exception if
++            // a caller constructs an enum value outside that wire domain.
++            int operatorValue = (int)operand.Operator;
++            if (operatorValue < 0 || operatorValue > byte.MaxValue)
++                throw new VMSimanticsException("Unknown expression type", context);
++            var nativeOperand = new ExpressionOperand {
++                LhsData = operand.LhsData, RhsData = operand.RhsData,
++                IsSigned = operand.IsSigned, Operator = (byte)operand.Operator,
++                LhsOwner = (byte)operand.LhsOwner, RhsOwner = (byte)operand.RhsOwner
++            };
++            bool negativeSqrt = false;
++            long calls = 0;
++            if (TS1Diagnostics)
++            {
++                if (nativeOperand.Operator < 21) Interlocked.Increment(ref TS1OpcodeCounts[nativeOperand.Operator]);
++                calls = Interlocked.Increment(ref TS1Calls);
++            }
++            try
++            {
++                bool result = TS1Native.Executor.Execute(context, nativeOperand, out negativeSqrt);
++                return result.AsGotoExitCode();
++            }
++            catch (ExpressionUnknownOperatorException)
++            {
++                if (TS1Diagnostics) Interlocked.Increment(ref TS1Errors);
++                throw new VMSimanticsException("Unknown expression type", context);
++            }
++            catch
++            {
++                if (TS1Diagnostics) Interlocked.Increment(ref TS1Errors);
++                throw;
++            }
++            finally
++            {
++                if (TS1Diagnostics)
++                {
++                    if (negativeSqrt) Interlocked.Increment(ref TS1NegativeSqrt);
++                    if (calls == 1 || (calls & 16383) == 0) WriteTS1Diagnostics(calls);
++                }
++            }
++        }
++
++        private static void WriteTS1Diagnostics(long calls)
++        {
++            // One event on first execution, then one per 16,384 calls. The
++            // primitive path does no formatting or logging between samples.
++            // Diagnostics must never replace an Expression result or exception.
++            try
++            {
++                Console.WriteLine("TS1 native expression: {\"Calls\":" + calls +
++                    ",\"Errors\":" + Interlocked.Read(ref TS1Errors) +
++                    ",\"NegativeSqrt\":" + Interlocked.Read(ref TS1NegativeSqrt) +
++                    ",\"OpcodeCounts\":[" + string.Join(",", TS1OpcodeCounts) + "]}");
++            }
++            catch { }
++        }
++
+         private string OperatorToString(VMExpressionOperator op)
+         {
+             switch (op){
+@@ -59,6 +149,7 @@ namespace FSO.SimAntics.Engine.Primitives
+         public override VMPrimitiveExitCode Execute(VMStackFrame context, VMPrimitiveOperand args)
+         {
+             var operand = (VMExpressionOperand)args;
++            if (context.VM.TS1) return ExecuteTS1(context, operand);
+ 
+             int rhsValue;
+             int lhsValue = 0;
+@@ -190,63 +281,43 @@ namespace FSO.SimAntics.Engine.Primitives
+                     return result.AsGotoExitCode();
+ 
+                 case VMExpressionOperator.Push:
+-                    if (context.VM.TS1)
+-                    {
+-                        //OrEquals
+-                        lhsValue = VMMemory.GetBigVariable(context, operand.LhsOwner, operand.LhsData);
+-                        rhsValue = VMMemory.GetBigVariable(context, operand.RhsOwner, operand.RhsData);
+-                        lhsValue |= rhsValue;
+-                        VMMemory.SetBigVariable(context, operand.LhsOwner, operand.LhsData, lhsValue);
+-                    }
+-                    else
+-                    {
+-                        var lhsList = VMMemory.GetList(context, operand.LhsOwner);
+-                        rhsValue = VMMemory.GetBigVariable(context, operand.RhsOwner, operand.RhsData);
++                    // TS1's OR operation returned above through native execution.
++                    var lhsList = VMMemory.GetList(context, operand.LhsOwner);
++                    rhsValue = VMMemory.GetBigVariable(context, operand.RhsOwner, operand.RhsData);
+ 
+-                        switch (operand.LhsData)
+-                        {
+-                            case 0: //front
+-                                lhsList.AddFirst((short)rhsValue);
+-                                break;
+-                            case 1: //back
+-                                lhsList.AddLast((short)rhsValue);
+-                                break;
+-                            case 2:
+-                                throw new VMSimanticsException("Unknown list push destination: " + operand.LhsData, context);
+-                        }
++                    switch (operand.LhsData)
++                    {
++                        case 0: //front
++                            lhsList.AddFirst((short)rhsValue);
++                            break;
++                        case 1: //back
++                            lhsList.AddLast((short)rhsValue);
++                            break;
++                        case 2:
++                            throw new VMSimanticsException("Unknown list push destination: " + operand.LhsData, context);
+                     }
+                     return VMPrimitiveExitCode.GOTO_TRUE;
+ 
+                 case VMExpressionOperator.Pop:
+-                    if (context.VM.TS1)
++                    // TS1's XOR operation returned above through native execution.
++                    var rhsList = VMMemory.GetList(context, operand.RhsOwner);
++                    if (rhsList.Count == 0) return VMPrimitiveExitCode.GOTO_FALSE;
++
++                    switch (operand.RhsData)
+                     {
+-                        //XorEquals
+-                        lhsValue = VMMemory.GetBigVariable(context, operand.LhsOwner, operand.LhsData);
+-                        rhsValue = VMMemory.GetBigVariable(context, operand.RhsOwner, operand.RhsData);
+-                        lhsValue ^= rhsValue;
+-                        VMMemory.SetBigVariable(context, operand.LhsOwner, operand.LhsData, lhsValue);
++                        case 0: //front
++                            lhsValue = rhsList.First.Value;
++                            rhsList.RemoveFirst();
++                            break;
++                        case 1: //back
++                            lhsValue = rhsList.Last.Value;
++                            rhsList.RemoveLast();
++                            break;
++                        case 2:
++                            throw new VMSimanticsException("Unknown list pop source: " + operand.LhsData, context);
+                     }
+-                    else
+-                    {
+-                        var rhsList = VMMemory.GetList(context, operand.RhsOwner);
+-                        if (rhsList.Count == 0) return VMPrimitiveExitCode.GOTO_FALSE;
+-
+-                        switch (operand.RhsData)
+-                        {
+-                            case 0: //front
+-                                lhsValue = rhsList.First.Value;
+-                                rhsList.RemoveFirst();
+-                                break;
+-                            case 1: //back
+-                                lhsValue = rhsList.Last.Value;
+-                                rhsList.RemoveLast();
+-                                break;
+-                            case 2:
+-                                throw new VMSimanticsException("Unknown list pop source: " + operand.LhsData, context);
+-                        }
+ 
+-                        VMMemory.SetBigVariable(context, operand.LhsOwner, operand.LhsData, lhsValue);
+-                    }
++                    VMMemory.SetBigVariable(context, operand.LhsOwner, operand.LhsData, lhsValue);
+                     return VMPrimitiveExitCode.GOTO_TRUE;
+ 
+                 case VMExpressionOperator.TS1AssignSqrtRHS:
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
 index 007e875..0867340 100644
 --- a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
