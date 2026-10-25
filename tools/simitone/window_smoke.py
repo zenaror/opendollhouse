@@ -22,6 +22,8 @@ PROTECTED = (
     'GameData/Global/Global.far', 'GameData/Objects/Objects.far',
 )
 
+NATIVE_LIBRARIES = ('libodh_data.so', 'libodh_simulation.so')
+
 
 def digest(path):
     value = hashlib.sha256()
@@ -84,7 +86,8 @@ def main():
                   'Simitone.dll', 'Simitone.Client.dll', 'OpenDollhouse.Simulation.dll', 'OpenDollhouse.Data.Interop.dll', 'FSO.SimAntics.dll',
                   'FSO.HIT.dll', 'FSO.Content.dll', 'FSO.Files.dll',
                   'Simitone.runtimeconfig.json')},
-              'native_sha256': {'libodh_data.so': digest(binary.parent / 'libodh_data.so')},
+              'native_sha256': {name: digest(binary.parent / name)
+                                for name in NATIVE_LIBRARIES},
               'runtime': str(binary), 'gameplay_verified': False}
     try:
         with tempfile.TemporaryDirectory(prefix='odh-simitone-window-') as temporary:

@@ -35,12 +35,16 @@ indicada no handoff. Não reaplicar patches sobre fontes já adaptadas. Os proje
 cmake -S native/data -B build/native-data -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native-data
 ctest --test-dir build/native-data --output-on-failure
+cmake -S native/simulation -B build/native-simulation -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native-simulation
+ctest --test-dir build/native-simulation --output-on-failure
 
 dotnet publish refs/work/Simitone-linux/Client/Simitone/Simitone.Desktop/Simitone.Desktop.csproj \
   -c Release -r linux-x64 --self-contained true \
   -p:PublishAot=false -p:PublishTrimmed=false \
   -p:TreatWarningsAsErrors=false -p:WarningsAsErrors= \
   -p:ODHNativeDataLibrary="$(pwd)/build/native-data/libodh_data.so" \
+  -p:ODHNativeSimulationLibrary="$(pwd)/build/native-simulation/libodh_simulation.so" \
   -o build/simitone-linux
 ```
 
@@ -82,5 +86,7 @@ iguais, e arquivado como `rebuilt-exact`, sem confundi-lo com captura original.
 Não foram executados o jogo completo, fila gerenciada ou save de família no 3DS,
 nem hardware físico. O restante do motor ainda depende de CLR/serviços desktop.
 Este corte torna um leitor efetivamente compartilhado; os demais sistemas e os
-ports continuam no escopo. Próxima fronteira: fila/estado de simulação com seus
-oráculos existentes e prova de execução, sem iniciar dois motores completos.
+ports continuam no escopo. A fronteira seguinte é a
+[fila nativa de simulação](native-simulation-integration.md). A receita atual acima
+inclui as duas bibliotecas; os resultados BCON descritos aqui continuam históricos
+do checkpoint anterior, sem atribuir a eles a validação da fila nova.

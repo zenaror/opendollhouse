@@ -108,7 +108,8 @@ separação concreta e esse fluxo Linux; o motor completo ainda referencia gráf
 áudio e serviços, agora com 11 projetos na sua dependência transitiva e 30 no
 aplicativo. A verificação conhecida de dependências aprova somente o módulo de
 fila, enquanto o relatório continua declarando runtime de console não provado.
-O próximo experimento precisa usar esse componente no ambiente real do alvo.
+O experimento seguinte substituiu essa fila por uma implementação nativa; veja
+o corte compartilhado abaixo.
 
 ## Experimento concreto no 3DS (2026-10-25)
 
@@ -134,9 +135,8 @@ Isso demonstra uma opção de implementação para um componente de dados, não 
 motor do jogo. A etapa seguinte já ligou BCON ao Simitone por uma API C pequena, com tipos,
 memória e erros definidos, e repetiu a execução no 3DS emulado. A ligação e seus
 limites estão em [integração nativa](native-data-integration.md). Não
-transportar objetos CLR ou tipos internos de STL pela fronteira. A fila C# fica
-como implementação funcional/oráculo enquanto seu caminho de execução no alvo
-não for demonstrado; não ampliar uma obrigação universal de CLR.
+transportar objetos CLR ou tipos internos de STL pela fronteira. O scheduler C# original fixado permanece como oráculo; a implementação atual
+usa a fila nativa descrita abaixo, sem ampliar obrigação universal de CLR.
 
 Continuam faltando execução de simulação e save/retomada no alvo, gráficos,
 áudio, entrada e orçamento de recursos. A estratégia é substituir componentes
@@ -151,6 +151,27 @@ Não transformar isso em afirmação sobre todo o estado interno do Flatpak.
 Evidência: `reports/portability/3ds-managed-probe/report.json`,
 `3ds-native-data/report.json` e `3ds-native-execution-final/final-review.json`.
 Receita e limites em [tools/portability/3ds-native-data/README.md](../tools/portability/3ds-native-data/README.md).
+
+## Fila nativa usada no Linux e executada no 3DS emulado
+
+A extração seguinte substitui o armazenamento e ordenação da fila por
+`native/simulation`, usada pelo VMScheduler real. Preserva identidades distintas
+de IDs mutáveis, listas vivas/reentrância, referências e migração do relógio.
+Tetos explícitos recusam excesso de recursos sem descartar ações. A ponte permite
+carregamento serializado em outra thread e libera recursos com SafeHandle.
+
+Passaram 19 comparações com o código original, 13 grupos de ownership/recursos,
+82 verificações nativas, CTest e sanitizers. A mesma fonte executou numa fixture
+3DSX com avanço e reconstrução sintéticos; o candidato Linux comprou/usou a cadeira,
+salvou e reabriu em outro processo com a biblioteca realmente carregada.
+Picos observados da fila foram 9.680 e 9.440 bytes nativos; o resto do jogo,
+registro gerenciado e gráficos não entram nessa medida.
+
+Receita e gates separados em [native-simulation-integration.md](native-simulation-integration.md).
+A fixture ARM não executa entidades/BHAVs do jogo, CLR ou saves comerciais. O
+núcleo completo, gráficos/áudio/entrada e orçamento total continuam pendentes,
+assim como os outros alvos e hardware físico. Esta prova libera continuar os
+fluxos visíveis de famílias enquanto a separação segue vinculada a sistemas usados.
 
 ## Verificações antes de consolidar a arquitetura
 

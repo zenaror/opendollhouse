@@ -4,5 +4,16 @@
     <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <ODHNativeSimulationFileName Condition="'$(ODHNativeSimulationLibrary)' != ''">$([System.IO.Path]::GetFileName('$(ODHNativeSimulationLibrary)'))</ODHNativeSimulationFileName>
   </PropertyGroup>
+  <ItemGroup Condition="'$(ODHNativeSimulationLibrary)' != ''">
+    <None Include="$(ODHNativeSimulationLibrary)" Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireODHNativeSimulationLibrary" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(ODHNativeSimulationLibrary)' == ''" Text="Set ODHNativeSimulationLibrary to the absolute path of the target platform's odh_simulation library. No managed wake queue fallback is provided." />
+    <Error Condition="'$(ODHNativeSimulationLibrary)' != '' and !Exists('$(ODHNativeSimulationLibrary)')" Text="ODHNativeSimulationLibrary does not exist: $(ODHNativeSimulationLibrary)" />
+    <Error Condition="'$(ODHNativeSimulationLibrary)' != '' and !$([System.IO.Path]::IsPathRooted('$(ODHNativeSimulationLibrary)'))" Text="ODHNativeSimulationLibrary must be an absolute path." />
+    <Error Condition="'$(ODHNativeSimulationLibrary)' != '' and '$(ODHNativeSimulationFileName)' != 'libodh_simulation.so' and '$(ODHNativeSimulationFileName)' != 'libodh_simulation.dylib' and '$(ODHNativeSimulationFileName)' != 'odh_simulation.dll'" Text="ODHNativeSimulationLibrary must use the unversioned loader basename libodh_simulation.so, libodh_simulation.dylib or odh_simulation.dll." />
+  </Target>
 </Project>

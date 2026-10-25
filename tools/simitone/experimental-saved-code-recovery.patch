@@ -203,24 +203,30 @@ index c8b8f14..f70aa02 100644
                  io.WriteInt32(ArchitectureExpense);
              }
 diff --git a/TSOClient/tso.simantics/Engine/VMScheduler.cs b/TSOClient/tso.simantics/Engine/VMScheduler.cs
-index a74a3e5..aec5557 100644
+index a74a3e5..03f9b95 100644
 --- a/TSOClient/tso.simantics/Engine/VMScheduler.cs
 +++ b/TSOClient/tso.simantics/Engine/VMScheduler.cs
-@@ -1,11 +1,12 @@
+@@ -1,12 +1,16 @@
  ﻿using System.Collections.Generic;
 +using OpenDollhouse.Simulation;
  
  namespace FSO.SimAntics.Engine
  {
-     public class VMScheduler
+-    public class VMScheduler
++    public class VMScheduler : System.IDisposable
      {
          private VM vm;
 -        private Dictionary<uint, List<VMEntity>> TickSchedule = new Dictionary<uint, List<VMEntity>>();
-+        private readonly WakeQueue<VMEntity> wakeQueue = new WakeQueue<VMEntity>(ent => ent.ObjectID);
-         private List<VMEntity> TickThisFrame;
+-        private List<VMEntity> TickThisFrame;
++        // Explicit host safety ceilings, not portable device memory budgets.
++        private readonly WakeQueue<VMEntity> wakeQueue = new WakeQueue<VMEntity>(ent => ent.ObjectID,
++            new WakeQueueLimits(65536, 1048576, 64UL * 1024 * 1024));
++        private uint completedFrames;
++        private bool loggedNativeFrame;
          public HashSet<VMEntity> PendingDeletion = new HashSet<VMEntity>();
          public uint CurrentTickID;
-@@ -27,20 +28,14 @@ namespace FSO.SimAntics.Engine
+         public short CurrentObjectID;
+@@ -27,20 +31,14 @@ namespace FSO.SimAntics.Engine
          public void ScheduleTick(VMEntity ent, uint tick)
          {
              if (ent.Dead) return;
@@ -243,7 +249,7 @@ index a74a3e5..aec5557 100644
          }
  
          public void DescheduleTick(VMEntity ent)
-@@ -48,31 +43,22 @@ namespace FSO.SimAntics.Engine
+@@ -48,31 +46,22 @@ namespace FSO.SimAntics.Engine
              //on delete or interrupt.
              if (ent.Thread != null && ent.Thread.ScheduleIdleEnd > CurrentTickID)
              {
@@ -281,25 +287,41 @@ index a74a3e5..aec5557 100644
              CurrentTickID = tickID;
          }
  
-@@ -80,7 +66,7 @@ namespace FSO.SimAntics.Engine
+@@ -80,16 +69,19 @@ namespace FSO.SimAntics.Engine
          {
              if (vm.Aborting) return;
              RunningNow = true;
 -            if (TickSchedule.TryGetValue(CurrentTickID, out TickThisFrame))
-+            if (wakeQueue.TryGetCurrentTick(CurrentTickID, out TickThisFrame))
++            int processed = 0;
++            if (wakeQueue.SelectCurrentTick(CurrentTickID))
              {
-                 //Console.WriteLine(TickThisFrame.Count + " entities ticked out of " + Entities.Count);
-                 for (int i = 0; i < TickThisFrame.Count; i++)
-@@ -89,7 +75,7 @@ namespace FSO.SimAntics.Engine
+-                //Console.WriteLine(TickThisFrame.Count + " entities ticked out of " + Entities.Count);
+-                for (int i = 0; i < TickThisFrame.Count; i++)
++                // Both accesses read the replaceable native alias. Reentrant
++                // RunTick may replace it; do not cache a list or its count.
++                for (int i = 0; i < wakeQueue.CurrentCount; i++)
+                 {
+-                    var ent = TickThisFrame[i];
++                    var ent = wakeQueue.CurrentAt(i);
                      CurrentObjectID = ent.ObjectID;
                      ent.Tick();
++                    processed++;
                  }
 -                TickSchedule.Remove(CurrentTickID);
 +                wakeQueue.CompleteCurrentTick(CurrentTickID);
              }
  
              vm.Context.RandomSeed += (ulong)vm.Entities.Count; // some "entropy" based on the number of entities present. forces a more strict sync
-@@ -111,7 +97,7 @@ namespace FSO.SimAntics.Engine
+@@ -102,6 +94,8 @@ namespace FSO.SimAntics.Engine
+                 obj.Delete(false, vm.Context);
+             }
+             PendingDeletion.Clear();
++            completedFrames++;
++            LogNativeWakeQueue(processed);
+         }
+ 
+         public void Delete(VMEntity obj)
+@@ -111,9 +105,40 @@ namespace FSO.SimAntics.Engine
  
          public void Reset()
          {
@@ -308,6 +330,39 @@ index a74a3e5..aec5557 100644
              CurrentTickID = 0;
              CurrentObjectID = short.MaxValue;
          }
++
++        public WakeQueueStats GetWakeQueueStats() { return wakeQueue.GetStats(); }
++
++        public void Dispose() { wakeQueue.Dispose(); }
++
++        private void LogNativeWakeQueue(int processed)
++        {
++            try
++            {
++                if (System.Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") != "1" ||
++                    (!loggedNativeFrame && processed == 0) ||
++                    (loggedNativeFrame && completedFrames % 256 != 0)) return;
++                var stats = wakeQueue.GetStats();
++                var culture = System.Globalization.CultureInfo.InvariantCulture;
++                System.Console.WriteLine("ODH native wake queue: {\"SchemaVersion\":1,\"AbiVersion\":1,\"Tick\":" +
++                    CurrentTickID.ToString(culture) + ",\"Processed\":" + processed.ToString(culture) +
++                    ",\"CompletedFrames\":" + completedFrames.ToString(culture) +
++                    ",\"ScheduledBuckets\":" + stats.ScheduledBuckets.ToString(culture) +
++                    ",\"PeakScheduledBuckets\":" + stats.PeakScheduledBuckets.ToString(culture) +
++                    ",\"LiveLists\":" + stats.LiveLists.ToString(culture) +
++                    ",\"LiveEntries\":" + stats.LiveEntries.ToString(culture) +
++                    ",\"PeakEntries\":" + stats.PeakEntries.ToString(culture) +
++                    ",\"CurrentAlias\":" + (stats.HasCurrentAlias ? "1" : "0") +
++                    ",\"LiveBytes\":" + stats.LiveBytes.ToString(culture) +
++                    ",\"PeakBytes\":" + stats.PeakBytes.ToString(culture) +
++                    ",\"RetainedTokens\":" + stats.RetainedTokens.ToString(culture) +
++                    ",\"PeakRegisteredTokens\":" + stats.PeakRegisteredTokens.ToString(culture) + "}");
++                loggedNativeFrame = true;
++            }
++            catch { /* Optional diagnostics must not fail a simulation tick. */ }
++        }
+     }
+ }
 diff --git a/TSOClient/tso.simantics/Engine/VMThread.cs b/TSOClient/tso.simantics/Engine/VMThread.cs
 index f449b52..4dc5d98 100644
 --- a/TSOClient/tso.simantics/Engine/VMThread.cs

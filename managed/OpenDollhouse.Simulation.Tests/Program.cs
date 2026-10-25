@@ -82,8 +82,13 @@ internal static class Program
         count++;
     }
 
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--expect-native-unavailable")
+        {
+            NativeQueueTests.ExpectMissingNative();
+            return;
+        }
         Compare("live insertion, ID order and deduplication", h =>
         {
             var a = h.Entity(10); var b = h.Entity(30); var c = h.Entity(20); var duplicate = h.Entity(20);
@@ -200,6 +205,70 @@ internal static class Program
             return h.Result(first, skipped, inner);
         }, "tick:10|tick:30|seed:6|state:10:5:0:False|state:20:5:0:False|state:30:6:0:False");
 
+        Compare("mutable signed ObjectIDs use live comparisons without resorting", h =>
+        {
+            var a = h.Entity(-1); var b = h.Entity(10); var c = h.Entity(0);
+            h.ScheduleTick(a, 5); h.ScheduleTick(b, 5);
+            a.ObjectID = short.MaxValue; b.ObjectID = short.MinValue;
+            h.ScheduleTick(c, 5); h.Begin(5); h.Run();
+            return h.Result(a, b, c);
+        }, null);
+
+        Compare("mutable IDs can insert the same reference twice", h =>
+        {
+            var a = h.Entity(10); var b = h.Entity(20); var c = h.Entity(30);
+            h.ScheduleTick(a, 5); h.ScheduleTick(b, 5); h.ScheduleTick(c, 5);
+            a.ObjectID = 40; h.ScheduleTick(a, 5);
+            h.Begin(5); h.Run();
+            return h.Result(a, b, c);
+        }, "tick:40|tick:20|tick:30|tick:40|seed:3|state:40:5:0:False|state:20:5:0:False|state:30:5:0:False");
+
+        Compare("insertion before current index can tick same entity again", h =>
+        {
+            var first = h.Entity(10); var later = h.Entity(30); var before = h.Entity(5);
+            bool inserted = false;
+            first.OnTick = () => { if (!inserted) { inserted = true; h.ScheduleCurrentTick(before); } };
+            h.ScheduleTick(first, 5); h.ScheduleTick(later, 5); h.Begin(5); h.Run();
+            return h.Result(first, later, before);
+        }, "tick:10|tick:10|tick:30|seed:3|state:10:5:0:False|state:30:5:0:False|state:5:5:0:False");
+
+        Compare("same reference remains queued in an older tick bucket", h =>
+        {
+            var entity = h.Entity(10);
+            h.ScheduleTick(entity, 5); h.ScheduleTick(entity, 7); h.Deschedule(entity);
+            h.Begin(5); h.Run(); h.Begin(7); h.Run();
+            return h.Result(entity);
+        }, "tick:10|seed:2|state:10:7:0:False");
+
+        Compare("reentrant missing lookup clears alias and outer run throws", h =>
+        {
+            var first = h.Entity(10); var skipped = h.Entity(20);
+            first.OnTick = () => { h.Begin(6); h.Run(); };
+            h.ScheduleTick(first, 5); h.ScheduleTick(skipped, 5); h.Begin(5);
+            try { h.Run(); throw new Exception("Expected missing-list exception"); }
+            catch (NullReferenceException) { h.Vm.Trace.Add("missing-list:null"); }
+            return h.Result(first, skipped);
+        }, null);
+
+        Compare("aborted run does not clear stale current alias", h =>
+        {
+            var first = h.Entity(10); var interrupted = h.Entity(20);
+            h.ScheduleTick(first, 5); h.Begin(5); h.Run(); h.Reset();
+            h.Begin(6); h.Vm.Aborting = true; h.Run(); h.Vm.Aborting = false;
+            h.ScheduleTick(interrupted, 9); h.SetCurrentObjectId(0); h.Interrupt(interrupted);
+            h.Run(); h.Begin(9); h.Run();
+            return h.Result(first, interrupted);
+        }, null);
+
+        Compare("save-resume reset rebuilds tick1 then migrates restored clock", h =>
+        {
+            var entity = h.Entity(10);
+            h.ScheduleTick(entity, 5); h.Begin(5); h.Run();
+            h.Reset(); h.ScheduleTickIn(entity, 1); h.Begin(500); h.Run();
+            return h.Result(entity);
+        }, "tick:10|tick:10|seed:2|state:10:1:1:False");
+
         Console.WriteLine("Compared " + count + " scenarios against the original scheduler source.");
+        NativeQueueTests.Run();
     }
 }

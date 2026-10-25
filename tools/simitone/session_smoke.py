@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import time
 
-from window_smoke import digest, fingerprint, stop
+from window_smoke import NATIVE_LIBRARIES, digest, fingerprint, stop
 from compare_save_states import walk_differences
 
 
@@ -155,6 +155,7 @@ def log_facts(log_path, profile):
                                  '=== FATAL ERROR ===' in line for line in lines),
         'avatar_samples': records('TS1 avatar state: '),
         'native_bcon_decodes': records('ODH native BCON decode: '),
+        'native_wake_queues': records('ODH native wake queue: '),
         'save_states': records('TS1 save state: '),
         'native_recoveries': records('Native object recovery: '),
         'native_person_recoveries': records('Native person recovery: '),
@@ -271,7 +272,7 @@ def observe_phase(name, seconds, actions, argv, env, display, profile, out):
                                                if line.startswith(('VmRSS:', 'VmHWM:'))]
             maps = Path('/proc') / str(process.pid) / 'maps'
             result['native_library_mappings'] = ([line for line in maps.read_text().splitlines()
-                if 'libodh_data.so' in line] if maps.exists() else [])
+                if any(name in line for name in NATIVE_LIBRARIES)] if maps.exists() else [])
             result['capture_sha256'] = capture(display, out / result['capture'])
     finally:
         stop(process)
@@ -333,7 +334,8 @@ def main():
         'protected_before': protected_before,
         'binary_sha256': digest(binary),
         'managed_sha256': {name: digest(binary.parent / name) for name in MANAGED},
-        'native_sha256': {'libodh_data.so': digest(binary.parent / 'libodh_data.so')},
+        'native_sha256': {name: digest(binary.parent / name)
+                          for name in NATIVE_LIBRARIES},
         'runtime': str(binary),
         'audio': 'disabled',
         'vm_diagnostics': args.vm_diagnostics,

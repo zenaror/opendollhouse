@@ -40,7 +40,11 @@ O experimento 3DS seguinte rejeitou a fila C# inalterada no ReSharp fixado e
 executou o leitor C++ de dados em emulador. Esse corte agora fornece uma API nativa
 BCON usada pelo candidato Linux e pelo teste ARM emulado, antes de ampliar
 obrigações de CLR. Receita e limites em [integração nativa](native-data-integration.md).
-Isso não inicia outro motor nem aprova o jogo completo no 3DS.
+Isso não inicia outro motor nem aprova o jogo completo no 3DS. A fila de execução
+agora também usa uma implementação nativa compartilhada, verificada no jogo Linux
+com compra/Sit/save/reabertura e numa fixture ARM emulada. Identidade, referências,
+recursos e limites em [fila nativa](native-simulation-integration.md). O restante
+da VM continua gerenciado; não há runtime universal aprovado.
 
 C#/.NET e bibliotecas herdadas são escolhas iniciais da avaliação, não garantias
 para consoles. Investigar cedo restrições de runtime, geração de código em

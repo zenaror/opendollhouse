@@ -8,6 +8,7 @@ namespace FSO.SimAntics.Engine
     {
         public static bool UseWorld;
         public bool Aborting;
+        public object Scheduler;
         public readonly VMContext Context = new VMContext();
         public readonly List<VMEntity> Entities = new List<VMEntity>();
         public readonly List<string> Trace = new List<string>();

@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A fila que organiza quando Sims e objetos agem agora usa uma parte nativa
+  compartilhada com o teste do 3DS emulado. Comprar, sentar e salvar/reabrir
+  passaram no Linux. Limites e liberação de memória foram verificados; o jogo
+  completo para consoles continua pendente.
 - O candidato Linux agora usa o mesmo leitor nativo de constantes testado no 3DS
   emulado. Comprar, usar a cadeira e salvar/reabrir continuaram funcionando no
   cenário observado. O restante do motor e os ports completos continuam pendentes.

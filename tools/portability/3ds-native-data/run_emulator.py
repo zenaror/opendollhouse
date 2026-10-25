@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import subprocess
@@ -19,6 +20,13 @@ import time
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def guest_markers(log, prefix):
+    """Match exact SVC messages from the guest, not frontend text or PASSIVE."""
+    return re.findall(
+        r'Debug\.Emulated <Debug> core/hle/kernel/svc\.cpp:OutputDebugString:\d+: '
+        + re.escape(prefix) + r':(PASS|FAIL)[ \t]*$', log, re.MULTILINE)
 
 
 def stop(process):
@@ -82,13 +90,19 @@ def main():
     parser.add_argument('--report-dir', type=Path, required=True)
     parser.add_argument('--seconds', type=float, default=25)
     parser.add_argument('--flatpak-app', default='org.libretro.RetroArch')
+    parser.add_argument('--marker-prefix', default='ODH_3DS_NATIVE_DATA_V1',
+                        help='exact probe marker prefix before :PASS or :FAIL')
     args = parser.parse_args()
     if not 1 <= args.seconds <= 60:
         parser.error('--seconds must be 1..60')
+    if (not args.marker_prefix or not args.marker_prefix.isascii()
+            or not args.marker_prefix.replace('_', '').isalnum()):
+        parser.error('--marker-prefix must contain only ASCII letters, digits and underscores')
     core, probe = args.core.resolve(strict=True), args.probe.resolve(strict=True)
     out = args.report_dir.resolve()
     out.mkdir(parents=True, exist_ok=False)
     result = {'runner_sha256': digest(Path(__file__)),
+              'marker_prefix': args.marker_prefix,
               'core': str(core), 'core_sha256': digest(core),
               'probe': str(probe), 'probe_sha256': digest(probe),
               'hardware_verified': False, 'game_verified': False,
@@ -127,7 +141,7 @@ def main():
                 path.mkdir()
                 settings[key] = str(path)
             config.write_text(''.join('%s = "%s"\n' % item for item in settings.items()))
-            (profile / 'core-options.cfg').write_text('citra_is_new_3ds = "enabled"\n')
+            (profile / 'core-options.cfg').write_text('citra_is_new_3ds = "New 3DS"\n')
             result['config'] = config.read_text()
             xvfb = subprocess.Popen(['Xvfb', '-displayfd', '1', '-screen', '0',
                                      '1280x960x24', '-nolisten', 'tcp'],
@@ -183,8 +197,9 @@ def main():
                 stop(xvfb)
         # Read and hash only after the actual sandbox processes have ended.
         log = (out / 'emulator.log').read_text(errors='replace')
-        result['debug_pass_marker'] = 'ODH_3DS_NATIVE_DATA_V1:PASS' in log
-        result['debug_fail_marker'] = 'ODH_3DS_NATIVE_DATA_V1:FAIL' in log
+        result['guest_markers'] = guest_markers(log, args.marker_prefix)
+        result['debug_pass_marker'] = 'PASS' in result['guest_markers']
+        result['debug_fail_marker'] = 'FAIL' in result['guest_markers']
         result['log_sha256'] = digest(out / 'emulator.log')
     finally:
         stop(game)
