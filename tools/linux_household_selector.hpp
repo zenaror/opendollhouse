@@ -3,6 +3,7 @@
 #include "odh/raster.hpp"
 #include "odh/saved_world.hpp"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -15,12 +16,15 @@ struct UiRect {
 };
 
 UiRect household_selector_button_rect(std::uint32_t width,std::uint32_t height);
-UiRect household_selector_panel_rect(std::uint32_t width,std::uint32_t height);
+UiRect household_selector_panel_rect(std::uint32_t width,std::uint32_t height,
+    std::size_t resident_count=8);
 bool household_selector_button_hit(std::uint32_t width,std::uint32_t height,
                                    std::int32_t x,std::int32_t y);
+using HouseholdSelectorPortrait=std::array<std::array<std::uint8_t,4>,74*74>;
 struct HouseholdSelectorResident {
     std::int16_t runtime_id=0;
     std::string label;
+    const HouseholdSelectorPortrait* portrait=nullptr;
 };
 // Look up the saved object's OBJT name by its original ID and GUID. The
 // restored World owns these records after the loader moves its source vectors.

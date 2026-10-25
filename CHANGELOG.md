@@ -10,8 +10,9 @@ validação indicados por versão.
 - O renderizador agora calcula retratos de cabeça em perspectiva numa imagem
   própria de 74×74 pixels e recorta partes da malha que cruzam o limite próximo
   da câmera, com texturas e profundidade corrigidas para perspectiva. A saída
-  do lote isométrico não mudou. A validação usa malha sintética; integração ao
-  seletor e comparação visual ainda faltam. Veja
+  do lote isométrico não mudou. Os cartões provisórios do seletor Linux já
+  exibem os retratos de Bob e Betty na House07. O teste real confirma a ligação
+  dos recursos; ainda faltam comparação visual e interface completa. Veja
   [`head-portrait-validation.md`](docs/head-portrait-validation.md).
 
 - A janela do lote agora mostra as sete necessidades e a pontuação de cômodo
@@ -24,9 +25,9 @@ validação indicados por versão.
 - O botão “Sims” abre uma faixa para escolher outro morador já carregado no
   lote. A House07 confirmou a troca do Sim 105 para o 137 e atualizou as
   necessidades mostradas. Os cartões buscam o nome da tabela OBJT do lote pelo
-  GUID do Sim e mostram o ID interno quando não encontram um nome válido. Na
-  House07, a leitura confirmou Bob (105) e Betty (137). Ainda falta conferir os
-  nomes na janela e criar retratos; a interface continua provisória. Veja
+  GUID do Sim e mostram o ID interno quando não encontram um nome válido. Agora
+  também mostram retratos; Bob (105) e Betty (137) foram vistos na janela. A
+  interface continua provisória, sem paridade visual comprovada. Veja
   [`current-handoff.md`](docs/current-handoff.md).
 
 - A VM mantém os dois valores TempXL de 32 bits usados pelas rotinas do jogo e

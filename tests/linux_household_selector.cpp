@@ -45,7 +45,7 @@ int main(){try{
           "button hit area ends at its right edge");
 
     const auto first=odh_host::household_selector_pick(residents,width,height,20,35);
-    const auto fifth=odh_host::household_selector_pick(residents,width,height,20,59);
+    const auto fifth=odh_host::household_selector_pick(residents,width,height,20,92);
     check(first&&*first==48,"first household card selects its resident");
     check(fifth&&*fifth==89,"second row card selects its resident");
     const std::vector<odh_host::HouseholdSelectorResident> two_residents{
@@ -66,7 +66,7 @@ int main(){try{
     odh_host::draw_household_selector(frame,residents,67,14);
     check(frame.pixels[static_cast<std::size_t>(button.y)*width+button.x]!=
           std::array<std::uint8_t,4>{1,2,3,255},"selector button draws into the panel");
-    const auto panel=odh_host::household_selector_panel_rect(width,height);
+    const auto panel=odh_host::household_selector_panel_rect(width,height,residents.size());
     check(frame.pixels[static_cast<std::size_t>(panel.y)*width+panel.x]!=
           std::array<std::uint8_t,4>{1,2,3,255},"resident chooser draws its overlay");
     for(const auto& pixel:frame.pixels)
@@ -81,6 +81,15 @@ int main(){try{
     odh_host::draw_household_selector(fallback_frame,fallback,67,14);
     check(named.pixels!=fallback_frame.pixels,
           "resident label is drawn while the selected runtime identity remains independent");
+    odh_host::HouseholdSelectorPortrait portrait{};
+    portrait.fill({230,30,40,255});
+    const std::vector<odh_host::HouseholdSelectorResident> portrait_residents{{105,"Bob",&portrait}};
+    odh::RasterFrame portrait_frame{width,height,
+        std::vector<std::array<std::uint8_t,4>>(width*height,{1,2,3,255}),{},0,0,{}};
+    odh_host::draw_household_selector(portrait_frame,portrait_residents,105,14);
+    check(portrait_frame.pixels[static_cast<std::size_t>(58)*width+37]==
+          std::array<std::uint8_t,4>{230,30,40,255},
+          "resident card draws the cached portrait pixels at thumbnail size");
     std::cout<<"linux household selector: checks passed\n";
     return 0;
 }catch(const std::exception& error){std::cerr<<"linux household selector: "<<error.what()<<'\n';return 1;}}

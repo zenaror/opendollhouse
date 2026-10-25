@@ -1601,6 +1601,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::optional<odh::Playback> playback;
         std::optional<odh::AvatarBodyDescriptor> body_state;
         std::unique_ptr<SceneRenderer> scene_renderer;
+        std::vector<std::string> rendered_bound_appearances;
         std::unique_ptr<odh::Vm> vm;
         std::optional<odh::WorldRoomRouteGrid> route_grid;
         std::unique_ptr<odh::Routing> routing;
@@ -2979,6 +2980,17 @@ struct PlacementCandidateProbe {
     std::optional<std::array<std::int32_t,2>> render_menu_anchor;
     std::int16_t active_household_actor=runtime_avatar_id;
     bool household_selector_open=false;
+    struct CachedHouseholdPortrait {
+        std::uint32_t guid=0;
+        SceneRenderer* renderer=nullptr;
+        const odh::AvatarBodyDescriptor* body=nullptr;
+        std::string body_name,head_name;
+        std::vector<std::string> bound_appearances;
+        bool available=false;
+        odh_host::HouseholdSelectorPortrait pixels{};
+    };
+    std::map<std::int16_t,CachedHouseholdPortrait> household_portrait_cache;
+    std::vector<std::string> rendered_bound_appearances;
     const auto selected_household_member=[&]() -> HouseholdRuntime* {
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
             [&](const auto& member){return member->id==active_household_actor;});
@@ -3609,8 +3621,10 @@ struct PlacementCandidateProbe {
         render_appearances=std::make_unique<SavedAppearanceResources>(*render_animation_far,*render_textures_far,
             *render_skeleton_entry,*render_skeleton_name,loose_skins);
         auto scene_config=render_appearances->resolve_body(*body_state->body);
-        if(const auto* live_avatar=world.find(runtime_avatar_id))
+        const auto* live_avatar=world.find(runtime_avatar_id);
+        if(live_avatar)
             render_appearances->append_accessories(scene_config,live_avatar->bound_appearances);
+        rendered_bound_appearances=live_avatar?live_avatar->bound_appearances:std::vector<std::string>{};
         const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
             auto decoded=animation_catalog->decode(selected);
             const auto* planes=&decoded->planes;
@@ -3618,8 +3632,13 @@ struct PlacementCandidateProbe {
         };
         render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
         for(auto& member:household_runtime){
-            if(!member->body_state||!member->body_state->body||!member->playback)continue;
-            const auto member_scene_config=render_appearances->resolve_body(*member->body_state->body);
+            if(!member->body_state||!member->body_state->body)continue;
+            auto member_scene_config=render_appearances->resolve_body(*member->body_state->body);
+            const auto* live_member=world.find(member->id);
+            if(live_member){
+                render_appearances->append_accessories(member_scene_config,live_member->bound_appearances);
+                member->rendered_bound_appearances=live_member->bound_appearances;
+            }
             member->scene_renderer=std::make_unique<SceneRenderer>(member_scene_config,provider);
         }
         if(render_floors){
@@ -4752,6 +4771,53 @@ struct PlacementCandidateProbe {
 #endif
     };
     std::optional<odh_host::StatusHud> captured_status_hud;
+    const auto household_selector_portrait=[&](std::int16_t runtime_id,std::uint32_t guid)
+        ->const odh_host::HouseholdSelectorPortrait* {
+        SceneRenderer* renderer=nullptr;
+        const odh::AvatarBodyDescriptor* descriptor=nullptr;
+        std::vector<std::string> bound;
+        if(runtime_id==runtime_avatar_id){
+            renderer=render_renderer.get();
+            if(body_state)descriptor=&*body_state;
+            if(const auto* live=world.find(runtime_id))bound=live->bound_appearances;
+        }else{
+            const auto member=std::find_if(household_runtime.begin(),household_runtime.end(),
+                [&](const auto& candidate){return candidate->id==runtime_id;});
+            if(member==household_runtime.end())return nullptr;
+            renderer=(*member)->scene_renderer.get();
+            if((*member)->body_state)descriptor=&*(*member)->body_state;
+            if(const auto* live=world.find(runtime_id))bound=live->bound_appearances;
+        }
+        if(!renderer||!descriptor||!descriptor->body)return nullptr;
+        const auto& body_name=descriptor->body->body;
+        const auto& head_name=descriptor->body->head;
+        const auto cached=household_portrait_cache.find(runtime_id);
+        if(cached!=household_portrait_cache.end()&&cached->second.guid==guid&&
+           cached->second.renderer==renderer&&cached->second.body==descriptor&&
+           cached->second.body_name==body_name&&cached->second.head_name==head_name&&
+           cached->second.bound_appearances==bound)
+            return cached->second.available?&cached->second.pixels:nullptr;
+        if(cached==household_portrait_cache.end()&&household_portrait_cache.size()>=8)return nullptr;
+        auto& entry=household_portrait_cache[runtime_id];
+        entry.guid=guid;entry.renderer=renderer;entry.body=descriptor;
+        entry.body_name=body_name;entry.head_name=head_name;entry.bound_appearances=bound;
+        entry.available=false;
+        try{
+            const auto rendered=renderer->render_head_portrait(SceneState{});
+            if(rendered.image.width!=74||rendered.image.height!=74||rendered.image.pixels.size()!=74U*74U)
+                throw odh::FormatError("household portrait renderer returned an invalid image");
+            std::copy(rendered.image.pixels.begin(),rendered.image.pixels.end(),entry.pixels.begin());
+            entry.available=true;
+        }catch(const std::exception& error){
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            session_log.event("household selector portrait unavailable Sim="+
+                std::to_string(runtime_id)+" reason="+error.what());
+#else
+            (void)error;
+#endif
+        }
+        return entry.available?&entry.pixels:nullptr;
+    };
     const auto household_selector_residents=[&] {
         std::vector<odh_host::HouseholdSelectorResident> residents;
         if(!saved_world_main)return residents;
@@ -4774,14 +4840,13 @@ struct PlacementCandidateProbe {
                 }
             }
             if(label.empty())label="Sim "+std::to_string(runtime_id);
-            residents.push_back({runtime_id,std::move(label)});
+            residents.push_back({runtime_id,std::move(label),household_selector_portrait(runtime_id,guid)});
         };
         append(runtime_avatar_id,person.binding->guid);
         for(const auto& member:household_runtime)
             append(member->id,member->data.binding->guid);
         return residents;
     };
-    std::vector<std::string> rendered_bound_appearances;
     const auto capture_frame=[&]{
         if(!render_requested||(!render_window&&render_evidence))return;
         if(render_appearances&&body_state&&body_state->body){
@@ -4797,7 +4862,24 @@ struct PlacementCandidateProbe {
                 };
                 render_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
                 rendered_bound_appearances=current;
+                household_portrait_cache.erase(runtime_avatar_id);
             }
+        }
+        if(render_appearances)for(auto& member:household_runtime){
+            if(!member->body_state||!member->body_state->body)continue;
+            const auto* live_member=world.find(member->id);
+            const auto current=live_member?live_member->bound_appearances:std::vector<std::string>{};
+            if(current==member->rendered_bound_appearances)continue;
+            auto scene_config=render_appearances->resolve_body(*member->body_state->body);
+            render_appearances->append_accessories(scene_config,current);
+            const SceneCfpResolver provider=[&](const odh::AnimationHeader& selected){
+                auto decoded=animation_catalog->decode(selected);
+                const auto* planes=&decoded->planes;
+                return std::shared_ptr<const odh::CfpPlanes>(std::move(decoded),planes);
+            };
+            member->scene_renderer=std::make_unique<SceneRenderer>(scene_config,provider);
+            member->rendered_bound_appearances=current;
+            household_portrait_cache.erase(member->id);
         }
         if(!render_window&&render_tick&&ticks-resumed_tick!=*render_tick)return;
         const auto sample=playback->sample();if(!sample)return;
@@ -5486,11 +5568,12 @@ struct PlacementCandidateProbe {
                         (household_selector_open?"opened":"closed"));
 #endif
                 }else if(household_selector_open){
+                    const auto residents=household_selector_residents();
                     const auto panel=odh_host::household_selector_panel_rect(render_lot_evidence->pick_width,
-                                                                             render_lot_evidence->pick_height);
+                                                                             render_lot_evidence->pick_height,
+                                                                             residents.size());
                     if(click_x>=panel.x&&click_y>=panel.y&&click_x<panel.x+panel.width&&
                        click_y<panel.y+panel.height){
-                        const auto residents=household_selector_residents();
                         selector_resident_pick=odh_host::household_selector_pick(residents,
                             render_lot_evidence->pick_width,render_lot_evidence->pick_height,click_x,click_y);
                         household_selector_open=false;

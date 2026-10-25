@@ -1,5 +1,31 @@
 # Continuidade atual
 
+## Progresso: retratos reais nos cartões do seletor (2026-10-25)
+
+A faixa provisória do seletor agora chama o renderizador de cada morador e
+mostra sua cabeça no cartão. O jogo fornece BodySTR, os CMX/SKN/BMP e texturas;
+os recursos comerciais continuam externos e somente lidos. O cache guarda só
+pixels RGBA e tem teto de oito retratos (175.232 bytes de pixels), renovando
+quando identidade, corpo, cabeça, renderer ou acessórios ativos mudam. Os
+renderers dos moradores secundários agora recebem os acessórios ativos também.
+
+Na House07 com dados reais, a captura Xvfb mostra Bob e Betty com rostos em
+seus cartões. O relatório registrou `host_failed=false`, 61 ticks e a família
+com os GUIDs 850010198/844195932. Evidência local ignorada pelo Git:
+`reports/household-selector/household-portrait-integration.png` (SHA256
+`d0b6fb6275e9d9846b9c184a8816b24d53cb8539b1c7865d17b1bce9ae71a28a`) e
+`portrait-session-output.json` (SHA256
+`75972503ffb1a423273b2ed41873d83f9dc4acbfd254c9aafb647628d7b46d21`). O Xvfb
+terminou pelo `xvfb-run`; não restou processo do jogo.
+
+`odh-person` e `odh-linux-household-selector-tests` compilaram. Os CTests
+`linux_household_selector`, `linux_text_renderer`, `scene_hand_gestures`,
+`scene_cfp_provider`, `reusable_scene_host`, `saved_scene_cli` e `raster`
+passaram (7/7). Isso prova que os rostos chegaram à faixa provisória usando
+dados reais; não valida semelhança com a arte da UI original/Simitone. Ainda
+faltam categorias/painéis, cache após mudanças de roupa mais amplas e comparação
+visual com uma referência correspondente.
+
 ## Progresso: primeiro caminho de retrato 74×74 (2026-10-25)
 
 `SceneRenderer` agora oferece uma câmera em perspectiva própria para retratos:
@@ -13,8 +39,8 @@ posição/direção no lote, limite próximo e câmera inválida.
 Os valores iniciais de campo de visão, zoom, distância e ângulos foram
 transcritos de `UIIconCache.GenHeadTex` no checkout local do Simitone; a regra
 de pose vem de `StripAllButHead`. A projeção/pintura é nossa. Não há comparação
-visual com o Simitone nem retratos exibidos na UI; isto é uma base técnica, não
-uma afirmação de paridade. Detalhes e limites em
+visual com o Simitone na implementação da câmera nem comparação de paridade da
+UI. Detalhes e limites em
 [`head-portrait-validation.md`](head-portrait-validation.md).
 
 Build de `odh-person`, `odh-raster-tests`, `odh-scene-hand-gesture-tests`,
@@ -22,8 +48,8 @@ Build de `odh-person`, `odh-raster-tests`, `odh-scene-hand-gesture-tests`,
 `odh-saved-scene` passou; CTest
 `scene_hand_gestures`, `scene_cfp_provider`, `reusable_scene_host`,
 `saved_scene_cli` e `raster` passaram (5/5). Retratos ainda não estão
-conectados ao seletor; cache, conferência com dados reais e ajuste visual
-permanecem pendentes.
+conectados ao seletor naquele checkpoint; agora há uma faixa de teste com
+cache, mas a comparação visual ampla permanece pendente.
 
 ## Progresso anterior: deformação somente da cabeça no renderizador (2026-10-25)
 

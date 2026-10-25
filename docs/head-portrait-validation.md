@@ -36,10 +36,31 @@ CTest 5/5 no total. Os cinco alvos
 `odh-scene-renderer-driver` e `odh-saved-scene` compilaram em
 `build/linux-checkpoint`; `odh-raster-tests` também compilou.
 
+## Integração provisória no seletor
+
+O seletor Linux fornece agora retratos para os cartões a partir do
+`SceneRenderer` já montado para cada morador. Ele desenha uma miniatura de 48×48
+e mantém apenas os pixels RGBA num cache limitado a oito moradores: no máximo
+175.232 bytes de pixels, mais os metadados do mapa. A chave confere GUID,
+identidade do renderer, descritores BODY/HEAD e lista exata de acessórios
+ativos. Uma troca de renderer ou acessório invalida o retrato.
+
+Execução com `tools/play_linux.py --mode 1 --house 7 --resident-id 48
+--language 1`, instalação local original e Xvfb isolado: a captura mostra Bob e
+Betty com retratos. O relatório marcou `host_failed=false`, 61 ticks e família
+House07 com GUIDs 850010198 e 844195932. Captura ignorada pelo Git:
+`reports/household-selector/household-portrait-integration.png`, SHA256
+`d0b6fb6275e9d9846b9c184a8816b24d53cb8539b1c7865d17b1bce9ae71a28a`. O JSON
+completo do processo está em `reports/household-selector/portrait-session-output.json`,
+SHA256 `75972503ffb1a423273b2ed41873d83f9dc4acbfd254c9aafb647628d7b46d21`.
+`xvfb-run` encerrou a tela e não restou processo do jogo. A integração de UI é
+uma faixa de teste ainda provisória.
+
 ## Limites e próximos passos
 
-Os testes usam malha sintética. Ainda falta renderizar um morador real da
-instalação do jogo, comparar enquadramento e cores com uma captura de
-referência, ligar a imagem ao seletor e implementar cache com limite de memória.
-Este checkpoint não demonstra retratos corretos para todos os corpos/cabeças,
-paridade visual com The Sims 1/Simitone ou uma interface jogável completa.
+A imagem é real, mas não foi comparada lado a lado com uma captura do
+The Sims 1/Simitone. Os testes de interpolação e clipping continuam sintéticos;
+não provam enquadramento correto para todos os tipos de corpo, idade, cabeça ou
+expansão. Falta completar o cache para todos os caminhos de troca de aparência,
+validar mais moradores e reconstruir categorias/painéis da interface. Não há
+afirmação de paridade visual nem de UI jogável completa.

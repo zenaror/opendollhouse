@@ -28,7 +28,7 @@ void fill(odh::RasterFrame& frame,UiRect rect,Color color) {
 }
 
 UiRect card_rect(std::size_t index,std::size_t count,std::uint32_t width) {
-    constexpr std::int32_t columns=4,card_height=21,gap=3;
+    constexpr std::int32_t columns=4,card_height=54,gap=3;
     const auto column=static_cast<std::int32_t>(index%columns);
     const auto row=static_cast<std::int32_t>(index/columns);
     const auto inner_width=static_cast<std::int32_t>(width)-20;
@@ -46,10 +46,13 @@ UiRect household_selector_button_rect(std::uint32_t width,std::uint32_t height) 
     return {8,static_cast<std::int32_t>(height)-20,button_width,16};
 }
 
-UiRect household_selector_panel_rect(std::uint32_t width,std::uint32_t height) {
+UiRect household_selector_panel_rect(std::uint32_t width,std::uint32_t height,
+    std::size_t resident_count) {
     const auto bounded_width=static_cast<std::int32_t>(std::min<std::uint32_t>(width,2048));
-    (void)height;
-    return {6,6,std::max(0,bounded_width-12),88};
+    const auto rows=std::max<std::size_t>(1,(std::min<std::size_t>(resident_count,8)+3)/4);
+    const auto panel_height=25+static_cast<std::int32_t>(rows)*57+4;
+    const auto bounded_height=static_cast<std::int32_t>(std::min<std::uint32_t>(height,2048));
+    return {6,6,std::max(0,bounded_width-12),std::min(panel_height,std::max(0,bounded_height-12))};
 }
 
 std::optional<std::string> household_selector_saved_name(std::int16_t runtime_id,
@@ -101,7 +104,7 @@ void draw_household_selector(odh::RasterFrame& frame,const std::vector<Household
     if(language<1||language>kPanelLabels.size()||residents.empty()||residents.size()>8||
        frame.width<160||frame.height<120||
        frame.pixels.size()!=static_cast<std::size_t>(frame.width)*frame.height)return;
-    const auto panel=household_selector_panel_rect(frame.width,frame.height);
+    const auto panel=household_selector_panel_rect(frame.width,frame.height,residents.size());
     fill(frame,panel,{16,22,29,255});
     TextOverlayStyle heading;heading.x=12;heading.y=8;heading.width=panel.width-12;
     heading.height=18;heading.font_size_px=12;heading.padding=1;
@@ -111,10 +114,26 @@ void draw_household_selector(odh::RasterFrame& frame,const std::vector<Household
         const auto rect=card_rect(i,residents.size(),frame.width);
         const bool active=residents[i].runtime_id==selected;
         fill(frame,rect,active?Color{54,108,133,255}:Color{45,52,58,255});
-        TextOverlayStyle style;style.x=rect.x;style.y=rect.y;style.width=rect.width;
+        std::int32_t text_x=rect.x+4;
+        if(residents[i].portrait){
+            const auto icon=std::min<std::int32_t>(48,std::min(rect.height-4,rect.width-4));
+            if(icon>0){
+                const auto icon_x=rect.x+3,icon_y=rect.y+(rect.height-icon)/2;
+                for(std::int32_t y=0;y<icon;++y)for(std::int32_t x=0;x<icon;++x){
+                    const auto source_x=static_cast<std::size_t>((std::uint64_t(2*x+1)*74)/(2*icon));
+                    const auto source_y=static_cast<std::size_t>((std::uint64_t(2*y+1)*74)/(2*icon));
+                    const auto destination=static_cast<std::size_t>(icon_y+y)*frame.width+
+                                           static_cast<std::size_t>(icon_x+x);
+                    frame.pixels[destination]=(*residents[i].portrait)[source_y*74+source_x];
+                }
+                text_x=icon_x+icon+4;
+            }
+        }
+        TextOverlayStyle style;style.x=text_x;style.y=rect.y;
+        style.width=std::max(0,rect.x+rect.width-text_x-3);
         style.height=rect.height;style.font_size_px=11;style.padding=1;
         style.foreground={250,248,230,255};style.background=active?Color{54,108,133,0}:Color{45,52,58,0};
-        (void)draw_text_overlay(frame,residents[i].label,language,style);
+        if(style.width>0)(void)draw_text_overlay(frame,residents[i].label,language,style);
     }
 }
 
