@@ -17,11 +17,21 @@ apagado. Isso confirma o abrir/voltar lógico com os dados comerciais, não uma
 comparação visual com a interface original. A janela de gameplay ainda é
 provisória.
 
-No serviço Pizza, o avatar percorreu32 callbacks de rota usando a forma de
-`GotoRelativePosition` da House07. Em seguida, a avaliação parou em scope26,
-índice261. Simitone identifica scope26 como leitura Tuning e o índice aponta
-para BCON4098, constante5, pertencente ao recurso privado do telefone. O
-avaliador isolado ainda não fornece esse BCON; Pizza não foi concluído.
+## BCON privado em TestFunction e ação semiglobal (2026-10-24)
+
+O avaliador read-only recebe tuning privado explícito do objeto e aplica a
+leitura de BCON para scope26. Se o recurso foi ligado e a tabela/chave está
+ausente, usa zero como o Simitone; sem owner ligado, continua unsupported.
+Índices nos bancos semiglobal/global ainda ficam fora desse perfil. Fixtures
+cobrem zero, valor não-zero, chave ausente e owner desconhecido.
+
+O telefone também carrega o BCON privado ao despachar uma ação semiglobal:
+Simitone associa `ScopeResource` ao objeto dono, embora o BHAV venha de
+`PhoneGlobals`. Com House07, a Pizza 8312 leu BCON4098[5]=5, percorreu os BHAVs
+da ligação e retornou `true` após454 instruções de trace, com `host_failed=false`.
+O código3 veio do limite de ticks enquanto Main aguardava. Isso confirma o fim
+da interação de telefone; não confirma NPC criado, entrega concluída ou
+comportamento equivalente ao original após a chamada.
 
 ## TS1 Budget — primeiro perfil de orçamento familiar
 

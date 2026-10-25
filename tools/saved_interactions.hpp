@@ -8,6 +8,7 @@
 #include "odh/object_type.hpp"
 #include "odh/relationship.hpp"
 #include "odh/ts1_budget.hpp"
+#include "odh/tuning.hpp"
 #include "odh/world.hpp"
 #include "resource.hpp"
 #include <algorithm>
@@ -276,7 +277,8 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
     const std::function<std::optional<std::int16_t>(std::int16_t)>& read_global={},
     const odh::RoutineSet* linked_global=nullptr,const odh::LotContext* linked_lot=nullptr,
     const odh::NeighborContext* linked_neighbors=nullptr,
-    std::optional<std::int32_t> family_budget=std::nullopt) {
+    std::optional<std::int32_t> family_budget=std::nullopt,
+    const odh::TuningResources* linked_tuning=nullptr) {
     constexpr std::size_t test_limit=32;
     if(tests.size()>test_limit||arguments.size()>256)throw odh::FormatError("interaction test arguments/count exceed bounded probe profile");
     std::vector<SavedTestFunctionResult> result;result.reserve(tests.size());
@@ -303,8 +305,25 @@ inline std::vector<SavedTestFunctionResult> evaluate_saved_test_functions(
             return result;
         }
     odh::VmLimits limits;limits.stack_depth=16;limits.frame_variables=256;limits.code_owners=2;
-    odh::VmMemory memory;memory.read=[&world,&read_global](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
+    std::optional<odh::BconTuning> tuning;
+    if(linked_tuning)tuning.emplace(*linked_tuning);
+    odh::VmMemory memory;memory.read=[&world,&read_global,&tuning,linked_tuning](const odh::VmFrame& frame,std::uint8_t scope,std::int16_t index){
         if(scope==6&&read_global)return read_global(index);
+        if(scope==26){
+            if(!tuning||!linked_tuning)return std::optional<std::int16_t>{};
+            const auto address=odh::BconTuning::address(index);
+            // This evaluator links only the selected object's exact private
+            // resource. Packed semiglobal/global tuning needs its own explicit
+            // resource state and remains unsupported here.
+            if(address.scope!=odh::RoutineScope::private_object)return std::optional<std::int16_t>{};
+            const auto owner=linked_tuning->owners.find(frame.context.code_owner);
+            if(owner==linked_tuning->owners.end())return std::optional<std::int16_t>{};
+            if(const auto value=tuning->read(frame.context.code_owner,index))
+                return std::optional<std::int16_t>{value->value};
+            // Simitone returns zero when an exact, loaded private BCON table
+            // or constant is absent. An absent owner above remains unsupported.
+            return std::optional<std::int16_t>{0};
+        }
         const auto value=world.read(frame,scope,index);
         // Simitone initializes every declared attribute to zero and reads
         // beyond the declared length as zero. Preserve that read-only rule.

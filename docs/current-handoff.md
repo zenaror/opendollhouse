@@ -1,5 +1,26 @@
 # Continuidade atual
 
+## Atualização: BCON privado e retorno da Pizza (2026-10-24)
+
+O avaliador read-only de `TestFunction` agora recebe os BCON privados do objeto
+selecionado. Quando o recurso exato está carregado, tabela/chave ausente segue
+o padrão Simitone de valor zero; owner não ligado continua unsupported. Os
+modos semiglobal/global desse scope seguem fora do perfil. Fixtures cobrem
+constante zero/não-zero, chave ausente e owner não ligado.
+
+A fila também carrega os BCON privados do telefone quando a ação usa uma rotina
+semiglobal: o código vem de `PhoneGlobals`, mas o Simitone mantém o recurso do
+objeto em `ScopeResource`. No probe com House07, a ação Pizza 8312 leu
+BCON4098[5]=5 e retornou `true` após454 instruções de trace, sem falha do host.
+O código3 indica que o harness chegou ao limite de ticks enquanto Main
+aguardava. Isso confirma o retorno da interação telefônica, não a chegada do
+NPC nem a entrega da Pizza. O save original não foi alterado; o PPM temporário
+foi apagado.
+
+Próximo: conferir o efeito pós-chamada esperado no Simitone/jogo e continuar
+outros serviços. Manter leituras sem recurso explicitamente ligado como
+unsupported; não inferir entrega a partir do retorno do telefonema.
+
 ## Atualização: menu de serviços e primeira rota relativa (2026-10-24)
 
 O harness headless agora aceita passos explícitos para abrir uma categoria,
@@ -13,17 +34,14 @@ removeu o PPM temporário.
 O Simitone lê `OldTrapCount` de `GotoRelativePosition`, mas não o usa para
 escolher o destino. O ODH agora aceita o valor5 nos perfis relativos usados
 pela ação de serviço e continua usando o primeiro SLOT temporário. O teste de
-rota passou com esse valor. No teste integrado de Pizza, o avatar andou por32
-callbacks; depois a ação parou em `unsupported read scope 26 index 261`.
-No Simitone, scope26 é Tuning: índice261 aponta para BCON4098, constante5 do
-recurso privado do telefone. O avaliador isolado ainda não conecta essa fonte,
-então a ação não foi concluída. A implementação de rota é parcial e não prova
-que o serviço Pizza terminou.
+rota passou com esse valor. No primeiro probe integrado de Pizza, o avatar
+andou por32 callbacks antes de parar em `unsupported read scope 26 index 261`.
+Simitone mapeia esse índice para BCON4098, constante5 do recurso privado do
+telefone. A leitura e o retorno posterior da ação estão documentados na
+atualização mais recente acima; isso não prova que o serviço foi entregue.
 
 Build de `odh-person` e `odh-routing-tests` passou; o teste `routing` passou.
-O CTest completo passou 244/244. Próximo: ligar ao avaliador
-isolado a leitura read-only do BCON privado do objeto dono do código e testar a
-ação do telefone até o próximo bloqueio real. A UI atual segue provisória.
+O CTest completo passou 244/244. A UI atual segue provisória.
 
 ## Atualização: testes do telefone e vizinhos tipados (2026-10-24)
 
@@ -38,17 +56,15 @@ telefone136; TTAB129 foi decodificada. O teste `Services.../Pizza` (BHAV8303)
 ficou elegível após a leitura read-only do orçamento. `Call Neighbor` (BHAV8310)
 e `Services.../Butler` (BHAV8331) também ficaram elegíveis; outras linhas ainda
 param em escopos sem suporte. A seleção automática enfileirou a ação Pizza
-(BHAV8312), mas a execução parou com falha do host em `GotoRelativePosition`,
-antes da correção parcial documentada abaixo, a ação parou em `GotoRelativePosition`.
-Isso prova que a seleção chegou ao alvo e que os testes passaram no perfil ODH;
-não prova a ação concluída nem o abre/volta visual do submenu. O probe usou um PPM dentro de pasta temporária, removida ao
-fim; nenhum Xvfb ou janela virtual foi iniciado. Os arquivos temporários
+(BHAV8312), que primeiro parou em `GotoRelativePosition` e depois passou pela
+rota após as correções acima. Isso prova a seleção e o retorno da ação no perfil
+ODH, não a entrega do serviço nem paridade geral. O probe usou um PPM temporário
+removido ao fim; nenhum Xvfb ou janela virtual foi iniciado. Os arquivos temporários
 autorizados para limpeza já estavam ausentes.
 
-Próximo: completar a leitura de tuning usada pelo telefone e continuar a ação
-de serviço, sem editar os saves originais; manter status e resultado da VM
-separados. A UI final ainda deve seguir os recursos e o comportamento do jogo
-original, com Simitone como referência; este painel continua provisório.
+Na retomada seguinte, conferir o efeito após o retorno do telefonema. A UI final
+ainda deve seguir os recursos e o comportamento do jogo original, com Simitone
+como referência; este painel continua provisório.
 
 ## Atualização: BHAV global ligado no avaliador de ações (2026-10-24)
 

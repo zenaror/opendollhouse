@@ -1739,7 +1739,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto address=odh::BconTuning::address(index);
             if(address.scope==odh::RoutineScope::private_object){
                 const auto table=supplemental->second.find(address.table);
-                if(table==supplemental->second.end()||address.index>=table->second.constants.size())return {};
+                // This map entry means the exact owner resource was loaded.
+                // Simitone's private tuning lookup defaults a missing BCON/key
+                // to zero; an owner absent from the map remains unsupported.
+                if(table==supplemental->second.end()||address.index>=table->second.constants.size())return 0;
                 const auto raw=table->second.constants[address.index];
                 const auto signed_value=raw<0x8000?static_cast<std::int16_t>(raw):
                     static_cast<std::int16_t>(static_cast<std::int32_t>(raw)-0x10000);
@@ -3089,11 +3092,15 @@ struct PlacementCandidateProbe {
             if(bootstrap_globals)if(const auto value=bootstrap_globals->read(index))return value;
             return lot?lot->read(index):std::nullopt;
         };
+        odh::TuningResources test_tuning_resources;
+        test_tuning_resources.owners.emplace(static_cast<odh::CodeOwner>(target),odh::TuningOwner{
+            load_saved_action_tuning(candidate),{},odh::TuningSemiState::unknown});
         return evaluate_saved_test_functions(candidate,world,actor,target,tests,4096,128,{0},
             linked_semiglobal,groups,relationships,ngbh?&*ngbh:nullptr,read_saved_test_global,
             globals?&shared_program->routines():nullptr,lot?&*lot:nullptr,
             neighbors?&*neighbors:nullptr,
-            active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt);
+            active_family?std::optional<std::int32_t>{active_family->family.budget}:std::nullopt,
+            &test_tuning_resources);
     };
     const auto prepare_selected_object=[&](std::optional<SavedObjectSelection> selection){
         render_selection=std::move(selection);
@@ -3195,9 +3202,12 @@ struct PlacementCandidateProbe {
             odh::TuningTables action_tuning;
             const auto key=odh::routine_key(row.action);
             try{
+                // A shared action BHAV still reads private tuning from the
+                // selected object's resource (Simitone's ScopeResource is the
+                // code owner's object resource, not the semiglobal bank).
+                action_tuning=load_saved_action_tuning(*candidate);
                 if(key.scope==odh::RoutineScope::private_object){
                     routines=load_saved_action_routines(*candidate,row.action);
-                    action_tuning=load_saved_action_tuning(*candidate);
                 }
                 else if(key.scope==odh::RoutineScope::semiglobal&&linked_bank&&
                         linked_bank->routines.count(key)){
@@ -3217,7 +3227,7 @@ struct PlacementCandidateProbe {
                 render_interaction_status="unsupported";render_interaction_diagnostic="selected resident VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
             }
             saved_action_resources.emplace(code_owner,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
-            if(!action_tuning.empty())saved_action_tuning.emplace(code_owner,std::move(action_tuning));
+            saved_action_tuning.emplace(code_owner,std::move(action_tuning));
             if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
             else ++next_saved_code_owner;
             owner=owner_map->emplace(owner_key,code_owner).first;

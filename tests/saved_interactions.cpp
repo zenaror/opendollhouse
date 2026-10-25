@@ -23,6 +23,9 @@ std::string test_bhav(unsigned opcode=2){std::string b;put(b,0x8002,2);put(b,1,2
 std::string budget_test_bhav(std::uint16_t amount,std::uint8_t flags){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,25,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     b.push_back(0);b.push_back(7);put(b,amount,2);b.push_back(static_cast<char>(flags));b.push_back(0);b.push_back(3);b.push_back(0);return b;}
+std::string tuning_test_bhav(){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
+    put(b,2,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
+    b.push_back(5);b.push_back(1);b.push_back(0);b.push_back(0);b.push_back(0);b.push_back(2);b.push_back(26);b.push_back(7);return b;}
 std::string object_type_test_bhav(std::uint32_t guid){std::string b;put(b,0x8002,2);put(b,1,2);b.push_back(0);b.push_back(4);b.append(6,'\0');
     put(b,32,2);b.push_back(static_cast<char>(254));b.push_back(static_cast<char>(255));
     put(b,guid,4);put(b,0,2);b.push_back(10);b.push_back(0);return b;}
@@ -307,5 +310,28 @@ int main(){try{
     check(budget_write[0].state==SavedTestFunctionResult::State::unsupported&&
           budget_write[0].diagnostic.find("writer")!=std::string::npos,
         "read-only TS1 Budget rejects attempts to change the family's balance");
+    data=iff(chunk("BHAV",4098,tuning_test_bhav()));write(path,data);
+    odh::TuningResources object_tuning;odh::TuningOwner tuning_owner;
+    tuning_owner.private_tables[4098]={0,{0,0,0,0,0,0},0};
+    object_tuning.owners.emplace(2,tuning_owner);
+    const auto evaluate_tuning=[&](const odh::TuningResources& resources){
+        return evaluate_saved_test_functions({path.string(),"",7,object},world,1,2,{4098},
+            4096,128,{0},nullptr,{},nullptr,nullptr,{},nullptr,nullptr,nullptr,std::nullopt,&resources);
+    };
+    const auto tuning_zero=evaluate_tuning(object_tuning);
+    check(tuning_zero[0].state==SavedTestFunctionResult::State::eligible,
+        "read-only TestFunction reads private BCON4098 constant5 from the explicit object owner");
+    object_tuning.owners.at(2).private_tables[4098].constants[5]=9;
+    const auto tuning_nonzero=evaluate_tuning(object_tuning);
+    check(tuning_nonzero[0].state==SavedTestFunctionResult::State::ineligible,
+        "private tuning value changes the TestFunction comparison");
+    object_tuning.owners.at(2).private_tables.clear();
+    const auto tuning_missing_constant=evaluate_tuning(object_tuning);
+    check(tuning_missing_constant[0].state==SavedTestFunctionResult::State::eligible,
+        "loaded private tuning with a missing BCON key follows Simitone's zero default");
+    object_tuning.owners.clear();
+    const auto tuning_unlinked=evaluate_tuning(object_tuning);
+    check(tuning_unlinked[0].state==SavedTestFunctionResult::State::unsupported,
+        "private tuning remains unsupported when the exact object resource is not linked");
     std::filesystem::remove_all(root);std::cout<<checks<<" saved interaction discovery checks passed (synthetic IFF only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
