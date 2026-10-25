@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Compra de uma cadeira pela janela, uso por Bob e conservação do objeto,
+  posição, preço e dinheiro ao salvar/reabrir passaram no candidato Linux.
+  Diagnósticos e um comparador distinguem uso real de uma ação apenas na fila.
+  Isso valida esse objeto nesse fluxo; outros objetos e construção seguem pendentes.
 - O candidato Linux salvou com Bob comendo, voltou à vizinhança e reabriu em
   outro processo, mantendo a ação, comida, necessidades e dinheiro. Bob terminou
   de comer. Isso valida esse ciclo, sem aprovar o jogo completo.

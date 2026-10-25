@@ -8,6 +8,11 @@ The Sims 1 PC original. Simitone é o ponto de partida funcional; aparência,
 controles, simulação e cobertura das expansões continuam tendo o original como
 critério final. Paridade Simitone é um marco intermediário, não a conclusão.
 
+Ordem de trabalho confirmada pelo usuário: manter provisoriamente a interface
+Simitone para validar as funções e deixar a adaptação à interface original para
+a etapa final. Isso adia a execução visual, sem remover o requisito de aparência,
+menus e controles do The Sims 1 nem acoplar a simulação a essa interface temporária.
+
 Complemento humano de 2026-10-25: a meta foi recriada e inicialmente pausada;
 a instrução posterior determina respeitar seu status real, inclusive retomadas.
 Nesta retomada, `get_goal` confirmou active. Uma pausa futura impede execução;

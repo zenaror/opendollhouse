@@ -1,8 +1,61 @@
 # Continuidade atual
 
+## Comprar, usar e conservar uma cadeira (2026-10-25)
+
+Meta ACTIVE. A interface original fica para a etapa final, como solicitado.
+Novo ciclo real em `reports/simitone-linux-evaluation/house07-chair-save-before-notice/`:
+74 s no primeiro processo e 40 s no segundo, mesma cópia/perfil isolados.
+Compra normal da cadeira Werkbunnst §80: saldo §665→§585, novo objeto 139
+(GUID 0x26BFBB29), posição (392,424,1), direção 1 e preço inicial 80.
+Bob executou Sit, fila ID 2, nessa cadeira; ticks 600–690 mostram a mesma ação
+ativa e postura sentada, também visível na captura antes de Options. Conforto não
+aumentou: não foi provada melhora nem equivalência da animação ao original. A cadeira e o dinheiro persistiram
+em todas as etapas do save e da reabertura. O uso foi comprovado antes de salvar;
+não houve uma segunda ordem Sit após reabrir.
+
+`purchase-proof.json` passou com `--require-action-name Sit --require-posture 1`
+e `--session-result result.json`. O comparador exige IDs novos, débito, posição,
+direção, preço do grupo, ação realmente iniciada e amostra ativa da mesma fila,
+postura e persistência. Também vincula os logs ao arquivo FSOV, perfil e processos.
+Os 13 testes sintéticos verificam rejeição de provas erradas; não são prova de jogo.
+O primeiro ensaio `house07-chair-first-save-reopen` conserva a compra mas falha
+corretamente por ausência de uso: F1 fora ignorado pelo campo de busca do catálogo.
+O ensaio final usa o botão de modo ao vivo. O ensaio `...-use-save-reopen-final`
+foi interrompido pelo aviso do kit mágico antes de Save, e falhou corretamente.
+O caso `house07-chair-save-before-notice` salva mais cedo e passou. O relatório
+completo desse caso foi preservado; um relatório intermediário perdeu campos
+por cópia acidental do resumo e não é a evidência final.
+
+Diagnósticos novos são optativos e somente leitura; falha ao capturar/gravar o log
+não interrompe a compra nem a ação. Build passou, avisos antigos permanecem.
+FreeSO experimental agora tem 18 arquivos, após 0003/0004/0005, SHA256
+`bb7a35bfae36de0e56b8c8820dc5ff171fce8f0d5b65f9cc993000a9cd906ddf`.
+Replay exato independente aprovado; frontend 0006 e seu hash permanecem iguais.
+`source-manifest.json`, `lifecycle-summary.json` e `purchase-proof.json` identificam
+fontes e evidência. Zero erros de VM/fatais/diagnóstico, seis hashes comerciais
+protegidos iguais; processos encerrados e cópia/perfil removidos.
+Estado inteiro registrado coincide antes de Load, exceto promoção SIMI 62→64;
+bancos de pessoa/necessidades continuam iguais após Load. Mudanças dos demais
+objetos nos callbacks continuam relatadas; não equivalem a paridade geral.
+
+Próximo fluxo: criar/excluir/mudar famílias pela interface e conservar o resultado;
+mapa estático em `reports/simitone-linux-evaluation/family-flow-source-map/report.json`.
+Candidato: família de um adulto → House09 livre residencial §3500 → salvar/reabrir
+→ despejar → excluir no CAS. Inspeção de fonte, ainda sem prova de execução:
+Evict não salva imediatamente nem limpa FSOV antigo; reembolso/ValueInArch e
+DeleteFamily mantendo NBRS/arquivos de personagens precisam ser avaliados.
+Não tratar estas suspeitas como bugs demonstrados sem executar o fluxo.
+Construção, outros objetos/rotações/grupos, viagens das sete expansões, idioma,
+áudio, conteúdo personalizado e UI original continuam pendentes. Não foi aprovado
+um jogo completo. Preservar C++ WIP e scripts antigos. O checkpoint anterior abaixo
+continua válido historicamente; seu hash de patch de 15 arquivos foi substituído
+pelo de 18 acima, com cópia arquivada junto da evidência anterior.
+
 ## Salvar, voltar à vizinhança e retomar (2026-10-25)
 
 Meta ACTIVE conferida nesta retomada; objetivo completo continua incompleto.
+Última preferência humana: interface Simitone provisória; interface original
+na etapa final, ainda obrigatória para concluir o objetivo. Não redesenhar agora.
 O candidato Linux agora salvou durante Eat, voltou à vizinhança, reentrou na
 mesma casa e reabriu em outro processo. Bob manteve a comida 192, ação Eat (ID 1),
 posição, necessidades, dinheiro §660 e relógio no tick 889 (7:30); depois terminou de comer.

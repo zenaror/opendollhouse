@@ -151,6 +151,21 @@ index c8b8f14..f70aa02 100644
                  io.WriteInt32(HouseholdExpense);
                  io.WriteInt32(ArchitectureExpense);
              }
+diff --git a/TSOClient/tso.simantics/Engine/VMThread.cs b/TSOClient/tso.simantics/Engine/VMThread.cs
+index f449b52..4dc5d98 100644
+--- a/TSOClient/tso.simantics/Engine/VMThread.cs
++++ b/TSOClient/tso.simantics/Engine/VMThread.cs
+@@ -890,7 +890,9 @@ namespace FSO.SimAntics.Engine
+             ((VMAvatar)Entity).SetPersonData(VMPersonDataVariable.Priority, action.Priority);
+             var frame = action.ToStackFrame(Entity);
+             frame.SpecialResult = VMSpecialResult.Interaction;
+-            return Push(frame);
++            var pushed = Push(frame);
++            if (pushed) FSO.SimAntics.Utils.VMTS1PurchaseDiagnostics.ActionStarted(Context.VM, Entity, action);
++            return pushed;
+         }
+ 
+         public List<VMPieMenuInteraction> CheckTS1Action(VMQueuedAction action, bool auto)
 diff --git a/TSOClient/tso.simantics/Entities/VMAvatar.cs b/TSOClient/tso.simantics/Entities/VMAvatar.cs
 index 2c82435..b9b6e46 100644
 --- a/TSOClient/tso.simantics/Entities/VMAvatar.cs
@@ -240,6 +255,59 @@ index 3e89a2d..273dad0 100644
              }
              else
              {
+diff --git a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMNetBuyObjectCmd.cs b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMNetBuyObjectCmd.cs
+index b0aee4c..4825130 100644
+--- a/TSOClient/tso.simantics/NetPlay/Model/Commands/VMNetBuyObjectCmd.cs
++++ b/TSOClient/tso.simantics/NetPlay/Model/Commands/VMNetBuyObjectCmd.cs
+@@ -5,6 +5,7 @@ using FSO.SimAntics.Model.TSOPlatform;
+ using FSO.SimAntics.Entities;
+ using FSO.SimAntics.Model;
+ using FSO.SimAntics.Model.Platform;
++using FSO.SimAntics.Utils;
+ 
+ namespace FSO.SimAntics.NetPlay.Model.Commands
+ {
+@@ -46,6 +47,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+             if (!vm.TS1 && (Blacklist.Contains(GUID) || caller == null)) return false;
+ 
+             //careful here! if the object can't be placed, we have to give the user their money back.
++            var beforeIDs = VMTS1PurchaseDiagnostics.ObjectIDs(vm);
+             if (TryPlace(vm, caller))
+             {
+                 if (vm.GlobalLink != null)
+@@ -65,6 +67,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+                 var objDefinition = CreatedGroup.BaseObject.MasterDefinition ?? CreatedGroup.BaseObject.Object.OBJ;
+ 
+                 if (Mode != PurchaseMode.Donate) CreatedGroup.InitialPrice = (int)value;
++                VMTS1PurchaseDiagnostics.Placed(vm, this, caller, value, beforeIDs, CreatedGroup, true);
+ 
+                 return true;
+             }
+@@ -77,6 +80,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+                     //...and we can't exactly do much about it if it were to!
+                 });
+             }
++            VMTS1PurchaseDiagnostics.Placed(vm, this, caller, value, beforeIDs, null, false);
+             return false;
+         }
+ 
+@@ -168,6 +172,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+             //TODO: fine grained purchase control based on user status
+ 
+             //perform the transaction. If it succeeds, requeue the command
++            var budgetBefore = VMTS1PurchaseDiagnostics.Budget(vm);
+             vm.GlobalLink.PerformTransaction(vm, false, caller?.PersistID ?? uint.MaxValue, uint.MaxValue, value,
+                 (bool success, int transferAmount, uint uid1, uint budget1, uint uid2, uint budget2) =>
+                 {
+@@ -177,6 +182,8 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
+                         vm.ForwardCommand(this);
+                     }
+                 });
++            // TS1 mutates the family synchronously; its callback runs elsewhere.
++            VMTS1PurchaseDiagnostics.Charged(vm, this, caller, value, budgetBefore, VMTS1PurchaseDiagnostics.Budget(vm));
+ 
+             return false;
+         }
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs b/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
 index 007e875..0867340 100644
 --- a/TSOClient/tso.simantics/Utils/VMTS1ActivatorNew.cs
@@ -317,10 +385,10 @@ index 007e875..0867340 100644
                  if (inst.MultitileData == null)
 diff --git a/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs b/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs
 new file mode 100644
-index 0000000..de47a42
+index 0000000..6be2916
 --- /dev/null
 +++ b/TSOClient/tso.simantics/Utils/VMTS1GameplayDiagnostics.cs
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,60 @@
 +// This Source Code Form is subject to the terms of the Mozilla Public
 +// License, v. 2.0. If a copy of the MPL was not distributed with this
 +// file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -356,6 +424,8 @@ index 0000000..de47a42
 +                    Position = new { person.Position.x, person.Position.y, person.Position.Level },
 +                    Room = vm.Context.GetObjectRoom(person),
 +                    Hunger = person.GetMotiveData(VMMotive.Hunger),
++                    Comfort = person.GetMotiveData(VMMotive.Comfort),
++                    Posture = person.GetPersonData(VMPersonDataVariable.Posture),
 +                    thread.ActiveQueueBlock,
 +                    Queue = thread.Queue.Select(action => new
 +                    {
@@ -369,6 +439,8 @@ index 0000000..de47a42
 +                    {
 +                        Routine = frame.Routine?.ID,
 +                        frame.InstructionPointer,
++                        Callee = frame.Callee?.ObjectID,
++                        StackObject = frame.StackObject?.ObjectID,
 +                        Kind = frame.GetType().Name
 +                    }).ToArray(),
 +                    Carried = person.Contained.Select(child => child?.ObjectID ?? (short)0).ToArray()
@@ -1562,6 +1634,112 @@ index 0000000..a1daede
 +        {
 +            return new NotSupportedException("TS1 portal recovery unsupported for entity "
 +                + target.ObjectID + ": " + reason);
++        }
++    }
++}
+diff --git a/TSOClient/tso.simantics/Utils/VMTS1PurchaseDiagnostics.cs b/TSOClient/tso.simantics/Utils/VMTS1PurchaseDiagnostics.cs
+new file mode 100644
+index 0000000..672b9eb
+--- /dev/null
++++ b/TSOClient/tso.simantics/Utils/VMTS1PurchaseDiagnostics.cs
+@@ -0,0 +1,100 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at https://mozilla.org/MPL/2.0/.
++
++using System;
++using System.Linq;
++using System.Text.Json;
++using FSO.SimAntics.Engine;
++using FSO.SimAntics.Entities;
++using FSO.SimAntics.NetPlay.Model.Commands;
++
++namespace FSO.SimAntics.Utils
++{
++    /// <summary>Read-only purchase/action observations on the simulation thread.</summary>
++    public static class VMTS1PurchaseDiagnostics
++    {
++        public static bool Enabled(VM vm) => vm.TS1
++            && Environment.GetEnvironmentVariable("ODH_VM_DIAGNOSTICS") == "1";
++
++        public static short[] ObjectIDs(VM vm) => Enabled(vm)
++            ? Capture(() => vm.Entities.Select(entity => entity.ObjectID).OrderBy(id => id).ToArray()) : null;
++
++        public static int? Budget(VM vm) => Enabled(vm) ? Capture<int?>(() => vm.TS1State.CurrentFamily?.Budget) : null;
++
++        public static void Charged(VM vm, VMNetBuyObjectCmd command, VMAvatar caller,
++            int value, int? before, int? after)
++        {
++            if (!Enabled(vm)) return;
++            Emit("TS1 purchase event: ", () => new
++            {
++                SchemaVersion = 1, Phase = "charged", command.GUID,
++                command.x, command.y, command.level,
++                Direction = (byte)command.dir, Mode = (byte)command.Mode,
++                Value = value, CallerObjectID = caller?.ObjectID, CallerPersistID = caller?.PersistID,
++                FamilyBudgetBefore = before, FamilyBudgetAfter = after
++            });
++        }
++
++        public static void Placed(VM vm, VMNetBuyObjectCmd command, VMAvatar caller,
++            int value, short[] beforeIDs, VMMultitileGroup group, bool success)
++        {
++            if (!Enabled(vm)) return;
++            Emit("TS1 purchase event: ", () => new
++            {
++                SchemaVersion = 1, Phase = "placed", command.GUID,
++                command.x, command.y, command.level,
++                Direction = (byte)command.dir, Mode = (byte)command.Mode,
++                Value = value, CallerObjectID = caller?.ObjectID, CallerPersistID = caller?.PersistID,
++                FamilyBudgetAfter = Budget(vm), PlacementSucceeded = success,
++                BeforeObjectIDs = beforeIDs,
++                Pieces = group?.Objects.Select(piece => new
++                {
++                    piece.ObjectID, GUID = piece.Object.OBJ.GUID, MasterGUID = piece.MasterDefinition?.GUID ?? 0,
++                    Position = new { piece.Position.x, piece.Position.y, piece.Position.Level },
++                    Direction = (byte)piece.Direction
++                }).ToArray()
++            });
++        }
++
++        public static void ActionStarted(VM vm, VMEntity actor, VMQueuedAction action)
++        {
++            if (!Enabled(vm)) return;
++            Emit("TS1 action started: ", () => new
++            {
++                SchemaVersion = 1, ActorObjectID = actor.ObjectID,
++                QueueUID = action.UID, ActionName = action.Name,
++                RoutineID = action.ActionRoutine?.ID, CalleeID = action.Callee?.ObjectID,
++                Tick = vm.Scheduler.CurrentTickID
++            });
++        }
++
++        private static T Capture<T>(Func<T> capture)
++        {
++            try { return capture(); }
++            catch (Exception error)
++            {
++                ReportFailure("TS1 purchase event: ", error);
++                return default(T);
++            }
++        }
++
++        private static void Emit(string prefix, Func<object> record)
++        {
++            try { Console.Error.WriteLine(prefix + JsonSerializer.Serialize(record())); }
++            catch (Exception error) { ReportFailure(prefix, error); }
++        }
++
++        private static void ReportFailure(string prefix, Exception error)
++        {
++            try
++            {
++                Console.Error.WriteLine(prefix + JsonSerializer.Serialize(new
++                {
++                    SchemaVersion = 1, DiagnosticError = error.GetType().Name
++                }));
++            }
++            catch (Exception) { /* Optional diagnostics must never interrupt gameplay. */ }
 +        }
 +    }
 +}

@@ -49,6 +49,10 @@
   confirmar a base; identificar revisões, licenças e dependências. O destino é
   a experiência do The Sims 1 original, incluindo aparência, controles e regras,
   não reproduzir permanentemente as escolhas ou limitações do Simitone.
+- Prioridade humana adicional: usar provisoriamente a interface do Simitone
+  para validar os recursos; adaptar à interface original do The Sims 1 na
+  etapa final. Não iniciar agora uma reformulação visual. A interface original
+  continua sendo requisito de conclusão, incluindo menus e controles.
 - Preservar o motor C++, ferramentas, descobertas e alterações pendentes como
   apoio; não manter duas implementações completas em desenvolvimento paralelo
   nem traduzir todo o Simitone para C++ como primeira etapa. Novos testes devem

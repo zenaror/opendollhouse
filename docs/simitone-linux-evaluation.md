@@ -340,3 +340,32 @@ atômica; o arquivo cas.weather é global; salvar durante viagens e RuntimeSubse
 não foi validado. Esses limites não impedem o ciclo observado, mas impedem declarar
 confiabilidade geral ou equivalência ao original. Compra/construção, famílias,
 expansões, áudio/idioma e conteúdo personalizado continuam como próximos fluxos.
+
+## Compra, uso e persistência observados (2026-10-25)
+
+O ciclo `house07-chair-save-before-notice` compra a cadeira Werkbunnst por §80,
+coloca o novo objeto 139, faz Bob executar Sit e salva/reabre a casa em outro
+processo. O saldo §585, o objeto, a posição/direção e o preço permanecem iguais.
+A mesma ação Sit e postura sentada foram registradas juntas antes de salvar;
+o conforto não aumentou, e não foi testada uma segunda ordem Sit após reabrir.
+Não houve erros de VM/fatais.
+Os seis arquivos comerciais acompanhados conservaram os hashes; aplicação,
+tela virtual e dados temporários foram encerrados/removidos.
+
+`tools/simitone/compare_purchase.py` vincula compra/ação/estado/arquivo salvo a
+`session_smoke.py` e exige `--session-result` para aprovar o ciclo completo observado.
+Usar `--require-action-name Sit --require-posture 1` neste caso. O modo opcional
+`--require-comfort-gain` é outro requisito e não foi aprovado por este ensaio.
+Treze testes sintéticos cobrem rejeições de provas falsas. Um ensaio anterior
+sem ação Sit foi rejeitado, apesar de compra e persistência corretas. Outro ensaio
+foi bloqueado por um aviso automático do kit mágico antes de Save; o caso final
+salva mais cedo. Um relatório intermediário perdeu os campos detalhados por erro
+de cópia do resumo; o caso final mantém `result.json` integral e o resumo separado.
+
+O patch experimental corrente tem 18 arquivos, SHA256
+`bb7a35bfae36de0e56b8c8820dc5ff171fce8f0d5b65f9cc993000a9cd906ddf`,
+reproduzido exatamente após 0003/0004/0005; frontend 0006 permanece obrigatório.
+Diagnósticos de compra e ação só funcionam com `ODH_VM_DIAGNOSTICS=1` e não
+alteram decisões do jogo. Falhas dos diagnósticos são contidas. O build foi
+publicado localmente; distribuição binária e equivalência geral não estão aprovadas.
+Os limites e a próxima etapa estão em [continuidade](current-handoff.md).
