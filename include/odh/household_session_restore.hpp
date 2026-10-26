@@ -14,7 +14,8 @@ namespace odh {
 // An unpublished candidate. Prepare restores owned World/relationship/global
 // values before the caller constructs VM primitives and controllers against
 // them. The live session must remain intact until restore_execution succeeds.
-// Exactly one runtime resident may own a verified local Go Here dynamic route.
+// Legacy Go Here routes and verified generic resource-owned interactions share
+// the same resident execution graphs.
 struct SessionExecutionBinding {
     std::int16_t id = 0;
     Vm* vm = nullptr;
@@ -27,6 +28,8 @@ class HouseholdSessionRestore {
 public:
     using DynamicActionLoader = std::function<std::pair<RoutineSet,
         std::optional<SessionLinkedSemiglobal>>(const SessionDynamicActionOwner&)>;
+    using ResourceOwnerLoader = std::function<std::pair<RoutineSet,
+        std::optional<SessionLinkedSemiglobal>>(const SessionResourceCodeOwner&)>;
     static std::unique_ptr<HouseholdSessionRestore> prepare(
         const std::vector<std::uint8_t>& archive,
         const SessionResourceIdentity& expected_resources,
@@ -36,7 +39,8 @@ public:
         const LotContext& original_globals,
         const Ts1BootstrapGlobals& bootstrap,
         std::optional<std::int16_t> family_global,
-        SessionBundleLimits limits = {});
+        SessionBundleLimits limits = {},
+        const SessionCreatedObjectResolver& created_objects = {});
 
     World& world() {
         if(!world_)throw FormatError("candidate World ownership was transferred to the host");
@@ -57,6 +61,13 @@ public:
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
+    bool generic_execution() const {return bundle_.generic_execution;}
+    CodeOwner next_code_owner() const {return bundle_.next_code_owner;}
+    bool code_owner_ids_exhausted() const {return bundle_.code_owner_ids_exhausted;}
+    const std::vector<SessionCreatedObject>& created_objects() const {return bundle_.created_objects;}
+    const std::vector<SessionDeferredRemoval>& deferred_removals() const {return bundle_.deferred_removals;}
+    const std::vector<SessionResourceCodeOwner>& resource_owners(std::int16_t id) const;
+    void install_resource_owners(std::int16_t id,Vm&,const ResourceOwnerLoader&);
     const std::vector<SessionDynamicActionOwner>& dynamic_action_owners(std::int16_t id) const;
     void install_dynamic_action_owners(std::int16_t id, Vm&, const DynamicActionLoader&);
     const LocalRouteSnapshot* local_route(std::int16_t id) const {
@@ -83,6 +94,7 @@ private:
     std::optional<std::int16_t> dynamic_owner_resident_;
     const Vm* dynamic_owner_vm_ = nullptr;
     bool dynamic_owners_verified_ = false;
+    std::map<std::int16_t,const Vm*> resource_owner_vms_;
 };
 
 } // namespace odh

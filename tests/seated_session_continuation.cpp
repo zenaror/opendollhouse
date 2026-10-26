@@ -101,9 +101,79 @@ odh::SessionBundle animation_main_fixture(Fixture& source) {
     return bundle;
 }
 }
+void loaded_bank_fingerprint_cases() {
+    const std::array<std::uint8_t,32> legacy_golden{{
+        0x9d,0x70,0x25,0xa0,0x63,0xa6,0x41,0x78,0xcf,0x7b,0x18,0xcc,0xc5,0xba,0xbe,0xae,0xd0,0x13,0xb1,0xd7,0xe7,0xd8,0xf4,0x84,0xa5,0x7c,0x9a,0xd0,0x1b,0x0d,0x11,0x2a}};
+    require(odh::session_action_routine_fingerprint(action(4097))==legacy_golden,
+        "legacy strict closure fingerprint bytes changed");
+    auto bank=action(4097);bank.begin()->second.instructions[0].opcode=8217;
+    rejects([&]{odh::session_action_routine_fingerprint(bank);},
+        "legacy closure fingerprint accepted unresolved call after generic API addition");
+    const auto exact=odh::session_loaded_bank_fingerprint(bank);
+    require(exact==odh::session_loaded_bank_fingerprint(bank),"loaded bank digest is not deterministic");
+    auto changed=bank;changed.begin()->second.instructions[0].operands[7]=1;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"loaded bank digest missed operand change");
+    changed=bank;changed.begin()->second.instructions[0].opcode=8218;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"loaded bank digest missed unresolved target change");
+    changed=bank;changed.begin()->second.header[7]=1;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"loaded bank digest missed raw header change");
+    changed=bank;changed.begin()->second.metadata->locals++;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"loaded bank digest missed interpreted metadata change");
+    changed=bank;changed.emplace(odh::routine_key(8217),action(8217).begin()->second);
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"loaded bank digest missed added target routine");
+    require(odh::session_loaded_bank_fingerprint(action(4097))!=legacy_golden,
+        "loaded bank and strict closure digest domains collide");
+    for(const auto version:{0x8000,0x8001}){
+        changed=bank;changed.begin()->second.version=static_cast<std::uint16_t>(version);
+        changed.begin()->second.metadata.reset();
+        require(odh::session_loaded_bank_fingerprint(changed)!=exact,
+            "loaded bank legacy BHAV format is not identified");
+    }
+    require(odh::session_loaded_bank_fingerprint({})!=exact,"empty installed bank identity is not distinct");
+    rejects([&]{odh::session_loaded_bank_fingerprint({{{odh::RoutineScope::private_object,8217},bank.begin()->second}});},
+        "loaded bank scope and routine ID mismatch accepted");
+    rejects([&]{odh::session_loaded_bank_fingerprint({{odh::routine_key(1),bank.begin()->second}});},
+        "global routine accepted into resource owner bank");
+    changed=bank;changed.begin()->second.metadata.reset();
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"raw optional metadata presence omitted from identity");
+    changed=bank;changed.begin()->second.version=0x8003;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"unused raw BHAV version omitted from identity");
+    changed=bank;changed.begin()->second.instructions[0].on_true=1;
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"unused branch bytes omitted from identity");
+    changed=bank;changed.begin()->second.instructions.resize(32769,bank.begin()->second.instructions[0]);
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"native loaded bank inherited seated instruction limit");
+    changed.clear();for(std::uint16_t id=4096;id<4096+769;++id)changed.emplace(odh::routine_key(id),bank.begin()->second);
+    require(odh::session_loaded_bank_fingerprint(changed)!=exact,"native loaded bank inherited seated routine limit");
+    for(const auto version:{0x8000,0x8001}){
+        const odh::RoutineSet legacy{{odh::routine_key(4097),odh::Bhav{static_cast<std::uint16_t>(version),
+            {{2,254,255,{0,0,5,0,0,5,8,7}}},{},std::nullopt}}};
+        odh::Vm native(odh::RoutineSet{},{},{},{},{{0x80000000U,legacy}});
+        require(native.start(odh::routine_key(4097),{1,1,1,0x80000000U})==odh::VmStatus::running&&
+            native.run(1)==odh::VmStatus::returned_true&&native.temps()[0]==5,
+            "native VM does not execute metadata-absent legacy BHAV fixture");
+        require(odh::session_loaded_bank_fingerprint(legacy)!=exact,
+            "native metadata-absent executable bank fingerprint rejected");
+    }
+}
+
 int main(){try{
+    loaded_bank_fingerprint_cases();
     Fixture f;const auto bytes=odh::encode_session_bundle(f.bundle);const auto loaded=odh::decode_session_bundle(bytes,f.bundle.resources);
     require(odh::encode_session_bundle(loaded)==bytes&&f.resolve(loaded).count(0x80000000U),"canonical seated owner roundtrip");
+    auto unverified_carry=f.bundle;
+    unverified_carry.runtime_entities[0].playback.carry->code_owner++;
+    rejects([&]{odh::encode_session_bundle(unverified_carry);},
+        "SEAT dispatch exempted an undeclared carry owner from strict provenance validation");
+    auto mixed_dyno=f.bundle;
+    odh::SessionDynamicActionOwner unrelated;unrelated.owner=0x80000001U;
+    unrelated.target_id=2;unrelated.target_generation=f.world.find(2)->generation;
+    unrelated.target_guid=456;unrelated.source=f.definition.source;unrelated.asset=f.definition.asset;
+    unrelated.definition_chunk_id=f.definition.chunk_id;unrelated.tree_table_id=8;unrelated.root_routine=4097;
+    unrelated.routine_fingerprint=f.bundle.seated_continuation->sit_routine_fingerprint;
+    mixed_dyno.runtime_entities[0].dynamic_action_owners.push_back(unrelated);
+    rejects([&]{odh::encode_session_bundle(mixed_dyno);},
+        "SEAT dispatch bypassed unrelated DYNO owner validation");
+
     auto legacy=odh::decode_session_archive(bytes);
     auto legacy_seat=std::find_if(legacy.sections.begin(),legacy.sections.end(),[](const auto& s){
         return s.id==std::array<char,4>{{'S','E','A','T'}};});

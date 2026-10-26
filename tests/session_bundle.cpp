@@ -265,7 +265,234 @@ odh::SessionBundle object_thread_fixture() {
     return object_bundle;
 }
 
+odh::SessionResourceCodeOwner resource_owner(odh::CodeOwner owner,std::uint32_t guid,
+    std::uint16_t root=4097) {
+    odh::SessionResourceCodeOwner result;result.owner=owner;result.resource_guid=guid;
+    result.source="GameData/Objects/Objects.far";result.asset="synthetic-object.iff";
+    result.definition_chunk_id=17;result.tree_table_id=3;result.root_routine=root;
+    result.routine_fingerprint.fill(0x53);return result;
+}
+odh::SessionBundle generic_action_fixture() {
+    auto bundle=fixture();odh::World world;
+    require(world.create(1,odh::EntityKind::avatar)&&world.create_runtime_object(2,0x12345678u,{}, {})&&
+        world.create_runtime_object(3,0x12345678u,{},{}),"create generic actor and equal-resource targets");
+    odh::EntityThreadControllers controllers(world,1);
+    const odh::Bhav main{0x8002,{{17,0,255,{0,0,1,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,1,0,0}};
+    const odh::Bhav action{0x8002,{{17,254,255,{0,0,0,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,1,0,0}};
+    constexpr odh::CodeOwner owner=0x80000000U;
+    odh::Vm vm({{odh::routine_key(4096),main}},world.vm_memory(),{},controllers.interaction_primitive(),
+        {{owner,{{odh::routine_key(4097),action}}}});
+    require(vm.start(odh::routine_key(4096),{1,1,1},{10})==odh::VmStatus::running&&controllers.bind(vm),
+        "start generic Main and bind controllers");
+    require(controllers.interactions().enqueue(odh::routine_key(4097),{1,2,2,owner},{4})&&
+        controllers.interactions().enqueue(odh::routine_key(4097),{1,3,3,owner},{4}),
+        "queue one resource owner against two object instances");
+    require(vm.run(8)==odh::VmStatus::waiting&&controllers.interactions().active()&&
+        controllers.interactions().waiting(),"actual action tree reaches active IdleForInput wait");
+    odh::EntityVmScheduler scheduler(4);
+    require(scheduler.add(1,vm,[](std::uint64_t){return true;},[]{return true;},[]{return true;}),
+        "schedule generic action thread");
+    bundle.world=world.snapshot();bundle.runtime_entities={{1,vm.snapshot(),controllers.snapshot()}};
+    bundle.runtime_entities[0].resource_owners={resource_owner(owner,0x12345678u)};
+    bundle.scheduler=scheduler.snapshot();bundle.generic_execution=true;bundle.next_code_owner=owner+1;
+    return bundle;
+}
+odh::SessionBundle generic_object_fixture() {
+    auto bundle=object_thread_fixture();bundle.generic_execution=true;bundle.next_code_owner=0x80000001U;
+    auto& object=bundle.object_threads[0];const auto owner=0x80000000U;
+    object.code_owners.clear();object.resource_owners={resource_owner(owner,object.guid,4096)};object.primary_owner=owner;
+    object.resource_owners[0].bank_kind=odh::SessionCodeBankKind::complete_private;
+    for(auto& frame:object.vm.stack)frame.context.code_owner=owner;
+    if(object.vm.pending){object.vm.pending->context.code_owner=owner;
+        object.vm.pending->instruction.code_owner=owner;}
+    bundle.created_objects.push_back({object.id,object.generation,object.guid,
+        object.resource_owners[0].source,object.resource_owners[0].asset,17});
+    bundle.world.entities.back().static_footprint=false;
+    bundle.deferred_removals.push_back({object.id,object.generation});
+    bundle.removed_original_objects.push_back({206,1,0x654321u});
+    return bundle;
+}
+void generic_execution_cases() {
+    const auto bundle=generic_action_fixture();const auto bytes=odh::encode_session_bundle(bundle);
+    const auto decoded=odh::decode_session_bundle(bytes);
+    require(decoded.generic_execution&&decoded.runtime_entities[0].resource_owners.size()==1&&
+        decoded.runtime_entities[0].controllers.interactions.actions.size()==2&&
+        decoded.runtime_entities[0].controllers.interactions.active&&
+        decoded.runtime_entities[0].controllers.interactions.wait&&!decoded.runtime_entities[0].route&&
+        decoded.next_code_owner==bundle.next_code_owner&&odh::encode_session_bundle(decoded)==bytes,
+        "generic active action Idle wait and shared resource owner round-trip without route or fixed target");
+    auto archive=odh::decode_session_archive(bytes);
+    const auto section=std::find_if(archive.sections.begin(),archive.sections.end(),
+        [](const auto& value){return value.id==std::array<char,4>{{'G','E','X','P'}};});
+    require(section!=archive.sections.end()&&section->required,"generic execution capability is required");
+    const auto section_index=static_cast<std::size_t>(section-archive.sections.begin());
+    auto malformed=archive;malformed.sections[section_index].required=false;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"optional GEXP accepted");
+    malformed=archive;malformed.sections[section_index].data[0]=2;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"unknown GEXP version accepted");
+    malformed=archive;malformed.sections[section_index].data[6]=2;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"invalid exhaustion marker accepted");
+    malformed=archive;malformed.sections[section_index].data[7]=0;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"partial thread manifest accepted");
+    malformed=archive;malformed.sections[section_index].id={{'G','X','9','9'}};
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"unknown required execution capability accepted");
+    malformed=archive;malformed.sections[section_index].data.push_back(0);
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(malformed));},"GEXP trailing bytes accepted");
+    auto bad=bundle;bad.generic_execution=false;
+    rejects([&]{odh::encode_session_bundle(bad);},"new provenance silently written without required capability");
+    bad=bundle;bad.runtime_entities[0].resource_owners.clear();
+    rejects([&]{odh::encode_session_bundle(bad);},"unproven generic owner accepted");
+    bad=bundle;bad.runtime_entities[0].resource_owners[0].routine_fingerprint.fill(0);
+    rejects([&]{odh::encode_session_bundle(bad);},"empty owner fingerprint accepted");
+    bad=bundle;bad.runtime_entities[0].resource_owners[0].bank_kind=static_cast<odh::SessionCodeBankKind>(99);
+    rejects([&]{odh::encode_session_bundle(bad);},"unknown code bank kind accepted");
+    bad=bundle;bad.runtime_entities[0].resource_owners[0].linked_semiglobal=odh::SessionLinkedSemiglobal{
+        "Wrong","GameData/Global/Global.far","Wrong.iff"};
+    rejects([&]{odh::encode_session_bundle(bad);},"private bank unexpectedly binds semiglobal");
+    bad=bundle;bad.runtime_entities[0].resource_owners.push_back(resource_owner(0x80000001U,123));
+    ++bad.next_code_owner;
+    const auto retained_owner=odh::decode_session_bundle(odh::encode_session_bundle(bad));
+    require(retained_owner.runtime_entities[0].resource_owners.size()==2&&
+        retained_owner.runtime_entities[0].resource_owners[1].owner==0x80000001U,
+        "installed idle owner cache did not survive the session bundle");
+    bad=bundle;bad.next_code_owner=0x80000000U;
+    rejects([&]{odh::encode_session_bundle(bad);},"owner allocator would reuse live ID");
+    bad=bundle;bad.next_code_owner=0x80000011U;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(bad)).next_code_owner==0x80000011U,
+        "allocator cursor preserves gaps from unreferenced past owners");
+    bad.code_owner_ids_exhausted=true;
+    rejects([&]{odh::encode_session_bundle(bad);},"exhausted allocator with nonMAX cursor accepted");
+    bad.next_code_owner=UINT32_MAX;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(bad)).code_owner_ids_exhausted,
+        "exhaustion survives reload without ID reuse");
+    const auto objects=generic_object_fixture();const auto object_bytes=odh::encode_session_bundle(objects);
+    const auto object_copy=odh::decode_session_bundle(object_bytes);
+    require(object_copy.object_threads[0].code_owners.empty()&&object_copy.object_threads[0].resource_owners.size()==1&&
+        object_copy.created_objects.size()==1&&object_copy.removed_original_objects.size()==1&&
+        object_copy.deferred_removals.size()==1&&odh::encode_session_bundle(object_copy)==object_bytes,
+        "created object Main with process owner and deferred removal round-trips without GUID owner assumption");
+    auto wrong=objects;wrong.created_objects[0].generation++;
+    rejects([&]{odh::encode_session_bundle(wrong);},"created provenance with stale generation accepted");
+    wrong=objects;wrong.created_objects[0].guid++;
+    rejects([&]{odh::encode_session_bundle(wrong);},"created provenance with wrong GUID accepted");
+    wrong=objects;wrong.created_objects[0].source="different.far";
+    rejects([&]{odh::encode_session_bundle(wrong);},"created Main resource differs from origin");
+    wrong=objects;wrong.deferred_removals[0].generation++;
+    rejects([&]{odh::encode_session_bundle(wrong);},"stale deferred removal accepted");
+    wrong=objects;wrong.deferred_removals.push_back(wrong.deferred_removals[0]);
+    rejects([&]{odh::encode_session_bundle(wrong);},"duplicate deferred removal accepted");
+    wrong=objects;wrong.removed_original_objects={{objects.created_objects[0].id,
+        objects.created_objects[0].generation,objects.created_objects[0].guid}};
+    rejects([&]{odh::encode_session_bundle(wrong);},"removed identity still live accepted");
+    wrong=objects;wrong.created_objects.push_back(wrong.created_objects[0]);
+    rejects([&]{odh::encode_session_bundle(wrong);},"duplicate creation provenance accepted");
+    wrong=objects;wrong.object_threads[0].primary_owner=0;
+    rejects([&]{odh::encode_session_bundle(wrong);},"generic object primary bank inferred instead of explicit identity");
+    wrong=objects;wrong.object_threads[0].primary_owner++;
+    rejects([&]{odh::encode_session_bundle(wrong);},"object primary bank points to undeclared program");
+    wrong=objects;wrong.object_threads[0].resource_owners[0].resource_guid++;
+    rejects([&]{odh::encode_session_bundle(wrong);},"object bank provenance lacks its actual private resource");
+    auto same_guid_banks=objects;same_guid_banks.next_code_owner=0x80000002U;
+    auto secondary_bank=same_guid_banks.object_threads[0].resource_owners[0];secondary_bank.owner++;
+    same_guid_banks.object_threads[0].resource_owners.push_back(secondary_bank);
+    for(auto& frame:same_guid_banks.object_threads[0].vm.stack)frame.context.code_owner=secondary_bank.owner;
+    same_guid_banks.object_threads[0].vm.pending->context.code_owner=secondary_bank.owner;
+    same_guid_banks.object_threads[0].vm.pending->instruction.code_owner=secondary_bank.owner;
+    const auto explicit_primary=odh::decode_session_bundle(odh::encode_session_bundle(same_guid_banks));
+    require(explicit_primary.object_threads[0].primary_owner==0x80000000U&&
+        explicit_primary.object_threads[0].resource_owners.size()==2,
+        "explicit primary owner survives another referenced complete bank with the same GUID");
+    auto guid_backed=objects;guid_backed.next_code_owner=0x80000000U;
+    auto& guid_thread=guid_backed.object_threads[0];auto& guid_owner=guid_thread.resource_owners[0];
+    guid_owner.owner=guid_thread.guid;guid_thread.primary_owner=guid_thread.guid;guid_owner.identity=odh::SessionCodeOwnerIdentity::resource_guid;
+    for(auto& frame:guid_thread.vm.stack)frame.context.code_owner=guid_thread.guid;
+    guid_thread.vm.pending->context.code_owner=guid_thread.guid;
+    guid_thread.vm.pending->instruction.code_owner=guid_thread.guid;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(guid_backed)).next_code_owner==0x80000000U,
+        "GUID-backed private owner does not consume process owner allocator range");
+    guid_owner.identity=odh::SessionCodeOwnerIdentity::process;
+    rejects([&]{odh::encode_session_bundle(guid_backed);},"explicit process identity bypassed allocator cursor");
+    guid_owner.identity=static_cast<odh::SessionCodeOwnerIdentity>(99);
+    rejects([&]{odh::encode_session_bundle(guid_backed);},"unknown code owner identity profile accepted");
+    auto coincident=objects;coincident.next_code_owner=0x80000000U;
+    coincident.object_threads[0].guid=0x80000000U;
+    coincident.object_threads[0].resource_owners[0].resource_guid=0x80000000U;
+    coincident.world.entities.back().definition->guid=0x80000000U;
+    coincident.created_objects[0].guid=0x80000000U;
+    rejects([&]{odh::encode_session_bundle(coincident);},"allocated owner equal to GUID bypassed explicit allocation identity");
+    // A single process-wide resource owner may be installed into two native VMs.
+    auto shared=objects;
+    shared.runtime_entities[0].vm.stack.push_back({odh::routine_key(4096),0,
+        {1,207,207,0x80000000U},{},{},odh::VmCallReturnMode::ordinary,0});
+    shared.runtime_entities[0].vm.status=odh::VmStatus::running;
+    shared.runtime_entities[0].resource_owners=shared.object_threads[0].resource_owners;
+    shared.scheduler.entities[0].status=odh::VmStatus::running;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(shared)).generic_execution,
+        "one identical resource owner shared across VM manifests");
+    shared.runtime_entities[0].resource_owners[0].routine_fingerprint[0]^=1;
+    rejects([&]{odh::encode_session_bundle(shared);},"same global owner ID bound to conflicting bank fingerprints");
+    auto implicit_collision=objects;
+    auto& collided=implicit_collision.object_threads[0];collided.resource_owners[0].owner=2;collided.primary_owner=2;
+    for(auto& frame:collided.vm.stack)frame.context.code_owner=2;
+    collided.vm.pending->context.code_owner=2;collided.vm.pending->instruction.code_owner=2;
+    rejects([&]{odh::encode_session_bundle(implicit_collision);},
+        "resource owner in object VM collides with another resident implicit bank");
+    auto legacy_collision=object_thread_fixture();legacy_collision.generic_execution=true;
+    const auto legacy_id=legacy_collision.object_threads[0].guid;
+    legacy_collision.next_code_owner=legacy_id+1;
+    auto& invoker=legacy_collision.runtime_entities[0];invoker.vm.status=odh::VmStatus::running;
+    invoker.vm.stack={{odh::routine_key(4096),0,{1,207,207,legacy_id},{},{},odh::VmCallReturnMode::ordinary,0}};
+    invoker.resource_owners={resource_owner(legacy_id,legacy_id,4096)};
+    legacy_collision.scheduler.entities[0].status=odh::VmStatus::running;
+    rejects([&]{odh::encode_session_bundle(legacy_collision);},
+        "resource owner collides with another object's legacy bank registry");
+    auto mixed=dynamic_action_route_fixture();mixed.generic_execution=true;mixed.next_code_owner=0x80000001U;
+    odh::World mixed_world;require(mixed_world.restore_snapshot(mixed.world)&&
+        mixed_world.create(3,odh::EntityKind::avatar),"create second resident for mixed owner registries");
+    mixed.world=mixed_world.snapshot();
+    auto extra=fixture().runtime_entities[1];extra.id=3;extra.controllers.interactions.actor_id=3;
+    extra.controllers.interactions.actor_generation=mixed_world.find(3)->generation;
+    extra.vm.status=odh::VmStatus::running;
+    extra.vm.stack={{odh::routine_key(8213),0,{3,2,2,0x80000000U},{},{},odh::VmCallReturnMode::ordinary,0}};
+    const auto& dyno=mixed.runtime_entities[0].dynamic_action_owners[0];
+    auto res=resource_owner(dyno.owner,dyno.target_guid,dyno.root_routine);
+    res.source=dyno.source;res.asset=dyno.asset;res.definition_chunk_id=dyno.definition_chunk_id;
+    res.tree_table_id=dyno.tree_table_id;res.routine_fingerprint=dyno.routine_fingerprint;
+    res.bank_kind=odh::SessionCodeBankKind::private_and_semiglobal;res.linked_semiglobal=dyno.linked_semiglobal;
+    extra.resource_owners={res};mixed.runtime_entities.push_back(extra);
+    mixed.scheduler.entities.push_back({3,extra.vm.run_generation,extra.vm.steps,extra.vm.status,false,false,false});
+    rejects([&]{odh::encode_session_bundle(mixed);},"GEXP owner collides with another resident DYNO registry");
+    auto legacy_shared=object_thread_fixture();legacy_shared.generic_execution=true;
+    odh::World twin_world;require(twin_world.restore_snapshot(legacy_shared.world)&&
+        twin_world.create_runtime_object(208,legacy_shared.object_threads[0].guid,{},{}),
+        "create two instances with one legacy private resource");
+    legacy_shared.world=twin_world.snapshot();auto twin=legacy_shared.object_threads[0];
+    twin.id=208;twin.generation=twin_world.find(208)->generation;
+    for(auto& frame:twin.vm.stack)frame.context.caller=frame.context.callee=frame.context.stack_object=208;
+    twin.vm.pending->context.caller=twin.vm.pending->context.callee=twin.vm.pending->context.stack_object=208;
+    twin.sleep.actor->id=208;twin.sleep.actor->generation=twin.generation;
+    legacy_shared.object_threads.push_back(twin);
+    legacy_shared.scheduler.entities.push_back({208,twin.vm.run_generation,twin.vm.steps,twin.vm.status,false,false,false});
+    require(odh::decode_session_bundle(odh::encode_session_bundle(legacy_shared)).object_threads.size()==2,
+        "identical legacy GUID owner sharing does not advance process allocator");
+    legacy_shared.object_threads[1].code_owners[0].routine_fingerprint[0]^=1;
+    rejects([&]{odh::encode_session_bundle(legacy_shared);},"legacy shared owner bank fingerprint conflict accepted");
+    auto secondary=object_thread_fixture();secondary.generic_execution=true;
+    auto secondary_owner=secondary.object_threads[0].code_owners[0];secondary_owner.owner=UINT32_MAX;
+    secondary.object_threads[0].code_owners.push_back(secondary_owner);
+    rejects([&]{odh::encode_session_bundle(secondary);},"secondary legacy process owner skipped allocator cursor validation");
+    // Native push-head insertion reorders UIDs; a completed UID is not an order bound.
+    auto reordered=live_wait_fixture(false);auto& queue=reordered.runtime_entities[0].controllers.interactions;
+    const auto target_generation=reordered.world.entities.front().generation;
+    const odh::VmCall call{odh::routine_key(4097),{1,1,1}, {},odh::VmCallReturnMode::interaction_next_tick};
+    queue.sequence=3;queue.actions={{3,target_generation,call},{1,target_generation,call}};
+    queue.completion=odh::InteractionCompletion{2,1,0,true};
+    require(odh::decode_session_bundle(odh::encode_session_bundle(reordered)).runtime_entities[0].controllers.
+        interactions.actions.front().uid==3,"push-head queue order and prior completion UID are preserved");
+}
+
 int main() {
+    generic_execution_cases();
     const auto source=fixture();
     const auto bytes=odh::encode_session_bundle(source);
     const auto restored=odh::decode_session_bundle(bytes,source.resources);

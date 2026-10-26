@@ -66,6 +66,39 @@ std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&
     return hash.finish();
 }
 
+std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet& routines) {
+    // This is identity, not an executable-closure verifier. Match the native
+    // owner constructor's key rules; unused trees must not create new startup
+    // failures. The map keyspace bounds routine count, while vector lengths
+    // are serialized without narrowing and SHA-256 checks its own length bound.
+    static_assert(sizeof(std::size_t)<=sizeof(std::uint64_t),"loaded bank length must fit uint64");
+    Sha256 hash;static constexpr char domain[]="ODH-LOADED-CODE-BANK-V1";
+    const auto length=[&](std::size_t value){
+        const auto count=static_cast<std::uint64_t>(value);
+        std::array<std::uint8_t,8> bytes{};
+        for(unsigned n=0;n<8;++n)bytes[n]=static_cast<std::uint8_t>(count>>(n*8));
+        hash.update(bytes.data(),bytes.size());
+    };
+    hash.update(domain,sizeof(domain));length(routines.size());
+    for(const auto& item:routines){
+        const auto& key=item.first;const auto& bhav=item.second;
+        if((key.scope!=RoutineScope::private_object&&key.scope!=RoutineScope::semiglobal)||
+           routine_key(key.id).scope!=key.scope)
+            throw FormatError("loaded owner bank has invalid native owner routine keys");
+        digest_u16(hash,key.id);digest_u16(hash,bhav.version);
+        hash.update(bhav.header.data(),bhav.header.size());
+        const std::uint8_t metadata_present=bhav.metadata?1:0;hash.update(&metadata_present,1);
+        if(bhav.metadata){const auto& m=*bhav.metadata;
+            hash.update(&m.type,1);hash.update(&m.arguments,1);digest_u16(hash,m.locals);digest_u16(hash,m.tree_version);}
+        length(bhav.instructions.size());
+        for(const auto& ins:bhav.instructions){
+            digest_u16(hash,ins.opcode);hash.update(&ins.on_true,1);hash.update(&ins.on_false,1);
+            hash.update(ins.operands.data(),ins.operands.size());
+        }
+    }
+    return hash.finish();
+}
+
 void validate_seated_session_continuation(const SessionBundle& bundle) {
     if(!bundle.seated_continuation)throw FormatError("seated continuation metadata is absent");
     const auto& c=*bundle.seated_continuation;

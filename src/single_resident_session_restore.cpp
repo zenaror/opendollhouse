@@ -144,6 +144,7 @@ std::unique_ptr<SingleResidentSessionRestore> SingleResidentSessionRestore::prep
     const SessionHostState& selection,const WorldSnapshot& original,const LotContext& globals,
     const Ts1BootstrapGlobals& bootstrap,std::optional<std::int16_t> family,SessionBundleLimits limits) {
     auto bundle=decode_session_bundle(archive,resources,limits);
+    if(bundle.generic_execution)throw FormatError("generic execution requires the household restore profile");
     if(!bundle.household_roster.empty())throw FormatError("legacy single-resident restore cannot load a household session");
     const auto& host=bundle.host;
     if(host.neighborhood_mode!=selection.neighborhood_mode||host.house_number!=selection.house_number||

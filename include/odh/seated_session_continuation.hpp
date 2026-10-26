@@ -9,6 +9,14 @@ namespace odh {
 // keys and 8002 metadata. The host still verifies source/asset/root separately.
 std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&);
 
+// GEXP resource identity of the EXACT loaded private/semiglobal bank, not a
+// claim that every potential call is resolvable. Missing targets remain normal
+// native VM runtime faults if reached. Checks native owner key consistency;
+// hashes raw versions/headers, optional metadata and 64-bit lengths without
+// imposing seated closure limits or validating unused executable paths. Never
+// loads more code. Domain is distinct from legacy closures.
+std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet&);
+
 // Value-only checks. Requires the continuation and exactly one idle resident,
 // a successful completed Sit, reciprocal positioned containment and matching
 // Stand EP27. Dynamic owner declarations must equal the referenced owner set.

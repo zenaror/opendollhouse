@@ -8,6 +8,7 @@
 #include <limits>
 #include <utility>
 #include <set>
+#include <map>
 
 namespace odh {
 namespace {
@@ -25,6 +26,7 @@ constexpr std::array<char,4> seated_id{{'S','E','A','T'}};
 constexpr std::array<char,4> route_id{{'R','O','U','T'}};
 constexpr std::array<char,4> object_vm_id{{'O','B','V','M'}};
 constexpr std::array<char,4> dynamic_owner_id{{'D','Y','N','O'}};
+constexpr std::array<char,4> generic_execution_id{{'G','E','X','P'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
 static_assert(sizeof(float)==sizeof(std::uint32_t),"session Playback codec requires 32-bit float");
@@ -406,8 +408,8 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
     if(interactions.active) {
         if(interactions.actions.empty()||
            interactions.active->uid!=interactions.actions.front().uid||
-           !valid_ticket(interactions.active->ticket)||interactions.wait||
-           interactions.resume_tick||interactions.idle_start)
+           !valid_ticket(interactions.active->ticket)||interactions.resume_tick||
+           (interactions.wait?!action_frame:interactions.idle_start!=0))
             throw FormatError("session active interaction is invalid");
         if(vm.interaction_return) {
             if(action_frame||vm.interaction_return->ticket!=interactions.active->ticket||
@@ -418,7 +420,7 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
             throw FormatError("session active interaction has no VM frame");
     }
     if(interactions.wait) {
-        if(interactions.active||interactions.resume_tick||
+        if(interactions.resume_tick||(interactions.active&&!action_frame)||
            !valid_ticket(interactions.wait->ticket)||
            interactions.wait->deadline<=interactions.clock||
            interactions.wait->deadline>max_clock||vm.status!=VmStatus::waiting||
@@ -442,7 +444,8 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
         const auto& completion=*interactions.completion;
         if(!completion.uid||completion.uid>interactions.sequence||
            !valid_ticket(completion.ticket)||completion.tick>interactions.clock||
-           (!interactions.actions.empty()&&completion.uid>=interactions.actions.front().uid))
+           std::any_of(interactions.actions.begin(),interactions.actions.end(),
+               [&](const auto& action){return action.uid==completion.uid;}))
             throw FormatError("session interaction completion is invalid");
     }
     if(interactions.resume_tick) {
@@ -469,6 +472,95 @@ std::optional<SessionLinkedSemiglobal> read_linked_semiglobal(Reader& r) {
     SessionLinkedSemiglobal link;link.name=r.string();link.archive=r.string();link.entry=r.string();
     return link;
 }
+using ResourceOwnerRoster = std::vector<std::pair<std::int16_t,const std::vector<SessionResourceCodeOwner>*>>;
+ResourceOwnerRoster resource_owner_roster(const SessionBundle& bundle) {
+    ResourceOwnerRoster result;
+    for(const auto& state:bundle.runtime_entities)result.emplace_back(state.id,&state.resource_owners);
+    for(const auto& state:bundle.object_threads)result.emplace_back(state.id,&state.resource_owners);
+    std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.first<b.first;});
+    return result;
+}
+std::vector<std::uint8_t> encode_generic_execution(const SessionBundle& bundle,const SessionBundleLimits& limits) {
+    Writer w(limits.archive.max_section_bytes);w.u16(1);
+    w.u32(bundle.next_code_owner);w.u8(bundle.code_owner_ids_exhausted?1:0);
+    const auto roster=resource_owner_roster(bundle);w.u16(static_cast<std::uint16_t>(roster.size()));
+    for(const auto& thread:roster){
+        w.i16(thread.first);
+        CodeOwner primary=0;
+        for(const auto& object:bundle.object_threads)if(object.id==thread.first)primary=object.primary_owner;
+        w.u32(primary);w.u16(static_cast<std::uint16_t>(thread.second->size()));
+        for(const auto& owner:*thread.second){
+            w.u32(owner.owner);w.u32(owner.resource_guid);w.string(owner.source);w.string(owner.asset);
+            w.u16(owner.definition_chunk_id);w.u16(owner.tree_table_id);w.u16(owner.root_routine);
+            w.u8(static_cast<std::uint8_t>(owner.bank_kind));w.u8(static_cast<std::uint8_t>(owner.identity));write_linked_semiglobal(w,owner.linked_semiglobal);
+            w.append(owner.routine_fingerprint.data(),owner.routine_fingerprint.size());
+        }
+    }
+    w.u32(static_cast<std::uint32_t>(bundle.created_objects.size()));
+    for(const auto& object:bundle.created_objects){
+        w.i16(object.id);w.u64(object.generation);w.u32(object.guid);w.string(object.source);w.string(object.asset);
+        w.u16(object.definition_chunk_id);
+    }
+    w.u32(static_cast<std::uint32_t>(bundle.removed_original_objects.size()));
+    for(const auto& object:bundle.removed_original_objects){w.i16(object.id);w.u64(object.generation);w.u32(object.guid);}
+    w.u32(static_cast<std::uint32_t>(bundle.deferred_removals.size()));
+    for(const auto& object:bundle.deferred_removals){w.i16(object.id);w.u64(object.generation);}
+    return w.take();
+}
+void decode_generic_execution(const std::vector<std::uint8_t>& bytes,SessionBundle& bundle,
+                              const SessionBundleLimits& limits) {
+    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported generic execution profile version");
+    bundle.next_code_owner=r.u32();const auto exhausted=r.u8();
+    if(exhausted>1)throw FormatError("invalid generic code owner exhaustion marker");
+    bundle.code_owner_ids_exhausted=exhausted!=0;
+    const auto roster=resource_owner_roster(bundle);
+    if(r.u16()!=roster.size())throw FormatError("generic execution manifest does not cover every thread");
+    for(const auto& thread:roster){
+        if(r.i16()!=thread.first)throw FormatError("generic execution thread manifest is reordered or unrelated");
+        const auto primary=r.u32();
+        const auto count=r.u16();
+        if(count>limits.max_resource_owners_per_thread)throw FormatError("generic owner count exceeds limit");
+        std::vector<SessionResourceCodeOwner>* owners=nullptr;
+        for(auto& state:bundle.runtime_entities)if(state.id==thread.first){
+            if(primary)throw FormatError("resident manifest cannot declare an object primary owner");
+            owners=&state.resource_owners;
+        }
+        for(auto& state:bundle.object_threads)if(state.id==thread.first){
+            owners=&state.resource_owners;state.primary_owner=primary;
+        }
+        if(!owners)throw FormatError("generic execution owner manifest has no runtime thread");
+        for(unsigned n=0;n<count;++n){
+            SessionResourceCodeOwner owner;owner.owner=r.u32();owner.resource_guid=r.u32();
+            owner.source=r.string();owner.asset=r.string();owner.definition_chunk_id=r.u16();
+            owner.tree_table_id=r.u16();owner.root_routine=r.u16();owner.bank_kind=static_cast<SessionCodeBankKind>(r.u8());
+            owner.identity=static_cast<SessionCodeOwnerIdentity>(r.u8());
+            owner.linked_semiglobal=read_linked_semiglobal(r);
+            const auto hash=r.bytes(owner.routine_fingerprint.size());
+            std::copy(hash.begin(),hash.end(),owner.routine_fingerprint.begin());owners->push_back(std::move(owner));
+        }
+    }
+    const auto created=r.u32();
+    if(created>limits.world.world.entities)throw FormatError("created object manifest exceeds limit");
+    for(std::uint32_t n=0;n<created;++n){
+        SessionCreatedObject object;object.id=r.i16();object.generation=r.u64();object.guid=r.u32();
+        object.source=r.string();object.asset=r.string();object.definition_chunk_id=r.u16();
+        bundle.created_objects.push_back(std::move(object));
+    }
+    const auto removed=r.u32();
+    if(removed>limits.world.world.entities)throw FormatError("removed original manifest exceeds limit");
+    for(std::uint32_t n=0;n<removed;++n){
+        SessionRemovedOriginalObject object;object.id=r.i16();object.generation=r.u64();object.guid=r.u32();
+        bundle.removed_original_objects.push_back(object);
+    }
+    const auto removals=r.u32();
+    if(removals>limits.world.world.entities)throw FormatError("deferred removal manifest exceeds limit");
+    for(std::uint32_t n=0;n<removals;++n){
+        SessionDeferredRemoval object;object.id=r.i16();object.generation=r.u64();bundle.deferred_removals.push_back(object);
+    }
+    if(!r.done())throw FormatError("generic execution profile has trailing data");
+    bundle.generic_execution=true;
+}
+
 std::vector<std::uint8_t> encode_dynamic_owners(const std::vector<SessionRuntimeEntity>& entities,
                                                 const SessionBundleLimits& limits) {
     return encode_roster(entities,limits,[&](const auto& entity){
@@ -530,8 +622,10 @@ void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity&
             return owner.owner==vm.pending->context.code_owner&&owner.target_id==route.target&&
                 owner.target_guid==0x7c4&&owner.root_routine==4096&&!owner.linked_semiglobal;
         });
+    const bool verified_resource_owner=std::any_of(entity.resource_owners.begin(),entity.resource_owners.end(),
+        [&](const auto& owner){return owner.owner==vm.pending->context.code_owner;});
     if(vm.pending->context.caller!=entity.id||vm.pending->context.stack_object!=route.target||
-       (vm.pending->context.code_owner!=static_cast<CodeOwner>(entity.id)&&!verified_destination_owner)||
+       (vm.pending->context.code_owner!=static_cast<CodeOwner>(entity.id)&&!verified_destination_owner&&!verified_resource_owner)||
        vm.stack.empty()||
        vm.pending->instruction.depth!=vm.stack.size()||vm.pending->context.caller!=vm.stack.back().context.caller||
        vm.pending->context.stack_object!=vm.stack.back().context.stack_object||
@@ -671,7 +765,7 @@ void validate_object_thread_links(const SessionObjectThread& thread,const Entity
        sleep.actor->id!=thread.id||sleep.actor->generation!=thread.generation||
        sleep.actor->run_generation!=vm.run_generation)
         throw FormatError("session object thread identity or scheduler state is inconsistent");
-    if(thread.code_owners.empty()||thread.code_owners.size()>16)
+    if((thread.code_owners.empty()&&thread.resource_owners.empty())||thread.code_owners.size()>16)
         throw FormatError("session object thread has no bounded code provenance");
     std::uint32_t previous_owner=0;bool found_private_owner=false;
     for(const auto& owner:thread.code_owners){
@@ -680,9 +774,14 @@ void validate_object_thread_links(const SessionObjectThread& thread,const Entity
             throw FormatError("session object code owner provenance is incomplete or unordered");
         found_private_owner|=owner.owner==thread.guid;previous_owner=owner.owner;
     }
+    found_private_owner|=std::any_of(thread.resource_owners.begin(),thread.resource_owners.end(),
+        [&](const auto& owner){return owner.owner==thread.primary_owner&&owner.resource_guid==thread.guid&&
+            owner.bank_kind==SessionCodeBankKind::complete_private;});
     if(!found_private_owner)throw FormatError("session object private code owner is absent");
     const auto owner_is_pinned=[&](CodeOwner owner){return !owner||std::any_of(
-        thread.code_owners.begin(),thread.code_owners.end(),[&](const auto& value){return value.owner==owner;});};
+        thread.code_owners.begin(),thread.code_owners.end(),[&](const auto& value){return value.owner==owner;})||
+        std::any_of(thread.resource_owners.begin(),thread.resource_owners.end(),
+            [&](const auto& value){return value.owner==owner;});};
     if(std::any_of(vm.stack.begin(),vm.stack.end(),[&](const auto& frame){
            return !owner_is_pinned(frame.context.code_owner);})||
        (vm.pending&&!owner_is_pinned(vm.pending->context.code_owner))||
@@ -716,7 +815,7 @@ void validate_object_thread_links(const SessionObjectThread& thread,const Entity
 }
 
 void validate_dynamic_action_owners(const SessionRuntimeEntity& entity,
-    const std::vector<Entity>& world) {
+    const std::vector<Entity>& world,const SessionSeatedContinuation* verified_seated) {
     std::set<CodeOwner> referenced;
     const auto note=[&](CodeOwner owner){if(owner>=0x80000000U)referenced.insert(owner);};
     for(const auto& frame:entity.vm.stack)note(frame.context.code_owner);
@@ -727,6 +826,12 @@ void validate_dynamic_action_owners(const SessionRuntimeEntity& entity,
     for(const auto& action:entity.controllers.interactions.actions)note(action.call.context.code_owner);
     if(entity.playback.state)note(entity.playback.state->resource.code_owner);
     if(entity.playback.carry)note(entity.playback.carry->code_owner);
+    for(const auto& owner:entity.resource_owners)referenced.erase(owner.owner);
+    // SEAT has a separate strict owner roster for the completed Sit carry.
+    // Only bindings already verified by validate_seated_session_continuation
+    // are handled there; do not misclassify them as Go Here DYNO owners.
+    if(verified_seated&&entity.id==verified_seated->actor_id)
+        for(const auto& owner:verified_seated->code_owners)referenced.erase(owner.owner);
     if(!referenced.empty()&&!entity.route)
         throw FormatError("dynamic action owners are supported only for a saved local route");
     std::set<CodeOwner> declared;CodeOwner previous=0;
@@ -757,9 +862,199 @@ void validate_dynamic_action_owners(const SessionRuntimeEntity& entity,
         throw FormatError("dynamic action owner roster is missing, excessive or unrelated to the VM");
 }
 
+bool valid_resource_text(const std::string& value,bool allow_empty=false) {
+    return (allow_empty||!value.empty())&&value.size()<=4096&&value.find('\0')==std::string::npos;
+}
+bool valid_resource_link(const std::optional<SessionLinkedSemiglobal>& link) {
+    return !link||(valid_resource_text(link->name)&&valid_resource_text(link->archive)&&
+        valid_resource_text(link->entry)&&link->name.find_first_of("/\\.:")==std::string::npos&&
+        link->archive.front()!='/'&&link->archive.find('\\')==std::string::npos&&
+        link->archive.find(':')==std::string::npos&&link->archive.find("..")==std::string::npos&&
+        link->entry==link->name+".iff");
+}
+std::set<CodeOwner> referenced_owners(const VmSnapshot& vm) {
+    std::set<CodeOwner> result;
+    const auto note=[&](CodeOwner owner){if(owner)result.insert(owner);};
+    for(const auto& frame:vm.stack)note(frame.context.code_owner);
+    if(vm.pending)note(vm.pending->context.code_owner);
+    for(const auto& wait:vm.suspended_pending)note(wait.context.code_owner);
+    if(vm.interaction_return)note(vm.interaction_return->code_owner);
+    if(vm.external_frame_return)note(vm.external_frame_return->code_owner);
+    return result;
+}
+void validate_resource_owners(const std::vector<SessionResourceCodeOwner>& owners,
+    const std::set<CodeOwner>& referenced,const std::set<CodeOwner>& implicit,
+    const SessionBundleLimits& limits) {
+    if(owners.size()>limits.max_resource_owners_per_thread||owners.size()>UINT16_MAX)
+        throw FormatError("session resource owner count exceeds bounds");
+    std::set<CodeOwner> declared;CodeOwner previous=0;
+    for(const auto& owner:owners){
+        const auto scope=routine_key(owner.root_routine).scope;
+        const bool private_root=scope==RoutineScope::private_object;
+        const bool semiglobal_root=scope==RoutineScope::semiglobal;
+        const bool kind_valid=owner.bank_kind==SessionCodeBankKind::private_closure||
+            owner.bank_kind==SessionCodeBankKind::complete_private||
+            owner.bank_kind==SessionCodeBankKind::private_and_semiglobal;
+        const bool identity_valid=owner.identity==SessionCodeOwnerIdentity::process?
+            owner.owner>=0x80000000U:(owner.identity==SessionCodeOwnerIdentity::resource_guid&&owner.owner==owner.resource_guid);
+        if(!identity_valid||!owner.owner||owner.owner<=previous||implicit.count(owner.owner)||!owner.resource_guid||
+           !owner.definition_chunk_id||!valid_resource_text(owner.source)||
+           !valid_resource_text(owner.asset,true)||!valid_resource_link(owner.linked_semiglobal)||
+           !nonzero_digest(owner.routine_fingerprint)||!kind_valid||(!private_root&&!semiglobal_root)||
+           (owner.bank_kind==SessionCodeBankKind::private_and_semiglobal?!owner.linked_semiglobal:
+                (owner.linked_semiglobal.has_value()||!private_root)))
+            throw FormatError("session resource owner provenance is invalid or unordered");
+        // The owner manifest records code banks installed in this VM, including
+        // banks retained for interactions that will be queued later. A bank
+        // need not be named by the VM at this exact tick.
+        declared.insert(owner.owner);previous=owner.owner;
+    }
+    for(const auto owner:referenced)
+        if(!implicit.count(owner)&&!declared.count(owner))
+            throw FormatError("session execution references an undeclared resource owner");
+}
+bool same_resource_owner(const SessionResourceCodeOwner& a,const SessionResourceCodeOwner& b) {
+    return a.resource_guid==b.resource_guid&&a.source==b.source&&a.asset==b.asset&&
+        a.definition_chunk_id==b.definition_chunk_id&&a.tree_table_id==b.tree_table_id&&
+        a.root_routine==b.root_routine&&a.bank_kind==b.bank_kind&&a.identity==b.identity&&a.linked_semiglobal==b.linked_semiglobal&&
+        a.routine_fingerprint==b.routine_fingerprint;
+}
+void validate_generic_execution(const SessionBundle& bundle,const SessionBundleLimits& limits) {
+    const bool has_resource_owners=std::any_of(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+        [](const auto& state){return !state.resource_owners.empty();})||
+        std::any_of(bundle.object_threads.begin(),bundle.object_threads.end(),
+            [](const auto& state){return !state.resource_owners.empty()||state.primary_owner!=0;});
+    if(!bundle.generic_execution){
+        if(has_resource_owners||!bundle.created_objects.empty()||!bundle.removed_original_objects.empty()||
+           !bundle.deferred_removals.empty()||bundle.next_code_owner!=0x80000000U||bundle.code_owner_ids_exhausted)
+            throw FormatError("generic execution values require GEXP profile");
+        return;
+    }
+    if(bundle.runtime_entities.size()+bundle.object_threads.size()>UINT16_MAX)
+        throw FormatError("generic execution thread count exceeds format");
+    if(bundle.next_code_owner<0x80000000U||
+       (bundle.code_owner_ids_exhausted&&bundle.next_code_owner!=UINT32_MAX))
+        throw FormatError("generic code owner allocator state is invalid");
+    const auto allocated=[&](CodeOwner owner){
+        if(owner>=0x80000000U&&!bundle.code_owner_ids_exhausted&&owner>=bundle.next_code_owner)
+            throw FormatError("persisted process owner is ahead of allocator cursor");
+    };
+    for(const auto& state:bundle.runtime_entities){
+        for(const auto& owner:state.resource_owners)if(owner.identity==SessionCodeOwnerIdentity::process)allocated(owner.owner);
+        for(const auto& owner:state.dynamic_action_owners)allocated(owner.owner);
+    }
+    for(const auto& state:bundle.object_threads){
+        for(const auto& owner:state.resource_owners)if(owner.identity==SessionCodeOwnerIdentity::process)allocated(owner.owner);
+        // Legacy OBVM identifies its primary private bank by GUID, not a
+        // process allocation. Secondary process owners still consume the cursor.
+        for(const auto& owner:state.code_owners)if(owner.owner!=state.guid)allocated(owner.owner);
+    }
+    std::set<CodeOwner> resident_owners;
+    for(const auto& state:bundle.runtime_entities)resident_owners.insert(static_cast<CodeOwner>(state.id));
+    std::map<CodeOwner,const SessionDynamicActionOwner*> legacy_actions;
+    std::map<CodeOwner,const SessionActionCodeOwner*> legacy_objects;
+    for(const auto& state:bundle.runtime_entities)for(const auto& owner:state.dynamic_action_owners){
+        if(resident_owners.count(owner.owner))throw FormatError("dynamic owner collides with a resident owner");
+        const auto inserted=legacy_actions.emplace(owner.owner,&owner);
+        if(!inserted.second){const auto& old=*inserted.first->second;
+            if(old.target_guid!=owner.target_guid||old.source!=owner.source||old.asset!=owner.asset||
+               old.definition_chunk_id!=owner.definition_chunk_id||old.tree_table_id!=owner.tree_table_id||
+               old.root_routine!=owner.root_routine||old.linked_semiglobal!=owner.linked_semiglobal||
+               old.routine_fingerprint!=owner.routine_fingerprint)
+                throw FormatError("legacy dynamic owner ID has conflicting programs across threads");
+        }
+    }
+    for(const auto& state:bundle.object_threads)for(const auto& owner:state.code_owners){
+        if(resident_owners.count(owner.owner)||legacy_actions.count(owner.owner))
+            throw FormatError("legacy object owner ID collides with another owner profile");
+        const auto inserted=legacy_objects.emplace(owner.owner,&owner);
+        if(!inserted.second){const auto& old=*inserted.first->second;
+            if(old.source!=owner.source||old.asset!=owner.asset||old.root_routine!=owner.root_routine||
+               old.routine_fingerprint!=owner.routine_fingerprint)
+                throw FormatError("legacy object owner ID has conflicting programs across threads");
+        }
+    }
+    std::map<CodeOwner,const SessionResourceCodeOwner*> global_owners;
+    const auto register_owners=[&](const auto& owners){
+        for(const auto& owner:owners){
+            if(resident_owners.count(owner.owner)||legacy_actions.count(owner.owner)||legacy_objects.count(owner.owner))
+                throw FormatError("resource owner ID collides with an implicit or legacy owner profile");
+            const auto inserted=global_owners.emplace(owner.owner,&owner);
+            if(!inserted.second&&!same_resource_owner(owner,*inserted.first->second))
+                throw FormatError("shared resource owner ID has conflicting programs across threads");
+        }
+    };
+    for(const auto& state:bundle.runtime_entities)register_owners(state.resource_owners);
+    for(const auto& state:bundle.object_threads)register_owners(state.resource_owners);
+    for(const auto& state:bundle.runtime_entities){
+        auto referenced=referenced_owners(state.vm);std::set<CodeOwner> implicit{static_cast<CodeOwner>(state.id)};
+        for(const auto& action:state.controllers.interactions.actions)
+            if(action.call.context.code_owner)referenced.insert(action.call.context.code_owner);
+        if(state.playback.state&&state.playback.state->resource.code_owner)
+            referenced.insert(state.playback.state->resource.code_owner);
+        if(state.playback.carry&&state.playback.carry->code_owner)referenced.insert(state.playback.carry->code_owner);
+        for(const auto& owner:state.dynamic_action_owners)implicit.insert(owner.owner);
+        validate_resource_owners(state.resource_owners,referenced,implicit,limits);
+    }
+    for(const auto& thread:bundle.object_threads){
+        std::set<CodeOwner> implicit;
+        for(const auto& owner:thread.code_owners)implicit.insert(owner.owner);
+        auto referenced=referenced_owners(thread.vm);
+        if(thread.primary_owner){
+            const auto primary=std::find_if(thread.resource_owners.begin(),thread.resource_owners.end(),
+                [&](const auto& owner){return owner.owner==thread.primary_owner;});
+            if(primary==thread.resource_owners.end()||primary->resource_guid!=thread.guid||
+               primary->bank_kind!=SessionCodeBankKind::complete_private)
+                throw FormatError("object primary owner is not its exact complete private resource bank");
+            referenced.insert(thread.primary_owner);
+        }else if(thread.code_owners.empty())throw FormatError("generic object thread has no explicit primary owner");
+        validate_resource_owners(thread.resource_owners,referenced,implicit,limits);
+    }
+    if(bundle.created_objects.size()>limits.world.world.entities||
+       bundle.removed_original_objects.size()>limits.world.world.entities||
+       bundle.deferred_removals.size()>limits.world.world.entities)
+        throw FormatError("generic execution object provenance exceeds World limits");
+    std::int16_t previous=0;
+    for(const auto& origin:bundle.created_objects){
+        const auto entity=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+            [&](const auto& value){return value.id==origin.id;});
+        if(origin.id<=previous||!origin.generation||origin.generation>bundle.world.generation_sequence||
+           !origin.guid||!origin.definition_chunk_id||!valid_resource_text(origin.source)||
+           !valid_resource_text(origin.asset,true)||entity==bundle.world.entities.end()||
+           entity->kind!=EntityKind::object||!entity->definition||entity->definition->guid!=origin.guid||
+           entity->generation!=origin.generation)
+            throw FormatError("created object provenance differs from World identity");
+        previous=origin.id;
+        const auto thread=std::find_if(bundle.object_threads.begin(),bundle.object_threads.end(),
+            [&](const auto& value){return value.id==origin.id;});
+        if(thread!=bundle.object_threads.end()&&!std::any_of(thread->resource_owners.begin(),thread->resource_owners.end(),
+            [&](const auto& owner){return owner.owner==thread->primary_owner&&owner.resource_guid==origin.guid&&owner.source==origin.source&&
+                owner.asset==origin.asset&&owner.definition_chunk_id==origin.definition_chunk_id;}))
+            throw FormatError("created object Main bank differs from creation resource");
+    }
+    previous=0;
+    for(const auto& removed:bundle.removed_original_objects){
+        if(removed.id<=previous||!removed.generation||removed.generation>bundle.world.generation_sequence||!removed.guid||
+           std::any_of(bundle.world.entities.begin(),bundle.world.entities.end(),[&](const auto& entity){
+               return entity.id==removed.id&&entity.generation==removed.generation;}))
+            throw FormatError("removed original object identity is invalid or still live");
+        previous=removed.id;
+    }
+    std::set<std::pair<std::int16_t,std::uint64_t>> removals;
+    for(const auto& removal:bundle.deferred_removals){
+        const auto entity=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+            [&](const auto& value){return value.id==removal.id&&value.generation==removal.generation;});
+        if(!removals.emplace(removal.id,removal.generation).second||entity==bundle.world.entities.end()||
+           entity->kind!=EntityKind::object)
+            throw FormatError("deferred object removal target is duplicated, absent or stale");
+    }
+}
+
 void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limits) {
     validate_host(bundle.host,limits);
     validate_household(bundle);
+    validate_generic_execution(bundle,limits);
+    if(bundle.seated_continuation)validate_seated_session_continuation(bundle);
     if(bundle.runtime_entities.empty()||bundle.runtime_entities.size()>limits.max_runtime_entities||
        bundle.object_threads.size()>limits.max_object_threads||
        bundle.runtime_entities.size()>UINT16_MAX||
@@ -802,7 +1097,8 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
                 throw FormatError("session queued interaction target is stale");
         }
         validate_controller_vm_links(entity);
-        validate_dynamic_action_owners(entity,bundle.world.entities);
+        validate_dynamic_action_owners(entity,bundle.world.entities,
+            bundle.seated_continuation?&*bundle.seated_continuation:nullptr);
         validate_local_route_links(entity,*world_actor,bundle.world.entities,limits);
         validate_playback_links(entity,*world_actor,bundle.host,limits);
         found_primary|=entity.id==bundle.host.runtime_avatar_id;
@@ -833,6 +1129,8 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
         if(bundle.scheduler.entities[i].id!=expected_ids[i])
             throw FormatError("session scheduler contains an unrepresented VM thread");
     for(const auto& entity:bundle.world.entities)if(!entity.static_footprint){
+        if(bundle.generic_execution&&std::any_of(bundle.created_objects.begin(),bundle.created_objects.end(),
+            [&](const auto& origin){return origin.id==entity.id&&origin.generation==entity.generation;}))continue;
         const auto route=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [&](const auto& runtime){return runtime.id==entity.id&&runtime.route.has_value();});
         const bool go_here_marker=entity.kind==EntityKind::object&&entity.ui_ghost&&entity.position&&entity.definition&&
@@ -845,7 +1143,6 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
         if((entity.kind!=EntityKind::avatar||route==bundle.runtime_entities.end())&&!go_here_marker)
             throw FormatError("session has a dynamic footprint without a saved local route");
     }
-    if(bundle.seated_continuation)validate_seated_session_continuation(bundle);
 }
 
 const SessionArchiveSection& required_section(const SessionArchive& archive,
@@ -959,7 +1256,7 @@ void decode_routes(const std::vector<std::uint8_t>& bytes,std::vector<SessionRun
 bool recognized(const std::array<char,4>& id) {
     return id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||
-           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id;
+           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id;
 }
 
 void write_sleep_snapshot(Writer& w,const SleepSnapshot& state) {
@@ -1017,7 +1314,7 @@ std::vector<SessionObjectThread> decode_object_threads(const std::vector<std::ui
         if(thread.id<=previous||size>r.remaining())throw FormatError("object thread roster is invalid");
         const auto payload=r.bytes(size);Reader entry(payload);
         thread.generation=entry.u64();thread.guid=entry.u32();
-        const auto owners=entry.u8();if(!owners||owners>16)throw FormatError("object code owner count exceeds bounds");
+        const auto owners=entry.u8();if(owners>16)throw FormatError("object code owner count exceeds bounds");
         for(std::uint8_t n=0;n<owners;++n){SessionActionCodeOwner owner;owner.owner=entry.u32();
             owner.source=entry.string();owner.asset=entry.string();owner.root_routine=entry.u16();
             const auto digest=entry.bytes(owner.routine_fingerprint.size());
@@ -1074,6 +1371,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
         archive.sections.push_back({dynamic_owner_id,false,encode_dynamic_owners(bundle.runtime_entities,limits)});
     if(bundle.seated_continuation)archive.sections.push_back({seated_id,true,encode_seated(*bundle.seated_continuation,limits)});
     if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
+    if(bundle.generic_execution)archive.sections.push_back({generic_execution_id,true,encode_generic_execution(bundle,limits)});
     return encode_session_archive(archive,limits.archive);
 }
 
@@ -1125,6 +1423,10 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     for(const auto& section:archive.sections)if(section.id==simulation_id){
         if(!section.required)throw FormatError("session simulation section must be required");
         result.simulation=decode_simulation(section.data,limits.max_runtime_entities);
+    }
+    for(const auto& section:archive.sections)if(section.id==generic_execution_id){
+        if(!section.required)throw FormatError("generic execution profile must be required");
+        decode_generic_execution(section.data,result,limits);
     }
     validate_links(result,limits);
     validate_simulation(result);

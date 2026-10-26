@@ -32,7 +32,36 @@ const SessionRuntimeEntity* dynamic_route_resident(const SessionBundle& bundle) 
     }
     return result;
 }
-void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original) {
+WorldSnapshot session_restore_baseline(const SessionBundle& bundle,const WorldSnapshot& original,
+        const SessionCreatedObjectResolver& resolve) {
+    auto expected=original;
+    if(!bundle.generic_execution)return expected;
+    for(const auto& removed:bundle.removed_original_objects){
+        const auto found=std::find_if(expected.entities.begin(),expected.entities.end(),
+            [&](const auto& value){return value.id==removed.id;});
+        if(found==expected.entities.end()||found->kind!=EntityKind::object||
+           found->generation!=removed.generation||!found->definition||found->definition->guid!=removed.guid)
+            throw FormatError("removed original object does not match the selected lot baseline");
+        expected.entities.erase(found);
+    }
+    for(const auto& created:bundle.created_objects){
+        if(!resolve||created.generation<=original.generation_sequence||
+           std::any_of(expected.entities.begin(),expected.entities.end(),
+               [&](const auto& value){return value.id==created.id;}))
+            throw FormatError("created object has no fresh verified origin outside the lot baseline");
+        auto metadata=resolve(created);
+        if(metadata.id!=created.id||metadata.generation!=created.generation||
+           metadata.kind!=EntityKind::object||!metadata.definition||metadata.definition->guid!=created.guid||
+           metadata.ui_ghost||metadata.attachment||metadata.position)
+            throw FormatError("created object resource constructor returned incompatible metadata");
+        expected.entities.push_back(std::move(metadata));
+    }
+    std::sort(expected.entities.begin(),expected.entities.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+    return expected;
+}
+void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original,
+        const SessionCreatedObjectResolver& created_objects) {
+    const auto expected=session_restore_baseline(bundle,original,created_objects);
     if(bundle.world.attribute_policy!=original.attribute_policy)
         throw FormatError("session World attribute policy differs from the original lot");
     const Entity* route_marker=nullptr;
@@ -49,9 +78,9 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
             throw FormatError("saved Go Here route marker is not the exact temporary Destination object");
         route_marker=&*found;
     }
-    if(bundle.world.entities.size()!=original.entities.size()+(route_marker?1u:0u))
+    if(bundle.world.entities.size()!=expected.entities.size()+(route_marker?1u:0u))
         throw FormatError("session entity roster differs from original lot and optional Go Here marker");
-    for(const auto& b:original.entities) {
+    for(const auto& b:expected.entities) {
         const auto found=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
             [&](const auto& entity){return entity.id==b.id;});
         if(found==bundle.world.entities.end())throw FormatError("session entity roster lost original lot entity");
@@ -59,6 +88,8 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         const auto route=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
             [&](const auto& runtime){return runtime.id==a.id&&runtime.route.has_value();});
         const bool route_actor=route!=bundle.runtime_entities.end();
+        const bool created=bundle.generic_execution&&std::any_of(bundle.created_objects.begin(),bundle.created_objects.end(),
+            [&](const auto& value){return value.id==a.id&&value.generation==a.generation;});
         const bool route_footprint_change=route_actor&&b.static_footprint&&
             !a.static_footprint&&route->route->walking_started;
         std::string changed;
@@ -79,16 +110,16 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         if(a.person_data.size()!=b.person_data.size())mark("person_data_count");
         if(a.motives.size()!=b.motives.size())mark("motive_count");
         if(a.ui_ghost!=b.ui_ghost)mark("ghost_flag_changed");
-        if(a.static_footprint!=b.static_footprint&&!route_footprint_change)mark("footprint_flag_changed");
+        if(a.static_footprint!=b.static_footprint&&!route_footprint_change&&!created)mark("footprint_flag_changed");
         if(a.ui_ghost)mark("ghost_entity");
-        if(!a.static_footprint&&!route_actor)mark("dynamic_footprint_entity");
+        if(!a.static_footprint&&!route_actor&&!created)mark("dynamic_footprint_entity");
         if(!changed.empty())
             throw FormatError("session World metadata rejected for entity "+std::to_string(b.id)+": "+changed);
     }
     for(const auto& entity:bundle.world.entities){
-        const auto found=std::find_if(original.entities.begin(),original.entities.end(),
+        const auto found=std::find_if(expected.entities.begin(),expected.entities.end(),
             [&](const auto& value){return value.id==entity.id;});
-        if(found==original.entities.end() && &entity!=route_marker)
+        if(found==expected.entities.end() && &entity!=route_marker)
             throw FormatError("session added an entity other than its exact active Go Here marker");
     }
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
@@ -100,7 +131,9 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
 void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) {
-    if(context.code_owner==static_cast<CodeOwner>(state.id))return;
+    if(context.code_owner==0||context.code_owner==static_cast<CodeOwner>(state.id))return;
+    if(std::any_of(state.resource_owners.begin(),state.resource_owners.end(),
+        [&](const auto& owner){return owner.owner==context.code_owner;}))return;
     if(state.route&&std::any_of(state.dynamic_action_owners.begin(),state.dynamic_action_owners.end(),
        [&](const auto& owner){return owner.owner==context.code_owner;}))return;
     if(context.code_owner!=static_cast<CodeOwner>(state.id))
@@ -144,10 +177,7 @@ void validate_runtime(const SessionBundle& bundle) {
             throw FormatError("session queued portal action is unsupported");
     }
     const auto playback_key=[&](const PlaybackResourceKey& key){
-        if(key.code_owner!=static_cast<CodeOwner>(state.id)&&
-           !(state.route&&std::any_of(state.dynamic_action_owners.begin(),state.dynamic_action_owners.end(),
-             [&](const auto& owner){return owner.owner==key.code_owner;})))
-            throw FormatError("session animation requires a dynamic owner");
+        validate_owner({key.caller,key.callee,key.stack_object,key.code_owner},state);
     };
     if(state.playback.state)playback_key(state.playback.state->resource);
     if(state.playback.carry)playback_key(*state.playback.carry);
@@ -166,6 +196,31 @@ const std::vector<SessionDynamicActionOwner>& HouseholdSessionRestore::dynamic_a
         [&](const auto& state){return state.id==id;});
     if(found==bundle_.runtime_entities.end())throw FormatError("household dynamic owner resident is absent");
     return found->dynamic_action_owners;
+}
+
+const std::vector<SessionResourceCodeOwner>& HouseholdSessionRestore::resource_owners(std::int16_t id) const {
+    const auto found=std::find_if(bundle_.runtime_entities.begin(),bundle_.runtime_entities.end(),
+        [&](const auto& state){return state.id==id;});
+    if(found==bundle_.runtime_entities.end())throw FormatError("resource owner resident is absent");
+    return found->resource_owners;
+}
+void HouseholdSessionRestore::install_resource_owners(std::int16_t id,Vm& vm,const ResourceOwnerLoader& load) {
+    if(attempted_||!bundle_.generic_execution||resource_owner_vms_.count(id)||!load)
+        throw FormatError("resource owners must be installed once into the fresh resident VM");
+    const auto& owners=resource_owners(id);
+    std::vector<std::pair<CodeOwner,RoutineSet>> resolved;
+    for(const auto& owner:owners){
+        auto source=load(owner);
+        if(source.second!=owner.linked_semiglobal||
+           !source.first.count(routine_key(owner.root_routine))||
+           session_loaded_bank_fingerprint(source.first)!=owner.routine_fingerprint)
+            throw FormatError("resource code owner bank or provenance changed");
+        resolved.emplace_back(owner.owner,std::move(source.first));
+    }
+    for(auto& owner:resolved)if(!vm.install_owner(owner.first,std::move(owner.second))){
+        attempted_=true;throw FormatError("fresh resident VM rejected its verified resource owner");
+    }
+    resource_owner_vms_.emplace(id,&vm);
 }
 
 void HouseholdSessionRestore::install_dynamic_action_owners(std::int16_t id,Vm& vm,
@@ -195,7 +250,8 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
     const std::vector<std::uint8_t>& archive,const SessionResourceIdentity& resources,
     const SessionHostState& selection,const std::vector<SessionHouseholdMember>& expected_roster,
     const WorldSnapshot& original,const LotContext& globals,
-    const Ts1BootstrapGlobals& bootstrap,std::optional<std::int16_t> family,SessionBundleLimits limits) {
+    const Ts1BootstrapGlobals& bootstrap,std::optional<std::int16_t> family,SessionBundleLimits limits,
+    const SessionCreatedObjectResolver& created_objects) {
     auto bundle=decode_session_bundle(archive,resources,limits);
     if(expected_roster.empty()||!same_session_household_roster(bundle.household_roster,expected_roster))
         throw FormatError("saved household roster differs from family, World or character resources");
@@ -205,7 +261,7 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
        host.resident_guid!=selection.resident_guid||host.resident_neighbor_id!=selection.resident_neighbor_id||
        host.runtime_avatar_id!=selection.runtime_avatar_id)
         throw FormatError("session selection differs from the explicitly selected lot and resident");
-    validate_baseline(bundle,original);validate_runtime(bundle);
+    validate_baseline(bundle,original,created_objects);validate_runtime(bundle);
     if(family&&*family!=static_cast<std::int16_t>(selection.family_chunk_id))
         throw FormatError("host family global does not match selected household");
     if(globals.read(10)!=std::optional<std::int16_t>{static_cast<std::int16_t>(selection.house_number)})
@@ -265,6 +321,12 @@ void HouseholdSessionRestore::restore_execution(const std::vector<SessionExecuti
         if(binding==bindings.end()||!dynamic_owners_verified_||
            dynamic_owner_resident_!=binding->id||dynamic_owner_vm_!=binding->vm)
             throw FormatError("routed resident dynamic action resources were not verified and installed into this VM");
+    }
+    for(const auto& binding:bindings){
+        if(resource_owners(binding.id).empty())continue;
+        const auto verified=resource_owner_vms_.find(binding.id);
+        if(verified==resource_owner_vms_.end()||verified->second!=binding.vm)
+            throw FormatError("resident resource owners were not verified in this execution graph");
     }
     for(std::size_t n=0;n<bindings.size();++n){const auto& b=bindings[n];const auto& state=bundle_.runtime_entities[n];
         if(!b.vm->restore_snapshot(state.vm))throw FormatError("household VM does not match fresh programs and bindings");

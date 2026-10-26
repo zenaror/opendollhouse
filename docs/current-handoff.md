@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes desta etapa: `c7966c100bc97555cbbc71f3cba6455182228291`.
+Base publicada antes desta etapa: `66007bf992290de948dafe3a6d533ee84657fd1f`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -38,6 +38,29 @@ por etapas, mas a conclusão exige o aplicativo nativo completo. A migração de
 VMExpression abaixo foi implementada e validada; o port completo segue incompleto.
 
 ## Checkpoint nativo validado (2026-10-26)
+
+### Save/reopen de ação em andamento (WIP atual)
+
+Após o checkpoint publicado acima, esta etapa ainda está no working tree e não
+foi publicada. O save nativo de família agora registra todos os bancos de código
+instalados em cada VM, inclusive os ociosos necessários à ação seguinte. Corrige
+o caso em que a geladeira cria comida e a VM do morador precisa desse código ao
+retomar PushInteraction. Também foram corrigidos registros de VM ao remover
+objetos, desfazer criações e rejeitar IDs duplicados durante restauração.
+
+Gate House07 da tentativa 7 e nove CTests passaram. Dois saves, nos ticks 256 e
+512, foram reabertos em processos novos; os 12 blocos do save e o estado final
+coincidiram com a execução sem interrupção até tick 4096. Save legado também
+carregou; 25 arquivos originais mantiveram seus hashes. Revisor independente
+aprovou o rastreamento dos bancos instalados e seu ciclo de vida. Detalhes em
+[native-active-session.md](native-active-session.md). Isto prova somente a
+continuação headless da interação geladeira/comida na Casa 07. Não é paridade
+Simitone nem build jogável. A mudança de C# existente e outros WIP citados abaixo
+permanecem preservados e fora desta etapa.
+
+Revisão do diff nativo concluída e checkpoint registrado nesta etapa. Próximo
+passo: avançar a migração integrada de filas/continuações, mantendo a direção de
+port completo C/C++ e os limites de evidência.
 
 A orientação mais recente exige não usar C#. A frente atual conecta o executor
 compartilhado diretamente ao `Vm` C++ e conclui bancos TEMP/TempXL nativos.

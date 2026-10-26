@@ -173,7 +173,70 @@ void resume(odh::HouseholdSessionRestore& candidate,const odh::SessionBundle& ex
     actual.host.global_values=globals(candidate.lot(),candidate.bootstrap());
     require(odh::encode_session_bundle(actual)==odh::encode_session_bundle(expected),"two residents differ from continuous execution");
 }
-void tests(){Fixture f;f.start();odh::VmFrame attribute_frame;
+void generic_execution_tests(){
+    Fixture f;f.start();f.step();auto b=f.snapshot();b.generic_execution=true;
+    constexpr odh::CodeOwner owner=0x80000000U;b.next_code_owner=owner+9;
+    auto& state=b.runtime_entities.front();
+    for(auto& frame:state.vm.stack)frame.context.code_owner=owner;
+    state.vm.pending->context.code_owner=owner;state.vm.pending->instruction.code_owner=owner;
+    odh::SessionResourceCodeOwner provenance;provenance.owner=owner;provenance.resource_guid=98765;
+    provenance.source="Objects.far";provenance.asset="Synthetic.iff";provenance.definition_chunk_id=1;
+    provenance.tree_table_id=1;provenance.root_routine=4096;
+    provenance.routine_fingerprint=odh::session_loaded_bank_fingerprint(program());
+    state.resource_owners={provenance};const auto bytes=odh::encode_session_bundle(b);
+    auto missing=prepare(bytes,f);odh::RandomState rng{999};std::uint64_t tick=999;
+    Execution missing_a(missing->world(),1,rng),missing_b(missing->world(),2,rng);
+    odh::EntityVmScheduler missing_scheduler{4};missing_a.schedule(missing_scheduler,1);missing_b.schedule(missing_scheduler,2);
+    rejects([&]{missing->restore_execution({{1,&missing_a.vm,&missing_a.controllers,&missing_a.playback,{}},
+        {2,&missing_b.vm,&missing_b.controllers,&missing_b.playback,{}}},missing_scheduler,rng,tick);},
+        "generic restore accepted an owner bank that was never resource verified");
+    require(tick==999&&rng.seed()==999,"missing resource owner published tick or RNG");
+    auto candidate=prepare(bytes,f);Execution a(candidate->world(),1,rng),c(candidate->world(),2,rng);
+    odh::EntityVmScheduler scheduler{4};a.schedule(scheduler,1);c.schedule(scheduler,2);
+    rejects([&]{candidate->install_resource_owners(1,a.vm,[](const auto&){return std::make_pair(go_here_program(),
+        std::optional<odh::SessionLinkedSemiglobal>{});});},"generic owner accepted changed bank fingerprint");
+    std::size_t loads=0;
+    candidate->install_resource_owners(1,a.vm,[&](const auto& record){++loads;
+        require(record.resource_guid==98765,"resource owner incorrectly inferred from its current callee");
+        return std::make_pair(program(),std::optional<odh::SessionLinkedSemiglobal>{});});
+    candidate->restore_execution({{1,&a.vm,&a.controllers,&a.playback,{}},{2,&c.vm,&c.controllers,&c.playback,{}}},
+        scheduler,rng,tick);
+    require(loads==1&&tick==1&&rng.seed()==b.host.random_seed&&candidate->next_code_owner()==owner+9&&
+        a.vm.stack().front().context.code_owner==owner&&a.vm.pending()->ticket==state.vm.pending->ticket,
+        "generic resource owner and pending Sleep restore without rerunning Main or resetting allocator gaps");
+
+    // Replace one original object with a fresh generation at the same ID.
+    Fixture reuse;
+    require(reuse.world.create_runtime_object(3,111,{2,0,1,0},{{0,4096}}),"create original object fixture");
+    reuse.baseline=reuse.world.snapshot();reuse.start();reuse.step();
+    const auto old=*reuse.world.find(3);require(reuse.world.remove(3),"remove original object fixture");
+    require(reuse.world.create_runtime_object(3,222,{3,0,2,0},{{0,4097}}),"reuse original ID with new constructed object");
+    const auto fresh=*reuse.world.find(3);auto with_object=reuse.snapshot();with_object.generic_execution=true;
+    with_object.created_objects={{3,fresh.generation,222,"Objects.far","NewObject.iff",2}};
+    with_object.removed_original_objects={{3,old.generation,111}};
+    with_object.deferred_removals={{3,fresh.generation}};
+    const auto object_bytes=odh::encode_session_bundle(with_object);
+    rejects([&]{prepare(object_bytes,reuse);},"created object accepted without an exact resource metadata resolver");
+    std::size_t constructors=0;
+    const odh::SessionCreatedObjectResolver metadata=[&](const auto& origin){++constructors;
+        require(origin.id==3&&origin.guid==222&&origin.definition_chunk_id==2,"created object provenance changed");
+        odh::World world;require(world.create_runtime_object(origin.id,origin.guid,{3,0,2,0},{{0,4097}}),
+            "resource-only metadata constructor");
+        auto entity=*world.find(origin.id);entity.generation=origin.generation;return entity;};
+    const auto restored=odh::HouseholdSessionRestore::prepare(object_bytes,reuse.resources,reuse.selection,reuse.roster,
+        reuse.baseline,reuse.lot,reuse.bootstrap,21,{},metadata);
+    require(constructors==1&&restored->world().find(3)->generation==fresh.generation&&
+        restored->world().find(3)->definition->guid==222&&restored->deferred_removals().size()==1,
+        "verified created object replaces removed original identity and retains stable removal intent");
+    rejects([&]{odh::HouseholdSessionRestore::prepare(object_bytes,reuse.resources,reuse.selection,reuse.roster,
+        reuse.baseline,reuse.lot,reuse.bootstrap,21,{},[&](const auto& origin){auto value=metadata(origin);
+            value.entry_points=std::vector<odh::EntryPoint>{{0,999}};return value;});},
+        "created object accepted metadata from another resource constructor");
+    auto wrong_removed=with_object;wrong_removed.removed_original_objects.front().guid++;
+    rejects([&]{odh::HouseholdSessionRestore::prepare(odh::encode_session_bundle(wrong_removed),reuse.resources,reuse.selection,
+        reuse.roster,reuse.baseline,reuse.lot,reuse.bootstrap,21,{},metadata);},"removed baseline identity was not checked");
+}
+void tests(){generic_execution_tests();Fixture f;f.start();odh::VmFrame attribute_frame;
     attribute_frame.context.caller=1;attribute_frame.context.stack_object=1;
     require(f.world.write(attribute_frame,0,4,99),"TS1 attribute bank grows on write");
     f.step();auto saved=f.snapshot();const auto bytes=odh::encode_session_bundle(saved);
@@ -209,6 +272,13 @@ void tests(){Fixture f;f.start();odh::VmFrame attribute_frame;
         odh::VmFrame frame;frame.context.caller=1;frame.context.stack_object=1;
         require(route_fixture.world.write(frame,0,4,99),"route resident bank grows");
         auto routed=go_here_bundle(route_fixture,routed_id);const auto routed_bytes=odh::encode_session_bundle(routed);
+        auto generic_route=routed;generic_route.generic_execution=true;
+        generic_route.next_code_owner=0x80000001U;
+        auto generic_candidate=prepare(odh::encode_session_bundle(generic_route),route_fixture);
+        require(generic_candidate->generic_execution()&&generic_candidate->local_route(routed_id)&&
+            generic_candidate->resource_owners(routed_id).empty()&&
+            generic_candidate->dynamic_action_owners(routed_id).size()==1,
+            "GEXP retains the existing exact Go Here DYNO and temporary marker profile without requiring new manifests");
         auto route_candidate=prepare(routed_bytes,route_fixture);
         require(route_candidate->dynamic_action_owners(routed_id).size()==1&&
             route_candidate->dynamic_action_owners(idle_id).empty()&&

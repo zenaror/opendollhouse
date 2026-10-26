@@ -13,6 +13,7 @@
 #include "odh/world_snapshot_codec.hpp"
 
 #include <optional>
+#include <functional>
 
 namespace odh {
 
@@ -57,6 +58,40 @@ struct SessionDynamicActionOwner {
     std::array<std::uint8_t,32> routine_fingerprint{};
 };
 
+// Resource ownership is independent of the objects currently named by a call.
+// The host rebuilds this exact bank before applying any VM snapshot.
+enum class SessionCodeBankKind : std::uint8_t {
+    private_closure = 0, complete_private = 1, private_and_semiglobal = 2
+};
+enum class SessionCodeOwnerIdentity : std::uint8_t { process = 0, resource_guid = 1 };
+struct SessionResourceCodeOwner {
+    CodeOwner owner = 0;
+    std::uint32_t resource_guid = 0;
+    std::string source, asset;
+    std::uint16_t definition_chunk_id = 0, tree_table_id = 0, root_routine = 0;
+    SessionCodeBankKind bank_kind = SessionCodeBankKind::private_closure;
+    SessionCodeOwnerIdentity identity = SessionCodeOwnerIdentity::process;
+    std::optional<SessionLinkedSemiglobal> linked_semiglobal;
+    std::array<std::uint8_t,32> routine_fingerprint{};
+};
+struct SessionCreatedObject {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+    std::string source, asset;
+    std::uint16_t definition_chunk_id = 0;
+};
+struct SessionRemovedOriginalObject {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+};
+struct SessionDeferredRemoval {
+    std::int16_t id = 0;
+    std::uint64_t generation = 0;
+};
+using SessionCreatedObjectResolver = std::function<Entity(const SessionCreatedObject&)>;
+
 struct SessionRuntimeEntity {
     std::int16_t id = 0;
     VmSnapshot vm;
@@ -64,6 +99,7 @@ struct SessionRuntimeEntity {
     PlaybackSnapshot playback;
     std::optional<LocalRouteSnapshot> route;
     std::vector<SessionDynamicActionOwner> dynamic_action_owners; // Strictly ascending owner IDs.
+    std::vector<SessionResourceCodeOwner> resource_owners; // Installed generic code banks, including idle cached owners; ascending IDs.
 };
 
 // A process-local owner is meaningful only with its exact resource provenance
@@ -87,6 +123,8 @@ struct SessionObjectThread {
     std::vector<SessionActionCodeOwner> code_owners; // Strictly ascending owner IDs.
     VmSnapshot vm;
     SleepSnapshot sleep;
+    std::vector<SessionResourceCodeOwner> resource_owners; // Installed generic code banks, including idle cached owners; ascending IDs.
+    CodeOwner primary_owner = 0; // Explicit object private bank; zero only for legacy OBVM.
 };
 
 // The seated continuation describes only the stable, completed Sit -> Stand
@@ -141,6 +179,13 @@ struct SessionBundle {
     std::vector<SessionObjectThread> object_threads; // Strictly ascending IDs, disjoint from avatars.
     EntityVmSchedulerSnapshot scheduler;
     std::optional<SessionSeatedContinuation> seated_continuation;
+    // GEXP v1 is required when true: older readers must reject this profile.
+    bool generic_execution = false;
+    CodeOwner next_code_owner = 0x80000000U;
+    bool code_owner_ids_exhausted = false;
+    std::vector<SessionCreatedObject> created_objects; // Ascending live IDs.
+    std::vector<SessionRemovedOriginalObject> removed_original_objects; // Ascending baseline IDs.
+    std::vector<SessionDeferredRemoval> deferred_removals; // Ordered host intents, unique identities.
 };
 
 struct SessionBundleLimits {
@@ -158,6 +203,7 @@ struct SessionBundleLimits {
     std::size_t max_runtime_entities = 64;
     std::size_t max_route_points = 262145;
     std::size_t max_object_threads = 64;
+    std::size_t max_resource_owners_per_thread = 256;
     std::size_t max_host_globals = 256;
 };
 

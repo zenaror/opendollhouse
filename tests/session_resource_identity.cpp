@@ -1,4 +1,7 @@
 #include "odh/session_resource_identity.hpp"
+#include "session_generic_resource_path.hpp"
+#include <chrono>
+#include <fstream>
 
 #include <cstdlib>
 #include <iostream>
@@ -52,5 +55,29 @@ int main() {
     changed.pop_back();
     rejects([&] { (void)odh::decode_session_resource_identity(changed); },
             "truncated META payload rejects");
-    std::cout << "session resource identity: 9 checks passed\n";
+    const auto directory=std::filesystem::temp_directory_path()/
+        ("odh-generic-resource-path-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    check(std::filesystem::create_directory(directory),"create owned portable resource fixture");
+    struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove_all(path,error);}} cleanup{directory};
+    const auto first=directory/"first",second=directory/"relocated";
+    const auto key=std::filesystem::path("GameData/Objects/Objects.far");
+    for(const auto& root:{first,second}){
+        std::filesystem::create_directories((root/key).parent_path());
+        std::ofstream(root/key)<<"synthetic resource";
+    }
+    check(odh_host::generic_session_source_key(first,(first/key).string())==key.generic_string(),
+        "absolute live resource becomes a portable generic key");
+    check(odh_host::generic_session_source_key(first,key.generic_string())==key.generic_string(),
+        "restored relative generic key normalizes idempotently");
+    check(odh_host::generic_session_source_key(second,(second/key).string())==
+        odh_host::generic_session_source_key(first,(first/key).string()),
+        "relocating the game root preserves generic resource identity");
+    rejects([&]{(void)odh_host::generic_session_source_key(first,(second/key).string());},
+        "a checkpoint cannot disguise an outside-root resource as game-relative");
+    odh_host::validate_generic_session_source_key(key.generic_string());
+    for(const auto& invalid:{std::string{},std::string("../outside.far"),std::string("/absolute.far"),
+        std::string("C:/Objects.far"),std::string("GameData/../Objects.far"),
+        std::string("GameData")+char(92)+"Objects.far"})
+        rejects([&]{odh_host::validate_generic_session_source_key(invalid);},"nonportable archive key accepted");
+    std::cout << "session resource identity and portable generic path checks passed\n";
 }
