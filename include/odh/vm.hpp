@@ -218,6 +218,13 @@ public:
     bool activate_dormant_state();
     VmStatus run(std::uint64_t instruction_budget,
                  const std::function<void(const VmTrace&)>& trace = {});
+    // Execute a freshly started, disposable check VM at an external safe point.
+    // The host supplies cloned or shared register values and exact code/resource
+    // ownership. Only the explicit synchronous handler is used; waits and service
+    // child calls fault instead of creating an untracked asynchronous operation.
+    // World/register effects before a failure remain visible. Do not use on Main.
+    VmSubroutineResult run_synchronous_check(std::uint64_t instruction_budget,
+                                            const VmPrimitive& check_primitive = {});
     // Run a synchronous child tree using this thread's code owners, memory,
     // primitive handlers, and Temp registers, while saving/restoring its Main
     // stack and status. Requires an idle safe point with a live dormant or
@@ -253,6 +260,9 @@ public:
     VmStatus status() const { return status_; }
     const std::string& diagnostic() const { return diagnostic_; }
     const std::vector<VmFrame>& stack() const { return stack_; }
+    // A removal service must retain object data used by another execution
+    // frame, including service waits, until that reference has been released.
+    bool references_entity(std::int16_t entity) const;
     Ts1Temps& temps() { return temps_; }
     const Ts1Temps& temps() const { return temps_; }
     Ts1TempXL& temp_xl() { return temp_xl_; }

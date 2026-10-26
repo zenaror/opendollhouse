@@ -55,10 +55,12 @@ std::string values(const odh::EntityThreadControllersSnapshot& s){
     out<<bool(a.job)<<';';if(a.job)out<<a.job->ticket<<','<<a.job->idle_start<<','<<a.job->deadline<<','<<a.job->argument<<';';
     optional(out,a.last_tick);out<<a.clock<<','<<a.interrupted<<','<<a.notify_resume<<';'<<a.diagnostic.size()<<':'<<a.diagnostic<<';';
     out<<q.actor_id<<','<<q.capacity<<','<<q.actor_generation<<','<<q.run_generation<<','<<q.sequence<<','<<q.clock<<','<<q.idle_start<<';';
-    optional(out,q.last_tick);optional(out,q.resume_tick);out<<q.actions.size()<<';';
+    optional(out,q.last_tick);optional(out,q.resume_tick);out<<int(q.profile)<<','<<q.next_queue_uid<<';'<<q.actions.size()<<';';
     for(const auto& action:q.actions){
         out<<action.uid<<','<<action.target_generation<<','<<int(action.call.key.scope)<<','<<action.call.key.id<<','<<int(action.call.return_mode)<<';';
         context(out,action.call.context);out<<action.call.arguments.size()<<';';for(auto v:action.call.arguments)out<<v<<',';
+        out<<action.queue_uid<<','<<action.priority<<','<<int(action.mode)<<','<<action.flags<<','<<action.notify_idle<<','<<action.check_permissions<<';';
+        out<<bool(action.check)<<';';if(action.check)out<<int(action.check->scope)<<','<<action.check->id<<';';
     }
     out<<bool(q.active)<<';';if(q.active)out<<q.active->uid<<','<<q.active->ticket<<';';
     out<<q.suspended_active.size()<<';';for(const auto& parent:q.suspended_active)out<<parent.uid<<','<<parent.ticket<<';';
@@ -263,6 +265,60 @@ void nested_save_continuation(){
             "true and false children both return control to their parent without losing registers");
     }
 }
+void cancelled_action_continuation(){
+    Fixture source(Kind::nested);
+    auto& queue=source.controllers.interactions();
+    require(queue.enqueue_ts1(key(4098),{1,2,2,22},{4},50,
+        odh::InteractionQueueMode::normal,0,false,false),"cancellation continuation enqueues parent");
+    const auto uid=queue.last_enqueued_uid();source.run(1);
+    require(queue.active()&&queue.cancel(uid)==odh::InteractionCancelResult::notified&&
+        queue.contains_uid(uid)&&queue.snapshot().actions.front().notify_idle&&
+        source.world.find(1)->person_data[33]==0&&
+        (source.world.find(1)->object_words.at(8)&128),"cancel active action retains its frame and publishes game cancel signal");
+    auto copy=restored(source);
+    require(source.run(8)==copy->run(8),"cancelled action resumes its game cleanup identically after reopen");same(source,*copy);
+    for(std::uint64_t tick=1;tick<=6;++tick){
+        auto at_cut=restored(source);
+        const auto expected=source.step(tick,8);
+        require(copy->step(tick,8)==expected&&at_cut->step(tick,8)==expected,
+            "cancelled action and Main dispatch order matches after repeated reopening");
+        same(source,*copy);same(source,*at_cut);
+    }
+    require(!queue.active()&&!queue.contains_uid(uid)&&queue.completion()&&
+        queue.completion()->uid==uid&&source.vm.temps()[3]==77&&
+        !(source.world.find(1)->object_words.at(8)&128),
+        "cancelled action completes through BHAV and clears the original cancellation flag");
+}
+void deferred_removal_keeps_cleanup_data(){
+    odh::World original,copy;
+    require(original.create(1,odh::EntityKind::avatar)&&original.create(2,odh::EntityKind::object)&&
+        original.declare_object_word(2,8,80),"deferred cleanup object has original flag bits");
+    const odh::RoutineSet code{{key(4096),routine({
+        {18,1,255,{}},
+        {2,2,255,{5,0,8,0,0,5,8,4}}, // Read removed StackObject flags after Remove.
+        {2,3,255,{0,0,1,0,0,5,10,7}}, // Release the foreign StackObject reference.
+        set(6,99)})}};
+    unsigned remove_calls=0;
+    const odh::VmPrimitive remove=[&](const auto&,const auto& instruction,const auto&,const auto&){
+        if(instruction.opcode!=18)return odh::PrimitiveOutcome{};
+        ++remove_calls;return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+    };
+    odh::Vm source(code,original.vm_memory(),{},remove);
+    source.start(key(4096),{1,1,2,0});
+    require(source.run(1)==odh::VmStatus::budget_exhausted&&remove_calls==1&&
+        source.references_entity(2)&&original.find(2),
+        "instruction-budget cut after removal request retains data needed by cleanup");
+    require(copy.restore_snapshot(original.snapshot()),"restore World including deferred cleanup data");
+    odh::Vm restored_vm(code,copy.vm_memory(),{},remove);
+    require(restored_vm.restore_snapshot(odh::decode_vm_snapshot(odh::encode_vm_snapshot(source.snapshot())))&&
+        restored_vm.references_entity(2),"deferred object reference survives VM save/reopen");
+    require(source.run(8)==odh::VmStatus::returned_true&&restored_vm.run(8)==odh::VmStatus::returned_true&&
+        source.temps()[5]==80&&restored_vm.temps()==source.temps()&&remove_calls==1,
+        "cleanup reads original flags after Remove without replaying the removal request");
+    require(!source.references_entity(2)&&!restored_vm.references_entity(2)&&
+        original.remove(2)&&copy.remove(2)&&!original.find(2)&&!copy.find(2),
+        "removal becomes safe once foreign frames release their object reference");
+}
 void rejection_and_atomicity(){
     Fixture source(Kind::actions);require(source.enqueue()&&source.enqueue(4097),"validation actions");source.run(1);source.run(1);
     const auto snapshot=roundtrip(source.controllers.snapshot());require(snapshot.sleep.job&&snapshot.interactions.active,"joint validation fixture contains active action and Sleep wait");
@@ -344,7 +400,7 @@ void rejection_and_atomicity(){
 }
 }
 int main(){
-    try{wait_and_notifications();actions_and_boundaries();nested_save_continuation();rejection_and_atomicity();
+    try{wait_and_notifications();actions_and_boundaries();nested_save_continuation();cancelled_action_continuation();deferred_removal_keeps_cleanup_data();rejection_and_atomicity();
         std::cout<<"thread_controller_snapshot: "<<checks<<" checks passed (synthetic in-memory continuation only)\n";}
     catch(const std::exception& error){allocation_countdown=-1;std::cerr<<"thread_controller_snapshot: "<<error.what()<<'\n';return 1;}
 }

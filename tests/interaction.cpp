@@ -21,6 +21,19 @@ struct Fixture {
  }
  bool enqueue(unsigned id=4096){return queue.enqueue(key(id),{1,2,2,22});}
 };
+struct CancelFixture {
+ odh::World world;odh::InteractionQueue queue;odh::Vm vm;
+ CancelFixture():queue(world,1,8),
+  vm({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},queue.primitive(),
+     {{22,{{key(4097),bhav({set(0,33)})},{key(4098),bhav({set(1,44)})}}}}) {
+  world.create(1,odh::EntityKind::avatar,{0,70,0,0});world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,16);vm.start(key(4096),{1,1,1,0},{4});queue.bind(vm);
+ }
+ bool enqueue(unsigned id,std::int16_t priority,odh::InteractionQueueMode mode=odh::InteractionQueueMode::normal,
+              std::uint32_t flags=0,bool push_tail=false) {
+  return queue.enqueue_ts1(key(id),{1,2,2,22},{},priority,mode,flags,false,push_tail);
+ }
+};
 }
 namespace {
 void user_permission_checks() {
@@ -455,6 +468,172 @@ int main(int argc,char** argv){try {
       queue.snapshot().actions[0].notify_idle&&
       (static_cast<std::uint16_t>(world.find(1)->object_words.at(8))&0x0080U),
       "child completion restores the parent then immediately recalculates NotifyIdle and InteractionCanceled");
+ }
+ { // Cancellation separates source queue UID from native identity and runs the skip hook once.
+  CancelFixture f;require(f.enqueue(4097,50),"pending action to cancel enqueues");
+  const auto uid=f.queue.last_enqueued_uid();std::size_t callbacks=0;std::uint16_t callback_queue_uid=0;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot& action){
+   ++callbacks;callback_queue_uid=action.queue_uid;return action.uid==uid&&action.call.key.id==4097;
+  });
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::removed&&f.queue.size()==0&&
+      callbacks==1&&callback_queue_uid==0&&!f.queue.completion(),
+      "pending Normal cancellation removes the action and runs EntryPoint4 hook exactly once");
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::missing&&callbacks==1,
+      "removed native identity cannot run the callback twice");
+ }
+ { // A stale target is not removed or passed to the callback.
+  CancelFixture f;require(f.enqueue(4097,50),"stale-target action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();std::size_t callbacks=0;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot&){++callbacks;return true;});
+  f.world.remove(2);f.world.create(2,odh::EntityKind::object);
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::unsupported&&f.queue.size()==1&&
+      f.queue.contains_uid(uid)&&callbacks==0,
+      "stale target cancellation preserves the request and never dispatches EntryPoint4");
+ }
+ { // Without a synchronous skip hook, cancellation leaves a pending action untouched.
+  CancelFixture f;require(f.enqueue(4097,50),"no-hook action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::unsupported&&f.queue.size()==1&&
+      f.queue.contains_uid(uid),"missing EntryPoint4 handler cannot silently discard a Normal action");
+ }
+ { // Callback failure is reported after source-ordered removal, without a fake completion.
+  CancelFixture f;require(f.enqueue(4097,50),"false-hook action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();std::size_t callbacks=0;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot&){++callbacks;return false;});
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::unsupported&&f.queue.size()==0&&
+      callbacks==1&&!f.queue.completion()&&f.queue.cancel(uid)==odh::InteractionCancelResult::missing&&callbacks==1,
+      "false EntryPoint4 hook does not resurrect or complete the removed action");
+ }
+ { // A throwing EntryPoint4 hook also reports post-removal failure exactly once.
+  CancelFixture f;require(f.enqueue(4097,50),"throwing-hook action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();std::size_t callbacks=0;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot&)->bool{
+   ++callbacks;throw std::runtime_error("fixture EntryPoint4 failure");
+  });
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::unsupported&&f.queue.size()==0&&
+      callbacks==1&&!f.queue.completion()&&f.queue.cancel(uid)==odh::InteractionCancelResult::missing&&callbacks==1,
+      "throwing EntryPoint4 hook does not resurrect or complete the removed action");
+ }
+ { // The synchronous hook cannot recursively cancel another item in the same queue.
+  CancelFixture f;require(f.enqueue(4097,50)&&f.enqueue(4098,40),"reentrant-hook actions enqueue");
+  const auto first=f.queue.snapshot().actions[0].uid,second=f.queue.snapshot().actions[1].uid;
+  odh::InteractionCancelResult nested=odh::InteractionCancelResult::missing;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot& action){
+   if(action.uid==first)nested=f.queue.cancel(second)==odh::InteractionCancelResult::unsupported?
+       odh::InteractionCancelResult::unsupported:odh::InteractionCancelResult::removed;
+   return true;
+  });
+  require(f.queue.cancel(first)==odh::InteractionCancelResult::removed&&
+      nested==odh::InteractionCancelResult::unsupported&&f.queue.size()==1&&f.queue.contains_uid(second),
+      "same-queue recursive cancellation is rejected without changing the other action");
+ }
+ { // MustRun remains queued, notifying IdleForInput and preserving unrelated flag bits.
+  CancelFixture f;require(f.enqueue(4097,50,odh::InteractionQueueMode::normal,1U<<10),
+      "MustRun action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::notified&&f.queue.size()==1&&
+      f.queue.snapshot().actions[0].notify_idle&&f.world.find(1)->person_data[33]==0&&
+      (static_cast<std::uint16_t>(f.world.find(1)->object_words.at(8))&0x0090U)==0x0090U,
+      "MustRun cancellation retains the item and sets InteractionCanceled plus priority zero");
+  odh::EntityThreadControllersSnapshot saved{};saved.interactions=f.queue.snapshot();
+  const auto restored=odh::decode_entity_thread_controllers_snapshot(
+      odh::encode_entity_thread_controllers_snapshot(saved));
+  require(restored.interactions.actions.size()==1&&restored.interactions.actions[0].uid==uid&&
+      restored.interactions.actions[0].queue_uid==saved.interactions.actions[0].queue_uid&&
+      restored.interactions.actions[0].flags==saved.interactions.actions[0].flags&&
+      (restored.interactions.actions[0].flags&(1U<<10))&&restored.interactions.actions[0].notify_idle,
+      "retained cancellation metadata and wrapping source UID survive snapshot roundtrip");
+ }
+ { // Active and protected actions are notified rather than erased.
+  CancelFixture f;require(f.enqueue(4097,50)&&f.vm.run(1)==odh::VmStatus::budget_exhausted&&
+      f.queue.active(),"active cancellation fixture dispatches its action");
+  const auto uid=f.queue.snapshot().active->uid;
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::notified&&f.queue.active()&&f.queue.size()==1&&
+      f.queue.snapshot().actions[0].notify_idle&&f.world.find(1)->person_data[33]==0&&
+      (static_cast<std::uint16_t>(f.world.find(1)->object_words.at(8))&0x0080U),
+      "active cancellation preserves the protected action and requests cooperative interruption");
+ }
+ { // DirectControl may be removed even when its queue mode is not Normal.
+  CancelFixture f;require(f.enqueue(4097,30,odh::InteractionQueueMode::parent_exit,1U<<27),
+      "DirectControl ParentExit action enqueues");
+  const auto uid=f.queue.last_enqueued_uid();std::size_t callbacks=0;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot& action){
+   ++callbacks;return action.uid==uid;
+  });
+  require(f.queue.cancel(uid)==odh::InteractionCancelResult::removed&&f.queue.size()==0&&callbacks==1,
+      "non-MustRun DirectControl can be removed despite ParentExit mode");
+ }
+ { // Cancelling ParentIdle removes following ParentIdle entries and hides ParentExit at priority zero.
+  CancelFixture f;
+  require(f.enqueue(4097,40,odh::InteractionQueueMode::parent_idle,false),"ParentIdle cancel target enqueues");
+  const auto parent_uid=f.queue.last_enqueued_uid();
+  require(f.enqueue(4098,30,odh::InteractionQueueMode::parent_exit),"ParentExit followup enqueues");
+  const auto exit_uid=f.queue.last_enqueued_uid();
+  require(f.enqueue(4097,40,odh::InteractionQueueMode::parent_idle,0,true),"ParentIdle followup enqueues");
+  const auto idle_uid=f.queue.last_enqueued_uid();
+  require(f.queue.cancel(parent_uid)==odh::InteractionCancelResult::notified&&f.queue.size()==2&&
+      f.queue.snapshot().actions[0].uid==parent_uid&&f.queue.snapshot().actions[0].notify_idle&&
+      f.queue.snapshot().actions[1].uid==exit_uid&&f.queue.snapshot().actions[1].notify_idle&&
+      f.queue.snapshot().actions[1].priority==0&&!f.queue.contains_uid(idle_uid)&&
+      f.world.find(1)->person_data[33]==0,
+      "ParentIdle chain removes its pending ParentIdle child but preserves ParentExit as cancelled");
+ }
+ { // ParentIdle cannot remove a protected nested descendant or partially signal cancellation.
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,70,0,0});
+  world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,16);world.set_person_data(1,33,0);
+  odh::InteractionQueue queue(world,1,4);
+  const odh::RoutineSet main{{key(4096),bhav({idle(1,1),set(2,99)})}};
+  const odh::RoutineOwners owners{{22,{{key(4096),bhav({set(3,77,1),idle(1,1),set(0,22)})},
+                                      {key(4097),bhav({set(1,33)})}}}};
+  odh::Vm vm(main,world.vm_memory(),{},queue.primitive(),owners);queue.bind(vm);
+  vm.start(key(4096),{1,1,1,0},{4});
+  // Both actions exist before dispatch; PushHead puts the lower-priority
+  // parent first. Its commit clears the cancel bit, allowing ParentIdle nesting
+  // in the same VM slice before a tick-boundary priority notification.
+  require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::parent_idle,
+          0,false,false)&&queue.enqueue_ts1(key(4096),{1,2,2,22},{4},40,
+          odh::InteractionQueueMode::parent_idle,0,true,false),"ParentIdle protected chain queues before dispatch");
+  const auto parent_uid=queue.last_enqueued_uid();
+  require(vm.run(20)==odh::VmStatus::yielded&&
+          queue.snapshot().suspended_active.size()==1&&queue.active(),
+      "ParentIdle child becomes a protected nested descendant");
+  const auto before=queue.snapshot();const auto priority=world.find(1)->person_data[33];
+  const auto flags=world.find(1)->object_words.at(8);
+  require(queue.cancel(parent_uid)==odh::InteractionCancelResult::unsupported&&
+      queue.snapshot().actions.size()==before.actions.size()&&
+      queue.snapshot().actions[0].uid==before.actions[0].uid&&
+      queue.snapshot().actions[1].uid==before.actions[1].uid&&
+      queue.snapshot().actions[0].notify_idle==before.actions[0].notify_idle&&
+      queue.snapshot().actions[1].notify_idle==before.actions[1].notify_idle&&
+      queue.snapshot().suspended_active.size()==before.suspended_active.size()&&
+      world.find(1)->person_data[33]==priority&&world.find(1)->object_words.at(8)==flags,
+      "protected ParentIdle descendant rejection leaves queue and cancellation flags unchanged");
+ }
+ { // Internal cancel uses the 64-bit identity even after the source UID wraps.
+  CancelFixture f;auto snapshot=f.queue.snapshot();snapshot.next_queue_uid=0xffffU;
+  require(f.queue.restore_snapshot(snapshot)&&f.enqueue(4097,50)&&f.enqueue(4098,50),
+      "queue UID wrap fixture restores and queues two actions");
+  const auto state=f.queue.snapshot();const auto first=state.actions[0],second=state.actions[1];
+  require(first.queue_uid==0xffffU&&second.queue_uid==0&&first.uid!=second.uid,
+      "public queue UID wraps independently from native identity");
+  std::uint16_t skipped_source_uid=0xffffU;
+  f.queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot& action){
+   skipped_source_uid=action.queue_uid;return true;
+  });
+  require(f.queue.cancel(second.uid)==odh::InteractionCancelResult::removed&&f.queue.size()==1&&
+      f.queue.contains_uid(first.uid)&&!f.queue.contains_uid(second.uid)&&skipped_source_uid==0,
+      "native cancellation selects the correct action across source UID wrap");
+ }
+ { // A legacy FIFO snapshot keeps its old profile instead of silently gaining TS1 cancellation.
+  CancelFixture f;require(f.enqueue(4097,50),"legacy cancellation fixture action enqueues");
+  auto saved=f.queue.snapshot();saved.profile=odh::InteractionQueueProfile::legacy_fifo;
+  odh::InteractionQueue restored(f.world,1,8);odh::Vm restored_vm(
+      {{key(4096),bhav({idle(1,1),set(2,99)})}},f.world.vm_memory(),{},restored.primitive(),
+      {{22,{{key(4097),bhav({set(0,33)})},{key(4098),bhav({set(1,44)})}}}});
+  restored.bind(restored_vm);restored_vm.start(key(4096),{1,1,1,0},{4});
+  require(restored.restore_snapshot(saved)&&restored.cancel(saved.actions[0].uid)==
+      odh::InteractionCancelResult::unsupported&&restored.size()==1,
+      "legacy FIFO restore rejects TS1 cancellation without changing the queue");
  }
  { // An inactive TS1 queue has ActiveQueueBlock=-1, so head inserts at zero.
   Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"inactive PushHead fixture queues ordinary actions");

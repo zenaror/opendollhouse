@@ -521,6 +521,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<HeadlessInteraction> headless_interaction;
     std::optional<std::int16_t> headless_interaction_actor;
     bool headless_interaction_applied=false;
+    std::optional<std::uint64_t> headless_cancel_interaction_tick;
+    bool headless_cancel_interaction_applied=false;
+    std::string interaction_cancel_status="not_requested",interaction_cancel_diagnostic;
     std::optional<HeadlessGoHere> headless_go_here;
     bool headless_go_here_same_room_only=false;
     bool headless_go_here_applied=false;
@@ -706,6 +709,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             headless_interaction_actor=static_cast<std::int16_t>(actor);
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
+        else if(option=="--headless-cancel-interaction"&&!headless_cancel_interaction_tick&&n+1<argc){
+            const auto tick=selector(argv[++n]);
+            if(tick==0)throw odh::FormatError("headless interaction cancel tick must be nonzero");
+            headless_cancel_interaction_tick=tick;
+        }
         else if(option=="--headless-window-interaction"&&!headless_window_interaction&&n+1<argc){
             const auto id=selector(argv[++n]);
             if(id==0||id>32767)throw odh::FormatError("headless window interaction target is outside the supported profile");
@@ -828,6 +836,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("render lot options require --saved-world-main --render-floors; walls/view/theme need their explicit inputs");
     if(headless_interaction&&(!headless_main||headless_interaction->tick>ticks_limit))
         throw odh::FormatError("--headless-interaction requires --headless-main and a tick within --ticks");
+    if(headless_cancel_interaction_tick&&(!headless_interaction||(!headless_main&&!headless_interaction_actor)||
+       *headless_cancel_interaction_tick>ticks_limit||
+       *headless_cancel_interaction_tick<headless_interaction->tick))
+        throw odh::FormatError("--headless-cancel-interaction requires a scheduled interaction and an in-range tick not before it");
     if(headless_interaction_actor&&(!session_context||session_context->single_resident_session||
        session_context->household_members.empty()))
         throw odh::FormatError("--headless-resident-interaction requires an integrated whole-household session");
@@ -2762,24 +2774,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto flags=i.operands[2];
             if(flags!=0)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                 "RemoveObjectInstance ReturnImmediately/CleanupAll flags are outside the deferred removal profile"};
-            if(!d.origin||!d.ticket||pending_remove_objects.size()>=64)
+            if(!d.origin||!d.ticket)
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                    "RemoveObjectInstance queue is missing a VM ticket or is full"};
+                    "RemoveObjectInstance is missing a VM dispatch identity"};
             const auto* object=world.find(target);
             if(!object)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
             if(object->kind!=odh::EntityKind::object)
                 return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                     "RemoveObjectInstance avatar deletion is outside the object cleanup profile"};
-            // A VM deleting its own object must not leave a completion ticket
-            // pointing into the RuntimeObjectThread that the safe-point service
-            // is about to destroy. Defer that case without a VM ticket.
-            const bool defer=target==f.context.caller||any_interaction_references_target(target);
-            try{pending_remove_objects.push_back({defer?nullptr:const_cast<odh::Vm*>(d.origin),
-                defer?0:d.ticket,target,object->generation,defer});}
+            // A second cleanup path can request the same deletion before the
+            // scheduler boundary. Keep one generation-qualified deferred job.
+            if(std::any_of(pending_remove_objects.begin(),pending_remove_objects.end(),[&](const auto& pending){
+                return pending.object==target&&pending.generation==object->generation;
+            }))return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            if(pending_remove_objects.size()>=64)
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,"RemoveObjectInstance queue is full"};
+            // TS1 queues deletion until the scheduler boundary and continues
+            // this tree immediately. Its cleanup may still read StackObject.
+            // Never suspend here and erase the object before that continuation.
+            try{pending_remove_objects.push_back({nullptr,0,target,object->generation,true});}
             catch(const std::exception& error){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
                 std::string("RemoveObjectInstance request could not be queued: ")+error.what()};}
-            if(defer)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
         if(i.opcode==4)return grab_handler(f,i,t,d);
         if(i.opcode==50){
@@ -3506,10 +3522,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(simulation_clock)for(const auto& member:household_runtime)simulation_motives.try_emplace(member->id);
     const auto resumed_tick=ticks;
     std::optional<std::uint64_t> scheduled_interaction_tick;
+    std::optional<std::uint64_t> scheduled_cancel_interaction_tick;
     if(headless_interaction){
         if(restoring_session&&headless_interaction->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed interaction tick overflows the session clock");
         scheduled_interaction_tick=headless_interaction->tick+(restoring_session?resumed_tick:0);
+    }
+    if(headless_cancel_interaction_tick){
+        if(restoring_session&&*headless_cancel_interaction_tick>
+           std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("resumed interaction cancel tick overflows the session clock");
+        scheduled_cancel_interaction_tick=*headless_cancel_interaction_tick+(restoring_session?resumed_tick:0);
     }
     std::optional<std::uint64_t> scheduled_stand_tick;
     if(headless_stand){
@@ -3735,12 +3758,106 @@ struct PlacementCandidateProbe {
             [&](const auto& member){return member->id==actor_id;});
         return found==household_runtime.end()?nullptr:(*found)->vm.get();
     };
+    const auto callee_vm_for=[&](std::int16_t target_id)->odh::Vm* {
+        if(auto* resident=actor_vm_for(target_id))return resident;
+        const auto found=runtime_object_threads.find(target_id);
+        if(found!=runtime_object_threads.end()&&found->second&&found->second->vm)return found->second->vm.get();
+        if(saved_phone_thread&&saved_phone_id==target_id)return saved_phone_thread.get();
+        return nullptr;
+    };
     const auto actor_queue_for=[&](std::int16_t actor_id)->odh::InteractionQueue* {
         if(actor_id==runtime_avatar_id)return &queue;
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
             [&](const auto& member){return member->id==actor_id;});
         return found==household_runtime.end()||!(*found)->controllers?nullptr:&(*found)->controllers->interactions();
     };
+    std::string queue_skipped_diagnostic;
+    struct QueueSkippedEvidence {
+        std::int16_t target=0,caller=0,stack_object=0;
+        std::uint16_t routine=0;
+        std::uint64_t steps=0;
+        std::string result="not_run";
+    };
+    std::optional<QueueSkippedEvidence> queue_skipped_evidence;
+    const auto queue_skipped=[&](const odh::InteractionActionSnapshot& action)->bool {
+        queue_skipped_diagnostic.clear();
+        queue_skipped_evidence.reset();
+        try{
+            const auto* target=world.find(action.call.context.callee);
+            if(!target||target->generation!=action.target_generation||
+               !target->definition||!target->entry_points){
+                queue_skipped_diagnostic="cancelled action target has no exact live EntryPoint table";return false;
+            }
+            // A known short table has no EntryPoint4, like an explicit zero ID.
+            // Unknown metadata above remains unsupported rather than a no-op.
+            const auto entry_action=target->entry_points->size()>4?target->entry_points->at(4).action:std::uint16_t{0};
+            queue_skipped_evidence=QueueSkippedEvidence{target->id,target->id,
+                action.call.context.caller,entry_action,0,"not_run"};
+            if(!entry_action){queue_skipped_evidence->result="no_op";return true;}
+            const auto* candidate=definition_index?definition_index->unique(target->definition->guid):nullptr;
+            if(!candidate){queue_skipped_diagnostic="cancelled action definition is missing or ambiguous";return false;}
+            const auto resource=saved_action_resources.find(action.call.context.code_owner);
+            if(!action.call.context.code_owner||resource==saved_action_resources.end()||
+               resource->second.archive!=candidate->source||resource->second.entry!=candidate->asset){
+                queue_skipped_diagnostic="cancelled action has no exact installed resource identity";return false;
+            }
+            if(!session_context||!globals||globals->standalone||!definition_index){
+                queue_skipped_diagnostic="queue-skipped EntryPoint 4 requires the selected game root, Global FAR and definition index";return false;
+            }
+            const auto key=odh::routine_key(entry_action);
+            odh::RoutineSet ep4_routines;
+            if(key.scope==odh::RoutineScope::global){
+                if(!shared_program->routines().count(key)){
+                    queue_skipped_diagnostic="queue-skipped global EntryPoint 4 routine is unavailable";return false;
+                }
+            }else{
+                auto source=load_session_action_source(*candidate,entry_action,{},session_context->game_root,
+                    globals,&*definition_index,true);
+                if(!source.routines.count(key)){
+                    queue_skipped_diagnostic="queue-skipped EntryPoint 4 is absent from the exact private/semiglobal bank";return false;
+                }
+                ep4_routines=std::move(source.routines);
+            }
+            odh::RoutineOwners ep4_owners;
+            ep4_owners.emplace(action.call.context.code_owner,std::move(ep4_routines));
+            odh::Vm ep4_vm(shared_program,odh::ShareVmProgramTag{},memory,odh::VmLimits{},check_primitive,
+                std::move(ep4_owners));
+            const odh::VmContext context{target->id,target->id,action.call.context.caller,
+                action.call.context.code_owner};
+            const auto started=ep4_vm.start(key,context,{0,0,0,0});
+            if(started!=odh::VmStatus::running){
+                queue_skipped_diagnostic="queue-skipped EntryPoint 4 could not start: "+ep4_vm.diagnostic();return false;
+            }
+            if(auto* callee_vm=callee_vm_for(target->id)){
+                ep4_vm.temps()=callee_vm->temps();
+                ep4_vm.temp_xl()=callee_vm->temp_xl();
+            }
+            const auto result=ep4_vm.run_synchronous_check(10000,check_primitive);
+            queue_skipped_evidence->steps=result.steps;
+            if(!result.started||(result.status!=odh::VmStatus::returned_true&&
+                                 result.status!=odh::VmStatus::returned_false)){
+                queue_skipped_evidence->result=odh::vm_status_name(result.status);
+                queue_skipped_diagnostic="queue-skipped EntryPoint 4 did not finish synchronously";
+                if(!result.diagnostic.empty())queue_skipped_diagnostic+="; "+result.diagnostic;
+                return false;
+            }
+            queue_skipped_evidence->result=result.status==odh::VmStatus::returned_true?"returned_true":"returned_false";
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+            session_log.event("interaction queue-skipped EntryPoint4 completed actor="+
+                std::to_string(action.call.context.caller)+" target="+std::to_string(target->id)+
+                " routine="+std::to_string(entry_action)+" result="+
+                (result.status==odh::VmStatus::returned_true?"true":"false"));
+#endif
+            return true;
+        }catch(const std::exception& error){
+            queue_skipped_diagnostic=std::string("queue-skipped EntryPoint 4 failed: ")+error.what();
+            return false;
+        }catch(...){
+            queue_skipped_diagnostic="queue-skipped EntryPoint 4 failed with a non-standard error";return false;
+        }
+    };
+    queue.set_queue_skipped_handler(queue_skipped);
+    for(auto& member:household_runtime)member->controllers->interactions().set_queue_skipped_handler(queue_skipped);
     std::optional<SavedObjectInteractions> render_interactions;
     std::optional<SavedSemiglobalCodeBank> render_interaction_semiglobal;
     std::optional<std::size_t> render_selected_interaction_row;
@@ -3756,6 +3873,50 @@ struct PlacementCandidateProbe {
     std::optional<SavedObjectSelection> render_interaction_target;
     std::optional<std::uint64_t> render_interaction_actor_generation;
     std::optional<std::int16_t> render_interaction_actor_id;
+    bool render_interaction_cancel_attempted=false;
+    const auto cancel_selected_interaction=[&](std::int16_t actor_id,std::uint64_t uid){
+        render_interaction_cancel_attempted=true;
+        interaction_cancel_diagnostic.clear();
+        queue_skipped_diagnostic.clear();
+        queue_skipped_evidence.reset();
+        auto* actor_queue=actor_queue_for(actor_id);
+        if(!actor_queue){
+            interaction_cancel_status="unsupported";
+            interaction_cancel_diagnostic="selected resident has no native interaction queue";
+        }else{
+            const auto result=actor_queue->cancel(uid);
+            switch(result){
+            case odh::InteractionCancelResult::missing:interaction_cancel_status="missing";break;
+            case odh::InteractionCancelResult::removed:interaction_cancel_status="removed";break;
+            case odh::InteractionCancelResult::notified:interaction_cancel_status="notified";break;
+            case odh::InteractionCancelResult::unsupported:interaction_cancel_status="unsupported";break;
+            }
+            if(result==odh::InteractionCancelResult::unsupported){
+                interaction_cancel_diagnostic=queue_skipped_diagnostic;
+                if(!actor_queue->diagnostic().empty()){
+                    if(!interaction_cancel_diagnostic.empty())interaction_cancel_diagnostic+="; ";
+                    interaction_cancel_diagnostic+=actor_queue->diagnostic();
+                }
+                if(interaction_cancel_diagnostic.empty())interaction_cancel_diagnostic="native queue rejected action cancellation";
+            }
+        }
+        if(interaction_cancel_status=="removed")render_interaction_status="cancelled_removed";
+        else if(interaction_cancel_status=="notified")render_interaction_status="cancelled_notified";
+        else if(interaction_cancel_status=="missing")render_interaction_status="cancel_missing";
+        else render_interaction_status="cancel_unsupported";
+        render_interaction_diagnostic=interaction_cancel_diagnostic;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("interaction cancel actor="+std::to_string(actor_id)+" uid="+std::to_string(uid)+
+            " result="+interaction_cancel_status+
+            (interaction_cancel_diagnostic.empty()?std::string{}:" reason="+interaction_cancel_diagnostic));
+        if(queue_skipped_evidence){const auto& ep4=*queue_skipped_evidence;
+            session_log.event("interaction cancel EP4 target="+std::to_string(ep4.target)+
+                " caller="+std::to_string(ep4.caller)+" stack_object="+std::to_string(ep4.stack_object)+
+                " routine="+std::to_string(ep4.routine)+" steps="+std::to_string(ep4.steps)+
+                " result="+ep4.result);
+        }
+#endif
+    };
     std::optional<std::int16_t> stand_actor_id;
     // Retain the successful seated action independently of menu selection, so
     // clicking another object and then the chair does not lose the Stand gate.
@@ -3888,6 +4049,10 @@ struct PlacementCandidateProbe {
     };
     const auto request_selected_interaction=[&] {
         if(render_interaction_enqueued)return;
+        render_interaction_cancel_attempted=false;
+        interaction_cancel_status="not_requested";
+        interaction_cancel_diagnostic.clear();
+        queue_skipped_evidence.reset();
         if(!saved_world_main||!render_selection||!render_interactions){
             render_interaction_status="unsupported";render_interaction_diagnostic="select a saved-lot object with a decoded TTAB first";return;
         }
@@ -4400,8 +4565,8 @@ struct PlacementCandidateProbe {
 #ifdef ODH_HAVE_X11
         if(render_window){
             std::string title=render_lot?
-                "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts; S saves experimental state; Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close":
-                "OpenDollhouse Main preview: S saves experimental state; Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close";
+                "OpenDollhouse Main preview: click selects object or ground; Space/Return interacts; S saves experimental state; Backspace cancels pending action or Go Here, P pause, arrows rotate, +/- zoom, Escape close":
+                "OpenDollhouse Main preview: S saves experimental state; Backspace cancels pending action or Go Here, P pause, arrows rotate, +/- zoom, Escape close";
             if(neighborhood_resume)title+=" | M: neighborhood";
             if(shared_window){
                 shared_window->resize(render_camera.width,render_camera.height);
@@ -6291,12 +6456,27 @@ struct PlacementCandidateProbe {
             }
         }
     };
+    const auto foreign_execution_references_object=[&](std::int16_t object){
+        // The object's own Main is destroyed with it; counting that Main would
+        // keep every self-deleting object alive forever.
+        for(const auto& item:resident_interaction_threads)
+            if(item.first!=object&&item.second.vm&&item.second.vm->references_entity(object))return true;
+        for(const auto& item:runtime_object_threads)
+            if(item.first!=object&&item.second&&item.second->vm&&item.second->vm->references_entity(object))return true;
+        return saved_phone_id!=object&&saved_phone_thread&&saved_phone_thread->references_entity(object);
+    };
     const auto process_pending_remove_objects=[&]{
         auto attempts=pending_remove_objects.size();
         while(attempts--&&!pending_remove_objects.empty()){
             const auto pending=pending_remove_objects.front();
             pending_remove_objects.pop_front();
-            if(pending.defer_until_unreferenced&&any_interaction_references_target(pending.object)){
+            const auto* current_object=world.find(pending.object);
+            if(pending.defer_until_unreferenced&&(!current_object||current_object->generation!=pending.generation)){
+                last_remove_object_diagnostic="RemoveObjectInstance target identity became stale";
+                continue; // Never pin or erase a replacement object with the same ID.
+            }
+            if(pending.defer_until_unreferenced&&(any_interaction_references_target(pending.object)||
+               foreign_execution_references_object(pending.object))){
                 pending_remove_objects.push_back(pending);
                 continue;
             }
@@ -6760,6 +6940,11 @@ struct PlacementCandidateProbe {
                     go_here_cancel_pending=true;
                     go_here_route_status="cancelling";
                     if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
+                }else if(render_interaction_enqueued&&render_interaction_queue_uid){
+                    const auto actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);
+                    auto* action_queue=actor_queue_for(actor_id);
+                    if(action_queue&&action_queue->contains_uid(*render_interaction_queue_uid))
+                        cancel_selected_interaction(actor_id,*render_interaction_queue_uid);
                 }
             }
             bool household_selector_click_consumed=false;
@@ -6922,7 +7107,7 @@ struct PlacementCandidateProbe {
                     if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                     if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 }
-                if(render_window_host)render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+                if(render_window_host)render_window_host->set_title(title+" | Backspace cancels pending action or Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
             if(session_save_requested){
                 session_save_requested=false;
@@ -7015,6 +7200,24 @@ struct PlacementCandidateProbe {
                     target->generation,candidate->definition.tree_table_id});
                 request_selected_interaction();
             }
+            }
+        }
+        if(scheduled_cancel_interaction_tick&&!headless_cancel_interaction_applied&&
+           ticks==*scheduled_cancel_interaction_tick){
+            headless_cancel_interaction_applied=true;
+            if(render_interaction_enqueued&&render_interaction_queue_uid){
+                cancel_selected_interaction(render_interaction_actor_id.value_or(runtime_avatar_id),
+                    *render_interaction_queue_uid);
+            }else{
+                render_interaction_cancel_attempted=true;
+                interaction_cancel_status="missing";
+                interaction_cancel_diagnostic="scheduled action did not produce a tracked queue identity";
+                render_interaction_status="cancel_missing";
+                render_interaction_diagnostic=interaction_cancel_diagnostic;
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+                session_log.event("interaction cancel tick="+std::to_string(ticks)+
+                    " result=missing reason="+interaction_cancel_diagnostic);
+#endif
             }
         }
         if(headless_go_here&&!headless_go_here_applied&&ticks==headless_go_here->tick){
@@ -7315,7 +7518,7 @@ struct PlacementCandidateProbe {
                     go_here_route_status=="cancelled"?"cancelled by player":"could not reach the selected ground";
                 if(go_here_route_status=="failed"&&runtime_routing&&!runtime_routing->diagnostic().empty())
                     title+=" | "+runtime_routing->diagnostic();
-                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(title+" | Backspace cancels pending action or Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
             if(go_here_status!="queued"){
@@ -7392,7 +7595,10 @@ struct PlacementCandidateProbe {
                     }
                 }
             }else if(action_queue&&render_interaction_queue_uid&&
-                     !action_queue->contains_uid(*render_interaction_queue_uid)){
+                     !action_queue->contains_uid(*render_interaction_queue_uid)&&
+                     !(render_interaction_cancel_attempted&&
+                       (interaction_cancel_status=="removed"||interaction_cancel_status=="unsupported"||
+                        interaction_cancel_status=="missing"))){
                 render_interaction_status="ineligible";
                 render_interaction_diagnostic="selected action left the queue before execution without matching completion";
             }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
@@ -7404,7 +7610,7 @@ struct PlacementCandidateProbe {
                 if(render_interaction_action)title+=" BHAV"+std::to_string(*render_interaction_action);
                 if(!render_interaction_diagnostic.empty())title+=" | "+render_interaction_diagnostic;
                 if(render_selection&&stand_selection_is_current(*render_selection))title+=" | U to stand";
-                render_window_host->set_title(title+" | Backspace cancels Go Here, P pause, arrows rotate, +/- zoom, Escape close");
+                render_window_host->set_title(title+" | Backspace cancels pending action or Go Here, P pause, arrows rotate, +/- zoom, Escape close");
             }
 #endif
         }
@@ -7780,7 +7986,10 @@ struct PlacementCandidateProbe {
             render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
             render_interaction_diagnostic.clear();
         }else if(action_queue&&render_interaction_queue_uid&&
-                 !action_queue->contains_uid(*render_interaction_queue_uid)){
+                 !action_queue->contains_uid(*render_interaction_queue_uid)&&
+                 !(render_interaction_cancel_attempted&&
+                   (interaction_cancel_status=="removed"||interaction_cancel_status=="unsupported"||
+                    interaction_cancel_status=="missing"))){
             render_interaction_status="ineligible";
             render_interaction_diagnostic="selected action left the queue before execution without matching completion";
         }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
@@ -7790,8 +7999,11 @@ struct PlacementCandidateProbe {
     std::optional<std::string> saved_session_path;
     if(!neighborhood_transition&&session_context&&session_context->save_on_exit){
         if(host_failed||vm.status()==odh::VmStatus::fault||vm.status()==odh::VmStatus::budget_exhausted||
-           session_policy.instruction_limit_reached(total_steps()))
-            throw odh::FormatError("failed or instruction-limited session will not replace the previous save");
+           session_policy.instruction_limit_reached(total_steps())){
+            const auto detail=!host_diagnostic.empty()?host_diagnostic:!vm.diagnostic().empty()?
+                vm.diagnostic():std::string("session instruction limit reached");
+            throw odh::FormatError("failed or instruction-limited session will not replace the previous save: "+detail);
+        }
         saved_session_path=save_live_session();
     }
     const auto status=vm.status();
@@ -8229,6 +8441,18 @@ struct PlacementCandidateProbe {
             <<",\"enqueued\":"<<(render_interaction_enqueued?"true":"false")
             <<",\"status\":"<<json_bytes(render_interaction_status)
             <<",\"diagnostic\":"<<json_bytes(render_interaction_diagnostic)
+            <<",\"cancel\":{\"attempted\":"<<(render_interaction_cancel_attempted?"true":"false")
+            <<",\"scheduled_tick\":"<<(scheduled_cancel_interaction_tick?
+                std::to_string(*scheduled_cancel_interaction_tick):"null")
+            <<",\"result\":"<<json_bytes(interaction_cancel_status)
+            <<",\"diagnostic\":"<<json_bytes(interaction_cancel_diagnostic)
+            <<",\"entry_point4\":";
+        if(queue_skipped_evidence){const auto& ep4=*queue_skipped_evidence;
+            std::cout<<"{\"target\":"<<ep4.target<<",\"caller\":"<<ep4.caller
+                <<",\"stack_object\":"<<ep4.stack_object<<",\"routine\":"<<ep4.routine
+                <<",\"steps\":"<<ep4.steps<<",\"result\":"<<json_bytes(ep4.result)<<'}';
+        }else std::cout<<"null";
+        std::cout<<'}'
             <<",\"main_vm_status\":"<<json_bytes(odh::vm_status_name(vm.status()))
             <<",\"main_vm_diagnostic\":"<<json_bytes(vm.diagnostic())
             <<",\"actor_vm_status\":"<<(actor_vm?json_bytes(odh::vm_status_name(actor_vm->status())):"null")

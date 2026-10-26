@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `6dc587ec1b3420ef6460130991eeeef3c336b178`.
+Base publicada antes da etapa atual: `4a90c3e2f386ac99f06f2df0dc97a9b1ce65a0cc`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,61 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Uma ação pode aguardar outra e depois continuar (etapa atual)
+### Cancelar uma ação e conservar a limpeza do objeto (etapa atual)
+
+Cancelamento usa a identidade nativa64, separada do UID público16. Uma ação
+pendente Normal/DirectControl sem MustRun é removida e executa EP4 do callee
+sincronamente; true/false do BHAV são conclusão, não falha. Sem EP4 na tabela
+conhecida é no-op. Caller=Callee=alvo, StackObject=ator, quatro argumentos zero,
+TEMP/XL copiados do thread alvo fora do tick e bancos exatos. Serviço desconhecido,
+wait/call assíncrono ou limite10000 são erro explícito. Falha depois da remoção
+não ressuscita a ação nem fabrica completion ou repete o callback.
+
+Ação ativa/protegida ou retida recebe NotifyIdle, cancelbit e prioridade corrente
+zero; a própria BHAV faz a limpeza. ParentIdle remove ParentIdle pendente posterior
+e marca ParentExit notificado/prioridade0. A API recusa antes de mutar se isso
+removeria um descendente protegido, e recusa perfil FIFO legado. Reentrada na
+mesma fila é rejeitada. Ainda faltam callbacks gerais, cancelamento automático
+no Enqueue, RunImmediately e a exceção de skip protegido fora da árvore de ação.
+
+Backspace respeita precedência de fechar menu/cancelar Go Here e depois cancela
+interação rastreada; CLI --headless-cancel-interaction aceita o mesmo tick do
+pedido e ticks seguintes. JSON/log registram resultado, diagnóstico e EP4.
+A sessão mantém formato controller v5; callbacks são reinstalados na reabertura.
+
+O cenário real revelou RemoveObjectInstance suspendendo e apagando comida180
+antes de a limpeza ler suas flags. Para remoção de outro objeto sem flags, a
+BHAV agora segue imediatamente e o serviço remove no limite do scheduler,
+retendo dados enquanto outros frames ainda os referenciam. O Main do próprio
+objeto não impede sua remoção. Intenções repetidas deduplicam ID/geração; intenções
+stale são descartadas antes de verificar referências. VM::references_entity e
+snapshot World/VM cobrem corte por orçamento de instruções. HOST já persiste
+intenções deferred por ID/geração e possui fixtures de restauração/negativos.
+
+Limites de lifecycle: o objeto retido continua visível na World, diferente do
+VMEntity morto fora do lookup na fonte; tombstones/referências geracionais ainda
+precisam port. Self-removal mantém GOTO_TRUE imediato preexistente, enquanto fonte
+faz NEXT_TICK. Não declarar esses caminhos equivalentes. Diagnóstico de leitura
+agora inclui caller/callee/StackObject/owner/rotina/PC, e uma falha que impede save
+é registrada com sua causa concreta sem sobrescrever o save anterior.
+
+
+Validação final: build C++ `reports/native-action-cancel/attempt-1/deferred-build.log`
+e host final `deferred-final-host-build.log`; 15 CTests em `deferred-ctest.log`.
+Binário SHA256 `9df60d8101a1d9fd034b9740c624b90e55e3876ade84768589d73757165f0add`.
+`reports/native-action-cancel/real-2/result.json`: cancelar geladeira112 na Casa07
+pelo ator105 em tick1 remove antes de iniciar (EP4 conhecido0 = no-op). Cancelar
+em tick256 conserva ação ativa no save256, depois termina limpeza/retornafalse
+com fila vazia. Ambos zero-reopen12 e final12 iguais ao controle sem interrupção,
+final512/4096 e campos ator/global/RNG/tick iguais. NonzeroEP4 só fixture VM.
+`reports/native-active-interaction/attempt-23/result.json`: geladeira semcancel
+continua passando cortes256/512,12seções iguais reabertura/final4096, legadoabre.
+25 originais intactos nos dois relatórios,16processos/perfis encerrados; nenhuma
+tela virtual. Revisão independente conferiu código e evidências sem reexecutar.
+O teste de HOSTpending é sintético, não o corte real256 antes da remoção; não
+confundir. A falha real-1 fica preservada como evidência histórica já corrigida.
+
+### Uma ação pode aguardar outra e depois continuar (commit `4a90c3e`)
 
 AllowPush dentro de uma ação pode iniciar outra de prioridade maior. A fila
 preserva os pais na ordem, restaura a prioridade ao retornar e só encerra as

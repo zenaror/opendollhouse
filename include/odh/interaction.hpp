@@ -2,6 +2,7 @@
 #include "odh/world.hpp"
 #include <algorithm>
 #include <deque>
+#include <stdexcept>
 
 namespace odh {
 struct InteractionCompletion {std::uint64_t uid,ticket,tick;bool result;};
@@ -11,6 +12,7 @@ enum class InteractionPermission { allowed, denied, unsupported };
 InteractionPermission ts1_interaction_permission(const Entity*,std::uint32_t flags);
 enum class InteractionQueueMode : std::uint8_t { normal, parent_idle, parent_exit, idle };
 enum class InteractionQueueProfile : std::uint8_t { legacy_fifo, ts1_priority };
+enum class InteractionCancelResult : std::uint8_t { missing, removed, notified, unsupported };
 struct InteractionActionSnapshot {
     std::uint64_t uid,target_generation;
     VmCall call;
@@ -71,6 +73,17 @@ public:
     // and BHAV at dispatch, with UserDriven priority 50.
     bool enqueue_user(RoutineKey,VmContext,const std::vector<std::int16_t>& args,
         std::uint32_t flags,std::optional<RoutineKey> check={});
+    // Cancel by stable native identity. The source-compatible wrapping 16-bit
+    // queue UID remains metadata and is never used as an internal pointer.
+    InteractionCancelResult cancel(std::uint64_t native_uid);
+    // TS1 invokes the skipped object's EntryPoint 4 after removing the item.
+    // The host supplies that synchronous operation; it is not persisted. The
+    // callback must not reenter this queue; false/throw reports failure after
+    // removal and does not restore the action.
+    void set_queue_skipped_handler(std::function<bool(const InteractionActionSnapshot&)> handler) {
+        if(executing_)throw std::logic_error("queue-skipped handler cannot reenter controller");
+        queue_skipped_handler_=std::move(handler);
+    }
     // Native identity (not the wrapping public queue UID) for UI request tracking.
     std::uint64_t last_enqueued_uid() const {return sequence_;}
     bool contains_uid(std::uint64_t uid) const {
@@ -107,6 +120,7 @@ private:
         std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool,std::optional<RoutineKey>,bool);
     World& world_;std::int16_t actor_id_;std::size_t capacity_;
     std::function<bool()> thread_interrupt_;
+    std::function<bool(const InteractionActionSnapshot&)> queue_skipped_handler_;
     VmPrimitive check_primitive_;
     Vm* vm_=nullptr;std::uint64_t actor_generation_=0,run_generation_=0,sequence_=0;
     std::uint64_t clock_=0,idle_start_=0;std::optional<std::uint64_t> last_tick_,resume_tick_;

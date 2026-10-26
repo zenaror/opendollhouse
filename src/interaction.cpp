@@ -7,6 +7,8 @@ namespace odh {
 namespace {
 struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}};
 constexpr std::uint32_t ttab_run_immediately=1U<<2;
+constexpr std::uint32_t ttab_must_run=1U<<10;
+constexpr std::uint32_t ttab_direct_control=1U<<27;
 constexpr std::uint32_t tso_push_tail=1U<<30;
 constexpr std::uint32_t tso_push_head=1U<<29;
 constexpr std::uint32_t tso_skip_permissions=1U<<28;
@@ -252,6 +254,107 @@ bool InteractionQueue::enqueue_ts1(RoutineKey key,VmContext context,const std::v
 bool InteractionQueue::enqueue_user(RoutineKey key,VmContext context,
         const std::vector<std::int16_t>& args,std::uint32_t flags,std::optional<RoutineKey> check) {
     return enqueue_impl(key,context,args,50,InteractionQueueMode::normal,flags,false,false,true,check,true);
+}
+InteractionCancelResult InteractionQueue::cancel(std::uint64_t native_uid) {
+    if(executing_){diagnostic_="interaction cancellation cannot reenter the queue";
+        return InteractionCancelResult::unsupported;}
+    fresh_=false;
+    if(!validate())return InteractionCancelResult::unsupported;
+    const auto selected_it=std::find_if(queue_.begin(),queue_.end(),[&](const Action& action){
+        return action.uid==native_uid;
+    });
+    if(selected_it==queue_.end()){diagnostic_.clear();return InteractionCancelResult::missing;}
+    if(profile_!=InteractionQueueProfile::ts1_priority){
+        diagnostic_="TS1 action cancellation is unsupported for legacy FIFO queues";
+        return InteractionCancelResult::unsupported;
+    }
+    const auto selected=*selected_it;
+    const auto selected_index=static_cast<std::size_t>(std::distance(queue_.begin(),selected_it));
+    const auto protected_count=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
+    const auto* target=world_.find(selected.call.context.callee);
+    if(!target||target->generation!=selected.target_generation){
+        diagnostic_="cancelled interaction target identity is stale";
+        return InteractionCancelResult::unsupported;
+    }
+    const bool must_run=(selected.flags&ttab_must_run)!=0;
+    const bool direct_control=(selected.flags&ttab_direct_control)!=0;
+    const bool removable=!must_run&&selected_index>=protected_count&&
+        (selected.mode==InteractionQueueMode::normal||direct_control);
+    if(removable&&!queue_skipped_handler_){
+        diagnostic_="removing a TS1 action requires a synchronous queue-skipped handler";
+        return InteractionCancelResult::unsupported;
+    }
+
+    std::vector<std::uint64_t> remove_parent_idle;
+    std::vector<std::uint64_t> notify_parent_exit;
+    if(selected.mode==InteractionQueueMode::parent_idle){
+        for(std::size_t n=selected_index+1;n<queue_.size();++n){
+            if(queue_[n].mode==InteractionQueueMode::parent_idle){
+                if(n<protected_count){
+                    diagnostic_="ParentIdle cancellation would remove a protected descendant";
+                    return InteractionCancelResult::unsupported;
+                }
+                remove_parent_idle.push_back(queue_[n].uid);
+            }else if(queue_[n].mode==InteractionQueueMode::parent_exit){
+                notify_parent_exit.push_back(queue_[n].uid);
+            }
+        }
+    }
+
+    const auto* actor=world_.find(actor_id_);
+    if(!removable&&(!actor||actor->generation!=actor_generation_||
+       actor->kind!=EntityKind::avatar||actor->person_data.size()<=33||
+       !actor->object_words.count(8))){
+        diagnostic_="retained action cancellation requires avatar PersonData[33] and ObjectData[8]";
+        return InteractionCancelResult::unsupported;
+    }
+    if(!removable){
+        const auto flags=static_cast<std::uint16_t>(actor->object_words.at(8))|0x0080U;
+        if(!world_.set_person_data(actor_id_,33,0)||
+           !world_.declare_object_word(actor_id_,8,word(flags))){
+            diagnostic_="retained action cancellation could not publish priority and cancel flag";
+            return InteractionCancelResult::unsupported;
+        }
+    }
+
+    for(const auto uid:notify_parent_exit){
+        const auto it=std::find_if(queue_.begin(),queue_.end(),[uid](const Action& action){
+            return action.uid==uid;
+        });
+        if(it!=queue_.end()){it->notify_idle=true;it->priority=0;}
+    }
+    for(const auto uid:remove_parent_idle){
+        const auto it=std::find_if(queue_.begin(),queue_.end(),[uid](const Action& action){
+            return action.uid==uid;
+        });
+        if(it!=queue_.end())queue_.erase(it);
+    }
+    const auto current=std::find_if(queue_.begin(),queue_.end(),[native_uid](const Action& action){
+        return action.uid==native_uid;
+    });
+    if(current==queue_.end()){
+        diagnostic_="cancelled action disappeared while applying its ParentIdle chain";
+        return InteractionCancelResult::unsupported;
+    }
+    current->notify_idle=true;
+    if(!removable){diagnostic_.clear();return InteractionCancelResult::notified;}
+
+    const auto skipped=*current;
+    queue_.erase(current);
+    try{
+        Guard guard(executing_);
+        if(!queue_skipped_handler_(skipped)){
+            diagnostic_="queue-skipped handler did not complete EntryPoint 4 synchronously";
+            return InteractionCancelResult::unsupported;
+        }
+    }catch(const std::exception& error){
+        diagnostic_=std::string("queue-skipped handler failed after action removal: ")+error.what();
+        return InteractionCancelResult::unsupported;
+    }catch(...){
+        diagnostic_="queue-skipped handler failed after action removal";
+        return InteractionCancelResult::unsupported;
+    }
+    diagnostic_.clear();return InteractionCancelResult::removed;
 }
 bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
         std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,

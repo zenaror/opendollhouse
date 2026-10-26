@@ -40,7 +40,9 @@ and BHAV checks against the current World; a check-time change can reject an
 action that was available at click time. Other direct host enqueues and legacy
 saves retain their old semantics. Check primitive coverage remains incomplete.
 
-It does not implement full cancellation or followup skipping, inject
+Targeted cancellation now removes pending skippable actions or signals retained
+actions; see below for the synchronous EntryPoint4 path and its limits. It does
+not implement automatic Enqueue followup skipping, inject
 RunImmediately at a tick boundary, or support action callbacks.
 RunImmediately requests are rejected explicitly so they cannot masquerade as
 ordinary queued work. Priority reevaluation protects the entire active prefix; it runs on each tick
@@ -53,8 +55,9 @@ simulation. Do not present this slice as game parity.
 Current gates: 15 focused CTests passed for VM execution/snapshots, queue,
 controller codec v1–v5, session bundle, seated continuation and resident restore
 (including cross-process fixtures). Output:
-`reports/native-nested-actions/attempt-1/final-ctest.log`; build:
-`reports/native-nested-actions/attempt-1/final-build.log`.
+`reports/native-action-cancel/attempt-1/deferred-ctest.log`; build:
+`reports/native-action-cancel/attempt-1/deferred-build.log` and the final host
+rebuild `deferred-final-host-build.log` in that directory.
 The earlier cross-resident PushInteraction assertion remains covered.
 Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
 zero check arguments, missing/unsupported checks, independent instruction budgets,
@@ -65,8 +68,8 @@ unknown avatar data, pet/visitor/age flags, and rejected requests without fabric
 completion. These are synthetic interpreter/World fixtures, not original-executable evidence.
 
 House07 active-save/reopen rerun:
-`reports/native-active-interaction/attempt-22/result.json`, binary SHA256
-`6df60219ced71276479606d2a9eeb2d824921bd902426c7a75254f7da20a0e14`.
+`reports/native-active-interaction/attempt-23/result.json`, binary SHA256
+`9df60d8101a1d9fd034b9740c624b90e55e3876ade84768589d73757165f0add`.
 Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
 continuations matched the uninterrupted run through tick 4096. The legacy save
 loaded and 25 original game files retained their hashes. Processes ended and
@@ -87,11 +90,84 @@ New AllowPush=1 waits poll every tick. Restore still accepts the older full
 countdown deadline for a Main wait and preserves that deadline. AllowPush=0
 keeps its full countdown. Captures before return observation, after observation,
 and after a clock advance before VM execution preserve the same continuation.
-Nested dispatch requires the TS1 priority profile; legacy FIFO snapshots cannot
-fabricate suspended ancestors. RunImmediately and full callbacks/cancellation
+Nested dispatch and targeted cancellation require the TS1 priority profile;
+legacy FIFO snapshots cannot fabricate suspended ancestors or gain new cancellation
+semantics. RunImmediately, callbacks and automatic Enqueue followup cancellation
 remain explicit gaps. The synthetic integration test covers one parent and one
 child for both return values, comparing uninterrupted and repeatedly reopened
 VM/controller/World state; this is not evidence of a complete game flow.
+
+## Targeted cancellation and queue-skipped entry points
+
+The host cancels by the native 64-bit action identity, independently of the
+wrapping ushort source UID. Pending Normal or DirectControl entries can be
+removed unless MustRun is set. Active/protected entries and other retained
+modes instead receive NotifyIdle, avatar InteractionCanceled and current priority
+zero; their game BHAV performs cleanup. Cancelling ParentIdle removes following
+pending ParentIdle entries and marks following ParentExit entries notified with
+priority zero. If that would remove a protected descendant, the native queue
+reports unsupported before mutation rather than corrupting its active prefix.
+Legacy FIFO cancel is also explicitly unsupported.
+
+Removal invokes a configured synchronous queue-skipped handler **after** removal,
+as in the pinned source. The host resolves callee EntryPoint4 from the exact
+live definition/resource, runs Caller=Callee=object and StackObject=avatar with
+four zero arguments, and accepts either true or false completion. A known zero
+entry is a no-op. An external host-boundary call clones callee TEMP/XL (or starts
+zero if no callee thread exists); it never imports the avatar's registers.
+The disposable VM shares exact code/memory and only explicit synchronous
+handlers. Waiting, asynchronous service calls, unavailable code and the
+10000-instruction limit are explicit errors. Effects before failure remain;
+an errored callback does not resurrect the removed action, fabricate completion,
+or run again on a retry for that identity.
+
+The callback itself is not serialized: it finishes at the host boundary, and
+only the resulting queue/World state is saved using existing v5 metadata. Hosts
+rebind their callbacks on reopen. Active cancellation state, including priority,
+flags and NotifyIdle, is compared across VM/controller save/reopen in synthetic
+execution. Callback reentry into the same queue is rejected. Arbitrary callbacks
+that enqueue work, automatic Enqueue followup cancellation (including the static
+source-loop hazard), RunImmediately, and the source exception for skipping a
+protected action outside an action tree remain pending. No asynchronous EP4 job
+is silently dropped or represented as a successful cancellation.
+
+Cancelling the real fridge action exposed a separate cleanup-order bug:
+RemoveObjectInstance used to wait, erase object180, then resume code that still
+read that object's flags. Non-self flags0 removal now continues the tree immediately and
+queues deletion for a scheduler boundary, matching the source's deferred delete.
+Foreign VM frame/service references retain the object's data across an instruction
+budget cut or save/reopen; the object's own Main does not pin its own deletion.
+The existing deferred-removal identity/generation section stores this work.
+This is still a native lifecycle limitation: retained objects remain in World
+until readers release them, whereas the source can remove the entity from lookup
+while existing frames retain a VMEntity reference. General dead-object/tombstone
+visibility and the remaining removal flags require a later lifecycle migration.
+Self-removal also retains the previous native immediate branch, whereas the pinned
+source uses GOTO_TRUE_NEXT_TICK; that timing path is not validated by object180.
+Repeated deletion requests are deduplicated by ID/generation, and stale intents
+are discarded before reference checks so they cannot pin or erase a replacement;
+no unknown or removed object read is fabricated as zero.
+
+Backspace uses the existing menu/Go Here precedence, then cancels the tracked
+selected interaction. `--headless-cancel-interaction TICK` schedules that same
+host operation after enqueue and before the tick's interpreter dispatch; equal
+enqueue/cancel ticks exercise pending cancellation. JSON and session logs retain
+cancel result/diagnostic and EP4 context/routine/steps/result.
+
+Cancellation runtime evidence: `reports/native-action-cancel/real-2/result.json`,
+using the same final binary as the normal fridge regression above. Tick1 removes
+the pending fridge action without starting it (its known EP4 is zero). Tick256
+signals the active action; the save at tick256 still has that action active.
+It then finishes its cleanup, returns false and leaves an empty queue. Both
+scenarios reopen all 12 sections identically and their final states match their
+uninterrupted controls (ticks512 and4096). Actor/global/RNG/tick fields match;
+25 originals are unchanged and all eight processes/profiles were cleaned up.
+Nonzero EP4 execution and true/false effects are interpreter fixtures, not a
+claim that every object's EP4 has been exercised. HOST deferred jobs have fixture
+roundtrips; these real cuts do not prove saving during pending removal itself.
+The earlier `real-1` failure at tick395 documents the cleanup-order bug fixed
+here. Static independent review and report inspection found no remaining blocker
+for these exercised paths; no graphics, original-EXE or hardware proof is claimed.
 
 ## Player requests and code ownership
 

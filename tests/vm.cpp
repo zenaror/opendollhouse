@@ -290,6 +290,52 @@ int main() {
                 temporary.status()==suspended_main.status&&temporary.stack()[0].pc==0,
                 "missing temporary routine leaves the suspended Main untouched");
 
+        // Queue-skipped entry points run on disposable check threads outside a tick.
+        // They must use explicit synchronous handlers and preserve exact object context.
+        for(const bool returned:{true,false}){
+            unsigned effects=0;bool exact_context=false,check_dispatch=false;
+            odh::VmMemory entry_memory;
+            entry_memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,
+                                   std::int16_t index,std::int16_t value){
+                exact_context=frame.context.caller==22&&frame.context.callee==22&&
+                    frame.context.stack_object==11&&frame.context.code_owner==7;
+                if(scope!=12||index!=0||value!=123)return false;
+                ++effects;return true;
+            };
+            unsigned implicit_calls=0;
+            odh::Vm entry({},entry_memory,{},[&](const auto&,const auto&,const auto&,const auto&){
+                ++implicit_calls;return odh::PrimitiveOutcome{};
+            },{{7,{{key(),routine({expr(5,0,123,12,7,1),
+                {99,static_cast<std::uint8_t>(returned?254:255),255,{}}})}}}});
+            entry.start(key(),{22,22,11,7},{0,0,0,0});
+            entry.temps()[2]=19;entry.temp_xl()[1]=123456;
+            const auto result=entry.run_synchronous_check(8,[&](const auto& frame,const auto&,
+                    const auto& temps,const odh::VmDispatch& dispatch){
+                check_dispatch=dispatch.check_mode&&dispatch.origin==&entry&&
+                    frame.arguments==std::vector<std::int16_t>({0,0,0,0})&&temps[2]==19;
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            });
+            require(result.started&&result.steps==2&&result.status==(returned?
+                    odh::VmStatus::returned_true:odh::VmStatus::returned_false)&&
+                effects==1&&exact_context&&check_dispatch&&!implicit_calls&&entry.temp_xl()[1]==123456,
+                "disposable entry check retains false/true World effects with exact callee context and explicit handler");
+            require(!entry.run_synchronous_check(8).started,"entry check cannot execute twice after returning");
+        }
+        for(const auto disposition:{odh::PrimitiveDisposition::wait,odh::PrimitiveDisposition::call}){
+            auto entry=machine(routine({{99,254,255,{}}}));entry.start(key());
+            const auto result=entry.run_synchronous_check(8,[&](const auto&,const auto&,const auto&,const auto&){
+                return odh::PrimitiveOutcome{disposition,{}};
+            });
+            require(result.started&&result.status==odh::VmStatus::fault&&!entry.pending()&&
+                    entry.stack().size()==1,"disposable entry check rejects asynchronous service without publishing pending state");
+        }
+        auto bounded_entry=machine(routine({expr(5,2,9,8,7,0)}));bounded_entry.start(key());
+        require(!bounded_entry.run_synchronous_check(0).started,"entry check refuses zero budget before execution");
+        const auto bounded_result=bounded_entry.run_synchronous_check(3);
+        require(bounded_result.started&&bounded_result.status==odh::VmStatus::budget_exhausted&&
+                bounded_result.steps==3&&bounded_entry.temps()[2]==9&&!bounded_entry.pending(),
+                "disposable entry check bounds infinite BHAV loop and retains effects without fabricating false");
+
         // A Check BHAV can run synchronously from an executing Main primitive.
         // Its stack is separate, but the actor's registers and World backend are shared.
         std::optional<odh::VmContext> check_world_write_context;

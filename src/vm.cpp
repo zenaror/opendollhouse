@@ -397,7 +397,12 @@ std::int32_t Vm::read(std::uint8_t scope, std::int16_t data) {
             const auto value = memory_.read(frame, address->scope, address->index);
             if (value) return *value;
         }
-        throw VmError("unsupported read scope " + std::to_string(scope) + " index " + std::to_string(data));
+        throw VmError("unsupported read scope " + std::to_string(scope) + " index " + std::to_string(data) +
+            " (caller=" + std::to_string(frame.context.caller) + " callee=" +
+            std::to_string(frame.context.callee) + " stack_object=" +
+            std::to_string(frame.context.stack_object) + " owner=" +
+            std::to_string(frame.context.code_owner) + " routine=" + std::to_string(frame.key.id) +
+            " pc=" + std::to_string(frame.pc) + ")");
     }
 }
 bool Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
@@ -518,6 +523,43 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
         ~Guard() { value = false; }
     } guard(executing_);
     return run_internal(budget,trace,nullptr,false);
+}
+
+bool Vm::references_entity(std::int16_t entity) const {
+    const auto matches=[entity](const VmContext& context){
+        return context.caller==entity||context.callee==entity||context.stack_object==entity;
+    };
+    for(const auto& frame:stack_)if(matches(frame.context))return true;
+    if(pending_&&matches(pending_->context))return true;
+    for(const auto& pending:suspended_pending_)if(matches(pending.context))return true;
+    return false;
+}
+
+VmSubroutineResult Vm::run_synchronous_check(std::uint64_t budget,const VmPrimitive& primitive) {
+    VmSubroutineResult result;
+    if(executing_||check_active_||status_!=VmStatus::running||steps_||stack_.size()!=1||
+       stack_.front().pc||stack_.front().return_mode!=VmCallReturnMode::ordinary||
+       pending_||!suspended_pending_.empty()||interaction_return_||external_frame_return_||!budget){
+        result.status=status_;
+        result.diagnostic="synchronous check requires a freshly started disposable VM and a nonzero budget";
+        return result;
+    }
+    struct Guard {
+        bool& executing;bool& checking;
+        Guard(bool& a,bool& b):executing(a),checking(b){executing=true;checking=true;}
+        ~Guard(){executing=false;checking=false;}
+    } guard(executing_,check_active_);
+    result.started=true;
+    try{
+        result.status=run_internal(budget,{},&primitive,true,&result.steps);
+        result.diagnostic=diagnostic_;
+        if(result.status==VmStatus::budget_exhausted)result.diagnostic="check instruction limit reached";
+    }catch(const std::exception& error){
+        status_=VmStatus::fault;result.status=status_;result.diagnostic=error.what();
+    }catch(...){
+        status_=VmStatus::fault;result.status=status_;result.diagnostic="synchronous check raised a non-standard exception";
+    }
+    return result;
 }
 
 VmStatus Vm::run_internal(std::uint64_t instruction_budget,

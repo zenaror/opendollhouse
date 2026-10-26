@@ -7,11 +7,18 @@ validação indicados por versão.
 
 ### Corrigido
 
+- Ao cancelar a geladeira, a limpeza passa a conservar os dados da comida até
+  terminar de usá-los, evitando apagar o objeto antes de concluir a ação.
+
 - O Sim pode sentar no banco da Casa 05, salvar, reabrir e levantar no perfil
   nativo de um morador. A restauração conserva o código, os valores de
   comportamento e a animação usados pelo banco.
 
 ### Adicionado
+
+- Cancelamento nativo da ação selecionada, com aviso ao objeto quando a ação
+  ainda não começou e sinal de interrupção quando já está em andamento.
+  O resultado e possíveis falhas ficam nos logs e diagnósticos da sessão.
 
 - Uma ação do Sim pode aguardar outra de prioridade maior e depois continuar
   do mesmo ponto. Salvar e reabrir essa sequência foi validado em testes do

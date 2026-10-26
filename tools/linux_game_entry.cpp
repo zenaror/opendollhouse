@@ -118,6 +118,7 @@ struct Options {
     std::optional<unsigned> headless_stand_tick;
     std::optional<ResidentSit> headless_resident_sit;
     std::optional<ResidentInteraction> headless_resident_interaction;
+    std::optional<unsigned> headless_cancel_interaction_tick;
     std::optional<ResidentGoHere> headless_resident_go_here;
     std::optional<SingleResidentGoHere> headless_single_resident_go_here;
     bool headless_stand = false;
@@ -199,6 +200,13 @@ Options parse_options(int argc, char** argv) {
             if(!actor_id||!object_id||!tick)
                 throw odh::FormatError("resident interaction actor, object, or tick is outside the supported profile");
             result.headless_resident_interaction=Options::ResidentInteraction{actor_id,object_id,tick};
+            continue;
+        }
+        if (key == "--headless-cancel-interaction" && !result.headless_cancel_interaction_tick) {
+            if (i + 1 >= argc) throw odh::FormatError("missing interaction cancel tick");
+            const auto tick=parse_number(argv[++i],4096,"interaction cancel tick");
+            if(!tick)throw odh::FormatError("interaction cancel tick must be nonzero");
+            result.headless_cancel_interaction_tick=tick;
             continue;
         }
         if (key == "--headless-travel-house") {
@@ -295,6 +303,16 @@ Options parse_options(int argc, char** argv) {
     if (result.headless_resident_interaction && result.load_session &&
         (!result.restore_bundle || result.restore_bundle->household_roster.empty()))
         throw odh::FormatError("resumed resident interaction requires a saved whole-household session");
+    if(result.headless_cancel_interaction_tick){
+        const auto interaction_tick=result.headless_resident_interaction?
+            result.headless_resident_interaction->tick:
+            result.headless_sit_object?1U:0U;
+        if(!interaction_tick||!result.headless_ticks||result.plan_only||
+           *result.headless_cancel_interaction_tick<interaction_tick||
+           *result.headless_cancel_interaction_tick>*result.headless_ticks||
+           result.headless_resident_sit)
+            throw odh::FormatError("--headless-cancel-interaction requires a scheduled non-Sit action and an in-range tick not before it");
+    }
     if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
         result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
         throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
@@ -736,6 +754,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
         append(args, {"--headless-resident-interaction", std::to_string(options.headless_resident_interaction->actor_id),
             std::to_string(options.headless_resident_interaction->object_id),
             std::to_string(options.headless_resident_interaction->tick)});
+    if(options.headless_cancel_interaction_tick)
+        append(args,{"--headless-cancel-interaction",std::to_string(*options.headless_cancel_interaction_tick)});
     if (options.headless_stand) {
         if (!options.restore_bundle || !options.restore_bundle->seated_continuation)
             throw odh::FormatError("Stand request has no verified saved seat");
