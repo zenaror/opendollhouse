@@ -796,6 +796,17 @@ VmMemory World::vm_memory() {
     memory.write=[this](const VmFrame& frame,std::uint8_t scope,std::int16_t index,std::int16_t value) {
         return write(frame,scope,index,value);
     };
+    memory.expression_levels=[this](const VmFrame& frame)
+        -> std::optional<std::array<std::int32_t,3>> {
+        const auto* caller=find(frame.context.caller);
+        const auto* callee=find(frame.context.callee);
+        if(!caller || !callee || !caller->position || !callee->position) return {};
+        const auto offset=callee->definition_words.find(56);
+        if(offset==callee->definition_words.end()) return {};
+        // OBJD LevelOffset is unsigned16, unlike the signed word storage.
+        return std::array<std::int32_t,3>{caller->position->level,callee->position->level,
+            static_cast<std::uint16_t>(offset->second)};
+    };
     memory.dynamic_sprite_flag=[this](const VmFrame& frame,std::uint16_t flag) {
         return dynamic_sprite_flag(frame.context.stack_object,flag);
     };

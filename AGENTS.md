@@ -1,5 +1,13 @@
 # Orientação do OpenDollhouse
 
+- Orientação humana mais recente (2026-10-26): não usar C# nem se limitar a
+  corrigir o Simitone. Desenvolvimento e execução da frente atual são C/C++.
+  Não ampliar, compilar ou publicar a ponte gerenciada. Preservar seu WIP
+  separado. Usar o código Simitone como referência de comportamento e integrar
+  os componentes compartilhados no motor C++ existente, sem outro motor paralelo.
+  A retomada posterior à edição da meta foi confirmada como `active`; conferir
+  esse status ao retomar, sem reativar por conta própria uma meta pausada.
+
 - Base comum: papel OMM `project-base`. Mapa local no README; planejamento
   canônico em `docs/architecture.md`, evidência nos documentos de validação
   e em `reports/`. Preservar as particularidades e autorizações abaixo.

@@ -14,13 +14,34 @@ Online que não participam do TS1. Todas as funcionalidades do Simitone para TS1
 e os requisitos adicionais do original permanecem no escopo. Preservar licenças
 e atribuições de código derivado. Assets comerciais continuam externos.
 
+## Execução vigente (2026-10-26)
+
+A instrução mais recente é não usar C# nem apenas corrigir a referência.
+O trabalho segue diretamente no motor C++ existente: integrar os componentes
+migrados ao seu caminho de execução, preservar os dados e evitar implementações
+paralelas do mesmo sistema. O código Simitone é referência para a implementação,
+não o aplicativo em que novas funções serão desenvolvidas. A ponte gerenciada
+anterior e seu trabalho pendente ficam preservados fora desta frente.
+
 ## Estado real
 
-O programa atual ainda depende principalmente de C#/.NET. O leitor BCON e a fila
-de simulação já usam implementações nativas compartilhadas, com execução Linux
-e testes sintéticos ARM. Isso está longe de ser o port completo. O executor
-dos 21 operadores de expressões das ações também foi migrado e executado no
-jogo Linux e no teste ARM; [evidência](native-expression-integration.md).
+O candidato anterior baseado no Simitone ainda depende principalmente de
+C#/.NET e não é o produto final. A frente atual executa diretamente no
+`odh-person` C++: o `Vm` existente já chama o executor compartilhado dos 21
+operadores, sem hospedar C# nesta execução. A comparação inicial isolou uma
+falha anterior de idioma, seguida por uma limitação na fila dos outros moradores.
+Ambas foram corrigidas no programa nativo. No teste final da Casa 07, a ação
+da geladeira retornou verdadeiro, a fila esvaziou, a sessão foi salva e reaberta
+e continuou rodando. Isso ainda não comprova uma casa plenamente jogável.
+
+Os novos bancos TEMP/TempXL nativos foram validados separadamente; o `Vm`
+existente continua usando seus próprios arrays C++, sem cópia gerenciada.
+Não apresentar esses bancos como já integrados ao aplicativo. Relatórios locais:
+`reports/portability/native-state/`, `reports/native-vm-house07/`,
+`reports/native-vm-expression-comparison/` e `reports/native-vm-resident-continuation/`.
+Detalhes do checkpoint em [native-state-integration.md](native-state-integration.md).
+Os resultados anteriores com ponte C# são históricos:
+[evidência](native-expression-integration.md).
 
 O C++ existente em `src/`, `include/` e `tools/` deve ser aproveitado quando seu
 comportamento servir ao port. Não tratar o antigo motor parcial como equivalente
@@ -46,6 +67,12 @@ uma interface vazia ou um teste sintético isolado.
 
 ## Ordem prática
 
+Prioridade reafirmada pelo usuário: migrar os sistemas TS1 do Simitone e sua
+revisão FreeSO para C/C++ como trabalho principal. Testes servem para verificar
+essas entregas; componentes isolados não substituem a migração do aplicativo.
+Cada etapa deve conectar uma funcionalidade ao programa nativo e registrar o
+que ainda falta para a paridade. Não retomar desenvolvimento da ponte C#.
+
 1. Migrar a execução e o estado compartilhado, aproveitando BCON e fila já usados.
    O primeiro passo executado foi `VMExpression`: cálculos e comparações nativos,
    mantendo temporariamente o acesso às variáveis pela ponte de comparação.
@@ -61,10 +88,10 @@ uma interface vazia ou um teste sintético isolado.
 5. Validar e empacotar por plataforma, mantendo as restrições dos alvos limitados
    presentes durante toda a migração. A implementação Linux não define o núcleo.
 
-Durante a transição, o candidato C# pode chamar a implementação C++ para comparar
-o resultado em um fluxo real. Esse candidato é uma ferramenta de validação e
-não satisfaz o critério final. Não acrescentar novos recursos de jogo em C# nem
-substituir o port completo por uma tentativa de levar o CLR aos consoles.
+Nos checkpoints anteriores, o candidato C# chamava componentes C++ para
+comparação. A orientação atual encerra essa frente: implementar e executar
+no aplicativo C++ existente. Preservar os resultados anteriores como evidência
+histórica, sem ampliar a ponte ou tentar levar o CLR aos consoles.
 
 ## Verificação e limites
 

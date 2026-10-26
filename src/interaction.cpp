@@ -145,7 +145,7 @@ bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vecto
         diagnostic_="interaction requires a live Main run";return false;
     }
     Action action{++sequence_,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick}};
-    if(push_after_active&&active_&&!queue_.empty())queue_.insert(queue_.begin()+1,std::move(action));
+    if(push_after_active)queue_.insert(queue_.begin()+(active_?1:0),std::move(action));
     else queue_.push_back(std::move(action));
     diagnostic_.clear();return true;
 }
@@ -285,4 +285,53 @@ bool InteractionQueue::notify() {
     }
     wait_.reset();diagnostic_.clear();return true;
 }
+const Interaction* ts1_interaction_by_index(const Ttab& table,std::uint8_t index) {
+    if(table.status!=TtabStatus::decoded)return nullptr;
+    const Interaction* selected=nullptr;
+    for(const auto& row:table.interactions)if(row.label_index==index){
+        if(selected)throw FormatError("TTAB interaction index is ambiguous");
+        selected=&row;
+    }
+    return selected;
+}
+VmPrimitive ts1_push_interaction_primitive(const World& world,Ts1PushInteractionLookup lookup,
+        Ts1PushInteractionThread resolve_thread) {
+    return [&world,lookup=std::move(lookup),resolve_thread=std::move(resolve_thread)](
+        const VmFrame& frame,const Instruction& instruction,const Ts1Temps&,const VmDispatch&)->PrimitiveOutcome {
+        if(instruction.opcode!=13)return {};
+        const auto& bytes=instruction.operands;
+        constexpr std::uint8_t supported_flags=0x87;
+        if(bytes[2]!=0||(bytes[3]&static_cast<std::uint8_t>(~supported_flags))!=0)
+            return unsupported("PushInteraction priority/queue mode is outside the inherited FIFO adapter");
+        const auto& bank=(bytes[3]&2)!=0?frame.locals:frame.arguments;
+        if(bytes[1]>=bank.size()||((bytes[3]&1)!=0&&bytes[4]>=frame.locals.size()))
+            return unsupported("PushInteraction object/icon index outside its BHAV frame");
+        Ts1PushInteractionRequest request{frame.context.stack_object,bank[bytes[1]],bytes[0],
+            (bytes[3]&4)!=0,(bytes[3]&128)!=0,{}};
+        if((bytes[3]&1)!=0)request.custom_icon=frame.locals[bytes[4]];
+        if(!world.find(request.source))return {PrimitiveDisposition::goto_false,{}};
+        const auto* actor=world.find(request.actor);
+        if(!actor||actor->kind!=EntityKind::avatar)
+            return unsupported("PushInteraction StackObject has no supported resident interaction thread");
+        try {
+            if(!lookup)return unsupported("PushInteraction action resource resolver is unavailable");
+            const auto action=lookup(request);
+            if(!action)return {PrimitiveDisposition::goto_false,{}};
+            const auto target=resolve_thread?resolve_thread(request.actor):Ts1PushInteractionTarget{};
+            if(!target.vm||!target.queue)
+                return unsupported("PushInteraction resident interaction thread is unavailable");
+            if(!target.vm->has_routine(action->key,action->owner))
+                return unsupported("PushInteraction recipient lacks the exact installed action code owner");
+            const VmContext context{request.actor,request.source,request.source,action->owner};
+            // Head inserts after an active action, or at the front when idle. With inherited FIFO priority,
+            // tail continuation shares the ordinary append ordering.
+            if(!target.queue->enqueue(action->key,context,{},request.push_head))
+                return unsupported("PushInteraction resident queue rejected action: "+target.queue->diagnostic());
+            return {PrimitiveDisposition::goto_true,{}};
+        } catch(const std::exception& error) {
+            return unsupported(std::string("PushInteraction action could not be resolved: ")+error.what());
+        }
+    };
+}
+
 }

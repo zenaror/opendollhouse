@@ -31,6 +31,12 @@ const StringEntry* string_in_language(const StringTable& table,std::uint8_t lang
         --index;}
     return nullptr;
 }
+const StringEntry* string_in_ts1_language_set(const StringTable& table,std::uint8_t language,std::size_t index) {
+    // A flat table represents an absent and an empty language set identically.
+    // Test set membership before indexing: an empty string is still an entry.
+    const auto selected=string_in_language(table,language,0)?language:std::uint8_t{1};
+    return string_in_language(table,selected,index);
+}
 const StringEntry* string_in_language_or_english(const StringTable& table,std::uint8_t language,std::size_t index) {
     if(const auto* selected=string_in_language(table,language,index))return selected;
     if(language==0||language==1)return nullptr;

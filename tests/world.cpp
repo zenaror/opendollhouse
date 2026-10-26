@@ -305,6 +305,30 @@ int main() {
         route_calls=0;portal_vm.start(odh::routine_key(4113),portal_context);
         require(portal_vm.run(10)==odh::VmStatus::fault&&route_calls==0,
                 "4113 condition faults closed when the StackObject identity is unavailable");
+        {
+            odh::World levels;
+            require(levels.create(1,odh::EntityKind::avatar,{}) &&
+                    levels.create(2,odh::EntityKind::object,{}) &&
+                    levels.set_position(1,{16,16,1,0}) &&
+                    levels.set_position(2,{32,16,2,0}) &&
+                    levels.declare_object_word(1,29,1500), "room Expression world setup");
+            const odh::Bhav less{0x8002,{{2,254,255,{29,0,0,4,0,1,3,7}}},{},
+                odh::Bhav::Metadata{0,4,0,0}};
+            odh::Vm vm({{odh::routine_key(4096),less}},levels.vm_memory());
+            vm.start(odh::routine_key(4096),{1,2,2});
+            require(vm.run(2)==odh::VmStatus::fault,"missing level offset is not guessed as zero");
+            require(levels.declare_definition_word(2,56,0),"bind room level metadata");
+            vm.start(odh::routine_key(4096),{1,2,2});
+            require(vm.run(2)==odh::VmStatus::returned_true,
+                    "room sentinel compares caller and callee floors rather than room number");
+            require(levels.create(3,odh::EntityKind::object,{}) &&
+                    levels.set_position(3,{48,16,2,0}) &&
+                    levels.declare_definition_word(3,56,-1),"bind unsigned65535 level offset");
+            vm.start(odh::routine_key(4096),{1,3,3});
+            require(vm.run(2)==odh::VmStatus::returned_false,"level offset preserves unsigned OBJD word");
+            auto missing=frame(1,2);missing.context.callee=99;
+            require(!levels.vm_memory().expression_levels(missing),"missing callee level remains unavailable");
+        }
         std::cout<<checks<<" world checks passed (synthetic fixtures only)\n";
         return 0;
     } catch(const std::exception& e) { std::cerr<<"World test failed: "<<e.what()<<'\n'; return 1; }

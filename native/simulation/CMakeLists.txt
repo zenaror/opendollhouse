@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(odh_simulation VERSION 1.0 LANGUAGES C CXX)
 
-add_library(odh_simulation SHARED src/odh_simulation.cpp src/odh_expression.cpp)
+add_library(odh_simulation SHARED src/odh_simulation.cpp src/odh_expression.cpp src/odh_thread_state.cpp)
 target_compile_features(odh_simulation PRIVATE cxx_std_17)
+target_include_directories(odh_simulation PRIVATE ../../include)
 target_compile_definitions(odh_simulation PRIVATE ODH_SIMULATION_SHARED_BUILD)
 target_include_directories(odh_simulation PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -15,11 +16,11 @@ set_target_properties(odh_simulation PROPERTIES
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(export_map "${CMAKE_CURRENT_BINARY_DIR}/odh_simulation.exports.map")
-    file(WRITE "${export_map}" "{ global: odh_wake_*; odh_expression_*; local: *; };\n")
+    file(WRITE "${export_map}" "{ global: odh_wake_*; odh_expression_*; odh_state_*; odh_bank_*; local: *; };\n")
     target_link_options(odh_simulation PRIVATE "LINKER:--version-script=${export_map}")
 elseif(APPLE)
     set(export_list "${CMAKE_CURRENT_BINARY_DIR}/odh_simulation.exports.list")
-    file(WRITE "${export_list}" "_odh_wake_abi_version\n_odh_wake_create_v1\n_odh_wake_destroy_v1\n_odh_wake_schedule_v1\n_odh_wake_schedule_current_v1\n_odh_wake_deschedule_v1\n_odh_wake_prepare_interrupt_v1\n_odh_wake_begin_v1\n_odh_wake_select_current_v1\n_odh_wake_current_count_v1\n_odh_wake_current_at_v1\n_odh_wake_complete_v1\n_odh_wake_reset_v1\n_odh_wake_stats_v1\n_odh_expression_abi_version\n_odh_expression_execute_ts1_v1\n")
+    file(WRITE "${export_list}" "_odh_wake_abi_version\n_odh_wake_create_v1\n_odh_wake_destroy_v1\n_odh_wake_schedule_v1\n_odh_wake_schedule_current_v1\n_odh_wake_deschedule_v1\n_odh_wake_prepare_interrupt_v1\n_odh_wake_begin_v1\n_odh_wake_select_current_v1\n_odh_wake_current_count_v1\n_odh_wake_current_at_v1\n_odh_wake_complete_v1\n_odh_wake_reset_v1\n_odh_wake_stats_v1\n_odh_expression_abi_version\n_odh_expression_execute_ts1_v1\n_odh_expression_execute_ts1_state_v1\n_odh_state_abi_version\n_odh_state_create_v1\n_odh_state_retain_v1\n_odh_state_release_v1\n_odh_state_get_bank_v1\n_odh_state_bind_bank_v1\n_odh_bank_create_v1\n_odh_bank_retain_v1\n_odh_bank_release_v1\n_odh_bank_clone_v1\n_odh_bank_read_v1\n_odh_bank_write_v1\n_odh_bank_import16_v1\n_odh_bank_export16_v1\n_odh_bank_import32_v1\n_odh_bank_export32_v1\n_odh_bank_info_v1\n")
     target_link_options(odh_simulation PRIVATE "LINKER:-exported_symbols_list,${export_list}")
 endif()
 
@@ -39,4 +40,11 @@ if(BUILD_TESTING)
     add_executable(odh_expression_c_header tests/test_expression_c_header.c)
     target_link_libraries(odh_expression_c_header PRIVATE odh_simulation)
     add_test(NAME odh_simulation_expression_c_header COMMAND odh_expression_c_header)
+    add_executable(odh_state_tests tests/test_state.cpp)
+    target_compile_features(odh_state_tests PRIVATE cxx_std_17)
+    target_link_libraries(odh_state_tests PRIVATE odh_simulation)
+    add_test(NAME odh_simulation_state COMMAND odh_state_tests)
+    add_executable(odh_state_c_header tests/test_state_c_header.c)
+    target_link_libraries(odh_state_c_header PRIVATE odh_simulation)
+    add_test(NAME odh_simulation_state_c_header COMMAND odh_state_c_header)
 endif()

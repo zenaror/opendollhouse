@@ -1835,6 +1835,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return member->controllers&&member->controllers->interactions().references_target(target);
         });
     };
+    std::map<std::int16_t,odh::Ts1PushInteractionTarget> resident_interaction_threads;
     odh::EntityVmScheduler entity_scheduler(64);
     std::uint64_t ticks=0;
     struct PendingCreateObject {
@@ -2369,7 +2370,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     table=saved_action_string304.emplace(owner,std::move(found->second)).first;
                 }catch(const std::exception&){return std::nullopt;}
             }
-            const auto* entry=odh::string_in_language(table->second,game_language,index);
+            const auto* entry=odh::string_in_ts1_language_set(table->second,game_language,index);
             return entry?std::optional<std::string>{entry->value}:std::nullopt;
         });
     const auto code_owner_resource=[&](odh::CodeOwner owner)->std::optional<Resource>{
@@ -2427,7 +2428,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(found!=tree_name_local_strings.end())table=&found->second;
         }
         if(!table)return {odh::PrimitiveDisposition::goto_false,{}};
-        const auto* name=odh::string_in_language(*table,game_language,static_cast<std::uint32_t>(string_id-1));
+        const auto* name=odh::string_in_ts1_language_set(*table,game_language,static_cast<std::uint32_t>(string_id-1));
         if(!name)return {odh::PrimitiveDisposition::goto_false,{}};
 
         const auto* target=world.find(frame.context.stack_object);
@@ -2491,76 +2492,34 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return {odh::PrimitiveDisposition::call,{}, {},
             odh::VmCall{*routine,call_context,std::move(arguments)}};
     };
-    const odh::VmPrimitive push_interaction_handler=[&](const odh::VmFrame& frame,
-        const odh::Instruction& instruction,const std::array<std::int16_t,20>&,
-        const odh::VmDispatch&)->odh::PrimitiveOutcome{
-        if(instruction.opcode!=13)return {};
-        const auto interaction_index=instruction.operands[0];
-        const auto object_location=instruction.operands[1];
-        const auto priority=instruction.operands[2];
-        const auto flags=instruction.operands[3];
-        const auto icon_location=instruction.operands[4];
-        constexpr std::uint8_t supported_flags=0x87; // custom icon, local source, head/tail continuation
-        if(priority!=0||(flags&static_cast<std::uint8_t>(~supported_flags))!=0)
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction priority/flags outside the inherited Food continuation profile"};
-        const bool source_is_local=(flags&2)!=0;
-        const auto& source_bank=source_is_local?frame.locals:frame.arguments;
-        if(object_location>=source_bank.size()||((flags&1)!=0&&icon_location>=frame.locals.size()))
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction object/icon local index outside its BHAV frame"};
-        if(frame.context.stack_object!=runtime_avatar_id)
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction currently supports the primary avatar StackObject queue only"};
-        const auto source_id=source_bank[object_location];
-        const auto* source_object=world.find(source_id);
-        if(source_id<=0||!source_object||source_object->kind!=odh::EntityKind::object||
-           !source_object->definition||!definition_index)
-            return {odh::PrimitiveDisposition::goto_false,{}};
-        const auto* candidate=definition_index->unique(source_object->definition->guid);
-        if(!candidate||candidate->definition.guid!=source_object->definition->guid)
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction source definition is missing or ambiguous"};
-        const auto source_thread=runtime_object_threads.find(source_id);
-        if(source_thread==runtime_object_threads.end()||!source_thread->second)
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction source object has no installed runtime code owner"};
-        const auto owner_resource=saved_action_resources.find(source_thread->second->owner);
-        if(owner_resource==saved_action_resources.end()||owner_resource->second.archive!=candidate->source||
-           owner_resource->second.entry!=candidate->asset)
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                "PushInteraction exact source resource does not match its installed code owner"};
-        try{
-            auto interactions=saved_object_interactions(*candidate,game_language);
-            if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded||
-               interaction_index>=interactions.table->interactions.size())
-                return {odh::PrimitiveDisposition::goto_false,{}};
-            const auto& row=interactions.table->interactions[interaction_index];
-            const auto action_key=odh::routine_key(row.action);
-            const auto test_key=odh::routine_key(row.test);
-            if(action_key.scope!=odh::RoutineScope::private_object||
-               (row.test!=0&&test_key.scope!=odh::RoutineScope::private_object))
-                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                    "PushInteraction action/test is outside the exact private Food owner profile"};
-            const auto action_routines=load_saved_action_routines(*candidate,row.action);
-            if(!action_routines.count(action_key))return {odh::PrimitiveDisposition::goto_false,{}};
-            if(row.test!=0){
-                const auto test_routines=load_saved_action_routines(*candidate,row.test);
-                if(!test_routines.count(test_key))return {odh::PrimitiveDisposition::goto_false,{}};
-            }
-            const odh::VmContext queued_context{runtime_avatar_id,source_id,source_id,
-                source_thread->second->owner};
-            const bool push_head=(flags&4)!=0;
-            if(!thread_controllers.interactions().enqueue(action_key,queued_context,{},push_head))
-                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                    "PushInteraction could not enqueue the exact Food action: "+
-                    thread_controllers.interactions().diagnostic()};
-            return {odh::PrimitiveDisposition::goto_true,{}};
-        }catch(const std::exception& error){
-            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
-                std::string("PushInteraction exact Food table/action could not be read: ")+error.what()};
-        }
-    };
+    const auto push_interaction_handler=odh::ts1_push_interaction_primitive(world,
+        [&](const odh::Ts1PushInteractionRequest& request)->std::optional<odh::Ts1PushInteractionAction>{
+            const auto* source_object=world.find(request.source);
+            if(!source_object||!source_object->definition||!definition_index)return std::nullopt;
+            const auto* candidate=definition_index->unique(source_object->definition->guid);
+            if(!candidate||candidate->definition.guid!=source_object->definition->guid)
+                throw odh::FormatError("source definition is missing or ambiguous");
+            const auto source_thread=runtime_object_threads.find(request.source);
+            if(source_thread==runtime_object_threads.end()||!source_thread->second)
+                throw odh::FormatError("source object has no installed runtime code owner");
+            const auto owner=source_thread->second->owner;
+            const auto owner_resource=saved_action_resources.find(owner);
+            if(owner_resource==saved_action_resources.end()||owner_resource->second.archive!=candidate->source||
+               owner_resource->second.entry!=candidate->asset)
+                throw odh::FormatError("source resource does not match its installed code owner");
+            auto interactions=saved_object_interactions(*candidate,*definition_index,game_language);
+            if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return std::nullopt;
+            const auto* selected=odh::ts1_interaction_by_index(*interactions.table,request.interaction);
+            if(!selected)return std::nullopt;
+            const auto action_key=odh::routine_key(selected->action);
+            if(!source_thread->second->vm->has_routine(action_key,owner)||
+               (selected->test!=0&&!source_thread->second->vm->has_routine(odh::routine_key(selected->test),owner)))
+                return std::nullopt;
+            return odh::Ts1PushInteractionAction{action_key,owner};
+        },[&](std::int16_t actor){
+            const auto found=resident_interaction_threads.find(actor);
+            return found==resident_interaction_threads.end()?odh::Ts1PushInteractionTarget{}:found->second;
+        });
     const odh::VmPrimitive person_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
         if(i.opcode==42){
             if(!d.origin||!d.ticket||pending_create_objects.size()>=64)
@@ -2942,6 +2901,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         [&](std::uint64_t){return second_main_thread->observe();},[&]{return second_main_thread->observe();},
         [&]{return second_main_thread->notify();}))
         throw odh::FormatError("second person VM could not join the entity scheduler");
+    resident_interaction_threads.emplace(runtime_avatar_id,odh::Ts1PushInteractionTarget{&vm,&queue});
+    if(second_main_vm)resident_interaction_threads.emplace(static_cast<std::int16_t>(headless_second_main->avatar.id),
+        odh::Ts1PushInteractionTarget{second_main_vm.get(),&second_main_thread->interactions()});
+    for(const auto& member:household_runtime)
+        resident_interaction_threads.emplace(member->id,odh::Ts1PushInteractionTarget{
+            member->vm.get(),&member->controllers->interactions()});
     std::vector<odh::VmTrace> trace;std::optional<odh::VmTrace> latest_trace;
     bool host_failed=false;std::string host_diagnostic;
     std::vector<std::string> trace_phases;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // TS1 VMExpression.Execute semantics adapted from FreeSO 7e76c1960252ddd033d8937d5edb47d326f5b69c.
-#include "odh_expression.h"
+#include "odh_thread_state.h"
 
 #include <limits>
 
@@ -51,6 +51,7 @@ struct Execution {
     uint8_t op, lhs_scope, rhs_scope;
     int16_t lhs_index, rhs_index;
     uint32_t* result;
+    uint32_t* negative_sqrt = nullptr;
 
     int32_t read_lhs(int32_t& value) const {
         return read(context, lhs_scope, lhs_index, &value) == 0 ? ODH_EXPRESSION_OK : ODH_EXPRESSION_CALLBACK_FAILED;
@@ -74,6 +75,7 @@ struct Execution {
             if (op == 5) return store(rhs, true);
             // .NET 9/10 oracle: negative sqrt cast to short is zero. For positive
             // input, truncate sqrt then preserve low 16 bits as a signed short.
+            if (negative_sqrt && rhs < 0) *negative_sqrt = 1;
             const auto root = rhs < 0 ? UINT32_C(0) : square_root(static_cast<uint32_t>(rhs));
             return store(signed_short(static_cast<uint16_t>(root)), true);
         }
@@ -161,6 +163,118 @@ extern "C" int32_t ODH_SIM_CALL odh_expression_execute_ts1_v1(
         return execution.run();
     } catch (...) {
         *goto_true = 0;
+        return ODH_EXPRESSION_INTERNAL;
+    }
+}
+
+namespace {
+// Adapts memory only. Both public entrypoints execute the same operator body.
+struct StateExecution {
+    odh_thread_state* current;
+    void* context;
+    odh_expression_read_fn read;
+    odh_expression_write_fn write;
+    odh_expression_levels_fn levels;
+    odh_expression_resolve_stack_state_fn resolve;
+    uint32_t *native_reads, *native_writes, *host_reads, *host_writes, *resolutions;
+    int32_t error = ODH_EXPRESSION_OK;
+    // At most three memory accesses per Expression, plus the current holder.
+    odh_thread_state* retained[4]{};
+    unsigned retained_count = 0;
+    ~StateExecution() {
+        while (retained_count) odh_state_release_v1(retained[--retained_count]);
+    }
+    int32_t hold(odh_thread_state* state) {
+        if (!state) return ODH_EXPRESSION_BANK_UNAVAILABLE;
+        for (unsigned i = 0; i < retained_count; ++i)
+            if (retained[i] == state) return ODH_EXPRESSION_OK;
+        if (retained_count == 4 || odh_state_retain_v1(state) != ODH_STATE_OK)
+            return ODH_EXPRESSION_INTERNAL;
+        retained[retained_count++] = state;
+        return ODH_EXPRESSION_OK;
+    }
+    int32_t access(uint8_t scope, int16_t index, int32_t& value, bool writing) {
+        if (scope != 8 && scope != 11 && scope != 13 && scope != 42) {
+            if (writing) return ODH_EXPRESSION_INTERNAL; // writes preserve accepted below
+            if (!read) return ODH_EXPRESSION_INVALID_ARGUMENT;
+            if (read(context, scope, index, &value) != 0) return ODH_EXPRESSION_CALLBACK_FAILED;
+            ++*host_reads;
+            return ODH_EXPRESSION_OK;
+        }
+        auto* holder = current;
+        if (scope == 13) {
+            if (!resolve) return ODH_EXPRESSION_BANK_UNAVAILABLE;
+            ++*resolutions;
+            holder = nullptr;
+            if (resolve(context, &holder) != 0) return ODH_EXPRESSION_CALLBACK_FAILED;
+        }
+        auto status = hold(holder);
+        if (status != ODH_EXPRESSION_OK) return status;
+        odh_register_bank* bank = nullptr;
+        const auto state_status = odh_state_get_bank_v1(holder,
+            scope == 42 ? ODH_BANK_XL32 : ODH_BANK_TEMP16, &bank);
+        if (state_status == ODH_STATE_MISSING_BANK) return ODH_EXPRESSION_BANK_UNAVAILABLE;
+        if (state_status != ODH_STATE_OK) return ODH_EXPRESSION_INTERNAL;
+        int32_t slot = index;
+        if (scope == 11) {
+            status = odh_bank_read_v1(bank, slot, &slot);
+            if (status == ODH_STATE_OK) ++*native_reads;
+        }
+        if (status == ODH_STATE_OK) {
+            status = writing ? odh_bank_write_v1(bank, slot, value) : odh_bank_read_v1(bank, slot, &value);
+            if (status == ODH_STATE_OK) ++*(writing ? native_writes : native_reads);
+        }
+        odh_bank_release_v1(bank);
+        if (status == ODH_STATE_BOUNDS) return ODH_EXPRESSION_BANK_BOUNDS;
+        return status == ODH_STATE_OK ? ODH_EXPRESSION_OK : ODH_EXPRESSION_INTERNAL;
+    }
+    static int32_t ODH_SIM_CALL read_bridge(void* opaque, uint8_t scope, int16_t index, int32_t* value) {
+        auto& self = *static_cast<StateExecution*>(opaque);
+        self.error = self.access(scope, index, *value, false);
+        return self.error;
+    }
+    static int32_t ODH_SIM_CALL write_bridge(void* opaque, uint8_t scope, int16_t index, int32_t value, uint32_t* accepted) {
+        auto& self = *static_cast<StateExecution*>(opaque);
+        if (scope == 8 || scope == 11 || scope == 13 || scope == 42) {
+            self.error = self.access(scope, index, value, true);
+            *accepted = self.error == ODH_EXPRESSION_OK ? 1 : 0;
+        } else if (!self.write) self.error = ODH_EXPRESSION_INVALID_ARGUMENT;
+        else if (self.write(self.context, scope, index, value, accepted) != 0)
+            self.error = ODH_EXPRESSION_CALLBACK_FAILED;
+        else { ++*self.host_writes; self.error = ODH_EXPRESSION_OK; }
+        return self.error;
+    }
+    static int32_t ODH_SIM_CALL levels_bridge(void* opaque, int32_t* caller, int32_t* callee, int32_t* offset) {
+        auto& self = *static_cast<StateExecution*>(opaque);
+        if (!self.levels) self.error = ODH_EXPRESSION_INVALID_ARGUMENT;
+        else if (self.levels(self.context, caller, callee, offset) != 0) self.error = ODH_EXPRESSION_CALLBACK_FAILED;
+        return self.error;
+    }
+};
+}
+
+extern "C" int32_t ODH_SIM_CALL odh_expression_execute_ts1_state_v1(
+    const uint8_t* operand, uint32_t length, odh_thread_state* current,
+    void* context, odh_expression_read_fn read, odh_expression_write_fn write,
+    odh_expression_levels_fn levels, odh_expression_resolve_stack_state_fn resolve,
+    uint32_t* result, uint32_t* native_reads, uint32_t* native_writes,
+    uint32_t* host_reads, uint32_t* host_writes, uint32_t* resolutions, uint32_t* negative_sqrt) {
+    uint32_t* outputs[] = {result, native_reads, native_writes, host_reads, host_writes, resolutions, negative_sqrt};
+    bool complete = true;
+    for (auto* output : outputs) { if (output) *output = 0; else complete = false; }
+    if (!complete || !operand || length != 8) return ODH_EXPRESSION_INVALID_ARGUMENT;
+    if (operand[5] > 20) return ODH_EXPRESSION_UNKNOWN_OPERATOR;
+    try {
+        StateExecution memory{current, context, read, write, levels, resolve,
+            native_reads, native_writes, host_reads, host_writes, resolutions};
+        if (current && memory.hold(current) != ODH_EXPRESSION_OK) return ODH_EXPRESSION_INTERNAL;
+        const Execution execution{&memory, StateExecution::read_bridge, StateExecution::write_bridge,
+            StateExecution::levels_bridge, operand[5], operand[6], operand[7], little_short(operand),
+            little_short(operand + 2), result, negative_sqrt};
+        const auto status = execution.run();
+        return status == ODH_EXPRESSION_CALLBACK_FAILED && memory.error != ODH_EXPRESSION_OK ? memory.error : status;
+    } catch (...) {
+        *result = 0;
         return ODH_EXPRESSION_INTERNAL;
     }
 }

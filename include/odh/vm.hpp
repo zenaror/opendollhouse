@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/formats.hpp"
+#include "odh/temporary_registers.hpp"
 #include <map>
 #include <memory>
 #include <utility>
@@ -73,13 +74,20 @@ struct VmMemory {
     // Scope 27 selects a dynamic sprite flag with the Temp register named by data.
     std::function<std::optional<bool>(const VmFrame&, std::uint16_t)> dynamic_sprite_flag;
     std::function<bool(const VmFrame&, std::uint16_t, bool)> set_dynamic_sprite_flag;
+    // Expression-only setter result: nullopt is unsupported; false is a known
+    // rejection and selects false for operators that observe SetBigVariable.
+    // Existing write callbacks retain their unsupported-on-false contract.
+    std::function<std::optional<bool>(const VmFrame&, std::uint8_t, std::int16_t, std::int16_t)> expression_write;
+    // Caller level, callee level, callee OBJD LevelOffset. Used lazily only by
+    // the reference's exact MyObject.Room < / >= 1024 Expression special case.
+    std::function<std::optional<std::array<std::int32_t, 3>>(const VmFrame&)> expression_levels;
 };
 struct VmMemoryAddress {std::uint8_t scope;std::int16_t index;};
 // Scopes30/31 select My/StackObject PersonData using temps[index]. The temp
 // selector is checked here; the entity memory backend checks the resulting
 // PersonData index. Other addresses pass through unchanged.
 std::optional<VmMemoryAddress> resolve_person_data_address(std::uint8_t scope,
-    std::int16_t index,const std::array<std::int16_t,20>& temps);
+    std::int16_t index,const Ts1Temps& temps);
 struct VmLimits {
     std::size_t stack_depth = 64;
     std::size_t frame_variables = 4096;
@@ -124,7 +132,7 @@ struct PrimitiveOutcome {
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
 using VmPrimitive = std::function<PrimitiveOutcome(const VmFrame&, const Instruction&,
-                                                 const std::array<std::int16_t,20>&, const VmDispatch&)>;
+                                                 const Ts1Temps&, const VmDispatch&)>;
 struct VmPending {
     std::uint64_t ticket;
     VmTrace instruction;
@@ -149,9 +157,9 @@ struct VmExternalFrameReturn {
 // equivalent memory/primitive bindings. This is not a session-file envelope.
 struct VmSnapshot {
     std::vector<VmFrame> stack;
-    std::array<std::int16_t, 20> temps{};
+    Ts1Temps temps{};
     // Simitone's VMThread owns two signed 32-bit TempXL values per entity.
-    std::array<std::int32_t, 2> temp_xl{};
+    Ts1TempXL temp_xl{};
     VmStatus status = VmStatus::ready;
     std::string diagnostic;
     std::uint64_t steps = 0;
@@ -195,7 +203,7 @@ public:
     VmStatus start(RoutineKey, VmContext = {}, const std::vector<std::int16_t>& args = {});
     // Load a complete, already-resolved stack without starting Main or running
     // an instruction. Invalid snapshots throw and leave this VM unchanged.
-    void restore_dormant_state(std::vector<VmFrame>, const std::array<std::int16_t, 20>& temps);
+    void restore_dormant_state(std::vector<VmFrame>, const Ts1Temps& temps);
     // A host must explicitly opt in after restoring the surrounding world state.
     bool activate_dormant_state();
     VmStatus run(std::uint64_t instruction_budget,
@@ -212,13 +220,16 @@ public:
     // owners and active VM state are preserved. Rejects owner zero, duplicates,
     // invalid keys, capacity overflow, or calls made from inside run/callbacks.
     bool install_owner(CodeOwner, RoutineSet routines);
+    // Observe availability in this VM without installing or changing code/state.
+    // A missing nonzero owner returns false, including for global routines.
+    bool has_routine(RoutineKey key, CodeOwner owner) const { return resolve(key,owner)!=nullptr; }
     VmStatus status() const { return status_; }
     const std::string& diagnostic() const { return diagnostic_; }
     const std::vector<VmFrame>& stack() const { return stack_; }
-    std::array<std::int16_t, 20>& temps() { return temps_; }
-    const std::array<std::int16_t, 20>& temps() const { return temps_; }
-    std::array<std::int32_t, 2>& temp_xl() { return temp_xl_; }
-    const std::array<std::int32_t, 2>& temp_xl() const { return temp_xl_; }
+    Ts1Temps& temps() { return temps_; }
+    const Ts1Temps& temps() const { return temps_; }
+    Ts1TempXL& temp_xl() { return temp_xl_; }
+    const Ts1TempXL& temp_xl() const { return temp_xl_; }
     std::uint64_t steps() const { return steps_; }
     std::uint64_t run_generation() const { return run_generation_; } // Every start attempt, including faults.
     const std::optional<VmPending>& pending() const { return pending_; }
@@ -250,15 +261,15 @@ private:
               VmCallReturnMode = VmCallReturnMode::ordinary, std::uint64_t ticket = 0);
     void branch(bool);
     bool expression(const Instruction&);
-    std::int16_t read(std::uint8_t, std::int16_t);
-    void write(std::uint8_t, std::int16_t, std::int32_t);
+    std::int32_t read(std::uint8_t, std::int16_t);
+    bool write(std::uint8_t, std::int16_t, std::int32_t);
     std::shared_ptr<const VmProgram> program_;
     RoutineOwners owners_;
     VmMemory memory_;
     VmLimits limits_;
     std::vector<VmFrame> stack_;
-    std::array<std::int16_t, 20> temps_{};
-    std::array<std::int32_t, 2> temp_xl_{};
+    Ts1Temps temps_{};
+    Ts1TempXL temp_xl_{};
     VmStatus status_ = VmStatus::ready;
     std::string diagnostic_;
     std::uint64_t steps_ = 0;

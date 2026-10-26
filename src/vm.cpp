@@ -1,6 +1,8 @@
 #include "odh/vm.hpp"
+#include "odh_expression.h"
 
 #include <algorithm>
+#include <exception>
 #include <limits>
 #include <type_traits>
 
@@ -353,21 +355,27 @@ std::optional<VmMemoryAddress> resolve_person_data_address(std::uint8_t scope,
     if(index<0||static_cast<std::size_t>(index)>=temps.size())return {};
     return VmMemoryAddress{static_cast<std::uint8_t>(scope==30?18:19),temps[static_cast<std::size_t>(index)]};
 }
-std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
+std::int32_t Vm::read(std::uint8_t scope, std::int16_t data) {
     auto& frame = stack_.back();
+    const auto temp = [this](std::int16_t index) -> std::int16_t& {
+        if (index < 0 || static_cast<std::size_t>(index) >= temps_.size())
+            throw VmError("temp index outside registers");
+        return temps_[static_cast<std::size_t>(index)];
+    };
     switch (scope) {
     case 7: return data;
-    case 8:
-        if (data < 0 || static_cast<std::size_t>(data) >= temps_.size()) throw VmError("temp index outside registers");
-        return temps_[static_cast<std::size_t>(data)];
+    case 8: return temp(data);
     case 9: return indexed(frame.arguments, data);
     case 10: return frame.context.stack_object;
+    case 11: return temp(temp(data));
     case 25: return indexed(frame.locals, data);
+    case 42:
+        if (data < 0 || static_cast<std::size_t>(data) >= temp_xl_.size())
+            throw VmError("TempXL index outside registers");
+        return temp_xl_[static_cast<std::size_t>(data)];
     default:
         if (scope == 27 && memory_.dynamic_sprite_flag) {
-            if (data < 0 || static_cast<std::size_t>(data) >= temps_.size())
-                throw VmError("dynamic sprite flag temp index outside registers");
-            const auto flag=static_cast<std::uint16_t>(temps_[static_cast<std::size_t>(data)]);
+            const auto flag=static_cast<std::uint16_t>(temp(data));
             if (const auto value=memory_.dynamic_sprite_flag(frame,flag)) return *value?1:0;
         }
         if (scope == 23 && memory_.room_by_temp0) {
@@ -380,72 +388,78 @@ std::int16_t Vm::read(std::uint8_t scope, std::int16_t data) {
         throw VmError("unsupported read scope " + std::to_string(scope) + " index " + std::to_string(data));
     }
 }
-void Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
+bool Vm::write(std::uint8_t scope, std::int16_t data, std::int32_t value) {
     auto& frame = stack_.back();
     const auto truncated = word(static_cast<std::uint32_t>(value));
+    const auto temp = [this](std::int16_t index) -> std::int16_t& {
+        if (index < 0 || static_cast<std::size_t>(index) >= temps_.size())
+            throw VmError("temp index outside registers");
+        return temps_[static_cast<std::size_t>(index)];
+    };
     switch (scope) {
-    case 8:
-        if (data < 0 || static_cast<std::size_t>(data) >= temps_.size()) throw VmError("temp index outside registers");
-        temps_[static_cast<std::size_t>(data)] = truncated; return;
-    case 9: indexed(frame.arguments, data) = truncated; return;
-    case 10: frame.context.stack_object = truncated; return;
-    case 25: indexed(frame.locals, data) = truncated; return;
+    // The pinned SetVariable explicitly rejects these read-only scopes.
+    case 7: case 21: case 26: case 35: case 38: return false;
+    case 8: temp(data) = truncated; return true;
+    case 9: indexed(frame.arguments, data) = truncated; return true;
+    case 10: frame.context.stack_object = truncated; return true;
+    case 11: temp(temp(data)) = truncated; return true;
+    case 25: indexed(frame.locals, data) = truncated; return true;
+    case 42:
+        if (data < 0 || static_cast<std::size_t>(data) >= temp_xl_.size())
+            throw VmError("TempXL index outside registers");
+        temp_xl_[static_cast<std::size_t>(data)] = value; return true;
     default:
         if (scope == 27 && memory_.set_dynamic_sprite_flag) {
-            if (data < 0 || static_cast<std::size_t>(data) >= temps_.size())
-                throw VmError("dynamic sprite flag temp index outside registers");
-            const auto flag=static_cast<std::uint16_t>(temps_[static_cast<std::size_t>(data)]);
-            if (memory_.set_dynamic_sprite_flag(frame,flag,truncated>0)) return;
+            const auto flag=static_cast<std::uint16_t>(temp(data));
+            if (memory_.set_dynamic_sprite_flag(frame,flag,truncated>0)) return true;
         }
-        if (const auto address=resolve_person_data_address(scope,data,temps_);address&&memory_.write&&
-            memory_.write(frame,address->scope,address->index,truncated)) return;
+        if (const auto address=resolve_person_data_address(scope,data,temps_);address) {
+            if (memory_.expression_write) {
+                if (const auto result=memory_.expression_write(frame,address->scope,address->index,truncated))
+                    return *result;
+            }
+            if (memory_.write && memory_.write(frame,address->scope,address->index,truncated)) return true;
+        }
         throw VmError("unsupported write scope " + std::to_string(scope) + " index " + std::to_string(data));
     }
 }
 bool Vm::expression(const Instruction& i) {
-    const auto lhs_data = operand_word(i, 0), rhs_data = operand_word(i, 2);
-    const auto op = i.operands[5], lhs_scope = i.operands[6], rhs_scope = i.operands[7];
-    // Byte4 is preserved in traces. The reference TS1 handler does not use it.
-    if (op > 19) throw VmError("unsupported expression operator " + std::to_string(op));
-    if (op == 5) { write(lhs_scope, lhs_data, read(rhs_scope, rhs_data)); return true; }
-    std::int32_t lhs = read(lhs_scope, lhs_data);
-    if (op == 11 || op == 17) {
-        lhs += op == 11 ? 1 : -1;
-        write(lhs_scope, lhs_data, lhs);
-        const auto rhs = read(rhs_scope, rhs_data); // Read after mutation, including aliases.
-        return op == 11 ? lhs < rhs : lhs > rhs;
-    }
-    const std::int32_t rhs = read(rhs_scope, rhs_data);
-    switch (op) {
-    case 0: return lhs > rhs;
-    case 1: return lhs < rhs;
-    case 2: return lhs == rhs;
-    case 3: lhs += rhs; break;
-    case 4: lhs -= rhs; break;
-    case 6: lhs *= rhs; break;
-    case 7:
-        if (rhs == 0) throw VmError("division by zero: original semantics unverified");
-        lhs /= rhs; break;
-    case 8: case 9: case 10: {
-        if (rhs < 1 || rhs > 16) throw VmError("flag index outside supported 16-bit range");
-        const auto mask = std::uint32_t{1} << (rhs - 1);
-        const auto bits = static_cast<std::uint32_t>(lhs) & 65535;
-        if (op == 8) return (bits & mask) != 0;
-        lhs = word(op == 9 ? bits | mask : bits & ~mask); break;
-    }
-    case 12:
-        if (rhs == 0) throw VmError("modulo by zero: original semantics unverified");
-        lhs = (lhs % rhs + rhs) % rhs; break;
-    case 13: lhs &= rhs; break;
-    case 14: return lhs >= rhs;
-    case 15: return lhs <= rhs;
-    case 16: return lhs != rhs;
-    case 18: lhs |= rhs; break; // TS1 OR, not the TSO list operation.
-    case 19: lhs ^= rhs; break;
-    default: throw VmError("unsupported expression operator");
-    }
-    write(lhs_scope, lhs_data, lhs);
-    return true;
+    // Keep all operator evaluation and write ordering in the shared native TS1
+    // executor. The callbacks borrow this existing entity thread and never let
+    // a C++ exception cross the C ABI; rethrow it on this side after execution.
+    struct Context { Vm* vm; std::exception_ptr error; } context{this,{}};
+    const auto read_callback = [](void* raw, std::uint8_t scope, std::int16_t index,
+                                  std::int32_t* value) noexcept -> std::int32_t {
+        auto& state = *static_cast<Context*>(raw);
+        try { *value=state.vm->read(scope,index); return 0; }
+        catch (...) { state.error=std::current_exception(); return 1; }
+    };
+    const auto write_callback = [](void* raw, std::uint8_t scope, std::int16_t index,
+                                   std::int32_t value, std::uint32_t* accepted) noexcept -> std::int32_t {
+        auto& state = *static_cast<Context*>(raw);
+        try { *accepted=state.vm->write(scope,index,value)?1U:0U; return 0; }
+        catch (...) { state.error=std::current_exception(); return 1; }
+    };
+    const auto levels_callback = [](void* raw, std::int32_t* caller, std::int32_t* callee,
+                                    std::int32_t* offset) noexcept -> std::int32_t {
+        auto& state = *static_cast<Context*>(raw);
+        try {
+            const auto& vm = *state.vm;
+            if (!vm.memory_.expression_levels) throw VmError("unsupported expression room levels");
+            const auto levels=vm.memory_.expression_levels(vm.stack_.back());
+            if (!levels) throw VmError("unsupported expression room levels");
+            *caller=(*levels)[0]; *callee=(*levels)[1]; *offset=(*levels)[2]; return 0;
+        } catch (...) { state.error=std::current_exception(); return 1; }
+    };
+    std::uint32_t result=0;
+    const auto status=odh_expression_execute_ts1_v1(i.operands.data(),
+        static_cast<std::uint32_t>(i.operands.size()), &context,
+        read_callback,write_callback,levels_callback,&result);
+    if (context.error) std::rethrow_exception(context.error);
+    if (status!=ODH_EXPRESSION_OK)
+        throw VmError("native expression error " + std::to_string(status) +
+                      " operator " + std::to_string(i.operands[5]));
+    return result!=0;
 }
 void Vm::branch(bool result) {
     // Iteratively unwind returning children; parent stays on its call instruction.

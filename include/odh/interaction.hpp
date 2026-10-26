@@ -37,7 +37,8 @@ public:
     bool restore_snapshot(const InteractionQueueSnapshot&);
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
     // Queue behind existing actions by default. push_after_active inserts a
-    // continuation immediately after the running action, matching TS1's
+    // continuation immediately after the running action (or at the front when
+    // no action is running), matching TS1's
     // PushInteraction PushHead behavior.
     bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={},bool push_after_active=false);
     bool references_target(std::int16_t entity) const {
@@ -73,4 +74,22 @@ private:
     std::string diagnostic_;
     bool fresh_=true;
 };
+// Native TS1 PushInteraction for the inherited-priority runnable FIFO profile.
+// Resource lookup and resident-thread ownership are supplied by the host; this
+// primitive never creates another VM or substitutes the primary resident.
+struct Ts1PushInteractionRequest {
+    std::int16_t actor,source;
+    std::uint8_t interaction;
+    bool push_head,push_tail;
+    // The host may use this for presentation; it does not affect execution.
+    std::optional<std::int16_t> custom_icon;
+};
+struct Ts1PushInteractionAction {RoutineKey key;CodeOwner owner;};
+struct Ts1PushInteractionTarget {Vm* vm=nullptr;InteractionQueue* queue=nullptr;};
+using Ts1PushInteractionLookup=std::function<std::optional<Ts1PushInteractionAction>(const Ts1PushInteractionRequest&)>;
+using Ts1PushInteractionThread=std::function<Ts1PushInteractionTarget(std::int16_t)>;
+// TS1 GetAction selects TTAB.TTAIndex (label_index), not serialized row order.
+// Missing/undecoded tables return null; duplicate identifiers are malformed.
+const Interaction* ts1_interaction_by_index(const Ttab&,std::uint8_t);
+VmPrimitive ts1_push_interaction_primitive(const World&,Ts1PushInteractionLookup,Ts1PushInteractionThread);
 }

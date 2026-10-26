@@ -38,6 +38,29 @@ int main(){try{
     require(odh::string_in_language_or_english(st,3,0)->value=="US" &&
             odh::string_in_language_or_english(st,2,0)->value=="UK" &&
             !odh::string_in_language_or_english(st,1,2),"user-facing lookup falls back to English only when selected text is absent");
+    require(odh::string_in_ts1_language_set(st,14,0)->value=="US" &&
+            odh::string_in_ts1_language_set(st,14,1)->value=="US2" &&
+            !odh::string_in_ts1_language_set(st,14,2),
+            "TS1 absent language set selects English with exact English indexing");
+    require(odh::string_in_ts1_language_set(st,2,0)->value=="UK" &&
+            !odh::string_in_ts1_language_set(st,2,1) &&
+            odh::string_in_language_or_english(st,2,1)->value=="US2",
+            "TS1 present set never falls back for an individual missing entry");
+    require(odh::string_in_ts1_language_set(st,0,0)->value=="US" &&
+            odh::string_in_ts1_language_set(st,1,1)->value=="US2",
+            "TS1 explicit US and zero alias retain English group indexing");
+    st.entries.push_back({14,"","empty localized entry"});
+    require(odh::string_in_ts1_language_set(st,14,0) &&
+            odh::string_in_ts1_language_set(st,14,0)->value.empty() &&
+            !odh::string_in_ts1_language_set(st,14,1),
+            "TS1 empty string belongs to a present set and never triggers fallback");
+    require(!odh::string_in_ts1_language_set(strings(""),14,0) &&
+            !odh::string_in_ts1_language_set(strings(std::string(2,'\0')),14,0),
+            "TS1 absent and header-only tables do not invent English entries");
+    odh::StringTable without_english{odh::StringTableState::decoded,-3,{{2,"UK",""}},0};
+    require(!odh::string_in_ts1_language_set(without_english,14,0) &&
+            odh::string_in_ts1_language_set(without_english,2,0)->value=="UK",
+            "TS1 missing English fallback stays absent without borrowing another set");
     for(std::size_t n=3;n<multi.size();++n)rejects([&]{strings(multi.substr(0,n));});
     require(strings("").state==odh::StringTableState::absent && strings(std::string(2,'\0')).state==odh::StringTableState::header_only,"missing/header-only distinction");
     require(strings(multi+"xxx").remaining_bytes==3,"string tail retained");

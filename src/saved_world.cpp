@@ -12,7 +12,8 @@ void consume(std::uint64_t& available, std::uint64_t count, const char* why) {
 bool same_definition(const ObjectDefinition& a,const ObjectDefinition& b) {
     return a.version==b.version && a.guid==b.guid && a.object_type==b.object_type &&
         a.master_id==b.master_id && a.sub_index==b.sub_index && a.is_multitile==b.is_multitile &&
-        a.header_extent==b.header_extent && a.remaining_bytes==b.remaining_bytes;
+        a.header_extent==b.header_extent && a.remaining_bytes==b.remaining_bytes &&
+        a.level_offset==b.level_offset;
 }
 template<class T> void count_matches(std::int64_t count,const std::vector<T>& values) {
     check(count>=0 && static_cast<std::uint64_t>(count)==values.size(),"saved world serialized count mismatch");
@@ -244,6 +245,12 @@ std::unique_ptr<SavedWorld> make_saved_world(std::vector<SavedWorldEntity> sourc
         // available to BHAVs such as the Legacy UrnStone EP5 check.
         check(result->world->declare_definition_word(id,9,r.definition.object_type),
               "saved world runtime definition type rejected");
+        if(r.definition.level_offset) {
+            const auto raw=static_cast<std::int32_t>(*r.definition.level_offset);
+            const auto signed_word=static_cast<std::int16_t>(raw<=32767 ? raw : raw-65536);
+            check(result->world->declare_definition_word(id,56,signed_word),
+                  "saved world runtime definition level offset rejected");
+        }
         if(p.x!=-16 || p.y!=-16)
             check(result->world->set_position(id,{p.x,p.y,static_cast<std::int16_t>(p.level),static_cast<std::uint8_t>(p.object_data[1])}),
                   "saved world runtime position rejected");

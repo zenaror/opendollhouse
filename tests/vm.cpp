@@ -52,6 +52,25 @@ void rejects_outputs(odh::PrimitiveOutcome outcome) {
 }
 int main() {
     try {
+        {
+            odh::Vm owners{{{key(),routine({expr(2,0,0)})},
+                            {key(256),routine({expr(2,0,0)})}}, {}, {64,4096,3}};
+            require(owners.has_routine(key(),0)&&!owners.has_routine(key(4097),0)&&
+                    !owners.has_routine(key(),11)&&!owners.has_routine(key(256),11),
+                    "routine availability rejects missing roots and missing owners, even for globals");
+            require(owners.install_owner(11,{{key(4097),routine({expr(2,0,0)})}})&&
+                    owners.has_routine(key(4097),11)&&owners.has_routine(key(256),11)&&
+                    !owners.has_routine(key(),11)&&!owners.has_routine(key(4097),0),
+                    "routine availability resolves owner-local roots and shared globals without default fallback");
+            owners.start(key());const auto before=owners.snapshot();
+            require(owners.has_routine(key(4097),11)&&!owners.has_routine(key(),99)&&
+                    owners.status()==before.status&&owners.steps()==before.steps&&
+                    owners.run_generation()==before.run_generation&&owners.stack().size()==before.stack.size()&&
+                    owners.stack().front().pc==before.stack.front().pc&&
+                    !owners.install_owner(11,{{key(),routine({expr(2,0,0)})}}),
+                    "availability queries preserve active VM state and installed owners remain immutable");
+        }
+
         // Independently specified byte header exercises format -> VM metadata.
         const std::string bytes = std::string("\x02\x80\x01\x00\x16\x02\x03\x00\x04\x00\xAA\xBB",12) +
             std::string("\x02\x00\xFE\xFF\x00\x00\x01\x00\x00\x05\x08\x07",12);
@@ -261,8 +280,9 @@ int main() {
         require(flag.run(1) == odh::VmStatus::returned_true, "high-bit flag check");
         for (const auto op : {7,12}) {
             auto m = machine(routine({expr(static_cast<unsigned>(op),0,0)})); m.start(key());
-            require(m.run(1) == odh::VmStatus::fault && !m.stack().empty() && m.stack()[0].pc == 0,
-                    "zero divisor faults with location preserved");
+            require(m.run(1) == odh::VmStatus::returned_true && m.stack().empty() &&
+                    m.temps()[0] == (op == 7 ? -1 : 0),
+                    "pinned TS1 zero divisor result");
         }
         // Run slices retain state; this is an instruction budget, not a simulated tick.
         auto loop = machine(routine({expr(5,0,0,8,7,1),expr(11,0,3,8,7,1,254)})); loop.start(key());
@@ -295,11 +315,21 @@ int main() {
         auto fd_error = machine(routine({expr(2,0,1,7,7,253,253)})); fd_error.start(key());
         require(fd_error.run(1) == odh::VmStatus::fault, "two FD targets fault");
 
-        for (const auto bad : {expr(2,0,0,16,7),expr(5,0,0,7,7),expr(2,-1,0),expr(2,20,0),
-                               expr(2,4,0,25,7),expr(20,0,0),expr(9,0,17)}) {
+        for (const auto bad : {expr(2,0,0,16,7),expr(2,-1,0),expr(2,20,0),
+                               expr(2,4,0,25,7),expr(21,0,0)}) {
             auto m = machine(routine({bad})); m.start(key());
             require(m.run(1) == odh::VmStatus::fault && !m.diagnostic().empty(), "unsupported scope/index/operator");
         }
+        auto read_only_literal = machine(routine({expr(5,0,0,7,7)}));
+        read_only_literal.start(key());
+        require(read_only_literal.run(1) == odh::VmStatus::returned_false,
+                "literal setter is a known rejection");
+        auto square_root = machine(routine({expr(20,0,81)})); square_root.start(key());
+        require(square_root.run(1) == odh::VmStatus::returned_true && square_root.temps()[0] == 9,
+                "pinned TS1 sqrt operator");
+        auto wide_flag = machine(routine({expr(9,0,17)})); wide_flag.start(key());
+        require(wide_flag.run(1) == odh::VmStatus::returned_true && wide_flag.temps()[0] == 0,
+                "flag mask is 32-bit before narrow store");
         auto missing = machine(routine({call(4097)})); missing.start(key());
         require(missing.run(1) == odh::VmStatus::fault && missing.stack().size()==1,"missing call not success");
         auto primitive = machine(routine({{49,254,255,{}}})); primitive.start(key());

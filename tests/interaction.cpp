@@ -21,6 +21,100 @@ struct Fixture {
  bool enqueue(unsigned id=4096){return queue.enqueue(key(id),{1,2,2,22});}
 };
 }
+namespace {
+void native_push_interaction_checks() {
+    odh::World world;
+    world.create(1,odh::EntityKind::avatar);world.create(3,odh::EntityKind::avatar);
+    world.create(2,odh::EntityKind::object);world.declare_object_word(2,25,0);
+    world.declare_object_word(1,8,16);world.declare_object_word(3,8,16);
+    odh::InteractionQueue caller_queue(world,1),recipient_queue(world,3);
+    odh::Vm* caller_vm=nullptr;odh::Vm* recipient_vm=nullptr;
+    std::optional<odh::Ts1PushInteractionRequest> decoded;
+    bool present=true,wrong_owner=false,throw_lookup=false;
+    const auto push=odh::ts1_push_interaction_primitive(world,
+        [&](const odh::Ts1PushInteractionRequest& request)->std::optional<odh::Ts1PushInteractionAction>{
+            decoded=request;
+            if(throw_lookup)throw odh::FormatError("fixture malformed resource");
+            if(!present)return std::nullopt;
+            return odh::Ts1PushInteractionAction{key(4097),wrong_owner?99U:22U};
+        },[&](std::int16_t actor){
+            if(actor==1)return odh::Ts1PushInteractionTarget{caller_vm,&caller_queue};
+            if(actor==3)return odh::Ts1PushInteractionTarget{recipient_vm,&recipient_queue};
+            return odh::Ts1PushInteractionTarget{};
+        });
+    const odh::Instruction push_instruction{13,254,255,{7,0,0,0,0,0,0,0}};
+    const odh::Instruction capture_caller{2,1,255,{0,0,11,0,0,5,8,3}};
+    const odh::Instruction write_source{2,254,255,{25,0,7,0,0,5,4,7}};
+    const auto caller_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d){
+        return i.opcode==13?push(f,i,t,d):caller_queue.primitive()(f,i,t,d);
+    };
+    odh::Vm caller({{key(4096),bhav({push_instruction})}},world.vm_memory(),{},caller_primitive,
+        {{22,{{key(4097),bhav({capture_caller,write_source})}}}});
+    odh::Vm recipient({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},
+        recipient_queue.primitive(),{{22,{{key(4097),bhav({capture_caller,write_source})}}}});
+    caller_vm=&caller;recipient_vm=&recipient;
+    require(caller_queue.bind(caller)&&recipient_queue.bind(recipient),"PushInteraction residents bind independent queues");
+    caller.start(key(4096),{1,1,3,0},{2});recipient.start(key(4096),{3,3,3,0},{0});
+    require(caller.run(1)==odh::VmStatus::returned_true&&recipient_queue.size()==1&&caller_queue.size()==0,
+            "native PushInteraction targets StackObject resident rather than invoking caller queue");
+    require(decoded&&decoded->actor==3&&decoded->source==2&&decoded->interaction==7&&!decoded->custom_icon,
+            "native PushInteraction decodes argument source and distinct target actor");
+    const auto queued=recipient_queue.snapshot();
+    require(queued.actions.front().call.context.caller==3&&queued.actions.front().call.context.callee==2&&
+            queued.actions.front().call.context.stack_object==2&&queued.actions.front().call.context.code_owner==22,
+            "pushed action retains recipient Caller and exact source owner");
+    require(recipient.run(10)==odh::VmStatus::yielded&&recipient.temps()[0]==3&&
+            world.find(2)->object_words.at(25)==7,"recipient executes pushed action in its existing VM and shared World");
+    require(recipient_queue.observe()&&recipient_queue.completion()->result&&recipient_queue.tick(1)&&
+            recipient.run(10)==odh::VmStatus::returned_true&&recipient.temps()[2]==99,
+            "pushed action completion resumes recipient Main on next tick");
+
+    // Self-targeting uses the same resolver while that entity's Main is live.
+    caller.start(key(4096),{1,1,1,0},{2});
+    odh::VmFrame frame{key(4096),0,{1,1,1,0},{2},{2,0,77}};
+    auto local_icon=push_instruction;local_icon.operands[3]=7;local_icon.operands[4]=2;
+    require(push(frame,local_icon,caller.temps(),{&caller,1}).disposition==odh::PrimitiveDisposition::goto_true&&
+            caller_queue.size()==1&&decoded&&decoded->actor==1&&decoded->source==2&&decoded->push_head&&
+            decoded->custom_icon==77,"self-target local-source PushHead decodes custom icon without actor substitutions");
+    auto tail=push_instruction;tail.operands[3]=128;
+    require(push(frame,tail,caller.temps(),{&caller,2}).disposition==odh::PrimitiveDisposition::goto_true&&
+            decoded->push_tail&&!decoded->push_head&&caller_queue.size()==2,
+            "inherited PushTail continuation appends to recipient FIFO");
+    const auto before=caller_queue.size();
+    present=false;
+    require(push(frame,push_instruction,caller.temps(),{&caller,3}).disposition==odh::PrimitiveDisposition::goto_false&&
+            caller_queue.size()==before,"missing GetAction result selects false without queue mutation");
+    present=true;wrong_owner=true;
+    require(push(frame,push_instruction,caller.temps(),{&caller,4}).disposition==odh::PrimitiveDisposition::unsupported&&
+            caller_queue.size()==before,"recipient missing exact owner fails explicitly before enqueuing");
+    wrong_owner=false;throw_lookup=true;
+    require(push(frame,push_instruction,caller.temps(),{&caller,5}).disposition==odh::PrimitiveDisposition::unsupported&&
+            caller_queue.size()==before,"malformed action resource does not change recipient queue");
+    throw_lookup=false;
+    for(const auto operands:{std::array<std::uint8_t,8>{7,4,0,0,0,0,0,0},
+                            {7,0,1,0,0,0,0,0},{7,0,0,8,0,0,0,0},{7,0,0,1,9,0,0,0}}){
+        auto invalid=push_instruction;invalid.operands=operands;
+        require(push(frame,invalid,caller.temps(),{&caller,6}).disposition==odh::PrimitiveDisposition::unsupported&&
+                caller_queue.size()==before,"unsupported PushInteraction indices/priority/mode preserve queues");
+    }
+    frame.context.stack_object=2;
+    require(push(frame,push_instruction,caller.temps(),{&caller,7}).disposition==odh::PrimitiveDisposition::unsupported,
+            "non-avatar target has explicit unsupported queue diagnostic");
+    world.create(4,odh::EntityKind::avatar);frame.context.stack_object=4;
+    require(push(frame,push_instruction,caller.temps(),{&caller,8}).disposition==odh::PrimitiveDisposition::unsupported,
+            "unregistered resident target never falls back to another resident");
+
+    odh::Interaction row_a{};row_a.action=4097;row_a.label_index=7;
+    odh::Interaction row_b{};row_b.action=4098;row_b.label_index=2;
+    odh::Ttab table{odh::TtabStatus::decoded,2,8,false,0,{row_a,row_b}};
+    require(odh::ts1_interaction_by_index(table,2)==&table.interactions[1]&&
+            odh::ts1_interaction_by_index(table,7)==&table.interactions[0]&&
+            !odh::ts1_interaction_by_index(table,0),"TS1 GetAction resolves TTAIndex independently of row order");
+    table.interactions.push_back(row_a);bool duplicate=false;
+    try{(void)odh::ts1_interaction_by_index(table,7);}catch(const odh::FormatError&){duplicate=true;}
+    require(duplicate,"ambiguous TTAIndex is malformed rather than silently choosing a row");
+}
+}
 int main(int argc,char** argv){try {
  if(argc==4 && std::string(argv[1])=="--native-global") {
   std::ifstream input(argv[2],std::ios::binary);if(!input)throw std::runtime_error("native archive absent");
@@ -46,6 +140,7 @@ int main(int argc,char** argv){try {
   std::cout<<checks<<" native-wrapper ODH checks passed; action/Main fixtures synthetic\n";return 0;
  }
  if(argc!=1)throw std::runtime_error("usage: --native-global ARCHIVE ENTRY");
+ native_push_interaction_checks();
  {odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
   world.create(3,odh::EntityKind::avatar);world.declare_object_word(2,25,0);
   odh::InteractionQueue mover_queue(world,1),blocker_queue(world,3);
@@ -96,6 +191,15 @@ int main(int argc,char** argv){try {
           !queue.active()&&queue.tick(6)&&vm.run(30)==odh::VmStatus::returned_true,
           "Main resumes on the following tick after action-tree idle and successful completion");
   require(!queue.references_target(2),"completed interaction releases its target for deferred object removal");
+ }
+ { // An inactive TS1 queue has ActiveQueueBlock=-1, so head inserts at zero.
+  Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"inactive PushHead fixture queues ordinary actions");
+  require(f.queue.enqueue(key(4096),{1,2,2,22},{},true),"inactive PushHead accepts a continuation");
+  const auto snapshot=f.queue.snapshot();
+  require(!snapshot.active&&snapshot.actions.size()==3&&snapshot.actions[0].uid==3&&
+      snapshot.actions[1].uid==1&&snapshot.actions[2].uid==2&&
+      snapshot.actions[0].call.context.callee==2&&snapshot.actions[0].call.key.id==4096,
+      "inactive queue orders head C before pending A and B with exact action context");
  }
  { // PushHead keeps the running action first but may reorder later UIDs.
   Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"PushHead fixture queues two actions");

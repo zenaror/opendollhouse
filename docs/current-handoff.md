@@ -12,14 +12,18 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes desta etapa: `0e2f6c8881ce84774581fb9e05ae9bdc085c81b8`.
+Base publicada antes desta etapa: `c7966c100bc97555cbbc71f3cba6455182228291`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
-Preservar WIP anterior fora desta frente: `include/odh/vm.hpp`, `tests/routing.cpp`,
-`tests/vm.cpp`, `tools/household_go_here_session.hpp`; também `Testing/`,
+Preservar WIP anterior fora desta frente: `tests/routing.cpp`,
+`tools/household_go_here_session.hpp`; também `Testing/`,
 `tests/factory_tests_runner.py`, `.sh` e `tests/house07_snack_integration.py`.
-O cache CMake da raiz é legado inválido; `build/linux-checkpoint` é antigo apoio.
+As três linhas anteriores de `Vm::has_routine` e seus testes em `tests/vm.cpp`
+foram incorporados como dependência direta da nova validação de PushInteraction.
+Preservar também o WIP em `managed/OpenDollhouse.Simulation` e na referência de
+trabalho ignorada; não continuar esses arquivos nesta frente.
+O cache CMake da raiz é legado inválido; `build/linux-checkpoint` é o build nativo ativo.
 Convergir para um único jogo nativo; o port integral do Simitone está autorizado
 pela direção mais recente abaixo.
 
@@ -32,6 +36,48 @@ iniciar tradução integral. `docs/native-port-plan.md` é o mapa completo; C# f
 como referência e ponte transitória, não arquitetura final. O trabalho acontece
 por etapas, mas a conclusão exige o aplicativo nativo completo. A migração de
 VMExpression abaixo foi implementada e validada; o port completo segue incompleto.
+
+## Checkpoint nativo validado (2026-10-26)
+
+A orientação mais recente exige não usar C#. A frente atual conecta o executor
+compartilhado diretamente ao `Vm` C++ e conclui bancos TEMP/TempXL nativos.
+O candidato .NET e seu WIP permanecem preservados, sem novos builds ou alterações
+nesses arquivos nesta retomada. A antiga estratégia de ampliar a ponte para
+validar cada componente não é a direção vigente.
+
+Base publicada: `c7966c100bc97555cbbc71f3cba6455182228291`. Consultar Git/OMM
+para a publicação posterior. Detalhes: [native-state-integration.md](native-state-integration.md).
+O restante deste documento descreve checkpoints anteriores e não autoriza
+retomar desenvolvimento em C#.
+
+Reforço humano posterior: a migração integral deveria ter sido o caminho
+principal desde a decisão de escrever um motor nativo. Não interpretar o
+trabalho atual como autorização para continuar o Simitone gerenciado ou limitar
+o port a bibliotecas. Entregar sistemas integrados em C/C++, aproveitando o
+código TS1 de referência e o C++ existente. A meta consultada permanece ativa.
+
+`odh-person` C++ usa o executor compartilhado. A comparação inicial produziu
+1.713 passos idênticos com o executor anterior e o novo, isolando uma falha
+anterior de idioma. A busca de nomes agora segue a seleção de tabela TS1, e
+PushInteraction foi extraído para C++ compartilhado com destinatário por morador,
+identificador TTAB real e ordem correta de inserção na frente da fila.
+
+Teste final `reports/native-vm-resident-continuation/`: Casa 07, idioma 14,
+morador adicional 105, geladeira 112/ação 4103. Aos 4.096 ticks a ação retornou
+verdadeiro, a fila estava vazia e os objetos temporários de execução removidos.
+Salvou, reabriu sem avançar e continuou até tick 5.120; três processos terminaram
+com código zero, sem falha do host. Dados originais preservados e perfis/PIDs
+encerrados; nenhuma janela foi aberta. Dez CTests focados passaram. Binário
+SHA256 `2425bf514ae00260e2499315b9af88922aa533117a02da4a6c4dfe75068bc9bd`.
+Novos bancos de estado são componente separado testado, ainda não usados pelo
+`Vm` existente. O save foi feito depois da ação, não durante sua execução.
+Prioridades completas, modos especiais de fila, UI original e paridade de jogo
+seguem incompletos. Não promover esse fluxo a versão jogável equivalente ao Simitone.
+
+Próximo desenvolvimento: continuar portando sistemas TS1 para o mesmo executável
+C++, incluindo filas/prioridades e ações ainda não suportadas, preservação de
+ações em andamento nos saves, famílias/vizinhança/expansões e apresentação nativa.
+Usar os limites documentados para escolher fluxos reais; não retomar a ponte C#.
 
 ## Etapa nativa concluída: regras das ações
 

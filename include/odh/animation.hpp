@@ -17,8 +17,12 @@ struct StringTable {
 StringTable read_strings(const View&,AnimationLimits limits={});
 // Explicit language group. Codes0/1 are US; no automatic language fallback.
 const StringEntry* string_in_language(const StringTable&,std::uint8_t,std::size_t);
+// TS1 STR.GetLanguageSet semantics: an absent/empty requested group selects
+// English US. A present group keeps its own indexing, including missing indexes
+// and empty strings; neither causes a per-entry fallback. Codes0/1 select US.
+const StringEntry* string_in_ts1_language_set(const StringTable&,std::uint8_t,std::size_t);
 // User-facing text lookup: use the requested group, then English US (code 1).
-// This does not change the exact lookup used by engine identifiers.
+// Unlike TS1 set selection, a missing index may fall back per entry.
 const StringEntry* string_in_language_or_english(const StringTable&,std::uint8_t,std::size_t);
 using AnimationProperties=std::vector<std::pair<std::string,std::string>>;
 struct AnimationTimeProperty {std::int32_t id;AnimationProperties pairs;};

@@ -127,6 +127,16 @@ int main() {
         require(avatar->attachment && avatar->attachment->container==1 && avatar->attachment->slot==1 && !avatar->attachment->positioned,
                 "runtime attachment uses subsequent slot pair and remains unpositioned");
         require(avatar->position==odh::EntityPosition{32,64,1,3},"attachment preserves independently saved child coordinates");
+        require(w.find(1)->definition_words.at(56)==0,
+                "resolved OBJD level offset reaches native world");
+        {
+            auto absent=fixture();
+            for(auto& r:absent) r.definition.level_offset.reset();
+            odh::DefinitionIndex absent_index(candidates(absent));
+            auto no_offset=odh::make_saved_world(absent,absent_index);
+            require(no_offset->world->find(1)->definition_words.count(56)==0,
+                    "missing OBJD offset is not synthesized during import");
+        }
         require(!w.find(4)->position && w.find(4)->definition->master_guid==105,"out of world retained and master resolved by resource");
         require(w.find(1)->slots==std::vector<std::int16_t>({0,2}),"linked slot not confused with runtime slot zero");
         require(w.read(frame(2),3,2)==1 && w.read(frame(2),3,3)==1 && w.read(frame(2),3,11)==2 && w.read(frame(1),3,67)==2,
@@ -198,6 +208,8 @@ int main() {
         reject_change([](auto& v){v[0].saved.type_id=0;},"zero type mapping rejected");
         reject_change([](auto& v){v[0].saved.type_id=v[1].saved.type_id;},"contradictory type/GUID mapping rejected");
         reject_change([](auto& v){v[0].definition.guid=999;},"definition metadata mismatch rejected");
+        reject_change([](auto& v){v[0].definition.level_offset=123;},
+                      "definition level offset mismatch rejected");
         reject_change([](auto& v){v[0].tail.multitile.reset();},"required multitile branch rejected");
         reject_change([](auto& v){v[1].serialized_object_type=4;},"person/OBJT branch mismatch rejected");
         reject_change([](auto& v){v[0].saved.prefix.level=3;},"invalid level rejected");

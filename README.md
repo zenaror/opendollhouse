@@ -5,23 +5,29 @@ progressivo às sete expansões e ao conteúdo personalizado clássico.
 Direção vigente: **portar o jogo baseado no Simitone/FreeSO para C/C++**, com
 interface, gráficos, áudio e controles nativos, sem C#/.NET no produto final.
 A interface e o comportamento do The Sims 1 original continuam sendo o destino.
-O fork alexjyong e sua revisão FreeSO são referências executáveis durante a
-migração; o candidato gerenciado é temporário e não satisfaz esse objetivo.
+O fork alexjyong e sua revisão FreeSO são referências de código e comportamento.
+O desenvolvimento atual acontece no programa C++; o candidato gerenciado
+anterior está preservado, sem ampliar ou executar sua ponte nesta frente.
 
-Já foram observados compra e uso de objetos, salvamento/reabertura e um ciclo
-limitado de criar, mudar e excluir uma família. BCON e fila já usam C++;
-as expressões das ações também passaram a executar em C++, com validação
-integrada e no emulador. O jogo completo ainda não está portado ou aprovado como primeira versão jogável.
+Na avaliação anterior do candidato gerenciado foram observados compra e uso
+de objetos, salvamento/reabertura e um ciclo limitado de criar, mudar e excluir
+uma família. Esses resultados não comprovam os mesmos fluxos no port C++.
+Agora o `Vm` do programa C++ usa diretamente o executor compartilhado das
+expressões das ações. Um morador adicional completou a ação da geladeira na
+Casa 07, a fila esvaziou e a sessão foi salva, reaberta e continuada nesse
+executável sem runtime gerenciado. Estado, evidência e limites estão em
+[native-state-integration.md](docs/native-state-integration.md).
+O jogo completo ainda não está portado ou aprovado como primeira versão jogável.
 Plano completo em [native-port-plan.md](docs/native-port-plan.md), estado atual
 em [current-handoff.md](docs/current-handoff.md) e evidências da referência em
 [avaliação Simitone](docs/simitone-linux-evaluation.md).
 
-Estado do motor próprio preservado: leitores de recursos, núcleo de execução BHAV e modelo inicial de
+Base C++ em desenvolvimento: leitores de recursos, núcleo de execução BHAV e modelo inicial de
 entidades/slots em C++17,
 com testes sem janela, traces, rasterização CPU de avatar texturizado e decode
 de sprites de objetos com alpha/Z, com composição de avatar/cadeira em imagens.
 O probe da cadeira tem preview X11 opcional ligado ao World/playback. Ainda
-faltam inicialização/encerramento fiel das poses, lote, persistência, serviços
+faltam inicialização/encerramento fiel das poses, apresentação completa do lote, persistência completa, serviços
 completos de simulação e validação em consoles.
 
 Plataformas planejadas: Linux como primeiro ambiente de validação; New Nintendo
@@ -82,7 +88,7 @@ receipts e projetos Ghidra únicos ficam retidos em `reports/`; ser ignorado
 pelo Git não os torna descartáveis. Não houve remoção de evidências neste
 checkpoint de organização.
 
-## Compilar e testar o motor C++ preservado
+## Compilar e testar o programa C++
 
 Requisitos desta etapa: compilador C++17 e CMake 3.16 ou superior. No Linux,
 Iconv converte textos antigos do jogo. A janela jogável precisa dos arquivos de
