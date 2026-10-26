@@ -297,10 +297,17 @@ void native_push_interaction_checks() {
         odh::InteractionQueueMode::normal,odh::InteractionQueueMode::parent_idle,
         odh::InteractionQueueMode::parent_exit,odh::InteractionQueueMode::idle};
     for(std::uint8_t code=1;code<=6;++code){
+        // Decode each source priority on a new Main run. Accumulating these
+        // unrelated cases would now invoke legitimate automatic suffix skips;
+        // those effects and their EntryPoint4 hooks have their own matrix.
+        caller.start(key(4096),{1,1,1,0},{2});
         auto prioritized=push_instruction;prioritized.operands[2]=code;
         require(push(frame,prioritized,caller.temps(),{&caller,static_cast<std::uint64_t>(20U+code)}).disposition==odh::PrimitiveDisposition::goto_true&&
             decoded&&decoded->priority_code==code&&decoded->priority==expected_priorities[code]&&
-            decoded->mode==expected_modes[code],"PushInteraction maps every TS1 priority to priority/mode");
+            decoded->mode==expected_modes[code]&&caller_queue.size()==1&&
+            caller_queue.snapshot().actions.front().priority==expected_priorities[code]&&
+            caller_queue.snapshot().actions.front().mode==expected_modes[code],
+            "PushInteraction maps every TS1 priority to priority/mode");
     }
     frame.context.stack_object=2;
     require(push(frame,push_instruction,caller.temps(),{&caller,7}).disposition==odh::PrimitiveDisposition::unsupported,
@@ -635,6 +642,134 @@ int main(int argc,char** argv){try {
       odh::InteractionCancelResult::unsupported&&restored.size()==1,
       "legacy FIFO restore rejects TS1 cancellation without changing the queue");
  }
+ { // Ordinary insertion cancels the original lower-priority suffix in source order.
+  for(const auto incoming:{std::int16_t{50},std::int16_t{100}}){
+   CancelFixture f;std::vector<std::uint64_t> skipped;
+   require(f.enqueue(4097,100)&&f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true)&&
+       f.enqueue(4097,5,odh::InteractionQueueMode::normal,0,true),"automatic-skip suffix setup uses tail insertion");
+   const auto before=f.queue.snapshot();const auto next=before.sequence+1;
+   bool published=true;
+   f.queue.set_queue_skipped_handler([&](const auto& action){
+    skipped.push_back(action.uid);published=published&&f.queue.last_enqueued_uid()==next&&f.queue.contains_uid(next);return true;
+   });
+   require(f.enqueue(4098,incoming)&&skipped==std::vector<std::uint64_t>({before.actions[1].uid,before.actions[2].uid})&&published,
+       "ordinary high/equal-priority pivot skips each original suffix item after publishing the new identity");
+   const auto after=f.queue.snapshot();
+   require(after.actions.size()==2&&after.actions[0].uid==before.actions[0].uid&&after.actions[1].uid==next&&
+       after.actions[1].queue_uid==before.next_queue_uid&&after.next_queue_uid==before.next_queue_uid+1&&!f.queue.completion(),
+       "automatic skip retains the pivot and new request without fabricating completion");
+  }
+ }
+ { // Head and tail use their own insertion branches even when a pivot-like order exists.
+  for(const auto flags:{1U<<29,1U<<30,(1U<<29)|(1U<<30)}){
+   CancelFixture f;std::size_t callbacks=0;
+   require(f.enqueue(4097,100)&&f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true)&&
+       f.enqueue(4097,5,odh::InteractionQueueMode::normal,0,true),"head/tail bypass suffix setup");
+   f.queue.set_queue_skipped_handler([&](const auto&){++callbacks;return true;});
+   require(f.enqueue(4098,50,odh::InteractionQueueMode::normal,flags)&&f.queue.size()==4&&callbacks==0,
+       "PushHead and PushTail never invoke ordinary automatic suffix cancellation");
+   const auto after=f.queue.snapshot();
+   require(after.actions[(flags&(1U<<29))?0:1].uid==f.queue.last_enqueued_uid(),
+       "head takes precedence when both insertion flags are present");
+  }
+ }
+ { // A ParentExit boundary alone does not enable skipping when its priority is lower.
+  CancelFixture f;std::size_t callbacks=0;
+  require(f.enqueue(4097,30,odh::InteractionQueueMode::parent_exit)&&
+      f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true),"ParentExit-only pivot setup");
+  f.queue.set_queue_skipped_handler([&](const auto&){++callbacks;return true;});
+  require(f.enqueue(4097,50)&&f.queue.size()==3&&callbacks==0&&f.queue.snapshot().actions[1].priority==50,
+      "finding ParentExit with incoming priority above pivot inserts without cancelling its suffix");
+ }
+ { // Retained MustRun is signalled once; the pass must continue rather than spin on it.
+  CancelFixture f;std::vector<std::uint64_t> skipped;
+  require(f.enqueue(4097,100)&&f.enqueue(4098,10,odh::InteractionQueueMode::normal,1U<<10,true)&&
+      f.enqueue(4097,5,odh::InteractionQueueMode::normal,0,true),"MustRun retained suffix setup");
+  const auto before=f.queue.snapshot();
+  f.queue.set_queue_skipped_handler([&](const auto& action){skipped.push_back(action.uid);return true;});
+  require(f.enqueue(4098,50)&&skipped==std::vector<std::uint64_t>({before.actions[2].uid}),
+      "bounded automatic skip passes retained MustRun and removes the next original Normal entry once");
+  const auto after=f.queue.snapshot();
+  require(after.actions.size()==3&&after.actions[2].uid==before.actions[1].uid&&after.actions[2].notify_idle&&
+      (after.actions[2].flags&(1U<<10))&&f.world.find(1)->person_data[33]==0&&
+      (f.world.find(1)->object_words.at(8)&128),"retained MustRun cancellation state is preserved");
+  odh::EntityThreadControllersSnapshot saved{};saved.interactions=after;
+  const auto decoded=odh::decode_entity_thread_controllers_snapshot(odh::encode_entity_thread_controllers_snapshot(saved));
+  odh::InteractionQueue restored(f.world,1,8);
+  odh::Vm restored_vm({{key(4096),bhav({idle(1,1),set(2,99)})}},f.world.vm_memory(),{},restored.primitive(),
+      {{22,{{key(4097),bhav({set(0,33)})},{key(4098),bhav({set(1,44)})}}}});
+  require(restored_vm.restore_snapshot(f.vm.snapshot())&&restored.bind(restored_vm)&&
+      restored.restore_snapshot(decoded.interactions)&&restored.snapshot().actions[2].notify_idle&&
+      restored.snapshot().actions[2].uid==before.actions[1].uid&&restored.snapshot().sequence==after.sequence&&
+      restored.snapshot().next_queue_uid==after.next_queue_uid,
+      "bounded suffix cancellation metadata restores against its exact Main VM");
+ }
+ { // ParentIdle can erase a later original UID; it must not be visited or called again.
+  CancelFixture f;std::vector<std::uint64_t> skipped;
+  require(f.enqueue(4097,100)&&f.enqueue(4098,30,odh::InteractionQueueMode::parent_exit)&&
+      f.enqueue(4097,10,odh::InteractionQueueMode::parent_idle,0,true)&&
+      f.enqueue(4098,5,odh::InteractionQueueMode::parent_idle,0,true)&&
+      f.enqueue(4097,1,odh::InteractionQueueMode::normal,0,true),"ParentIdle erased-suffix setup");
+  const auto before=f.queue.snapshot();
+  f.queue.set_queue_skipped_handler([&](const auto& action){skipped.push_back(action.uid);return true;});
+  require(f.enqueue(4098,20)&&f.queue.size()==4&&
+      !f.queue.contains_uid(before.actions[3].uid)&&!f.queue.contains_uid(before.actions[4].uid)&&
+      skipped==std::vector<std::uint64_t>({before.actions[4].uid})&&
+      f.queue.snapshot().actions.back().uid==before.actions[2].uid&&f.queue.snapshot().actions.back().notify_idle,
+      "ParentIdle removal skips the erased UID and still cancels the later Normal exactly once");
+ }
+ { // Active prefix cannot serve as an ordinary insertion pivot or be cancelled by it.
+  CancelFixture f;std::size_t callbacks=0;
+  require(f.enqueue(4097,100)&&f.vm.run(1)==odh::VmStatus::budget_exhausted&&f.queue.active(),
+      "protected-prefix ordinary insertion starts an active action");
+  const auto active=f.queue.snapshot().active;
+  require(f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true)&&
+      f.enqueue(4097,5,odh::InteractionQueueMode::normal,0,true),"protected-prefix pending suffix setup");
+  f.queue.set_queue_skipped_handler([&](const auto&){++callbacks;return true;});
+  require(f.enqueue(4098,50)&&callbacks==0&&f.queue.size()==4&&f.queue.snapshot().active->uid==active->uid&&
+      f.queue.snapshot().suspended_active.empty()&&f.queue.snapshot().actions[1].priority==50,
+      "no pending pivot means insert after protected prefix without suffix cancellation");
+ }
+ { // A failed later callback cannot undo earlier removal/World effects or reuse the rejected UID.
+  CancelFixture f;std::vector<std::uint64_t> skipped;
+  f.world.declare_object_word(2,25,0);
+  require(f.enqueue(4097,100)&&f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true)&&
+      f.enqueue(4097,5,odh::InteractionQueueMode::normal,0,true),"partial automatic-skip failure setup");
+  const auto before=f.queue.snapshot();const auto rejected=before.sequence+1;
+  f.queue.set_queue_skipped_handler([&](const auto& action){
+   skipped.push_back(action.uid);f.world.declare_object_word(2,25,static_cast<std::int16_t>(skipped.size()));return skipped.size()<2;
+  });
+  require(!f.enqueue(4098,50)&&skipped.size()==2&&f.queue.size()==1&&
+      f.queue.contains_uid(before.actions[0].uid)&&!f.queue.contains_uid(rejected)&&
+      f.queue.snapshot().sequence==rejected&&f.queue.snapshot().next_queue_uid==before.next_queue_uid+1&&
+      f.world.find(2)->object_words.at(25)==2&&!f.queue.completion()&&
+      f.queue.diagnostic().find("earlier effects retained")!=std::string::npos,
+      "callback failure removes only the new request while retaining prior irreversible effects and consumed UID");
+  require(f.enqueue(4098,1,odh::InteractionQueueMode::normal,1U<<29)&&
+      f.queue.last_enqueued_uid()==rejected+1&&f.queue.snapshot().actions.front().queue_uid==before.next_queue_uid+1,
+      "next accepted request cannot reuse failed published native or public identity");
+ }
+ { // EntryPoint4 effects can invalidate the new target after the old suffix was removed.
+  CancelFixture f;require(f.world.create(3,odh::EntityKind::object)&&f.enqueue(4097,100)&&
+      f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true),"new target callback invalidation setup");
+  const auto before=f.queue.snapshot();
+  f.queue.set_queue_skipped_handler([&](const auto&){return f.world.remove(3);});
+  require(!f.queue.enqueue_ts1(key(4097),{1,3,3,22},{},50,odh::InteractionQueueMode::normal,0,false,false)&&
+      f.queue.size()==1&&f.queue.contains_uid(before.actions[0].uid)&&
+      !f.queue.contains_uid(before.sequence+1)&&!f.world.find(3)&&f.queue.snapshot().sequence==before.sequence+1&&
+      f.queue.diagnostic().find("invalidated the new request")!=std::string::npos,
+      "callback World effects cannot publish a new request to a target that disappeared");
+ }
+ { // Missing skip support rejects the new insertion, leaving the original suffix intact.
+  CancelFixture f;
+  require(f.enqueue(4097,100)&&f.enqueue(4098,10,odh::InteractionQueueMode::normal,0,true),
+      "automatic-skip no-hook setup");
+  const auto before=f.queue.snapshot();
+  require(!f.enqueue(4097,50)&&f.queue.size()==2&&
+      f.queue.snapshot().actions[0].uid==before.actions[0].uid&&f.queue.snapshot().actions[1].uid==before.actions[1].uid&&
+      f.queue.snapshot().sequence==before.sequence+1&&!f.queue.contains_uid(before.sequence+1),
+      "missing EntryPoint4 hook does not silently accept a request whose suffix could not be cancelled");
+ }
  { // An inactive TS1 queue has ActiveQueueBlock=-1, so head inserts at zero.
   Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"inactive PushHead fixture queues ordinary actions");
   require(f.queue.enqueue(key(4096),{1,2,2,22},{},true),"inactive PushHead accepts a continuation");
@@ -646,18 +781,19 @@ int main(int argc,char** argv){try {
  }
  { // TS1 priority ordering applies to the real interaction queue and protects its active front.
   Fixture f(1,8);require(f.enqueue(),"priority ordering begins with an inherited action");
+  std::size_t skipped=0;f.queue.set_queue_skipped_handler([&](const auto&){++skipped;return true;});
   require(f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false)&&
           f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},30,odh::InteractionQueueMode::normal,0,false,false)&&
           f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},2,odh::InteractionQueueMode::normal,0,false,true),
           "priority and tail actions enter the same live TS1 queue");
   auto state=f.queue.snapshot();
-  require(state.actions.size()==4&&state.actions[0].priority==50&&state.actions[1].priority==30&&
-          state.actions[2].priority==2&&state.actions[3].priority==1,
-          "pending actions order by TS1 priority and PushTail inserts before the first lower priority");
+  require(state.actions.size()==3&&state.actions[0].priority==50&&state.actions[1].priority==30&&
+          state.actions[2].priority==2&&skipped==1,
+          "ordinary insertion skips the inherited suffix while PushTail retains the remaining priority order");
   require(f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},0,odh::InteractionQueueMode::normal,0,true,false),
           "PushHead action enters the TS1 queue");
   state=f.queue.snapshot();
-  require(state.actions.front().priority==0&&state.actions.back().priority==1&&
+  require(state.actions.front().priority==0&&state.actions.back().priority==2&&
           state.actions.front().flags==(1U<<28|1U<<29),
           "PushHead ignores priority and records skip-permission and queue flags");
  }

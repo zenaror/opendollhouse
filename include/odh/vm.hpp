@@ -225,6 +225,13 @@ public:
     // World/register effects before a failure remain visible. Do not use on Main.
     VmSubroutineResult run_synchronous_check(std::uint64_t instruction_budget,
                                             const VmPrimitive& check_primitive = {});
+    // Seed a disposable check from the callee's registers. During a simulation
+    // tick, publish register effects even when the check fails or reaches its
+    // limit; outside the tick the seed is a clone. The owner must outlive this
+    // synchronous call and cannot be this disposable VM.
+    VmSubroutineResult run_synchronous_check_with_registers(Vm& register_owner,
+        bool share_effects, std::uint64_t instruction_budget,
+        const VmPrimitive& check_primitive = {});
     // Run a synchronous child tree using this thread's code owners, memory,
     // primitive handlers, and Temp registers, while saving/restoring its Main
     // stack and status. Requires an idle safe point with a live dormant or
@@ -292,6 +299,7 @@ public:
     // Unlike complete(), retry never takes an instruction branch.
     bool retry_pending(std::uint64_t ticket, std::optional<VmFrameWrite> write = {});
 private:
+    bool can_start_synchronous_check(std::uint64_t budget) const;
     const Bhav* resolve(RoutineKey, CodeOwner) const;
     const Bhav& current_routine(const VmFrame&) const;
     void push(RoutineKey, VmContext, const std::vector<std::int16_t>&,

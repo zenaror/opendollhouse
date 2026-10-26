@@ -41,9 +41,10 @@ action that was available at click time. Other direct host enqueues and legacy
 saves retain their old semantics. Check primitive coverage remains incomplete.
 
 Targeted cancellation now removes pending skippable actions or signals retained
-actions; see below for the synchronous EntryPoint4 path and its limits. It does
-not implement automatic Enqueue followup skipping, inject
-RunImmediately at a tick boundary, or support action callbacks.
+actions; ordinary Enqueue also cancels the following suffix under the pinned
+priority-pivot rule. See below for the bounded retained-action policy and
+synchronous EntryPoint4 limits. RunImmediately tick injection and general action
+callbacks remain pending.
 RunImmediately requests are rejected explicitly so they cannot masquerade as
 ordinary queued work. Priority reevaluation protects the entire active prefix; it runs on each tick
 and when a nested action completes instead of FreeSO's QueueDirty-only schedule,
@@ -52,12 +53,11 @@ flag also requires ObjectData[8]. Keep extending the existing `Vm`,
 `InteractionQueue`, World and session codecs; keep one authoritative native
 simulation. Do not present this slice as game parity.
 
-Current gates: 15 focused CTests passed for VM execution/snapshots, queue,
+Current gates: 18 focused CTests passed for VM execution/snapshots, queue,
 controller codec v1–v5, session bundle, seated continuation and resident restore
 (including cross-process fixtures). Output:
-`reports/native-action-cancel/attempt-1/deferred-ctest.log`; build:
-`reports/native-action-cancel/attempt-1/deferred-build.log` and the final host
-rebuild `deferred-final-host-build.log` in that directory.
+`reports/native-auto-cancel/attempt-1/final-ctest.log`; build:
+`reports/native-auto-cancel/attempt-1/final-build.log`.
 The earlier cross-resident PushInteraction assertion remains covered.
 Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
 zero check arguments, missing/unsupported checks, independent instruction budgets,
@@ -68,8 +68,8 @@ unknown avatar data, pet/visitor/age flags, and rejected requests without fabric
 completion. These are synthetic interpreter/World fixtures, not original-executable evidence.
 
 House07 active-save/reopen rerun:
-`reports/native-active-interaction/attempt-23/result.json`, binary SHA256
-`9df60d8101a1d9fd034b9740c624b90e55e3876ade84768589d73757165f0add`.
+`reports/native-active-interaction/attempt-24/result.json`, binary SHA256
+`0469a48014ff9cfdb3c59a342398b21a627d92a4bfd080d0a9902c1717c3a4fc`.
 Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
 continuations matched the uninterrupted run through tick 4096. The legacy save
 loaded and 25 original game files retained their hashes. Processes ended and
@@ -92,10 +92,47 @@ keeps its full countdown. Captures before return observation, after observation,
 and after a clock advance before VM execution preserve the same continuation.
 Nested dispatch and targeted cancellation require the TS1 priority profile;
 legacy FIFO snapshots cannot fabricate suspended ancestors or gain new cancellation
-semantics. RunImmediately, callbacks and automatic Enqueue followup cancellation
-remain explicit gaps. The synthetic integration test covers one parent and one
+semantics. RunImmediately and general action callbacks remain explicit gaps. The synthetic integration test covers one parent and one
 child for both return values, comparing uninterrupted and repeatedly reopened
 VM/controller/World state; this is not evidence of a complete game flow.
+
+## Automatic suffix cancellation on enqueue
+
+Only the ordinary backward priority scan triggers this rule: if an insertion
+follows a pivot whose priority is at least the new priority, cancel entries after
+the newly inserted request in their original order. PushHead, PushTail, empty
+queues, highest-priority insertion without a pivot, and a lower-priority
+ParentExit-only boundary do not trigger the pass. The native implementation
+uses existing cancel(native UID), preserving its MustRun, mode, protected-prefix
+and queue-skipped EP4 semantics.
+
+The source's repeated-index loop can fail to terminate on a retained action.
+Native policy is to snapshot the original suffix's native identities and visit
+each still-present identity at most once. ParentIdle may remove later identities,
+which are skipped; retained entries remain signalled and the pass continues.
+Work appended by callbacks is not included (same-queue callback reentry remains
+unsupported). This is a deliberate termination policy for a static source hazard,
+not proof of exact finite original-executable behavior for that broken loop.
+
+Native/source identities and any legacy-to-TS1 adoption are published before
+callbacks. If cancellation fails after effects have begun, remove only the new
+pending request and report enqueue failure. Earlier removals, World/register
+effects and consumed identities remain; no completion or identity reuse is
+fabricated. Revalidate actor/run generation and the new request's target after
+callbacks. Callers may use last_enqueued_uid for request tracking only after a
+successful enqueue. Successful states and retained notification metadata keep
+controller codec v5, with no asynchronous callback job to serialize.
+
+The synthetic scheduler gate executes automatic suffix cancellation during a
+registered avatar VM's tick. Its nonzero EP4 returns false while updating callee
+TEMP/TempXL and World; those effects persist, its waiting Main does not advance,
+and the callback runs once under its own instruction bound. Separate VM fixtures
+cover external clone mode, true/false/exception/limit writeback and rejected
+reentry leaving both banks unchanged. Queue fixtures cover original suffix
+order, mode boundaries, retained items, callback failure, consumed identities,
+new-target invalidation and controller/VM snapshot restoration. Real fridge
+runs below are continuity regressions; they do not prove automatic suffix or
+nonzero EP4 in an original game interaction.
 
 ## Targeted cancellation and queue-skipped entry points
 
@@ -115,7 +152,11 @@ live definition/resource, runs Caller=Callee=object and StackObject=avatar with
 four zero arguments, and accepts either true or false completion. A known zero
 entry is a no-op. An external host-boundary call clones callee TEMP/XL (or starts
 zero if no callee thread exists); it never imports the avatar's registers.
-The disposable VM shares exact code/memory and only explicit synchronous
+During simulation dispatch, EP4 register effects are published back to that
+callee before returning, including false, fault and budget-limit effects. The
+scheduler exposes its active phase; a host phase guard covers initial Main
+slices before the first numbered tick. Rejected nested/freshness checks validate
+before touching either register bank. The disposable VM shares exact code/memory and only explicit synchronous
 handlers. Waiting, asynchronous service calls, unavailable code and the
 10000-instruction limit are explicit errors. Effects before failure remain;
 an errored callback does not resurrect the removed action, fabricate completion,
@@ -126,9 +167,9 @@ only the resulting queue/World state is saved using existing v5 metadata. Hosts
 rebind their callbacks on reopen. Active cancellation state, including priority,
 flags and NotifyIdle, is compared across VM/controller save/reopen in synthetic
 execution. Callback reentry into the same queue is rejected. Arbitrary callbacks
-that enqueue work, automatic Enqueue followup cancellation (including the static
-source-loop hazard), RunImmediately, and the source exception for skipping a
-protected action outside an action tree remain pending. No asynchronous EP4 job
+that enqueue work, RunImmediately, and the source exception for skipping a
+protected action outside an action tree remain pending. Automatic Enqueue uses
+the bounded suffix pass below rather than reproducing the source-loop hazard. No asynchronous EP4 job
 is silently dropped or represented as a successful cancellation.
 
 Cancelling the real fridge action exposed a separate cleanup-order bug:
@@ -154,7 +195,7 @@ host operation after enqueue and before the tick's interpreter dispatch; equal
 enqueue/cancel ticks exercise pending cancellation. JSON and session logs retain
 cancel result/diagnostic and EP4 context/routine/steps/result.
 
-Cancellation runtime evidence: `reports/native-action-cancel/real-2/result.json`,
+Cancellation runtime evidence: `reports/native-action-cancel/auto-regression-1/result.json`,
 using the same final binary as the normal fridge regression above. Tick1 removes
 the pending fridge action without starting it (its known EP4 is zero). Tick256
 signals the active action; the save at tick256 still has that action active.
@@ -283,10 +324,10 @@ those banks outside a tick; a failed check does not imply rollback of prior effe
 Pinned VMThread.cs lines 807–812 repeatedly call CancelAction on the same queue
 index without advancing it. Cancellation can retain a MustRun, non-Normal or
 protected item. For such a queue state the loop can fail to make progress. This
-is a **static source hazard, not a demonstrated game failure**. Do not blindly
-translate an unbounded loop into C++. Establish a bounded, documented policy and
-fixtures for retained items before claiming parity for this case; do not silently
-reinterpret it as ordinary deletion.
+is a **static source hazard, not a demonstrated game failure**. The bounded
+original-UID suffix policy above preserves retained items and makes progress;
+it does not silently reinterpret those items as ordinary deletion or claim
+original-executable parity for the source's nonterminating state.
 
 ## State and codec coordination
 

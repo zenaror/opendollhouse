@@ -336,6 +336,47 @@ int main() {
                 bounded_result.steps==3&&bounded_entry.temps()[2]==9&&!bounded_entry.pending(),
                 "disposable entry check bounds infinite BHAV loop and retains effects without fabricating false");
 
+        // EP4 runs inside automatic enqueue ticks and at external UI boundaries.
+        // Both modes seed from the callee, but only the tick publishes register effects.
+        for(const bool share:{false,true})for(const unsigned outcome:{0U,1U,2U,3U}){
+            odh::Vm register_owner({{key(),routine({{99,254,255,{}}})}}, {}, {},
+                [](const auto&,const auto&,const auto&,const auto&){
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};
+                });
+            register_owner.start(key(),{22,22,0,0});register_owner.run(1);
+            register_owner.temps()[2]=19;register_owner.temp_xl()[1]=10;
+            const auto ticket=register_owner.pending()->ticket;
+            auto last=odh::Instruction{99,static_cast<std::uint8_t>(outcome==1?255:254),255,{}};
+            if(outcome==3)last=expr(5,4,1,8,7,3); // bounded infinite loop after effects
+            auto entry=machine(routine({expr(5,3,2,8,8,1),expr(5,2,78,8,7,2),
+                expr(5,1,77,42,7,3),last}));entry.start(key(),{22,22,11,0},{0,0,0,0});
+            const auto result=entry.run_synchronous_check_with_registers(register_owner,share,6,
+                [&](const auto&,const auto&,const auto&,const auto&)->odh::PrimitiveOutcome{
+                    if(outcome==2)throw std::runtime_error("EP4 fixture exception after register writes");
+                    return {odh::PrimitiveDisposition::goto_true,{}};
+                });
+            const auto expected=outcome==0?odh::VmStatus::returned_true:outcome==1?
+                odh::VmStatus::returned_false:outcome==2?odh::VmStatus::fault:odh::VmStatus::budget_exhausted;
+            require(result.started&&result.status==expected&&entry.temps()[3]==19&&
+                register_owner.temps()[2]==(share?78:19)&&register_owner.temp_xl()[1]==(share?77:10)&&
+                register_owner.status()==odh::VmStatus::waiting&&register_owner.pending()->ticket==ticket&&
+                register_owner.steps()==1&&register_owner.stack()[0].pc==0,
+                "EP4 clones outside tick and publishes callee TEMP/XL within tick even on false, exception or limit without advancing callee Main");
+        }
+
+        {
+            auto owner=machine(routine({expr(5,0,1)}));owner.start(key());owner.temps()[5]=333;
+            auto entry=machine(routine({{99,254,255,{}}}));entry.start(key());entry.temps()[5]=91;
+            bool nested_rejected=false;
+            const auto result=entry.run_synchronous_check(4,[&](const auto&,const auto&,const auto&,const auto&){
+                const auto nested=entry.run_synchronous_check_with_registers(owner,true,4);
+                nested_rejected=!nested.started&&entry.temps()[5]==91&&owner.temps()[5]==333;
+                return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+            });
+            require(result.status==odh::VmStatus::returned_true&&nested_rejected&&owner.temps()[5]==333,
+                "rejected register-seeded check reentry cannot clobber the running check or seed owner");
+        }
+
         // A Check BHAV can run synchronously from an executing Main primitive.
         // Its stack is separate, but the actor's registers and World backend are shared.
         std::optional<odh::VmContext> check_world_write_context;

@@ -49,6 +49,9 @@ public:
     bool tick(std::uint64_t tick,std::uint64_t instruction_budget,
               std::uint64_t per_entity_budget,const Trace& trace={});
     std::size_t size() const {return entities_.size();}
+    // Ephemeral execution phase, not persistent session state. Synchronous
+    // checks share callee registers during a tick and clone them outside it.
+    bool running() const {return ticking_;}
     std::uint64_t instructions_last_tick() const {return instructions_last_tick_;}
     const std::string& diagnostic() const {return diagnostic_;}
 private:

@@ -535,11 +535,29 @@ bool Vm::references_entity(std::int16_t entity) const {
     return false;
 }
 
+bool Vm::can_start_synchronous_check(std::uint64_t budget) const {
+    return !executing_&&!check_active_&&status_==VmStatus::running&&!steps_&&stack_.size()==1&&
+       !stack_.front().pc&&stack_.front().return_mode==VmCallReturnMode::ordinary&&
+       !pending_&&suspended_pending_.empty()&&!interaction_return_&&!external_frame_return_&&budget;
+}
+
+VmSubroutineResult Vm::run_synchronous_check_with_registers(Vm& owner,bool share,
+        std::uint64_t budget,const VmPrimitive& primitive) {
+    if(&owner==this)return {false,status_,0,"disposable check cannot own its register seed"};
+    // Reject reentry before touching either register bank. The running check
+    // must not be overwritten by a rejected nested call's seed.
+    if(!can_start_synchronous_check(budget))return run_synchronous_check(budget,primitive);
+    temps_=owner.temps_;temp_xl_=owner.temp_xl_;
+    struct PublishRegisters {
+        Vm& owner;Vm& check;bool share;
+        ~PublishRegisters(){if(share){owner.temps()=check.temps();owner.temp_xl()=check.temp_xl();}}
+    } publish{owner,*this,share};
+    return run_synchronous_check(budget,primitive);
+}
+
 VmSubroutineResult Vm::run_synchronous_check(std::uint64_t budget,const VmPrimitive& primitive) {
     VmSubroutineResult result;
-    if(executing_||check_active_||status_!=VmStatus::running||steps_||stack_.size()!=1||
-       stack_.front().pc||stack_.front().return_mode!=VmCallReturnMode::ordinary||
-       pending_||!suspended_pending_.empty()||interaction_return_||external_frame_return_||!budget){
+    if(!can_start_synchronous_check(budget)){
         result.status=status_;
         result.diagnostic="synchronous check requires a freshly started disposable VM and a nonzero budget";
         return result;

@@ -16,6 +16,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A fila nativa pode cancelar ações posteriores quando uma nova ordem exige
+  isso, preservando as que precisam terminar. A passagem tem limite para evitar
+  travamentos, e a limpeza conserva os valores usados pelo objeto durante o jogo.
+
 - Cancelamento nativo da ação selecionada, com aviso ao objeto quando a ação
   ainda não começou e sinal de interrupção quando já está em andamento.
   O resultado e possíveis falhas ficam nos logs e diagnósticos da sessão.

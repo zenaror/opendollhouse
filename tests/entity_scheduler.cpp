@@ -20,6 +20,63 @@ odh::Bhav routine(std::initializer_list<odh::Instruction> instructions) {
 
 int main() {
     try {
+        {
+            odh::EntityVmScheduler phase;
+            bool before_phase=false,primitive_phase=false,after_phase=false;
+            odh::Vm action({{key(4096),routine({{99,254,255,{}}})}}, {}, {},
+                [&](const auto&,const auto&,const auto&,const auto&){
+                    primitive_phase=phase.running();return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+                });
+            action.start(key(4096));
+            require(!phase.running()&&phase.add(1,action,[&](auto){before_phase=phase.running();return true;},
+                [&]{after_phase=phase.running();return true;}),"scheduler starts at an external register-clone boundary");
+            require(phase.tick(1,8,8)&&before_phase&&primitive_phase&&after_phase&&!phase.running(),
+                "scheduler exposes active simulation phase inside hooks and BHAV then restores external mode");
+            require(!phase.tick(2,0,8)&&!phase.running(),"rejected tick never enters shared-register mode");
+        }
+        { // Automatic queue skip during a real scheduler dispatch, with nonzero EP4.
+            odh::World state;
+            require(state.create(1,odh::EntityKind::avatar,{0,80,0,16})&&
+                state.create(2,odh::EntityKind::object)&&state.declare_object_word(1,8,16)&&
+                state.declare_object_word(2,25,0),"automatic skip entities initialized");
+            odh::EntityVmScheduler dispatch;
+            odh::InteractionQueue queue(state,1,8);
+            odh::Vm callee({{key(4096),routine({{99,254,255,{}}})}},state.vm_memory(),{},
+                [](const auto&,const auto&,const auto&,const auto&){return odh::PrimitiveOutcome{odh::PrimitiveDisposition::wait,{}};});
+            callee.start(key(4096),{2,2,0,0});callee.run(1);
+            callee.temps()[2]=19;callee.temp_xl()[1]=10;const auto callee_ticket=callee.pending()->ticket;
+            unsigned callbacks=0;bool accepted=false,exact_context=false;
+            queue.set_queue_skipped_handler([&](const odh::InteractionActionSnapshot& action){
+                ++callbacks;
+                const odh::RoutineSet ep4{{key(4100),routine({
+                    {2,1,255,{3,0,2,0,0,5,8,8}},
+                    {2,2,255,{2,0,78,0,0,5,8,7}},
+                    {2,3,255,{1,0,77,0,0,5,42,7}},
+                    {2,255,253,{25,0,9,0,0,5,3,7}}})}};
+                odh::Vm check({},state.vm_memory(),{}, {},{{22,ep4}});
+                check.start(key(4100),{2,2,1,22},{0,0,0,0});
+                const auto result=check.run_synchronous_check_with_registers(callee,dispatch.running(),8);
+                exact_context=action.call.context.callee==2&&check.temps()[3]==19;
+                return result.started&&result.status==odh::VmStatus::returned_false;
+            });
+            odh::Vm actor({{key(4096),routine({{99,254,255,{}}})}},state.vm_memory(),{},
+                [&](const auto&,const auto&,const auto&,const auto&){
+                    accepted=queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,
+                        odh::InteractionQueueMode::normal,0,false,false);
+                    return odh::PrimitiveOutcome{accepted?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::unsupported,{}};
+                },{{22,{{key(4097),routine({set(1,33)})},{key(4098),routine({set(1,44)})}}}});
+            actor.start(key(4096),{1,1,1,0});require(queue.bind(actor),"bind automatic skip thread");
+            require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false),"automatic skip pivot queued");
+            const auto pivot=queue.last_enqueued_uid();
+            require(queue.enqueue_ts1(key(4098),{1,2,2,22},{},10,odh::InteractionQueueMode::normal,0,false,true),"automatic skip suffix queued");
+            const auto suffix=queue.last_enqueued_uid();
+            require(dispatch.add(1,actor)&&dispatch.tick(1,16,16)&&accepted&&callbacks==1&&exact_context&&
+                queue.size()==2&&queue.contains_uid(pivot)&&!queue.contains_uid(suffix)&&
+                callee.temps()[2]==78&&callee.temp_xl()[1]==77&&state.find(2)->object_words.at(25)==9&&
+                callee.status()==odh::VmStatus::waiting&&callee.pending()->ticket==callee_ticket&&callee.steps()==1&&
+                actor.steps()==1&&!dispatch.running(),
+                "automatic skip invokes false-returning EP4 once inside tick, preserving its callee register/World effects without advancing callee Main");
+        }
         odh::World world;
         require(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object)&&
                 world.create(3,odh::EntityKind::avatar)&&world.declare_object_word(2,25,0),

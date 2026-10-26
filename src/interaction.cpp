@@ -388,6 +388,7 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
     const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
     const auto protected_prefix=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
     auto position=queue_.end();
+    bool cancel_followups=false;
     if(!use_ts1_profile){
         position=push_head?queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix):queue_.end();
     }else if((flags&tso_push_head)!=0||push_head){
@@ -401,28 +402,68 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
         for(auto it=queue_.end();it!=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);){
             --it;
             if(hit_parent_end&&(priority<=it->priority||it->mode==InteractionQueueMode::parent_exit)){
-                position=std::next(it);found_pivot=true;break;
+                position=std::next(it);found_pivot=true;
+                cancel_followups=priority<=it->priority;
+                break;
             }
             if(it->mode==InteractionQueueMode::parent_exit)hit_parent_end=true;
         }
         if(!found_pivot&&protected_prefix<queue_.size())
             position=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);
     }
+    // The source repeatedly cancels one queue index. A retained MustRun or
+    // parent-mode item makes that loop unbounded. Visit this original suffix in
+    // order once instead: ParentIdle can remove later UIDs and retained items
+    // stay signalled while the pass continues. New callback work is not part of
+    // this pass (reentry into the same queue remains unsupported).
+    std::vector<std::uint64_t> followups;
+    if(cancel_followups)
+        for(auto it=position;it!=queue_.end();++it)followups.push_back(it->uid);
+    const auto target_generation=action.target_generation;
     queue_.insert(position,std::move(action));
-    if(!evaluate_queue_priorities()){
+    const auto remove_new_request=[&]{
         const auto inserted=std::find_if(queue_.begin(),queue_.end(),[&](const Action& queued){
             return queued.uid==new_sequence;
         });
         if(inserted!=queue_.end())queue_.erase(inserted);
+    };
+    const auto publish_identity=[&]{
+        sequence_=new_sequence;
+        if(migrating_legacy){
+            std::uint16_t public_uid=0;
+            for(auto& queued:queue_)queued.queue_uid=public_uid++;
+            next_queue_uid_=public_uid;
+            profile_=InteractionQueueProfile::ts1_priority;
+        }else next_queue_uid_=static_cast<std::uint16_t>(next_queue_uid_+1U);
+    };
+    // Callbacks observe the accepted source identity. Once cancellation effects
+    // begin, neither UID consumption nor those effects can be rolled back.
+    const bool published_before_effects=!followups.empty();
+    if(published_before_effects)publish_identity();
+    for(const auto uid:followups){
+        if(!contains_uid(uid))continue; // Removed by a preceding ParentIdle chain.
+        if(cancel(uid)==InteractionCancelResult::unsupported){
+            const auto reason=diagnostic_;
+            remove_new_request();
+            diagnostic_="automatic followup cancellation failed after queue publication; new request removed, earlier effects retained: "+reason;
+            return false;
+        }
+    }
+    const auto* current_target=world_.find(context.callee);
+    if(published_before_effects&&(!validate()||!contains_uid(new_sequence)||
+       !current_target||current_target->generation!=target_generation)){
+        const auto reason=diagnostic_.empty()?std::string("new request identity changed during queue-skipped callbacks"):diagnostic_;
+        remove_new_request();
+        diagnostic_="automatic followup cancellation invalidated the new request; earlier effects retained: "+reason;
         return false;
     }
-    sequence_=new_sequence;
-    if(migrating_legacy){
-        std::uint16_t public_uid=0;
-        for(auto& queued:queue_)queued.queue_uid=public_uid++;
-        next_queue_uid_=public_uid;
-        profile_=InteractionQueueProfile::ts1_priority;
-    }else next_queue_uid_=static_cast<std::uint16_t>(next_queue_uid_+1U);
+    if(!evaluate_queue_priorities()){
+        remove_new_request();
+        if(published_before_effects)
+            diagnostic_="automatic followup priority evaluation failed after queue publication; new request removed, earlier effects retained: "+diagnostic_;
+        return false;
+    }
+    if(!published_before_effects)publish_identity();
     diagnostic_.clear();return true;
 }
 VmPrimitive InteractionQueue::primitive() {

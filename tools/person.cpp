@@ -1957,6 +1957,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     std::map<std::int16_t,odh::Ts1PushInteractionTarget> resident_interaction_threads;
     odh::EntityVmScheduler entity_scheduler(64);
+    bool simulation_dispatch_running=false;
     std::uint64_t ticks=0;
     struct PendingCreateObject {
         odh::Vm* vm = nullptr;
@@ -3828,11 +3829,12 @@ struct PlacementCandidateProbe {
             if(started!=odh::VmStatus::running){
                 queue_skipped_diagnostic="queue-skipped EntryPoint 4 could not start: "+ep4_vm.diagnostic();return false;
             }
-            if(auto* callee_vm=callee_vm_for(target->id)){
-                ep4_vm.temps()=callee_vm->temps();
-                ep4_vm.temp_xl()=callee_vm->temp_xl();
-            }
-            const auto result=ep4_vm.run_synchronous_check(10000,check_primitive);
+            // TS1 check trees clone registers at an external UI boundary but
+            // share their effects when invoked by Enqueue during a VM tick.
+            auto* callee_vm=callee_vm_for(target->id);
+            const auto result=callee_vm?ep4_vm.run_synchronous_check_with_registers(
+                *callee_vm,entity_scheduler.running()||simulation_dispatch_running,10000,check_primitive):
+                ep4_vm.run_synchronous_check(10000,check_primitive);
             queue_skipped_evidence->steps=result.steps;
             if(!result.started||(result.status!=odh::VmStatus::returned_true&&
                                  result.status!=odh::VmStatus::returned_false)){
@@ -6511,6 +6513,13 @@ struct PlacementCandidateProbe {
     };
     const auto execute=[&](bool scheduled_tick) {
         if(host_failed)return;
+        // Initial Main slices are simulation dispatch too, even before the
+        // scheduler's first numbered tick. UI callbacks outside execute clone.
+        struct SimulationPhase {
+            bool& flag;bool previous;
+            explicit SimulationPhase(bool& value):flag(value),previous(value){flag=true;}
+            ~SimulationPhase(){flag=previous;}
+        } simulation_phase(simulation_dispatch_running);
         const auto budget=session_policy.entity_budget(total_steps());
         if(scheduled_tick) {
             const auto phase_trace=trace_in(initialize?"main":"root_probe");

@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `4a90c3e2f386ac99f06f2df0dc97a9b1ce65a0cc`.
+Base publicada antes da etapa atual: `91e0dd1fe36fb351e1f92e728035702b59c89b76`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,45 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Cancelar uma ação e conservar a limpeza do objeto (etapa atual)
+### Cancelamento automático após entrada de uma nova ordem (etapa atual)
+
+No ramo ordinary de Enqueue, um pivot de prioridade maior ou igual à nova ordem
+cancela o sufixo depois dessa ordem. PushHead/PushTail, fila vazia, inserção sem
+pivot e fronteira ParentExit com prioridade menor não iniciam esse cancelamento.
+A passagem usa os UIDs nativos originais uma vez por item presente; ParentIdle
+pode apagar itens futuros, que são ignorados, e MustRun/modos retidos permanecem
+notificados. É uma política explícita para terminar onde a referência pode entrar
+em loop, não uma alegação de equivalência ao EXE nesse estado defeituoso.
+
+Identidades e migração FIFO→TS1 são publicadas antes dos callbacks. Se a limpeza
+falhar depois de efeitos irreversíveis, só o novo pedido pendente é removido;
+consumo de UID, remoções e efeitos anteriores ficam, com erro explícito. O motor
+revalida ator/run e geração do novo alvo. Só consultar last_enqueued_uid para
+rastrear um pedido após enqueue retornar sucesso. Nenhum schema novo; controller
+continua v5. Callbacks que enfileiram na mesma fila continuam recusados.
+
+EP4 fora da execução clona TEMP/XL do callee. Dentro do scheduler, ou nas primeiras
+fatias de Main antes do tick numerado, seus efeitos são devolvidos ao callee,
+inclusive retorno falso, exceção e limite. A VM valida frescor/reentrada antes de
+copiar qualquer banco; tentativa reentrante rejeitada deixa os dois bancos intactos.
+
+Build e 18 CTests passaram em `reports/native-auto-cancel/attempt-1/final-*.log`.
+A fixture de scheduler usa EP4 não zero/retorno falso durante cancelamento automático,
+conserva TEMP/XL/World e mantém Main do callee parado. Matriz de fila cobre modos,
+ordem, retidos, falhas parciais, identidades e restauração VM/controller.
+Binário SHA256 `0469a48014ff9cfdb3c59a342398b21a627d92a4bfd080d0a9902c1717c3a4fc`.
+`reports/native-action-cancel/auto-regression-1/result.json`: cancelar geladeira
+antes de iniciar ou em tick256 continua passando save/reopen, com 12 seções iguais
+no zero-reopen/final e campos ator/global/RNG/tick iguais. Ação cancelada ativa
+termina falsa/fila0. `reports/native-active-interaction/attempt-24/result.json`:
+uso normal da geladeira termina verdadeiro/fila0, cortes256/512 iguais até4096 e
+save legado abre. 25 originais intactos;16 processos/perfis encerrados.
+Revisor independente conferiu código e relatórios sem repetir testes.
+Esses testes reais são regressões: automatic suffix/EP4 nãozero só fixture;
+UI, EXE original, ports/hardware e paridade integral continuam não provados.
+
+
+### Cancelar uma ação e conservar a limpeza do objeto (commit `91e0dd1`)
 
 Cancelamento usa a identidade nativa64, separada do UID público16. Uma ação
 pendente Normal/DirectControl sem MustRun é removida e executa EP4 do callee

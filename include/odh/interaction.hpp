@@ -62,7 +62,11 @@ public:
     bool restore_snapshot(const InteractionQueueSnapshot&);
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
     // Simple host queue request using inherited priority 1. A v1 FIFO-restored
-    // queue retains FIFO semantics through this entry point.
+    // queue retains FIFO semantics through this entry point. In the TS1 profile,
+    // ordinary pivot insertion cancels its original suffix once in source order.
+    // Retained items are signalled rather than retried forever. If a cancellation
+    // fails, false removes the new request but preserves earlier World/queue
+    // effects and consumed identities; diagnostics distinguish that partial failure.
     bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={},bool push_after_active=false);
     // Native PushInteraction path. A legacy v1 FIFO queue adopts priority order
     // on this first source action while preserving its existing action order.
@@ -84,7 +88,9 @@ public:
         if(executing_)throw std::logic_error("queue-skipped handler cannot reenter controller");
         queue_skipped_handler_=std::move(handler);
     }
-    // Native identity (not the wrapping public queue UID) for UI request tracking.
+    // Last consumed native identity (not the wrapping public queue UID). Only
+    // use for request tracking after successful enqueue: a rejected insertion
+    // with irreversible followup effects also consumes its published identity.
     std::uint64_t last_enqueued_uid() const {return sequence_;}
     bool contains_uid(std::uint64_t uid) const {
         return std::any_of(queue_.begin(),queue_.end(),[uid](const auto& action){return action.uid==uid;});
