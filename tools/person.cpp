@@ -196,13 +196,11 @@ odh::SessionActionRoutineSource load_session_action_source(
     const odh::DefinitionCandidate& candidate,std::uint16_t root,
     const std::optional<odh::SessionLinkedSemiglobal>& expected_link,
     const std::filesystem::path& game_root,const std::optional<Resource>& globals,
-    const odh::DefinitionIndex* definitions) {
+    const odh::DefinitionIndex* definitions,bool include_linked_for_private=false) {
     const auto scope=odh::routine_key(root).scope;
-    if(scope==odh::RoutineScope::private_object){
-        if(expected_link)throw odh::FormatError("private seated action unexpectedly declares a semiglobal bank");
+    if(scope==odh::RoutineScope::private_object&&!expected_link&&!include_linked_for_private)
         return {load_saved_action_routines(candidate,root),{}};
-    }
-    if(scope!=odh::RoutineScope::semiglobal)
+    if(scope!=odh::RoutineScope::private_object&&scope!=odh::RoutineScope::semiglobal)
         throw odh::FormatError("seated action root must belong to the exact private or linked semiglobal bank");
     if(!globals||globals->standalone||!definitions)
         throw odh::FormatError("seated semiglobal action needs the explicit Global FAR and definition index");
@@ -215,13 +213,17 @@ odh::SessionActionRoutineSource load_session_action_source(
             semiglobal_name=unique_saved_semiglobal_name(catalog);
         }
     }
+    if((!semiglobal_name||semiglobal_name->empty())&&scope==odh::RoutineScope::private_object&&
+       include_linked_for_private&&!expected_link)
+        return {load_saved_private_routines(candidate,256),{}};
     if(!semiglobal_name||semiglobal_name->empty()||
        semiglobal_name->find_first_of("/\\:")!=std::string::npos||
        semiglobal_name->find('\0')!=std::string::npos||semiglobal_name->find('.')!=std::string::npos)
         throw odh::FormatError("seated semiglobal action has no unique flat GLOB link");
     const auto entry=*semiglobal_name+".iff";
     auto bank=load_saved_semiglobal_code_bank(globals->archive,entry);
-    if(bank.name!=*semiglobal_name||bank.entry!=entry||!bank.routines.count(odh::routine_key(root)))
+    if(bank.name!=*semiglobal_name||bank.entry!=entry||
+       (scope==odh::RoutineScope::semiglobal&&!bank.routines.count(odh::routine_key(root))))
         throw odh::FormatError("seated action root is absent from its exact GLOB-linked bank");
     std::error_code error;
     const auto root_path=std::filesystem::canonical(game_root,error);
@@ -241,6 +243,36 @@ odh::SessionActionRoutineSource load_session_action_source(
         if(!routines.emplace(key,routine).second)
             throw odh::FormatError("private and linked semiglobal seated routines collide");
     return {std::move(routines),std::move(link)};
+}
+struct LoadedMenuActionBank {
+    odh::RoutineSet routines;
+    std::optional<odh::SessionLinkedSemiglobal> linked_semiglobal;
+    odh::SessionCodeBankKind kind=odh::SessionCodeBankKind::private_closure;
+};
+LoadedMenuActionBank load_menu_action_bank(const odh::DefinitionCandidate& candidate,
+    std::uint16_t action,const odh::Ttab& table,const std::filesystem::path& game_root,
+    const std::optional<Resource>& globals,const odh::DefinitionIndex* definitions) {
+    const auto plan=saved_menu_action_routine_plan(table,action);
+    if(!plan)throw odh::FormatError("selected menu ActionFunction has no supported private/semiglobal bank plan");
+    LoadedMenuActionBank result;
+    const auto action_key=odh::routine_key(action);
+    const bool include_linked=action_key.scope==odh::RoutineScope::semiglobal||!plan->checks.empty();
+    auto source=load_session_action_source(candidate,action,{},game_root,globals,definitions,
+        include_linked&&action_key.scope==odh::RoutineScope::private_object);
+    result.routines=std::move(source.routines);
+    result.linked_semiglobal=std::move(source.linked_semiglobal);
+    result.kind=result.linked_semiglobal?odh::SessionCodeBankKind::private_and_semiglobal:
+        plan->complete_private?odh::SessionCodeBankKind::complete_private:
+        action_key.scope==odh::RoutineScope::semiglobal?odh::SessionCodeBankKind::private_and_semiglobal:
+            odh::SessionCodeBankKind::private_closure;
+    if(plan->linked_semiglobal&&!result.linked_semiglobal)
+        throw odh::FormatError("TTAB TestFunction requires the object's exact linked semiglobal bank");
+    if(!result.routines.count(action_key))
+        throw odh::FormatError("selected ActionFunction is absent from its planned code owner");
+    for(const auto check:plan->checks)
+        if(check.scope!=odh::RoutineScope::global&&!result.routines.count(check))
+            throw odh::FormatError("TTAB TestFunction is absent from its planned exact code owner");
+    return result;
 }
 odh::SessionResourceCodeOwner session_resource_owner(odh::CodeOwner owner,
     const odh::DefinitionCandidate& candidate,std::uint16_t root,odh::SessionCodeBankKind kind,
@@ -1670,7 +1702,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::unique_ptr<odh::Routing> routing;
         odh_host::RoomPortalSession room_portals;
         std::unique_ptr<odh_host::HouseholdGoHereSession> go_here;
-        std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> action_code_owners;
+        std::map<std::tuple<std::string,std::string,std::uint16_t,std::uint8_t>,odh::CodeOwner> action_code_owners;
         std::optional<SavedObjectSelection> seated_action_target;
         std::optional<std::uint64_t> seated_action_actor_generation;
         std::optional<std::uint16_t> seated_action_code;
@@ -1787,7 +1819,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     std::map<odh::CodeOwner,odh::TuningTables> saved_action_tuning;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
-    std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner> saved_code_owners;
+    std::map<std::tuple<std::string,std::string,std::uint16_t,std::uint8_t>,odh::CodeOwner> saved_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
     bool saved_owner_ids_exhausted=false;
     // Saved object VMs use the object's resource identity as CodeOwner. The
@@ -2926,8 +2958,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // report unsupported instead of approving an unchecked action.
     const odh::VmPrimitive check_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d)
             ->odh::PrimitiveOutcome{
+        if(i.opcode==1&&i.operands[0]==28)return person_primitive(f,i,t,d);
         switch(i.opcode){
-        case 7: case 15: case 16: case 25: case 29: case 50:
+        case 7: case 15: case 16: case 24: case 25: case 26: case 29:
+        case 31: case 32: case 50: case 51:
             return person_primitive(f,i,t,d);
         default:return {odh::PrimitiveDisposition::unsupported,
             "interaction check primitive requires synchronous support: "+std::to_string(i.opcode)};
@@ -3094,7 +3128,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         if(action&&!host_failed&&vm.status()!=odh::VmStatus::fault&&!queue.enqueue(odh::routine_key(*action_routine),{runtime_avatar_id,2,2,2}))throw odh::FormatError(queue.diagnostic());
     }
     if(!restoring_session)prepare_household_bodies();
-    using SavedOwnerMap=std::map<std::tuple<std::string,std::string,std::uint16_t>,odh::CodeOwner>;
+    using SavedOwnerMap=std::map<std::tuple<std::string,std::string,std::uint16_t,std::uint8_t>,odh::CodeOwner>;
     const auto actor_owner_map_for=[&](std::int16_t actor_id)->SavedOwnerMap* {
         if(actor_id==runtime_avatar_id)return &saved_code_owners;
         const auto found=std::find_if(household_runtime.begin(),household_runtime.end(),
@@ -3122,9 +3156,69 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             }
         }
         if(!exact)throw odh::FormatError("dynamic action object provenance no longer matches selected resources");
+        const auto& definitions=*definition_index;
         auto source=load_session_action_source(*exact,binding.root_routine,binding.linked_semiglobal,
-            session_context->game_root,globals,definition_index?&*definition_index:nullptr);
-        const auto key=std::make_tuple(exact->source,binding.asset,binding.root_routine);
+            session_context->game_root,globals,&definitions);
+        auto bank_kind=(source.linked_semiglobal||
+            odh::routine_key(binding.root_routine).scope==odh::RoutineScope::semiglobal)?
+            odh::SessionCodeBankKind::private_and_semiglobal:odh::SessionCodeBankKind::private_closure;
+        const auto interactions=saved_object_interactions(*exact,definitions,game_language);
+        const bool has_action_row=interactions.table&&interactions.table->status==odh::TtabStatus::decoded&&
+            std::any_of(interactions.table->interactions.begin(),interactions.table->interactions.end(),
+                [&](const auto& row){return row.action==binding.root_routine;});
+        if(has_action_row){
+            try{
+                auto menu_bank=load_menu_action_bank(*exact,binding.root_routine,*interactions.table,
+                    session_context->game_root,globals,&definitions);
+                const bool canonical_matches=menu_bank.linked_semiglobal==binding.linked_semiglobal&&
+                    odh::session_action_routine_fingerprint(menu_bank.routines)==binding.routine_fingerprint;
+                if(canonical_matches){
+                    source={std::move(menu_bank.routines),std::move(menu_bank.linked_semiglobal)};
+                    bank_kind=menu_bank.kind;
+                }else if(odh::session_action_routine_fingerprint(source.routines)==binding.routine_fingerprint){
+                    // Existing single-resident saves used the action-root closure.
+                    // Keep that exact bank when its saved fingerprint says so.
+                }else if(!binding.linked_semiglobal&&
+                    odh::routine_key(binding.root_routine).scope==odh::RoutineScope::private_object){
+                    auto complete_private=load_saved_private_routines(*exact,256);
+                    if(odh::session_action_routine_fingerprint(complete_private)!=binding.routine_fingerprint)
+                        throw odh::FormatError("dynamic action fingerprint matches neither legacy closure nor complete private bank");
+                    source={std::move(complete_private),{}};
+                    bank_kind=odh::SessionCodeBankKind::complete_private;
+                }else{
+                    throw odh::FormatError("dynamic action fingerprint matches neither legacy closure nor canonical TTAB-check bank");
+                }
+            }catch(const odh::FormatError& error){
+                if(odh::session_action_routine_fingerprint(source.routines)!=binding.routine_fingerprint)
+                    throw;
+                // A legacy closure remains valid only when its exact fingerprint
+                // matches; unsupported new check banks are never guessed.
+                (void)error;
+            }
+        }
+        if(source.linked_semiglobal!=binding.linked_semiglobal||
+           !source.routines.count(odh::routine_key(binding.root_routine))||
+           odh::session_action_routine_fingerprint(source.routines)!=binding.routine_fingerprint)
+            throw odh::FormatError("dynamic action owner fingerprint changed");
+        auto profile=session_resource_owner(binding.owner,*exact,binding.root_routine,bank_kind,
+            source.routines,source.linked_semiglobal);
+        const auto old_profile=resource_owner_provenance.find(binding.owner);
+        if(old_profile!=resource_owner_provenance.end()&&
+           (old_profile->second.source!=profile.source||old_profile->second.asset!=profile.asset||
+            old_profile->second.root_routine!=profile.root_routine||old_profile->second.bank_kind!=profile.bank_kind||
+            old_profile->second.linked_semiglobal!=profile.linked_semiglobal||
+            old_profile->second.routine_fingerprint!=profile.routine_fingerprint))
+            throw odh::FormatError("dynamic action owner bank conflicts with another installed provenance");
+        resource_owner_provenance.insert_or_assign(binding.owner,std::move(profile));
+        const auto plan=interactions.table&&interactions.table->status==odh::TtabStatus::decoded?
+            saved_menu_action_routine_plan(*interactions.table,binding.root_routine):
+            std::optional<SavedMenuActionRoutinePlan>{};
+        // Cache identity follows the bank actually restored. A semiglobal
+        // action needs the linked bank even without a TestFunction; checked
+        // actions use their complete private or private+linked bank.
+        const auto menu_variant=bank_kind!=odh::SessionCodeBankKind::private_closure?
+            std::uint8_t{1}:std::uint8_t{0};
+        const auto key=std::make_tuple(exact->source,binding.asset,binding.root_routine,menu_variant);
         auto* registry=actor_owner_map_for(actor_id);
         if(!registry||!registry->emplace(key,binding.owner).second)
             throw odh::FormatError("dynamic action owner resident or resource key is invalid or duplicated");
@@ -3298,8 +3392,40 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             auto* registry=actor_owner_map_for(execution.id);
             if(!registry)throw odh::FormatError("restored resource owner resident registry is absent");
             for(const auto& owner:household_restore->resource_owners(execution.id)){
-                if(owner.bank_kind==odh::SessionCodeBankKind::complete_private)continue;
-                if(!registry->emplace(std::make_tuple(resource_owner_provenance.at(owner.owner).source,owner.asset,owner.root_routine),owner.owner).second)
+                const auto& provenance=resource_owner_provenance.at(owner.owner);
+                bool menu_bank=false;
+                if(definition_index){
+                    const auto* candidates=definition_index->candidates(provenance.resource_guid);
+                    const odh::DefinitionCandidate* exact=nullptr;
+                    if(candidates)for(const auto& candidate:*candidates)
+                        if(candidate.source==provenance.source&&candidate.asset==provenance.asset&&
+                           candidate.chunk_id==provenance.definition_chunk_id){
+                            if(exact)throw odh::FormatError("restored action owner resource is ambiguous");
+                            exact=&candidate;
+                        }
+                    if(exact){
+                        const auto interactions=saved_object_interactions(*exact,*definition_index,game_language);
+                        const bool action_present=interactions.table&&
+                            interactions.table->status==odh::TtabStatus::decoded&&
+                            std::any_of(interactions.table->interactions.begin(),interactions.table->interactions.end(),
+                                [&](const auto& row){return row.action==owner.root_routine;});
+                        const auto plan=action_present?
+                            saved_menu_action_routine_plan(*interactions.table,owner.root_routine):
+                            std::optional<SavedMenuActionRoutinePlan>{};
+                        const bool linked_required=plan&&plan->linked_semiglobal;
+                        const bool checks_require_full_bank=plan&&!plan->checks.empty();
+                        const bool linked_bank=provenance.bank_kind==odh::SessionCodeBankKind::private_and_semiglobal;
+                        const bool private_full=provenance.bank_kind==odh::SessionCodeBankKind::complete_private;
+                        const bool closure=provenance.bank_kind==odh::SessionCodeBankKind::private_closure;
+                        menu_bank=plan&&((linked_required&&linked_bank)||
+                            (checks_require_full_bank&&!linked_required&&(private_full||linked_bank))||
+                            (!checks_require_full_bank&&!linked_required&&closure));
+                    }
+                }
+                if(!menu_bank)continue;
+                const auto variant=owner.bank_kind==odh::SessionCodeBankKind::private_closure?
+                    std::uint8_t{0}:std::uint8_t{1};
+                if(!registry->emplace(std::make_tuple(provenance.source,owner.asset,owner.root_routine,variant),owner.owner).second)
                     throw odh::FormatError("restored action resource cache key is duplicated");
             }
             for(const auto& owner:household_restore->resource_owners(execution.id))
@@ -3563,6 +3689,7 @@ struct PlacementCandidateProbe {
     std::uint64_t render_selection_clicks=0,render_selection_tick=0;
     bool render_interaction_requested=false,render_interaction_enqueued=false;
     std::string render_interaction_status="not_requested",render_interaction_diagnostic;
+    std::optional<std::uint64_t> render_interaction_queue_uid;
     std::optional<std::uint16_t> render_interaction_action;
     std::optional<odh::CodeOwner> render_interaction_owner;
     std::optional<SavedObjectSelection> render_interaction_target;
@@ -3600,7 +3727,6 @@ struct PlacementCandidateProbe {
         if(found==household_runtime.end())return {nullptr,nullptr,nullptr};
         return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation,&(*found)->seated_action_code};
     };
-    std::optional<std::uint64_t> previous_completion_uid;
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     bool go_here_cancel_pending=false;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -3615,7 +3741,7 @@ struct PlacementCandidateProbe {
     bool resumed_go_here_route=false;
     if(session_restore&&session_restore->seated_continuation()){
         for(const auto& binding:session_restore->seated_continuation()->code_owners){
-            const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine);
+            const auto key=std::make_tuple(binding.source,binding.asset,binding.root_routine,std::uint8_t{0});
             if(!saved_code_owners.emplace(key,binding.owner).second)
                 throw odh::FormatError("restored seated action owner identity is duplicated");
             if(binding.owner>=next_saved_code_owner){
@@ -3759,55 +3885,59 @@ struct PlacementCandidateProbe {
             render_interaction_diagnostic="selected TTAB action is no longer eligible at the input boundary";return;
         }
         const auto& row=render_interactions->table->interactions[*render_selected_interaction_row];
-        const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action);
+        const auto action_key=odh::routine_key(row.action);
+        const auto check_key=row.test?std::optional<odh::RoutineKey>{odh::routine_key(row.test)}:
+            std::optional<odh::RoutineKey>{};
+        const auto bank_plan=saved_menu_action_routine_plan(*render_interactions->table,row.action);
+        const auto menu_variant=bank_plan&&
+            (!bank_plan->checks.empty()||action_key.scope==odh::RoutineScope::semiglobal)?
+            std::uint8_t{1}:std::uint8_t{0};
+        const auto owner_key=std::make_tuple(candidate->source,candidate->asset,row.action,menu_variant);
         auto owner=owner_map->find(owner_key);
+        if(owner!=owner_map->end()){
+            bool complete=actor_vm->has_routine(action_key,owner->second);
+            if(bank_plan)for(const auto check:bank_plan->checks)
+                if(check.scope!=odh::RoutineScope::global&&!actor_vm->has_routine(check,owner->second))
+                    complete=false;
+            if(!complete)owner=owner_map->end();
+        }
         if(owner==owner_map->end()){
             if(saved_owner_ids_exhausted){
                 render_interaction_status="unsupported";render_interaction_diagnostic="saved object code-owner identity space exhausted";return;
             }
-            odh::RoutineSet routines;
             odh::TuningTables action_tuning;
-            const auto key=odh::routine_key(row.action);
+            LoadedMenuActionBank bank;
             try{
                 // A shared action BHAV still reads private tuning from the
                 // selected object's resource (Simitone's ScopeResource is the
                 // code owner's object resource, not the semiglobal bank).
                 action_tuning=load_saved_action_tuning(*candidate);
-                if(key.scope==odh::RoutineScope::private_object){
-                    routines=load_saved_action_routines(*candidate,row.action);
-                }
-                else if(key.scope==odh::RoutineScope::semiglobal&&linked_bank&&
-                        linked_bank->routines.count(key)){
-                    routines=load_saved_private_routines(*candidate);
-                    for(const auto& [linked_key,routine]:linked_bank->routines)
-                        routines.emplace(linked_key,routine);
-                }
+                const auto game_root=session_context&&!session_context->game_root.empty()?
+                    std::filesystem::path(session_context->game_root):
+                    std::filesystem::path(globals&&!globals->archive.empty()?globals->archive:candidate->source)
+                        .parent_path().parent_path().parent_path();
+                bank=load_menu_action_bank(*candidate,row.action,*render_interactions->table,
+                    game_root,globals,definition_index?&*definition_index:nullptr);
             }
             catch(const std::exception& error){
                 render_interaction_status="unsupported";render_interaction_diagnostic=error.what();return;
             }
-            if(!routines.count(key)){
-                render_interaction_status="unsupported";render_interaction_diagnostic="selected ActionFunction is absent from its exact private or linked semiglobal owner";return;
+            if(check_key&&check_key->scope!=odh::RoutineScope::global&&!bank.routines.count(*check_key)){
+                render_interaction_status="unsupported";render_interaction_diagnostic="selected TestFunction is absent from its exact private or linked semiglobal owner";return;
             }
             const auto code_owner=next_saved_code_owner;
-            std::optional<odh::SessionResourceCodeOwner> provenance;
-            if(session_context&&!session_context->single_resident_session){
-                const auto provenance_source=load_session_action_source(*candidate,row.action,{},
-                    session_context->game_root,globals,definition_index?&*definition_index:nullptr);
-                provenance=session_resource_owner(code_owner,*candidate,row.action,
-                    key.scope==odh::RoutineScope::semiglobal?odh::SessionCodeBankKind::private_and_semiglobal:
-                        odh::SessionCodeBankKind::private_closure,routines,provenance_source.linked_semiglobal);
-            }
-            if(!actor_vm->install_owner(code_owner,std::move(routines))){
+            const auto provenance=session_resource_owner(code_owner,*candidate,row.action,bank.kind,
+                bank.routines,bank.linked_semiglobal);
+            if(!actor_vm->install_owner(code_owner,std::move(bank.routines))){
                 render_interaction_status="unsupported";render_interaction_diagnostic="selected resident VM rejected saved object code owner (duplicate, capacity or unsafe point)";return;
             }
-            if(provenance)resource_owner_provenance.emplace(code_owner,std::move(*provenance));
+            resource_owner_provenance.emplace(code_owner,provenance);
             note_installed_resource_owner(*actor_vm,code_owner);
             saved_action_resources.emplace(code_owner,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
             saved_action_tuning.emplace(code_owner,std::move(action_tuning));
             if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
             else ++next_saved_code_owner;
-            owner=owner_map->emplace(owner_key,code_owner).first;
+            owner=owner_map->insert_or_assign(owner_key,code_owner).first;
         }
         actor=world.find(actor_id);target=world.find(selected.id);
         if(!actor||actor->kind!=odh::EntityKind::avatar||!target||target->generation!=selected.generation||
@@ -3816,15 +3946,19 @@ struct PlacementCandidateProbe {
         }
         saved_action_resources.emplace(owner->second,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
         const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
-        if(!actor_queue->enqueue(odh::routine_key(row.action),context)){
+        if(!actor_queue->enqueue_user(action_key,context,{},row.flags,check_key)){
             render_interaction_status="rejected";render_interaction_diagnostic=actor_queue->diagnostic();return;
         }
+        const auto action_uid=actor_queue->last_enqueued_uid();
+        if(!action_uid||!actor_queue->contains_uid(action_uid)){
+            render_interaction_status="rejected";render_interaction_diagnostic="selected menu action was not retained in the resident queue";return;
+        }
+        render_interaction_queue_uid=action_uid;
         render_interaction_enqueued=true;render_interaction_status="queued";render_interaction_action=row.action;
         render_interaction_owner=owner->second;
         render_interaction_target=selected;
         render_interaction_actor_generation=actor->generation;
         render_interaction_actor_id=actor_id;
-        previous_completion_uid=actor_queue->completion()?std::optional<std::uint64_t>{actor_queue->completion()->uid}:std::optional<std::uint64_t>{};
         render_interaction_diagnostic.clear();
     };
     // Stand is an explicit host control, not a fabricated TTAB row. Its
@@ -3883,7 +4017,7 @@ struct PlacementCandidateProbe {
                stand_scope!=odh::RoutineScope::semiglobal))
                 fail_stand("Stand entry point 27 has no unique private or linked semiglobal function owner");
             else {
-                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action);
+                const auto owner_key=std::make_tuple(candidate->source,candidate->asset,stand_action,std::uint8_t{0});
                 auto owner=owner_map->find(owner_key);
                 if(owner==owner_map->end()){
                     if(saved_owner_ids_exhausted)fail_stand("saved object code-owner identity space exhausted");
@@ -4989,7 +5123,7 @@ struct PlacementCandidateProbe {
                 member->ui_go_here_status="queued";
                 member->go_here_trigger="window_input";
                 member->action_code_owners.insert_or_assign(
-                    std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096}),owner);
+                    std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096},std::uint8_t{0}),owner);
                 saved_action_resources.emplace(owner,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
                 saved_action_tuning.emplace(owner,load_saved_action_tuning(*candidate));
                 member->go_here_movement_logged=false;
@@ -5043,7 +5177,7 @@ struct PlacementCandidateProbe {
         marker_ready=marker_ready&&world.set_position(marker_id,destination)&&
             world.set_static_footprint(marker_id,false)&&world.set_ui_ghost(marker_id,true);
         if(!marker_ready){world.remove(marker_id);reject("temporary Destination initial ObjectData or position was rejected");return;}
-        const auto owner_key=std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096});
+        const auto owner_key=std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096},std::uint8_t{0});
         auto owner=saved_code_owners.find(owner_key);
         if(owner==saved_code_owners.end()){
             odh::RoutineSet routines;
@@ -5472,7 +5606,22 @@ struct PlacementCandidateProbe {
                 }
                 if(!exact||exact->definition.guid!=target->definition->guid)
                     throw odh::FormatError("dynamic action target does not match its installed resource owner");
-                const auto source=load_session_action_source(*exact,root,{},session_context->game_root,
+                odh::SessionActionRoutineSource source;
+                const auto profile=resource_owner_provenance.find(owner_id);
+                if(profile!=resource_owner_provenance.end()){
+                    if(profile->second.source!=exact->source||profile->second.asset!=exact->asset||
+                       profile->second.root_routine!=root)
+                        throw odh::FormatError("dynamic action installed-bank profile does not match its registry entry");
+                    if(profile->second.bank_kind==odh::SessionCodeBankKind::complete_private){
+                        if(profile->second.linked_semiglobal)
+                            throw odh::FormatError("complete-private dynamic action profile unexpectedly links semiglobal code");
+                        source.routines=load_saved_private_routines(*exact,256);
+                    }else source=load_session_action_source(*exact,root,profile->second.linked_semiglobal,
+                        session_context->game_root,globals,definition_index?&*definition_index:nullptr);
+                    if(source.linked_semiglobal!=profile->second.linked_semiglobal||
+                       odh::session_loaded_bank_fingerprint(source.routines)!=profile->second.routine_fingerprint)
+                        throw odh::FormatError("dynamic action installed-bank fingerprint changed before save");
+                }else source=load_session_action_source(*exact,root,{},session_context->game_root,
                     globals,definition_index?&*definition_index:nullptr);
                 odh::SessionDynamicActionOwner record;record.owner=owner_id;record.target_id=target_id;
                 record.target_generation=target->generation;record.target_guid=target->definition->guid;
@@ -6622,6 +6771,7 @@ struct PlacementCandidateProbe {
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
                         render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
                         render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
+                        render_interaction_queue_uid.reset();
                     }
                 }else{
                     auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
@@ -6638,6 +6788,7 @@ struct PlacementCandidateProbe {
                         render_interaction_status="not_requested";render_interaction_diagnostic.clear();
                         render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
                         render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
+                        render_interaction_queue_uid.reset();
                     }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
@@ -6854,7 +7005,7 @@ struct PlacementCandidateProbe {
                     if((*resident)->go_here->request(destination,owner,std::move(routines),4096)){
                         (*resident)->go_here_trigger="headless_schedule";
                         (*resident)->action_code_owners.insert_or_assign(
-                            std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096}),owner);
+                            std::make_tuple(candidate->source,candidate->asset,std::uint16_t{4096},std::uint8_t{0}),owner);
                         saved_action_resources.emplace(owner,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
                         saved_action_tuning.emplace(owner,load_saved_action_tuning(*candidate));
                         (*resident)->go_here_movement_logged=false;
@@ -7154,8 +7305,8 @@ struct PlacementCandidateProbe {
                 // faults on a later tick after the interaction was removed.
             }else if(host_failed){
                 render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;
-            }else if(action_queue&&action_queue->completion()&&
-                     (!previous_completion_uid||action_queue->completion()->uid!=*previous_completion_uid)){
+            }else if(action_queue&&render_interaction_queue_uid&&action_queue->completion()&&
+                     action_queue->completion()->uid==*render_interaction_queue_uid){
                 render_interaction_result=action_queue->completion()->result;
                 render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
                 render_interaction_diagnostic.clear();
@@ -7171,6 +7322,10 @@ struct PlacementCandidateProbe {
                         *seated_code=render_interaction_action;
                     }
                 }
+            }else if(action_queue&&render_interaction_queue_uid&&
+                     !action_queue->contains_uid(*render_interaction_queue_uid)){
+                render_interaction_status="ineligible";
+                render_interaction_diagnostic="selected action left the queue before execution without matching completion";
             }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
                 render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
             }
@@ -7550,11 +7705,15 @@ struct PlacementCandidateProbe {
         if(render_interaction_result){
             // The interaction result is independent from a later parent-Main fault.
         }else if(host_failed){render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;}
-        else if(action_queue&&action_queue->completion()&&(!previous_completion_uid||
-                                      action_queue->completion()->uid!=*previous_completion_uid)){
+        else if(action_queue&&render_interaction_queue_uid&&action_queue->completion()&&
+                action_queue->completion()->uid==*render_interaction_queue_uid){
             render_interaction_result=action_queue->completion()->result;
             render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
             render_interaction_diagnostic.clear();
+        }else if(action_queue&&render_interaction_queue_uid&&
+                 !action_queue->contains_uid(*render_interaction_queue_uid)){
+            render_interaction_status="ineligible";
+            render_interaction_diagnostic="selected action left the queue before execution without matching completion";
         }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
             render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
         }

@@ -5,6 +5,10 @@
 
 namespace odh {
 struct InteractionCompletion {std::uint64_t uid,ticket,tick;bool result;};
+enum class InteractionPermission { allowed, denied, unsupported };
+// TS1 CheckTS1Action permission block only. Missing avatar data is unknown;
+// FSOSkipPermissions bypasses permissions, never the separate check BHAV.
+InteractionPermission ts1_interaction_permission(const Entity*,std::uint32_t flags);
 enum class InteractionQueueMode : std::uint8_t { normal, parent_idle, parent_exit, idle };
 enum class InteractionQueueProfile : std::uint8_t { legacy_fifo, ts1_priority };
 struct InteractionActionSnapshot {
@@ -18,6 +22,7 @@ struct InteractionActionSnapshot {
     // Check uses the action code owner and actor/source context. Missing means
     // a legacy or direct host request; never invent a check for old saves.
     std::optional<RoutineKey> check={};
+    bool check_permissions=false;
 };
 struct InteractionActiveSnapshot {std::uint64_t uid,ticket;};
 struct InteractionWaitSnapshot {std::uint64_t ticket,deadline;};
@@ -60,6 +65,15 @@ public:
     bool enqueue_ts1(RoutineKey,VmContext,const std::vector<std::int16_t>& args,
         std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,
         bool push_head,bool push_tail,std::optional<RoutineKey> check={});
+    // Player-selected TTAB action: retain original flags, recheck permissions
+    // and BHAV at dispatch, with UserDriven priority 50.
+    bool enqueue_user(RoutineKey,VmContext,const std::vector<std::int16_t>& args,
+        std::uint32_t flags,std::optional<RoutineKey> check={});
+    // Native identity (not the wrapping public queue UID) for UI request tracking.
+    std::uint64_t last_enqueued_uid() const {return sequence_;}
+    bool contains_uid(std::uint64_t uid) const {
+        return std::any_of(queue_.begin(),queue_.end(),[uid](const auto& action){return action.uid==uid;});
+    }
     bool references_target(std::int16_t entity) const {
         return std::any_of(queue_.begin(),queue_.end(),[&](const InteractionActionSnapshot& action){
             return action.call.context.callee==entity;
@@ -88,7 +102,7 @@ private:
     bool validate();
     bool evaluate_queue_priorities();
     bool enqueue_impl(RoutineKey,VmContext,const std::vector<std::int16_t>&,
-        std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool,std::optional<RoutineKey>);
+        std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool,std::optional<RoutineKey>,bool);
     World& world_;std::int16_t actor_id_;std::size_t capacity_;
     std::function<bool()> thread_interrupt_;
     VmPrimitive check_primitive_;

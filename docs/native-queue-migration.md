@@ -11,8 +11,10 @@ The existing `IdleForInput` wait keeps its scheduled wake time; when it next run
 it sets the avatar's notified flag. Starting and finishing the outer action
 update PersonData[33] when that bank is present. The VM checks routine ownership,
 frame limits and stack depth before the queue publishes an action as active.
-Controller codec v3 persists priority, mode, flags, notification bit, public
-queue UID, queue profile and optional check routine identity. It reads v2
+Controller codec v4 persists priority, mode, flags, notification bit, public
+queue UID, queue profile, optional check routine identity and whether a
+player request requires permission checks. It reads v3 without adding that
+permission requirement to older actions, and reads v2
 priority saves without inventing checks, and still reads v1 FIFO saves as an explicit legacy
 profile; the first new TS1 push adopts priority ordering while keeping old
 pending actions in their existing order and assigning unique queue UIDs.
@@ -26,11 +28,14 @@ next one in the same attempt; effects produced before false remain. Missing code
 unsupported services, faults and the 10000-instruction check limit produce an
 explicit error, never approval or a fabricated false result. The check retains
 the suspended Main frame and uses a separate, synchronous-only primitive handler.
-The host currently supports Expression/BHAV calls plus synchronous primitives
-7, 15, 16, 25, 29 and 50; all others remain explicit gaps. PushInteraction sets
-SkipPermissions, which bypasses permissions but not the check. Direct host
-enqueues and legacy saves with no check keep their existing behavior; full UI
-permission filtering and check primitive coverage remain incomplete.
+The host uses an explicit synchronous handler set, including the operations
+accepted by its menu probe; asynchronous services remain explicit gaps. PushInteraction sets
+SkipPermissions, which bypasses permissions but not the check. Player-selected TTAB actions retain their flags, priority 50, check identity and
+permission requirement. Menu selection and live dispatch use the same TS1 rule
+for age, visitors, pet flags and debug restrictions. Dispatch repeats permission
+and BHAV checks against the current World; a check-time change can reject an
+action that was available at click time. Other direct host enqueues and legacy
+saves retain their old semantics. Check primitive coverage remains incomplete.
 
 It does not dispatch nested actions from an
 action-tree `AllowPush`, cancel or skip followups, inject RunImmediately at a
@@ -43,24 +48,49 @@ flag also requires ObjectData[8]. Keep extending the existing `Vm`,
 `InteractionQueue`, World and session codecs; keep one authoritative native
 simulation. Do not present this slice as game parity.
 
-Current gates: six focused CTests passed for VM checks, queue execution, controller
-codec v1/v2/v3, session bundle and resident restore. Output:
-`reports/native-queue-checks/attempt-1/ctest.log`; the final cross-resident
-PushInteraction check assertion also passed in `interaction-final.log` there.
+Current gates: eight focused CTests passed for VM checks, queue execution, controller
+codec v1/v2/v3/v4, session bundle, menu discovery, seated continuation and both
+resident restore profiles. Output: `reports/native-menu-checks/attempt-1/ctest-final.log`.
+The earlier cross-resident PushInteraction assertion remains covered.
 Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
 zero check arguments, missing/unsupported checks, independent instruction budgets,
 queue save/reopen, rejected missing-owner code, priority threshold captured before
 the attempt, cancellation flag clearing, and cancelled ParentIdle removal.
-These are synthetic interpreter/World fixtures, not original-executable evidence.
+Player fixtures additionally cover permission changes after enqueue and save/reopen,
+unknown avatar data, pet/visitor/age flags, and rejected requests without fabricated
+completion. These are synthetic interpreter/World fixtures, not original-executable evidence.
 
 House07 active-save/reopen rerun:
-`reports/native-active-interaction/attempt-16/result.json`, binary SHA256
-`a444d0a27adf3eefaad112034fcb435e2c0817624ea8d3f5a017ec9bb8e8de82`.
+`reports/native-active-interaction/attempt-17/result.json`, binary SHA256
+`189a48cb3583e9bd81828918659bb3831ccfd0c1d98d634415d030ed4b9b1e80`.
 Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
 continuations matched the uninterrupted run through tick 4096. The legacy save
 loaded and 25 original game files retained their hashes. Processes ended and
 isolated profiles were removed. This verifies continuity of the fridge action;
 it does not establish coverage of all checks, competing priorities or game parity.
+
+## Player requests and code ownership
+
+The UI tracks the request's native 64-bit identity, independently of the wrapping
+public UID. Losing a pending request without a completion means it was rejected
+before execution; a later automatic action must not supply its result.
+Menu actions keep checks for every TTAB row sharing an action root under the
+same resource owner, including private and linked code needed by those checks.
+New complete banks use existing resource-bank descriptors. Legacy dynamic-owner
+restoration accepts only a bank whose fingerprint exactly matches the save;
+old action closures remain readable. Unknown code/permission state is an explicit
+error, not a fabricated eligibility result. The pinned TS1 permission rule has
+quirks (including humans passing the cat/dog flag branch); preserve its observed
+source semantics rather than imposing new game rules.
+
+Legacy single-resident regression probe: House07 Sit/save/fresh reopen/Stand
+passed in `reports/native-menu-checks/seated-2/result.json`, with byte-identical
+zero-tick reopen. House05 bench173 fails before tick256 with
+`RunTreeByName target has no loaded runtime code owner`; both 512 and 1024
+tick attempts fail. This is unresolved, not a passing gate or proof of a new
+regression. The legacy profile still cannot save arbitrary pending manual
+actions; its dynamic owners remain limited to routing and dedicated seated
+continuation. Whole-household code-owner capture is a distinct supported path.
 
 ## Pinned authority
 
@@ -170,7 +200,7 @@ work; resolve identities afresh across those calls.
 Coordinate changes to `InteractionQueueSnapshot`, `VmSnapshot`,
 `entity_thread_controllers_snapshot_codec.cpp`, `vm_snapshot_codec.cpp`, and
 `session_bundle.cpp::validate_controller_vm_links` with the active-save work.
-Current controller codec is v3 (reads v1/v2) and VM codec v2. Active-save validation is already
+Current controller codec is v4 (reads v1/v2/v3) and VM codec v2. Active-save validation is already
 changing the same active/wait/frame invariants: do not independently replace its
 schema. Add versioned fields only after agreeing the shared shape; old FIFO saves
 must not silently acquire invented TS1 priority metadata. Upstream load rebuilds

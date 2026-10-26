@@ -16,6 +16,25 @@ std::int16_t word(std::uint64_t v) {
 }
 PrimitiveOutcome unsupported(const std::string& text) {return {PrimitiveDisposition::unsupported,text};}
 }
+InteractionPermission ts1_interaction_permission(const Entity* actor,std::uint32_t flags) {
+    if(!actor||actor->kind!=EntityKind::avatar)return InteractionPermission::unsupported;
+    if(flags&tso_skip_permissions)return InteractionPermission::allowed;
+    if(actor->person_data.size()<=65)return InteractionPermission::unsupported;
+    const auto& data=actor->person_data;
+    const bool dog=(static_cast<std::uint16_t>(data[65])&8U)!=0;
+    const bool cat=(static_cast<std::uint16_t>(data[65])&16U)!=0;
+    const bool pet=dog||cat;
+    constexpr auto cats=1U<<9, dogs=1U<<10;
+    if(flags&(cats|dogs)){
+        // The pinned TS1 path does not reject humans in this branch.
+        if((cat&&!(flags&cats))||(dog&&!(flags&dogs)))return InteractionPermission::denied;
+    }else if(pet)return InteractionPermission::denied;
+    if(flags&(1U<<7))return InteractionPermission::denied; // debugTrees=false
+    if(data[58]<18&&(flags&(1U<<4)))return InteractionPermission::denied;
+    if(data[58]>=18&&!pet&&(flags&(1U<<6)))return InteractionPermission::denied;
+    if(data[32]==1&&data[34]<2&&!(flags&1U))return InteractionPermission::denied;
+    return InteractionPermission::allowed;
+}
 InteractionQueueSnapshot InteractionQueue::snapshot() const {
     if(executing_)throw std::logic_error("interaction callbacks must not capture controller state");
     if(vm_)(void)vm_->snapshot(); // Reject capture inside another VM primitive/trace callback too.
@@ -178,17 +197,21 @@ bool InteractionQueue::evaluate_queue_priorities() {
 }
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
                                bool push_after_active) {
-    return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false,{});
+    return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false,{},false);
 }
 bool InteractionQueue::enqueue_ts1(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
         std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,
         std::optional<RoutineKey> check) {
     flags|=tso_skip_permissions; // TS1 PushInteraction always sets TTABFlags.FSOSkipPermissions.
-    return enqueue_impl(key,context,args,priority,mode,flags,push_head,push_tail,true,check);
+    return enqueue_impl(key,context,args,priority,mode,flags,push_head,push_tail,true,check,false);
+}
+bool InteractionQueue::enqueue_user(RoutineKey key,VmContext context,
+        const std::vector<std::int16_t>& args,std::uint32_t flags,std::optional<RoutineKey> check) {
+    return enqueue_impl(key,context,args,50,InteractionQueueMode::normal,flags,false,false,true,check,true);
 }
 bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
         std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,
-        bool ts1_request,std::optional<RoutineKey> check) {
+        bool ts1_request,std::optional<RoutineKey> check,bool check_permissions) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
     fresh_=false;
     if(!validate())return false;
@@ -213,7 +236,7 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
     if(push_tail)flags|=tso_push_tail;
     const auto new_sequence=sequence_+1;
     Action action{new_sequence,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick},
-        next_queue_uid_,priority,mode,flags,false,check};
+        next_queue_uid_,priority,mode,flags,false,check,check_permissions};
     const bool migrating_legacy=ts1_request&&profile_==InteractionQueueProfile::legacy_fifo;
     const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
     const auto protected_prefix=active_?std::size_t{1}:std::size_t{0};
@@ -342,6 +365,12 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         const auto* candidate_target=world_.find(candidate.call.context.callee);
         if(!candidate_target || candidate_target->generation!=candidate.target_generation)
             return unsupported("queued interaction target identity stale");
+        if(candidate.check_permissions){
+            const auto permission=ts1_interaction_permission(world_.find(actor_id_),candidate.flags);
+            if(permission==InteractionPermission::unsupported)
+                return unsupported("interaction permissions require complete avatar person data");
+            if(permission==InteractionPermission::denied){queue_.pop_front();continue;}
+        }
         if(candidate.check){
             const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
                 {0,0,0,0},10000,check_primitive_);

@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Ações escolhidas no menu passam a repetir a verificação de disponibilidade
+  antes de começar, inclusive após salvar e carregar. Menu e execução compartilham
+  as regras de idade, visitantes, gatos e cães da referência TS1.
+
 - Ações enviadas por objetos agora podem executar sua regra de disponibilidade
   antes de começar, preservando essa regra ao salvar. Regras ainda não suportadas
   geram diagnóstico; a cobertura de interações do jogo permanece incompleta.

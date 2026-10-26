@@ -10,6 +10,7 @@
 #include "odh/ts1_budget.hpp"
 #include "odh/tuning.hpp"
 #include "odh/world.hpp"
+#include "odh/interaction.hpp"
 #include "resource.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -197,32 +198,47 @@ struct SavedTestFunctionResult {
     std::string diagnostic;
 };
 
-// Current manual host action profile supports ordinary private/linked
-// semiglobal actions, the TS1 visitor and age restrictions, AutoFirstSelect's
-// menu-default hint, and a matching successful ODH TestFunction. Other TTAB
-// permission bits remain unsupported.
+// The player can select among multiple TTAB rows that call the same action
+// BHAV. Keep every row's referenced check in that action owner's bank so a
+// later selection never reuses an incomplete owner. The session descriptor
+// records the resulting bank shape; no check identity is inferred on restore.
+struct SavedMenuActionRoutinePlan {
+    std::vector<odh::RoutineKey> checks;
+    bool complete_private=false;
+    bool linked_semiglobal=false;
+};
+
+inline std::optional<SavedMenuActionRoutinePlan> saved_menu_action_routine_plan(
+    const odh::Ttab& table,std::uint16_t action) {
+    if(table.status!=odh::TtabStatus::decoded)return {};
+    const auto action_key=odh::routine_key(action);
+    if(action_key.scope!=odh::RoutineScope::private_object&&
+       action_key.scope!=odh::RoutineScope::semiglobal)return {};
+    SavedMenuActionRoutinePlan result;
+    result.linked_semiglobal=action_key.scope==odh::RoutineScope::semiglobal;
+    for(const auto& row:table.interactions){
+        if(row.action!=action||row.test==0)continue;
+        const auto key=odh::routine_key(row.test);
+        if(std::find_if(result.checks.begin(),result.checks.end(),[&](const auto old){
+            return old.scope==key.scope&&old.id==key.id;
+        })!=result.checks.end())continue;
+        result.checks.push_back(key);
+        // A check in a shared bank can call back into the selected object's
+        // private code, so any executable check requires its full private bank.
+        result.complete_private=true;
+        result.linked_semiglobal|=key.scope==odh::RoutineScope::semiglobal;
+    }
+    result.complete_private&=!result.linked_semiglobal;
+    return result;
+}
+
+// Manual menu and runtime dispatch share the same TS1 permission rule.
+// Check BHAV results and executable code availability remain separate gates.
 inline std::vector<std::size_t> eligible_saved_interaction_rows(
     const SavedObjectInteractions& interactions,const std::vector<SavedTestFunctionResult>& tests,
     const odh::Entity* actor,const odh::RoutineSet* linked_semiglobal=nullptr) {
     std::vector<std::size_t> result;
     if(!interactions.table||interactions.table->status!=odh::TtabStatus::decoded)return result;
-    // Simitone CheckTS1Action reads these saved person-data fields directly:
-    // PersonType, GreetStatus, PersonsAge, and Gender (pet bits). Missing state
-    // is unknown.
-    if(!actor||actor->kind!=odh::EntityKind::avatar||actor->person_data.size()<=65)return result;
-    constexpr std::uint32_t allow_visitors=0x00000001U;
-    constexpr std::uint32_t no_child=0x00000010U;
-    constexpr std::uint32_t no_demo_child=0x00000020U;
-    constexpr std::uint32_t no_adult=0x00000040U;
-    constexpr std::uint32_t auto_first_select=0x00000100U;
-    constexpr std::uint32_t supported_flags=allow_visitors|no_child|no_demo_child|
-        no_adult|auto_first_select;
-    constexpr std::int16_t person_type=32,greet_status=34,age=58,gender=65;
-    const auto is_visitor=actor->person_data[person_type]==1&&actor->person_data[greet_status]<2;
-    const auto gender_flags=static_cast<std::uint16_t>(actor->person_data[gender]);
-    const auto is_pet=(gender_flags&(8U|16U))!=0;
-    if(is_pet)return result; // Pet-specific interactions are outside this profile.
-    const auto is_child=actor->person_data[age]<18;
     const auto count=std::min<std::size_t>({interactions.table->interactions.size(),tests.size(),32});
     for(std::size_t n=0;n<count;++n){
         const auto& row=interactions.table->interactions[n];
@@ -230,10 +246,10 @@ inline std::vector<std::size_t> eligible_saved_interaction_rows(
         const bool action_owner_supported=action_key.scope==odh::RoutineScope::private_object||
             (action_key.scope==odh::RoutineScope::semiglobal&&linked_semiglobal&&
              linked_semiglobal->count(action_key));
-        if((row.flags&~supported_flags)!=0||
-           (is_visitor&&(row.flags&allow_visitors)==0)||
-           (is_child&&(row.flags&no_child)!=0)||
-           (!is_child&&(row.flags&no_adult)!=0)||
+        // Immediate injection has no runtime implementation yet; do not offer
+        // a selection which enqueue would explicitly reject.
+        if((row.flags&(1U<<2))!=0||
+           odh::ts1_interaction_permission(actor,row.flags)!=odh::InteractionPermission::allowed||
            tests[n].routine!=row.test||tests[n].state!=SavedTestFunctionResult::State::eligible||
            !action_owner_supported)continue;
         result.push_back(n);

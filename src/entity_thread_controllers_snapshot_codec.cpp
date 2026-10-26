@@ -7,12 +7,13 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 3;
+constexpr std::uint16_t codec_version = 4;
 constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t minimum_size = 84;
 constexpr std::size_t minimum_action_size_v1 = 34;
 constexpr std::size_t minimum_action_size_v2 = 44;
 constexpr std::size_t minimum_action_size_v3 = 45;
+constexpr std::size_t minimum_action_size_v4 = 46;
 constexpr auto maximum_clock = std::numeric_limits<std::uint32_t>::max();
 static_assert(sizeof(std::size_t) <= sizeof(std::uint64_t), "controller codec requires size_t no wider than 64 bits");
 
@@ -226,6 +227,7 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
         writer.boolean(action.notify_idle);
         writer.boolean(action.check.has_value());
         if(action.check)write_key(writer,*action.check);
+        writer.boolean(action.check_permissions);
     }
     writer.boolean(state.active.has_value());
     if (state.active) { writer.u64(state.active->uid); writer.u64(state.active->ticket); }
@@ -258,7 +260,8 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
     if (reader.boolean()) state.last_tick = reader.u64();
     if (reader.boolean()) state.resume_tick = reader.u64();
     const auto count = reader.count(limits.max_queue_actions,
-        version>=3?minimum_action_size_v3:version>=2?minimum_action_size_v2:minimum_action_size_v1);
+        version>=4?minimum_action_size_v4:version>=3?minimum_action_size_v3:
+            version>=2?minimum_action_size_v2:minimum_action_size_v1);
     state.actions.resize(count);
     for (auto& action : state.actions) {
         action.uid = reader.u64();
@@ -275,6 +278,7 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
             action.notify_idle=reader.boolean();
         }
         if(version>=3&&reader.boolean())action.check=read_key(reader);
+        if(version>=4)action.check_permissions=reader.boolean();
     }
     if (reader.boolean()) state.active = InteractionActiveSnapshot{reader.u64(), reader.u64()};
     if (reader.boolean()) state.wait = InteractionWaitSnapshot{reader.u64(), reader.u64()};

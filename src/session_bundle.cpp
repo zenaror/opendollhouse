@@ -848,7 +848,10 @@ void validate_dynamic_action_owners(const SessionRuntimeEntity& entity,
              owner.linked_semiglobal->archive.find(':')!=std::string::npos||
              owner.linked_semiglobal->archive.find("..")!=std::string::npos||
              owner.linked_semiglobal->entry!=owner.linked_semiglobal->name+".iff");
-        const bool root_has_link=(scope==RoutineScope::semiglobal)==owner.linked_semiglobal.has_value();
+        // A private root may need its exact GLOB bank for a TTAB TestFunction
+        // or a private routine it calls. Semiglobal roots always require the
+        // link; private roots may carry it when the installed owner did.
+        const bool root_has_link=scope!=RoutineScope::semiglobal||owner.linked_semiglobal.has_value();
         const bool zero_digest=std::all_of(owner.routine_fingerprint.begin(),owner.routine_fingerprint.end(),
             [](std::uint8_t value){return value==0;});
         if(owner.owner<0x80000000U||owner.owner<=previous||owner.target_id<=0||

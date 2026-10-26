@@ -23,6 +23,78 @@ struct Fixture {
 };
 }
 namespace {
+void user_permission_checks() {
+    using Permission=odh::InteractionPermission;
+    struct Case {int age,type,greet,gender;std::uint32_t flags;Permission expected;const char* name;};
+    const Case cases[]{
+        {27,0,0,0,0,Permission::allowed,"adult resident allowed"},
+        {17,0,0,0,16,Permission::denied,"NoChild boundary"},
+        {18,0,0,0,64,Permission::denied,"NoAdult boundary"},
+        {17,0,0,0,64,Permission::allowed,"NoAdult permits child"},
+        {17,0,0,0,32,Permission::allowed,"NoDemoChild ignored by full TS1"},
+        {27,1,1,0,0,Permission::denied,"ungreeted visitor denied"},
+        {27,1,2,0,0,Permission::allowed,"greeted visitor allowed"},
+        {27,1,0,0,1,Permission::allowed,"AllowVisitors permits ungreeted visitor"},
+        {27,0,0,16,512,Permission::allowed,"cat permitted"},
+        {27,0,0,8,512,Permission::denied,"dog excluded by cats-only row"},
+        {27,0,0,24,1536,Permission::allowed,"both pet bits require both permissions"},
+        {27,0,0,24,512,Permission::denied,"combined pet bits still enforce dog permission"},
+        {27,0,0,0,512,Permission::allowed,"pinned TS1 permits human on cat flag"},
+        {27,0,0,8,1024|64,Permission::allowed,"NoAdult ignores adult pet"},
+        {17,0,0,8,1024|16,Permission::denied,"NoChild still restricts young pet"},
+        {27,0,0,0,128,Permission::denied,"Debug disabled"},
+        {27,0,0,0,2,Permission::allowed,"execution flags do not become permissions"},
+        {17,1,0,8,(1U<<28)|128,Permission::allowed,"SkipPermissions bypasses permission block"}
+    };
+    odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});world.create(2,odh::EntityKind::object);
+    world.declare_object_word(1,8,16);
+    for(const auto& item:cases){
+        world.set_person_data(1,58,static_cast<std::int16_t>(item.age));
+        world.set_person_data(1,32,static_cast<std::int16_t>(item.type));
+        world.set_person_data(1,34,static_cast<std::int16_t>(item.greet));
+        world.set_person_data(1,65,static_cast<std::int16_t>(item.gender));
+        require(odh::ts1_interaction_permission(world.find(1),item.flags)==item.expected,item.name);
+    }
+    world.create(3,odh::EntityKind::avatar);
+    require(odh::ts1_interaction_permission(world.find(3),0)==Permission::unsupported,
+        "missing saved person data is unknown, not allowed or denied");
+    world.set_person_data(1,58,27);world.set_person_data(1,32,0);world.set_person_data(1,65,0);
+    const odh::RoutineSet main{{key(4096),bhav({idle()})}};
+    const odh::Instruction object_available{2,254,255,{25,0,0,0,0,2,4,7}};
+    const odh::RoutineOwners owners{{22,{{key(4097),bhav({set(1,33)})},
+        {key(4098),bhav({set(0,71)})},{key(4099),bhav({object_available})}}}};
+    odh::InteractionQueue queue(world,1);odh::Vm vm(main,world.vm_memory(),{},queue.primitive(),owners);
+    queue.bind(vm);vm.start(key(4096),{1,1,1,0},{});
+    require(queue.enqueue_user(key(4097),{1,2,2,22},{},16,key(4098)),"adult selects checked NoChild user action");
+    const auto request_uid=queue.last_enqueued_uid();
+    require(queue.contains_uid(request_uid),"UI tracks exact queued request identity");
+    odh::EntityThreadControllersSnapshot state{};state.interactions=queue.snapshot();
+    const auto decoded=odh::decode_entity_thread_controllers_snapshot(odh::encode_entity_thread_controllers_snapshot(state));
+    require(decoded.interactions.actions.front().check_permissions&&
+        decoded.interactions.actions.front().priority==50&&decoded.interactions.actions.front().flags==16,
+        "user request saves original flags, permission provenance and priority50 without skip");
+    odh::InteractionQueue restored(world,1);odh::Vm restored_vm(main,world.vm_memory(),{},restored.primitive(),owners);
+    require(restored_vm.restore_snapshot(vm.snapshot())&&restored.bind(restored_vm)&&
+        restored.restore_snapshot(decoded.interactions),"pending user request restores with permission recheck");
+    world.set_person_data(1,58,17);
+    require(vm.run(10)==odh::VmStatus::returned_true&&queue.size()==0&&!queue.contains_uid(request_uid)&&
+        !queue.completion()&&vm.temps()[0]==0&&vm.temps()[1]==0&&
+        restored_vm.run(10)==odh::VmStatus::returned_true&&restored.size()==0&&restored_vm.temps()==vm.temps(),
+        "permission changing after click blocks check and action equally before and after save/reopen");
+    world.set_person_data(1,58,27);world.declare_object_word(2,25,0);
+    vm.start(key(4096),{1,1,1,0},{});
+    require(queue.enqueue_user(key(4097),{1,2,2,22},{},0,key(4099)),
+        "user selects object while its availability condition is true");
+    world.declare_object_word(2,25,1);
+    require(vm.run(10)==odh::VmStatus::returned_true&&queue.size()==0&&vm.temps()[1]==0,
+        "object becoming unavailable while queued prevents action at dispatch");
+    odh::InteractionQueue unknown_queue(world,3);
+    odh::Vm unknown_vm(main,world.vm_memory(),{},unknown_queue.primitive(),owners);
+    unknown_queue.bind(unknown_vm);unknown_vm.start(key(4096),{3,3,3,0},{});
+    require(unknown_queue.enqueue_user(key(4097),{3,2,2,22},{},0)&&
+        unknown_vm.run(10)==odh::VmStatus::fault&&unknown_queue.size()==1&&!unknown_queue.active(),
+        "unknown permission state remains an explicit error with pending action intact");
+}
 void eligibility_checks() {
     odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
     world.declare_object_word(1,8,16);world.declare_object_word(2,25,0);
@@ -260,6 +332,7 @@ int main(int argc,char** argv){try {
   std::cout<<checks<<" native-wrapper ODH checks passed; action/Main fixtures synthetic\n";return 0;
  }
  if(argc!=1)throw std::runtime_error("usage: --native-global ARCHIVE ENTRY");
+ user_permission_checks();
  eligibility_checks();
  dispatch_priority_checks();
  native_push_interaction_checks();

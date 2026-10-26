@@ -560,6 +560,20 @@ int main() {
                 dynamic_route.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal&&
             odh::encode_session_bundle(dynamic_restored)==dynamic_bytes,
             "dynamic route owner target, exact resource, GLOB link and closure hash round-trip");
+    auto private_root_with_link=dynamic_route;
+    private_root_with_link.runtime_entities[0].dynamic_action_owners[0].root_routine=4097;
+    const auto private_root_link_bytes=odh::encode_session_bundle(private_root_with_link);
+    const auto private_root_link_restored=odh::decode_session_bundle(private_root_link_bytes,
+        private_root_with_link.resources);
+    require(private_root_link_restored.runtime_entities[0].dynamic_action_owners[0].root_routine==4097&&
+            private_root_link_restored.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal==
+                private_root_with_link.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal&&
+            odh::encode_session_bundle(private_root_link_restored)==private_root_link_bytes,
+            "single-resident dynamic owner preserves a private root with its exact linked check bank");
+    auto semiglobal_root_without_link=dynamic_route;
+    semiglobal_root_without_link.runtime_entities[0].dynamic_action_owners[0].linked_semiglobal.reset();
+    rejects([&]{odh::encode_session_bundle(semiglobal_root_without_link);},
+            "single-resident semiglobal action root still requires its exact linked bank");
     auto legacy_route_archive=odh::decode_session_archive(route_bytes);
     auto legacy_route_section=std::find_if(legacy_route_archive.sections.begin(),legacy_route_archive.sections.end(),
         [](const auto& section){return section.id==std::array<char,4>{{'R','O','U','T'}};});

@@ -145,6 +145,36 @@ int main(){try{
           cycle_eligible_saved_interaction_row(eligible_rows,2,0)==2&&
           !cycle_eligible_saved_interaction_row({},std::nullopt,1),
         "interaction chooser recovers a stale selection at the first live row and handles empty rows");
+    odh::Ttab bank_plan_table{};bank_plan_table.status=odh::TtabStatus::decoded;
+    const auto add_bank_plan_row=[&](std::uint16_t action,std::uint16_t test){
+        odh::Interaction row{};row.action=action;row.test=test;
+        bank_plan_table.interactions.push_back(row);
+    };
+    add_bank_plan_row(0x1001,0x1002);add_bank_plan_row(0x1001,0x1003);
+    add_bank_plan_row(0x1001,0x1002);add_bank_plan_row(0x1004,0x2001);
+    add_bank_plan_row(0x1005,1);add_bank_plan_row(0x2002,0x1006);
+    const auto private_plan=saved_menu_action_routine_plan(bank_plan_table,0x1001);
+    check(private_plan&&private_plan->checks.size()==2&&
+          private_plan->checks[0].scope==odh::RoutineScope::private_object&&private_plan->checks[0].id==0x1002&&
+          private_plan->checks[1].scope==odh::RoutineScope::private_object&&private_plan->checks[1].id==0x1003&&
+          private_plan->complete_private&&!private_plan->linked_semiglobal,
+          "same-action private checks share a complete-private menu owner plan");
+    const auto linked_plan=saved_menu_action_routine_plan(bank_plan_table,0x1004);
+    check(linked_plan&&linked_plan->checks.size()==1&&
+          linked_plan->checks[0].scope==odh::RoutineScope::semiglobal&&linked_plan->checks[0].id==0x2001&&
+          !linked_plan->complete_private&&linked_plan->linked_semiglobal,
+          "semiglobal check selects a private-and-linked menu owner plan");
+    const auto global_plan=saved_menu_action_routine_plan(bank_plan_table,0x1005);
+    check(global_plan&&global_plan->checks.size()==1&&
+          global_plan->checks[0].scope==odh::RoutineScope::global&&global_plan->checks[0].id==1&&
+          global_plan->complete_private&&!global_plan->linked_semiglobal,
+          "shared check retains full private owner for calls back into the selected object");
+    const auto semiglobal_action_plan=saved_menu_action_routine_plan(bank_plan_table,0x2002);
+    check(semiglobal_action_plan&&semiglobal_action_plan->complete_private==false&&
+          semiglobal_action_plan->linked_semiglobal,
+          "semiglobal action keeps its linked bank even when its check is private");
+    check(!saved_menu_action_routine_plan(bank_plan_table,0x0100),
+          "menu owner plan rejects action roots outside private and linked-semiglobal banks");
     auto visitor_allowed=no_labels;visitor_allowed.table->interactions[0].flags=1;
     check(first_eligible_saved_interaction(visitor_allowed,eligible_row,actor)==0,
         "AllowVisitors flag accepts resident adult");
@@ -174,14 +204,22 @@ int main(){try{
     check(first_eligible_saved_interaction(no_labels,eligible_row,actor)==0,
         "PersonType one with greet status two or greater is not treated as visitor");
     auto unknown_flags=no_labels;unknown_flags.table->interactions[0].flags=2;
-    check(!first_eligible_saved_interaction(unknown_flags,eligible_row,actor),
-        "unknown TTAB permission bit remains unsupported");
+    check(first_eligible_saved_interaction(unknown_flags,eligible_row,actor)==0,
+        "Joinable is not a TS1 permission rejection");
     unknown_flags.table->interactions[0].flags=3;
-    check(!first_eligible_saved_interaction(unknown_flags,eligible_row,actor),
-        "known AllowVisitors plus unknown TTAB bit remains unsupported");
+    check(first_eligible_saved_interaction(unknown_flags,eligible_row,actor)==0,
+        "AllowVisitors and Joinable preserve TS1 permission result");
     check(actor_world.set_person_data(1,34,0)&&actor_world.set_person_data(1,65,8),"pet profile initialized");
     check(!first_eligible_saved_interaction(visitor_allowed,eligible_row,actor),
-        "pet interaction permissions remain outside the supported profile");
+        "pet cannot use a row without a matching pet flag");
+    auto pet_action=visitor_allowed;pet_action.table->interactions[0].flags|=1U<<10;
+    check(first_eligible_saved_interaction(pet_action,eligible_row,actor)==0,
+        "dog can select a TS1 AllowDogs interaction");
+    pet_action.table->interactions[0].flags=1U|(1U<<9);
+    check(!first_eligible_saved_interaction(pet_action,eligible_row,actor),
+        "dog cannot select a cats-only interaction");
+    check(actor_world.set_person_data(1,65,16)&&first_eligible_saved_interaction(pet_action,eligible_row,actor)==0,
+        "cat can select a TS1 AllowCats interaction");
     auto mismatched=eligible_row;mismatched[0].routine=0x1003;
     check(actor_world.set_person_data(1,65,0),"resident gender profile restored");
     check(!first_eligible_saved_interaction(no_labels,mismatched,actor),"manual action selector requires TestFunction identity match");

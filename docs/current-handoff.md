@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `ecc7c6da31d960587198ebf877b0f3762f3ab197`.
+Base publicada antes da etapa atual: `ee425588e7b3e503376785a357d76c038d9fe464`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -75,7 +75,7 @@ ação para notificar; `IdleForInput` trata o aviso no seu próximo horário já
 agendado. Detalhes e limites em
 [native-queue-migration.md](native-queue-migration.md).
 
-### Regras de disponibilidade antes de iniciar ação (etapa atual)
+### Regras de disponibilidade antes de iniciar ação (commit `ee42558`)
 
 PushInteraction agora mantém a rotina de check da TTAB junto à ação. Antes de
 iniciá-la, o C++ executa o check com o dono de código correto e bancos TEMP/TempXL
@@ -92,6 +92,31 @@ os dois cortes reabriram com 12 seções iguais e chegaram ao mesmo estado do
 controle até tick 4096; save legado carregou, originais intactos, processos e
 perfis encerrados. As fixtures provam os checks exercitados; a casa prova somente
 continuidade daquele fluxo, sem equivalência ao jogo completo.
+
+### Ações escolhidas no menu (etapa atual)
+
+A fila recebe flags TTAB, prioridade de jogador e rotina de disponibilidade.
+Menu e despacho compartilham a regra TS1 de crianças/adultos, visitantes, cães,
+gatos e debug. Antes de iniciar, a fila verifica novamente o estado atual.
+Codec v4 registra essa exigência por ação; saves v1/v2/v3 não ganham regras novas
+inventadas. O menu acompanha o UID nativo da requisição para distinguir uma ação
+rejeitada antes de começar da conclusão de outra ação automática. Bancos de
+código precisam conservar ação e checks exatos, inclusive ao reabrir saves.
+Build nativo e oito CTests passaram (`reports/native-menu-checks/attempt-1/ctest-final.log`).
+House07 geladeira repetida em `reports/native-active-interaction/attempt-17/result.json`:
+12 blocos iguais ao reabrir nos ticks 256/512 e nas continuações até 4096; save legado
+carregou, 25 arquivos originais intactos e processos/perfis encerrados.
+O perfil antigo de um morador passou sentar/reabrir/levantar na House07 em
+`reports/native-menu-checks/seated-2/result.json`. House05 falha antes de 256 ticks:
+`RunTreeByName target has no loaded runtime code owner`, ao sentar no banco 173.
+Repetir com 512 ou 1024 ticks não resolve; a falha antecede a gravação.
+Não promover o antigo gate House05 como validado neste executável.
+Investigar o carregamento do código do objeto nesse perfil, sem enfraquecer
+a validação de identidade. A revisão estática independente não encontrou
+novo bloqueador no diff de permissões/menu; não comprova ausência de regressões.
+Esse perfil antigo não admite salvar qualquer ação manual pendente: seu suporte
+a donos dinâmicos continua limitado a rotas e à continuação sentada dedicada.
+O caminho de família usa o registro completo de bancos de código.
 
 Próximo passo: ampliar a cobertura real de checks e o estado de execução para o
 prefixo protegido de ações, AllowPush aninhado, cancelamento e RunImmediately.
