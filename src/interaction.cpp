@@ -6,6 +6,10 @@
 namespace odh {
 namespace {
 struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}};
+constexpr std::uint32_t ttab_run_immediately=1U<<2;
+constexpr std::uint32_t tso_push_tail=1U<<30;
+constexpr std::uint32_t tso_push_head=1U<<29;
+constexpr std::uint32_t tso_skip_permissions=1U<<28;
 std::int16_t word(std::uint64_t v) {
     const auto bits=static_cast<std::uint16_t>(v);
     return static_cast<std::int16_t>(bits<32768?static_cast<std::int32_t>(bits):static_cast<std::int32_t>(bits)-65536);
@@ -16,7 +20,7 @@ InteractionQueueSnapshot InteractionQueue::snapshot() const {
     if(executing_)throw std::logic_error("interaction callbacks must not capture controller state");
     if(vm_)(void)vm_->snapshot(); // Reject capture inside another VM primitive/trace callback too.
     return {actor_id_,capacity_,actor_generation_,run_generation_,sequence_,clock_,idle_start_,last_tick_,resume_tick_,
-            queue_,active_,wait_,completion_,interrupted_,diagnostic_};
+            queue_,active_,wait_,completion_,interrupted_,diagnostic_,profile_,next_queue_uid_};
 }
 bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) const {
     if(executing_)throw std::logic_error("interaction callbacks must not restore controller state");
@@ -28,6 +32,7 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
        state.actor_generation!=actor->generation||state.actor_generation!=actor_generation_||
        state.run_generation!=vm.run_generation||!state.capacity||state.capacity>capacity_||
        state.actions.size()>state.capacity||state.clock>max_clock||state.idle_start>state.clock||
+       state.profile>InteractionQueueProfile::ts1_priority||
        (state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
     std::set<std::uint64_t> action_uids;
     for(const auto& action:state.actions){
@@ -36,7 +41,8 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
         if(!action.uid||!action_uids.insert(action.uid).second||action.uid>state.sequence||!target||
            action.target_generation!=target->generation||call.context.caller!=actor_id_||
            call.context.stack_object!=call.context.callee||call.arguments.size()>4096||
-           call.key.scope!=routine_key(call.key.id).scope||call.return_mode!=VmCallReturnMode::interaction_next_tick)
+           call.key.scope!=routine_key(call.key.id).scope||call.return_mode!=VmCallReturnMode::interaction_next_tick||
+           action.mode>InteractionQueueMode::idle)
             return false;
     }
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
@@ -91,7 +97,8 @@ void InteractionQueue::publish_snapshot(InteractionQueueSnapshot&& state) noexce
     capacity_=state.capacity;actor_generation_=state.actor_generation;run_generation_=state.run_generation;
     sequence_=state.sequence;clock_=state.clock;idle_start_=state.idle_start;last_tick_=state.last_tick;
     resume_tick_=state.resume_tick;queue_.swap(state.actions);active_=state.active;wait_=state.wait;
-    completion_=state.completion;interrupted_=state.interrupted;diagnostic_.swap(state.diagnostic);fresh_=false;
+    completion_=state.completion;interrupted_=state.interrupted;diagnostic_.swap(state.diagnostic);
+    profile_=state.profile;next_queue_uid_=state.next_queue_uid;fresh_=false;
 }
 bool InteractionQueue::restore_snapshot(const InteractionQueueSnapshot& state) {
     if(!valid_snapshot(state))return false;
@@ -132,21 +139,69 @@ bool InteractionQueue::validate() {
 }
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
                                bool push_after_active) {
+    return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false);
+}
+bool InteractionQueue::enqueue_ts1(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
+        std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail) {
+    flags|=tso_skip_permissions; // TS1 PushInteraction always sets TTABFlags.FSOSkipPermissions.
+    return enqueue_impl(key,context,args,priority,mode,flags,push_head,push_tail,true);
+}
+bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
+        std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,
+        bool ts1_request) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
     fresh_=false;
     if(!validate())return false;
     const auto* target=world_.find(context.callee);
     if(context.caller!=actor_id_ || !target || context.stack_object!=context.callee ||
-       args.size()>4096 || queue_.size()>=capacity_ || sequence_==std::numeric_limits<std::uint64_t>::max()) {
-        diagnostic_="interaction request identity/argument/capacity outside FIFO profile";return false;
+       args.size()>4096 || queue_.size()>=capacity_ || sequence_==std::numeric_limits<std::uint64_t>::max() ||
+       mode>InteractionQueueMode::idle) {
+        diagnostic_="interaction request identity/argument/capacity outside supported queue profile";return false;
     }
     if(vm_->status()==VmStatus::ready || vm_->status()==VmStatus::fault ||
        vm_->status()==VmStatus::returned_true || vm_->status()==VmStatus::returned_false) {
         diagnostic_="interaction requires a live Main run";return false;
     }
-    Action action{++sequence_,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick}};
-    if(push_after_active)queue_.insert(queue_.begin()+(active_?1:0),std::move(action));
-    else queue_.push_back(std::move(action));
+    if((flags&ttab_run_immediately)!=0){
+        diagnostic_="RunImmediately requires tick-boundary queue injection, which is not implemented";return false;
+    }
+    if(push_head)flags|=tso_push_head;
+    if(push_tail)flags|=tso_push_tail;
+    const auto new_sequence=sequence_+1;
+    Action action{new_sequence,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick},
+        next_queue_uid_,priority,mode,flags,false};
+    const bool migrating_legacy=ts1_request&&profile_==InteractionQueueProfile::legacy_fifo;
+    const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
+    const auto protected_prefix=active_?std::size_t{1}:std::size_t{0};
+    auto position=queue_.end();
+    if(!use_ts1_profile){
+        position=push_head?queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix):queue_.end();
+    }else if((flags&tso_push_head)!=0||push_head){
+        position=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);
+    }else if((flags&tso_push_tail)!=0&&mode!=InteractionQueueMode::parent_exit){
+        for(auto it=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);it!=queue_.end();++it)
+            if(it->priority<priority){position=it;break;}
+    }else{
+        bool hit_parent_end=mode!=InteractionQueueMode::parent_idle;
+        bool found_pivot=false;
+        for(auto it=queue_.end();it!=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);){
+            --it;
+            if(hit_parent_end&&(priority<=it->priority||it->mode==InteractionQueueMode::parent_exit)){
+                position=std::next(it);found_pivot=true;break;
+            }
+            if(it->mode==InteractionQueueMode::parent_exit)hit_parent_end=true;
+        }
+        if(!found_pivot&&protected_prefix<queue_.size())
+            position=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);
+    }
+    queue_.insert(position,std::move(action));
+    sequence_=new_sequence;
+    if(migrating_legacy){
+        std::uint16_t public_uid=0;
+        for(auto& queued:queue_)queued.queue_uid=public_uid++;
+        next_queue_uid_=public_uid;
+        profile_=InteractionQueueProfile::ts1_priority;
+    }else next_queue_uid_=static_cast<std::uint16_t>(next_queue_uid_+1U);
     diagnostic_.clear();return true;
 }
 VmPrimitive InteractionQueue::primitive() {
@@ -297,17 +352,43 @@ const Interaction* ts1_interaction_by_index(const Ttab& table,std::uint8_t index
 VmPrimitive ts1_push_interaction_primitive(const World& world,Ts1PushInteractionLookup lookup,
         Ts1PushInteractionThread resolve_thread) {
     return [&world,lookup=std::move(lookup),resolve_thread=std::move(resolve_thread)](
-        const VmFrame& frame,const Instruction& instruction,const Ts1Temps&,const VmDispatch&)->PrimitiveOutcome {
+        const VmFrame& frame,const Instruction& instruction,const Ts1Temps&,const VmDispatch& dispatch)->PrimitiveOutcome {
         if(instruction.opcode!=13)return {};
         const auto& bytes=instruction.operands;
         constexpr std::uint8_t supported_flags=0x87;
-        if(bytes[2]!=0||(bytes[3]&static_cast<std::uint8_t>(~supported_flags))!=0)
-            return unsupported("PushInteraction priority/queue mode is outside the inherited FIFO adapter");
+        if(bytes[2]>6||(bytes[3]&static_cast<std::uint8_t>(~supported_flags))!=0)
+            return unsupported("PushInteraction priority or operand flags are unsupported");
         const auto& bank=(bytes[3]&2)!=0?frame.locals:frame.arguments;
         if(bytes[1]>=bank.size()||((bytes[3]&1)!=0&&bytes[4]>=frame.locals.size()))
             return unsupported("PushInteraction object/icon index outside its BHAV frame");
+        InteractionQueueMode mode=InteractionQueueMode::normal;
+        std::int16_t priority=1;
+        bool action_tree=false;
+        if(dispatch.origin){
+            const auto& stack=dispatch.origin->stack();
+            action_tree=std::any_of(stack.begin(),stack.end(),[](const VmFrame& item){
+                return item.return_mode==VmCallReturnMode::interaction_next_tick;
+            });
+        }
+        switch(bytes[2]){
+            case 0:{
+                if(action_tree){
+                    const auto* caller=world.find(frame.context.caller);
+                    if(caller&&caller->kind==EntityKind::avatar&&caller->person_data.size()>33)
+                        priority=std::max<std::int16_t>(1,caller->person_data[33]);
+                }
+                break;
+            }
+            case 1:priority=100;break;
+            case 2:priority=2;break;
+            case 3:priority=50;break;
+            case 4:priority=40;mode=InteractionQueueMode::parent_idle;break;
+            case 5:priority=30;mode=InteractionQueueMode::parent_exit;break;
+            case 6:priority=0;mode=InteractionQueueMode::idle;break;
+            default:return unsupported("PushInteraction priority code is invalid");
+        }
         Ts1PushInteractionRequest request{frame.context.stack_object,bank[bytes[1]],bytes[0],
-            (bytes[3]&4)!=0,(bytes[3]&128)!=0,{}};
+            (bytes[3]&4)!=0,(bytes[3]&128)!=0,bytes[2],priority,mode,{}};
         if((bytes[3]&1)!=0)request.custom_icon=frame.locals[bytes[4]];
         if(!world.find(request.source))return {PrimitiveDisposition::goto_false,{}};
         const auto* actor=world.find(request.actor);
@@ -323,9 +404,8 @@ VmPrimitive ts1_push_interaction_primitive(const World& world,Ts1PushInteraction
             if(!target.vm->has_routine(action->key,action->owner))
                 return unsupported("PushInteraction recipient lacks the exact installed action code owner");
             const VmContext context{request.actor,request.source,request.source,action->owner};
-            // Head inserts after an active action, or at the front when idle. With inherited FIFO priority,
-            // tail continuation shares the ordinary append ordering.
-            if(!target.queue->enqueue(action->key,context,{},request.push_head))
+            if(!target.queue->enqueue_ts1(action->key,context,{},request.priority,request.mode,
+                    action->flags,request.push_head,request.push_tail))
                 return unsupported("PushInteraction resident queue rejected action: "+target.queue->diagnostic());
             return {PrimitiveDisposition::goto_true,{}};
         } catch(const std::exception& error) {

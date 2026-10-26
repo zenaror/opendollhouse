@@ -57,8 +57,9 @@ void native_push_interaction_checks() {
     caller.start(key(4096),{1,1,3,0},{2});recipient.start(key(4096),{3,3,3,0},{0});
     require(caller.run(1)==odh::VmStatus::returned_true&&recipient_queue.size()==1&&caller_queue.size()==0,
             "native PushInteraction targets StackObject resident rather than invoking caller queue");
-    require(decoded&&decoded->actor==3&&decoded->source==2&&decoded->interaction==7&&!decoded->custom_icon,
-            "native PushInteraction decodes argument source and distinct target actor");
+    require(decoded&&decoded->actor==3&&decoded->source==2&&decoded->interaction==7&&!decoded->custom_icon&&
+            decoded->priority_code==0&&decoded->priority==1&&decoded->mode==odh::InteractionQueueMode::normal,
+            "native PushInteraction decodes inherited priority and argument source");
     const auto queued=recipient_queue.snapshot();
     require(queued.actions.front().call.context.caller==3&&queued.actions.front().call.context.callee==2&&
             queued.actions.front().call.context.stack_object==2&&queued.actions.front().call.context.code_owner==22,
@@ -92,10 +93,21 @@ void native_push_interaction_checks() {
             caller_queue.size()==before,"malformed action resource does not change recipient queue");
     throw_lookup=false;
     for(const auto operands:{std::array<std::uint8_t,8>{7,4,0,0,0,0,0,0},
-                            {7,0,1,0,0,0,0,0},{7,0,0,8,0,0,0,0},{7,0,0,1,9,0,0,0}}){
+                            {7,0,7,0,0,0,0,0},{7,0,0,8,0,0,0,0},{7,0,0,1,9,0,0,0}}){
         auto invalid=push_instruction;invalid.operands=operands;
         require(push(frame,invalid,caller.temps(),{&caller,6}).disposition==odh::PrimitiveDisposition::unsupported&&
                 caller_queue.size()==before,"unsupported PushInteraction indices/priority/mode preserve queues");
+    }
+    const std::array<std::int16_t,7> expected_priorities{1,100,2,50,40,30,0};
+    const std::array<odh::InteractionQueueMode,7> expected_modes{
+        odh::InteractionQueueMode::normal,odh::InteractionQueueMode::normal,odh::InteractionQueueMode::normal,
+        odh::InteractionQueueMode::normal,odh::InteractionQueueMode::parent_idle,
+        odh::InteractionQueueMode::parent_exit,odh::InteractionQueueMode::idle};
+    for(std::uint8_t code=1;code<=6;++code){
+        auto prioritized=push_instruction;prioritized.operands[2]=code;
+        require(push(frame,prioritized,caller.temps(),{&caller,static_cast<std::uint64_t>(20U+code)}).disposition==odh::PrimitiveDisposition::goto_true&&
+            decoded&&decoded->priority_code==code&&decoded->priority==expected_priorities[code]&&
+            decoded->mode==expected_modes[code],"PushInteraction maps every TS1 priority to priority/mode");
     }
     frame.context.stack_object=2;
     require(push(frame,push_instruction,caller.temps(),{&caller,7}).disposition==odh::PrimitiveDisposition::unsupported,
@@ -200,6 +212,56 @@ int main(int argc,char** argv){try {
       snapshot.actions[1].uid==1&&snapshot.actions[2].uid==2&&
       snapshot.actions[0].call.context.callee==2&&snapshot.actions[0].call.key.id==4096,
       "inactive queue orders head C before pending A and B with exact action context");
+ }
+ { // TS1 priority ordering applies to the real interaction queue and protects its active front.
+  Fixture f(1,8);require(f.enqueue(),"priority ordering begins with an inherited action");
+  require(f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false)&&
+          f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},30,odh::InteractionQueueMode::normal,0,false,false)&&
+          f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},2,odh::InteractionQueueMode::normal,0,false,true),
+          "priority and tail actions enter the same live TS1 queue");
+  auto state=f.queue.snapshot();
+  require(state.actions.size()==4&&state.actions[0].priority==50&&state.actions[1].priority==30&&
+          state.actions[2].priority==2&&state.actions[3].priority==1,
+          "pending actions order by TS1 priority and PushTail inserts before the first lower priority");
+  require(f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},0,odh::InteractionQueueMode::normal,0,true,false),
+          "PushHead action enters the TS1 queue");
+  state=f.queue.snapshot();
+  require(state.actions.front().priority==0&&state.actions.back().priority==1&&
+          state.actions.front().flags==(1U<<28|1U<<29),
+          "PushHead ignores priority and records skip-permission and queue flags");
+ }
+ { // Parent modes partition ordinary insertion, and RunImmediately never masquerades as an idle action.
+  Fixture f(1,8);
+  require(f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},30,odh::InteractionQueueMode::parent_exit,0,false,false)&&
+          f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},40,odh::InteractionQueueMode::parent_idle,0,false,false)&&
+          f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},20,odh::InteractionQueueMode::normal,0,false,false)&&
+          f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false),
+          "ParentIdle, ParentExit and ordinary actions enter the same queue");
+  const auto state=f.queue.snapshot();
+  require(state.actions.size()==4&&state.actions[0].mode==odh::InteractionQueueMode::parent_idle&&
+          state.actions[1].mode==odh::InteractionQueueMode::parent_exit&&
+          state.actions[2].priority==50&&state.actions[3].priority==20,
+          "ParentExit forms an insertion boundary while ParentIdle starts before its parent group");
+  const auto before=f.queue.snapshot();
+  require(!f.queue.enqueue_ts1(key(4097),{1,2,2,22},{},100,odh::InteractionQueueMode::normal,1U<<2,false,false)&&
+          f.queue.snapshot().actions.size()==before.actions.size(),
+          "RunImmediately stays explicitly unsupported without tick-boundary injection");
+ }
+ { // A v1 FIFO save adopts TS1 ordering only when new native PushInteraction work arrives.
+  Fixture f(1,8);require(f.enqueue()&&f.enqueue(4097),"legacy migration begins with two queued actions");
+  auto legacy=f.queue.snapshot();legacy.profile=odh::InteractionQueueProfile::legacy_fifo;
+  legacy.next_queue_uid=0;
+  for(auto& action:legacy.actions){action.queue_uid=0;action.priority=1;action.mode=odh::InteractionQueueMode::normal;action.flags=0;}
+  odh::InteractionQueue restored(f.world,1,8);
+  require(restored.bind(f.vm)&&restored.restore_snapshot(legacy),"legacy FIFO state restores before migration");
+  require(restored.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false),
+          "new PushInteraction upgrades the restored FIFO queue");
+  const auto migrated=restored.snapshot();
+  require(migrated.profile==odh::InteractionQueueProfile::ts1_priority&&migrated.actions.size()==3&&
+          migrated.actions[0].priority==50&&migrated.actions[1].uid==legacy.actions[0].uid&&
+          migrated.actions[2].uid==legacy.actions[1].uid&&migrated.actions[0].queue_uid==0&&
+          migrated.actions[1].queue_uid==1&&migrated.actions[2].queue_uid==2&&migrated.next_queue_uid==3,
+          "legacy action order survives adoption and public queue IDs become unique");
  }
  { // PushHead keeps the running action first but may reorder later UIDs.
   Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"PushHead fixture queues two actions");

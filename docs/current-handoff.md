@@ -39,28 +39,40 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Save/reopen de ação em andamento (WIP atual)
+### Save/reopen de ação em andamento (commit `4a6e0c2`)
 
-Após o checkpoint publicado acima, esta etapa ainda está no working tree e não
-foi publicada. O save nativo de família agora registra todos os bancos de código
+O save nativo de família registra todos os bancos de código
 instalados em cada VM, inclusive os ociosos necessários à ação seguinte. Corrige
 o caso em que a geladeira cria comida e a VM do morador precisa desse código ao
 retomar PushInteraction. Também foram corrigidos registros de VM ao remover
 objetos, desfazer criações e rejeitar IDs duplicados durante restauração.
 
-Gate House07 da tentativa 7 e nove CTests passaram. Dois saves, nos ticks 256 e
-512, foram reabertos em processos novos; os 12 blocos do save e o estado final
-coincidiram com a execução sem interrupção até tick 4096. Save legado também
-carregou; 25 arquivos originais mantiveram seus hashes. Revisor independente
+Gate House07 da tentativa 7 e nove CTests passaram; a tentativa 9 repetiu a
+comparação depois da alteração da fila descrita abaixo. Dois saves, nos ticks
+256 e 512, foram reabertos em processos novos; os 12 blocos do save e o estado
+final coincidiram com a execução sem interrupção até tick 4096. Save legado
+também carregou; 25 arquivos originais mantiveram seus hashes. Revisor independente
 aprovou o rastreamento dos bancos instalados e seu ciclo de vida. Detalhes em
 [native-active-session.md](native-active-session.md). Isto prova somente a
 continuação headless da interação geladeira/comida na Casa 07. Não é paridade
 Simitone nem build jogável. A mudança de C# existente e outros WIP citados abaixo
-permanecem preservados e fora desta etapa.
+permanecem preservados e fora do commit.
 
-Revisão do diff nativo concluída e checkpoint registrado nesta etapa. Próximo
-passo: avançar a migração integrada de filas/continuações, mantendo a direção de
-port completo C/C++ e os limites de evidência.
+### Prioridades de PushInteraction (WIP atual)
+
+A etapa atual decodifica as sete prioridades TS1, guarda prioridade/modo/flags na
+fila C++, aplica as regras de inserção suportadas e grava esses dados no formato
+de save v2. Saves v1 são lidos como FIFO legado; ao chegar a primeira ação TS1
+nova, a fila preserva a ordem antiga e passa para a ordenação por prioridade.
+Cinco CTests focados passaram e a cena House07 foi repetida em attempt-9. A
+revisão independente aprovou a inserção/adoção do save legado. Detalhes e
+limitações em [native-queue-migration.md](native-queue-migration.md).
+
+Isto ainda não executa check trees, reavalia/cancela a ação ativa, injeta
+RunImmediately, nem protege ações TS1 aninhadas. O runtime continua com somente
+uma ação ativa protegida. Próximo passo é integrar eligibility/check, notificação
+e início de ações no tick, ampliando ao mesmo tempo o estado salvo; não chamar a
+ordenação da fila de paridade.
 
 A orientação mais recente exige não usar C#. A frente atual conecta o executor
 compartilhado diretamente ao `Vm` C++ e conclui bancos TEMP/TempXL nativos.
@@ -68,7 +80,7 @@ O candidato .NET e seu WIP permanecem preservados, sem novos builds ou alteraç�
 nesses arquivos nesta retomada. A antiga estratégia de ampliar a ponte para
 validar cada componente não é a direção vigente.
 
-Base publicada: `c7966c100bc97555cbbc71f3cba6455182228291`. Consultar Git/OMM
+Base publicada: `4a6e0c22eb1e3c86f644bf790f7d6275d05f69e0`. Consultar Git/OMM
 para a publicação posterior. Detalhes: [native-state-integration.md](native-state-integration.md).
 O restante deste documento descreve checkpoints anteriores e não autoriza
 retomar desenvolvimento em C#.

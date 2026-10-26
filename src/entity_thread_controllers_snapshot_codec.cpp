@@ -7,9 +7,11 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 1;
+constexpr std::uint16_t codec_version = 2;
+constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t minimum_size = 84;
-constexpr std::size_t minimum_action_size = 34;
+constexpr std::size_t minimum_action_size_v1 = 34;
+constexpr std::size_t minimum_action_size_v2 = 44;
 constexpr auto maximum_clock = std::numeric_limits<std::uint32_t>::max();
 static_assert(sizeof(std::size_t) <= sizeof(std::uint64_t), "controller codec requires size_t no wider than 64 bits");
 
@@ -214,6 +216,13 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
         writer.u64(action.uid);
         writer.u64(action.target_generation);
         write_call(writer, action.call);
+        writer.u16(action.queue_uid);
+        writer.i16(action.priority);
+        if(action.mode>InteractionQueueMode::idle)
+            throw FormatError("invalid interaction queue mode");
+        writer.u8(static_cast<std::uint8_t>(action.mode));
+        writer.u32(action.flags);
+        writer.boolean(action.notify_idle);
     }
     writer.boolean(state.active.has_value());
     if (state.active) { writer.u64(state.active->uid); writer.u64(state.active->ticket); }
@@ -228,9 +237,13 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
     }
     writer.boolean(state.interrupted);
     writer.string(state.diagnostic);
+    if(state.profile>InteractionQueueProfile::ts1_priority)
+        throw FormatError("invalid interaction queue profile");
+    writer.u8(static_cast<std::uint8_t>(state.profile));
+    writer.u16(state.next_queue_uid);
 }
 InteractionQueueSnapshot read_interactions(Reader& reader,
-        const EntityThreadControllersSnapshotCodecLimits& limits) {
+        const EntityThreadControllersSnapshotCodecLimits& limits,std::uint16_t version) {
     InteractionQueueSnapshot state{};
     state.actor_id = reader.i16();
     state.capacity = reader.size(limits.max_queue_capacity);
@@ -241,18 +254,36 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
     state.idle_start = reader.u64();
     if (reader.boolean()) state.last_tick = reader.u64();
     if (reader.boolean()) state.resume_tick = reader.u64();
-    const auto count = reader.count(limits.max_queue_actions, minimum_action_size);
+    const auto count = reader.count(limits.max_queue_actions,
+        version>=codec_version?minimum_action_size_v2:minimum_action_size_v1);
     state.actions.resize(count);
     for (auto& action : state.actions) {
         action.uid = reader.u64();
         action.target_generation = reader.u64();
         action.call = read_call(reader, limits);
+        if(version>=codec_version){
+            action.queue_uid=reader.u16();
+            action.priority=reader.i16();
+            const auto mode=reader.u8();
+            if(mode>static_cast<std::uint8_t>(InteractionQueueMode::idle))
+                throw FormatError("invalid interaction queue mode");
+            action.mode=static_cast<InteractionQueueMode>(mode);
+            action.flags=reader.u32();
+            action.notify_idle=reader.boolean();
+        }
     }
     if (reader.boolean()) state.active = InteractionActiveSnapshot{reader.u64(), reader.u64()};
     if (reader.boolean()) state.wait = InteractionWaitSnapshot{reader.u64(), reader.u64()};
     if (reader.boolean()) state.completion = InteractionCompletion{reader.u64(), reader.u64(), reader.u64(), reader.boolean()};
     state.interrupted = reader.boolean();
     state.diagnostic = reader.string(limits.max_diagnostic_bytes);
+    if(version>=codec_version){
+        const auto profile=reader.u8();
+        if(profile>static_cast<std::uint8_t>(InteractionQueueProfile::ts1_priority))
+            throw FormatError("invalid interaction queue profile");
+        state.profile=static_cast<InteractionQueueProfile>(profile);
+        state.next_queue_uid=reader.u16();
+    }else state.profile=InteractionQueueProfile::legacy_fifo;
     return state;
 }
 
@@ -286,9 +317,12 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
             !valid_key(action.call.key) || action.call.arguments.size() > limits.max_call_arguments ||
             action.call.context.caller != interactions.actor_id ||
             action.call.context.stack_object != action.call.context.callee ||
-            action.call.return_mode != VmCallReturnMode::interaction_next_tick)
+            action.call.return_mode != VmCallReturnMode::interaction_next_tick ||
+            action.mode > InteractionQueueMode::idle)
             throw FormatError("invalid queued interaction action");
     }
+    if(interactions.profile>InteractionQueueProfile::ts1_priority)
+        throw FormatError("invalid interaction queue profile");
     const auto valid_ticket = [](std::uint64_t ticket) { return ticket != 0; };
     if (interactions.active && (interactions.actions.empty() ||
         interactions.active->uid != interactions.actions.front().uid ||
@@ -332,10 +366,12 @@ EntityThreadControllersSnapshot decode_entity_thread_controllers_snapshot(
         throw FormatError("controller snapshot exceeds byte limit");
     if (bytes.size() < minimum_size) throw FormatError("controller snapshot header is truncated");
     Reader reader(bytes);
-    if (reader.u16() != codec_version) throw FormatError("unsupported controller snapshot version");
+    const auto version=reader.u16();
+    if(version!=legacy_codec_version&&version!=codec_version)
+        throw FormatError("unsupported controller snapshot version");
     EntityThreadControllersSnapshot snapshot;
     snapshot.sleep = read_sleep(reader, limits);
-    snapshot.interactions = read_interactions(reader, limits);
+    snapshot.interactions = read_interactions(reader, limits,version);
     snapshot.thread_interrupt = reader.boolean();
     if (!reader.done()) throw FormatError("controller snapshot has unclaimed bytes");
     validate(snapshot, limits);

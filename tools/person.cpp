@@ -2604,7 +2604,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!source_thread->second->vm->has_routine(action_key,owner)||
                (selected->test!=0&&!source_thread->second->vm->has_routine(odh::routine_key(selected->test),owner)))
                 return std::nullopt;
-            return odh::Ts1PushInteractionAction{action_key,owner};
+            return odh::Ts1PushInteractionAction{action_key,owner,selected->flags};
         },[&](std::int16_t actor){
             const auto found=resident_interaction_threads.find(actor);
             return found==resident_interaction_threads.end()?odh::Ts1PushInteractionTarget{}:found->second;

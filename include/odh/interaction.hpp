@@ -5,7 +5,17 @@
 
 namespace odh {
 struct InteractionCompletion {std::uint64_t uid,ticket,tick;bool result;};
-struct InteractionActionSnapshot {std::uint64_t uid,target_generation;VmCall call;};
+enum class InteractionQueueMode : std::uint8_t { normal, parent_idle, parent_exit, idle };
+enum class InteractionQueueProfile : std::uint8_t { legacy_fifo, ts1_priority };
+struct InteractionActionSnapshot {
+    std::uint64_t uid,target_generation;
+    VmCall call;
+    std::uint16_t queue_uid=0;
+    std::int16_t priority=1;
+    InteractionQueueMode mode=InteractionQueueMode::normal;
+    std::uint32_t flags=0;
+    bool notify_idle=false;
+};
 struct InteractionActiveSnapshot {std::uint64_t uid,ticket;};
 struct InteractionWaitSnapshot {std::uint64_t ticket,deadline;};
 struct InteractionQueueSnapshot {
@@ -19,11 +29,14 @@ struct InteractionQueueSnapshot {
     std::optional<InteractionCompletion> completion;
     bool interrupted;
     std::string diagnostic;
+    InteractionQueueProfile profile=InteractionQueueProfile::ts1_priority;
+    std::uint16_t next_queue_uid=0;
 };
-// Explicit runnable FIFO actions for one avatar/VM. This adapter implements the
-// Main-only IdleForInput slice, not TTAB eligibility/priorities/cancellation.
-// World and VM must outlive it. Host validates with observe before each run/budget slice and after completion, then
-// tick once per consecutive simulation tick, before resuming VM execution.
+// Native queue for one avatar/VM. The TS1 profile currently implements priority
+// insertion and its persisted action metadata, while nested active prefixes,
+// eligibility/check execution, queue reevaluation, and cancellation remain
+// unsupported. World and VM must outlive it. Host observes before each run/budget
+// slice and after completion, then ticks once per consecutive simulation tick.
 class InteractionQueue {
 public:
     InteractionQueue(World& world,std::int16_t actor,std::size_t capacity=32)
@@ -36,11 +49,14 @@ public:
     // the destination. Capture/restore during controller or VM callbacks throws.
     bool restore_snapshot(const InteractionQueueSnapshot&);
     void set_thread_interrupt_source(std::function<bool()> consume) {thread_interrupt_=std::move(consume);}
-    // Queue behind existing actions by default. push_after_active inserts a
-    // continuation immediately after the running action (or at the front when
-    // no action is running), matching TS1's
-    // PushInteraction PushHead behavior.
+    // Simple host queue request using inherited priority 1. A v1 FIFO-restored
+    // queue retains FIFO semantics through this entry point.
     bool enqueue(RoutineKey,VmContext,const std::vector<std::int16_t>& args={},bool push_after_active=false);
+    // Native PushInteraction path. A legacy v1 FIFO queue adopts priority order
+    // on this first source action while preserving its existing action order.
+    bool enqueue_ts1(RoutineKey,VmContext,const std::vector<std::int16_t>& args,
+        std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,
+        bool push_head,bool push_tail);
     bool references_target(std::int16_t entity) const {
         return std::any_of(queue_.begin(),queue_.end(),[&](const InteractionActionSnapshot& action){
             return action.call.context.callee==entity;
@@ -65,26 +81,33 @@ private:
     void publish_snapshot(InteractionQueueSnapshot&&) noexcept;
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool validate();
+    bool enqueue_impl(RoutineKey,VmContext,const std::vector<std::int16_t>&,
+        std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool);
     World& world_;std::int16_t actor_id_;std::size_t capacity_;
     std::function<bool()> thread_interrupt_;
     Vm* vm_=nullptr;std::uint64_t actor_generation_=0,run_generation_=0,sequence_=0;
     std::uint64_t clock_=0,idle_start_=0;std::optional<std::uint64_t> last_tick_,resume_tick_;
     std::deque<Action> queue_;std::optional<Active> active_;std::optional<Wait> wait_;
+    InteractionQueueProfile profile_=InteractionQueueProfile::ts1_priority;
+    std::uint16_t next_queue_uid_=0;
     std::optional<InteractionCompletion> completion_;bool interrupted_=false,executing_=false;
     std::string diagnostic_;
     bool fresh_=true;
 };
-// Native TS1 PushInteraction for the inherited-priority runnable FIFO profile.
+// Native TS1 PushInteraction priority decoding and ordered enqueue path.
 // Resource lookup and resident-thread ownership are supplied by the host; this
 // primitive never creates another VM or substitutes the primary resident.
 struct Ts1PushInteractionRequest {
     std::int16_t actor,source;
     std::uint8_t interaction;
     bool push_head,push_tail;
+    std::uint8_t priority_code;
+    std::int16_t priority;
+    InteractionQueueMode mode;
     // The host may use this for presentation; it does not affect execution.
     std::optional<std::int16_t> custom_icon;
 };
-struct Ts1PushInteractionAction {RoutineKey key;CodeOwner owner;};
+struct Ts1PushInteractionAction {RoutineKey key;CodeOwner owner;std::uint32_t flags=0;};
 struct Ts1PushInteractionTarget {Vm* vm=nullptr;InteractionQueue* queue=nullptr;};
 using Ts1PushInteractionLookup=std::function<std::optional<Ts1PushInteractionAction>(const Ts1PushInteractionRequest&)>;
 using Ts1PushInteractionThread=std::function<Ts1PushInteractionTarget(std::int16_t)>;
