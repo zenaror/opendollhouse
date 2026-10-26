@@ -1,9 +1,20 @@
 # Continuidade atual
 
+## Planejamento da migração — 2026-10-26
+
+[Mapa detalhado](migration/README.md): 2.451 arquivos de referência fixados por
+revisão, destinos C++ candidatos, dependências, entregas e critérios de conclusão.
+O inventário é estrutural; a análise do comportamento de cada função continua
+pendente. Nenhum código do jogo foi alterado, compilado ou executado nesta etapa.
+As próximas tarefas e a divisão entre agentes estão descritas no mapa; só executar
+após retomada explícita da meta. Último checkpoint do motor: `6890bf141250164cc06198bdbac8f87f427c59ee`.
+
 ## Direção e estado
 
-Consultar `get_goal` ao retomar: somente `active` permite continuar. Na retomada
-atual está ativo; a pausa literal no objetivo é histórica. Objetivo integral
+Consultar `get_goal` ao retomar: somente `active` permite continuar o desenvolvimento.
+Estado confirmado em 2026-10-26: **meta pausada**. O pedido humano desta etapa
+autorizou apenas o planejamento abaixo; não retomar implementação automaticamente.
+Objetivo integral
 incompleto: experiência The Sims 1 original, sete expansões e conteúdo clássico.
 Simitone é base e marco intermediário; sua interface é provisória, com interface
 original obrigatória na etapa final. Linux é a primeira validação; código e

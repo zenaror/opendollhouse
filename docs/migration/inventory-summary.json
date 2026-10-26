@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "native_base": "6890bf141250164cc06198bdbac8f87f427c59ee",
+  "scope": "All tracked CS, shader and project-source files in both pinned repositories; not runtime reachability, methods or BHAV content coverage.",
+  "sources": [
+    {
+      "repository": "Simitone",
+      "revision": "e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab"
+    },
+    {
+      "repository": "FreeSO",
+      "revision": "7e76c1960252ddd033d8937d5edb47d326f5b69c"
+    }
+  ],
+  "rows": 2451,
+  "files_with_type_hints": 2345,
+  "counts": [
+    {
+      "repository": "FreeSO",
+      "family": "ASSET_TOOLS",
+      "files": 4
+    },
+    {
+      "repository": "FreeSO",
+      "family": "AUDIO",
+      "files": 21
+    },
+    {
+      "repository": "FreeSO",
+      "family": "BUILD",
+      "files": 1
+    },
+    {
+      "repository": "FreeSO",
+      "family": "DATA",
+      "files": 86
+    },
+    {
+      "repository": "FreeSO",
+      "family": "DRAW",
+      "files": 99
+    },
+    {
+      "repository": "FreeSO",
+      "family": "HOST",
+      "files": 21
+    },
+    {
+      "repository": "FreeSO",
+      "family": "JIT_REPLACE",
+      "files": 33
+    },
+    {
+      "repository": "FreeSO",
+      "family": "LIBRARY_REVIEW",
+      "files": 139
+    },
+    {
+      "repository": "FreeSO",
+      "family": "PACKAGING",
+      "files": 19
+    },
+    {
+      "repository": "FreeSO",
+      "family": "POSE",
+      "files": 24
+    },
+    {
+      "repository": "FreeSO",
+      "family": "PROVIDERS",
+      "files": 109
+    },
+    {
+      "repository": "FreeSO",
+      "family": "ROUTE",
+      "files": 7
+    },
+    {
+      "repository": "FreeSO",
+      "family": "SAVE",
+      "files": 18
+    },
+    {
+      "repository": "FreeSO",
+      "family": "SERVICE_REVIEW",
+      "files": 545
+    },
+    {
+      "repository": "FreeSO",
+      "family": "SHARED",
+      "files": 135
+    },
+    {
+      "repository": "FreeSO",
+      "family": "SHARED_UI",
+      "files": 374
+    },
+    {
+      "repository": "FreeSO",
+      "family": "SIM",
+      "files": 4
+    },
+    {
+      "repository": "FreeSO",
+      "family": "TOOL_REVIEW",
+      "files": 452
+    },
+    {
+      "repository": "FreeSO",
+      "family": "TSO_CONTENT_REVIEW",
+      "files": 1
+    },
+    {
+      "repository": "FreeSO",
+      "family": "VM",
+      "files": 273
+    },
+    {
+      "repository": "Simitone",
+      "family": "APP",
+      "files": 10
+    },
+    {
+      "repository": "Simitone",
+      "family": "HOST",
+      "files": 16
+    },
+    {
+      "repository": "Simitone",
+      "family": "UI",
+      "files": 60
+    }
+  ],
+  "csv_sha256": "65a37a7cabfb5df8e2dd36b4be42a1b9756d9f56a61d57746b791447df8bdce0"
+}

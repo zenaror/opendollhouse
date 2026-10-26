@@ -102,6 +102,13 @@ cada sistema portado; preservar o WIP anterior até a integração correspondent
 
 ## Frentes do port e prova de conclusão
 
+O inventário detalhado e a fila de entregas ficam em
+[migration/README.md](migration/README.md): fontes fixadas, arquivos/tipos,
+destinos C++ candidatos, dependências, critérios de conclusão e divisão de
+trabalho. É o ponto de partida da próxima retomada; não escolher a próxima
+frente apenas pelo último erro encontrado. O catálogo estrutural não equivale
+a uma auditoria semântica completa nem prova paridade de código.
+
 | Frente | Fontes e apoio atuais | Resultado exigido |
 | --- | --- | --- |
 | Execução das ações e estado do mundo | `tso.simantics`, `native/simulation`, antigo `src/vm.cpp` | Instruções, chamadas, variáveis, entidades, filas, necessidades, relações, inventário e relógio executados e armazenados em C/C++. |
