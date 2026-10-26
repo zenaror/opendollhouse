@@ -2,8 +2,9 @@
 
 The C++ household runtime now connects managed family occupancy, live finances
 and immutable session archives. This is a prerequisite for the full
-create-family → buy → play → move out → buy elsewhere lifecycle. Portable Sim
-transfer and the move-out interface for these families remain unfinished.
+create-family → buy → play → move out → buy elsewhere lifecycle. The subsequent
+[portable transfer profile](native-family-transfer.md) enables verified managed
+move-out and fresh-resident destinations; general relocation remains incomplete.
 
 ## Commit and restore rules
 
@@ -63,12 +64,13 @@ consume records; identical saves do not. Exhaustion rejects a new commit while
 preserving the previous checkpoint and retaining the unpublished-head archive
 for recovery. Future compaction must preserve occupancy and checkpoint authority.
 
-The old move-out UI guard remains in place for player move-ins. Full rehome
-still needs a versioned transfer of Sim identity, reviewed personal data,
-needs and neighbor relationships into the destination's freshly initialized
-residents. Restoring the old house's World/positions/VMs into another lot would
-be incorrect. Editing/renaming families, general liquidation, original UI and
-expansion travel remain separate unfinished requirements.
+Managed move-out now requires a current checkpoint and a compatible portable
+profile. The [transfer contract](native-family-transfer.md) covers reviewed
+personal data, needs and neighbor relationships into freshly initialized
+residents. Destinations with old residents and incompatible unknown progress
+remain guarded. Restoring the old house's World/positions/VMs into another lot
+would be incorrect. Editing/renaming families, general liquidation, original UI
+and expansion travel remain separate unfinished requirements.
 
 ## Verification
 

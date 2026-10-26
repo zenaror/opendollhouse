@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `21b554e92761ecdce89d5dc7c60a3553553cda0b`.
+Base publicada antes da etapa atual: `8f16b65a607fb3da67d92be12f07cc6fbc9b6fa6`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,39 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Save e dinheiro ligados à ocupação da família (etapa atual)
+### Transferência de família para casas vazias (etapa atual)
+
+Core C++ portátil `household_transfer` autentica o checkpoint anterior e aplica
+dados pessoais revisados, sete necessidades/frações e relações de vizinhos aos
+moradores recém-construídos. Recibo privado vincula origem, destino e elenco;
+journal só aceita o primeiro save compatível. Compra fica pendente até preparar
+o runtime saudável e a transferência, antes de cobrar. Falha de preparo/VM,
+dados desconhecidos incompatíveis ou moradores antigos no OBJM não cobram.
+
+`reports/native-family-transfer/real-2/result.json` passou com nove processos:
+criar dois adultos → comprar Casa01/T2 → sair → comprar Casa09/T0 → reabrir →
+sair → comprar Casa01/T0 → reabrir → recusar save da ocupação antiga. Budget de
+teste44500 vira34000/30500/20000, epochs1/2/3. Projeção pessoal, necessidades,
+frações, GUID/NID e recursos/fingerprints preservados; reaberturas byte-idênticas.
+114 originais e dois personagens privados intactos; perfis/PIDs encerrados,
+nenhum display. Binário8c3144862b53fa200a08663559e9ba776e4320e94c7a99ced6e59f35e35ac72f
+estável. Doze CTests passaram, incluindo recibo positivo, geração/asset válidos
+substituídos recusados e compra negada sem perda de saldo/autoridade.
+Contrato, referências e limites: `docs/native-family-transfer.md`.
+
+Atributos temporários ficam com Init/EP8 novo, conforme referência comprovada;
+originais ficam no archive. Person80 projeta/pad88; Person256 exige cauda após87
+zero. Antes de despejar, unknownP deve igualar NBRS efetivo salvo e unknownmotives
+0/1/2/4/10/12 devem manter100, baseline comprovado de VMAvatar.Init.
+
+PRÓXIMO: reconstruir moradores antigos da ocupação anterior em OBJM (hoje
+recusados), sem reativar ações/temporizadores/referências antigas ou apagar NPCs
+por heurística; validar o fluxo pela janela. Persistência da propriedade após
+desocupação precisa ser separada do save familiar antes de generalizar compra/
+construção. Famílias/saves legados, edição/renomeação, liquidação original e
+expansões continuam incompletos. O gate usa CAS helper e headless, sem cliques.
+
+### Save e dinheiro ligados à ocupação da família (checkpoint anterior)
 
 Novas compras usam overlay v6 e `FamilySessionJournal`: snapshot de lançamento
 único, arquivo imutável com lease FAML e commit do orçamento/checkpoint por CAS.
@@ -51,14 +83,14 @@ são idempotentes, com comparação ainda sob lock. Legado continua legível.
 Dez CTests passaram, incluindo o novo CLI com processo novo, zero ticks,
 continuação, rejeições e 7→8→7 sintético. Log em
 `reports/native-family-checkpoint/ctest.log`; contrato/limites em
-`docs/native-family-checkpoints.md`. O guard de despejo após compra permanece.
+`docs/native-family-checkpoints.md`. A extensão atual acima substitui o guard
+geral por validação do checkpoint/perfil portátil.
 O gate comercial em `reports/native-family-checkpoint/real-1/result.json`
 confirmou seis processos encerrados, 30 hashes intactos, T2→zero→T4 idêntico ao
 controle contínuo e 7→5→7. A autoridade foi semeada artificialmente no perfil
 privado; não confundir com compra/mudança pela UI ou transferência de Sims.
-Ticket de outra ocupação bloqueia jogar/salvar defaults: o próximo trabalho
-é transferir dados revisados dos Sims, necessidades e relações para os moradores
-recém-inicializados no destino, sem carregar World/VM da casa antiga.
+Ticket de outra ocupação bloqueia jogar/salvar defaults sem recibo validado de
+transferência, sem carregar World/VM da casa antiga.
 
 Na referência fixada, ValueInArch de família criada começa em zero e não foi
 encontrada atualização viva; o despejo devolve só esse valor retido. Não inventar

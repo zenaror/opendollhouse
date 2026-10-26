@@ -79,7 +79,9 @@ std::vector<std::uint8_t> template_person(const fs::path& game) {
 }
 
 int main(int argc, char** argv) try {
-    if (argc != 3) throw std::runtime_error("usage: odh-cas-movein-e2e GAME_ROOT PRIVATE_PROFILE_ROOT");
+    if ((argc != 3 && argc != 4) || (argc == 4 && std::string(argv[3]) != "--create-only"))
+        throw std::runtime_error("usage: odh-cas-movein-e2e GAME_ROOT PRIVATE_PROFILE_ROOT [--create-only]");
+    const bool create_only = argc == 4;
     const fs::path game = fs::canonical(argv[1]);
     const fs::path profile = fs::absolute(argv[2]);
     const fs::path user = game / "UserData";
@@ -88,18 +90,27 @@ int main(int argc, char** argv) try {
 
     std::uint16_t house = 0;
     fs::path house_path;
-    std::int32_t price = 0;
+    std::int32_t price = 0, second_price = 0;
+    std::uint16_t second_house = 0;
     for (const auto& lot : locations(user / "LotLocations.iff").lots) {
         if (lot.house < 1 || lot.house > 98 || family_context.by_house(static_cast<std::int16_t>(lot.house))) continue;
         std::ostringstream name;
         name << "House" << (lot.house < 10 ? "0" : "") << lot.house << ".iff";
         const auto candidate = user / "Houses" / name.str();
         if (!fs::is_regular_file(candidate)) continue;
-        try { price = purchase_price(candidate); }
+        std::int32_t candidate_price = 0;
+        try { candidate_price = purchase_price(candidate); }
         catch (const std::exception&) { continue; }
-        house = lot.house;
-        house_path = candidate;
-        break;
+        if (candidate_price < 0) continue;
+        if (!house) {
+            price = candidate_price;
+            house = lot.house;
+            house_path = candidate;
+            if (!create_only) break;
+        } else if (lot.house != house && (!second_house || candidate_price < second_price)) {
+            second_house = lot.house;
+            second_price = candidate_price;
+        }
     }
     if (!house) throw std::runtime_error("no vacant selectable base-game house with SIMI1 found");
 
@@ -111,6 +122,11 @@ int main(int argc, char** argv) try {
     const auto& body = bodies.front();
     if (price > std::numeric_limits<std::int32_t>::max() - 20000)
         throw std::runtime_error("selected lot price leaves no safe budget headroom");
+    const auto initial_budget_wide = create_only ?
+        2LL * price + second_price + 20000 : static_cast<std::int64_t>(price) + 20000;
+    if (initial_budget_wide > std::numeric_limits<std::int32_t>::max())
+        throw std::runtime_error("vacant lot round trip exceeds safe initial CAS budget");
+    const auto initial_budget = static_cast<std::int32_t>(initial_budget_wide);
     std::uint32_t cas_random = 0;
     const auto make_member = [&](std::string name) {
         odh_host::SimitoneCasPersonInput input;
@@ -138,12 +154,15 @@ int main(int argc, char** argv) try {
     const auto characters = profile / "data/opendollhouse/Characters";
     const auto created = odh_host::create_linux_private_family(template_person(game),
         user / "Characters", characters, neighborhood, overlay_path,
-        "ODH CAS Gate", {first_draft, second_draft}, price + 20000);
+        "ODH CAS Gate", {first_draft, second_draft}, initial_budget);
     auto overlay = odh_host::read_linux_family_overlay(overlay_path);
     if (!overlay) throw std::runtime_error("CAS creation did not persist a player overlay");
-    const auto moved = odh::plan_family_move_in_overlay(families, identity, &*overlay,
-        created.family_chunk_id, house, price);
-    odh_host::compare_exchange_linux_family_overlay_atomic(overlay_path, overlay, moved);
+    const auto moved = create_only ?
+        odh::plan_family_managed_move_in_overlay(families, identity, &*overlay, created.family_chunk_id, house, price) :
+        odh::plan_family_move_in_overlay(families, identity, &*overlay, created.family_chunk_id, house, price);
+    if (!create_only) odh_host::compare_exchange_linux_family_overlay_atomic(overlay_path, overlay, moved);
+    // Resolve prospective members in create-only mode without housing the
+    // persisted family: the real runtime owns deferred purchase publication.
     overlay = moved;
 
     const auto session = odh::load_session_entry(user, 1, house, 1, &*overlay, characters);
@@ -161,7 +180,25 @@ int main(int argc, char** argv) try {
               << ",\"neighbor_id\":" << session.members.front().neighbor_id
               << ",\"member_source\":\"" << session.members.front().character_source
               << "\",\"private_character\":\"" << created.members.front().path.string()
-              << "\",\"house_file\":\"" << house_path.string() << "\"}\n";
+              << "\",\"house_file\":\"" << house_path.string()
+              << "\",\"create_only\":" << (create_only ? "true" : "false")
+              << ",\"initial_budget\":" << initial_budget
+              << ",\"second_house\":" << second_house << ",\"second_purchase_price\":" << second_price
+              << ",\"members\":[";
+    constexpr char hex[] = "0123456789abcdef";
+    for (std::size_t i = 0; i < session.members.size(); ++i) {
+        if (i) std::cout << ',';
+        const auto& member = session.members[i];
+        std::string fingerprint;
+        for (const auto byte : created.members[i].content_sha256) {
+            fingerprint += hex[byte >> 4]; fingerprint += hex[byte & 15];
+        }
+        std::cout << "{\"guid\":" << member.guid << ",\"neighbor_id\":" << member.neighbor_id
+            << ",\"object_definition_id\":" << member.object_definition_id
+            << ",\"character_asset\":\"" << member.character_source << '/' << member.character_asset
+            << "\",\"character_sha256\":\"" << fingerprint << "\"}";
+    }
+    std::cout << "]}\n";
     return 0;
 } catch (const std::exception& error) {
     std::cerr << "odh-cas-movein-e2e: " << error.what() << '\n';

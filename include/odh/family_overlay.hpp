@@ -97,6 +97,7 @@ struct FamilyOverlayFamilyState {
     std::optional<std::array<std::uint8_t, 32>> checkpoint_sha256;
     std::uint16_t checkpoint_house = 0;
     std::uint64_t checkpoint_epoch = 0;
+    std::optional<std::int32_t> checkpoint_budget;
 };
 struct FamilyOverlayReplay {
     std::vector<FamilyEntry> families;

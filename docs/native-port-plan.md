@@ -35,8 +35,11 @@ no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
   controles ainda provisórios ([fila](native-player-queue.md)).
 - Novas compras ligam a ocupação da família ao dinheiro vivo e a um save
   imutável. O jogo retoma o último checkpoint confirmado e recusa saves antigos
-  como autoridade de escrita; a transferência dos Sims para outra casa ainda
-  falta ([checkpoints familiares](native-family-checkpoints.md)).
+  como autoridade de escrita ([checkpoints familiares](native-family-checkpoints.md)).
+- Transferência portátil permite a família criada mudar entre casas originalmente
+  vazias: Casa01→Casa09→Casa01 comercial passou com save/reabertura. Compras só
+  cobram após preparo saudável; moradores antigos/transformações incompatíveis
+  continuam limitados ([perfil e evidência](native-family-transfer.md)).
 - `40057ae`: SEAT v3 guarda vários moradores após Sit concluído, incluindo
   famílias mistas em pé/sentadas. House05 banco173 e House07 têm gates de
   reabertura/Stand; Sit/Stand em andamento e posturas arbitrárias continuam

@@ -23,6 +23,7 @@
 #include "odh/object_runtime_resources.hpp"
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
+#include "odh/household_transfer.hpp"
 #include "odh/relationship.hpp"
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
@@ -1198,7 +1199,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 throw odh::FormatError("managed neighborhood source changed before runtime preparation");
         }
         const auto overlay=session_context&&session_context->family_journal?
-            session_context->family_journal->expected_overlay():
+            session_context->family_journal->runtime_overlay():
             odh_host::read_linux_family_overlay_for_neighborhood(*neighborhood_path);
         if(overlay){
             family_records=odh::apply_family_overlay(family_records,
@@ -1382,6 +1383,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::map<std::int16_t,odh::VmSnapshot> materialized_main_states;
     if(session_context&&!session_context->single_resident_session&&saved_world_main&&active_family){
         const auto source=restored_world->world->snapshot();
+#ifdef __linux__
+        if(session_context->family_journal &&
+           (session_context->family_transfer||session_context->family_journal->pending_purchase())){
+            const auto original=odh::load_neighborhood_family_source(*neighborhood_path);
+            std::set<std::uint32_t> old_residents;
+            for(const auto& family:original.families)
+                if((static_cast<std::uint32_t>(family.family.house_number)&0xffffU)==session_context->house_number)
+                    old_residents.insert(family.family.member_guids.begin(),family.family.member_guids.end());
+            for(const auto& actor:source.entities){
+                if(actor.kind!=odh::EntityKind::avatar||!actor.definition)continue;
+                if(odh::FamilyContext::contains(*active_family,actor.definition->guid)||old_residents.count(actor.definition->guid))
+                    throw odh::FormatError("family transfer destination contains residents from an earlier occupancy; fresh reconstruction is required");
+            }
+        }
+#endif
         const auto reconciliation=odh::reconcile_session_household(active_family->family.member_guids,*restored_world->world);
         const bool missing=std::any_of(reconciliation.begin(),reconciliation.end(),[](const auto& member){
             return member.presence==odh::HouseholdMemberPresence::absent;
@@ -1574,6 +1590,44 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             random=candidate_random;
         }
     }
+    std::optional<odh::AppliedHouseholdTransfer> family_carry_applied;
+    std::unique_ptr<odh::RelationshipState> family_carry_relationships;
+    if(session_context&&session_context->family_transfer){
+#ifdef __linux__
+        if(!saved_world_main||!restored_world||!restored_world->world||!session_context->family_journal||
+           !session_context->restore_archive.empty()||!simi||simi->global_data.size()<=8||!neighbors)
+            throw odh::FormatError("portable family transfer requires a fresh complete destination runtime");
+        std::vector<odh::HouseholdTransferIdentity> roster;
+        for(const auto& member:session_context->household_members){
+            const auto pinned=pinned_characters.find(std::filesystem::canonical(member.character_path));
+            if(pinned==pinned_characters.end())throw odh::FormatError("portable character lacks loaded-byte provenance");
+            roster.push_back({member.guid,member.neighbor_id,member.object_definition_id,
+                member.character_asset,pinned->second.fingerprint});
+        }
+        for(const auto& actor:restored_world->world->snapshot().entities){
+            if(actor.kind!=odh::EntityKind::avatar||!actor.definition)continue;
+            const auto member=std::find_if(roster.begin(),roster.end(),[&](const auto& value){return value.guid==actor.definition->guid;});
+            if(member!=roster.end()&&!materialized_main_states.count(actor.id))
+                throw odh::FormatError("family transfer destination contains a resident from an earlier occupancy; fresh reconstruction is required");
+        }
+        odh::Ts1Clock clock;const auto& g=simi->global_data;
+        if(g[0]<0||g[1]<0||g[5]<0||g[6]<0||g[7]<0||
+           !clock.initialize_simi(static_cast<unsigned>(g[0]),static_cast<unsigned>(g[1]),
+               static_cast<unsigned>(g[5]),static_cast<unsigned>(g[6]),static_cast<unsigned>(g[7]),g[8]))
+            throw odh::FormatError("portable family transfer destination has an unsupported clock");
+        odh::RelationshipState base(*neighbors);
+        const auto relations=restored_world->relationships?restored_world->relationships->snapshot():base.snapshot();
+        family_carry_applied=odh::apply_household_transfer(*session_context->family_transfer,
+            restored_world->world->snapshot(),relations,session_context->family_journal->lease(),roster,clock.snapshot());
+        family_carry_relationships=std::make_unique<odh::RelationshipState>();
+        if(!family_carry_relationships->restore_snapshot(family_carry_applied->relationships())||
+           !restored_world->world->publish_snapshot(family_carry_applied->world()))
+            throw odh::FormatError("portable family transfer candidate could not be published");
+        session_context->family_journal->accept_carry(*family_carry_applied);
+#else
+        throw odh::FormatError("portable family host storage is unavailable on this platform");
+#endif
+    }
     if(render_saved_guid){
         if(*render_saved_guid!=person.binding->guid)
             throw odh::FormatError("selected resident GUID differs from the loaded person resource");
@@ -1740,6 +1794,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
     }
 
+    if(family_carry_applied){
+        if(!simulation_clock)throw odh::FormatError("portable family transfer requires destination simulation time");
+        for(const auto& record:family_carry_applied->decays()){
+            odh::Ts1MotiveDecay decay;
+            if(!decay.restore(record.decay))throw odh::FormatError("portable family motive fractions are invalid");
+            simulation_motives.insert_or_assign(record.id,decay);
+        }
+    }
     std::optional<odh::EntityPosition> paired_primary_start;
     const auto entity_count=[&]{std::size_t count=0;std::int16_t cursor=0;
         while(const auto next=world.next_entity(cursor)){++count;cursor=*next;}return count;};
@@ -2152,6 +2214,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(neighbors&&!restoring_session)original_relationships.emplace(*neighbors);
     auto* relationships=household_restore?&household_restore->relationships():session_restore?&session_restore->relationships():
         restored_world?restored_world->relationships.get():original_relationships?&*original_relationships:nullptr;
+    if(family_carry_relationships)relationships=family_carry_relationships.get();
     std::vector<odh::RelationshipRecord> relationship_records;
     const auto relationship_handler=relationships?relationships->primitive(world,memory,[&](const auto& value){
         if(diagnostics.retain(Diagnostic::relationship,relationship_records.size(),10000))relationship_records.push_back(value);
@@ -7145,6 +7208,27 @@ struct PlacementCandidateProbe {
 #endif
         return NeighborhoodRequestResult::transitioned;
     };
+#ifdef __linux__
+    if(session_context&&session_context->family_journal){
+        // No purchase is charged until the complete destination runtime and
+        // every member's portable state have passed preparation.
+        if(host_failed)
+            throw odh::FormatError("household preparation failed before purchase: "+host_diagnostic);
+        const auto failed_vm=[](const odh::Vm& actor_vm){return actor_vm.status()==odh::VmStatus::fault||
+            actor_vm.status()==odh::VmStatus::budget_exhausted;};
+        if(failed_vm(vm)||std::any_of(household_runtime.begin(),household_runtime.end(),
+                [&](const auto& member){return !member->vm||failed_vm(*member->vm);}))
+            throw odh::FormatError("household execution preparation failed before purchase");
+        if(!pending_create_objects.empty()||std::any_of(pending_remove_objects.begin(),pending_remove_objects.end(),
+                [](const auto& pending){return !pending.defer_until_unreferenced||pending.vm||pending.ticket;}))
+            throw odh::FormatError("household preparation left unfinished object services before purchase");
+        (void)capture_household_roster(true);
+        if(!neighborhood_path||odh_host::linux_neighborhood_identity(*neighborhood_path)!=
+            session_context->family_journal->lease().neighborhood_identity)
+            throw odh::FormatError("neighborhood source changed before household activation");
+        session_context->family_journal->commit_move_in();
+    }
+#endif
     while(!host_failed) {
 #ifdef ODH_HAVE_X11
         if(render_window_host||headless_window_interaction||headless_window_neighborhood_tick){
@@ -8400,6 +8484,7 @@ struct PlacementCandidateProbe {
         <<",\"session_loaded\":"<<(restoring_session?"true":"false")
         <<",\"resumed_tick\":"<<resumed_tick<<",\"saved_session_path\":"
         <<(saved_session_path?json_bytes(*saved_session_path):"null")
+        <<",\"family_transfer_applied\":"<<(family_carry_applied?"true":"false")
         <<",\"integrated_session_context\":";
     if(session_context){
         std::cout<<"{\"neighborhood_mode\":"<<static_cast<unsigned>(session_context->neighborhood_mode)

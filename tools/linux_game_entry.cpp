@@ -24,6 +24,7 @@
 #include "linux_session_archive_store.hpp"
 #include "linux_family_overlay_store.hpp"
 #include "linux_family_session_journal.hpp"
+#include "linux_family_transfer.hpp"
 #endif
 #include "odh/session_resource_identity.hpp"
 #include "json.hpp"
@@ -111,6 +112,7 @@ struct Options {
     std::optional<std::filesystem::path> load_session;
     bool load_session_advisory = false;
     std::optional<unsigned> headless_ticks;
+    std::optional<unsigned> headless_move_out_family, headless_move_in_family;
     std::optional<unsigned> instruction_budget;
     std::optional<std::filesystem::path> status_frame;
     std::optional<unsigned> status_tick;
@@ -283,6 +285,10 @@ Options parse_options(int argc, char** argv) {
             result.load_session = value;
         } else if (key == "--headless-ticks" && !result.headless_ticks) {
             result.headless_ticks = parse_number(value, 4096, "headless tick count");
+        } else if (key == "--headless-move-out-family" && !result.headless_move_out_family) {
+            result.headless_move_out_family = parse_number(value, 65535, "family chunk ID");
+        } else if (key == "--headless-move-in-family" && !result.headless_move_in_family) {
+            result.headless_move_in_family = parse_number(value, 65535, "family chunk ID");
         } else if (key == "--headless-status-frame" && !result.status_frame) {
             result.status_frame = value;
         } else if (key == "--headless-status-tick" && !result.status_tick) {
@@ -324,6 +330,12 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError("session loading is currently available only on Linux");
 #endif
     }
+    if ((result.headless_move_in_family || result.headless_move_out_family) &&
+        (!result.headless_ticks || !result.house || result.load_session || result.plan_only ||
+         result.single_resident_session || (result.headless_move_in_family && result.headless_move_out_family) ||
+         (result.headless_move_out_family && (*result.headless_ticks || result.save_on_exit ||
+           !result.headless_travel_houses.empty()))))
+        throw odh::FormatError("family move diagnostic requires a complete household, explicit house and headless ticks; move-out requires zero ticks and no save/travel");
     if ((result.status_frame || result.status_tick) &&
         (!result.status_frame || result.status_frame->empty() || !result.status_tick || !*result.status_tick ||
          !result.headless_ticks || *result.status_tick > *result.headless_ticks || result.plan_only ||
@@ -937,6 +949,40 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #else
         std::optional<odh::FamilyOverlay> family_overlay;
 #endif
+        std::shared_ptr<odh_host::FamilySessionJournal> pending_move_in;
+#ifdef __linux__
+        const auto prepare_lot_transfer = [&](const odh::NeighborhoodFamilySource& source,
+                const odh::FamilyOverlay& overlay, std::uint16_t family_id, std::uint16_t destination) {
+            const auto entry = odh::load_session_entry(userdata, options.mode, destination,
+                static_cast<std::uint8_t>(options.language), &overlay, player_character_directory);
+            const auto roster = odh_host::identify_transfer_household(entry, game, player_character_directory);
+            return odh_host::load_family_transfer(source, overlay, family_id, roster, userdata / "Neighborhood.iff");
+        };
+        if (options.headless_move_out_family) {
+            const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
+            const auto id = static_cast<std::uint16_t>(*options.headless_move_out_family);
+            odh_host::FamilySessionJournal journal(source.families, source.identity, family_overlay,
+                static_cast<std::uint16_t>(*options.house), id);
+            if (!journal.checkpoint_path() || !prepare_lot_transfer(source, *family_overlay, id,
+                    static_cast<std::uint16_t>(*options.house)))
+                throw odh::FormatError("managed move-out requires a current transferable checkpoint");
+            const auto next = odh::plan_family_managed_move_out_overlay(source.families, source.identity, &*family_overlay, id);
+            odh_host::compare_exchange_linux_family_overlay_atomic(odh_host::linux_family_overlay_path(source.identity), family_overlay, next);
+            std::cout << "{\"status\":\"moved_out\",\"family_chunk_id\":" << id << "}\n";
+            return 0;
+        }
+        if (options.headless_move_in_family) {
+            const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
+            const auto id = static_cast<std::uint16_t>(*options.headless_move_in_family);
+            const auto destination = static_cast<std::uint16_t>(*options.house);
+            const auto price = house_purchase_price(game, userdata, destination);
+            const auto next = odh::plan_family_managed_move_in_overlay(source.families, source.identity,
+                family_overlay ? &*family_overlay : nullptr, id, destination, price);
+            (void)prepare_lot_transfer(source, next, id, destination);
+            pending_move_in = std::make_shared<odh_host::FamilySessionJournal>(source.families, source.identity,
+                family_overlay, destination, id, next);
+        }
+#endif
         std::optional<std::filesystem::path> graphics_resource;
 #ifdef ODH_HAVE_X11
         const auto graphics = require_file(game, game / "UIGraphics/UIGraphics.far");
@@ -1172,9 +1218,22 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     userdata / "Neighborhood.iff");
                 bool can_move_out = false;
                 try {
-                    (void)odh::plan_family_move_out_overlay(map->source_families,
-                        neighborhood_identity, family_overlay ? &*family_overlay : nullptr,
-                        current_family->chunk_id);
+                    const auto replay = family_overlay ? std::optional<odh::FamilyOverlayReplay>{
+                        odh::replay_family_overlay(map->source_families, neighborhood_identity, *family_overlay)} : std::nullopt;
+                    const auto managed = replay && std::any_of(replay->states.begin(), replay->states.end(),
+                        [&](const auto& state) { return state.family_chunk_id == current_family->chunk_id && state.managed; });
+                    if (managed) {
+                        odh_host::FamilySessionJournal journal(map->source_families, neighborhood_identity,
+                            family_overlay, static_cast<std::uint16_t>(house), current_family->chunk_id);
+                        if (!journal.checkpoint_path() || !prepare_lot_transfer(
+                                {neighborhood_identity,map->source_families}, *family_overlay,
+                                current_family->chunk_id, static_cast<std::uint16_t>(house)))
+                            throw odh::FormatError("save the current household before moving it out");
+                        (void)odh::plan_family_managed_move_out_overlay(map->source_families,
+                            neighborhood_identity, &*family_overlay, current_family->chunk_id);
+                    } else (void)odh::plan_family_move_out_overlay(map->source_families,
+                            neighborhood_identity, family_overlay ? &*family_overlay : nullptr,
+                            current_family->chunk_id);
                     can_move_out = true;
                 } catch (const odh::FormatError&) {
                     // Families without a verified source refund can still enter
@@ -1197,6 +1256,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     }
                     const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
                         userdata / "Neighborhood.iff");
+                    if (latest_overlay.has_value() != family_overlay.has_value() ||
+                        (latest_overlay && odh::encode_family_overlay(*latest_overlay) != odh::encode_family_overlay(*family_overlay)))
+                        throw odh::FormatError("player state changed during move-out confirmation");
                     const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
                         options.mode, latest_overlay ? &*latest_overlay : nullptr,
                         static_cast<std::uint8_t>(options.language));
@@ -1217,9 +1279,25 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         odh::family_overlay_identity(*latest_family) !=
                             odh::family_overlay_identity(*current_family))
                         throw odh::FormatError("selected family changed before move-out was saved");
-                    const auto next_overlay = odh::plan_family_move_out_overlay(
-                        latest_map.source_families, latest_neighborhood_identity,
-                        latest_overlay ? &*latest_overlay : nullptr, latest_family->chunk_id);
+                    bool managed = false;
+                    if (latest_overlay) {
+                        const auto replay = odh::replay_family_overlay(latest_map.source_families,
+                            latest_neighborhood_identity, *latest_overlay);
+                        managed = std::any_of(replay.states.begin(), replay.states.end(),
+                            [&](const auto& state) { return state.family_chunk_id == latest_family->chunk_id && state.managed; });
+                    }
+                    if (managed) {
+                        odh_host::FamilySessionJournal journal(latest_map.source_families, latest_neighborhood_identity,
+                            latest_overlay, static_cast<std::uint16_t>(house), latest_family->chunk_id);
+                        if (!journal.checkpoint_path() || !prepare_lot_transfer(
+                                {latest_neighborhood_identity,latest_map.source_families}, *latest_overlay,
+                                latest_family->chunk_id, static_cast<std::uint16_t>(house)))
+                            throw odh::FormatError("managed move-out requires a current transferable checkpoint");
+                    }
+                    const auto next_overlay = managed ? odh::plan_family_managed_move_out_overlay(
+                        latest_map.source_families, latest_neighborhood_identity, &*latest_overlay, latest_family->chunk_id) :
+                        odh::plan_family_move_out_overlay(latest_map.source_families, latest_neighborhood_identity,
+                            latest_overlay ? &*latest_overlay : nullptr, latest_family->chunk_id);
                     odh_host::compare_exchange_linux_family_overlay_atomic(
                         odh_host::linux_family_overlay_path(latest_neighborhood_identity),
                         latest_overlay, next_overlay);
@@ -1397,9 +1475,15 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     latest_map.source_families, neighborhood_identity,
                     latest_overlay ? &*latest_overlay : nullptr, family_choice->family_chunk_id,
                     static_cast<std::uint16_t>(house), latest_price);
-                odh_host::compare_exchange_linux_family_overlay_atomic(
-                    odh_host::linux_family_overlay_path(neighborhood_identity),
-                    latest_overlay, next_overlay);
+                // Charge only after the destination runtime and any portable
+                // household transfer have both been prepared successfully.
+                if (options.single_resident_session)
+                    throw odh::FormatError("purchases require the complete household runtime");
+                (void)prepare_lot_transfer({neighborhood_identity,latest_map.source_families},
+                    next_overlay, family_choice->family_chunk_id, static_cast<std::uint16_t>(house));
+                pending_move_in = std::make_shared<odh_host::FamilySessionJournal>(latest_map.source_families,
+                    neighborhood_identity, latest_overlay, static_cast<std::uint16_t>(house),
+                    family_choice->family_chunk_id, next_overlay);
                 family_overlay = next_overlay;
                 map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
                     &*family_overlay, static_cast<std::uint8_t>(options.language));
@@ -1435,22 +1519,18 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             try {
                 if (!house || house > 98)
                     throw odh::FormatError("travel destination is outside the supported lot range");
-                std::shared_ptr<odh_host::FamilySessionJournal> family_journal;
+                auto family_journal = std::move(pending_move_in);
 #ifdef __linux__
                 // Every visit pins a fresh view, including the save just committed
                 // by the previous runtime. A per-house path cache has no authority.
-                family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
-                    userdata / "Neighborhood.iff");
-                if (family_overlay) {
+                if (family_journal) family_overlay = family_journal->runtime_overlay();
+                else family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(userdata / "Neighborhood.iff");
+                if (family_overlay && !family_journal) {
                     const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
                     const auto replay = odh::replay_family_overlay(source.families, source.identity, *family_overlay);
                     const auto occupant = std::find_if(replay.states.begin(), replay.states.end(),
                         [&](const auto& state) { return state.house_number == house; });
                     if (occupant != replay.states.end() && occupant->managed) {
-                        if (!options.plan_only && occupant->checkpoint_sha256 &&
-                            (occupant->checkpoint_house != occupant->house_number ||
-                             occupant->checkpoint_epoch != occupant->occupancy_epoch))
-                            throw odh::FormatError("family move requires portable Sim carryover before playing the new lot");
                         if (options.single_resident_session)
                             throw odh::FormatError("managed family saves require the complete household runtime");
                         family_journal = std::make_shared<odh_host::FamilySessionJournal>(source.families,
@@ -1486,6 +1566,17 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 const auto session = odh::load_session_entry(userdata, options.mode,
                     static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
                     family_overlay ? &*family_overlay : nullptr, player_character_directory);
+                std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
+#ifdef __linux__
+                if (family_journal && family_journal->carry_ticket() && !family_journal->checkpoint_path() && !options.plan_only) {
+                    const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
+                    const auto roster = odh_host::identify_transfer_household(session, game, player_character_directory);
+                    auto transfer = odh_host::load_family_transfer(source, *family_overlay, session.family_chunk_id, roster,
+                        userdata / "Neighborhood.iff");
+                    if (!transfer) throw odh::FormatError("family move has no portable checkpoint");
+                    family_transfer = std::make_shared<odh::PreparedHouseholdTransfer>(std::move(*transfer));
+                }
+#endif
                 if (!options.single_resident_session && session.members.size() > 8)
                     throw odh::FormatError("integrated household exceeds the eight-resident TS1 runtime profile");
                 const odh::SessionEntryMember* resident = nullptr;
@@ -1579,6 +1670,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
                 odh_host::IntegratedSessionContext session_context;
                 session_context.family_journal = std::move(family_journal);
+                session_context.family_transfer = std::move(family_transfer);
                 options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
                 session_context.resources = verified_identity;
                 session_context.restore_archive = std::move(options.restore_archive);

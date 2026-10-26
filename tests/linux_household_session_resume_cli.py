@@ -14,7 +14,7 @@ from linux_session_resume_cli import Bits, iff, strings, grid, make_game, saved_
 
 GUIDS = (0x12345678, 0x12345679)
 
-def make_household(root, secondary_posture=0, empty_hand_slot=False):
+def make_household(root, secondary_posture=0, empty_hand_slot=False, fresh_motives=False):
     make_game(root)
     user = root / 'UserData'
     family = struct.pack('<II4siiiiiiI', 0, 9, b'IMAF', 7, 900, 100, 0, 0, 0, 2) + struct.pack('<2I', *GUIDS)
@@ -31,7 +31,7 @@ def make_household(root, secondary_posture=0, empty_hand_slot=False):
     objm = struct.pack('<II4sB',0,62,b'MjbO',1) + table.data()
     objt = struct.pack('<II4s',0,2,b'tjbo')
     for i,guid in enumerate(GUIDS):
-        single,_ = saved_person(i+1,i+1,len(objm)+4,secondary_posture if i else 0,empty_hand_slot)
+        single,_ = saved_person(i+1,i+1,len(objm)+4,secondary_posture if i else 0,empty_hand_slot,fresh_motives)
         payload = single[22:]
         objm += struct.pack('<I',len(objm)+4+len(payload)-12) + payload
         objt += struct.pack('<I6H',guid,0,0,0,0,i+1,2) + b'person\0\0'

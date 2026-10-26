@@ -56,7 +56,8 @@ class Bits:
         return bytes(int(bits[pos:pos + 8], 2) for pos in range(0, len(bits), 8))
 
 
-def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, empty_hand_slot=False):
+def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, empty_hand_slot=False,
+                 fresh_motives=False):
     table = Bits()
     for value in (object_id, type_id, 0):
         table.word(value)
@@ -86,8 +87,11 @@ def saved_person(object_id=1, type_id=1, block_offset=None, person_posture=0, em
     for _ in range(3):
         block.string()  # animation, carry, base
     block.integer()  # routing state
-    for _ in range(9 + 16 + 16):
+    for _ in range(9 + 16):
         block.integer()  # finite float zero
+    for index in range(16):
+        # VMAvatar.Init/apply_avatar_body baseline, opt-in for relocation fixtures.
+        block.integer(0x42C80000 if fresh_motives and index != 11 else 0)
     for index in range(80):
         block.word(person_posture if index == 0 else 0)
     block.integer()  # routing frames

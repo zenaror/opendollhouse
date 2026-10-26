@@ -572,7 +572,7 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
     for (const auto& entry : result) {
         const auto house = static_cast<std::uint16_t>(static_cast<std::uint32_t>(entry.family.house_number) & 0xffffU);
         states.push_back({entry.chunk_id, family_overlay_identity(entry), house,
-            (house >= 1 && house <= 98) ? 1U : 0U, entry.family.budget, entry.family.value_in_arch, false, std::nullopt, 0, 0});
+            (house >= 1 && house <= 98) ? 1U : 0U, entry.family.budget, entry.family.value_in_arch, false, std::nullopt, 0, 0, std::nullopt});
     }
     std::map<std::uint16_t, std::size_t> by_id;
     std::map<std::uint16_t, std::uint16_t> occupied;
@@ -632,6 +632,7 @@ FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>& source
             state.checkpoint_sha256 = assignment.state->session_sha256;
             state.checkpoint_house = current_house;
             state.checkpoint_epoch = state.occupancy_epoch;
+            state.checkpoint_budget = family.budget;
         } else {
             if (!assignment.state && !move_out_supported[assignment.family_chunk_id])
                 throw FormatError("family move-out has no verified source ValueInArch");

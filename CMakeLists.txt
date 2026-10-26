@@ -924,6 +924,11 @@ add_library(odh_session_bundle src/session_bundle.cpp src/seated_session_continu
 target_link_libraries(odh_session_bundle PUBLIC odh_ts1_simulation odh_session_archive odh_session_resource_identity
   odh_world_snapshot_codec odh_relationship_snapshot_codec odh_vm_snapshot_codec
   odh_entity_scheduler_snapshot_codec odh_entity_thread_controllers_snapshot_codec)
+add_library(odh_household_transfer src/household_transfer.cpp)
+target_link_libraries(odh_household_transfer PUBLIC odh_session_bundle)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(odh_household_transfer PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+endif()
 add_library(odh_single_resident_session_restore src/single_resident_session_restore.cpp src/household_session_restore.cpp)
 target_link_libraries(odh_single_resident_session_restore PUBLIC odh_session_bundle odh_playback odh_lot_context odh_bootstrap odh_random)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -931,9 +936,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 target_link_libraries(odh-person PRIVATE odh_session_bundle odh_single_resident_session_restore odh_household_spawn)
 if(TARGET odh_linux_session_archive_store)
-  add_library(odh_linux_family_session_journal tools/linux_family_session_journal.cpp)
+  add_library(odh_linux_family_session_journal tools/linux_family_session_journal.cpp tools/linux_family_transfer.cpp)
   target_include_directories(odh_linux_family_session_journal PUBLIC tools)
-  target_link_libraries(odh_linux_family_session_journal PUBLIC odh_session_bundle
+  target_link_libraries(odh_linux_family_session_journal PUBLIC odh_session_bundle odh_household_transfer odh_session_entry
     odh_linux_family_overlay_store odh_linux_session_archive_store)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(odh_linux_family_session_journal PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
@@ -995,6 +1000,9 @@ if(BUILD_TESTING)
   add_executable(odh-session-bundle-tests tests/session_bundle.cpp)
   target_link_libraries(odh-session-bundle-tests PRIVATE odh_session_bundle odh_playback)
   add_test(NAME session_bundle COMMAND odh-session-bundle-tests)
+  add_executable(odh-household-transfer-tests tests/household_transfer.cpp)
+  target_link_libraries(odh-household-transfer-tests PRIVATE odh_household_transfer)
+  add_test(NAME household_transfer COMMAND odh-household-transfer-tests)
   add_executable(odh-seated-session-continuation-tests tests/seated_session_continuation.cpp)
   target_link_libraries(odh-seated-session-continuation-tests PRIVATE odh_single_resident_session_restore)
   add_test(NAME seated_session_continuation COMMAND odh-seated-session-continuation-tests)
@@ -1707,6 +1715,9 @@ if(BUILD_TESTING)
       add_test(NAME linux_managed_family_session_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_managed_family_session_cli.py $<TARGET_FILE:odh-person>)
       set_tests_properties(linux_managed_family_session_cli PROPERTIES TIMEOUT 120)
+      add_test(NAME linux_family_rehome_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_family_rehome_cli.py $<TARGET_FILE:odh-person>)
+      set_tests_properties(linux_family_rehome_cli PROPERTIES TIMEOUT 120)
       add_test(NAME linux_household_animation_snap_cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/linux_household_animation_snap_cli.py $<TARGET_FILE:odh-person>)
       add_test(NAME linux_session_resume_cli COMMAND ${Python3_EXECUTABLE}

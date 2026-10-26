@@ -16,10 +16,15 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Famílias criadas podem mudar entre casas vazias conservando dados pessoais,
+  necessidades e relações no perfil nativo validado. O ciclo Casa01→Casa09→Casa01
+  passou com dois adultos e reabertura. Compras são cobradas após a preparação;
+  casas com moradores antigos e estados ainda incompatíveis continuam limitados.
+
 - Famílias que entram em uma casa passam a vincular o dinheiro e o save à
   ocupação atual. A retomada procura o último save confirmado; saves antigos
-  não podem substituir progresso novo. A mudança definitiva para outra casa
-  continua pendente da transferência dos dados dos Sims.
+  não podem substituir progresso novo. O perfil de transferência acima amplia
+  esse checkpoint para mudanças entre casas originalmente vazias.
 
 - Trocas residenciais agora preservam as preferências de áudio. O roteiro de
   validação permite jogar por um tempo em cada casa antes de trocar, inclusive
