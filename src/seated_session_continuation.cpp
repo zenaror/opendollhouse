@@ -151,13 +151,27 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
         throw FormatError("seated continuation completion differs from the idle queue");
     if(state.vm.external_frame_return)
         throw FormatError("seated continuation has an external frame return");
+    std::set<CodeOwner> declared;
+    for(const auto& binding:c.code_owners) {
+        if(binding.owner<0x80000000U||binding.source!=c.source||binding.asset!=c.asset||
+           binding.root_routine!=c.action||binding.routine_fingerprint!=c.sit_routine_fingerprint||
+           !declared.insert(binding.owner).second)
+            throw FormatError("seated continuation code owner has mismatched resource provenance");
+    }
+    const auto allowed_owner=[&](CodeOwner value){
+        return value==static_cast<CodeOwner>(c.actor_id)||declared.count(value)!=0;
+    };
     const bool main_animation_wait=state.playback.state&&state.playback.state->wait;
     if(main_animation_wait) {
         if(!state.vm.pending||state.vm.pending->instruction.instruction.opcode!=44||
            state.vm.pending->context.caller!=c.actor_id||
-           state.vm.pending->context.code_owner!=static_cast<CodeOwner>(c.actor_id)||
-           state.playback.state->resource.code_owner!=static_cast<CodeOwner>(c.actor_id))
-            throw FormatError("seated continuation animation wait is not owned by the resident Main");
+           !allowed_owner(state.vm.pending->context.code_owner)||
+           state.playback.state->resource.code_owner!=state.vm.pending->context.code_owner)
+            throw FormatError("seated continuation animation wait is not owned by the declared Sit resource");
+        if(state.vm.pending->context.code_owner!=static_cast<CodeOwner>(c.actor_id)&&
+           ((state.vm.pending->context.callee!=c.actor_id&&state.vm.pending->context.callee!=c.target_id)||
+            state.vm.pending->context.stack_object!=c.target_id))
+            throw FormatError("seated continuation animation wait has a foreign target context");
         // Reuse the complete Playback/VM contract, including ticket, resource
         // context, VM/frame generations, opcode operands, frame output bank,
         // event index/expected value and blocking animation mode.
@@ -168,28 +182,39 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
     // permitted only after the completed Sit has left the interaction stack.
     std::set<CodeOwner> referenced;
     const auto owner=[&](CodeOwner value){if(value!=static_cast<CodeOwner>(c.actor_id))referenced.insert(value);};
+    if(state.vm.stack.empty()||state.vm.stack.front().context.code_owner!=static_cast<CodeOwner>(c.actor_id))
+        throw FormatError("seated continuation root frame is not the resident Main");
+    const auto context_matches_owner=[&](const VmContext& context){
+        if(context.caller!=c.actor_id||!allowed_owner(context.code_owner))return false;
+        if(context.code_owner!=static_cast<CodeOwner>(c.actor_id))
+            return (context.callee==c.actor_id||context.callee==c.target_id)&&
+                context.stack_object==c.target_id;
+        return true;
+    };
     for(const auto& frame:state.vm.stack) {
-        if(frame.return_mode!=VmCallReturnMode::ordinary||frame.context.caller!=c.actor_id||
-           frame.context.code_owner!=static_cast<CodeOwner>(c.actor_id))
-            throw FormatError("seated continuation VM is still inside an action or external frame");
+        if(frame.return_mode!=VmCallReturnMode::ordinary||!context_matches_owner(frame.context))
+            throw FormatError("seated continuation VM is still inside an action or foreign frame");
+        owner(frame.context.code_owner);
     }
     const auto pending=[&](const VmPending& value,bool animation){
-        if(value.context.caller!=c.actor_id||value.context.code_owner!=static_cast<CodeOwner>(c.actor_id)||
+        if(!context_matches_owner(value.context)||!value.instruction.depth||
+           value.instruction.depth>state.vm.stack.size()||
            (value.instruction.instruction.opcode!=0&&value.instruction.instruction.opcode!=17&&
             !(animation&&value.instruction.instruction.opcode==44)))
-            throw FormatError("seated continuation has a pending action, route or animation");
+            throw FormatError("seated continuation has a pending action, route or foreign animation");
+        const auto& frame=state.vm.stack[value.instruction.depth-1];
+        if(frame.context.caller!=value.context.caller||frame.context.callee!=value.context.callee||
+           frame.context.stack_object!=value.context.stack_object||frame.context.code_owner!=value.context.code_owner)
+            throw FormatError("seated continuation pending instruction does not match its owning frame");
+        if(value.context.code_owner!=static_cast<CodeOwner>(c.actor_id)&&
+           (!animation||value.instruction.instruction.opcode!=44))
+            throw FormatError("seated continuation Sit owner is not waiting on its matching animation");
+        owner(value.context.code_owner);
     };
     if(state.vm.pending)pending(*state.vm.pending,main_animation_wait);
     for(const auto& value:state.vm.suspended_pending)pending(value,false);
     if(state.playback.state)owner(state.playback.state->resource.code_owner);
     if(state.playback.carry)owner(state.playback.carry->code_owner);
-    std::set<CodeOwner> declared;
-    for(const auto& binding:c.code_owners) {
-        if(binding.owner<0x80000000U||binding.source!=c.source||binding.asset!=c.asset||
-           binding.root_routine!=c.action||binding.routine_fingerprint!=c.sit_routine_fingerprint||
-           !declared.insert(binding.owner).second)
-            throw FormatError("seated continuation code owner has mismatched resource provenance");
-    }
     if(referenced!=declared)throw FormatError("seated continuation dynamic owner roster is incomplete or excessive");
 }
 

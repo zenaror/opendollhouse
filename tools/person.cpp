@@ -1819,6 +1819,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(person.entry_points&&!world.define_entry_points(runtime_avatar_id,person.entry_points->entries))throw odh::FormatError("avatar entry point binding failed");
     std::map<odh::CodeOwner,odh::TuningTables> saved_action_tuning;
     std::map<odh::CodeOwner,Resource> saved_action_resources;
+    std::map<odh::CodeOwner,std::optional<odh::TuningTables>> saved_action_semiglobal_tuning;
     std::map<std::tuple<std::string,std::string,std::uint16_t,std::uint8_t>,odh::CodeOwner> saved_code_owners;
     odh::CodeOwner next_saved_code_owner=0x80000000U;
     bool saved_owner_ids_exhausted=false;
@@ -1860,19 +1861,48 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 global_reads.push_back({index,*value,clock?GlobalSource::clock:family_value?GlobalSource::family:runtime?GlobalSource::bootstrap:GlobalSource::lot});
             return value;}
         if(scope!=26)return world_memory.read(frame,scope,index);
-        const auto supplemental=saved_action_tuning.find(frame.context.code_owner);
+        auto supplemental=saved_action_tuning.find(frame.context.code_owner);
+        if(supplemental==saved_action_tuning.end()){
+            const auto resource=saved_action_resources.find(frame.context.code_owner);
+            if(resource!=saved_action_resources.end()){
+                const odh::DefinitionCandidate source{resource->second.archive,resource->second.entry,0,{}};
+                supplemental=saved_action_tuning.emplace(frame.context.code_owner,
+                    load_saved_action_tuning(source)).first;
+            }
+        }
         if(supplemental!=saved_action_tuning.end()){
             const auto address=odh::BconTuning::address(index);
-            if(address.scope==odh::RoutineScope::private_object){
-                const auto table=supplemental->second.find(address.table);
-                // This map entry means the exact owner resource was loaded.
-                // Simitone's private tuning lookup defaults a missing BCON/key
-                // to zero; an owner absent from the map remains unsupported.
-                if(table==supplemental->second.end()||address.index>=table->second.constants.size())return 0;
+            const odh::TuningTables* supplemental_tables=&supplemental->second;
+            bool semi_fallback=false;
+            if(address.scope==odh::RoutineScope::semiglobal){
+                auto semi=saved_action_semiglobal_tuning.find(frame.context.code_owner);
+                if(semi==saved_action_semiglobal_tuning.end()){
+                    const auto resource=saved_action_resources.find(frame.context.code_owner);
+                    if(resource==saved_action_resources.end())return {};
+                    const odh::DefinitionCandidate source{resource->second.archive,resource->second.entry,0,{}};
+                    const auto link=unique_saved_semiglobal_name(load_saved_tree_name_catalog(source));
+                    std::optional<odh::TuningTables> tables;
+                    if(link){
+                        if(link->empty()||link->find_first_of("/\\:.")!=std::string::npos||
+                           link->find('\0')!=std::string::npos||!globals||globals->standalone)return {};
+                        const odh::DefinitionCandidate shared_source{globals->archive,*link+".iff",0,{}};
+                        tables=load_saved_action_tuning(shared_source);
+                    }
+                    semi=saved_action_semiglobal_tuning.emplace(frame.context.code_owner,std::move(tables)).first;
+                }
+                semi_fallback=!semi->second.has_value();
+                if(semi->second)supplemental_tables=&*semi->second;
+            }
+            if(address.scope!=odh::RoutineScope::global){
+                const auto table=supplemental_tables->find(address.table);
+                // The selected private/linked resource was loaded successfully.
+                // Simitone defaults missing BCONs/keys in that bank to zero;
+                // unknown or unreadable resources remain unsupported.
+                if(table==supplemental_tables->end()||address.index>=table->second.constants.size())return 0;
                 const auto raw=table->second.constants[address.index];
                 const auto signed_value=raw<0x8000?static_cast<std::int16_t>(raw):
                     static_cast<std::int16_t>(static_cast<std::int32_t>(raw)-0x10000);
-                odh::TuningValue value{signed_value,address,frame.context.code_owner,false};
+                odh::TuningValue value{signed_value,address,frame.context.code_owner,semi_fallback};
                 if(diagnostics.retain(Diagnostic::tuning_reads,tuning_reads.size(),20000))tuning_reads.push_back(value);
                 return signed_value;
             }
@@ -2504,7 +2534,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         return std::nullopt;
     };
     const odh::VmPrimitive tree_by_name_handler=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
-        const std::array<std::int16_t,20>& temps,const odh::VmDispatch&)->odh::PrimitiveOutcome{
+        const std::array<std::int16_t,20>& temps,const odh::VmDispatch& dispatch)->odh::PrimitiveOutcome{
         if(instruction.opcode!=28)return {};
         const auto table_id=static_cast<std::uint16_t>(instruction.operands[0]|(instruction.operands[1]<<8));
         const auto string_scope=instruction.operands[2];
@@ -2607,8 +2637,28 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         else if(saved_phone_thread&&frame.context.caller==saved_phone_id&&
                 frame.context.stack_object==saved_phone_id)
             call_context.code_owner=static_cast<odh::CodeOwner>(2933422533U);
-        else return {odh::PrimitiveDisposition::unsupported,
-            "RunTreeByName target has no loaded runtime code owner"};
+        else {
+            // Destination 2 executes on the calling thread, with StackObject's
+            // resource as CodeOwner. The target need not have a running VM.
+            // A seated action already carries that object's complete bank;
+            // reuse it only when its recorded resource matches the target.
+            const auto* definition=definition_index?
+                definition_index->unique(target->definition->guid):nullptr;
+            const auto matches_target=[&](const auto& binding){
+                return definition&&dispatch.origin&&
+                    binding.second.archive==definition->source&&
+                    binding.second.entry==definition->asset&&
+                    binding.second.standalone==definition->asset.empty()&&
+                    dispatch.origin->has_routine(*routine,binding.first);
+            };
+            auto owner_resource=saved_action_resources.find(frame.context.code_owner);
+            if(owner_resource==saved_action_resources.end()||!matches_target(*owner_resource))
+                owner_resource=std::find_if(saved_action_resources.begin(),saved_action_resources.end(),matches_target);
+            if(owner_resource==saved_action_resources.end())
+                return {odh::PrimitiveDisposition::unsupported,
+                    "RunTreeByName target has no matching installed code owner"};
+            call_context.code_owner=owner_resource->first;
+        }
         std::vector<std::int16_t> arguments(temps.begin(),temps.begin()+4);
         return {odh::PrimitiveDisposition::call,{}, {},
             odh::VmCall{*routine,call_context,std::move(arguments)}};
@@ -3339,6 +3389,17 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                     return load_session_action_source(definition,root,seated->linked_semiglobal,
                         session_context->game_root,globals,definition_index?&*definition_index:nullptr);
                 });
+            // Playback restoration may resolve an object-owned Main animation
+            // before any instruction runs. Publish the verified Sit resource
+            // alongside its installed code, not only the later UI cache entry.
+            const auto source=load_session_action_source(*exact,seated->action,seated->linked_semiglobal,
+                session_context->game_root,globals,&*definition_index);
+            for(const auto& binding:seated->code_owners){
+                saved_action_resources.emplace(binding.owner,Resource{exact->source,exact->asset,exact->asset.empty()});
+                resource_owner_provenance.emplace(binding.owner,session_resource_owner(binding.owner,*exact,
+                    seated->action,source.linked_semiglobal?odh::SessionCodeBankKind::private_and_semiglobal:
+                        odh::SessionCodeBankKind::private_closure,source.routines,source.linked_semiglobal));
+            }
         }
         if(!session_restore->dynamic_action_owners().empty()){
             if(!definition_index||!session_context)
@@ -5566,6 +5627,10 @@ struct PlacementCandidateProbe {
             std::map<odh::CodeOwner,std::int16_t> dynamic_targets;
             const auto observe_owner=[&](const odh::VmContext& context){
                 if(context.code_owner<0x80000000U)return;
+                // The dedicated seated continuation below validates and records
+                // every referenced owner against the completed Sit resource.
+                // Do not classify those same owners as unrelated Route45 code.
+                if(!generic_execution&&seated&&id==runtime_avatar_id)return;
                 if(generic_execution&&route_dynamic_owner(id)!=std::optional<odh::CodeOwner>{context.code_owner})return;
                 const auto target=context.callee>0?context.callee:context.stack_object;
                 const auto inserted=dynamic_targets.emplace(context.code_owner,target);
@@ -5739,6 +5804,10 @@ struct PlacementCandidateProbe {
                         std::get<0>(entry.first)==continuation.source&&std::get<1>(entry.first)==continuation.asset;});
                 if(found==saved_code_owners.end())
                     throw odh::FormatError("seated animation or VM references an unverified dynamic action owner");
+                for(const auto& frame:runtime.vm.stack)
+                    if(frame.context.code_owner==owner&&frame.key.scope!=odh::RoutineScope::global&&
+                       !sit_source.routines.count(frame.key))
+                        throw odh::FormatError("seated Main routine is absent from the exact restorable Sit bank");
                 odh::SessionActionCodeOwner binding;binding.owner=owner;binding.source=continuation.source;
                 binding.asset=continuation.asset;binding.root_routine=continuation.action;
                 binding.routine_fingerprint=continuation.sit_routine_fingerprint;

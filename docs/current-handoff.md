@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `ee425588e7b3e503376785a357d76c038d9fe464`.
+Base publicada antes da etapa atual: `ef9dd70b10efbd6f1c516034daee4dd4cdb39700`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -93,7 +93,7 @@ controle até tick 4096; save legado carregou, originais intactos, processos e
 perfis encerrados. As fixtures provam os checks exercitados; a casa prova somente
 continuidade daquele fluxo, sem equivalência ao jogo completo.
 
-### Ações escolhidas no menu (etapa atual)
+### Ações escolhidas no menu (commit `ef9dd70`)
 
 A fila recebe flags TTAB, prioridade de jogador e rotina de disponibilidade.
 Menu e despacho compartilham a regra TS1 de crianças/adultos, visitantes, cães,
@@ -107,16 +107,45 @@ House07 geladeira repetida em `reports/native-active-interaction/attempt-17/resu
 12 blocos iguais ao reabrir nos ticks 256/512 e nas continuações até 4096; save legado
 carregou, 25 arquivos originais intactos e processos/perfis encerrados.
 O perfil antigo de um morador passou sentar/reabrir/levantar na House07 em
-`reports/native-menu-checks/seated-2/result.json`. House05 falha antes de 256 ticks:
-`RunTreeByName target has no loaded runtime code owner`, ao sentar no banco 173.
-Repetir com 512 ou 1024 ticks não resolve; a falha antecede a gravação.
-Não promover o antigo gate House05 como validado neste executável.
-Investigar o carregamento do código do objeto nesse perfil, sem enfraquecer
-a validação de identidade. A revisão estática independente não encontrou
-novo bloqueador no diff de permissões/menu; não comprova ausência de regressões.
+`reports/native-menu-checks/seated-2/result.json`. A falha House05 descoberta nesse
+checkpoint foi resolvida pela etapa abaixo; os relatórios anteriores continuam
+preservados como evidência das falhas, não como resultado do binário atual.
 Esse perfil antigo não admite salvar qualquer ação manual pendente: seu suporte
 a donos dinâmicos continua limitado a rotas e à continuação sentada dedicada.
 O caminho de família usa o registro completo de bancos de código.
+
+### Continuação do Sim sentado no banco (etapa atual)
+
+RunTreeByName destino 2 reutiliza um banco já instalado na VM chamadora somente
+quando source/asset correspondem ao objeto alvo e a rotina existe nesse owner.
+Não exige que o banco tenha uma thread própria. Tuning privado e semiglobal é
+carregado do recurso exato; ausência de link usa privado e chave ausente no
+recurso carregado vale zero, conforme a referência. Dados desconhecidos não
+viram aprovação nem valores fabricados.
+
+A continuação sentada aceita subrotinas comuns do Main sob o owner Sit declarado,
+incluindo espera de animação: valida contexto, frame, ticket, roster e fingerprint.
+Não aceita interação ativa nem owner estrangeiro. Esses owners são gravados pelo
+registro próprio de sentado, sem serem confundidos com Route45. Antes de salvar,
+o host exige que as rotinas não-globais em execução pertençam ao banco que será
+recarregado. Na restauração, registra os recursos antes de resolver a animação.
+
+Build e três CTests focados passaram (`reports/native-tree-owner/attempt-1/`).
+`reports/native-menu-checks/seated-8/result.json`: House05 banco173 e House07
+cadeira128 completam Sit, save, reopen em processo novo (bytes iguais em tick0)
+e Stand; terminam em pé e sem vínculo ao assento. 26 originais intactos e todos
+processos/perfis encerrados. O gate original House05 também passou em idioma1,
+com save512/reopen512/Stand até1024; o teste duplo usou idioma14 e save1024.
+Binário SHA256 `2ea0d52dd5ae652917ed9118b0ae31e555388c26d2e9980f8466e198940a0142`.
+House07 geladeira também passou em `reports/native-active-interaction/attempt-21/result.json`:
+cortes256/512 com 12 seções idênticas ao reabrir e no final4096, save legado
+carregado, 25 originais intactos e processos/perfis encerrados.
+Revisão independente conferiu código e contratos; fixtures não substituem os
+gates reais. Não é suporte genérico a qualquer ação pendente ou paridade de jogo.
+
+Limites restantes de RunTreeByName: destino0, destino1 geral, instalação de
+bancos arbitrários ainda não carregados, precedência de STR local semiglobal e
+argumentos extras além dos quatro TEMP ainda precisam de cobertura própria.
 
 Próximo passo: ampliar a cobertura real de checks e o estado de execução para o
 prefixo protegido de ações, AllowPush aninhado, cancelamento e RunImmediately.

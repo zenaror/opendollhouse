@@ -292,3 +292,36 @@ long-running session, and expansion-specific data. Add profiles for
 additional-resident posture/accessory state, in-progress routing, dynamic code
 owners and residents absent from the saved World before claiming those cases.
 This checkpoint does not establish expansion coverage or full game compatibility.
+
+## Object-owned seated Main continuation (2026-10-26)
+
+The native host can resume Main while it is inside a named routine of the seat
+object. RunTreeByName destination 2 stays on the calling VM and uses an installed
+owner matching the target's exact resource. Dynamic private and linked BCON
+constants are read from that same resource. All current registration paths derive
+the linked bank from that resource's GLOB; matching private resources cannot select
+an arbitrary semiglobal link. Multitile master lookup stays in the same source/asset.
+
+SEAT retains its exact owner roster and fingerprints. Ordinary object-owned Main
+frames and opcode44 waits are allowed only with the declared owner, resident caller,
+seat StackObject, and matching Playback/VM identity. The root remains the resident
+Main; queued interactions and foreign owners still fail. The host also checks that
+non-global frames are present in the canonical Sit bank before saving. Restore
+publishes verified resource metadata before resolving the saved animation.
+
+Evidence: `reports/native-menu-checks/seated-8/result.json` proves House05 bench173
+and House07 chair128 Sit/save/reopen/Stand with byte-identical zero-tick reopen,
+standing/detached final posture, unchanged 26 original files, and exited processes
+and removed isolated profiles. The original House05 CLI gate additionally passes
+at ticks512/1024 (language1); the paired run uses language14 and save tick1024.
+Build and three focused CTests, including the synthetic object-owned wait restore
+and malformed-owner cases, are in `reports/native-tree-owner/attempt-1/`.
+Binary SHA256: `2ea0d52dd5ae652917ed9118b0ae31e555388c26d2e9980f8466e198940a0142`.
+These are headless seated-flow proofs, not arbitrary pending-action support,
+visual fidelity, complete household seated support or console validation.
+
+The same binary also passes the House07 fridge roundtrip in
+`reports/native-active-interaction/attempt-21/result.json`: both cuts256/512
+reopen with 12 identical sections and match uninterrupted execution at tick4096;
+legacy save loads, 25 protected files remain unchanged, and processes/profiles
+are cleaned up. This covers the existing whole-household fridge path separately.

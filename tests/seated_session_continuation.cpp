@@ -20,6 +20,17 @@ odh::RoutineSet animation_main_program(){
     return {{odh::routine_key(4096),odh::Bhav{0x8002,
         {{44,254,255,{7,0,0,0,1,0,0,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}};
 }
+odh::RoutineSet named_animation_main_program(){
+    return {{odh::routine_key(4096),odh::Bhav{0x8002,
+        {{28,254,255,{0,0,0,0,0,0,0,0}}},{},odh::Bhav::Metadata{0,4,4,0}}}};
+}
+constexpr odh::CodeOwner sit_owner=0x80000000U;
+odh::RoutineSet sit_owner_bank(std::uint16_t sit_action){
+    auto bank=action(sit_action);
+    bank.emplace(odh::routine_key(8228),odh::Bhav{0x8002,
+        {{44,254,255,{7,0,0,0,1,0,0,0}}},{},odh::Bhav::Metadata{0,4,4,0}});
+    return bank;
+}
 struct Fixture {
     odh::World world;
     odh::EntityThreadControllers controllers{world,1};
@@ -98,6 +109,49 @@ odh::SessionBundle animation_main_fixture(Fixture& source) {
     auto& queue=bundle.runtime_entities[0].controllers.interactions;
     queue.sequence=1;queue.completion=odh::InteractionCompletion{1,1,1,true};
     bundle.scheduler=scheduler.snapshot();bundle.seated_continuation->code_owners.clear();
+    return bundle;
+}
+odh::SessionBundle named_owner_animation_fixture(Fixture& source){
+    odh::World world;require(world.restore_snapshot(source.bundle.world),"named-owner fixture World");
+    odh::EntityThreadControllers controllers(world,1);
+    auto clip=std::make_shared<odh::AnimationHeader>();clip->name="synthetic-seated-object-Main";
+    odh::BoneMotion motion{};motion.frames=3;motion.time_properties={{{0,{{"xevt","100"}}}}};
+    clip->motions.push_back(motion);
+    odh::Playback playback(world,[&](const auto&,auto,auto){return clip;});
+    const auto bank=sit_owner_bank(source.sit_action);
+    const odh::VmPrimitive playback_primitive=playback.primitive();
+    const odh::VmPrimitive dispatch=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const odh::Ts1Temps& temps,const odh::VmDispatch& vm_dispatch){
+        if(instruction.opcode==28){
+            const odh::VmContext context{1,1,2,sit_owner};
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::call,{}, {},
+                odh::VmCall{odh::routine_key(8228),context,{}}};
+        }
+        return playback_primitive(frame,instruction,temps,vm_dispatch);
+    };
+    odh::Vm vm(odh::RoutineSet{},world.vm_memory(),{},dispatch,
+        {{1,named_animation_main_program()},{sit_owner,bank}});
+    require(vm.start(odh::routine_key(4096),{1,1,1,1})==odh::VmStatus::running&&
+        controllers.bind(vm)&&playback.bind(vm),"bind Main to exact Sit owner bank");
+    require(vm.run(8)==odh::VmStatus::waiting&&vm.stack().size()==2&&
+        vm.stack().back().key.id==8228&&vm.stack().back().key.scope==odh::RoutineScope::semiglobal&&vm.stack().back().context.code_owner==sit_owner,
+        "Main enters the saved object's named BHAV and waits at opcode 44");
+    odh::EntityVmScheduler scheduler(4);
+    require(scheduler.add(1,vm,[&](std::uint64_t tick){return controllers.advance(tick);},
+        [&]{return controllers.observe();},[&]{return controllers.notify();})&&
+        scheduler.tick(1,8,8)&&scheduler.tick(2,8,8),"named-owner Main reaches scheduler save point");
+    odh::PlaybackSnapshot playback_snapshot;
+    require(playback.capture_snapshot(playback_snapshot)&&playback_snapshot.state&&playback_snapshot.state->wait,
+        "capture object-owned Main animation wait");
+    auto bundle=source.bundle;
+    bundle.runtime_entities={{1,vm.snapshot(),controllers.snapshot(),playback_snapshot}};
+    auto& queue=bundle.runtime_entities[0].controllers.interactions;
+    queue.sequence=1;queue.completion=odh::InteractionCompletion{1,1,1,true};
+    bundle.scheduler=scheduler.snapshot();
+    const auto fingerprint=odh::session_action_routine_fingerprint(bank);
+    bundle.seated_continuation->sit_routine_fingerprint=fingerprint;
+    bundle.seated_continuation->code_owners={{sit_owner,source.definition.source,source.definition.asset,
+        source.sit_action,fingerprint}};
     return bundle;
 }
 }
@@ -339,6 +393,66 @@ int main(){try{
         [&](const auto&){return animation_clip;},animation_random,animation_tick);
     require(animation_tick==2&&animation_vm.status()==odh::VmStatus::waiting&&animation_playback.progress(),
         "Main-owned seated animation pending wait restores before execution");
+    auto named=named_owner_animation_fixture(f);
+    const auto named_bytes=odh::encode_session_bundle(named);
+    const auto named_loaded=odh::decode_session_bundle(named_bytes,f.bundle.resources);
+    require(odh::encode_session_bundle(named_loaded)==named_bytes&&
+        named_loaded.runtime_entities[0].vm.stack.size()==2&&
+        named_loaded.runtime_entities[0].vm.stack.back().key.id==8228&&
+        named_loaded.runtime_entities[0].vm.stack.back().key.scope==odh::RoutineScope::semiglobal&&
+        named_loaded.runtime_entities[0].playback.state->wait&&
+        named_loaded.runtime_entities[0].vm.pending->context.code_owner==0x80000000U,
+        "save and reopen preserves Main inside the exact object's animation BHAV");
+    const auto named_bank=sit_owner_bank(f.sit_action);
+    const auto load_named=[&](const auto&,auto id){
+        if(id==f.sit_action)return odh::SessionActionRoutineSource{named_bank,{}};
+        return odh::SessionActionRoutineSource{action(id),{}};
+    };
+    const auto named_owners=odh::resolve_seated_session_owners(named_loaded,f.definition,
+        *f.world.find(2)->entry_points,load_named);
+    require(named_owners.count(0x80000000U)&&
+        named_owners.at(0x80000000U).count(odh::routine_key(8228)),
+        "restore resolver installs the recorded Sit bank containing the named wait routine");
+    const auto bad_named=[&](auto mutate,const char* message){auto changed=named_loaded;mutate(changed);
+        rejects([&]{odh::validate_seated_session_continuation(changed);},message);++rejections;};
+    bad_named([](auto& b){b.runtime_entities[0].vm.stack.back().context.code_owner=0x80000001U;},
+        "unregistered owner frame accepted in seated Main");
+    bad_named([](auto& b){b.runtime_entities[0].vm.stack.back().context.callee=3;},
+        "foreign callee context accepted in seated Main");
+    bad_named([](auto& b){b.runtime_entities[0].vm.stack.front().context.code_owner=0x80000000U;},
+        "object owner accepted as the root Main frame");
+    bad_named([](auto& b){b.runtime_entities[0].playback.state->resource.code_owner=1;},
+        "animation resource from another code owner accepted");
+    bad_named([](auto& b){b.runtime_entities[0].vm.pending->instruction.instruction.opcode=17;},
+        "non-animation wait inside the Sit owner accepted");
+    auto named_candidate=odh::SingleResidentSessionRestore::prepare(named_bytes,f.bundle.resources,f.bundle.host,
+        baseline,f.lot,f.bootstrap,21);
+    odh::EntityThreadControllers named_controllers(named_candidate->world(),1);
+    auto named_clip=std::make_shared<odh::AnimationHeader>();named_clip->name="synthetic-seated-object-Main";
+    odh::BoneMotion named_motion{};named_motion.frames=3;
+    named_motion.time_properties={{{0,{{"xevt","100"}}}}};named_clip->motions.push_back(named_motion);
+    odh::Playback named_playback(named_candidate->world(),[&](const auto&,auto,auto){return named_clip;});
+    const odh::VmPrimitive named_playback_primitive=named_playback.primitive();
+    const odh::VmPrimitive named_dispatch=[&](const odh::VmFrame& frame,const odh::Instruction& instruction,
+        const odh::Ts1Temps& temps,const odh::VmDispatch& vm_dispatch){
+        if(instruction.opcode==28)return odh::PrimitiveOutcome{odh::PrimitiveDisposition::call,{}, {},
+            odh::VmCall{odh::routine_key(8228),{1,1,2,0x80000000U},{}}};
+        return named_playback_primitive(frame,instruction,temps,vm_dispatch);
+    };
+    odh::Vm named_vm(odh::RoutineSet{},named_candidate->world().vm_memory(),{},named_dispatch,
+        {{1,named_animation_main_program()}});
+    require(named_controllers.bind(named_vm)&&named_playback.bind(named_vm),"bind named-owner restore controllers");
+    named_candidate->install_seated_continuation_owners(named_vm,f.definition,*f.world.find(2)->entry_points,load_named);
+    odh::EntityVmScheduler named_scheduler(4);
+    require(named_scheduler.add(1,named_vm,[&](std::uint64_t now){return named_controllers.advance(now);},
+        [&]{return named_controllers.observe();},[&]{return named_controllers.notify();}),
+        "register named-owner restored resident");
+    odh::RandomState named_random{999};std::uint64_t named_tick=999;
+    named_candidate->restore_execution(named_vm,named_controllers,named_playback,named_scheduler,
+        [&](const auto&){return named_clip;},named_random,named_tick);
+    require(named_tick==2&&named_vm.status()==odh::VmStatus::waiting&&
+        named_vm.stack().back().context.code_owner==0x80000000U&&named_playback.progress(),
+        "restore resumes the waiting BHAV from the exact Sit owner bank");
     std::cout<<"seated continuation: roundtrip, exact resource closure and "<<rejections<<" adversarial value cases passed\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

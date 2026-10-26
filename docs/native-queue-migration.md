@@ -83,14 +83,17 @@ error, not a fabricated eligibility result. The pinned TS1 permission rule has
 quirks (including humans passing the cat/dog flag branch); preserve its observed
 source semantics rather than imposing new game rules.
 
-Legacy single-resident regression probe: House07 Sit/save/fresh reopen/Stand
-passed in `reports/native-menu-checks/seated-2/result.json`, with byte-identical
-zero-tick reopen. House05 bench173 fails before tick256 with
-`RunTreeByName target has no loaded runtime code owner`; both 512 and 1024
-tick attempts fail. This is unresolved, not a passing gate or proof of a new
-regression. The legacy profile still cannot save arbitrary pending manual
-actions; its dynamic owners remain limited to routing and dedicated seated
-continuation. Whole-household code-owner capture is a distinct supported path.
+Legacy single-resident regression probe: House05 bench173 and House07 chair128
+both pass Sit/save/fresh reopen/Stand in
+`reports/native-menu-checks/seated-8/result.json`, including byte-identical
+zero-tick reopen. The earlier House05 failures are retained as historical
+evidence. The host now reuses the target's exact installed resource bank for
+RunTreeByName destination 2 and loads its linked BCON constants. Dedicated SEAT
+validation recognizes an ordinary Main subroutine and matching animation wait
+under its declared Sit owner. It verifies all owner references and restores
+resource metadata before animation resolution. Pending interaction queues and
+unknown owners remain unsupported in this legacy profile. Whole-household
+code-owner capture is a separate path. See `session-save-design.md` for evidence.
 
 ## Pinned authority
 

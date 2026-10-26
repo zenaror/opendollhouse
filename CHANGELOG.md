@@ -5,6 +5,12 @@ validação indicados por versão.
 
 ## Não lançado
 
+### Corrigido
+
+- O Sim pode sentar no banco da Casa 05, salvar, reabrir e levantar no perfil
+  nativo de um morador. A restauração conserva o código, os valores de
+  comportamento e a animação usados pelo banco.
+
 ### Adicionado
 
 - Ações escolhidas no menu passam a repetir a verificação de disponibilidade
