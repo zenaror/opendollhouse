@@ -16,6 +16,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- A interface nativa permite várias ordens por Sim, mostra a fila e permite
+  cancelar uma ordem clicando nela. Ordens pendentes reaparecem ao carregar;
+  trocar de Sim preserva a fila do outro morador.
+
 - A fila nativa pode cancelar ações posteriores quando uma nova ordem exige
   isso, preservando as que precisam terminar. A passagem tem limite para evitar
   travamentos, e a limpeza conserva os valores usados pelo objeto durante o jogo.

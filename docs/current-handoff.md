@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `91e0dd1fe36fb351e1f92e728035702b59c89b76`.
+Base publicada antes da etapa atual: `e88cedd2ceedaa858c1199c396470c86a28546b8`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,53 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Cancelamento automático após entrada de uma nova ordem (etapa atual)
+### Várias ordens do jogador na interface (etapa atual)
+
+A interface C++ permite reabrir menus e enfileirar enquanto há trabalho ativo,
+trocar de Sim e cancelar uma ordem pelo seu botão. A lista provisória é por Sim,
+na ordem nativa, com páginas; Backspace não cancela a ordem de outro Sim.
+Os textos usam a conversão existente para UTF-8; a lista redesenha mesmo pausada.
+A opção `--headless-resident-interaction` aceita até 32 argumentos repetidos,
+inclusive para o ator primário, com ticks não decrescentes e relativos à sessão.
+
+`UserInteractionTracker` acompanha cada pedido por ator, geração, execução de
+Main e UID nativo. Reconstrói ações pendentes e pais protegidos ao carregar.
+A conclusão de uma ação filha ou de outro Sim não conclui o pedido errado.
+O histórico guarda 64 resultados pela ordem de término; pedidos pendentes não
+são descartados. O vínculo para levantar é atualizado para cada ator a partir
+de sua conclusão e postura reais. Tentativas rejeitadas antes da entrada na fila
+também aparecem em `player_submissions`.
+A simulação continua sendo a autoridade; o formato de save v5 não mudou.
+Histórico, intenção explícita de cancelamento, seleção de Sim e rótulos não são
+persistidos. Os flags nativos de cancelamento continuam no save.
+Detalhes e limites em [native-player-queue.md](native-player-queue.md).
+
+Build final e 19 CTests passaram em
+`reports/native-player-queue/attempt-1/final-*.log`.
+SHA256 do binário:
+`6d2a3f3c76ec2d045afd3ade2dc4dbff71d61f1f9b0ee9b2bbf0ad76ac229217`.
+
+Na janela Xvfb final, foram dadas duas ordens Lanche ao Sim 105 e cancelada
+somente a segunda. Selecionar o Sim 137 e apertar Backspace preservou a primeira
+ordem do Sim 105. A tecla S salvou no tick 10; jogo, Xvfb e perfil foram encerrados.
+Imagem e JSON estão em `reports/native-player-queue/window-final/`.
+`window-zero-final/` confirma a reconstrução do pedido pendente e igualdade das
+12 seções do save; também confirma a rejeição de ticks decrescentes e 33 pedidos.
+
+`roundtrips-final/result.json` registra 12 processos: dois pedidos do Sim 105
+terminam com sucesso; alvo 32767 e ator 32766 são rejeitados e registrados;
+cancelar o UID 1 do Sim 137 não altera o UID 1 do Sim 105. A continuação do save
+da janela também passa. Os cortes em 256 e continuação até 4096 preservam as
+12 seções e os campos de ator, globais, RNG e ticks. Os 25 originais mantêm seus
+hashes; todos os processos e perfis temporários foram encerrados.
+
+Não forçar interrupção de Sleep ao enfileirar: a referência não faz isso.
+O pedido ainda pendente no tick 10 da janela é coerente com essa regra.
+Salvar famílias sentadas, interface original, expansões e ports continuam
+pendentes. A lista provisória mostra pedidos do jogador; os ícones de ações
+autônomas ainda não estão cobertos.
+
+### Cancelamento automático após entrada de uma nova ordem (commit `e88cedd`)
 
 No ramo ordinary de Enqueue, um pivot de prioridade maior ou igual à nova ordem
 cancela o sufixo depois dessa ordem. PushHead/PushTail, fila vazia, inserção sem

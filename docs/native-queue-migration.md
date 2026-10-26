@@ -212,6 +212,11 @@ for these exercised paths; no graphics, original-EXE or hardware proof is claime
 
 ## Player requests and code ownership
 
+Multiple player orders, per-actor tracking and native window/save evidence are
+described in [native-player-queue.md](native-player-queue.md). The queue remains
+authoritative; that presentation model introduces no new simulation save schema.
+
+
 The UI tracks the request's native 64-bit identity, independently of the wrapping
 public UID. Losing a pending request without a completion means it was rejected
 before execution; a later automatic action must not supply its result.

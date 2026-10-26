@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include "odh/user_interaction_tracker.hpp"
 #include "session_generic_resource_path.hpp"
 #include "odh/pie_menu.hpp"
 #include "odh/ui_bitmap.hpp"
@@ -521,6 +522,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<HeadlessInteraction> headless_interaction;
     std::optional<std::int16_t> headless_interaction_actor;
     bool headless_interaction_applied=false;
+    struct ScheduledPlayerInteraction {std::int16_t actor,target;std::uint64_t tick;};
+    std::vector<ScheduledPlayerInteraction> headless_player_interactions;
+    std::size_t headless_player_interaction_index=0;
     std::optional<std::uint64_t> headless_cancel_interaction_tick;
     bool headless_cancel_interaction_applied=false;
     std::string interaction_cancel_status="not_requested",interaction_cancel_diagnostic;
@@ -702,12 +706,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless interaction target/tick is outside the supported profile");
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
-        else if(option=="--headless-resident-interaction"&&!headless_interaction&&n+3<argc){
+        else if(option=="--headless-resident-interaction"&&n+3<argc){
             const auto actor=selector(argv[++n]),id=selector(argv[++n]),tick=selector(argv[++n]);
             if(actor==0||actor>32767||id==0||id>32767||tick==0)
                 throw odh::FormatError("headless resident interaction actor/target/tick is outside the supported profile");
-            headless_interaction_actor=static_cast<std::int16_t>(actor);
-            headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
+            if(headless_player_interactions.size()>=32||
+               (!headless_player_interactions.empty()&&tick<headless_player_interactions.back().tick))
+                throw odh::FormatError("player interaction sequence exceeds 32 requests or moves backward in time");
+            if(!headless_interaction){
+                headless_interaction_actor=static_cast<std::int16_t>(actor);
+                headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
+            }else if(headless_player_interactions.empty())
+                throw odh::FormatError("cannot mix a single interaction schedule with resident sequence requests");
+            headless_player_interactions.push_back({static_cast<std::int16_t>(actor),static_cast<std::int16_t>(id),tick});
         }
         else if(option=="--headless-cancel-interaction"&&!headless_cancel_interaction_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
@@ -840,6 +851,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        *headless_cancel_interaction_tick>ticks_limit||
        *headless_cancel_interaction_tick<headless_interaction->tick))
         throw odh::FormatError("--headless-cancel-interaction requires a scheduled interaction and an in-range tick not before it");
+    for(const auto& request:headless_player_interactions)
+        if(request.tick>ticks_limit)throw odh::FormatError("player interaction sequence exceeds the tick limit");
     if(headless_interaction_actor&&(!session_context||session_context->single_resident_session||
        session_context->household_members.empty()))
         throw odh::FormatError("--headless-resident-interaction requires an integrated whole-household session");
@@ -3529,6 +3542,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             throw odh::FormatError("resumed interaction tick overflows the session clock");
         scheduled_interaction_tick=headless_interaction->tick+(restoring_session?resumed_tick:0);
     }
+    if(restoring_session)for(auto& request:headless_player_interactions){
+        if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("resumed player request tick overflows the session clock");
+        request.tick+=resumed_tick;
+    }
     if(headless_cancel_interaction_tick){
         if(restoring_session&&*headless_cancel_interaction_tick>
            std::numeric_limits<std::uint64_t>::max()-resumed_tick)
@@ -3876,6 +3894,17 @@ struct PlacementCandidateProbe {
     std::optional<std::uint64_t> render_interaction_actor_generation;
     std::optional<std::int16_t> render_interaction_actor_id;
     bool render_interaction_cancel_attempted=false;
+    odh::UserInteractionTracker user_interactions(256,64);
+    std::optional<odh::UserInteractionIdentity> latest_player_request;
+    std::string player_request_error,player_request_message;
+    using PlayerLabelKey=std::tuple<std::int16_t,std::uint64_t,std::uint64_t,std::uint64_t>;
+    std::map<PlayerLabelKey,std::pair<std::string,std::uint8_t>> player_request_labels;
+    const auto player_label_key=[](const odh::UserInteractionIdentity& id){
+        return PlayerLabelKey{id.actor,id.actor_generation,id.run_generation,id.uid};
+    };
+    struct PlayerSubmission {std::int16_t actor,target;std::uint64_t tick;bool accepted;
+        std::optional<odh::UserInteractionIdentity> identity;std::string status,diagnostic;};
+    std::deque<PlayerSubmission> player_submissions;
     const auto cancel_selected_interaction=[&](std::int16_t actor_id,std::uint64_t uid){
         render_interaction_cancel_attempted=true;
         interaction_cancel_diagnostic.clear();
@@ -3886,7 +3915,10 @@ struct PlacementCandidateProbe {
             interaction_cancel_status="unsupported";
             interaction_cancel_diagnostic="selected resident has no native interaction queue";
         }else{
+            const auto* tracked=user_interactions.current(actor_id,uid);
+            const auto identity=tracked?std::optional<odh::UserInteractionIdentity>{tracked->identity}:std::nullopt;
             const auto result=actor_queue->cancel(uid);
+            if(identity)(void)user_interactions.note_cancel(*identity,result);
             switch(result){
             case odh::InteractionCancelResult::missing:interaction_cancel_status="missing";break;
             case odh::InteractionCancelResult::removed:interaction_cancel_status="removed";break;
@@ -3907,6 +3939,8 @@ struct PlacementCandidateProbe {
         else if(interaction_cancel_status=="missing")render_interaction_status="cancel_missing";
         else render_interaction_status="cancel_unsupported";
         render_interaction_diagnostic=interaction_cancel_diagnostic;
+        player_request_error=interaction_cancel_diagnostic;
+        player_request_message=interaction_cancel_status=="unsupported"?"Cannot cancel that action.":std::string{};
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         session_log.event("interaction cancel actor="+std::to_string(actor_id)+" uid="+std::to_string(uid)+
             " result="+interaction_cancel_status+
@@ -3950,6 +3984,67 @@ struct PlacementCandidateProbe {
             [&](const auto& member){return member->id==actor_id;});
         if(found==household_runtime.end())return {nullptr,nullptr,nullptr};
         return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation,&(*found)->seated_action_code};
+    };
+    const auto observe_player_requests=[&]{
+        const auto observe=[&](odh::InteractionQueue& native){
+            const auto state=native.snapshot();
+            if(!state.run_generation&&state.actions.empty())return;
+            if(!user_interactions.observe(state))
+                throw odh::FormatError("player request observation failed: "+user_interactions.diagnostic());
+        };
+        observe(queue);
+        for(auto& member:household_runtime)if(member->controllers)observe(member->controllers->interactions());
+        // A successful request establishes its own actor's Stand binding,
+        // independently of the object and Sim currently selected in the UI.
+        for(const auto& request:user_interactions.records())if(request.result&&*request.result){
+            const auto* actor=world.find(request.identity.actor);
+            const auto* target=world.find(request.action.call.context.callee);
+            if(!actor||actor->generation!=request.identity.actor_generation||actor->person_data.empty()||
+               actor->person_data[0]!=1||!actor->attachment||!target||!target->definition||
+               target->generation!=request.action.target_generation||actor->attachment->container!=target->id)continue;
+            const auto* candidate=definition_index?definition_index->unique(target->definition->guid):nullptr;
+            if(!candidate)continue;
+            const auto [selected,generation,code]=actor_seated_binding(request.identity.actor);
+            if(selected&&generation&&code){
+                *selected=SavedObjectSelection{target->id,target->definition->guid,target->generation,candidate->definition.tree_table_id};
+                *generation=request.identity.actor_generation;*code=request.action.call.key.id;
+            }
+        }
+        for(auto it=player_request_labels.begin();it!=player_request_labels.end();){
+            const auto& key=it->first;
+            if(!user_interactions.find({std::get<0>(key),std::get<1>(key),std::get<2>(key),std::get<3>(key)}))
+                it=player_request_labels.erase(it);
+            else ++it;
+        }
+        if(latest_player_request&&!user_interactions.find(*latest_player_request))latest_player_request.reset();
+        if(!latest_player_request){
+            const auto pending=user_interactions.pending(active_household_actor);
+            if(!pending.empty())latest_player_request=pending.back()->identity;
+            else for(const auto& request:user_interactions.records())
+                if(!odh::user_interaction_terminal(request.state))latest_player_request=request.identity;
+        }
+        if(!latest_player_request)return; // Keep dedicated legacy seated presentation.
+        const auto* request=user_interactions.find(*latest_player_request);if(!request)return;
+        render_interaction_requested=true;render_interaction_enqueued=true;
+        render_interaction_queue_uid=request->identity.uid;
+        render_interaction_actor_id=request->identity.actor;render_interaction_actor_generation=request->identity.actor_generation;
+        render_interaction_action=request->action.call.key.id;render_interaction_owner=request->action.call.context.code_owner;
+        render_interaction_result=request->result;
+        render_interaction_target.reset();
+        const auto* target=world.find(request->action.call.context.callee);
+        if(target&&target->definition&&target->generation==request->action.target_generation){
+            const auto* candidate=definition_index?definition_index->unique(target->definition->guid):nullptr;
+            if(candidate)render_interaction_target=SavedObjectSelection{target->id,target->definition->guid,target->generation,candidate->definition.tree_table_id};
+        }
+        render_interaction_diagnostic.clear();
+        if(request->result)render_interaction_status=*request->result?"returned_true":"returned_false";
+        else if(request->state==odh::UserInteractionState::cancelled)render_interaction_status="cancelled_removed";
+        else if(request->state==odh::UserInteractionState::dropped||request->state==odh::UserInteractionState::invalidated){
+            render_interaction_status="ineligible";render_interaction_diagnostic="request left its original queue without a matching completion";
+        }else if(host_failed){render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;}
+        else if(auto* actor_vm=actor_vm_for(request->identity.actor);actor_vm&&actor_vm->status()==odh::VmStatus::fault){
+            render_interaction_status="vm_fault";render_interaction_diagnostic=actor_vm->diagnostic();
+        }else render_interaction_status=request->state==odh::UserInteractionState::cancel_requested?"cancelled_notified":"queued";
     };
     std::string go_here_status="not_requested",go_here_route_status="not_requested",go_here_diagnostic;
     bool go_here_cancel_pending=false;
@@ -4050,7 +4145,6 @@ struct PlacementCandidateProbe {
                 "interaction row exceeds bounded selection-time probe profile"});
     };
     const auto request_selected_interaction=[&] {
-        if(render_interaction_enqueued)return;
         render_interaction_cancel_attempted=false;
         interaction_cancel_status="not_requested";
         interaction_cancel_diagnostic.clear();
@@ -4062,8 +4156,8 @@ struct PlacementCandidateProbe {
         auto* actor_queue=actor_queue_for(actor_id);
         auto* actor_vm=actor_vm_for(actor_id);
         auto* owner_map=actor_owner_map_for(actor_id);
-        if(!actor_queue||!actor_vm||!owner_map||actor_queue->size()!=0||actor_queue->active()){
-            render_interaction_status="rejected";render_interaction_diagnostic="manual preview action requires this resident's available VM and an empty interaction queue";return;
+        if(!actor_queue||!actor_vm||!owner_map){
+            render_interaction_status="rejected";render_interaction_diagnostic="selected resident has no available interaction VM";return;
         }
         const auto& selected=*render_selection;
         const auto* actor=world.find(actor_id);
@@ -4181,6 +4275,17 @@ struct PlacementCandidateProbe {
         if(!action_uid||!actor_queue->contains_uid(action_uid)){
             render_interaction_status="rejected";render_interaction_diagnostic="selected menu action was not retained in the resident queue";return;
         }
+        if(!user_interactions.observe(actor_queue->snapshot()))
+            throw odh::FormatError("player request tracking failed after enqueue: "+user_interactions.diagnostic());
+        const auto* tracked=user_interactions.current(actor_id,action_uid);
+        if(!tracked)throw odh::FormatError("accepted player request has no exact tracking identity");
+        latest_player_request=tracked->identity;
+        const auto row_index=*render_selected_interaction_row;
+        if(row_index<render_interactions->row_labels.size()&&render_interactions->row_labels[row_index])
+            player_request_labels[player_label_key(*latest_player_request)]={*render_interactions->row_labels[row_index],
+                row_index<render_interactions->row_label_languages.size()?render_interactions->row_label_languages[row_index]:std::uint8_t{1}};
+        render_interaction_result.reset();
+        render_menu_anchor.reset(); // Close this menu; another object can open a new one while work is queued.
         render_interaction_queue_uid=action_uid;
         render_interaction_enqueued=true;render_interaction_status="queued";render_interaction_action=row.action;
         render_interaction_owner=owner->second;
@@ -4188,6 +4293,24 @@ struct PlacementCandidateProbe {
         render_interaction_actor_generation=actor->generation;
         render_interaction_actor_id=actor_id;
         render_interaction_diagnostic.clear();
+    };
+    const auto record_player_submission=[&](std::int16_t actor,std::int16_t target,bool accepted,
+            std::optional<odh::UserInteractionIdentity> identity,const std::string& status,const std::string& diagnostic){
+        if(player_submissions.size()>=64)player_submissions.pop_front();
+        player_submissions.push_back({actor,target,ticks,accepted,identity,status,diagnostic});
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+        session_log.event("player request actor="+std::to_string(actor)+" target="+std::to_string(target)+
+            " tick="+std::to_string(ticks)+" result="+status+(diagnostic.empty()?std::string{}:" reason="+diagnostic));
+#endif
+    };
+    const auto submit_selected_player_request=[&]{
+        request_selected_interaction();
+        const bool accepted=render_interaction_status=="queued";
+        if(accepted){player_request_error.clear();player_request_message.clear();}
+        else{player_request_error=render_interaction_diagnostic.empty()?render_interaction_status:render_interaction_diagnostic;
+             player_request_message="Cannot add that action.";}
+        record_player_submission(active_household_actor,render_selection?render_selection->id:std::int16_t{0},
+            accepted,accepted?latest_player_request:std::nullopt,render_interaction_status,render_interaction_diagnostic);
     };
     // Stand is an explicit host control, not a fabricated TTAB row. Its
     // supported precondition is a successful action in this session that left
@@ -4366,7 +4489,7 @@ struct PlacementCandidateProbe {
         if(item.interaction_row){
             render_selected_interaction_row=*item.interaction_row;
             render_interaction_requested=true;
-            request_selected_interaction();
+            submit_selected_player_request();
             return std::string("interaction ")+render_interaction_status;
         }
         if(!item.children.empty()){
@@ -4378,7 +4501,7 @@ struct PlacementCandidateProbe {
     };
     const auto draw_interaction_menu=[&](odh::RasterFrame& image){
 #ifdef ODH_HAVE_LINUX_TEXT_RENDERER
-        if(!render_selection||!render_interactions||!render_interactions->table||render_interaction_enqueued)return;
+        if(!render_selection||!render_interactions||!render_interactions->table||!render_menu_anchor)return;
         const auto model=current_interaction_pie_menu();
         const auto* items=active_pie_menu_items(model);
         if(!items||items->empty())return;
@@ -4438,10 +4561,10 @@ struct PlacementCandidateProbe {
     odh::WorldProjection render_camera;render_camera.width=320;render_camera.height=240;render_camera.center_tile={0,0,0.75f};
     if(render_size){render_camera.width=(*render_size)[0];render_camera.height=(*render_size)[1];}
     const auto handle_interaction_menu_click=[&](std::int32_t x,std::int32_t y){
-        if(!render_selection||!render_interactions||!render_interactions->table||render_interaction_enqueued)
+        if(!render_selection||!render_interactions||!render_interactions->table||!render_menu_anchor)
             return false;
         auto* action_queue=actor_queue_for(active_household_actor);
-        if(!action_queue||action_queue->size()!=0||action_queue->active())return false;
+        if(!action_queue)return false;
         const auto model=current_interaction_pie_menu();
         const auto* items=active_pie_menu_items(model);
         if(!items||items->empty())return false;
@@ -4459,10 +4582,85 @@ struct PlacementCandidateProbe {
             const auto& item=(*items)[index];
             if(item.interaction_row){
                 render_selected_interaction_row=*item.interaction_row;
-                render_interaction_requested=true;request_selected_interaction();
+                render_interaction_requested=true;submit_selected_player_request();
             }else if(!item.children.empty()){
                 render_pie_menu_path.push_back(index);render_pie_menu_selected=0;
             }
+            return true;
+        }
+        return false;
+    };
+    std::vector<std::pair<odh::PieMenuRect,odh::UserInteractionIdentity>> player_queue_rows;
+    std::optional<odh::PieMenuRect> player_queue_header;
+    std::size_t player_queue_page=0,player_queue_pages=1;
+    const auto player_request_label=[&](const odh::UserInteractionRequest& request){
+        const auto key=player_label_key(request.identity);
+        if(const auto found=player_request_labels.find(key);found!=player_request_labels.end())return found->second;
+        std::pair<std::string,std::uint8_t> result{"Action",1};
+        const auto* target=world.find(request.action.call.context.callee);
+        const auto* candidate=target&&target->generation==request.action.target_generation&&target->definition&&definition_index?
+            definition_index->unique(target->definition->guid):nullptr;
+        if(candidate){
+            const auto table=saved_object_interactions(*candidate,*definition_index,game_language);
+            std::optional<std::pair<std::string,std::uint8_t>> match;
+            bool ambiguous=false;
+            if(table.table&&table.table->status==odh::TtabStatus::decoded)
+                for(std::size_t n=0;n<table.table->interactions.size();++n){
+                    const auto& row=table.table->interactions[n];
+                    if(row.action!=request.action.call.key.id||row.test!=(request.action.check?request.action.check->id:0)||
+                       n>=table.row_labels.size()||!table.row_labels[n])continue;
+                    const auto label=std::make_pair(*table.row_labels[n],n<table.row_label_languages.size()?table.row_label_languages[n]:std::uint8_t{1});
+                    if(match&&*match!=label){ambiguous=true;break;}match=label;
+                }
+            if(match&&!ambiguous)result=*match;
+        }
+        player_request_labels.emplace(key,result);return result;
+    };
+    const auto draw_player_queue=[&](odh::RasterFrame& image){
+        player_queue_rows.clear();player_queue_header.reset();
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+        const auto pending=user_interactions.pending(active_household_actor);
+        if(pending.empty()&&player_request_message.empty())return;
+        const auto width=std::min(220,static_cast<int>(image.width)-16);
+        if(width<40)return;
+        const auto rows=static_cast<std::size_t>(std::min(8,std::max(1,(static_cast<int>(image.height)-52)/22)));
+        player_queue_pages=std::max<std::size_t>(1,(pending.size()+rows-1)/rows);player_queue_page%=player_queue_pages;
+        player_queue_header=odh::PieMenuRect{8,8,width,22};
+        odh_host::TextOverlayStyle style;style.x=8;style.y=8;style.width=width;style.height=22;
+        style.font_size_px=12;style.padding=3;style.foreground={250,248,230,255};style.background={31,44,53,235};
+        std::string heading="Orders: "+std::to_string(pending.size());
+        if(player_queue_pages>1)heading+=" | More "+std::to_string(player_queue_page+1)+"/"+std::to_string(player_queue_pages);
+        (void)odh_host::draw_text_overlay(image,heading,1,style);
+        const auto begin=player_queue_page*rows;
+        for(std::size_t n=begin;n<std::min(begin+rows,pending.size());++n){
+            const auto& request=*pending[n];const auto label=player_request_label(request);
+            std::string display_label="Action";
+            try{display_label=odh_host::legacy_text_to_utf8(label.first,label.second,2048);}
+            catch(const std::exception&){ /* Labels never authorize or invalidate queued simulation work. */ }
+            const auto y=30+static_cast<int>(n-begin)*22;
+            player_queue_rows.push_back({odh::PieMenuRect{8,y,width,22},request.identity});
+            style.y=y;style.background=request.state==odh::UserInteractionState::active?
+                std::array<std::uint8_t,4>{42,91,121,235}:std::array<std::uint8_t,4>{24,27,31,225};
+            const auto prefix=request.state==odh::UserInteractionState::active?"Doing: ":
+                request.state==odh::UserInteractionState::cancel_requested?"Stopping: ":"Next: ";
+            (void)odh_host::draw_text_overlay(image,std::string(prefix)+display_label+"  [x]",label.second,style);
+        }
+        if(!player_request_message.empty()){
+            style.y=30+static_cast<int>(std::min(rows,pending.size()))*22;style.background={91,40,40,235};
+            (void)odh_host::draw_text_overlay(image,player_request_message,1,style);
+        }
+#else
+        (void)image;
+#endif
+    };
+    const auto handle_player_queue_click=[&](std::int32_t x,std::int32_t y){
+        if(player_queue_header&&player_queue_header->contains(x,y)){
+            player_queue_page=(player_queue_page+1)%player_queue_pages;return true;
+        }
+        for(const auto& row:player_queue_rows)if(row.first.contains(x,y)){
+            const auto id=row.second;const auto* current=user_interactions.current(id.actor,id.uid);
+            if(id.actor==active_household_actor&&current&&current->identity==id&&!odh::user_interaction_terminal(current->state))
+                cancel_selected_interaction(id.actor,id.uid);
             return true;
         }
         return false;
@@ -6262,6 +6460,7 @@ struct PlacementCandidateProbe {
                     render_window_host->set_title(interaction_window_title()+" | missing font glyphs: "+
                                                   std::to_string(text_result.missing_glyphs));
             }
+            draw_player_queue(frame.image);
             draw_interaction_menu(frame.image);
             if(saved_world_main&&captured_status_hud){
                 odh_host::draw_household_selector_button(frame.image,game_language);
@@ -6593,6 +6792,7 @@ struct PlacementCandidateProbe {
     }
 #endif
     if(!restoring_session)execute(false); // Restored Main resumes only at saved tick + 1.
+    observe_player_requests();
     profile_mark("first-main-execution");
     capture_frame();
     const auto queue_headless_window_interaction=[&]{
@@ -6945,15 +7145,16 @@ struct PlacementCandidateProbe {
                     member->go_here_cancel_pending=true;
                     if(render_window_host)render_window_host->set_title("OpenDollhouse: cancellation requested for resident "+
                         std::to_string(member->id));
-                }else if(go_here_status=="queued"){
+                }else if(active_household_actor==runtime_avatar_id&&go_here_status=="queued"){
                     go_here_cancel_pending=true;
                     go_here_route_status="cancelling";
                     if(render_window_host)render_window_host->set_title("OpenDollhouse Main preview: Go Here cancellation requested; finishing the game's failure action | Escape close");
-                }else if(render_interaction_enqueued&&render_interaction_queue_uid){
-                    const auto actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);
-                    auto* action_queue=actor_queue_for(actor_id);
-                    if(action_queue&&action_queue->contains_uid(*render_interaction_queue_uid))
-                        cancel_selected_interaction(actor_id,*render_interaction_queue_uid);
+                }else{
+                    const auto pending=user_interactions.pending(active_household_actor);
+                    if(!pending.empty()){
+                        const auto identity=pending.back()->identity;
+                        cancel_selected_interaction(identity.actor,identity.uid);
+                    }
                 }
             }
             bool household_selector_click_consumed=false;
@@ -6992,8 +7193,10 @@ struct PlacementCandidateProbe {
 #endif
             const bool interaction_menu_click_consumed=!household_selector_click_consumed&&input.primary_click&&
                 handle_interaction_menu_click((*input.primary_click)[0],(*input.primary_click)[1]);
+            const bool player_queue_click_consumed=!household_selector_click_consumed&&!interaction_menu_click_consumed&&input.primary_click&&
+                handle_player_queue_click((*input.primary_click)[0],(*input.primary_click)[1]);
             if(input.primary_click&&render_lot&&render_lot_evidence&&
-               (selector_resident_pick||(!household_selector_click_consumed&&!interaction_menu_click_consumed))){
+               (selector_resident_pick||(!household_selector_click_consumed&&!interaction_menu_click_consumed&&!player_queue_click_consumed))){
                 const auto click_x=(*input.primary_click)[0],click_y=(*input.primary_click)[1];
                 std::optional<std::int16_t> picked_resident=selector_resident_pick;
                 const auto& avatar_picks=render_lot_evidence->avatar_pick_ids;
@@ -7010,56 +7213,25 @@ struct PlacementCandidateProbe {
                     }
                 }
                 if(picked_resident){
-                    const bool manual_action_pending=(render_interaction_enqueued&&
-                        render_interaction_status=="queued")||headless_stand_status=="queued";
-                    if(!manual_action_pending)active_household_actor=*picked_resident;
+                    active_household_actor=*picked_resident;player_queue_page=0;
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
                     if(selector_resident_pick)
                         session_log.event("UI active Sim changed to "+std::to_string(active_household_actor));
 #endif
-                    if(manual_action_pending&&*picked_resident!=active_household_actor){
-                        if(render_window_host)render_window_host->set_title(
-                            "OpenDollhouse: finish the current resident action before changing Sims");
-                        continue;
-                    }
                     render_ground_selection.reset();
                     prepare_selected_object(std::nullopt);
-                    const bool any_interaction_active=queue.size()!=0||std::any_of(household_runtime.begin(),
-                        household_runtime.end(),[](const auto& member){return member->controllers&&
-                            (member->controllers->interactions().size()!=0||
-                             member->controllers->interactions().active());});
-                    const bool any_actor_action_active=any_interaction_active||queue.active();
-                    if(!headless_window_go_here&&(!render_interaction_enqueued||!any_actor_action_active)){
-                        render_interaction_requested=false;render_interaction_enqueued=false;
-                        render_interaction_status="not_requested";render_interaction_diagnostic.clear();
-                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
-                        render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
-                        render_interaction_queue_uid.reset();
-                    }
                 }else{
                     auto object=render_lot->pick(*render_lot_evidence,click_x,click_y);
                     render_ground_selection.reset();
                     if(!object)render_ground_selection=render_lot->pick_ground(*render_lot_evidence,click_x,click_y);
                     prepare_selected_object(std::move(object));
                     if(render_selection)render_menu_anchor=std::array<std::int32_t,2>{click_x,click_y};
-                    const bool any_interaction_active=queue.size()!=0||queue.active()||
-                        std::any_of(household_runtime.begin(),household_runtime.end(),[](const auto& member){
-                            return member->controllers&&(member->controllers->interactions().size()!=0||
-                                member->controllers->interactions().active());});
-                    if(!headless_window_go_here&&(!render_interaction_enqueued||!any_interaction_active)){
-                        render_interaction_requested=false;render_interaction_enqueued=false;
-                        render_interaction_status="not_requested";render_interaction_diagnostic.clear();
-                        render_interaction_action.reset();render_interaction_owner.reset();render_interaction_target.reset();
-                        render_interaction_result.reset();render_interaction_actor_id.reset();render_interaction_actor_generation.reset();
-                        render_interaction_queue_uid.reset();
-                    }
                 }
                 ++render_selection_clicks;render_selection_tick=ticks;
                 if(render_window_host)render_window_host->set_title(interaction_window_title());
             }
         if(input.interaction_selection_delta&&!input.primary_click&&render_selection&&render_interactions&&
-               actor_queue_for(active_household_actor)&&actor_queue_for(active_household_actor)->size()==0&&
-               !render_interaction_enqueued){
+               actor_queue_for(active_household_actor)){
                 const auto* candidate=definition_index?definition_index->unique(render_selection->guid):nullptr;
                 std::vector<std::uint16_t> tests;
                 if(candidate&&candidate->source==render_interactions->source&&
@@ -7134,7 +7306,10 @@ struct PlacementCandidateProbe {
             render_camera.rotation=static_cast<std::uint8_t>((int(render_camera.rotation)+input.rotation%4+4)%4);
             const auto zoom=std::clamp(int(render_camera.zoom)+input.zoom,1,3);
             render_camera.zoom=static_cast<std::uint8_t>(zoom);
-            if(input.rotation||input.zoom||input.redraw)capture_frame();
+            if(input.rotation||input.zoom||input.redraw||input.primary_click||input.action||input.confirm||
+               input.interaction_selection_delta||input.interrupt||input.stand||input.pause){
+                observe_player_requests();capture_frame();
+            }
             queue_headless_window_interaction();
             const bool runtime_finished=session_policy.limit_reached(ticks-resumed_tick,total_steps())||
                 (!vm_active(vm.status())&&(!second_main_vm||!vm_active(second_main_vm->status()))&&std::none_of(household_runtime.begin(),household_runtime.end(),
@@ -7176,26 +7351,32 @@ struct PlacementCandidateProbe {
         if(simulation_clock){
             if(!simulation_clock->tick(true))throw odh::FormatError("simulation clock exhausted");
         }
-        if(headless_interaction&&!headless_interaction_applied&&ticks==scheduled_interaction_tick){
+        while(headless_interaction&&((headless_player_interactions.empty()&&!headless_interaction_applied&&ticks==scheduled_interaction_tick)||
+              (headless_player_interaction_index<headless_player_interactions.size()&&
+               headless_player_interactions[headless_player_interaction_index].tick==ticks))){
+            const auto request=headless_player_interactions.empty()?ScheduledPlayerInteraction{
+                headless_interaction_actor.value_or(active_household_actor),headless_interaction->id,*scheduled_interaction_tick}:
+                headless_player_interactions[headless_player_interaction_index++];
+            scheduled_interaction_tick=request.tick;
             headless_interaction_applied=true;
             render_interaction_requested=true;
-            bool scheduled_actor_valid=true;
+            bool scheduled_actor_valid=true,submitted=false;
             if(headless_interaction_actor){
                 const auto resident=std::find_if(household_runtime.begin(),household_runtime.end(),
-                    [&](const auto& member){return member->id==*headless_interaction_actor;});
-                if(*headless_interaction_actor==runtime_avatar_id||resident==household_runtime.end()){
+                    [&](const auto& member){return member->id==request.actor;});
+                if(request.actor!=runtime_avatar_id&&resident==household_runtime.end()){
                     scheduled_actor_valid=false;
                     render_interaction_status="unsupported";
-                    render_interaction_diagnostic="scheduled action actor is not an additional member of the loaded household";
+                    render_interaction_diagnostic="scheduled action actor is not a loaded household member";
                 }else{
-                    active_household_actor=*headless_interaction_actor;
+                    active_household_actor=request.actor;
                 }
             }
             if(scheduled_actor_valid){
             // Keep diagnostics attributed to the selected household resident
             // even when the target or its TestFunctions reject the action.
             render_interaction_actor_id=active_household_actor;
-            const auto* target=world.find(headless_interaction->id);
+            const auto* target=world.find(request.target);
             const auto* candidate=target&&target->definition&&definition_index?
                 definition_index->unique(target->definition->guid):nullptr;
             if(!target||target->kind!=odh::EntityKind::object||!target->definition){
@@ -7207,8 +7388,13 @@ struct PlacementCandidateProbe {
             }else{
                 prepare_selected_object(SavedObjectSelection{target->id,target->definition->guid,
                     target->generation,candidate->definition.tree_table_id});
-                request_selected_interaction();
+                submit_selected_player_request();submitted=true;
             }
+            }
+            if(!submitted){
+                player_request_error=render_interaction_diagnostic;player_request_message="Cannot add that action.";
+                record_player_submission(request.actor,request.target,false,std::nullopt,
+                    render_interaction_status,render_interaction_diagnostic);
             }
         }
         if(scheduled_cancel_interaction_tick&&!headless_cancel_interaction_applied&&
@@ -7578,41 +7764,7 @@ struct PlacementCandidateProbe {
         }
         if(render_interaction_requested){
             const auto status_before=render_interaction_status;
-            const auto action_actor=render_interaction_actor_id.value_or(runtime_avatar_id);
-            auto* action_queue=actor_queue_for(action_actor);
-            auto* action_vm=actor_vm_for(action_actor);
-            if(render_interaction_result){
-                // Preserve the action's completion even if the parent Main
-                // faults on a later tick after the interaction was removed.
-            }else if(host_failed){
-                render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;
-            }else if(action_queue&&render_interaction_queue_uid&&action_queue->completion()&&
-                     action_queue->completion()->uid==*render_interaction_queue_uid){
-                render_interaction_result=action_queue->completion()->result;
-                render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
-                render_interaction_diagnostic.clear();
-                const auto* seated_actor=world.find(action_actor);
-                if(*render_interaction_result&&render_interaction_target&&render_interaction_actor_generation&&
-                   seated_actor&&seated_actor->generation==*render_interaction_actor_generation&&
-                   !seated_actor->person_data.empty()&&seated_actor->person_data[0]==1&&seated_actor->attachment&&
-                   seated_actor->attachment->container==render_interaction_target->id){
-                    const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(action_actor);
-                    if(seated_target&&seated_generation&&seated_code&&render_interaction_action){
-                        *seated_target=render_interaction_target;
-                        *seated_generation=render_interaction_actor_generation;
-                        *seated_code=render_interaction_action;
-                    }
-                }
-            }else if(action_queue&&render_interaction_queue_uid&&
-                     !action_queue->contains_uid(*render_interaction_queue_uid)&&
-                     !(render_interaction_cancel_attempted&&
-                       (interaction_cancel_status=="removed"||interaction_cancel_status=="unsupported"||
-                        interaction_cancel_status=="missing"))){
-                render_interaction_status="ineligible";
-                render_interaction_diagnostic="selected action left the queue before execution without matching completion";
-            }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
-                render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
-            }
+            observe_player_requests();
 #ifdef ODH_HAVE_X11
             if(render_window_host&&render_interaction_status!=status_before){
                 std::string title="OpenDollhouse Main preview: interaction "+render_interaction_status;
@@ -7982,29 +8134,7 @@ struct PlacementCandidateProbe {
             }
         }
     }
-    if(render_interaction_requested){
-        const auto action_actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);
-        auto* action_queue=actor_queue_for(action_actor_id);
-        auto* action_vm=actor_vm_for(action_actor_id);
-        if(render_interaction_result){
-            // The interaction result is independent from a later parent-Main fault.
-        }else if(host_failed){render_interaction_status="host_failed";render_interaction_diagnostic=host_diagnostic;}
-        else if(action_queue&&render_interaction_queue_uid&&action_queue->completion()&&
-                action_queue->completion()->uid==*render_interaction_queue_uid){
-            render_interaction_result=action_queue->completion()->result;
-            render_interaction_status=*render_interaction_result?"returned_true":"returned_false";
-            render_interaction_diagnostic.clear();
-        }else if(action_queue&&render_interaction_queue_uid&&
-                 !action_queue->contains_uid(*render_interaction_queue_uid)&&
-                 !(render_interaction_cancel_attempted&&
-                   (interaction_cancel_status=="removed"||interaction_cancel_status=="unsupported"||
-                    interaction_cancel_status=="missing"))){
-            render_interaction_status="ineligible";
-            render_interaction_diagnostic="selected action left the queue before execution without matching completion";
-        }else if(action_vm&&action_vm->status()==odh::VmStatus::fault){
-            render_interaction_status="vm_fault";render_interaction_diagnostic=action_vm->diagnostic();
-        }
-    }
+    observe_player_requests();
     std::optional<std::string> saved_session_path;
     if(!neighborhood_transition&&session_context&&session_context->save_on_exit){
         if(host_failed||vm.status()==odh::VmStatus::fault||vm.status()==odh::VmStatus::budget_exhausted||
@@ -8433,7 +8563,32 @@ struct PlacementCandidateProbe {
     if(action)std::cout<<"{\"archive\":"<<json_bytes(action->archive)<<",\"entry\":"<<json_bytes(action->entry)<<",\"objd_id\":"<<*action_def<<",\"guid\":"<<action_data->binding->guid<<",\"owner\":2,\"routine\":"<<*action_routine<<'}';else std::cout<<"null";
     std::cout<<",\"completion\":";
     if(queue.completion()){const auto& c=*queue.completion();std::cout<<"{\"uid\":"<<c.uid<<",\"ticket\":"<<c.ticket<<",\"tick\":"<<c.tick<<",\"result\":"<<(c.result?"true":"false")<<'}';}else std::cout<<"null";
-    std::cout<<",\"interaction_runtime\":";
+    std::cout<<",\"active_household_actor\":"<<active_household_actor<<",\"player_requests\":[";
+    {
+        bool first=true;
+        for(const auto& request:user_interactions.records()){
+            if(!first)std::cout<<',';first=false;
+            std::cout<<"{\"actor\":"<<request.identity.actor<<",\"actor_generation\":"<<request.identity.actor_generation
+                <<",\"run_generation\":"<<request.identity.run_generation<<",\"uid\":"<<request.identity.uid
+                <<",\"target\":"<<request.action.call.context.callee<<",\"target_generation\":"<<request.action.target_generation
+                <<",\"owner\":"<<request.action.call.context.code_owner<<",\"action\":"<<request.action.call.key.id
+                <<",\"state\":"<<json_bytes(odh::user_interaction_state_name(request.state))
+                <<",\"cancel_requested\":"<<(request.cancellation_requested?"true":"false")
+                <<",\"result\":"<<(request.result?(*request.result?"true":"false"):"null")
+                <<",\"queue_position\":"<<(odh::user_interaction_terminal(request.state)?"null":std::to_string(request.queue_position))<<'}';
+        }
+    }
+    std::cout<<"],\"player_submissions\":[";
+    for(std::size_t n=0;n<player_submissions.size();++n){
+        const auto& attempt=player_submissions[n];if(n)std::cout<<',';
+        std::cout<<"{\"actor\":"<<attempt.actor<<",\"target\":"<<attempt.target<<",\"tick\":"<<attempt.tick
+            <<",\"accepted\":"<<(attempt.accepted?"true":"false")
+            <<",\"uid\":"<<(attempt.identity?std::to_string(attempt.identity->uid):"null")
+            <<",\"actor_generation\":"<<(attempt.identity?std::to_string(attempt.identity->actor_generation):"null")
+            <<",\"run_generation\":"<<(attempt.identity?std::to_string(attempt.identity->run_generation):"null")
+            <<",\"status\":"<<json_bytes(attempt.status)<<",\"diagnostic\":"<<json_bytes(attempt.diagnostic)<<'}';
+    }
+    std::cout<<"],\"interaction_runtime\":";
     if(!render_interaction_requested)std::cout<<"null";
     else {
         const auto actor_id=render_interaction_actor_id.value_or(runtime_avatar_id);

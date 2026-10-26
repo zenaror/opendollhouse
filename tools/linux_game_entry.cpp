@@ -118,6 +118,9 @@ struct Options {
     std::optional<unsigned> headless_stand_tick;
     std::optional<ResidentSit> headless_resident_sit;
     std::optional<ResidentInteraction> headless_resident_interaction;
+    // Retain the first request for existing launch-profile guards; later
+    // requests keep CLI order, including requests at the same relative tick.
+    std::vector<ResidentInteraction> headless_resident_interactions;
     std::optional<unsigned> headless_cancel_interaction_tick;
     std::optional<ResidentGoHere> headless_resident_go_here;
     std::optional<SingleResidentGoHere> headless_single_resident_go_here;
@@ -192,14 +195,24 @@ Options parse_options(int argc, char** argv) {
             result.headless_resident_sit=Options::ResidentSit{actor_id,object_id,stand_tick};
             continue;
         }
-        if (key == "--headless-resident-interaction" && !result.headless_resident_interaction) {
+        if (key == "--headless-resident-interaction") {
             if (i + 3 >= argc) throw odh::FormatError("missing resident interaction values");
+            if(result.headless_resident_interaction&&result.headless_resident_interactions.size()>=31)
+                throw odh::FormatError("resident interaction sequence exceeds thirty-two requests");
             const auto actor_id=parse_number(argv[++i],32767,"resident interaction actor ID");
             const auto object_id=parse_number(argv[++i],32767,"resident interaction object ID");
             const auto tick=parse_number(argv[++i],4096,"resident interaction tick");
             if(!actor_id||!object_id||!tick)
                 throw odh::FormatError("resident interaction actor, object, or tick is outside the supported profile");
-            result.headless_resident_interaction=Options::ResidentInteraction{actor_id,object_id,tick};
+            const Options::ResidentInteraction request{actor_id,object_id,tick};
+            if(!result.headless_resident_interaction)result.headless_resident_interaction=request;
+            else{
+                const auto previous_tick=result.headless_resident_interactions.empty()?
+                    result.headless_resident_interaction->tick:result.headless_resident_interactions.back().tick;
+                if(tick<previous_tick)
+                    throw odh::FormatError("resident interaction sequence ticks must be nondecreasing");
+                result.headless_resident_interactions.push_back(request);
+            }
             continue;
         }
         if (key == "--headless-cancel-interaction" && !result.headless_cancel_interaction_tick) {
@@ -300,6 +313,9 @@ Options parse_options(int argc, char** argv) {
         throw odh::FormatError("--headless-resident-interaction requires a bounded whole-household lot session");
     if (result.headless_resident_interaction && result.headless_resident_interaction->tick > *result.headless_ticks)
         throw odh::FormatError("resident interaction tick must fit within the bounded run");
+    for(const auto& request:result.headless_resident_interactions)
+        if(request.tick>*result.headless_ticks)
+            throw odh::FormatError("resident interaction sequence ticks must fit within the bounded run");
     if (result.headless_resident_interaction && result.load_session &&
         (!result.restore_bundle || result.restore_bundle->household_roster.empty()))
         throw odh::FormatError("resumed resident interaction requires a saved whole-household session");
@@ -754,6 +770,9 @@ RuntimePlan build_runtime_arguments(const Options& options,
         append(args, {"--headless-resident-interaction", std::to_string(options.headless_resident_interaction->actor_id),
             std::to_string(options.headless_resident_interaction->object_id),
             std::to_string(options.headless_resident_interaction->tick)});
+    for(const auto& request:options.headless_resident_interactions)
+        append(args,{"--headless-resident-interaction",std::to_string(request.actor_id),
+            std::to_string(request.object_id),std::to_string(request.tick)});
     if(options.headless_cancel_interaction_tick)
         append(args,{"--headless-cancel-interaction",std::to_string(*options.headless_cancel_interaction_tick)});
     if (options.headless_stand) {
