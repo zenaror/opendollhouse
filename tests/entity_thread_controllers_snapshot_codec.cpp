@@ -40,6 +40,7 @@ odh::EntityThreadControllersSnapshot fixture() {
     const odh::VmCall second{odh::routine_key(4097), context, {-9},
                              odh::VmCallReturnMode::interaction_next_tick};
     state.interactions.actions = {{1, 8, first}, {2, 9, second}};
+    state.interactions.actions.front().check = odh::routine_key(4098);
     state.interactions.active = odh::InteractionActiveSnapshot{1, 6};
     state.interactions.diagnostic = "queued actions";
     state.thread_interrupt = true;
@@ -83,6 +84,28 @@ std::vector<std::uint8_t> legacy_v1_queue_fixture() {
     u8(0); // thread interrupt
     return bytes;
 }
+std::vector<std::uint8_t> legacy_v2_queue_fixture() {
+    std::vector<std::uint8_t> bytes;
+    const auto u8=[&](std::uint8_t value){bytes.push_back(value);};
+    const auto u16=[&](std::uint16_t value){u8(static_cast<std::uint8_t>(value));u8(static_cast<std::uint8_t>(value>>8));};
+    const auto i16=[&](std::int16_t value){u16(static_cast<std::uint16_t>(value));};
+    const auto u32=[&](std::uint32_t value){for(unsigned n=0;n<32;n+=8)u8(static_cast<std::uint8_t>(value>>n));};
+    const auto u64=[&](std::uint64_t value){for(unsigned n=0;n<64;n+=8)u8(static_cast<std::uint8_t>(value>>n));};
+    u16(2); // controller codec v2
+    u8(0);u8(0);u8(0);u64(0);u8(0);u8(0);u32(0); // empty Sleep state
+    i16(1);u64(2);u64(7);u64(3);u64(1);u64(0);u64(0);
+    u8(0);u8(0);u32(1); // Interaction actor/clock, then one action
+    u64(1);u64(8); // native identity/generation
+    u8(static_cast<std::uint8_t>(odh::routine_key(4096).scope));u16(4096);
+    i16(1);i16(2);i16(2);u32(22); // call context
+    u32(0);u8(static_cast<std::uint8_t>(odh::VmCallReturnMode::interaction_next_tick));
+    u16(4);i16(50);u8(static_cast<std::uint8_t>(odh::InteractionQueueMode::normal));
+    u32(1U<<28);u8(0); // queue UID, priority/mode/flags, no notification
+    u8(0);u8(0);u8(0);u8(0);u32(0); // no active/wait/completion/interrupt/diagnostic
+    u8(static_cast<std::uint8_t>(odh::InteractionQueueProfile::ts1_priority));u16(5);
+    u8(0); // thread interrupt
+    return bytes;
+}
 void same(const odh::EntityThreadControllersSnapshot& left,
           const odh::EntityThreadControllersSnapshot& right) {
     const auto& a = left.sleep; const auto& b = right.sleep;
@@ -112,7 +135,8 @@ void same(const odh::EntityThreadControllersSnapshot& left,
             p.call.context.code_owner == q.call.context.code_owner && p.call.arguments == q.call.arguments &&
             p.call.return_mode == q.call.return_mode && p.queue_uid == q.queue_uid &&
             p.priority == q.priority && p.mode == q.mode && p.flags == q.flags &&
-            p.notify_idle == q.notify_idle, "queued call fields round-trip");
+            p.notify_idle == q.notify_idle && p.check.has_value() == q.check.has_value() &&
+            (!p.check || (p.check->id == q.check->id && p.check->scope == q.check->scope)), "queued call fields round-trip");
     }
     if (x.active) require(x.active->uid == y.active->uid && x.active->ticket == y.active->ticket,
                           "active action round-trips");
@@ -159,7 +183,7 @@ int main() {
             rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(truncated); }, "every truncated prefix rejected");
         }
         auto changed = encoded;
-        changed[0] = 3;
+        changed[0] = 4;
         rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(changed); }, "unsupported version rejected");
         changed = encoded;
         changed[2] = 2;
@@ -182,12 +206,28 @@ int main() {
                 legacy_queued.interactions.actions.size()==1&&
                 legacy_queued.interactions.actions.front().priority==1&&
                 legacy_queued.interactions.actions.front().mode==odh::InteractionQueueMode::normal&&
-                legacy_queued.interactions.actions.front().flags==0,
+                legacy_queued.interactions.actions.front().flags==0&&
+                !legacy_queued.interactions.actions.front().check,
                 "legacy v1 queued actions retain FIFO identity without invented TS1 metadata");
         const auto migrated=odh::decode_entity_thread_controllers_snapshot(
             odh::encode_entity_thread_controllers_snapshot(legacy));
         require(migrated.interactions.profile==odh::InteractionQueueProfile::legacy_fifo,
                 "resaving a legacy queue does not invent TS1 priority state");
+        const auto v2=odh::decode_entity_thread_controllers_snapshot(legacy_v2_queue_fixture());
+        require(v2.interactions.profile==odh::InteractionQueueProfile::ts1_priority&&
+                v2.interactions.actions.size()==1&&v2.interactions.actions.front().priority==50&&
+                !v2.interactions.actions.front().check,
+                "legacy v2 queues retain priority metadata and gain no invented check routine");
+        const auto v2_resaved=odh::decode_entity_thread_controllers_snapshot(
+            odh::encode_entity_thread_controllers_snapshot(v2));
+        require(v2_resaved.interactions.actions.front().priority==50&&
+                !v2_resaved.interactions.actions.front().check,
+                "resaving v2 queue state in v3 preserves its no-check meaning");
+
+        auto invalid_check=state;
+        invalid_check.interactions.actions.front().check=odh::RoutineKey{static_cast<odh::RoutineScope>(99),4098};
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid_check);},
+                "invalid optional check key rejected");
 
         odh::World migration_world;
         require(migration_world.create(1,odh::EntityKind::avatar)&&

@@ -2604,7 +2604,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!source_thread->second->vm->has_routine(action_key,owner)||
                (selected->test!=0&&!source_thread->second->vm->has_routine(odh::routine_key(selected->test),owner)))
                 return std::nullopt;
-            return odh::Ts1PushInteractionAction{action_key,owner,selected->flags};
+            return odh::Ts1PushInteractionAction{action_key,owner,selected->flags,
+                selected->test?std::optional<odh::RoutineKey>{odh::routine_key(selected->test)}:std::nullopt};
         },[&](std::int16_t actor){
             const auto found=resident_interaction_threads.find(actor);
             return found==resident_interaction_threads.end()?odh::Ts1PushInteractionTarget{}:found->second;
@@ -2920,6 +2921,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             throw odh::FormatError("PhoneLine saved Main could not join the entity scheduler");
         saved_phone_main_scheduled=true;
     };
+    // Checks run synchronously with the avatar's registers. Only dispatch
+    // handlers audited not to create deferred service jobs; unknown primitives
+    // report unsupported instead of approving an unchecked action.
+    const odh::VmPrimitive check_primitive=[&](const auto& f,const auto& i,const auto& t,const auto& d)
+            ->odh::PrimitiveOutcome{
+        switch(i.opcode){
+        case 7: case 15: case 16: case 25: case 29: case 50:
+            return person_primitive(f,i,t,d);
+        default:return {odh::PrimitiveDisposition::unsupported,
+            "interaction check primitive requires synchronous support: "+std::to_string(i.opcode)};
+        }
+    };
+    queue.set_check_primitive(check_primitive);
+    if(second_main_thread)second_main_thread->interactions().set_check_primitive(check_primitive);
+    for(auto& member:household_runtime)member->controllers->interactions().set_check_primitive(check_primitive);
     auto shared_program=std::make_shared<const odh::VmProgram>(std::move(shared.routines));
     odh::Vm vm(shared_program,odh::ShareVmProgramTag{},memory,{},person_primitive,std::move(owners));
     std::unique_ptr<odh::Vm> second_main_vm;

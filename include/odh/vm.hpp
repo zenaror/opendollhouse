@@ -134,7 +134,14 @@ struct PrimitiveOutcome {
     std::function<bool()> call_commit = {};
 };
 class Vm;
-struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
+struct VmDispatch {
+    const Vm* origin;
+    std::uint64_t ticket;
+    // Check trees use the same interpreter state but a deliberately separate,
+    // synchronous-only primitive handler. Handlers can refuse asynchronous or
+    // queue-mutating services before they perform any external effects.
+    bool check_mode = false;
+};
 using VmPrimitive = std::function<PrimitiveOutcome(const VmFrame&, const Instruction&,
                                                  const Ts1Temps&, const VmDispatch&)>;
 struct VmPending {
@@ -177,10 +184,9 @@ struct VmSnapshot {
 
 // Result of running a short BHAV on an existing entity thread's temporary
 // stack. The entity's Main frames/status are restored; the thread's Temps and
-// TempXL remain shared with the called tree, matching Simitone's same-thread
-// subroutine model. A non-return status must be treated as an unsupported call
-// by the host; callers must pre-audit the tree for synchronous behavior. This
-// does not roll back World or service writes made before a non-return status.
+// TempXL remain shared with the called tree. A non-return status is not success
+// or a failed eligibility result. World and register writes before that status
+// remain visible; no action should be published from that evaluation.
 struct VmSubroutineResult {
     bool started = false;
     VmStatus status = VmStatus::ready;
@@ -220,6 +226,19 @@ public:
         RoutineKey, VmContext, const std::vector<std::int16_t>& arguments,
         std::uint64_t instruction_budget,
         const std::function<void(const VmTrace&)>& trace = {});
+    // Evaluate an interaction Check BHAV synchronously during an executing
+    // Main primitive. The Main stack and dispatch state are moved aside without
+    // invalidating its live frame reference; Temp/TempXL and World effects are
+    // intentionally shared. Only the supplied check_primitive handles primitive
+    // opcodes (there is no implicit reuse of asynchronous host services). That
+    // callback must be synchronous and must reject unsupported/async operations
+    // before producing side effects. The check has its own instruction budget,
+    // independent of the caller's current run() slice. Nested checks, waits and
+    // service child calls are refused. On a non-return status effects are not
+    // rolled back and no count is added to the caller's run() step total.
+    VmSubroutineResult evaluate_check(
+        RoutineKey, VmContext, const std::vector<std::int16_t>& arguments,
+        std::uint64_t instruction_budget, const VmPrimitive& check_primitive = {});
     // Append one private/semiglobal resource owner at a host safe point. Existing
     // owners and active VM state are preserved. Rejects owner zero, duplicates,
     // invalid keys, capacity overflow, or calls made from inside run/callbacks.
@@ -289,5 +308,10 @@ private:
     std::optional<VmExternalFrameReturn> external_frame_return_;
     std::uint64_t ticket_sequence_ = 0; // Never reset by start().
     std::uint64_t run_generation_ = 0;
+    bool check_active_ = false;
+    VmStatus run_internal(std::uint64_t instruction_budget,
+                          const std::function<void(const VmTrace&)>&,
+                          const VmPrimitive*, bool check_mode,
+                          std::uint64_t* executed_steps = nullptr);
 };
 } // namespace odh

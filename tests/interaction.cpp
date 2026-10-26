@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include "odh/entity_thread_controllers_snapshot_codec.hpp"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -22,6 +23,112 @@ struct Fixture {
 };
 }
 namespace {
+void eligibility_checks() {
+    odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
+    world.declare_object_word(1,8,16);world.declare_object_word(2,25,0);
+    odh::InteractionQueue queue(world,1);
+    // Failed check writes TEMP and source ObjectData; both effects survive.
+    const odh::Instruction source_write{2,255,255,{25,0,9,0,0,5,4,7}};
+    const odh::Instruction check_argument{2,254,255,{0,0,0,0,0,2,9,7}};
+    const odh::RoutineSet main{{key(4096),bhav({idle(1,1),set(2,99)})}};
+    const odh::RoutineOwners owners{{22,{{key(4097),bhav({set(1,33)})},
+              {key(4098),bhav({set(0,71,1),source_write})},
+              {key(4099),bhav({check_argument})},
+              {key(4100),bhav({{15,254,255,{}}})}}}};
+    odh::Vm vm(main,world.vm_memory(),{},queue.primitive(),owners);
+    require(queue.bind(vm),"check fixture binds existing resident VM");
+    vm.start(key(4096),{1,1,1,0},{0});
+    require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false,key(4098))&&
+            queue.enqueue_ts1(key(4097),{1,2,2,22},{},40,odh::InteractionQueueMode::normal,0,false,false,key(4099)),
+            "checks are attached with exact action code owner");
+    const auto saved_vm=vm.snapshot();
+    odh::EntityThreadControllersSnapshot saved_controllers{};
+    saved_controllers.interactions=queue.snapshot();
+    const auto restored_state=odh::decode_entity_thread_controllers_snapshot(
+        odh::encode_entity_thread_controllers_snapshot(saved_controllers)).interactions;
+    odh::InteractionQueue restored_queue(world,1);
+    odh::Vm restored_vm(main,world.vm_memory(),{},restored_queue.primitive(),owners);
+    require(restored_vm.restore_snapshot(saved_vm)&&restored_queue.bind(restored_vm)&&
+            restored_queue.restore_snapshot(restored_state),
+            "pending check identity survives encoding and binds to exact restored owner");
+    auto incomplete=owners;incomplete.at(22).erase(key(4098));
+    odh::InteractionQueue missing_queue(world,1);
+    odh::Vm missing_vm(main,world.vm_memory(),{},missing_queue.primitive(),incomplete);
+    require(missing_vm.restore_snapshot(saved_vm)&&missing_queue.bind(missing_vm)&&
+            !missing_queue.restore_snapshot(restored_state)&&missing_queue.size()==0,
+            "restore refuses a check missing from its owner without publishing queue");
+    require(vm.run(10)==odh::VmStatus::yielded&&queue.size()==1&&queue.active()&&
+            vm.temps()[0]==71&&vm.temps()[1]==33&&world.find(2)->object_words.at(25)==9,
+            "failed check keeps effects, drops only candidate, and following passing check starts action same tick");
+    require(vm.stack().size()==1&&vm.stack().front().pc==0&&vm.stack().front().arguments[0]==-1,
+            "checks preserve suspended Main and decrement its idle argument once");
+    require(restored_vm.run(1)==odh::VmStatus::budget_exhausted&&restored_queue.active()&&
+            restored_vm.run(10)==odh::VmStatus::yielded&&restored_vm.temps()==vm.temps()&&
+            restored_queue.size()==queue.size(),
+            "restored check outcome and action match even with a one-instruction Main slice");
+    require(queue.observe()&&queue.tick(1)&&vm.run(10)==odh::VmStatus::returned_true,
+            "checked action preserves next tick completion contract");
+    vm.start(key(4096),{1,1,1,0},{0});
+    require(!queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false,key(4999)),
+            "missing exact check routine is rejected before enqueue");
+    require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false,key(4100)),
+            "unsupported check primitive fixture enqueued");
+    require(vm.run(10)==odh::VmStatus::fault&&!queue.active()&&queue.size()==1&&vm.stack().size()==1&&
+            vm.stack().front().arguments[0]==0&&vm.diagnostic().find("check")!=std::string::npos,
+            "unsupported check never masquerades as false or successful action and leaves Main frame intact");
+}
+void dispatch_priority_checks() {
+    for(const auto current:{std::int16_t{50},std::int16_t{2},std::int16_t{0}}){
+        odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});
+        world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,128|16);
+        world.set_person_data(1,33,current);
+        odh::InteractionQueue queue(world,1);
+        odh::Vm vm({{key(4096),bhav({idle()})}},world.vm_memory(),{},queue.primitive(),
+            {{22,{{key(4097),bhav({set(1,33)})},{key(4098),bhav({set(0,71)})}}}});
+        require(queue.bind(vm),"priority gate queue binds");vm.start(key(4096),{1,1,1,0},{});
+        require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},current,odh::InteractionQueueMode::normal,
+            0,false,false,key(4098)),"priority gate queues equal priority check");
+        if(current==50){
+            require(vm.run(10)==odh::VmStatus::returned_true&&!queue.active()&&queue.size()==1&&vm.temps()[0]==0,
+                "equal high priority remains pending and does not execute check");
+        }else{
+            require(vm.run(1)==odh::VmStatus::budget_exhausted&&queue.active()&&vm.temps()[0]==71&&
+                (world.find(1)->object_words.at(8)&128)==0&&(world.find(1)->object_words.at(8)&16)!=0,
+                "equal low priority check starts and clears only cancellation flag");
+            world.declare_object_word(1,8,128|16);
+            require(vm.run(10)==odh::VmStatus::yielded&&queue.observe()&&
+                world.find(1)->object_words.at(8)==16,"normal completion clears cancellation preserving other flags");
+        }
+    }
+    {
+        odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});
+        world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,16);
+        odh::InteractionQueue queue(world,1);
+        const odh::Instruction change_priority{2,255,255,{33,0,100,0,0,5,18,7}};
+        odh::Vm vm({{key(4096),bhav({idle()})}},world.vm_memory(),{},queue.primitive(),
+            {{22,{{key(4097),bhav({set(1,33)})},{key(4098),bhav({change_priority})}}}});
+        queue.bind(vm);vm.start(key(4096),{1,1,1,0},{});
+        require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,
+            0,false,false,key(4098))&&queue.enqueue_ts1(key(4097),{1,2,2,22},{},40,
+            odh::InteractionQueueMode::normal,0,false,false),"priority-mutating check fixture enqueued");
+        require(vm.run(10)==odh::VmStatus::yielded&&queue.active()&&queue.size()==1&&
+            world.find(1)->person_data[33]==40,
+            "failed check priority mutation does not change this attempt's captured comparison threshold");
+    }
+    {
+        odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});
+        world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,128|16);
+        odh::InteractionQueue queue(world,1);
+        odh::Vm vm({{key(4096),bhav({idle()})}},world.vm_memory(),{},queue.primitive(),
+            {{22,{{key(4097),bhav({set(1,33)})},{key(4098),bhav({set(0,71)})}}}});
+        queue.bind(vm);vm.start(key(4096),{1,1,1,0},{});
+        require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},40,odh::InteractionQueueMode::parent_idle,
+            0,false,false,key(4098)),"cancelled ParentIdle fixture enqueued");
+        require(vm.run(10)==odh::VmStatus::returned_true&&queue.size()==0&&vm.temps()[0]==0&&
+            world.find(1)->object_words.at(8)==(128|16),
+            "cancelled ParentIdle is skipped without executing check or clearing cancellation");
+    }
+}
 void native_push_interaction_checks() {
     odh::World world;
     world.create(1,odh::EntityKind::avatar);world.create(3,odh::EntityKind::avatar);
@@ -36,7 +143,7 @@ void native_push_interaction_checks() {
             decoded=request;
             if(throw_lookup)throw odh::FormatError("fixture malformed resource");
             if(!present)return std::nullopt;
-            return odh::Ts1PushInteractionAction{key(4097),wrong_owner?99U:22U};
+            return odh::Ts1PushInteractionAction{key(4097),wrong_owner?99U:22U,0,key(4098)};
         },[&](std::int16_t actor){
             if(actor==1)return odh::Ts1PushInteractionTarget{caller_vm,&caller_queue};
             if(actor==3)return odh::Ts1PushInteractionTarget{recipient_vm,&recipient_queue};
@@ -49,9 +156,9 @@ void native_push_interaction_checks() {
         return i.opcode==13?push(f,i,t,d):caller_queue.primitive()(f,i,t,d);
     };
     odh::Vm caller({{key(4096),bhav({push_instruction})}},world.vm_memory(),{},caller_primitive,
-        {{22,{{key(4097),bhav({capture_caller,write_source})}}}});
+        {{22,{{key(4097),bhav({capture_caller,write_source})},{key(4098),bhav({set(3,88)})}}}});
     odh::Vm recipient({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},
-        recipient_queue.primitive(),{{22,{{key(4097),bhav({capture_caller,write_source})}}}});
+        recipient_queue.primitive(),{{22,{{key(4097),bhav({capture_caller,write_source})},{key(4098),bhav({set(3,88)})}}}});
     caller_vm=&caller;recipient_vm=&recipient;
     require(caller_queue.bind(caller)&&recipient_queue.bind(recipient),"PushInteraction residents bind independent queues");
     caller.start(key(4096),{1,1,3,0},{2});recipient.start(key(4096),{3,3,3,0},{0});
@@ -62,9 +169,10 @@ void native_push_interaction_checks() {
             "native PushInteraction decodes inherited priority and argument source");
     const auto queued=recipient_queue.snapshot();
     require(queued.actions.front().call.context.caller==3&&queued.actions.front().call.context.callee==2&&
-            queued.actions.front().call.context.stack_object==2&&queued.actions.front().call.context.code_owner==22,
+            queued.actions.front().call.context.stack_object==2&&queued.actions.front().call.context.code_owner==22&&
+            queued.actions.front().check&&queued.actions.front().check->id==4098,
             "pushed action retains recipient Caller and exact source owner");
-    require(recipient.run(10)==odh::VmStatus::yielded&&recipient.temps()[0]==3&&
+    require(recipient.run(10)==odh::VmStatus::yielded&&recipient.temps()[0]==3&&recipient.temps()[3]==88&&
             world.find(2)->object_words.at(25)==7,"recipient executes pushed action in its existing VM and shared World");
     require(recipient_queue.observe()&&recipient_queue.completion()->result&&recipient_queue.tick(1)&&
             recipient.run(10)==odh::VmStatus::returned_true&&recipient.temps()[2]==99,
@@ -152,6 +260,8 @@ int main(int argc,char** argv){try {
   std::cout<<checks<<" native-wrapper ODH checks passed; action/Main fixtures synthetic\n";return 0;
  }
  if(argc!=1)throw std::runtime_error("usage: --native-global ARCHIVE ENTRY");
+ eligibility_checks();
+ dispatch_priority_checks();
  native_push_interaction_checks();
  {odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);
   world.create(3,odh::EntityKind::avatar);world.declare_object_word(2,25,0);

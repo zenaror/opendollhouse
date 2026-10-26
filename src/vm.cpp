@@ -525,16 +525,26 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
         explicit Guard(bool& flag) : value(flag) { value = true; }
         ~Guard() { value = false; }
     } guard(executing_);
+    return run_internal(budget,trace,nullptr,false);
+}
+
+VmStatus Vm::run_internal(std::uint64_t instruction_budget,
+                          const std::function<void(const VmTrace&)>& trace,
+                          const VmPrimitive* primitive_override,bool check_mode,
+                          std::uint64_t* executed_steps) {
+    if (status_ != VmStatus::running && status_ != VmStatus::budget_exhausted) return status_;
     status_ = VmStatus::running;
-    for (std::uint64_t used = 0; used < budget && status_ == VmStatus::running; ++used) {
+    std::uint64_t used=0;
+    for (;used<instruction_budget && status_ == VmStatus::running;++used) {
         try {
             const auto& frame = stack_.back();
             const auto& routine = current_routine(frame);
             if (frame.pc >= routine.instructions.size()) throw VmError("instruction pointer outside routine");
             const auto instruction = routine.instructions[frame.pc];
-            if (steps_ == std::numeric_limits<std::uint64_t>::max()) throw VmError("step counter overflow");
+            if (!check_mode&&steps_ == std::numeric_limits<std::uint64_t>::max())
+                throw VmError("step counter overflow");
             if (trace) trace(VmTrace{steps_, stack_.size(), frame.key, frame.pc, instruction,frame.context.code_owner});
-            ++steps_;
+            if(!check_mode)++steps_;
             if (instruction.opcode >= 256) {
                 const auto key = routine_key(instruction.opcode);
                 const auto* found = resolve(key,frame.context.code_owner);
@@ -561,8 +571,9 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
             } else {
                 if (ticket_sequence_ == std::numeric_limits<std::uint64_t>::max())
                     throw VmError("service ticket overflow");
-                const VmDispatch dispatch{this,++ticket_sequence_};
-                const auto outcome = primitive_ ? primitive_(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
+                const auto& handler=primitive_override?*primitive_override:primitive_;
+                const VmDispatch dispatch{this,++ticket_sequence_,check_mode};
+                const auto outcome = handler ? handler(frame,instruction,temps_,dispatch) : PrimitiveOutcome{};
                 if (outcome.stack_object_write &&
                     outcome.disposition != PrimitiveDisposition::goto_true &&
                     outcome.disposition != PrimitiveDisposition::goto_false)
@@ -583,6 +594,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     throw VmError("unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
                 case PrimitiveDisposition::call:
+                    if(check_mode)
+                        throw VmError("check BHAV requested an asynchronous child service");
                     if(!outcome.call)throw VmError("primitive call requires child");
                     if(outcome.call->return_mode==VmCallReturnMode::external_frame_next_tick)
                         throw VmError("external frame child must be scheduled by its pending service");
@@ -621,6 +634,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                         stack_.back().context.stack_object = outcome.stack_object_write->value;
                     branch(outcome.disposition == PrimitiveDisposition::goto_true); break;
                 case PrimitiveDisposition::wait:
+                    if(check_mode)
+                        throw VmError("check BHAV attempted to wait for an asynchronous service");
                     if (outcome.write) {
                         auto* destination = frame_output(stack_.back(), *outcome.write,limits_.frame_variables);
                         if (!destination) throw VmError("primitive frame output bank/index outside frame");
@@ -635,9 +650,123 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                 }
             }
         } catch (const VmError& e) { diagnostic_ = e.what(); status_ = VmStatus::fault; }
+        catch (const std::exception& e) {
+            if(!check_mode)throw;
+            diagnostic_=e.what();status_=VmStatus::fault;
+        } catch (...) {
+            if(!check_mode)throw;
+            diagnostic_="Check BHAV primitive raised a non-standard exception";
+            status_=VmStatus::fault;
+        }
+        if(executed_steps)*executed_steps=used+1;
     }
-    if (status_ == VmStatus::running) status_ = VmStatus::budget_exhausted;
+    if (status_ == VmStatus::running && used>=instruction_budget) status_ = VmStatus::budget_exhausted;
+    if(executed_steps)*executed_steps=used;
     return status_;
+}
+
+VmSubroutineResult Vm::evaluate_check(RoutineKey key,VmContext context,
+        const std::vector<std::int16_t>& arguments,std::uint64_t instruction_budget,
+        const VmPrimitive& check_primitive) {
+    VmSubroutineResult result;
+    const bool live_main=!stack_.empty()&&status_==VmStatus::running;
+    if(check_active_||!live_main||!executing_||pending_||!suspended_pending_.empty()||
+       interaction_return_||external_frame_return_) {
+        result.status=status_;
+        result.diagnostic=check_active_?"nested Check BHAV evaluation is unsupported":
+            "Check BHAV evaluation requires an executing Main primitive safe point";
+        return result;
+    }
+    // Swapping the vector transfers ownership of the Main frames without moving
+    // their storage. The outer run() primitive still holds a valid reference to
+    // its frame while this temporary check stack uses stack_.
+    std::vector<VmFrame> main_stack;
+    main_stack.swap(stack_);
+    const auto main_status=status_;
+    auto main_diagnostic=std::move(diagnostic_);
+    auto main_pending=std::move(pending_);
+    auto main_suspended_pending=std::move(suspended_pending_);
+    auto main_interaction_return=std::move(interaction_return_);
+    auto main_external_frame_return=std::move(external_frame_return_);
+
+    struct RestoreMainState {
+        std::vector<VmFrame>& stack;
+        std::vector<VmFrame>& main_stack;
+        VmStatus& status;
+        VmStatus main_status;
+        std::string& diagnostic;
+        std::string main_diagnostic;
+        std::optional<VmPending>& pending;
+        std::optional<VmPending> main_pending;
+        std::vector<VmPending>& suspended_pending;
+        std::vector<VmPending> main_suspended_pending;
+        std::optional<VmInteractionReturn>& interaction_return;
+        std::optional<VmInteractionReturn> main_interaction_return;
+        std::optional<VmExternalFrameReturn>& external_frame_return;
+        std::optional<VmExternalFrameReturn> main_external_frame_return;
+        bool& check_active;
+        RestoreMainState(std::vector<VmFrame>& stack_,std::vector<VmFrame>& main_stack_,
+                VmStatus& status_,VmStatus main_status_,std::string& diagnostic_,
+                std::string main_diagnostic_,std::optional<VmPending>& pending_,
+                std::optional<VmPending> main_pending_,std::vector<VmPending>& suspended_pending_,
+                std::vector<VmPending> main_suspended_pending_,
+                std::optional<VmInteractionReturn>& interaction_return_,
+                std::optional<VmInteractionReturn> main_interaction_return_,
+                std::optional<VmExternalFrameReturn>& external_frame_return_,
+                std::optional<VmExternalFrameReturn> main_external_frame_return_,bool& check_active_)
+            noexcept
+            :stack(stack_),main_stack(main_stack_),status(status_),main_status(main_status_),
+             diagnostic(diagnostic_),main_diagnostic(std::move(main_diagnostic_)),
+             pending(pending_),main_pending(std::move(main_pending_)),
+             suspended_pending(suspended_pending_),
+             main_suspended_pending(std::move(main_suspended_pending_)),
+             interaction_return(interaction_return_),
+             main_interaction_return(std::move(main_interaction_return_)),
+             external_frame_return(external_frame_return_),
+             main_external_frame_return(std::move(main_external_frame_return_)),
+             check_active(check_active_) {check_active=true;}
+        ~RestoreMainState() noexcept {
+            std::vector<VmFrame> check_stack;
+            check_stack.swap(stack);
+            main_stack.swap(stack);
+            status=main_status;
+            diagnostic.swap(main_diagnostic);
+            pending.swap(main_pending);
+            suspended_pending.swap(main_suspended_pending);
+            interaction_return.swap(main_interaction_return);
+            external_frame_return.swap(main_external_frame_return);
+            check_active=false;
+        }
+    } restore{stack_,main_stack,status_,main_status,diagnostic_,std::move(main_diagnostic),
+        pending_,std::move(main_pending),suspended_pending_,std::move(main_suspended_pending),
+        interaction_return_,std::move(main_interaction_return),external_frame_return_,
+        std::move(main_external_frame_return),check_active_};
+    status_=VmStatus::running;
+    diagnostic_.clear();
+    pending_.reset();suspended_pending_.clear();
+    interaction_return_.reset();external_frame_return_.reset();
+    std::uint64_t check_steps=0;
+    try {
+        push(key,context,arguments);
+        result.started=true;
+        result.status=run_internal(instruction_budget,{},&check_primitive,true,&check_steps);
+        result.diagnostic=diagnostic_;
+    } catch(const std::exception& error) {
+        result.started=!stack_.empty();
+        result.status=VmStatus::fault;
+        result.diagnostic=error.what();
+    } catch(...) {
+        result.started=!stack_.empty();
+        result.status=VmStatus::fault;
+        result.diagnostic="Check BHAV evaluation raised a non-standard exception";
+    }
+    if(result.status==VmStatus::budget_exhausted)
+        result.diagnostic="check instruction limit reached";
+    result.steps=check_steps;
+
+    // The guard restores Main even if setting the result diagnostic allocates
+    // and throws. Temp/TempXL, World effects, and consumed dispatch tickets stay.
+    return result;
 }
 VmSubroutineResult Vm::run_subroutine_in_temporary_stack(
     RoutineKey key, VmContext context, const std::vector<std::int16_t>& arguments,

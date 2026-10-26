@@ -42,7 +42,9 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
            action.target_generation!=target->generation||call.context.caller!=actor_id_||
            call.context.stack_object!=call.context.callee||call.arguments.size()>4096||
            call.key.scope!=routine_key(call.key.id).scope||call.return_mode!=VmCallReturnMode::interaction_next_tick||
-           action.mode>InteractionQueueMode::idle)
+           action.mode>InteractionQueueMode::idle ||
+           (action.check && (action.check->scope!=routine_key(action.check->id).scope ||
+                            !vm_->has_routine(*action.check,call.context.code_owner))))
             return false;
     }
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
@@ -176,16 +178,17 @@ bool InteractionQueue::evaluate_queue_priorities() {
 }
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
                                bool push_after_active) {
-    return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false);
+    return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false,{});
 }
 bool InteractionQueue::enqueue_ts1(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
-        std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail) {
+        std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,
+        std::optional<RoutineKey> check) {
     flags|=tso_skip_permissions; // TS1 PushInteraction always sets TTABFlags.FSOSkipPermissions.
-    return enqueue_impl(key,context,args,priority,mode,flags,push_head,push_tail,true);
+    return enqueue_impl(key,context,args,priority,mode,flags,push_head,push_tail,true,check);
 }
 bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
         std::int16_t priority,InteractionQueueMode mode,std::uint32_t flags,bool push_head,bool push_tail,
-        bool ts1_request) {
+        bool ts1_request,std::optional<RoutineKey> check) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter enqueue");
     fresh_=false;
     if(!validate())return false;
@@ -202,11 +205,15 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
     if((flags&ttab_run_immediately)!=0){
         diagnostic_="RunImmediately requires tick-boundary queue injection, which is not implemented";return false;
     }
+    if(check && (check->scope!=routine_key(check->id).scope ||
+                 !vm_->has_routine(*check,context.code_owner))){
+        diagnostic_="interaction check requires its exact installed code owner";return false;
+    }
     if(push_head)flags|=tso_push_head;
     if(push_tail)flags|=tso_push_tail;
     const auto new_sequence=sequence_+1;
     Action action{new_sequence,target->generation,VmCall{key,context,args,VmCallReturnMode::interaction_next_tick},
-        next_queue_uid_,priority,mode,flags,false};
+        next_queue_uid_,priority,mode,flags,false,check};
     const bool migrating_legacy=ts1_request&&profile_==InteractionQueueProfile::legacy_fifo;
     const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
     const auto protected_prefix=active_?std::size_t{1}:std::size_t{0};
@@ -306,7 +313,44 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     const auto elapsed=idle_start_!=0&&idle_start_<clock_?clock_-idle_start_:1;
     const auto remaining=word(static_cast<std::uint16_t>(frame.arguments[static_cast<std::size_t>(index)])-elapsed);
     const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
-    if(allow==1 && !queue_.empty()) {
+    std::optional<std::int32_t> priority_threshold;
+    if(profile_==InteractionQueueProfile::ts1_priority){
+        const auto* actor=world_.find(actor_id_);
+        if(actor&&actor->person_data.size()>33){
+            priority_threshold=actor->person_data[33];
+            if(*priority_threshold<=2)--*priority_threshold;
+        }
+    }
+    while(allow==1 && !queue_.empty()) {
+        // The check can mutate World and thread registers even when it returns
+        // false. Keep a value copy and resolve identities again after it runs.
+        const auto candidate=queue_.front();
+        if(priority_threshold&&candidate.priority<=*priority_threshold)break;
+        if(profile_==InteractionQueueProfile::ts1_priority){
+            const auto* actor=world_.find(actor_id_);
+            if(actor&&actor->object_words.count(8)){
+                auto flags=static_cast<std::uint16_t>(actor->object_words.at(8));
+                if(candidate.notify_idle){
+                    flags|=0x0080U;
+                    world_.declare_object_word(actor_id_,8,word(flags));
+                }
+                if(candidate.mode==InteractionQueueMode::parent_idle&&(flags&0x0080U)){
+                    queue_.pop_front();continue;
+                }
+            }
+        }
+        const auto* candidate_target=world_.find(candidate.call.context.callee);
+        if(!candidate_target || candidate_target->generation!=candidate.target_generation)
+            return unsupported("queued interaction target identity stale");
+        if(candidate.check){
+            const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
+                {0,0,0,0},10000,check_primitive_);
+            if(!result.started || (result.status!=VmStatus::returned_true &&
+                                   result.status!=VmStatus::returned_false))
+                return unsupported("interaction check did not return synchronously: "+result.diagnostic);
+            if(!validate())return unsupported(diagnostic_);
+            if(result.status==VmStatus::returned_false){queue_.pop_front();continue;}
+        }
         const auto& action=queue_.front();const auto* target=world_.find(action.call.context.callee);
         if(!target || target->generation!=action.target_generation)
             return unsupported("queued interaction target identity stale");
@@ -319,6 +363,9 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         outcome.call_commit=[this,uid,priority,ticket]{
             if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
                !world_.set_person_data(actor_id_,33,priority))return false;
+            if(const auto* actor=world_.find(actor_id_);actor&&actor->object_words.count(8))
+                world_.declare_object_word(actor_id_,8,
+                    word(static_cast<std::uint16_t>(actor->object_words.at(8))&~0x0080U));
             active_=Active{uid,ticket};idle_start_=0;return true;
         };
         return outcome;
@@ -359,6 +406,11 @@ bool InteractionQueue::observe() {
     if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
        !world_.set_person_data(actor_id_,33,0)){
         diagnostic_="interaction completion could not restore PersonData[33] priority";return false;
+    }
+    if(queue_.front().mode!=InteractionQueueMode::parent_idle){
+        if(const auto* actor=world_.find(actor_id_);actor&&actor->object_words.count(8))
+            world_.declare_object_word(actor_id_,8,
+                word(static_cast<std::uint16_t>(actor->object_words.at(8))&~0x0080U));
     }
     completion_=InteractionCompletion{active_->uid,result->ticket,clock_,result->result};
     queue_.pop_front();active_.reset();idle_start_=clock_;
@@ -471,7 +523,7 @@ VmPrimitive ts1_push_interaction_primitive(const World& world,Ts1PushInteraction
                 return unsupported("PushInteraction recipient lacks the exact installed action code owner");
             const VmContext context{request.actor,request.source,request.source,action->owner};
             if(!target.queue->enqueue_ts1(action->key,context,{},request.priority,request.mode,
-                    action->flags,request.push_head,request.push_tail))
+                    action->flags,request.push_head,request.push_tail,action->check))
                 return unsupported("PushInteraction resident queue rejected action: "+target.queue->diagnostic());
             return {PrimitiveDisposition::goto_true,{}};
         } catch(const std::exception& error) {

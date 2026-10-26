@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `5b2f2fef2e388f1c4937922fcf29d795dee6c35b`.
+Base publicada antes da etapa atual: `ecc7c6da31d960587198ebf877b0f3762f3ab197`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -58,7 +58,7 @@ continuação headless da interação geladeira/comida na Casa 07. Não é parid
 Simitone nem build jogável. A mudança de C# existente e outros WIP citados abaixo
 permanecem preservados e fora do commit.
 
-### Prioridades e aviso de PushInteraction (WIP atual)
+### Prioridades e aviso de PushInteraction (commit `ecc7c6d`)
 
 A etapa atual decodifica as sete prioridades TS1, guarda prioridade/modo/flags na
 fila C++, aplica as regras de inserção suportadas e grava esses dados no formato
@@ -75,12 +75,27 @@ ação para notificar; `IdleForInput` trata o aviso no seu próximo horário já
 agendado. Detalhes e limites em
 [native-queue-migration.md](native-queue-migration.md).
 
-Isto ainda não executa check trees/eligibility, despacha ação aninhada por
-AllowPush, cancela/ignora ações, nem injeta RunImmediately. O runtime continua
-com somente uma ação ativa protegida. Próximo passo: ampliar o estado de execução
-para o prefixo protegido de ações e criar um ponto seguro para executar os checks
-reais antes de iniciar cada ação; não chamar a ordenação/notificação atual de
-paridade.
+### Regras de disponibilidade antes de iniciar ação (etapa atual)
+
+PushInteraction agora mantém a rotina de check da TTAB junto à ação. Antes de
+iniciá-la, o C++ executa o check com o dono de código correto e bancos TEMP/TempXL
+compartilhados. Se retornar falso, remove só aquela candidata e tenta a seguinte;
+os efeitos do check permanecem, como na fonte. O save v3 conserva essa identidade
+e lê v1/v2 sem inventar checks. Há orçamento próprio de execução e recusa explícita
+de primitivas ainda não suportadas nesse contexto. Filtros de permissão de UI,
+cobertura completa de primitivas e ações aninhadas continuam pendentes.
+
+Build nativo e seis CTests passaram; o teste final de PushInteraction entre
+moradores também passou. Evidência: `reports/native-queue-checks/attempt-1/`.
+House07 repetida em `reports/native-active-interaction/attempt-16/result.json`:
+os dois cortes reabriram com 12 seções iguais e chegaram ao mesmo estado do
+controle até tick 4096; save legado carregou, originais intactos, processos e
+perfis encerrados. As fixtures provam os checks exercitados; a casa prova somente
+continuidade daquele fluxo, sem equivalência ao jogo completo.
+
+Próximo passo: ampliar a cobertura real de checks e o estado de execução para o
+prefixo protegido de ações, AllowPush aninhado, cancelamento e RunImmediately.
+Não chamar a fila parcial de paridade de jogo.
 
 A orientação mais recente exige não usar C#. A frente atual conecta o executor
 compartilhado diretamente ao `Vm` C++ e conclui bancos TEMP/TempXL nativos.

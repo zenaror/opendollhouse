@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Ações enviadas por objetos agora podem executar sua regra de disponibilidade
+  antes de começar, preservando essa regra ao salvar. Regras ainda não suportadas
+  geram diagnóstico; a cobertura de interações do jogo permanece incompleta.
+
 - A fila que organiza quando Sims e objetos agem agora usa uma parte nativa
   compartilhada com o teste do 3DS emulado. Comprar, sentar e salvar/reabrir
   passaram no Linux. Limites e liberação de memória foram verificados; o jogo

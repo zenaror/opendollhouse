@@ -262,6 +262,87 @@ int main() {
                 temporary.status()==suspended_main.status&&temporary.stack()[0].pc==0,
                 "missing temporary routine leaves the suspended Main untouched");
 
+        // A Check BHAV can run synchronously from an executing Main primitive.
+        // Its stack is separate, but the actor's registers and World backend are shared.
+        std::optional<odh::VmContext> check_world_write_context;
+        std::optional<std::int16_t> check_world_write_value;
+        odh::VmMemory check_memory;
+        check_memory.write=[&](const odh::VmFrame& frame,std::uint8_t scope,
+                               std::int16_t index,std::int16_t value){
+            if(scope!=12||index!=0)return false;
+            check_world_write_context=frame.context;check_world_write_value=value;return true;
+        };
+        odh::Vm* checking_vm=nullptr;
+        std::optional<odh::VmSubroutineResult> check_result;
+        const odh::RoutineSet check_owner{{key(4097),routine({
+            expr(5,2,1,8,9,1),expr(5,1,77,42,7,2),expr(5,0,123,12,7,3),
+            expr(2,0,0,7,7)})}};
+        odh::Vm check_host({{key(),routine({{49,254,255,{}}})}},check_memory,{},
+            [&](const auto&,const auto& instruction,const auto&,const auto&){
+                if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                check_result=checking_vm->evaluate_check(key(4097),{11,22,33,7},
+                    {111,222,333,444},16);
+                return odh::PrimitiveOutcome{check_result->status==odh::VmStatus::returned_true
+                    ?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
+            },odh::RoutineOwners{{7,check_owner}});
+        checking_vm=&check_host;
+        check_host.start(key(),{1,2,3,0});
+        check_host.temps()[2]=9;check_host.temp_xl()[1]=10;
+        require(check_host.run(1)==odh::VmStatus::returned_true&&check_result&&
+                check_result->started&&check_result->status==odh::VmStatus::returned_true&&
+                check_result->steps==4,
+                "Check BHAV completes under its own bound during a one-instruction Main slice");
+        require(check_host.steps()==1&&check_host.temps()[2]==222&&
+                check_host.temp_xl()[1]==77&&check_world_write_context&&
+                check_world_write_context->caller==11&&check_world_write_context->callee==22&&
+                check_world_write_context->stack_object==33&&check_world_write_context->code_owner==7&&
+                check_world_write_value==123,
+                "Check BHAV preserves shared TEMP/XL and exact owner/context World effects without charging Main slice");
+
+        // Only an explicitly supplied synchronous handler is used by a check;
+        // asynchronous outcomes fault the check without publishing a wait/call.
+        for(const auto disposition:{odh::PrimitiveDisposition::wait,odh::PrimitiveDisposition::call}){
+            odh::Vm* rejected_vm=nullptr;
+            std::optional<odh::VmSubroutineResult> rejected_result;
+            odh::RoutineOwners rejected_owners{{7,{{key(4098),routine({{49,254,255,{}}})}}}};
+            odh::Vm rejected_check({{key(),routine({{49,254,255,{}}})}}, {}, {},
+                [&](const auto&,const auto& instruction,const auto&,const auto&){
+                    if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                    rejected_result=rejected_vm->evaluate_check(key(4098),{1,2,3,7},{},8,
+                        [disposition](const auto&,const auto&,const auto&,const auto& dispatch){
+                            require(dispatch.check_mode,"Check BHAV primitive dispatch is explicitly marked");
+                            return odh::PrimitiveOutcome{disposition,"check fixture async result"};
+                        });
+                    return odh::PrimitiveOutcome{odh::PrimitiveDisposition::unsupported,
+                        rejected_result->diagnostic};
+                },std::move(rejected_owners));
+            rejected_vm=&rejected_check;rejected_check.start(key(),{1,2,3,0});
+            require(rejected_check.run(1)==odh::VmStatus::fault&&rejected_result&&
+                    rejected_result->started&&rejected_result->status==odh::VmStatus::fault&&
+                    !rejected_check.pending()&&rejected_check.stack().size()==1&&
+                    rejected_check.stack()[0].pc==0,
+                    "Check BHAV refuses asynchronous wait/call and leaves Main frame resumable for host policy");
+        }
+
+        // A Check BHAV cannot recursively open another temporary check stack.
+        odh::Vm* nested_vm=nullptr;
+        bool nested_refused=false;
+        odh::Vm nested_check({{key(),routine({{49,254,255,{}}})}}, {}, {},
+            [&](const auto&,const auto& instruction,const auto&,const auto&){
+                if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                const auto outer=nested_vm->evaluate_check(key(4097),{1,2,3,7},{},8,
+                    [&](const auto&,const auto&,const auto&,const auto&){
+                        const auto nested=nested_vm->evaluate_check(key(4097),{1,2,3,7},{},8);
+                        nested_refused=!nested.started&&nested.diagnostic.find("nested Check")!=std::string::npos;
+                        return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
+                    });
+                return odh::PrimitiveOutcome{outer.status==odh::VmStatus::returned_true
+                    ?odh::PrimitiveDisposition::goto_true:odh::PrimitiveDisposition::goto_false,{}};
+            },odh::RoutineOwners{{7,{{key(4097),routine({{49,254,255,{}}})}}}});
+        nested_vm=&nested_check;nested_check.start(key(),{1,2,3,0});
+        require(nested_check.run(1)==odh::VmStatus::returned_true&&nested_refused,
+                "nested Check BHAV evaluation is explicitly refused");
+
         odh::RoutineOwners restored_owners{{42,{{key(),routine({expr(2,0,37,9,7)})}}}};
         odh::Vm restored_owner({{key(0),routine({expr(2,0,0)})}}, {}, {}, {},
                                std::move(restored_owners));

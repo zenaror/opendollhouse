@@ -11,14 +11,28 @@ The existing `IdleForInput` wait keeps its scheduled wake time; when it next run
 it sets the avatar's notified flag. Starting and finishing the outer action
 update PersonData[33] when that bank is present. The VM checks routine ownership,
 frame limits and stack depth before the queue publishes an action as active.
-Controller codec v2 persists priority, mode, flags, notification bit, public
-queue UID and queue profile. It still reads v1 FIFO saves as an explicit legacy
+Controller codec v3 persists priority, mode, flags, notification bit, public
+queue UID, queue profile and optional check routine identity. It reads v2
+priority saves without inventing checks, and still reads v1 FIFO saves as an explicit legacy
 profile; the first new TS1 push adopts priority ordering while keeping old
 pending actions in their existing order and assigning unique queue UIDs.
 
 This is a queue-ordering and notification milestone, **not full TS1 queue
 fidelity**. The current native runtime still protects only one active action.
-It does not execute check trees/eligibility, dispatch nested actions from an
+PushInteraction now retains its TTAB check routine under the same code owner.
+At AllowPush dispatch, the check runs synchronously with four zero arguments and
+shared TEMP/TempXL and World state. False removes that candidate and tries the
+next one in the same attempt; effects produced before false remain. Missing code,
+unsupported services, faults and the 10000-instruction check limit produce an
+explicit error, never approval or a fabricated false result. The check retains
+the suspended Main frame and uses a separate, synchronous-only primitive handler.
+The host currently supports Expression/BHAV calls plus synchronous primitives
+7, 15, 16, 25, 29 and 50; all others remain explicit gaps. PushInteraction sets
+SkipPermissions, which bypasses permissions but not the check. Direct host
+enqueues and legacy saves with no check keep their existing behavior; full UI
+permission filtering and check primitive coverage remain incomplete.
+
+It does not dispatch nested actions from an
 action-tree `AllowPush`, cancel or skip followups, inject RunImmediately at a
 tick boundary, or support nested protected action frames and their callbacks.
 RunImmediately requests are rejected explicitly so they cannot masquerade as
@@ -29,18 +43,24 @@ flag also requires ObjectData[8]. Keep extending the existing `Vm`,
 `InteractionQueue`, World and session codecs; keep one authoritative native
 simulation. Do not present this slice as game parity.
 
-Current gates: six focused CTests cover VM call-commit rollback, action
-decoding/order, active-action notification, controller codec v1/v2 and legacy
-migration; their captured output is in
-`reports/native-queue-priority/attempt-1/ctest.log`. The current
-House07 active-save/reopen rerun is in
-`reports/native-active-interaction/attempt-15/result.json`; both cuts (ticks
-256/512) reopened with all 12 save sections matching, and both continuations
-matched the uninterrupted run through tick 4096. The legacy save loaded and 25
-original game files retained their hashes. Repeat this gate after later queue
-changes before treating it as current runtime evidence. This House07 case checks
-save/reopen determinism for the fridge action; it does not exercise competing
-queue priorities or prove game parity.
+Current gates: six focused CTests passed for VM checks, queue execution, controller
+codec v1/v2/v3, session bundle and resident restore. Output:
+`reports/native-queue-checks/attempt-1/ctest.log`; the final cross-resident
+PushInteraction check assertion also passed in `interaction-final.log` there.
+Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
+zero check arguments, missing/unsupported checks, independent instruction budgets,
+queue save/reopen, rejected missing-owner code, priority threshold captured before
+the attempt, cancellation flag clearing, and cancelled ParentIdle removal.
+These are synthetic interpreter/World fixtures, not original-executable evidence.
+
+House07 active-save/reopen rerun:
+`reports/native-active-interaction/attempt-16/result.json`, binary SHA256
+`a444d0a27adf3eefaad112034fcb435e2c0817624ea8d3f5a017ec9bb8e8de82`.
+Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
+continuations matched the uninterrupted run through tick 4096. The legacy save
+loaded and 25 original game files retained their hashes. Processes ended and
+isolated profiles were removed. This verifies continuity of the fridge action;
+it does not establish coverage of all checks, competing priorities or game parity.
 
 ## Pinned authority
 
@@ -66,8 +86,8 @@ commit, lines 891–895. Do not infer whole-file equality for VMAvatar.
 ## Exact execution behavior to retain
 
 `VMPushInteraction` resolves the source from the selected local/argument and
-queues onto **StackObject's thread**. GetAction uses TTAB TTAIndex, requires both
-action and nonzero check routines, and carries exact owner/resource identity.
+queues onto **StackObject's thread**. GetAction uses TTAB TTAIndex, requires the
+action and any referenced nonzero check routine, and carries exact owner/resource identity.
 Push adds SkipPermissions; this bypasses permission filtering, **not the check
 routine**. Another avatar recipient also receives InteractionResult = 0.
 
@@ -137,7 +157,7 @@ reinterpret it as ordinary deletion.
 
 ## State and codec coordination
 
-Current native state has one active front/return event, no priority/mode/check/
+Current native state has one active front/return event, priority/mode/check/
 NotifyIdle metadata, and explicitly rejects nested interaction frames. Completing
 the queue requires extending these same structures with protected-prefix/action
 frame associations, action/check provenance, priority/mode/TS1 flags, notification
@@ -150,7 +170,7 @@ work; resolve identities afresh across those calls.
 Coordinate changes to `InteractionQueueSnapshot`, `VmSnapshot`,
 `entity_thread_controllers_snapshot_codec.cpp`, `vm_snapshot_codec.cpp`, and
 `session_bundle.cpp::validate_controller_vm_links` with the active-save work.
-Current controller codec is v1 and VM codec v2. Active-save validation is already
+Current controller codec is v3 (reads v1/v2) and VM codec v2. Active-save validation is already
 changing the same active/wait/frame invariants: do not independently replace its
 schema. Add versioned fields only after agreeing the shared shape; old FIFO saves
 must not silently acquire invented TS1 priority metadata. Upstream load rebuilds

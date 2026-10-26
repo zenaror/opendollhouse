@@ -390,6 +390,9 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
        (vm.status!=VmStatus::running&&vm.status!=VmStatus::budget_exhausted)))
         throw FormatError("session Sleep notify does not match VM state");
 
+    for(const auto& action:interactions.actions)if(action.check&&
+       action.check->scope!=routine_key(action.check->id).scope)
+        throw FormatError("session queued interaction check key does not match its routine ID");
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
     bool action_frame=false;
     for(const auto& frame:vm.stack) {
