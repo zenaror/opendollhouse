@@ -92,7 +92,7 @@ def main():
    proc.stdin.close();proc.stdout.close();assert proc.wait()==0
  out=ROOT/'docs/migration/source-inventory.csv'
  with out.open('w',newline='',encoding='utf8') as f:
-  w=csv.writer(f);w.writerow(['repository','revision','source_path','git_blob','work_family','backlog_packages_initial','native_candidates_not_parity','declared_types_heuristic','semantic_audit']);w.writerows(rows)
+  w=csv.writer(f,lineterminator="\n");w.writerow(['repository','revision','source_path','git_blob','work_family','backlog_packages_initial','native_candidates_not_parity','declared_types_heuristic','semantic_audit']);w.writerows(rows)
  summary={'schema':1,'native_base':'6890bf141250164cc06198bdbac8f87f427c59ee','scope':'All tracked CS, shader and project-source files in both pinned repositories; not runtime reachability, methods or BHAV content coverage.','sources':[{'repository':n,'revision':v} for n,r,v in SOURCES],'rows':len(rows),'files_with_type_hints':types,'counts':[{'repository':n,'family':g,'files':v} for (n,g),v in sorted(counts.items())],'csv_sha256':hashlib.sha256(out.read_bytes()).hexdigest()}
  (out.parent/'inventory-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
  print(json.dumps({'rows':len(rows),'files_with_type_hints':types,'unrouted':sum(v for (n,g),v in counts.items() if g=='TRIAGE'),'sha256':summary['csv_sha256']}))
