@@ -1,6 +1,7 @@
 #pragma once
 
 #include "linux_window.hpp"
+#include "neighborhood_request.hpp"
 #include "odh/session_entry.hpp"
 #include "odh/neighborhood_picker.hpp"
 
@@ -131,9 +132,9 @@ bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& fam
     const std::string& localized_title = "Evict Family?",
     const std::string& localized_yes = "Yes", const std::string& localized_no = "No");
 
-// Resume the already-loaded lot from its neighborhood marker. Other lots remain
-// unavailable while this session owns one live World.
-std::optional<std::uint16_t> show_neighborhood_resume_picker(
+// Same-lot selection resumes live state; other lots request a saved transition.
+// Management returns intent only, before the runtime saves and unwinds.
+std::optional<NeighborhoodMapRequest> show_neighborhood_resume_picker(
     LinuxWindow& window, const PreparedNeighborhoodMap& map, std::uint16_t active_house);
 
 // Select a family member in the existing window. Rows identify Sims by their

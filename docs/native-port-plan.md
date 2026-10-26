@@ -42,7 +42,9 @@ no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
   ser reconstruídos quando o histórico comprova sua saída; visitantes sem essa
   prova, objetos carregados e transformações incompatíveis continuam limitados
   ([transferência](native-family-transfer.md),
-  [reconstrução](native-occupancy-reconstruction.md)).
+  [reconstrução](native-occupancy-reconstruction.md)). O gate pela janela fez
+  Casa07→Casa09→Casa07 com compras, despejos e reabertura; M/E entra na gestão
+  após salvar/encerrar o runtime ([gestão nativa](native-family-window.md)).
 - `40057ae`: SEAT v3 guarda vários moradores após Sit concluído, incluindo
   famílias mistas em pé/sentadas. House05 banco173 e House07 têm gates de
   reabertura/Stand; Sit/Stand em andamento e posturas arbitrárias continuam
@@ -60,7 +62,8 @@ comercial House07→House05→House07 passou com partidas adiadas, continuação
 à execução contínua, Sim sentado preservado, Stand após reabrir e recuperação de
 destino inválido; opções de áudio seguem entre visitas. Ver
 [troca residencial e limites](neighborhood-return-validation.md). A janela/mapa
-ainda exige validação desse fluxo. Famílias/edição, compra/construção, atividades
+ainda exige validação da troca entre outras famílias; a gestão de mudança da
+família atual já passou pela janela. Famílias/edição, compra/construção, atividades
 das sete expansões, CC e interface original continuam exigindo fluxos completos.
 As camadas portáveis e serviços substituíveis por plataforma continuam requisitos;
 a integração Linux não estabelece suporte nos consoles.

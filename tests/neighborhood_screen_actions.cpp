@@ -184,6 +184,44 @@ int main(int argc, char** argv) {
                 "clicking the Old Town map tab must request mode 4");
 
         map.markers.push_back({{5, 320, 240}, true, false});
+        std::optional<odh_host::NeighborhoodMapRequest> resume_request;
+        run_with_keys_after_showing(window.native_id(), {XK_e}, [&] {
+            resume_request = odh_host::show_neighborhood_resume_picker(window, map, 5);
+        });
+        require(resume_request &&
+                resume_request->kind == odh_host::NeighborhoodRequestKind::manage_families &&
+                resume_request->destination_house == 0,
+                "E on the live-lot map must request family management without a travel destination");
+        run_with_click_after_showing(window.native_id(), 180, 568, [&] {
+            resume_request = odh_host::show_neighborhood_resume_picker(window, map, 5);
+        });
+        require(resume_request &&
+                resume_request->kind == odh_host::NeighborhoodRequestKind::manage_families &&
+                resume_request->destination_house == 0,
+                "the live-lot map management button must return management intent");
+        run_with_click_after_showing(window.native_id(), 320, 240, [&] {
+            resume_request = odh_host::show_neighborhood_resume_picker(window, map, 5);
+        });
+        require(resume_request &&
+                resume_request->kind == odh_host::NeighborhoodRequestKind::travel &&
+                resume_request->destination_house == 5,
+                "clicking the active house must retain its travel selection for same-lot resume");
+        map.markers.push_back({{9, 180, 568}, true, false});
+        run_with_click_after_showing(window.native_id(), 180, 568, [&] {
+            resume_request = odh_host::show_neighborhood_resume_picker(window, map, 5);
+        });
+        require(resume_request &&
+                resume_request->kind == odh_host::NeighborhoodRequestKind::travel &&
+                resume_request->destination_house == 9,
+                "a lot beneath the previous management-button position must remain selectable for travel");
+        odh_host::LinuxWindow resume_cancel_window(800, 600,
+            "OpenDollhouse live-lot map cancellation test");
+        run_with_keys_after_showing(resume_cancel_window.native_id(), {XK_Escape}, [&] {
+            resume_request = odh_host::show_neighborhood_resume_picker(resume_cancel_window, map, 5);
+        });
+        require(!resume_request,
+                "Escape on the live-lot map must return no management or travel request");
+
         auto panel_choice = odh_host::NeighborhoodLotPanelChoice::back_to_map;
         run_with_click_after_showing(window.native_id(), 70, 482, [&] {
             panel_choice = odh_host::show_neighborhood_lot_panel(window, map, 5,

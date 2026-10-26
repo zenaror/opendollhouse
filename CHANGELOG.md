@@ -20,6 +20,13 @@ validação indicados por versão.
 
 ### Adicionado
 
+- O mapa aberto durante uma partida agora oferece gestão de famílias sem
+  reiniciar o aplicativo. A partida é salva antes de abrir as telas de mudança;
+  Casa07→Casa09→Casa07 passou pela interface, incluindo dois despejos e
+  reabertura do save. O botão evita cobrir lotes. Interface ainda provisória;
+  criação e dinheiro inicial desse teste foram preparados por ferramenta de
+  teste. Veja `docs/native-family-window.md`.
+
 - Reconstrução nativa dos moradores quando o histórico comprova a saída da
   família original da casa. Móveis, visitantes e relações de vizinhos são
   preservados; os novos moradores recebem identidades próprias. Casos com

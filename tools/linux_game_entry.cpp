@@ -1121,7 +1121,13 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 
         unsigned house = options.house.value_or(0);
 #ifdef ODH_HAVE_X11
-        if (map && !options.house) {
+        const auto run_management_map = [&]() -> bool {
+            // Enter only before a runtime exists, or after it saved and unwound.
+            // Management can change authority: always discard a prospective view.
+            pending_move_in.reset();
+            family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(userdata / "Neighborhood.iff");
+            map = odh_host::prepare_neighborhood_map(userdata, graphics, options.mode,
+                family_overlay ? &*family_overlay : nullptr, static_cast<std::uint8_t>(options.language));
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
           if(session_log)session_log->stage("neighborhood-picker");
 #endif
@@ -1137,7 +1143,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             if (!selected) {
                 std::cout << "{\"status\":\"cancelled\",\"stage\":\"neighborhood\",\"cancellation_reason\":\""
                           << odh_host::window_quit_reason_name(window->quit_reason()) << "\"}\n";
-                return 0;
+                return false;
             }
             if (selected->action == odh_host::NeighborhoodPickerAction::switch_mode) {
                 if (!odh::neighborhood_mode_supported(selected->mode))
@@ -1279,7 +1285,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     static_cast<std::uint8_t>(options.language));
                 if (choice == odh_host::OccupiedLotChoice::cancel) {
                     std::cout << "{\"status\":\"cancelled\",\"stage\":\"occupied-lot-choice\"}\n";
-                    return 0;
+                    return false;
                 }
                 if (choice == odh_host::OccupiedLotChoice::move_out) {
                     if (!odh_host::show_move_out_confirmation(*window, *current_family,
@@ -1287,7 +1293,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                             static_cast<std::uint8_t>(options.language), move_out_title,
                             confirm_yes, confirm_no)) {
                         std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-out-confirmation\"}\n";
-                        return 0;
+                        return false;
                     }
                     const auto latest_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
                         userdata / "Neighborhood.iff");
@@ -1396,7 +1402,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                     if (reason == odh_host::WindowQuitReason::window_manager_close ||
                         reason == odh_host::WindowQuitReason::window_destroyed) {
                         std::cout << "{\"status\":\"cancelled\",\"stage\":\"family\",\"cancellation_reason\":\"window_close\"}\n";
-                        return 0;
+                        return false;
                     }
                     continue;
                 }
@@ -1477,7 +1483,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         static_cast<std::uint8_t>(options.language), move_in_title,
                         move_in_question, confirm_yes, confirm_no)) {
                     std::cout << "{\"status\":\"cancelled\",\"stage\":\"move-in-confirmation\"}\n";
-                    return 0;
+                    return false;
                 }
 
                 // Re-read both player state and commercial inputs after the
@@ -1529,7 +1535,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             }
             break;
           }
-        }
+            return true;
+        };
+        if (map && !options.house && !run_management_map()) return 0;
 #endif
 
         // Only small launch options and archive paths survive each runtime. Every
@@ -1785,6 +1793,25 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         throw odh::FormatError("headless travel was not accepted by the active lot");
                     rollback_options.reset();
                     return result.exit_code;
+                }
+                if (result.transition->kind == odh_host::NeighborhoodRequestKind::manage_families) {
+                    if (scripted_transition_expected)
+                        throw odh::FormatError("scripted lot travel cannot request family management");
+#ifdef ODH_HAVE_X11
+                    // The old runtime no longer exists. Its checkpoint remains
+                    // on disk, but management may expire its lease; never install
+                    // an automatic rollback to that old occupancy afterward.
+                    rollback_options.reset();
+                    saved_lots.clear();
+                    options = travel_options;
+                    options.house.reset();
+                    if (!run_management_map()) return 0;
+                    travel_options.mode = options.mode;
+                    options.house = house;
+                    continue;
+#else
+                    throw odh::FormatError("family management requires a window backend");
+#endif
                 }
                 if (scripted_transition_expected) {
                     const auto expected_house = options.headless_travel_houses[headless_travel_index];

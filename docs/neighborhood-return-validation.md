@@ -2,6 +2,18 @@
 
 Pressing **M** from the integrated Linux lot opens the existing neighborhood map in the same window. The live `odh_person_run` call remains on the stack while the map is open. Choosing the current lot resumes that same live state. Choosing another lot now asks the runtime to save at a safe point, ends that lot run, and lets the launcher construct the selected lot as a fresh runtime. The launcher keeps one save per visited lot so returning can restore its earlier state. If destination preparation or startup fails, it attempts to restore the lot the player just left. A failed save keeps the current lot running. Escape closes the application.
 
+The live map also exposes **E: Manage families** and a clickable button. This
+returns an explicit management request; it cannot change family state while
+the runtime is alive. The runtime saves and unwinds before the launcher opens
+the complete neighborhood management screen. That screen reloads persisted
+family authority and supports the existing CAS, purchase and eviction flows.
+Management clears the old travel rollback/cache because eviction can invalidate
+the old occupancy. Cancelling closes the application with confirmed changes
+retained; a later preparation failure does not restore an expired occupancy.
+See [native-family-window.md](native-family-window.md) for the graphical gate
+and its evidence limits. This is distinct from ordinary residential travel,
+whose rollback behavior above remains unchanged.
+
 The first deterministic integration uses House07 and drives the real `WindowInput` dispatcher without a display. It selects the chair by a pixel in the actual lot pick buffer, runs Sit, requests neighborhood return, resumes the same lot, then runs Stand. The evidence compares the tick, Main VM step count, avatar generation/position/person data/attachment and relationship matrix counts immediately before and after the scripted callback. The Sit attachment survives the map step and the original Stand BHAV completes afterward. The test checks these values for the selected avatar and checks relationship counts; it does not deep-compare every World entity or every relationship value.
 
 ```sh

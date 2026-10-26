@@ -1,6 +1,7 @@
 #pragma once
 
 #include "odh/session_resource_identity.hpp"
+#include "neighborhood_request.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -16,11 +17,12 @@ namespace odh_host {
 class LinuxWindow;
 class LinuxSessionLog;
 class FamilySessionJournal;
-using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>;
+using NeighborhoodResumeCallback = std::function<std::optional<NeighborhoodMapRequest>()>;
 
 struct NeighborhoodTransitionRequest {
     std::uint16_t destination_house = 0;
     std::filesystem::path saved_session_path;
+    NeighborhoodRequestKind kind = NeighborhoodRequestKind::travel;
 };
 struct PersonRunResult {
     int exit_code = 0;

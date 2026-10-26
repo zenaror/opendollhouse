@@ -7212,7 +7212,7 @@ struct PlacementCandidateProbe {
     std::optional<odh_host::NeighborhoodTransitionRequest> neighborhood_transition;
     auto window_deadline=std::chrono::steady_clock::now();
     enum class NeighborhoodRequestResult { cancelled, same_lot, transitioned };
-    const auto process_neighborhood_request=[&](std::optional<std::uint16_t> selected){
+    const auto process_neighborhood_request=[&](std::optional<odh_host::NeighborhoodMapRequest> selected){
         const auto* actor_before=world.find(runtime_avatar_id);
         const auto actor_generation_before=actor_before?actor_before->generation:0;
         const auto actor_position_before=actor_before?actor_before->position:std::nullopt;
@@ -7247,14 +7247,16 @@ struct PlacementCandidateProbe {
             relationship_pairs_before==(relationships?relationships->pair_count():0)&&
             relationship_values_before==(relationships?relationships->value_count():0);
         const auto active_house=lot_id.value_or(0);
-        neighborhood_resume_same_lot=active_house&&*selected==active_house;
+        const bool management=selected->kind==odh_host::NeighborhoodRequestKind::manage_families;
+        neighborhood_resume_same_lot=!management&&active_house&&selected->destination_house==active_house;
         if(neighborhood_resume_same_lot)return NeighborhoodRequestResult::same_lot;
         const auto save_path=save_live_session();
         neighborhood_transition=odh_host::NeighborhoodTransitionRequest{
-            *selected,std::filesystem::path(save_path)};
+            selected->destination_house,std::filesystem::path(save_path),selected->kind};
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         session_log.event("neighborhood transition requested from house="+
-            std::to_string(active_house)+" to house="+std::to_string(*selected)+
+            std::to_string(active_house)+" to house="+std::to_string(selected->destination_house)+
+            " management="+(management?"true":"false")+
             " saved_session="+save_path);
 #endif
         return NeighborhoodRequestResult::transitioned;
@@ -7416,7 +7418,8 @@ struct PlacementCandidateProbe {
                     if(render_window_host)render_window_host->resize(800,600);
                     if(!neighborhood_resume&&headless_window_neighborhood_tick&&lot_id){
                         const auto selected=headless_window_neighborhood_house.value_or(*lot_id);
-                        neighborhood_resume=[selected](){return std::optional<std::uint16_t>{selected};};
+                        neighborhood_resume=[selected](){return std::optional<odh_host::NeighborhoodMapRequest>{
+                            odh_host::NeighborhoodMapRequest{odh_host::NeighborhoodRequestKind::travel,selected}};};
                     }
                     NeighborhoodRequestResult result;
                     try{
@@ -7649,7 +7652,8 @@ struct PlacementCandidateProbe {
             headless_window_neighborhood_input_sent=true;
             const auto selected=headless_window_neighborhood_house.value_or(lot_id.value_or(0));
             const auto result=process_neighborhood_request(
-                selected?std::optional<std::uint16_t>{selected}:std::nullopt);
+                selected?std::optional<odh_host::NeighborhoodMapRequest>{
+                    odh_host::NeighborhoodMapRequest{odh_host::NeighborhoodRequestKind::travel,selected}}:std::nullopt);
             if(result==NeighborhoodRequestResult::cancelled){
                 window_closed=true;
                 break;

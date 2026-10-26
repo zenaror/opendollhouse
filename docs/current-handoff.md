@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `f89d2183aea6b0e8f51f2c118745cebb6b52469c`.
+Base publicada antes da etapa atual: `9ec4546c0b7648a2a695c24d27ff02a037472e8c`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,37 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Reconstrução após saída dos moradores originais (etapa atual)
+### Gestão pela janela sem reiniciar o aplicativo (etapa atual)
+
+No lote, M abre o mapa vivo; E ou botão pede gestão. Pedido tipado não escreve
+no overlay: `person.cpp` salva e retorna, destruindo runtime/VMs antes de abrir
+o mesmo mapa completo extraído do launcher. O helper recarrega overlay/mapa,
+limpa proposta pendente e usa CAS/compra/despejo já existentes. Rollback/cache
+anteriores são descartados porque despejo pode expirar a ocupação de origem.
+Cancelar encerra o aplicativo mantendo operações confirmadas. Selecionar a
+própria casa no mapa vivo continua sem salvar/reconstruir. O botão escolhe
+canto sem marcador; sem espaço, E segue disponível. Rótulo ainda inglês.
+
+`reports/native-family-window/attempt-3/result.json` passou: um PID fez compras
+Casa07→Casa09→Casa07, dois M/E e dois despejos pela UI, com três saves; outro PID
+reabriu o checkpoint certo no tick3. Roster/recursos/fingerprints/projeção pessoal
+iguais, transfer aplicado nos destinos, epochs1/2/3, budgets40725/37225/20000.
+Necessidades/frações podem avançar enquanto a cena roda. CAS privado, orçamento
+inicial57950 e saída da família original são preparo do helper, não prova CAS UI.
+116 originais e dois personagens privados intactos; helper, jogos e Xvfb
+encerrados; perfil removido. Binário final
+`fe7351297137816a56787e0983aa7fd5254b95dd7bbb605cdb53010537536f33`.
+14 regressões headless e2X11 passaram; revisões independentes sem bloqueio.
+Root inspecionou pixels da cena e mapa. Contrato, comandos e limites em
+`docs/native-family-window.md`. Attempt1 falhou só no offset do log rotacionado
+ao reabrir; attempt2 passou antes do ajuste do botão; attempt3 é final.
+
+PRÓXIMO: separar persistência da propriedade do save familiar, para conservar
+alterações de móveis/construção ao mudar de casa e voltar; ampliar gestão
+familiar legada, edição/renomeação e colocação de objetos carregados. A janela
+validou mudança de família, não viagens/atividades das expansões ou partida longa.
+
+### Reconstrução após saída dos moradores originais (checkpoint anterior)
 
 Core portátil `occupancy_projection` usa o histórico completo e a identidade
 dos dados instalados para retirar somente os moradores da ocupação original

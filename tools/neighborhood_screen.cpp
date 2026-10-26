@@ -959,22 +959,57 @@ bool show_move_out_confirmation(LinuxWindow& window, const odh::FamilyEntry& fam
     }
 }
 
-std::optional<std::uint16_t> show_neighborhood_resume_picker(
+std::optional<NeighborhoodMapRequest> show_neighborhood_resume_picker(
         LinuxWindow& window, const PreparedNeighborhoodMap& map, std::uint16_t active_house) {
     if (window.width() != 800 || window.height() != 600)
         throw odh::FormatError("neighborhood picker requires an 800x600 window");
     window.set_title("OpenDollhouse | select a lot; current lot " +
-        std::to_string(active_house) + " resumes | Esc: close");
-    window.present(map.frame);
+        std::to_string(active_house) + " resumes | E: manage families | Esc: close");
+    auto frame=map.frame;
+    if(frame.width!=800||frame.height!=600||frame.pixels.size()!=800*600)
+        throw odh::FormatError("neighborhood resume map frame is invalid");
+    std::optional<std::array<std::int32_t,2>> management_button;
+    constexpr std::array<std::array<std::int32_t,2>,4> corners{{
+        {24,548},{456,548},{24,24},{456,24}}};
+    const auto radius=std::int64_t{6}*map.marker_scale;
+    for(const auto& corner:corners){
+        const auto x=std::int64_t{corner[0]},y=std::int64_t{corner[1]};
+        const bool obscures_lot=std::any_of(map.markers.begin(),map.markers.end(),[&](const auto& marker){
+            const auto mx=std::int64_t{marker.location.x},my=std::int64_t{marker.location.y};
+            return mx+radius>=x&&mx-radius<x+320&&my+radius>=y&&my-radius<y+40;
+        });
+        if(!obscures_lot){management_button=corner;break;}
+    }
+    if(management_button)
+        for(std::int32_t y=(*management_button)[1];y<(*management_button)[1]+40;++y)
+            for(std::int32_t x=(*management_button)[0];x<(*management_button)[0]+320;++x)
+                frame.pixels[static_cast<std::size_t>(y*800+x)]={22,25,32,255};
+#ifdef ODH_HAVE_LINUX_TEXT_RENDERER
+    if(management_button){
+        TextOverlayStyle style;
+        style.x=(*management_button)[0];style.y=(*management_button)[1];style.width=320;style.height=40;
+        style.font_size_px=17;style.padding=7;
+        style.foreground={245,245,245,255};style.background={22,25,32,255};
+        draw_text_overlay(frame,"E: Manage families",1,style);
+    }
+#endif
+    window.present(frame);
     for (;;) {
         const auto input = window.poll();
         if (input.quit) return std::nullopt;
+        if(input.move_out)
+            return NeighborhoodMapRequest{NeighborhoodRequestKind::manage_families,0};
         if (input.primary_click) {
             const auto selected = odh::pick_neighborhood_lot(map.markers, map.marker_scale,
                 (*input.primary_click)[0], (*input.primary_click)[1]);
-            if (selected) return selected;
+            if (selected) return NeighborhoodMapRequest{NeighborhoodRequestKind::travel,*selected};
+            if(management_button&&(*input.primary_click)[0]>=(*management_button)[0]&&
+               (*input.primary_click)[0]<(*management_button)[0]+320&&
+               (*input.primary_click)[1]>=(*management_button)[1]&&
+               (*input.primary_click)[1]<(*management_button)[1]+40)
+                return NeighborhoodMapRequest{NeighborhoodRequestKind::manage_families,0};
         }
-        if (input.redraw) window.present(map.frame);
+        if (input.redraw) window.present(frame);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
