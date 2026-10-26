@@ -3,12 +3,26 @@
 #include "odh/family.hpp"
 #include "odh/neighborhood.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <optional>
 
 namespace odh {
 
-enum class FamilyOverlayAction : std::uint32_t { move_in = 0, move_out = 1 };
+inline constexpr std::size_t family_overlay_max_bytes = 4 * 1024 * 1024;
+
+enum class FamilyOverlayAction : std::uint32_t { move_in = 0, move_out = 1, checkpoint = 2 };
+
+// Explicit before-state for chronological native player-state operations.
+struct FamilyOverlayOperationState {
+    std::uint16_t expected_house = 0;
+    std::uint64_t expected_occupancy_epoch = 0;
+    std::int32_t budget_before = 0;
+    std::int32_t value_in_arch_before = 0;
+    std::int32_t value_in_arch_after = 0;
+    std::optional<std::array<std::uint8_t, 32>> session_sha256;
+};
 
 struct FamilyOverlayAssignment {
     std::uint16_t family_chunk_id = 0;
@@ -17,6 +31,7 @@ struct FamilyOverlayAssignment {
     std::int32_t purchase_price = 0;
     std::int32_t budget_after_purchase = 0;
     FamilyOverlayAction action = FamilyOverlayAction::move_in;
+    std::optional<FamilyOverlayOperationState> state;
 };
 
 // Persisted headless metadata only: this does not produce a private avatar IFF
@@ -68,6 +83,41 @@ struct FamilyOverlay {
     std::vector<FamilyOverlayDeletion> deletions{}; // Source families, applied last.
 };
 
+// Epoch counts occupancy periods, including legacy move-ins. A retained ticket
+// is a full-resume candidate only when its house and epoch match current occupancy;
+// otherwise it is available solely for validated portable household extraction.
+struct FamilyOverlayFamilyState {
+    std::uint16_t family_chunk_id = 0;
+    std::array<std::uint8_t, 32> family_identity{};
+    std::uint16_t house_number = 0;
+    std::uint64_t occupancy_epoch = 0;
+    std::int32_t budget = 0;
+    std::int32_t value_in_arch = 0;
+    bool managed = false;
+    std::optional<std::array<std::uint8_t, 32>> checkpoint_sha256;
+    std::uint16_t checkpoint_house = 0;
+    std::uint64_t checkpoint_epoch = 0;
+};
+struct FamilyOverlayReplay {
+    std::vector<FamilyEntry> families;
+    std::vector<FamilyOverlayFamilyState> states;
+};
+FamilyOverlayReplay replay_family_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t, 32>& neighborhood_identity, const FamilyOverlay&);
+
+FamilyOverlay plan_family_managed_move_in_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t, 32>&, const FamilyOverlay*,
+    std::uint16_t family_chunk_id, std::uint16_t house_number, std::int32_t purchase_price);
+FamilyOverlay plan_family_managed_move_out_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t, 32>&, const FamilyOverlay*, std::uint16_t family_chunk_id);
+// The checkpoint retains ValueInArch. Its digest names an immutable session
+// archive; the host must validate and durably publish that archive before CAS.
+FamilyOverlay plan_family_checkpoint_overlay(const std::vector<FamilyEntry>&,
+    const std::array<std::uint8_t, 32>&, const FamilyOverlay*,
+    std::uint16_t family_chunk_id, std::uint16_t expected_house,
+    std::uint64_t expected_epoch, std::int32_t budget_after,
+    const std::array<std::uint8_t, 32>& session_sha256);
+
 // Identity covers the FAMI chunk ID, family number, original house, ordered
 // member GUIDs, and original budget. It does not identify the whole IFF file.
 std::array<std::uint8_t, 32> family_overlay_identity(const FamilyEntry&);
@@ -97,8 +147,8 @@ FamilyOverlay plan_family_move_out_overlay(
     const std::array<std::uint8_t, 32>& neighborhood_identity,
     const FamilyOverlay* current_overlay, std::uint16_t family_chunk_id);
 
-// Bounded v3 tagged/length-prefixed codec for created-family metadata.
-// Assignment-only overlays retain v2 encoding; v1 saves remain readable. The
+// Bounded tagged codec: managed chronological operations use v6; legacy
+// assignment-only overlays retain v2 and metadata uses v3-v5. v1 remains readable. The
 // caller supplies SHA-256 of the exact source Neighborhood.iff so stale player
 // data can fail closed.
 std::vector<std::uint8_t> encode_family_overlay(const FamilyOverlay&);

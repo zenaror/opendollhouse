@@ -1,0 +1,164 @@
+Start testing: Oct 26 16:24 -03
+----------------------------------------------------------
+9/254 Testing: session_bundle
+9/254 Test: session_bundle
+Command: "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-session-bundle-tests"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"session_bundle" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+session bundle checks passed
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"session_bundle" end time: Oct 26 16:24 -03
+"session_bundle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/254 Testing: linux_session_archive_store
+17/254 Test: linux_session_archive_store
+Command: "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-linux-session-archive-store-tests"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_session_archive_store" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Linux session archive store checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"linux_session_archive_store" end time: Oct 26 16:24 -03
+"linux_session_archive_store" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/254 Testing: linux_family_overlay_store
+18/254 Test: linux_family_overlay_store
+Command: "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-linux-family-overlay-store-tests"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_family_overlay_store" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Linux family overlay store checks passed
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"linux_family_overlay_store" end time: Oct 26 16:24 -03
+"linux_family_overlay_store" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/254 Testing: linux_family_session_journal
+19/254 Test: linux_family_session_journal
+Command: "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-linux-family-session-journal-tests"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_family_session_journal" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Linux family session journal checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"linux_family_session_journal" end time: Oct 26 16:24 -03
+"linux_family_session_journal" time elapsed: 00:00:00
+----------------------------------------------------------
+
+48/254 Testing: family_overlay
+48/254 Test: family_overlay
+Command: "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-family-overlay-tests"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"family_overlay" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+family_overlay: 1692 checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"family_overlay" end time: Oct 26 16:24 -03
+"family_overlay" time elapsed: 00:00:00
+----------------------------------------------------------
+
+220/254 Testing: linux_game_entry_cli
+220/254 Test: linux_game_entry_cli
+Command: "/usr/bin/python3" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/tests/linux_game_entry_cli.py" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_game_entry_cli" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Integrated Linux entry CLI: 58 checks passed (synthetic only)
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"linux_game_entry_cli" end time: Oct 26 16:24 -03
+"linux_game_entry_cli" time elapsed: 00:00:00
+----------------------------------------------------------
+
+221/254 Testing: linux_household_session_resume_cli
+221/254 Test: linux_household_session_resume_cli
+Command: "/usr/bin/python3" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/tests/linux_household_session_resume_cli.py" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_household_session_resume_cli" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Synthetic player-owned character IFFs survive household save/fresh-process resume; changed private IFF hashes, mismatched and partial rosters are rejected
+<end of output>
+Test time =   0.29 sec
+----------------------------------------------------------
+Test Passed.
+"linux_household_session_resume_cli" end time: Oct 26 16:24 -03
+"linux_household_session_resume_cli" time elapsed: 00:00:00
+----------------------------------------------------------
+
+223/254 Testing: linux_lot_travel_cli
+223/254 Test: linux_lot_travel_cli
+Command: "/usr/bin/python3" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/tests/linux_lot_travel_cli.py" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_lot_travel_cli" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Integrated runtime lot travel: House07 → House08 → restored House07 (synthetic data)
+Delayed travel: House07 → House08 → House07 → House08; household state matches continuous run; audio retained
+<end of output>
+Test time =   0.33 sec
+----------------------------------------------------------
+Test Passed.
+"linux_lot_travel_cli" end time: Oct 26 16:24 -03
+"linux_lot_travel_cli" time elapsed: 00:00:00
+----------------------------------------------------------
+
+224/254 Testing: linux_managed_family_session_cli
+224/254 Test: linux_managed_family_session_cli
+Command: "/usr/bin/python3" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/tests/linux_managed_family_session_cli.py" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_managed_family_session_cli" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Managed native CLI: fresh immutable checkpoint, fresh-process continuation, stale-save rejection, and travel authority reload (synthetic data)
+<end of output>
+Test time =   0.22 sec
+----------------------------------------------------------
+Test Passed.
+"linux_managed_family_session_cli" end time: Oct 26 16:24 -03
+"linux_managed_family_session_cli" time elapsed: 00:00:00
+----------------------------------------------------------
+
+226/254 Testing: linux_session_resume_cli
+226/254 Test: linux_session_resume_cli
+Command: "/usr/bin/python3" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/tests/linux_session_resume_cli.py" "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person"
+Directory: /home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint
+"linux_session_resume_cli" start time: Oct 26 16:24 -03
+Output:
+----------------------------------------------------------
+Integrated session CLI: two-process continuation matches uninterrupted execution (synthetic only)
+<end of output>
+Test time =   0.10 sec
+----------------------------------------------------------
+Test Passed.
+"linux_session_resume_cli" end time: Oct 26 16:24 -03
+"linux_session_resume_cli" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 26 16:24 -03

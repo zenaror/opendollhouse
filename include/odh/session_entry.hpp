@@ -11,6 +11,14 @@
 
 namespace odh {
 
+struct NeighborhoodFamilySource {
+    std::array<std::uint8_t, 32> identity{};
+    std::vector<FamilyEntry> families;
+};
+// Read the immutable family baseline and its identity from the same IFF view.
+NeighborhoodFamilySource load_neighborhood_family_source(
+    const std::filesystem::path& neighborhood_iff);
+
 struct SessionEntryMember {
     std::uint32_t guid;
     std::int16_t neighbor_id;

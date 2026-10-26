@@ -52,6 +52,46 @@ int main() {
     const auto path = temp.path / "slot-01.odhs";
     const auto first = archive({1,2,3});
     const auto replacement = archive({9,8,7,6});
+    const auto immutable=odh_host::publish_session_archive_immutable(temp.path,first);
+    require(immutable.filename().string().size()==69&&immutable.extension()==".odhs",
+            "immutable archive uses digest filename");
+    struct stat immutable_before{},immutable_after{};
+    require(::stat(immutable.c_str(),&immutable_before)==0&&(immutable_before.st_mode&0777)==0600,
+            "immutable archive is private");
+    require(odh_host::publish_session_archive_immutable(temp.path,first)==immutable&&
+            ::stat(immutable.c_str(),&immutable_after)==0&&immutable_before.st_ino==immutable_after.st_ino,
+            "identical archive reuses existing inode");
+    require(odh_host::read_session_archive(immutable).sections[0].data==first.sections[0].data,
+            "immutable archive can be reopened");
+    require(odh_host::publish_session_archive_immutable(temp.path,replacement)!=immutable,
+            "changed payload publishes a separate archive");
+    const auto original_bytes=read_text(immutable);
+    {std::ofstream output(immutable,std::ios::binary|std::ios::trunc);auto changed=original_bytes;changed.back()^=1;output<<changed;}
+    rejects([&]{(void)odh_host::publish_session_archive_immutable(temp.path,first);},
+            "mismatched digest-named bytes reject without replacement");
+    {std::ofstream output(immutable,std::ios::binary|std::ios::trunc);output<<original_bytes;}
+    require(::chmod(immutable.c_str(),0644)==0,"make existing fixture non-private");
+    rejects([&]{(void)odh_host::publish_session_archive_immutable(temp.path,first);},
+            "non-private existing immutable file rejects");
+    require(::chmod(immutable.c_str(),0600)==0,"restore fixture permissions");
+    const auto retained=temp.path/"retained.odhs";
+    std::filesystem::rename(immutable,retained);
+    std::filesystem::create_symlink(retained.filename(),immutable);
+    rejects([&]{(void)odh_host::publish_session_archive_immutable(temp.path,first);},
+            "digest-named symlink rejects");
+    require(read_text(retained)==original_bytes,"symlink rejection preserves target");
+    std::filesystem::remove(immutable);
+    std::filesystem::rename(retained,immutable);
+    const auto directory_link=temp.path/"directory-link";
+    std::filesystem::create_directory_symlink(temp.path,directory_link);
+    rejects([&]{(void)odh_host::publish_session_archive_immutable(directory_link,first);},
+            "immutable publication refuses symlink directory");
+    odh::SessionArchiveLimits small;small.max_file_bytes=1;
+    rejects([&]{(void)odh_host::publish_session_archive_immutable(temp.path,first,small);},
+            "invalid limits reject before publication");
+    for(const auto& entry:std::filesystem::directory_iterator(temp.path))
+        require(entry.path().filename().string().find(".session-tmp-")!=0,
+                "immutable publication cleans up temporary names");
     odh_host::write_session_archive_atomic(path, first);
     require(odh_host::read_session_archive(path).sections[0].data == first.sections[0].data,
             "new archive can be reopened from disk");

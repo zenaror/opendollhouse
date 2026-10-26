@@ -36,6 +36,25 @@ void with_iff_file(const std::filesystem::path& path, F&& read) {
 }
 }
 
+NeighborhoodFamilySource load_neighborhood_family_source(
+        const std::filesystem::path& neighborhood_iff) {
+    NeighborhoodFamilySource result;
+    std::uint32_t remaining_members = 65536;
+    with_iff_file(neighborhood_iff, [&](const auto& view) {
+        result.identity = identity_of(view);
+        iff_chunks(view, [&](const Chunk& chunk) {
+            if (chunk.type != "FAMI") return;
+            if (result.families.size() >= 4096) throw FormatError("too many family records");
+            FamiLimits limits;
+            limits.members = std::min<std::uint32_t>(256, remaining_members);
+            auto family = read_fami(chunk.payload, limits);
+            remaining_members -= static_cast<std::uint32_t>(family.member_guids.size());
+            result.families.push_back({chunk.id, std::move(family)});
+        });
+    });
+    return result;
+}
+
 SessionEntry load_session_entry(const std::filesystem::path& user_data,
         unsigned mode, std::uint16_t house, std::uint8_t language,
         const FamilyOverlay* saved_overlay,

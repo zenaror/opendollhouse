@@ -15,7 +15,7 @@
 
 namespace odh_host {
 namespace {
-constexpr std::size_t max_overlay_bytes = 44 + 48 * 4096;
+constexpr std::size_t max_overlay_bytes = odh::family_overlay_max_bytes;
 
 class FileDescriptor {
 public:

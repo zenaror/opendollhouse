@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `6a3c88953c9eada4b9935c57f782e48f0e441605`.
+Base publicada antes da etapa atual: `21b554e92761ecdce89d5dc7c60a3553553cda0b`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,32 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Troca de casas com tempo de jogo e continuação preservada (etapa atual)
+### Save e dinheiro ligados à ocupação da família (etapa atual)
+
+Novas compras usam overlay v6 e `FamilySessionJournal`: snapshot de lançamento
+único, arquivo imutável com lease FAML e commit do orçamento/checkpoint por CAS.
+Retomada automática usa o SHA atual do overlay; caminhos de cache são sugestões,
+e carga explícita/rollback continuam sujeitos à autoridade atual. Um save antigo
+não pode voltar a valer só por ter a família e casa certas. Saves sem alterações
+são idempotentes, com comparação ainda sob lock. Legado continua legível.
+
+Dez CTests passaram, incluindo o novo CLI com processo novo, zero ticks,
+continuação, rejeições e 7→8→7 sintético. Log em
+`reports/native-family-checkpoint/ctest.log`; contrato/limites em
+`docs/native-family-checkpoints.md`. O guard de despejo após compra permanece.
+O gate comercial em `reports/native-family-checkpoint/real-1/result.json`
+confirmou seis processos encerrados, 30 hashes intactos, T2→zero→T4 idêntico ao
+controle contínuo e 7→5→7. A autoridade foi semeada artificialmente no perfil
+privado; não confundir com compra/mudança pela UI ou transferência de Sims.
+Ticket de outra ocupação bloqueia jogar/salvar defaults: o próximo trabalho
+é transferir dados revisados dos Sims, necessidades e relações para os moradores
+recém-inicializados no destino, sem carregar World/VM da casa antiga.
+
+Na referência fixada, ValueInArch de família criada começa em zero e não foi
+encontrada atualização viva; o despejo devolve só esse valor retido. Não inventar
+reembolso do preço pago; liquidação original TS1 continua sem prova.
+
+### Troca de casas com tempo de jogo e continuação preservada
 
 O roteiro de diagnóstico aceita `--headless-travel-tick N` por visita, inclusive
 quando retorna a um lote salvo. O tick absoluto interno continua disponível;

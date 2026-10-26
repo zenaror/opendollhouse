@@ -519,6 +519,80 @@ int main() {
         auto too_many = created; too_many.creations.resize(4097, creation);
         rejects([&] { (void)odh::encode_family_overlay(too_many); }, "operation budget rejects before copying payloads");
 
+        // Native profile: checkpoint the live budget between purchases; never
+        // synthesize architecture refund from the lot's purchase price.
+        std::array<std::uint8_t, 32> ticket{}; ticket[0] = 0x83;
+        auto managed = odh::plan_family_managed_move_in_overlay(
+            {resident, cas}, source_id, &created, 0, 7, 5500);
+        auto managed_replay = odh::replay_family_overlay({resident, cas}, source_id, managed);
+        require(managed_replay.states[2].occupancy_epoch == 1 &&
+                managed_replay.states[2].managed && managed_replay.states[2].value_in_arch == 0,
+                "created occupancy starts epoch one and retains zero architecture value");
+        managed = odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &managed, 0, 7, 1, 12345, ticket);
+        const auto checkpointed = managed;
+        managed = odh::plan_family_managed_move_out_overlay(
+            {resident, cas}, source_id, &managed, 0);
+        managed_replay = odh::replay_family_overlay({resident, cas}, source_id, managed);
+        require(managed_replay.states[2].house_number == 0 &&
+                managed_replay.states[2].budget == 12345 &&
+                managed_replay.states[2].checkpoint_sha256 == ticket &&
+                managed_replay.states[2].checkpoint_house == 7 &&
+                managed_replay.states[2].checkpoint_epoch == 1,
+                "move-out retains checkpoint carry ticket and live budget without purchase refund");
+        managed = odh::plan_family_managed_move_in_overlay(
+            {resident, cas}, source_id, &managed, 0, 8, 2000);
+        const auto v6 = odh::encode_family_overlay(managed);
+        require(v6[4] == 6 && odh::encode_family_overlay(odh::decode_family_overlay(v6)) == v6,
+                "v6 extended chronological operations roundtrip canonically");
+        managed_replay = odh::replay_family_overlay({resident, cas}, source_id, odh::decode_family_overlay(v6));
+        require(managed_replay.states[2].house_number == 8 &&
+                managed_replay.states[2].occupancy_epoch == 2 && managed_replay.states[2].budget == 10345 &&
+                managed_replay.states[2].checkpoint_epoch == 1 &&
+                managed_replay.families[2].family.member_guids == created_family.member_guids,
+                "second occupancy charges checkpoint budget and retains roster and earlier carry origin");
+        rejects([&] { (void)odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &managed, 0, 8, 1, 10345, ticket); }, "old epoch checkpoint rejects");
+        rejects([&] { (void)odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &managed, 0, 7, 2, 10345, ticket); }, "old house checkpoint rejects");
+        rejects([&] { (void)odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &managed, 0, 8, 2, -1, ticket); }, "negative checkpoint budget rejects");
+        rejects([&] { (void)odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &managed, 0, 8, 2, 10345, {}); }, "zero checkpoint digest rejects");
+        auto corrupt_managed = checkpointed;
+        ++corrupt_managed.assignments.back().state->budget_before;
+        rejects([&] { (void)odh::apply_family_overlay({resident, cas}, source_id, corrupt_managed); },
+                "stale checkpoint before-budget rejects");
+        corrupt_managed = checkpointed;
+        corrupt_managed.assignments.back().state->value_in_arch_after = 5500;
+        rejects([&] { (void)odh::apply_family_overlay({resident, cas}, source_id, corrupt_managed); },
+                "checkpoint cannot fabricate architecture refund");
+        const auto retained_source = odh::plan_family_managed_move_out_overlay(
+            {resident, cas}, source_id, nullptr, resident.chunk_id);
+        require(odh::replay_family_overlay({resident, cas}, source_id, retained_source).states[0].budget == 18000,
+                "managed source move-out retains verified source architecture refund");
+        auto adopted = odh::plan_family_checkpoint_overlay(
+            {resident, cas}, source_id, &overlay, cas.chunk_id, 7, 1, 14000, ticket);
+        const auto adopted_bytes = odh::encode_family_overlay(adopted);
+        require(adopted_bytes[44] == 1 && le32(adopted_bytes, 46) == 48 &&
+                adopted_bytes[98] == 5 && le32(adopted_bytes, 100) == 104,
+                "v6 retains legacy tag1 and appends a 104-byte tag5 checkpoint");
+        require(odh::replay_family_overlay({resident, cas}, source_id,
+            odh::plan_family_managed_move_out_overlay({resident, cas}, source_id, &adopted, cas.chunk_id))
+                .states[1].budget == 14000, "legacy occupancy can explicitly adopt managed checkpoint profile");
+        auto corrupt_v6 = adopted_bytes; corrupt_v6[154] = 2;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v6); }, "unknown extended flags reject");
+        corrupt_v6 = adopted_bytes; corrupt_v6[154] = 0;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v6); }, "absent digest requires zero bytes");
+        corrupt_v6 = adopted_bytes; corrupt_v6[100] = 103;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v6); }, "extended record exact extent enforced");
+        corrupt_v6 = adopted_bytes; corrupt_v6[4] = 5;
+        rejects([&] { (void)odh::decode_family_overlay(corrupt_v6); }, "extended operation cannot enter legacy codec");
+        for (std::size_t n = 0; n < adopted_bytes.size(); ++n) {
+            auto prefix = adopted_bytes; prefix.resize(n);
+            rejects([&] { (void)odh::decode_family_overlay(prefix); }, "every truncated v6 prefix rejects");
+        }
+
         std::cout << "family_overlay: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {

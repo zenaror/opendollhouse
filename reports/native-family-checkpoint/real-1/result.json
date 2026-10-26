@@ -1,0 +1,477 @@
+{
+  "evidence_type": "native Linux real installed-data bounded runtime; artificial temporary managed authority",
+  "limitations": [
+    "No UI relocation exercised; seeded sidecar is test authority only.",
+    "No portable household state migration exercised.",
+    "No commercial resources or session archive bytes retained in this report.",
+    "No hardware or console validation."
+  ],
+  "binary_sha256": "25db112bcc4b93283f70600c0f2a70c252f257c794a2a5b628ae50ea65c75c6f",
+  "game_root": "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+  "runs": [
+    {
+      "label": "fresh-two-ticks",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--mode",
+        "1",
+        "--language",
+        "14",
+        "--house",
+        "7",
+        "--resident-id",
+        "47",
+        "--instruction-budget",
+        "500000",
+        "--no-audio",
+        "--headless-ticks",
+        "2",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 0,
+      "pid": 229729,
+      "exit": 0,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "0e53e3792fff69c253f7ca2e1140792a6dca3f8d053ed59f6a889f8cad72c754",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "record_count": 1,
+      "visits": [
+        {
+          "ticks": 2,
+          "resumed_tick": 0,
+          "session_loaded": false,
+          "host_failed": false,
+          "house": 7
+        }
+      ]
+    },
+    {
+      "label": "automatic-resume-zero",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--mode",
+        "1",
+        "--language",
+        "14",
+        "--house",
+        "7",
+        "--resident-id",
+        "47",
+        "--instruction-budget",
+        "500000",
+        "--no-audio",
+        "--headless-ticks",
+        "0",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 0,
+      "pid": 229738,
+      "exit": 0,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "806cf345fc4918915fae88017d01d2694464bb25848ef95adc1e235c33516960",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "record_count": 1,
+      "visits": [
+        {
+          "ticks": 2,
+          "resumed_tick": 2,
+          "session_loaded": true,
+          "host_failed": false,
+          "house": 7
+        }
+      ]
+    },
+    {
+      "label": "automatic-resume-two-more",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--mode",
+        "1",
+        "--language",
+        "14",
+        "--house",
+        "7",
+        "--resident-id",
+        "47",
+        "--instruction-budget",
+        "500000",
+        "--no-audio",
+        "--headless-ticks",
+        "2",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 0,
+      "pid": 229752,
+      "exit": 0,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "d2d48f5128059dce64b9cbb0751a9c4c8d5164984d7e2c2d0c2788e5b976d092",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "record_count": 1,
+      "visits": [
+        {
+          "ticks": 4,
+          "resumed_tick": 2,
+          "session_loaded": true,
+          "host_failed": false,
+          "house": 7
+        }
+      ]
+    },
+    {
+      "label": "reject-old-checkpoint",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--load-session",
+        "/tmp/odh-real-family-checkpoint-sqltow7c/continuation/XDG_CONFIG_HOME/opendollhouse/player-state/sessions/e585615fed1f9ddfb15ff8f5ebe7a09ea48a1369e9a3106f8331d3d9f5dde323/081b6658c03e1b81833f00a2e156a84bc76f4cd306c28f25fdff748d60d8df26.odhs",
+        "--headless-ticks",
+        "0",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 2,
+      "pid": 229762,
+      "exit": 2,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "acce98d602bed9db0227cce68a65a6be53f7e03ca52369477b4bc5111c31a698",
+      "record_count": 0,
+      "visits": []
+    },
+    {
+      "label": "continuous-four-ticks",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--mode",
+        "1",
+        "--language",
+        "14",
+        "--house",
+        "7",
+        "--resident-id",
+        "47",
+        "--instruction-budget",
+        "500000",
+        "--no-audio",
+        "--headless-ticks",
+        "4",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 0,
+      "pid": 229763,
+      "exit": 0,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "6e81810ce92e3c2af9b9bb34cfb6ad31c85bd2732a2cb26b782c84488afac6e0",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "record_count": 1,
+      "visits": [
+        {
+          "ticks": 4,
+          "resumed_tick": 0,
+          "session_loaded": false,
+          "host_failed": false,
+          "house": 7
+        }
+      ]
+    },
+    {
+      "label": "travel-seven-five-seven",
+      "command": [
+        "/home/rafael/_PROJETOS/TheSims1/opendollhouse/build/linux-checkpoint/odh-person",
+        "--game-root",
+        "/home/rafael/_PROJETOS/TheSims1/referencias/The Sims",
+        "--mode",
+        "1",
+        "--language",
+        "14",
+        "--house",
+        "7",
+        "--resident-id",
+        "47",
+        "--instruction-budget",
+        "500000",
+        "--no-audio",
+        "--headless-travel-house",
+        "5",
+        "--headless-travel-house",
+        "7",
+        "--headless-ticks",
+        "2",
+        "--save-session-on-exit"
+      ],
+      "expected_exit": 0,
+      "pid": 229768,
+      "exit": 0,
+      "process_waited": true,
+      "pid_absent": true,
+      "stdout_sha256": "1667f1061baf9116d0e676113569ed252b5f2eb0e2c8ae1ea73b4482bb4d2cb7",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "record_count": 3,
+      "visits": [
+        {
+          "ticks": 1,
+          "resumed_tick": 0,
+          "session_loaded": false,
+          "host_failed": false,
+          "house": 7
+        },
+        {
+          "ticks": 1,
+          "resumed_tick": 0,
+          "session_loaded": false,
+          "host_failed": false,
+          "house": 5
+        },
+        {
+          "ticks": 3,
+          "resumed_tick": 1,
+          "session_loaded": true,
+          "host_failed": false,
+          "house": 7
+        }
+      ]
+    }
+  ],
+  "cases": {
+    "zero_tick": {
+      "archive_bytes_equal": true,
+      "all_sections_equal": true,
+      "overlay_unchanged": true
+    },
+    "old_checkpoint_rejected_unchanged": true,
+    "continuous_equivalence": {
+      "all_sections_equal": true,
+      "archive_bytes_equal": true
+    },
+    "travel_reload": {
+      "passed": true,
+      "final_archive_sha256": "4f08334b8ba54bc32edbf0f0057559103020f3add57a84804db421171c4ccc50",
+      "overlay_sha256": "59242a3160cd98ca3ed2eb058692c3999273f80bd5ef1eb59c5ba902aacadd75",
+      "final_sections": {
+        "META": {
+          "flags": 1,
+          "bytes": 44,
+          "sha256": "905ed415bfcfb884eef58a910ddd97b6e6576e079523b2b64f3440ddb3006efb"
+        },
+        "HOST": {
+          "flags": 1,
+          "bytes": 173,
+          "sha256": "9b2a20c312c930bd5d85838ea6d1eb9a9125200050c5c3bf5526552148bed20c"
+        },
+        "WRLD": {
+          "flags": 1,
+          "bytes": 117492,
+          "sha256": "d764585b42b85791d6cd3a43e6d111255f6a13f8e9f4797422f729cd2a7148b9"
+        },
+        "RELA": {
+          "flags": 1,
+          "bytes": 4591,
+          "sha256": "2edffe90bd896a8fed0d59c8654a9aef53218b32b7b1cff34bd0f80f025e214c"
+        },
+        "VM  ": {
+          "flags": 1,
+          "bytes": 830,
+          "sha256": "4f1dc18bc1324ac852b1659ea7536d89cc2b37637386aa93f559cdaff88326b4"
+        },
+        "SCHD": {
+          "flags": 1,
+          "bytes": 105,
+          "sha256": "31d0df16ddfe458957494cb2760b7150841cbc21e4f81971c09d387ab2249054"
+        },
+        "CTRL": {
+          "flags": 1,
+          "bytes": 266,
+          "sha256": "9943092cb30ba4712063848e1f51d79d7ec104e6d4a0e09bc8bc83ca7589ce1c"
+        },
+        "PLAY": {
+          "flags": 1,
+          "bytes": 286,
+          "sha256": "28732c31a88c1d50888be8e9f9f2da1e5edc2e0a6e6bf6a7cb8e2d6e4c3f35b6"
+        },
+        "HHRD": {
+          "flags": 1,
+          "bytes": 174,
+          "sha256": "f602b0abed46f9ed99a68bbdb2915cfeb14051ccdaa18dcf064139ab014fb5f8"
+        },
+        "OBVM": {
+          "flags": 0,
+          "bytes": 418,
+          "sha256": "11aa311cde49083811bc22120f14459768a1f0c66380a351dc75fee1b080e1f8"
+        },
+        "SIMS": {
+          "flags": 1,
+          "bytes": 56,
+          "sha256": "1519892109fafe9ee8dcdab8888ac61103c4e965602cd2f1aa8ebc597be00554"
+        },
+        "GEXP": {
+          "flags": 1,
+          "bytes": 45,
+          "sha256": "4f36b7f463969b142f5a01c4678e0b034e12cc0cdc1bfea18fe44e930bec195f"
+        },
+        "FAML": {
+          "flags": 1,
+          "bytes": 76,
+          "sha256": "cb6163c97fb2af1759e583a30483d9892ac4f899df01a6d508e52120022ca56e"
+        }
+      }
+    }
+  },
+  "passed": true,
+  "protected_before": {
+    "GameData/Animation/Animation.far": "acd29d2124d9ede479a586d40122a5896e264447cedd60c08ba54078c48eb35f",
+    "GameData/Global/Global.far": "25fe73945f89f82b1f49d2c2f53eb7c4bc31db1bc1dd575b1778a8cf72aaca59",
+    "GameData/Objects/Objects.far": "68cadf2f250a50a6227540ee9175cbb937016eed54770bed12ec8c55047ed0c5",
+    "UserData/Characters/User00000.iff": "900835b71807bac87ed0f431167850a5ed666b6008d7c37739042fd94610b7d5",
+    "UserData/Characters/User00001.iff": "7b5fecc81f6101e14589fa94d89e1d3b3f1bb56f695d9bcc847a7ba05497bd50",
+    "UserData/Characters/User00002.iff": "de4d4cf8aaaaec17508c37bf20184b929ddf029d352fbb81020ce338bee96cb4",
+    "UserData/Characters/User00003.iff": "bdb3b1784ae419bbfe83bb066fab83ed23a473b7fceebda9b347901eef641159",
+    "UserData/Characters/User00004.iff": "a50e57db3cb22bdde02a71091734873cbef2e56a2c2aa4dbde9e5bc40d66a4f4",
+    "UserData/Characters/User00005.iff": "e37b582fa65c3f8dbc6d3df95cc8983c9443730167c9b7fda4e0280a040a23de",
+    "UserData/Characters/User00006.iff": "f5836b326f8bdb9697894b09c4c8dc5fb5be0872c7ae8eb5dcdd6cce33ac25fe",
+    "UserData/Characters/User00007.iff": "2ee96c4b8031bad6f52b290670e6fcebf491f0849872e8aff2da1623ad5d4c56",
+    "UserData/Characters/User00008.iff": "bbaa5cb861957daec16dcbf27f0c53b9a962e48b558fa70044958ebd60146393",
+    "UserData/Characters/User00009.iff": "3fcb4ca91dd239fb3ed02cfd30977208d40308306ca978353a9d0b0821b9ae9b",
+    "UserData/Characters/User00010.iff": "8aa2b33b83a888f209557833ea00ad8bf0b93be8dff7ac66cc2297e320ba4803",
+    "UserData/Characters/User00011.iff": "2d54642336a47f25fe3f0b37dda45efb182e7f12115d73c43fef7a072c3e196e",
+    "UserData/Characters/User00013.iff": "a38ff46051bf3a674031711effb7857354ac728d6e486327cc4305e9ddc0528c",
+    "UserData/Characters/User00014.iff": "deb302d78d453ffb813224785340ef0f0d82ba71575d13a7158821df05d9f957",
+    "UserData/Characters/User00015.iff": "f4f2d61f6d7c05fbb4f22816339644aa6b1032c37bf789750243a2474889b423",
+    "UserData/Characters/User00017.iff": "01d79889f812c268290d563d6bfe4a9b18649ff4cd1d89dbe894bef09ff40187",
+    "UserData/Characters/User00020.iff": "4a254d72677200200aa5b48e5af7771149eb9d4e1e60d9806afab35b02158aa2",
+    "UserData/Characters/User00021.iff": "8baa631b3ffb0e3d401c82c8c13a45c0b0c38c0addd15999422170235e93cff6",
+    "UserData/Characters/User00022.iff": "20951ecbae7be0f38376d331630fc62a5aa1787e6bb869a39c4afd7e8c85391d",
+    "UserData/Characters/User00023.iff": "4a311f26b69ecdcf502c34c6e304f37118fe16b97aaf2dbffd0fde6d4bef3cac",
+    "UserData/Houses/House07.iff": "5b162c81135612acfa65628438df2246cd25ad8cb15e2646a28bb32e38de5133",
+    "UserData/Neighborhood.iff": "e585615fed1f9ddfb15ff8f5ebe7a09ea48a1369e9a3106f8331d3d9f5dde323",
+    "UserData/Houses/House05.iff": "a6d18d81c5072c507b118b68598ee12ea57403634d6507c39b7a04ad4c6cdd99",
+    "SoundData/SoundData.far": "14d98dce3bd75b445beea9f575fa2ebe8736e3c5542cb429d2b30a57fae7c5c0",
+    "SoundData/SimsGeneratedHitSource.hsm": "ca6bef035809b2cdacdc2c14a98582cd4c4702c53cc6640beceaa548c06d55b6",
+    "SoundData/SimsGeneratedHitSource.hot": "cf324a77668c04f15ec56e78e905e0b8b3219807ce959c60bca68b9e81afb21d",
+    "SoundData/simsgeneratedhitsource.hit": "a2d23b96490b6a0b8f29f61931c4fc7a5b66fa012e43bdb23cdd0c0356353c85"
+  },
+  "authority_seed": {
+    "source_family_chunk": 1,
+    "source_family_number": 5,
+    "source_budget": 665,
+    "source_value_in_arch": 17225,
+    "resulting_budget": 17890,
+    "occupancy_epoch": 2,
+    "purchase_price": 0,
+    "synthetic_authority": true
+  },
+  "checkpoint_sections": {
+    "META": {
+      "flags": 1,
+      "bytes": 44,
+      "sha256": "905ed415bfcfb884eef58a910ddd97b6e6576e079523b2b64f3440ddb3006efb"
+    },
+    "HOST": {
+      "flags": 1,
+      "bytes": 173,
+      "sha256": "29444612c55ec345fb3023237bc22808a19c687eef2b891dd21334a1caf1b517"
+    },
+    "WRLD": {
+      "flags": 1,
+      "bytes": 117492,
+      "sha256": "d764585b42b85791d6cd3a43e6d111255f6a13f8e9f4797422f729cd2a7148b9"
+    },
+    "RELA": {
+      "flags": 1,
+      "bytes": 4591,
+      "sha256": "2edffe90bd896a8fed0d59c8654a9aef53218b32b7b1cff34bd0f80f025e214c"
+    },
+    "VM  ": {
+      "flags": 1,
+      "bytes": 830,
+      "sha256": "4f1dc18bc1324ac852b1659ea7536d89cc2b37637386aa93f559cdaff88326b4"
+    },
+    "SCHD": {
+      "flags": 1,
+      "bytes": 105,
+      "sha256": "fedd0643e63526f8661c3e21ac24677c61caee5941e6b1c294920df52609980d"
+    },
+    "CTRL": {
+      "flags": 1,
+      "bytes": 266,
+      "sha256": "a1eebda940f4931df883d74cbce79ea05a9aeef7906a7dfbe336570470a43c76"
+    },
+    "PLAY": {
+      "flags": 1,
+      "bytes": 286,
+      "sha256": "0a2ae778240743f1bcb067a112292e57b5dfa201346bfa216e9b86f057297186"
+    },
+    "HHRD": {
+      "flags": 1,
+      "bytes": 174,
+      "sha256": "f602b0abed46f9ed99a68bbdb2915cfeb14051ccdaa18dcf064139ab014fb5f8"
+    },
+    "OBVM": {
+      "flags": 0,
+      "bytes": 418,
+      "sha256": "52136ec4a158f431d964d3543e79805da753e8c15c83f357b5acdb47e9acc30c"
+    },
+    "SIMS": {
+      "flags": 1,
+      "bytes": 56,
+      "sha256": "f6dd25c1462cd8ee3b22f9d01e786850931e0ca9a98a3d92b5e860e5483d888d"
+    },
+    "GEXP": {
+      "flags": 1,
+      "bytes": 45,
+      "sha256": "4f36b7f463969b142f5a01c4678e0b034e12cc0cdc1bfea18fe44e930bec195f"
+    },
+    "FAML": {
+      "flags": 1,
+      "bytes": 76,
+      "sha256": "cb6163c97fb2af1759e583a30483d9892ac4f899df01a6d508e52120022ca56e"
+    }
+  },
+  "checkpoint_sha256": "3a46c0013f47e23b3a2d475a99334db8aefbe758aa65a5120f13dbacf088c427",
+  "temporary_profiles_removed_on_exit": true,
+  "protected_after": {
+    "GameData/Animation/Animation.far": "acd29d2124d9ede479a586d40122a5896e264447cedd60c08ba54078c48eb35f",
+    "GameData/Global/Global.far": "25fe73945f89f82b1f49d2c2f53eb7c4bc31db1bc1dd575b1778a8cf72aaca59",
+    "GameData/Objects/Objects.far": "68cadf2f250a50a6227540ee9175cbb937016eed54770bed12ec8c55047ed0c5",
+    "UserData/Characters/User00000.iff": "900835b71807bac87ed0f431167850a5ed666b6008d7c37739042fd94610b7d5",
+    "UserData/Characters/User00001.iff": "7b5fecc81f6101e14589fa94d89e1d3b3f1bb56f695d9bcc847a7ba05497bd50",
+    "UserData/Characters/User00002.iff": "de4d4cf8aaaaec17508c37bf20184b929ddf029d352fbb81020ce338bee96cb4",
+    "UserData/Characters/User00003.iff": "bdb3b1784ae419bbfe83bb066fab83ed23a473b7fceebda9b347901eef641159",
+    "UserData/Characters/User00004.iff": "a50e57db3cb22bdde02a71091734873cbef2e56a2c2aa4dbde9e5bc40d66a4f4",
+    "UserData/Characters/User00005.iff": "e37b582fa65c3f8dbc6d3df95cc8983c9443730167c9b7fda4e0280a040a23de",
+    "UserData/Characters/User00006.iff": "f5836b326f8bdb9697894b09c4c8dc5fb5be0872c7ae8eb5dcdd6cce33ac25fe",
+    "UserData/Characters/User00007.iff": "2ee96c4b8031bad6f52b290670e6fcebf491f0849872e8aff2da1623ad5d4c56",
+    "UserData/Characters/User00008.iff": "bbaa5cb861957daec16dcbf27f0c53b9a962e48b558fa70044958ebd60146393",
+    "UserData/Characters/User00009.iff": "3fcb4ca91dd239fb3ed02cfd30977208d40308306ca978353a9d0b0821b9ae9b",
+    "UserData/Characters/User00010.iff": "8aa2b33b83a888f209557833ea00ad8bf0b93be8dff7ac66cc2297e320ba4803",
+    "UserData/Characters/User00011.iff": "2d54642336a47f25fe3f0b37dda45efb182e7f12115d73c43fef7a072c3e196e",
+    "UserData/Characters/User00013.iff": "a38ff46051bf3a674031711effb7857354ac728d6e486327cc4305e9ddc0528c",
+    "UserData/Characters/User00014.iff": "deb302d78d453ffb813224785340ef0f0d82ba71575d13a7158821df05d9f957",
+    "UserData/Characters/User00015.iff": "f4f2d61f6d7c05fbb4f22816339644aa6b1032c37bf789750243a2474889b423",
+    "UserData/Characters/User00017.iff": "01d79889f812c268290d563d6bfe4a9b18649ff4cd1d89dbe894bef09ff40187",
+    "UserData/Characters/User00020.iff": "4a254d72677200200aa5b48e5af7771149eb9d4e1e60d9806afab35b02158aa2",
+    "UserData/Characters/User00021.iff": "8baa631b3ffb0e3d401c82c8c13a45c0b0c38c0addd15999422170235e93cff6",
+    "UserData/Characters/User00022.iff": "20951ecbae7be0f38376d331630fc62a5aa1787e6bb869a39c4afd7e8c85391d",
+    "UserData/Characters/User00023.iff": "4a311f26b69ecdcf502c34c6e304f37118fe16b97aaf2dbffd0fde6d4bef3cac",
+    "UserData/Houses/House07.iff": "5b162c81135612acfa65628438df2246cd25ad8cb15e2646a28bb32e38de5133",
+    "UserData/Neighborhood.iff": "e585615fed1f9ddfb15ff8f5ebe7a09ea48a1369e9a3106f8331d3d9f5dde323",
+    "UserData/Houses/House05.iff": "a6d18d81c5072c507b118b68598ee12ea57403634d6507c39b7a04ad4c6cdd99",
+    "SoundData/SoundData.far": "14d98dce3bd75b445beea9f575fa2ebe8736e3c5542cb429d2b30a57fae7c5c0",
+    "SoundData/SimsGeneratedHitSource.hsm": "ca6bef035809b2cdacdc2c14a98582cd4c4702c53cc6640beceaa548c06d55b6",
+    "SoundData/SimsGeneratedHitSource.hot": "cf324a77668c04f15ec56e78e905e0b8b3219807ce959c60bca68b9e81afb21d",
+    "SoundData/simsgeneratedhitsource.hit": "a2d23b96490b6a0b8f29f61931c4fc7a5b66fa012e43bdb23cdd0c0356353c85"
+  },
+  "protected_unchanged": true
+}

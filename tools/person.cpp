@@ -87,6 +87,7 @@
 #include "person_runtime.hpp"
 #ifdef __linux__
 #include "linux_family_overlay_store.hpp"
+#include "linux_family_session_journal.hpp"
 #endif
 #include "linux_window.hpp"
 #include "session_resource_manifest.hpp"
@@ -1190,7 +1191,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(neighborhood_path&&!nbrs)throw odh::FormatError("NBRS1 absent");
 #ifdef __linux__
     if(activate_family&&neighborhood_path){
-        const auto overlay=odh_host::read_linux_family_overlay_for_neighborhood(*neighborhood_path);
+        if(session_context&&session_context->family_journal){
+            session_context->family_journal->verify_current();
+            if(odh_host::linux_neighborhood_identity(*neighborhood_path)!=
+               session_context->family_journal->lease().neighborhood_identity)
+                throw odh::FormatError("managed neighborhood source changed before runtime preparation");
+        }
+        const auto overlay=session_context&&session_context->family_journal?
+            session_context->family_journal->expected_overlay():
+            odh_host::read_linux_family_overlay_for_neighborhood(*neighborhood_path);
         if(overlay){
             family_records=odh::apply_family_overlay(family_records,
                 overlay->neighborhood_identity,*overlay);
@@ -1660,6 +1669,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::unique_ptr<odh::SingleResidentSessionRestore> session_restore;
     std::unique_ptr<odh::HouseholdSessionRestore> household_restore;
     if(session_context&&!session_context->restore_archive.empty()){
+#ifdef __linux__
+        if(session_context->family_journal){
+            session_context->family_journal->verify_current();
+            session_context->family_journal->validate_restore(session_context->restore_archive);
+        }else if(odh::decode_session_bundle(session_context->restore_archive).family_lease){
+            throw odh::FormatError("managed family save requires current journal authority");
+        }
+#endif
         if(!saved_world_main||!restored_world||!lot||!bootstrap_globals||!session_context->resources||
            headless_second_main||headless_fixture_avatar||initialize||action||seed||age||flags||routine)
             throw odh::FormatError("session restore requires an unchanged integrated saved-lot host");
@@ -5986,17 +6003,20 @@ struct PlacementCandidateProbe {
         for(const auto& member:household_runtime)validate_seated_binding(member->id);
         if(!session_baseline||!lot||!bootstrap_globals)
             throw odh::FormatError("this session cannot yet be restored: original lot baseline is unavailable");
-        const char* data_home=std::getenv("XDG_DATA_HOME");
         std::filesystem::path directory;
-        if(data_home&&*data_home)directory=data_home;
-        else {
-            const char* home=std::getenv("HOME");
-            if(!home||!*home)throw odh::FormatError("XDG_DATA_HOME or HOME is required to store saves");
-            directory=std::filesystem::path(home)/".local"/"share";
+        if(session_context->family_journal)directory=session_context->family_journal->archive_directory();
+        else{
+            const char* data_home=std::getenv("XDG_DATA_HOME");
+            if(data_home&&*data_home)directory=data_home;
+            else {
+                const char* home=std::getenv("HOME");
+                if(!home||!*home)throw odh::FormatError("XDG_DATA_HOME or HOME is required to store saves");
+                directory=std::filesystem::path(home)/".local"/"share";
+            }
+            directory/="opendollhouse";directory/="saves";
         }
         if(!directory.is_absolute())
             throw odh::FormatError("save data directory must be an absolute path");
-        directory/="opendollhouse";directory/="saves";
         std::error_code path_error;
         directory=std::filesystem::weakly_canonical(directory,path_error);
         if(path_error)throw odh::FormatError("cannot resolve the user save directory");
@@ -6022,7 +6042,7 @@ struct PlacementCandidateProbe {
                 checkout=parent;
             }
         }
-        const auto save_path=directory/("mode-"+std::to_string(session_context->neighborhood_mode)+
+        auto save_path=directory/("mode-"+std::to_string(session_context->neighborhood_mode)+
             "-house-"+std::to_string(session_context->house_number)+
             "-family-"+std::to_string(session_context->family_number)+".odhs");
         odh::SessionBundle bundle;
@@ -6325,6 +6345,8 @@ struct PlacementCandidateProbe {
             else bundle.seated_continuation=std::move(continuation);
         };
         for(const auto& runtime:bundle.runtime_entities)capture_seated_continuation(runtime);
+        if(session_context->family_journal)
+            bundle.family_lease=session_context->family_journal->lease();
         std::vector<std::uint8_t> encoded;
         try{
             encoded=odh::encode_session_bundle(bundle);
@@ -6368,8 +6390,14 @@ struct PlacementCandidateProbe {
         }catch(const std::exception& error){
             throw odh::FormatError(std::string("this session cannot yet be restored: ")+error.what());
         }
-        std::filesystem::create_directories(directory);
-        odh_host::write_session_archive_atomic(save_path,odh::decode_session_archive(encoded));
+        if(session_context->family_journal){
+            save_path=session_context->family_journal->publish(std::move(bundle));
+            if(session_context->family_journal->durability_uncertain())
+                std::cerr<<"odh-person: family save was published, but disk flush could not be confirmed\n";
+        }else{
+            std::filesystem::create_directories(directory);
+            odh_host::write_session_archive_atomic(save_path,odh::decode_session_archive(encoded));
+        }
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
         session_log.event("experimental session save written tick="+std::to_string(ticks)+
             " path="+save_path.string());

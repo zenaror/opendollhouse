@@ -159,6 +159,32 @@ int main() {
         {700, free_family}, {701, resident_family}};
     const auto planned = odh::plan_family_move_in_overlay(
         synthetic_families, identity, nullptr, 700, 5, 3200);
+    // A legitimate managed history can exceed the old assignment-only reader
+    // cap while remaining below the shared codec/store byte and record limits.
+    auto large_v6 = odh::plan_family_managed_move_in_overlay(
+        synthetic_families, identity, nullptr, 700, 5, 3200);
+    std::array<std::uint8_t, 32> checkpoint_digest{};
+    checkpoint_digest[0] = 0x6a;
+    large_v6 = odh::plan_family_checkpoint_overlay(
+        synthetic_families, identity, &large_v6, 700, 5, 1, 5800, checkpoint_digest);
+    const auto repeated_checkpoint = large_v6.assignments.back();
+    large_v6.assignments.resize(2049, repeated_checkpoint);
+    const auto large_v6_bytes = odh::encode_family_overlay(large_v6);
+    require(large_v6_bytes[4] == 6 && large_v6_bytes.size() > 44 + 48 * 4096 &&
+            large_v6_bytes.size() <= odh::family_overlay_max_bytes,
+            "valid v6 history exceeds the obsolete assignment-only store cap");
+    const auto large_v6_path = temp.path / "large-v6.odhp";
+    odh_host::write_linux_family_overlay_atomic(large_v6_path, large_v6);
+    const auto reopened_large_v6 = odh_host::read_linux_family_overlay(large_v6_path);
+    require(reopened_large_v6 &&
+            odh::encode_family_overlay(*reopened_large_v6) == large_v6_bytes,
+            "store writes and reopens a v6 history above its former reader limit");
+    const auto large_replay = odh::replay_family_overlay(
+        synthetic_families, identity, *reopened_large_v6);
+    require(large_replay.states[0].house_number == 5 &&
+            large_replay.states[0].occupancy_epoch == 1 && large_replay.states[0].budget == 5800 &&
+            large_replay.states[0].checkpoint_sha256 == checkpoint_digest,
+            "large reopened v6 history retains a valid checkpoint and occupancy");
     const auto transaction_path = odh_host::linux_family_overlay_path(identity);
     odh_host::compare_exchange_linux_family_overlay_atomic(
         transaction_path, std::nullopt, planned);

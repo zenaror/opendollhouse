@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 namespace odh_host {
 class LinuxWindow;
 class LinuxSessionLog;
+class FamilySessionJournal;
 using NeighborhoodResumeCallback = std::function<std::optional<std::uint16_t>()>;
 
 struct NeighborhoodTransitionRequest {
@@ -34,6 +36,7 @@ struct IntegratedHouseholdMember {
     std::string character_asset;
 };
 struct IntegratedSessionContext {
+    std::shared_ptr<FamilySessionJournal> family_journal;
     // Empty only for the explicit single-resident save/restore test profile.
     std::vector<IntegratedHouseholdMember> household_members;
     bool single_resident_session = false;

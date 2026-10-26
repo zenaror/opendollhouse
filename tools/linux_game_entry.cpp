@@ -23,6 +23,7 @@
 #ifdef __linux__
 #include "linux_session_archive_store.hpp"
 #include "linux_family_overlay_store.hpp"
+#include "linux_family_session_journal.hpp"
 #endif
 #include "odh/session_resource_identity.hpp"
 #include "json.hpp"
@@ -108,6 +109,7 @@ struct Options {
     std::optional<unsigned> resident_id;
     bool plan_only = false, choose_language = false;
     std::optional<std::filesystem::path> load_session;
+    bool load_session_advisory = false;
     std::optional<unsigned> headless_ticks;
     std::optional<unsigned> instruction_budget;
     std::optional<std::filesystem::path> status_frame;
@@ -1391,7 +1393,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 
                 const auto neighborhood_identity = odh_host::linux_neighborhood_identity(
                     userdata / "Neighborhood.iff");
-                const auto next_overlay = odh::plan_family_move_in_overlay(
+                const auto next_overlay = odh::plan_family_managed_move_in_overlay(
                     latest_map.source_families, neighborhood_identity,
                     latest_overlay ? &*latest_overlay : nullptr, family_choice->family_chunk_id,
                     static_cast<std::uint16_t>(house), latest_price);
@@ -1433,8 +1435,54 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             try {
                 if (!house || house > 98)
                     throw odh::FormatError("travel destination is outside the supported lot range");
+                std::shared_ptr<odh_host::FamilySessionJournal> family_journal;
+#ifdef __linux__
+                // Every visit pins a fresh view, including the save just committed
+                // by the previous runtime. A per-house path cache has no authority.
+                family_overlay = odh_host::read_linux_family_overlay_for_neighborhood(
+                    userdata / "Neighborhood.iff");
+                if (family_overlay) {
+                    const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
+                    const auto replay = odh::replay_family_overlay(source.families, source.identity, *family_overlay);
+                    const auto occupant = std::find_if(replay.states.begin(), replay.states.end(),
+                        [&](const auto& state) { return state.house_number == house; });
+                    if (occupant != replay.states.end() && occupant->managed) {
+                        if (!options.plan_only && occupant->checkpoint_sha256 &&
+                            (occupant->checkpoint_house != occupant->house_number ||
+                             occupant->checkpoint_epoch != occupant->occupancy_epoch))
+                            throw odh::FormatError("family move requires portable Sim carryover before playing the new lot");
+                        if (options.single_resident_session)
+                            throw odh::FormatError("managed family saves require the complete household runtime");
+                        family_journal = std::make_shared<odh_host::FamilySessionJournal>(source.families,
+                            source.identity, family_overlay, static_cast<std::uint16_t>(house), occupant->family_chunk_id);
+                        if (options.load_session_advisory) {
+                            options.load_session.reset();
+                            options.restore_bundle.reset();
+                            options.restore_archive.clear();
+                            options.resident_id.reset();
+                            options.load_session_advisory = false;
+                        }
+                        if (!options.load_session && !options.plan_only) {
+                            if (const auto checkpoint = family_journal->checkpoint_path()) {
+                                options.load_session = *checkpoint;
+                                options.house = house;
+                            }
+                        }
+                    }
+                }
+#endif
                 if (options.load_session && !options.restore_bundle)
                     load_travel_session(options);
+#ifdef __linux__
+                if (family_journal) {
+                    family_journal->verify_current();
+                    if (!options.restore_archive.empty()) family_journal->validate_restore(options.restore_archive);
+                    else if (!options.plan_only && family_journal->checkpoint_path())
+                        throw odh::FormatError("managed family checkpoint must be restored before playing");
+                } else if (options.restore_bundle && options.restore_bundle->family_lease) {
+                    throw odh::FormatError("managed family save has no current occupancy authority");
+                }
+#endif
                 const auto session = odh::load_session_entry(userdata, options.mode,
                     static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
                     family_overlay ? &*family_overlay : nullptr, player_character_directory);
@@ -1530,6 +1578,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 pointers.reserve(plan.arguments.size());
                 for (const auto& argument : plan.arguments) pointers.push_back(const_cast<char*>(argument.c_str()));
                 odh_host::IntegratedSessionContext session_context;
+                session_context.family_journal = std::move(family_journal);
                 options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
                 session_context.resources = verified_identity;
                 session_context.restore_archive = std::move(options.restore_archive);
@@ -1617,7 +1666,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 options = travel_options;
                 options.house = destination;
                 const auto cached = saved_lots.find(destination);
-                if (cached != saved_lots.end()) options.load_session = cached->second;
+                if (cached != saved_lots.end()) {
+                    options.load_session = cached->second;
+                    options.load_session_advisory = true;
+                }
                 house = destination;
             } catch (const std::exception& transition_error) {
                 if (!rollback_options) throw;

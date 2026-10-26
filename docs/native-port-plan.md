@@ -23,7 +23,7 @@ paralelas do mesmo sistema. O código Simitone é referência para a implementa�
 não o aplicativo em que novas funções serão desenvolvidas. A ponte gerenciada
 anterior e seu trabalho pendente ficam preservados fora desta frente.
 
-## Estado nativo atual (`6a3c889`, 2026-10-26)
+## Estado nativo atual (2026-10-26)
 
 O aplicativo atual executa VM, filas, moradores, cena, entrada e persistência
 no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
@@ -33,6 +33,10 @@ no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
 - `b23bae1`: ordens por Sim podem ser enfileiradas, canceladas e reconstruídas
   após carga, com identidade do ator/geração/execução/UID; lista paginada e
   controles ainda provisórios ([fila](native-player-queue.md)).
+- Novas compras ligam a ocupação da família ao dinheiro vivo e a um save
+  imutável. O jogo retoma o último checkpoint confirmado e recusa saves antigos
+  como autoridade de escrita; a transferência dos Sims para outra casa ainda
+  falta ([checkpoints familiares](native-family-checkpoints.md)).
 - `40057ae`: SEAT v3 guarda vários moradores após Sit concluído, incluindo
   famílias mistas em pé/sentadas. House05 banco173 e House07 têm gates de
   reabertura/Stand; Sit/Stand em andamento e posturas arbitrárias continuam

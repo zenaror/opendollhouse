@@ -546,9 +546,62 @@ void generic_execution_cases() {
 
 int main() {
     generic_execution_cases();
+    {
+        auto managed=fixture();managed.generic_execution=true;
+        for(auto& actor:managed.world.entities){
+            const auto guid=managed.host.resident_guid+static_cast<std::uint32_t>(actor.id-1);
+            actor.definition=odh::EntityType{guid,std::nullopt};
+            odh::SessionHouseholdMember member;
+            member.id=actor.id;member.generation=actor.generation;member.guid=guid;
+            member.neighbor_id=static_cast<std::int16_t>(managed.host.resident_neighbor_id+actor.id-1);
+            member.object_definition_id=128;
+            member.character_asset="PlayerData/Characters/User"+std::to_string(actor.id)+".iff";
+            member.character_fingerprint.fill(0x31);
+            managed.household_roster.push_back(member);
+        }
+        odh::SessionFamilyLease lease;
+        lease.neighborhood_identity.fill(0x12);lease.family_identity.fill(0x34);
+        lease.occupancy_epoch=0x100000002ULL;lease.family_chunk_id=managed.host.family_chunk_id;
+        managed.family_lease=lease;
+        const auto encoded=odh::encode_session_bundle(managed);
+        const auto restored_managed=odh::decode_session_bundle(encoded);
+        require(restored_managed.family_lease&&
+            restored_managed.family_lease->occupancy_epoch==lease.occupancy_epoch&&
+            restored_managed.family_lease->family_identity==lease.family_identity&&
+            restored_managed.family_lease->neighborhood_identity==lease.neighborhood_identity&&
+            odh::encode_session_bundle(restored_managed)==encoded,"managed family lease round-trip");
+        auto bad=managed;bad.family_lease->occupancy_epoch=0;
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"zero occupancy epoch rejected");
+        bad=managed;bad.family_lease->family_identity.fill(0);
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"zero family identity rejected");
+        bad=managed;bad.family_lease->neighborhood_identity.fill(0);
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"zero neighborhood identity rejected");
+        bad=managed;++bad.family_lease->family_chunk_id;
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"lease family differs from host rejected");
+        bad=managed;bad.generic_execution=false;
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"managed save requires generic execution");
+        bad=managed;bad.household_roster.clear();
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"managed save requires household roster");
+        bad=managed;bad.host.house_number=0;
+        rejects([&]{(void)odh::encode_session_bundle(bad);},"managed save requires occupied house");
+        const auto mutate_section=[&](auto mutate){
+            auto archive=odh::decode_session_archive(encoded);
+            for(auto& section:archive.sections)if(section.id==std::array<char,4>{{'F','A','M','L'}})mutate(section);
+            return odh::encode_session_archive(archive);
+        };
+        rejects([&]{(void)odh::decode_session_bundle(mutate_section([](auto& s){s.required=false;}));},
+            "optional lease rejected");
+        rejects([&]{(void)odh::decode_session_bundle(mutate_section([](auto& s){s.data[0]=2;}));},
+            "unknown lease version rejected");
+        rejects([&]{(void)odh::decode_session_bundle(mutate_section([](auto& s){s.data.push_back(0);}));},
+            "oversized lease rejected");
+        rejects([&]{(void)odh::decode_session_bundle(mutate_section([](auto& s){s.data.pop_back();}));},
+            "truncated lease rejected");
+    }
     const auto source=fixture();
     const auto bytes=odh::encode_session_bundle(source);
     const auto restored=odh::decode_session_bundle(bytes,source.resources);
+    require(!restored.family_lease,"legacy archive has no implicit family lease");
     require(odh::encode_session_bundle(restored)==bytes,"two-resident bundle is canonical");
     require(restored.host.random_seed==source.host.random_seed&&restored.host.global_values.size()==3&&
             restored.host.family_budget==source.host.family_budget&&

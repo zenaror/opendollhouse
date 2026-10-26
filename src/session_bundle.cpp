@@ -27,6 +27,7 @@ constexpr std::array<char,4> route_id{{'R','O','U','T'}};
 constexpr std::array<char,4> object_vm_id{{'O','B','V','M'}};
 constexpr std::array<char,4> dynamic_owner_id{{'D','Y','N','O'}};
 constexpr std::array<char,4> generic_execution_id{{'G','E','X','P'}};
+constexpr std::array<char,4> family_lease_id{{'F','A','M','L'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
 static_assert(sizeof(float)==sizeof(std::uint32_t),"session Playback codec requires 32-bit float");
@@ -1243,6 +1244,29 @@ const SessionArchiveSection& required_section(const SessionArchive& archive,
         throw FormatError("session bundle is missing a required section");
     return *it;
 }
+void validate_family_lease(const SessionBundle& bundle) {
+    if(!bundle.family_lease)return;
+    const auto& lease=*bundle.family_lease;
+    const auto zero=[](const auto& hash){return std::all_of(hash.begin(),hash.end(),[](auto b){return b==0;});};
+    if(zero(lease.neighborhood_identity)||zero(lease.family_identity)||!lease.occupancy_epoch||
+       lease.family_chunk_id!=bundle.host.family_chunk_id||bundle.host.house_number<1||
+       bundle.host.house_number>98||bundle.household_roster.empty()||!bundle.generic_execution||
+       bundle.seated_continuation)
+        throw FormatError("invalid managed family session lease or household profile");
+}
+std::vector<std::uint8_t> encode_family_lease(const SessionFamilyLease& lease,std::size_t limit) {
+    Writer w(limit);w.u16(1);w.u16(lease.family_chunk_id);w.u64(lease.occupancy_epoch);
+    w.append(lease.neighborhood_identity.data(),lease.neighborhood_identity.size());
+    w.append(lease.family_identity.data(),lease.family_identity.size());return w.take();
+}
+SessionFamilyLease decode_family_lease(const std::vector<std::uint8_t>& data) {
+    if(data.size()!=76)throw FormatError("invalid family lease extent");
+    Reader r(data);if(r.u16()!=1)throw FormatError("unsupported family lease version");
+    SessionFamilyLease lease;lease.family_chunk_id=r.u16();lease.occupancy_epoch=r.u64();
+    for(auto& b:lease.neighborhood_identity)b=r.u8();
+    for(auto& b:lease.family_identity)b=r.u8();
+    return lease;
+}
 void validate_simulation(const SessionBundle& bundle) {
     if(!bundle.simulation)return;
     const auto& sim=*bundle.simulation;Ts1Clock clock;
@@ -1346,7 +1370,7 @@ void decode_routes(const std::vector<std::uint8_t>& bytes,std::vector<SessionRun
 bool recognized(const std::array<char,4>& id) {
     return id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||
-           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id;
+           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==family_lease_id;
 }
 
 void write_sleep_snapshot(Writer& w,const SleepSnapshot& state) {
@@ -1436,6 +1460,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
                                                  SessionBundleLimits limits) {
     validate_links(bundle,limits);
     validate_simulation(bundle);
+    validate_family_lease(bundle);
     SessionArchive archive;
     archive.sections={
         {meta_id,true,encode_session_resource_identity(bundle.resources)},
@@ -1463,6 +1488,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     if(!bundle.household_seated_continuations.empty())archive.sections.push_back({seated_id,true,encode_household_seated(bundle,limits)});
     if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
     if(bundle.generic_execution)archive.sections.push_back({generic_execution_id,true,encode_generic_execution(bundle,limits)});
+    if(bundle.family_lease)archive.sections.push_back({family_lease_id,true,encode_family_lease(*bundle.family_lease,limits.archive.max_section_bytes)});
     return encode_session_archive(archive,limits.archive);
 }
 
@@ -1521,8 +1547,13 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
         if(!section.required)throw FormatError("generic execution profile must be required");
         decode_generic_execution(section.data,result,limits);
     }
+    for(const auto& section:archive.sections)if(section.id==family_lease_id){
+        if(!section.required)throw FormatError("family lease section must be required");
+        result.family_lease=decode_family_lease(section.data);
+    }
     validate_links(result,limits);
     validate_simulation(result);
+    validate_family_lease(result);
     return result;
 }
 

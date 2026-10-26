@@ -166,6 +166,14 @@ struct SessionSimulationState {
     std::vector<SessionAvatarMotiveState> avatars; // Strictly ascending runtime IDs.
 };
 
+// Immutable family/source identity plus the active occupancy generation.
+struct SessionFamilyLease {
+    std::array<std::uint8_t,32> neighborhood_identity{};
+    std::array<std::uint8_t,32> family_identity{};
+    std::uint64_t occupancy_epoch = 0;
+    std::uint16_t family_chunk_id = 0;
+};
+
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
 struct SessionBundle {
@@ -189,6 +197,9 @@ struct SessionBundle {
     std::vector<SessionCreatedObject> created_objects; // Ascending live IDs.
     std::vector<SessionRemovedOriginalObject> removed_original_objects; // Ascending baseline IDs.
     std::vector<SessionDeferredRemoval> deferred_removals; // Ordered host intents, unique identities.
+    // Required FAML v1 when present. The overlay owns the checkpoint head;
+    // this identifies the occupancy, not permission to overwrite a newer save.
+    std::optional<SessionFamilyLease> family_lease;
 };
 
 struct SessionBundleLimits {

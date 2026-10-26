@@ -16,6 +16,11 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Famílias que entram em uma casa passam a vincular o dinheiro e o save à
+  ocupação atual. A retomada procura o último save confirmado; saves antigos
+  não podem substituir progresso novo. A mudança definitiva para outra casa
+  continua pendente da transferência dos dados dos Sims.
+
 - Trocas residenciais agora preservam as preferências de áudio. O roteiro de
   validação permite jogar por um tempo em cada casa antes de trocar, inclusive
   ao voltar a uma casa salva; o ciclo comercial Casa07→Casa05→Casa07 passou.
