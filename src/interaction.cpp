@@ -137,6 +137,43 @@ bool InteractionQueue::validate() {
     }
     return true;
 }
+bool InteractionQueue::evaluate_queue_priorities() {
+    if(!active_||queue_.empty())return true;
+    const auto* actor=world_.find(actor_id_);
+    if(!actor||actor->kind!=EntityKind::avatar){diagnostic_="interaction priority actor identity stale";return false;}
+    if(actor->person_data.size()<=33)return true;
+
+    auto candidate=queue_;
+    const auto& active=candidate.front();
+    std::int16_t current_priority=actor->person_data[33];
+    if(current_priority==2)--current_priority; // TS1 autonomous actions yield to other autonomous actions.
+    bool notify_idle=active.priority!=0&&current_priority==0;
+    bool interaction_canceled=false;
+    for(auto it=std::next(candidate.begin());it!=candidate.end();){
+        const auto* target=world_.find(it->call.context.callee);
+        if(!target||target->generation!=it->target_generation){
+            it=candidate.erase(it);continue;
+        }
+        if(it->priority>current_priority){
+            notify_idle=true;
+            interaction_canceled=true;
+        }
+        ++it;
+    }
+    candidate.front().notify_idle=notify_idle;
+    if(interaction_canceled){
+        const auto flags=actor->object_words.find(8);
+        if(flags==actor->object_words.end()){
+            diagnostic_="queue priority change requires avatar ObjectData[8] flags";return false;
+        }
+        const auto updated=static_cast<std::uint16_t>(flags->second)|0x0080U;
+        if(!world_.declare_object_word(actor_id_,8,word(updated))){
+            diagnostic_="queue priority change could not set InteractionCanceled";return false;
+        }
+    }
+    queue_.swap(candidate);
+    return true;
+}
 bool InteractionQueue::enqueue(RoutineKey key,VmContext context,const std::vector<std::int16_t>& args,
                                bool push_after_active) {
     return enqueue_impl(key,context,args,1,InteractionQueueMode::normal,0,push_after_active,false,false);
@@ -195,6 +232,13 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
             position=queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix);
     }
     queue_.insert(position,std::move(action));
+    if(!evaluate_queue_priorities()){
+        const auto inserted=std::find_if(queue_.begin(),queue_.end(),[&](const Action& queued){
+            return queued.uid==new_sequence;
+        });
+        if(inserted!=queue_.end())queue_.erase(inserted);
+        return false;
+    }
     sequence_=new_sequence;
     if(migrating_legacy){
         std::uint16_t public_uid=0;
@@ -240,6 +284,13 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         const auto elapsed=idle_start_!=0&&idle_start_<clock_?clock_-idle_start_:1;
         const auto remaining=word(static_cast<std::uint16_t>(frame.arguments[static_cast<std::size_t>(index)])-elapsed);
         const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
+        if(!queue_.empty()&&queue_.front().notify_idle){
+            const auto* actor=world_.find(actor_id_);
+            if(!actor||!actor->object_words.count(8)||
+               !world_.declare_object_word(actor_id_,8,word(static_cast<std::uint16_t>(actor->object_words.at(8))|64U)))
+                return unsupported("IdleForInput could not publish active-action notification");
+            idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
+        }
         const bool thread_interrupted=thread_interrupt_&&thread_interrupt_();
         if(interrupted_||thread_interrupted||remaining<0){
             interrupted_=false;idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
@@ -259,8 +310,18 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         const auto& action=queue_.front();const auto* target=world_.find(action.call.context.callee);
         if(!target || target->generation!=action.target_generation)
             return unsupported("queued interaction target identity stale");
-        active_=Active{action.uid,dispatch.ticket};idle_start_=0;
-        return {PrimitiveDisposition::call,{},output,action.call};
+        if(!vm_->can_accept_call(action.call))
+            return unsupported("interaction VM cannot accept the queued action frame");
+        const auto uid=action.uid;
+        const auto priority=action.priority;
+        const auto ticket=dispatch.ticket;
+        PrimitiveOutcome outcome{PrimitiveDisposition::call,{},output,action.call};
+        outcome.call_commit=[this,uid,priority,ticket]{
+            if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
+               !world_.set_person_data(actor_id_,33,priority))return false;
+            active_=Active{uid,ticket};idle_start_=0;return true;
+        };
+        return outcome;
     }
     if(!queue_.empty()) {
         const auto* actor=world_.find(actor_id_);const auto flags=actor->object_words.find(8);
@@ -295,6 +356,10 @@ bool InteractionQueue::observe() {
     if(!world_.clear_motive_changes(actor_id_)){
         diagnostic_="interaction completion could not clear avatar motive changes";return false;
     }
+    if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
+       !world_.set_person_data(actor_id_,33,0)){
+        diagnostic_="interaction completion could not restore PersonData[33] priority";return false;
+    }
     completion_=InteractionCompletion{active_->uid,result->ticket,clock_,result->result};
     queue_.pop_front();active_.reset();idle_start_=clock_;
     resume_tick_=clock_+1;diagnostic_.clear();return true;
@@ -305,6 +370,7 @@ bool InteractionQueue::tick(std::uint64_t now) {
        (last_tick_&&(now<=*last_tick_ || now-*last_tick_!=1)))return false;
     if(!observe())return false;
     Guard guard(executing_);
+    if(!evaluate_queue_priorities())return false;
     last_tick_=now;clock_=now;
     if(resume_tick_ && now>=*resume_tick_) {
         if(!completion_ || !vm_->resume_interaction(completion_->ticket))return false;

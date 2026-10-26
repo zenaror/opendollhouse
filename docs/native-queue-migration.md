@@ -4,25 +4,43 @@ Status: **partial native implementation in progress**, 2026-10-26. The current
 working tree parses all seven TS1 `PushInteraction` priorities, maps them to
 signed priorities/modes, carries TTAB action flags into the native queue, and
 orders pending actions by the TS1 normal, ParentIdle/ParentExit, PushHead and
-PushTail rules that fit its existing one-active-action model. Controller codec
-v2 persists priority, mode, flags, notification bit, public queue UID and queue
-profile. It still reads v1 FIFO saves as an explicit legacy profile; the first
-new TS1 push adopts priority ordering while keeping old pending actions in their
-existing order and assigning unique queue UIDs.
+PushTail rules that fit its existing one-active-action model. It reevaluates the
+active action when work is queued and at tick boundaries: a higher-priority
+pending action, or active priority changing to zero, marks the action to notify.
+The existing `IdleForInput` wait keeps its scheduled wake time; when it next runs,
+it sets the avatar's notified flag. Starting and finishing the outer action
+update PersonData[33] when that bank is present. The VM checks routine ownership,
+frame limits and stack depth before the queue publishes an action as active.
+Controller codec v2 persists priority, mode, flags, notification bit, public
+queue UID and queue profile. It still reads v1 FIFO saves as an explicit legacy
+profile; the first new TS1 push adopts priority ordering while keeping old
+pending actions in their existing order and assigning unique queue UIDs.
 
-This is a queue-enqueue milestone, **not full TS1 queue fidelity**. The current
-native runtime still protects only one active action. It does not run check
-trees/eligibility, reevaluate queue priorities and notify an active action,
-cancel or skip followups, inject RunImmediately at a tick boundary, or support
-nested protected action frames and their callbacks. RunImmediately requests are
-rejected explicitly so they cannot masquerade as ordinary queued work. Keep
-extending the existing `Vm`, `InteractionQueue`, World and session codecs; keep
-one authoritative native simulation. Do not present this slice as game parity.
+This is a queue-ordering and notification milestone, **not full TS1 queue
+fidelity**. The current native runtime still protects only one active action.
+It does not execute check trees/eligibility, dispatch nested actions from an
+action-tree `AllowPush`, cancel or skip followups, inject RunImmediately at a
+tick boundary, or support nested protected action frames and their callbacks.
+RunImmediately requests are rejected explicitly so they cannot masquerade as
+ordinary queued work. Priority reevaluation is limited to the single active
+action model; it runs on each tick instead of FreeSO's QueueDirty-only schedule,
+and does nothing when the avatar lacks PersonData[33]. Setting the cancellation
+flag also requires ObjectData[8]. Keep extending the existing `Vm`,
+`InteractionQueue`, World and session codecs; keep one authoritative native
+simulation. Do not present this slice as game parity.
 
-Current gates: five focused CTests cover action decoding/order, controller codec
-v1/v2 and legacy migration. House07 active-save/reopen rerun is in
-`reports/native-active-interaction/attempt-9/result.json`; repeat it after any
-subsequent queue-code changes before using it as current runtime evidence.
+Current gates: six focused CTests cover VM call-commit rollback, action
+decoding/order, active-action notification, controller codec v1/v2 and legacy
+migration; their captured output is in
+`reports/native-queue-priority/attempt-1/ctest.log`. The current
+House07 active-save/reopen rerun is in
+`reports/native-active-interaction/attempt-15/result.json`; both cuts (ticks
+256/512) reopened with all 12 save sections matching, and both continuations
+matched the uninterrupted run through tick 4096. The legacy save loaded and 25
+original game files retained their hashes. Repeat this gate after later queue
+changes before treating it as current runtime evidence. This House07 case checks
+save/reopen determinism for the fridge action; it does not exercise competing
+queue priorities or prove game parity.
 
 ## Pinned authority
 

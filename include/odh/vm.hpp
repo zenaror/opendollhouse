@@ -128,6 +128,10 @@ struct PrimitiveOutcome {
     std::optional<VmStackObjectWrite> stack_object_write = {};
     // Synchronous branches only; validated with every output, applied after temp_write.
     std::optional<VmTempWrite> second_temp_write = {};
+    // A primitive may commit external controller state only after the child
+    // frame was successfully created. This callback must be atomic and must not
+    // throw; false or an exception rolls back the child frame before it runs.
+    std::function<bool()> call_commit = {};
 };
 class Vm;
 struct VmDispatch { const Vm* origin; std::uint64_t ticket; };
@@ -223,6 +227,10 @@ public:
     // Observe availability in this VM without installing or changing code/state.
     // A missing nonzero owner returns false, including for global routines.
     bool has_routine(RoutineKey key, CodeOwner owner) const { return resolve(key,owner)!=nullptr; }
+    // Preflight an ordinary or interaction child frame at a primitive safe
+    // point; external service frames belong to their scheduler. The subsequent
+    // call with the same VM state will pass push's deterministic checks.
+    bool can_accept_call(const VmCall&) const;
     VmStatus status() const { return status_; }
     const std::string& diagnostic() const { return diagnostic_; }
     const std::vector<VmFrame>& stack() const { return stack_; }

@@ -81,6 +81,7 @@ private:
     void publish_snapshot(InteractionQueueSnapshot&&) noexcept;
     PrimitiveOutcome request(const VmFrame&,const Instruction&,const VmDispatch&);
     bool validate();
+    bool evaluate_queue_priorities();
     bool enqueue_impl(RoutineKey,VmContext,const std::vector<std::int16_t>&,
         std::int16_t,InteractionQueueMode,std::uint32_t,bool,bool,bool);
     World& world_;std::int16_t actor_id_;std::size_t capacity_;

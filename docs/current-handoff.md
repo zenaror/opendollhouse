@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes desta etapa: `66007bf992290de948dafe3a6d533ee84657fd1f`.
+Base publicada antes da etapa atual: `5b2f2fef2e388f1c4937922fcf29d795dee6c35b`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -58,21 +58,29 @@ continuação headless da interação geladeira/comida na Casa 07. Não é parid
 Simitone nem build jogável. A mudança de C# existente e outros WIP citados abaixo
 permanecem preservados e fora do commit.
 
-### Prioridades de PushInteraction (WIP atual)
+### Prioridades e aviso de PushInteraction (WIP atual)
 
 A etapa atual decodifica as sete prioridades TS1, guarda prioridade/modo/flags na
 fila C++, aplica as regras de inserção suportadas e grava esses dados no formato
 de save v2. Saves v1 são lidos como FIFO legado; ao chegar a primeira ação TS1
 nova, a fila preserva a ordem antiga e passa para a ordenação por prioridade.
-Cinco CTests focados passaram e a cena House07 foi repetida em attempt-9. A
-revisão independente aprovou a inserção/adoção do save legado. Detalhes e
-limitações em [native-queue-migration.md](native-queue-migration.md).
+Seis CTests focados passaram. O VM pré-checa rotina, propriedade do código e
+limite de pilha, e só publica o estado da ação depois de criar seu quadro. A cena
+House07 foi repetida em attempt-15: os
+saves dos ticks 256 e 512 reabriram com todas as 12 seções iguais; as duas
+continuações coincidiram com a execução contínua até tick 4096. Save legado
+carregou e 25 hashes originais permaneceram iguais. O novo teste nativo verifica
+que uma prioridade maior e uma mudança da prioridade ativa para zero marcam a
+ação para notificar; `IdleForInput` trata o aviso no seu próximo horário já
+agendado. Detalhes e limites em
+[native-queue-migration.md](native-queue-migration.md).
 
-Isto ainda não executa check trees, reavalia/cancela a ação ativa, injeta
-RunImmediately, nem protege ações TS1 aninhadas. O runtime continua com somente
-uma ação ativa protegida. Próximo passo é integrar eligibility/check, notificação
-e início de ações no tick, ampliando ao mesmo tempo o estado salvo; não chamar a
-ordenação da fila de paridade.
+Isto ainda não executa check trees/eligibility, despacha ação aninhada por
+AllowPush, cancela/ignora ações, nem injeta RunImmediately. O runtime continua
+com somente uma ação ativa protegida. Próximo passo: ampliar o estado de execução
+para o prefixo protegido de ações e criar um ponto seguro para executar os checks
+reais antes de iniciar cada ação; não chamar a ordenação/notificação atual de
+paridade.
 
 A orientação mais recente exige não usar C#. A frente atual conecta o executor
 compartilhado diretamente ao `Vm` C++ e conclui bancos TEMP/TempXL nativos.

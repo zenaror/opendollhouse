@@ -247,6 +247,56 @@ int main(int argc,char** argv){try {
           f.queue.snapshot().actions.size()==before.actions.size(),
           "RunImmediately stays explicitly unsupported without tick-boundary injection");
  }
+ { // A higher-priority TS1 action notifies the protected action at its scheduled IdleForInput.
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,0);odh::InteractionQueue queue(world,1);
+  odh::Vm vm({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},queue.primitive(),
+      {{22,{{key(4097),bhav({idle(0,1),set(1,42)})}}}});
+  require(queue.bind(vm)&&vm.start(key(4096),{1,1,1,0},{8})==odh::VmStatus::running,
+      "priority-notification avatar has full TS1 PersonData and a live Main");
+  require(queue.enqueue_ts1(key(4097),{1,2,2,22},{2},10,odh::InteractionQueueMode::normal,0,false,false),
+      "priority action enters queue");
+  require(queue.tick(1),"priority action tick advances");
+  require(vm.run(20)==odh::VmStatus::waiting,"priority action reaches its idle wait");
+  require(queue.active()&&queue.waiting()&&world.find(1)->person_data[33]==10,
+      "starting an action publishes its live priority before its action tree waits");
+  require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false),
+      "higher-priority work joins behind the protected action");
+  auto state=queue.snapshot();
+  require(state.actions.front().notify_idle&&(static_cast<std::uint16_t>(world.find(1)->object_words.at(8))&128U),
+      "queue reevaluation marks the active action and InteractionCanceled");
+  require(queue.tick(2)&&vm.run(20)==odh::VmStatus::waiting,
+      "AllowPush0 keeps its scheduled wake instead of polling each tick");
+  require(queue.tick(3)&&vm.run(20)==odh::VmStatus::yielded&&vm.temps()[1]==42&&
+      (static_cast<std::uint16_t>(world.find(1)->object_words.at(8))&64U),
+      "scheduled IdleForInput sees NotifyIdle and publishes NotifiedByIdleForInput");
+  require(queue.observe()&&world.find(1)->person_data[33]==0&&queue.size()==1,
+      "finishing the outer action resets priority and leaves the higher-priority request pending");
+ }
+ { // Setting the active TS1 priority to zero also notifies that action at the next tick.
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,0);odh::InteractionQueue queue(world,1);
+  odh::Vm vm({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),{},queue.primitive(),
+      {{22,{{key(4097),bhav({idle(0,1),set(1,42)})}}}});
+  require(queue.bind(vm)&&vm.start(key(4096),{1,1,1,0},{})==odh::VmStatus::running&&
+      queue.enqueue_ts1(key(4097),{1,2,2,22},{2},10,odh::InteractionQueueMode::normal,0,false,false)&&
+      queue.tick(1)&&vm.run(20)==odh::VmStatus::waiting,"priority-zero notification fixture starts a waiting action");
+  require(world.set_person_data(1,33,0)&&queue.tick(2)&&vm.run(20)==odh::VmStatus::waiting&&
+      queue.tick(3)&&vm.run(20)==odh::VmStatus::yielded&&
+      (static_cast<std::uint16_t>(world.find(1)->object_words.at(8))&64U),
+      "active action sees a priority-zero change at its scheduled wake without a queued replacement");
+ }
+ { // A full VM stack rejects dispatch before queue or PersonData claims an active action.
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,80,0,16});world.create(2,odh::EntityKind::object);
+  world.declare_object_word(1,8,0);odh::InteractionQueue queue(world,1);odh::VmLimits limits;limits.stack_depth=1;
+  odh::Vm vm({{key(4096),bhav({idle(1,1),set(2,99)})}},world.vm_memory(),limits,queue.primitive(),
+      {{22,{{key(4097),bhav({set(1,42)})}}}});
+  require(queue.bind(vm)&&vm.start(key(4096),{1,1,1,0},{})==odh::VmStatus::running&&
+      queue.enqueue_ts1(key(4097),{1,2,2,22},{},10,odh::InteractionQueueMode::normal,0,false,false)&&
+      vm.run(10)==odh::VmStatus::fault&&!queue.active()&&queue.size()==1&&
+      world.find(1)->person_data[33]==0,
+      "stack-depth rejection leaves the request pending and live priority unchanged");
+ }
  { // A v1 FIFO save adopts TS1 ordering only when new native PushInteraction work arrives.
   Fixture f(1,8);require(f.enqueue()&&f.enqueue(4097),"legacy migration begins with two queued actions");
   auto legacy=f.queue.snapshot();legacy.profile=odh::InteractionQueueProfile::legacy_fifo;

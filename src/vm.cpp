@@ -136,6 +136,26 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
     std::copy(args.begin(), args.end(), frame.arguments.begin());
     stack_.push_back(std::move(frame));
 }
+bool Vm::can_accept_call(const VmCall& call) const {
+    if(call.return_mode!=VmCallReturnMode::ordinary&&
+       call.return_mode!=VmCallReturnMode::interaction_next_tick)return false;
+    if(call.return_mode==VmCallReturnMode::interaction_next_tick&&
+       std::any_of(stack_.begin(),stack_.end(),[](const auto& frame){
+           return frame.return_mode==VmCallReturnMode::interaction_next_tick;
+       }))return false;
+    if(call.context.code_owner!=0&&owners_.find(call.context.code_owner)==owners_.end())return false;
+    const auto* routine=resolve(call.key,call.context.code_owner);
+    if(!routine)return false;
+    const auto metadata=execution_metadata(*routine);
+    if(!metadata||routine->instructions.empty()||stack_.size()>=limits_.stack_depth)return false;
+    for(const auto& instruction:routine->instructions)
+        for(const auto target:{instruction.on_true,instruction.on_false})
+            if(target<0xFD&&target>=routine->instructions.size())return false;
+    const auto arg_count=std::max<std::size_t>(4,metadata->arguments);
+    const auto local_count=std::max<std::size_t>(metadata->locals,metadata->arguments);
+    return arg_count<=limits_.frame_variables&&local_count<=limits_.frame_variables&&
+        call.arguments.size()<=arg_count;
+}
 VmSnapshot Vm::snapshot() const {
     if (executing_) throw std::logic_error("VM callbacks must not capture running state");
     return {stack_, temps_, temp_xl_, status_, diagnostic_, steps_, pending_, suspended_pending_,
@@ -557,6 +577,8 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                 }
                 if(outcome.call && outcome.disposition!=PrimitiveDisposition::call)
                     throw VmError("primitive call payload requires call disposition");
+                if(outcome.call_commit&&outcome.disposition!=PrimitiveDisposition::call)
+                    throw VmError("primitive call commit requires call disposition");
                 if (outcome.write && outcome.disposition == PrimitiveDisposition::unsupported)
                     throw VmError("unsupported primitive outcome must not carry frame output");
                 switch (outcome.disposition) {
@@ -570,6 +592,15 @@ VmStatus Vm::run(std::uint64_t budget, const std::function<void(const VmTrace&)>
                     const auto parent_index=stack_.size()-1;
                     push(outcome.call->key,outcome.call->context,outcome.call->arguments,
                          outcome.call->return_mode, dispatch.ticket);
+                    if(outcome.call_commit){
+                        bool accepted=false;
+                        try{accepted=outcome.call_commit();}
+                        catch(...){stack_.pop_back();status_=VmStatus::fault;throw;}
+                        if(!accepted){
+                            stack_.pop_back();
+                            throw VmError("primitive call state commit rejected after frame preflight");
+                        }
+                    }
                     if(outcome.write)*frame_output(stack_[parent_index],*outcome.write,limits_.frame_variables)=outcome.write->value;
                     }
                     break;

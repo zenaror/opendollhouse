@@ -82,6 +82,36 @@ int main() {
         auto vm = machine(parsed); vm.start(key());
         require(vm.run(1) == odh::VmStatus::returned_true && vm.temps()[0] == 1, "parsed expression executes");
 
+        const odh::Instruction deferred_call{49,254,255,{}};
+        odh::Vm call_commit({{key(),routine({deferred_call,expr(2,0,0)})},
+                             {key(4097),routine({expr(2,0,0)})}}, {}, {},
+            [&](const auto& frame,const auto& instruction,const auto&,const auto&){
+                if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                odh::PrimitiveOutcome outcome{odh::PrimitiveDisposition::call,{}, {},
+                    odh::VmCall{key(4097),frame.context,{}}};
+                outcome.call_commit=[] {return false;};
+                return outcome;
+            });
+        call_commit.start(key());
+        require(call_commit.run(1)==odh::VmStatus::fault&&call_commit.stack().size()==1&&
+                call_commit.stack()[0].key.id==4096&&call_commit.stack()[0].pc==0,
+                "rejected child-state commit removes the created frame before it can execute");
+        odh::Vm call_commit_throw({{key(),routine({deferred_call,expr(2,0,0)})},
+                                   {key(4097),routine({expr(2,0,0)})}}, {}, {},
+            [&](const auto& frame,const auto& instruction,const auto&,const auto&){
+                if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+                odh::PrimitiveOutcome outcome{odh::PrimitiveDisposition::call,{}, {},
+                    odh::VmCall{key(4097),frame.context,{}}};
+                outcome.call_commit=[]()->bool {throw std::runtime_error("fixture commit failure");};
+                return outcome;
+            });
+        call_commit_throw.start(key());bool commit_exception=false;
+        try{(void)call_commit_throw.run(1);}catch(const std::runtime_error&){commit_exception=true;}
+        require(commit_exception&&call_commit_throw.status()==odh::VmStatus::fault&&
+                call_commit_throw.stack().size()==1&&
+                call_commit_throw.stack()[0].key.id==4096&&call_commit_throw.stack()[0].pc==0,
+                "throwing child-state commit removes the created frame before propagating");
+
         std::optional<std::uint16_t> read_flag;
         odh::VmMemory sprite_memory;
         sprite_memory.dynamic_sprite_flag=[&](const odh::VmFrame&,std::uint16_t flag)->std::optional<bool>{
