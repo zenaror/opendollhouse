@@ -2,6 +2,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <iterator>
+#include <utility>
 
 namespace odh {
 namespace {
@@ -44,6 +47,38 @@ std::int16_t scope_entity(const VmFrame& frame, std::uint8_t scope) {
         ? frame.context.caller : frame.context.stack_object;
 }
 }
+World::World(WorldLimits limits, AttributePolicy attributes)
+    : limits_(std::move(limits)), attribute_policy_(attributes) {
+    auto& reserved = limits_.reserved_entity_ids;
+    if (reserved.size() > 4096 || std::any_of(reserved.begin(), reserved.end(), [](auto id) { return id <= 0; }))
+        throw std::invalid_argument("World reserved entity IDs must contain at most 4096 positive IDs");
+    std::sort(reserved.begin(), reserved.end());
+    if (std::adjacent_find(reserved.begin(), reserved.end()) != reserved.end())
+        throw std::invalid_argument("World reserved entity IDs must be unique");
+}
+bool World::install_reserved_entity_ids(std::vector<std::int16_t> ids) {
+    if (ids.size() > 4096 || std::any_of(ids.begin(), ids.end(), [](auto id) { return id <= 0; }))
+        return false;
+    std::sort(ids.begin(), ids.end());
+    if (std::adjacent_find(ids.begin(), ids.end()) != ids.end()) return false;
+    const auto& existing = limits_.reserved_entity_ids;
+    auto combined_size = existing.size();
+    for (const auto id : ids) {
+        if (entities_.count(id)) return false;
+        if (!std::binary_search(existing.begin(), existing.end(), id) && ++combined_size > 4096)
+            return false;
+    }
+    if (combined_size == existing.size()) return true;
+    std::vector<std::int16_t> combined;
+    combined.reserve(combined_size);
+    std::set_union(existing.begin(), existing.end(), ids.begin(), ids.end(), std::back_inserter(combined));
+    limits_.reserved_entity_ids.swap(combined);
+    return true;
+}
+bool World::entity_id_available(std::int16_t id) const {
+    return id > 0 && !std::binary_search(limits_.reserved_entity_ids.begin(), limits_.reserved_entity_ids.end(), id) &&
+        !entities_.count(id);
+}
 WorldSnapshot World::snapshot() const {
     WorldSnapshot result;
     result.attribute_policy=attribute_policy_;
@@ -70,7 +105,8 @@ bool World::publish_snapshot(const WorldSnapshot& snapshot) {
     // Bound all banks before copying. ObjectData follows its fixed index range,
     // as declare_object_word does, rather than the variable bank_words limit.
     for(const auto& entity:snapshot.entities) {
-        if(entity.id<=0 || !entity.generation || entity.generation>snapshot.generation_sequence ||
+        if(entity.id<=0 || std::binary_search(limits_.reserved_entity_ids.begin(), limits_.reserved_entity_ids.end(), entity.id) ||
+           !entity.generation || entity.generation>snapshot.generation_sequence ||
            (entity.kind!=EntityKind::object && entity.kind!=EntityKind::avatar) ||
            entity.attributes.size()>limits_.bank_words || entity.attributes.size()>32768 ||
            entity.person_data.size()>limits_.bank_words || entity.person_data.size()>32768 ||
@@ -165,7 +201,7 @@ void World::mark_spatial_change() noexcept {
     if(spatial_revision_!=std::numeric_limits<std::uint64_t>::max())++spatial_revision_;
 }
 bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
-    if (id <= 0 || generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
+    if (!entity_id_available(id) || generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
         (kind != EntityKind::object && kind != EntityKind::avatar) ||
         entities_.count(id) || entities_.size() >= limits_.entities ||
         layout.attributes > limits_.bank_words || layout.person_data > limits_.bank_words ||
@@ -192,7 +228,7 @@ bool World::create(std::int16_t id, EntityKind kind, EntityLayout layout) {
 bool World::create_runtime_object(std::int16_t id, std::uint32_t guid,
     EntityLayout layout, const std::vector<EntryPoint>& entry_points) {
     constexpr std::size_t runtime_object_words = 75; // 0..78 except derived 2,3,11,67.
-    if (id <= 0 || guid == 0 || entities_.count(id) ||
+    if (!entity_id_available(id) || guid == 0 ||
         generation_sequence_ == std::numeric_limits<std::uint64_t>::max() ||
         layout.person_data != 0 || layout.motives != 0 ||
         layout.attributes > limits_.bank_words || layout.attributes > 32768 ||
@@ -233,7 +269,7 @@ bool World::create_saved_entity(std::int16_t id, EntityKind kind, std::uint32_t 
     const std::array<std::int16_t,68>& object_data,
     const std::array<std::int16_t,5>& extras, std::size_t slots,
     std::optional<std::uint32_t> master_guid) {
-    if (id<=0 || !guid || (master_guid && !*master_guid) ||
+    if (!entity_id_available(id) || !guid || (master_guid && !*master_guid) ||
         generation_sequence_==std::numeric_limits<std::uint64_t>::max() ||
         (kind!=EntityKind::object && kind!=EntityKind::avatar) ||
         entities_.count(id) || entities_.size()>=limits_.entities ||

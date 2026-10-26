@@ -78,7 +78,7 @@ std::int16_t family_word(std::uint16_t id) {
 std::int16_t next_free_id(const World& world) {
     for (std::int32_t candidate = 1; candidate <= 32767; ++candidate) {
         const auto id = static_cast<std::int16_t>(candidate);
-        if (!world.find(id)) return id;
+        if (world.entity_id_available(id)) return id;
     }
     throw FormatError("household runtime ID space exhausted");
 }
@@ -102,6 +102,8 @@ HouseholdSpawnResult materialize_household_members_impl(
     if (!prepare_avatar)
         throw FormatError("household avatar preparation callback is required");
 
+    // Snapshot bytes omit reservation policy. Every candidate explicitly
+    // receives the caller's launch limits, including retired-ID reservations.
     auto candidate = std::make_unique<World>(limits, source.attribute_policy);
     if (!candidate->restore_snapshot(source))
         throw FormatError("source WorldSnapshot cannot be restored into candidate World");

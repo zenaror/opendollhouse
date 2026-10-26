@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `8f16b65a607fb3da67d92be12f07cc6fbc9b6fa6`.
+Base publicada antes da etapa atual: `f89d2183aea6b0e8f51f2c118745cebb6b52469c`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,14 +39,53 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Transferência de família para casas vazias (etapa atual)
+### Reconstrução após saída dos moradores originais (etapa atual)
+
+Core portátil `occupancy_projection` usa o histórico completo e a identidade
+dos dados instalados para retirar somente os moradores da ocupação original
+comprovadamente encerrada. Não usa os elencos posteriores como autorização para
+apagar visitantes. Preserva os demais objetos e relações NBRS, limpa vínculos
+tipados dos atores retirados e reserva seus IDs em cada lançamento/retomada.
+Não altera codecs nem restaura ações antigas. Objetos carregados continuam
+recusados até existir colocação fiel; atributos/opacos retidos são evidência,
+não continuação executável. Fonte bruta fica separada da visão de ativação.
+
+O launcher carrega também as definições dos personagens realmente presentes no
+OBJM, antes de validar o mundo original e projetá-lo. O telefone começa com
+controlador novo, preparado para salvar mesmo antes do primeiro tick. Compra
+pendente só confirma após validar um save completo e sua restauração, sem
+publicar arquivos ou avançar relógio/RNG nessa verificação. A seleção por GUID
+espera a criação dos novos atores, sem ler uma fixture ausente.
+
+O teste comercial final `reports/native-occupancy-reconstruction/real-5/result.json`
+passou com 11 processos: dois adultos criados → Casa07/T2 → reabrir → sair →
+Casa09/T0 → reabrir → sair → Casa07/T0 → reabrir → recusar archive antigo.
+IDs105/137 retirados, novos180/181, outros180 registros preservados, cadeira128
+desocupada e NBRS original retido. Dados pessoais/necessidades/frações/recursos
+iguais e reaberturas byte-idênticas. Budget de teste57950 vira40725/37225/20000.
+114 arquivos originais e dois personagens privados intactos; perfis e11PIDs
+encerrados, sem display. Binário final
+`f7bb2e56f4258a40ca6a9e0784d11baffa6cffca22f535f76c483d3a273143e6`.
+19 CTests passaram após a última correção; log em
+`reports/native-occupancy-reconstruction/ctest.log`. Revisões independentes
+confirmaram os limites e a seleção corrigida. Contrato, histórico de falhas e
+limites em `docs/native-occupancy-reconstruction.md`. A saída da família original
+é preparo explícito do helper privado; não é prova da operação pela UI.
+
+PRÓXIMO: validar gestão de famílias pela janela e ampliar as regras de chegada
+quando os moradores antigos carregam objetos. Persistência da propriedade
+após desocupação precisa ser separada do save familiar antes de generalizar
+compra/construção. Famílias/saves legados, edição/renomeação, liquidação original
+e viagens/atividades das expansões continuam incompletos.
+
+### Transferência de família para casas vazias (checkpoint anterior)
 
 Core C++ portátil `household_transfer` autentica o checkpoint anterior e aplica
 dados pessoais revisados, sete necessidades/frações e relações de vizinhos aos
 moradores recém-construídos. Recibo privado vincula origem, destino e elenco;
 journal só aceita o primeiro save compatível. Compra fica pendente até preparar
 o runtime saudável e a transferência, antes de cobrar. Falha de preparo/VM,
-dados desconhecidos incompatíveis ou moradores antigos no OBJM não cobram.
+dados desconhecidos incompatíveis ou moradores sem prova de reconstrução não cobram.
 
 `reports/native-family-transfer/real-2/result.json` passou com nove processos:
 criar dois adultos → comprar Casa01/T2 → sair → comprar Casa09/T0 → reabrir →
@@ -64,12 +103,9 @@ originais ficam no archive. Person80 projeta/pad88; Person256 exige cauda após8
 zero. Antes de despejar, unknownP deve igualar NBRS efetivo salvo e unknownmotives
 0/1/2/4/10/12 devem manter100, baseline comprovado de VMAvatar.Init.
 
-PRÓXIMO: reconstruir moradores antigos da ocupação anterior em OBJM (hoje
-recusados), sem reativar ações/temporizadores/referências antigas ou apagar NPCs
-por heurística; validar o fluxo pela janela. Persistência da propriedade após
-desocupação precisa ser separada do save familiar antes de generalizar compra/
-construção. Famílias/saves legados, edição/renomeação, liquidação original e
-expansões continuam incompletos. O gate usa CAS helper e headless, sem cliques.
+A etapa atual acima amplia esse fluxo para moradores originais aposentados,
+com limites explícitos. Os gates usam CAS helper e headless, sem cliques;
+não validam a gestão pela interface.
 
 ### Save e dinheiro ligados à ocupação da família (checkpoint anterior)
 

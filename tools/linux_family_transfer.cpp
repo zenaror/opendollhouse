@@ -23,6 +23,9 @@ std::string hex(const std::array<std::uint8_t,32>& bytes){
     for(auto byte:bytes){out+=chars[byte>>4];out+=chars[byte&15];}return out;
 }
 }
+std::array<std::uint8_t,32> fingerprint_transfer_resource(const std::filesystem::path& path){
+    return fingerprint(path);
+}
 std::vector<odh::HouseholdTransferIdentity> identify_transfer_household(
         const odh::SessionEntry& session,const std::filesystem::path& game,
         const std::filesystem::path& player_root){

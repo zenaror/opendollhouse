@@ -71,7 +71,7 @@ def rewrite_archive(data, change):
     sections=change(archive_sections(data));payload=b''
     for ident,flags,body in sections:
         payload += ident + struct.pack('<IQI',flags,len(body),zlib.crc32(body)) + body
-    header=bytearray(data[:28]);struct.pack_into('<H',header,12,len(sections));struct.pack_into('<Q',header,16,len(payload));struct.pack_into('<I',header,24,zlib.crc32(payload))
+    header=bytearray(data[:28]);struct.pack_into('<H',header,12,len(sections));struct.pack_into('<Q',header,16,len(payload));struct.pack_into('<I',header,24,zlib.crc32(header[:24]))
     return bytes(header)+payload
 
 

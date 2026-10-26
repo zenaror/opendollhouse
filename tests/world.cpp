@@ -15,6 +15,114 @@ odh::VmFrame frame(std::int16_t caller=1,std::int16_t object=2) {
 }
 int main() {
     try {
+        {
+            odh::WorldLimits policy;
+            policy.reserved_entity_ids = {3, 1, 2};
+            odh::World guarded(policy);
+            require(guarded.reserved_entity_ids() == std::vector<std::int16_t>({1,2,3}),
+                "reservation policy is canonicalized without mutating caller limits");
+            require(policy.reserved_entity_ids == std::vector<std::int16_t>({3,1,2}) &&
+                !guarded.entity_id_available(0) && !guarded.entity_id_available(-1) &&
+                !guarded.entity_id_available(1) && guarded.entity_id_available(4) && guarded.entity_id_available(32767),
+                "availability separates invalid, reserved and free runtime IDs");
+            require(!guarded.create(1,odh::EntityKind::avatar,{0,88,0,16}) &&
+                !guarded.create_runtime_object(2,0x12345678U,{}, {}) &&
+                !guarded.create_saved_entity(3,odh::EntityKind::object,0x12345678U,{}, {}, {}, {}, {},0),
+                "every entity constructor rejects retired IDs");
+            require(!guarded.next_entity(0) && guarded.snapshot().generation_sequence == 0 &&
+                guarded.snapshot().spatial_revision == 0 && guarded.snapshot().word_count == 0,
+                "reservations do not enumerate or consume entity generations and banks");
+            std::int16_t first_available = 0;
+            for (std::int32_t value = 1; value <= 32767; ++value)
+                if (guarded.entity_id_available(static_cast<std::int16_t>(value))) {
+                    first_available = static_cast<std::int16_t>(value); break;
+                }
+            require(first_available == 4 && guarded.create(4,odh::EntityKind::object,{1}) &&
+                !guarded.entity_id_available(4), "allocation search skips reserved IDs before choosing a fresh ID");
+            odh::World ordinary;
+            require(ordinary.create(1,odh::EntityKind::object,{1}), "unreserved snapshot fixture");
+            odh::World fresh_guarded(policy);
+            require(!fresh_guarded.restore_snapshot(ordinary.snapshot()) && !fresh_guarded.next_entity(0) &&
+                fresh_guarded.snapshot().generation_sequence == 0,
+                "restore rejects a reserved live ID atomically before publishing any history");
+            require(fresh_guarded.restore_snapshot(guarded.snapshot()) &&
+                !fresh_guarded.entity_id_available(1) && fresh_guarded.find(4),
+                "restore accepts compatible entities while retaining external launch reservations");
+            odh::World default_restore;
+            require(default_restore.restore_snapshot(guarded.snapshot()) && default_restore.entity_id_available(1) &&
+                default_restore.reserved_entity_ids().empty(),
+                "snapshot format carries entity state without inventing a reservation wire field");
+            // A full-session restore can bind VMs before the host rederives
+            // exclusions. Install them in place without replacing World/entities.
+            const auto* stable_actor = default_restore.find(4);
+            const auto rebound_memory = default_restore.vm_memory();
+            const auto before_install = default_restore.snapshot();
+            require(default_restore.install_reserved_entity_ids({3,1,2}) &&
+                default_restore.reserved_entity_ids() == std::vector<std::int16_t>({1,2,3}) &&
+                default_restore.find(4) == stable_actor &&
+                default_restore.snapshot().word_count == before_install.word_count &&
+                default_restore.snapshot().generation_sequence == before_install.generation_sequence &&
+                default_restore.snapshot().spatial_revision == before_install.spatial_revision,
+                "post-restore policy installation preserves live entity pointers and all snapshot counters");
+            require(rebound_memory.write(frame(4,4),0,0,19) && stable_actor->attributes[0] == 19,
+                "VM memory callbacks bound before policy installation still address the same World");
+            require(!default_restore.install_reserved_entity_ids({8,4}) &&
+                default_restore.reserved_entity_ids() == std::vector<std::int16_t>({1,2,3}) &&
+                default_restore.entity_id_available(8) && default_restore.find(4) == stable_actor &&
+                stable_actor->attributes[0] == 19,
+                "a live reserved ID rejects the entire installation without reserving its other IDs");
+            require(default_restore.install_reserved_entity_ids({7,3}) &&
+                default_restore.install_reserved_entity_ids({3,7}) && default_restore.install_reserved_entity_ids({}) &&
+                default_restore.reserved_entity_ids() == std::vector<std::int16_t>({1,2,3,7}),
+                "installation unions exclusions idempotently and empty input cannot clear old reservations");
+            require(!default_restore.install_reserved_entity_ids({9,9}) &&
+                !default_restore.install_reserved_entity_ids({0}) && !default_restore.install_reserved_entity_ids({-1}) &&
+                !default_restore.install_reserved_entity_ids(std::vector<std::int16_t>(4097,10)) &&
+                default_restore.entity_id_available(9) && default_restore.reserved_entity_ids().size() == 4,
+                "invalid installation inputs reject atomically under the same bounds as construction");
+            std::vector<std::int16_t> full_policy;
+            for (std::int32_t id = 1; id <= 4097; ++id)
+                if (id != 4) full_policy.push_back(static_cast<std::int16_t>(id));
+            require(default_restore.install_reserved_entity_ids(full_policy) &&
+                default_restore.reserved_entity_ids().size() == 4096 &&
+                !default_restore.install_reserved_entity_ids({5000}) && default_restore.entity_id_available(5000) &&
+                default_restore.install_reserved_entity_ids({1}),
+                "combined reservation bound is enforced without rejecting overlap with a full existing policy");
+            odh::World restored_old_id;
+            require(restored_old_id.restore_snapshot(ordinary.snapshot()) &&
+                !restored_old_id.install_reserved_entity_ids({1,2}) && restored_old_id.find(1) &&
+                restored_old_id.reserved_entity_ids().empty() && restored_old_id.entity_id_available(2),
+                "an archive containing a retired live ID cannot acquire derived occupancy authority");
+            const auto before_publish = guarded.snapshot();
+            auto conflicting = before_publish;
+            auto extra = ordinary.snapshot().entities.front();
+            extra.generation = before_publish.generation_sequence + 1;
+            conflicting.entities.insert(conflicting.entities.begin(),extra);
+            conflicting.word_count += extra.attributes.size();
+            conflicting.generation_sequence = extra.generation;
+            ++conflicting.spatial_revision;
+            require(!guarded.publish_snapshot(conflicting) && !guarded.find(1) && guarded.find(4) &&
+                guarded.snapshot().generation_sequence == before_publish.generation_sequence &&
+                guarded.snapshot().spatial_revision == before_publish.spatial_revision &&
+                guarded.snapshot().word_count == before_publish.word_count,
+                "publish rejects reserved IDs without partially changing valid resident state or counters");
+            conflicting.entities.front().id = 5;
+            std::swap(conflicting.entities[0],conflicting.entities[1]);
+            require(guarded.publish_snapshot(conflicting) && guarded.find(5),
+                "the same otherwise valid candidate publishes with a nonreserved fresh ID");
+            require(guarded.remove(4) && guarded.entity_id_available(4) && !guarded.remove(1) &&
+                !guarded.entity_id_available(1) && !guarded.create(1,odh::EntityKind::object),
+                "ordinary removals cannot release or reuse retired occupancy IDs");
+            const auto rejects_policy = [&](std::vector<std::int16_t> ids) {
+                auto limits = policy; limits.reserved_entity_ids = std::move(ids);
+                try { odh::World invalid(limits); }
+                catch (const std::invalid_argument&) { return true; }
+                return false;
+            };
+            require(rejects_policy({1,1}) && rejects_policy({0}) && rejects_policy({-1}) &&
+                rejects_policy(std::vector<std::int16_t>(4097,1)),
+                "invalid, duplicate and oversized reservation policies reject at construction");
+        }
         odh::World spatial;
         require(spatial.create(1,odh::EntityKind::object,{0,0,1}) &&
                     spatial.create(2,odh::EntityKind::avatar,{0,88,0}) &&

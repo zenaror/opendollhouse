@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-from linux_household_session_resume_cli import GUIDS, archive_sections
+from linux_household_session_resume_cli import GUIDS, archive_sections, rewrite_archive
 from linux_lot_travel_cli import make_two_occupied_lots
 
 
@@ -23,7 +23,7 @@ def family_identity():
     return hashlib.sha256(struct.pack('<HIIII2I', 201, 900, 7, 100, 2, *GUIDS)).digest()
 
 
-def seed_managed_profile(root, env):
+def seed_managed_profile(root, env, binary=None):
     identity = hashlib.sha256((root / 'UserData/Neighborhood.iff').read_bytes()).digest()
     family = family_identity()
 
@@ -40,6 +40,26 @@ def seed_managed_profile(root, env):
     encoded += operation(1, 0, 7) + operation(0, 7, 0)
     path = Path(env['XDG_CONFIG_HOME']) / 'opendollhouse/player-state' / ('neighborhood-' + identity.hex() + '.odhp')
     path.parent.mkdir(parents=True)
+    if binary is not None:
+        # Adopt the SAME original occupancy. Closing epoch1 and inventing a
+        # fresh epoch around old OBJM actors would now require reconstruction.
+        run = subprocess.run([binary, '--game-root', str(root), '--mode', '1', '--house', '7',
+                              '--resident-id', '11', '--language', '1', '--headless-ticks', '0',
+                              '--save-session-on-exit'], capture_output=True, text=True, env=env, timeout=90)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+        record = [json.loads(line) for line in run.stdout.splitlines() if line.startswith('{')][-1]
+        source = Path(record['saved_session_path']).read_bytes()
+        lease = struct.pack('<HHQ', 1, 201, 1) + identity + family
+        archive = rewrite_archive(source, lambda sections: sections + [(b'FAML', 1, lease)])
+        digest = hashlib.sha256(archive).digest()
+        saved = path.parent / 'sessions' / identity.hex() / (digest.hex() + '.odhs')
+        saved.parent.mkdir(parents=True)
+        saved.write_bytes(archive)
+        saved.chmod(0o600)
+        payload = struct.pack('<H32sHiiI', 201, family, 7, 0, 100, 2)
+        payload += struct.pack('<HHQiii32s', 7, 1, 1, 100, 0, 0, digest)
+        encoded = b'ODHF' + struct.pack('<HH', 6, 0) + identity + struct.pack('<I', 1)
+        encoded += struct.pack('<HI', 5, len(payload)) + payload
     path.write_bytes(encoded)
     return path, identity, family
 
@@ -90,10 +110,10 @@ def main():
             return visits, result
 
         env = profile('continuation')
-        overlay, identity, family = seed_managed_profile(root, env)
+        overlay, identity, family = seed_managed_profile(root, env, binary)
         fresh = ['--mode', '1', '--house', '7', '--resident-id', '11', '--language', '1']
         first = run(fresh + ['--headless-ticks', '2', '--save-session-on-exit'], env)[0][0]
-        assert not first['session_loaded'] and first['ticks'] == 2, first
+        assert first['session_loaded'] and first['resumed_tick'] == 0 and first['ticks'] == 2, first
         first_path = Path(first['saved_session_path'])
         first_bytes = first_path.read_bytes()
         digest = hashlib.sha256(first_bytes).digest()
@@ -101,7 +121,7 @@ def main():
         assert first_path.parent == overlay.parent / 'sessions' / identity.hex()
         assert checkpoint_digest(overlay.read_bytes()) == digest
         sections = {ident: (flags, body) for ident, flags, body in archive_sections(first_bytes)}
-        assert sections[b'FAML'] == (1, struct.pack('<HHQ', 1, 201, 2) + identity + family)
+        assert sections[b'FAML'] == (1, struct.pack('<HHQ', 1, 201, 1) + identity + family)
         assert b'HHRD' in sections and b'GEXP' in sections
 
         before_zero = overlay.read_bytes()
@@ -130,12 +150,12 @@ def main():
         assert overlay.read_bytes() == current_overlay and current_path.read_bytes() == current_bytes
 
         travel_env = profile('travel')
-        travel_overlay, _, _ = seed_managed_profile(root, travel_env)
+        travel_overlay, _, _ = seed_managed_profile(root, travel_env, binary)
         visits = run(fresh + ['--headless-travel-house', '8', '--headless-travel-house', '7',
                               '--headless-ticks', '2', '--instruction-budget', '25000',
                               '--save-session-on-exit'], travel_env)[0]
         assert [v['integrated_session_context']['house_number'] for v in visits] == [7, 8, 7], visits
-        assert [v['session_loaded'] for v in visits] == [False, False, True], visits
+        assert [v['session_loaded'] for v in visits] == [True, False, True], visits
         assert [v['resumed_tick'] for v in visits] == [0, 0, 1], visits
         final_path = Path(visits[-1]['saved_session_path'])
         assert checkpoint_digest(travel_overlay.read_bytes()) == hashlib.sha256(final_path.read_bytes()).digest()

@@ -12,6 +12,12 @@ namespace odh {
 
 inline constexpr std::size_t family_overlay_max_bytes = 4 * 1024 * 1024;
 
+// Owned baseline data, independent of filesystem or platform entry points.
+struct NeighborhoodFamilySource {
+    std::array<std::uint8_t, 32> identity{};
+    std::vector<FamilyEntry> families;
+};
+
 enum class FamilyOverlayAction : std::uint32_t { move_in = 0, move_out = 1, checkpoint = 2 };
 
 // Explicit before-state for chronological native player-state operations.

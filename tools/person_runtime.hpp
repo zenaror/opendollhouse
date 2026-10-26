@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace odh { class PreparedHouseholdTransfer; }
+namespace odh { class PreparedHouseholdTransfer; class InstalledOccupancyRetirement; }
 
 namespace odh_host {
 class LinuxWindow;
@@ -40,6 +40,7 @@ struct IntegratedHouseholdMember {
 struct IntegratedSessionContext {
     std::shared_ptr<FamilySessionJournal> family_journal;
     std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
+    std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
     // Empty only for the explicit single-resident save/restore test profile.
     std::vector<IntegratedHouseholdMember> household_members;
     bool single_resident_session = false;

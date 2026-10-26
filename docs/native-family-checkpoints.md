@@ -67,8 +67,10 @@ for recovery. Future compaction must preserve occupancy and checkpoint authority
 Managed move-out now requires a current checkpoint and a compatible portable
 profile. The [transfer contract](native-family-transfer.md) covers reviewed
 personal data, needs and neighbor relationships into freshly initialized
-residents. Destinations with old residents and incompatible unknown progress
-remain guarded. Restoring the old house's World/positions/VMs into another lot
+residents. Original installed residents can be retired using the exact
+[expired source-occupancy proof](native-occupancy-reconstruction.md); unproven
+actors, unsupported held objects and incompatible unknown progress remain
+guarded. Restoring the old house's World/positions/VMs into another lot
 would be incorrect. Editing/renaming families, general liquidation, original UI
 and expansion travel remain separate unfinished requirements.
 

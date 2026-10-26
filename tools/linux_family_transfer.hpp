@@ -3,6 +3,7 @@
 #include "odh/session_entry.hpp"
 
 namespace odh_host {
+std::array<std::uint8_t,32> fingerprint_transfer_resource(const std::filesystem::path&);
 std::vector<odh::HouseholdTransferIdentity> identify_transfer_household(
     const odh::SessionEntry&, const std::filesystem::path& game_root,
     const std::filesystem::path& player_character_root);

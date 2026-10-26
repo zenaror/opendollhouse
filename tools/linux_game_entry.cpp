@@ -15,6 +15,9 @@
 #endif
 
 #include "odh/session_entry.hpp"
+#include "odh/character_catalog.hpp"
+#include "odh/saved_objects.hpp"
+#include "odh/occupancy_projection.hpp"
 #include "odh/animation.hpp"
 #include "odh/session_bundle.hpp"
 #include "odh/family.hpp"
@@ -745,6 +748,38 @@ RuntimePlan build_runtime_arguments(const Options& options,
         const auto character=resolve_character(member);
         if (std::find(character_files.begin(), character_files.end(), character) == character_files.end())
             character_files.push_back(character);
+    }
+    // A source lot can still serialize its former residents or visitors. Their
+    // exact definitions are needed to validate that World BEFORE retirement;
+    // the selected family's files alone do not describe the installed snapshot.
+    std::optional<odh::Objt> lot_types;
+    std::optional<odh::Objm> lot_objects;
+    with_iff_file(house_file.string(), [&](const auto& view) {
+        odh::iff_chunks(view, [&](const odh::Chunk& chunk) {
+            if (chunk.type == "objt" && chunk.id == 0) {
+                if (lot_types) throw odh::FormatError("ambiguous source lot objt0");
+                lot_types = odh::read_objt(chunk.payload);
+            } else if (chunk.type == "ObjM" && chunk.id == 1) {
+                if (lot_objects) throw odh::FormatError("ambiguous source lot ObjM1");
+                lot_objects = odh::read_objm(chunk.payload);
+            }
+        });
+    });
+    if (lot_types && lot_objects) {
+        const odh::DefinitionIndex installed_characters(odh::read_character_catalog(characters));
+        for (const auto& saved : odh::read_saved_object_prefixes(*lot_objects, *lot_types)) {
+            const auto* type = lot_types->entry_for_type(saved.type_id);
+            if (!type || !type->metadata || type->metadata->objd_type != 2) continue;
+            const auto* definition = installed_characters.unique(saved.guid);
+            if (!definition) {
+                if (installed_characters.candidates(saved.guid))
+                    throw odh::FormatError("source lot character definition is ambiguous");
+                continue; // A packaged prototype can be supplied by the object archives.
+            }
+            const auto path = require_file(game, std::filesystem::path(definition->source) / definition->asset);
+            if (std::find(character_files.begin(), character_files.end(), path) == character_files.end())
+                character_files.push_back(path);
+        }
     }
     const auto selected_character=resolve_character(resident);
     if (std::find(character_files.begin(), character_files.end(), selected_character) == character_files.end())
@@ -1566,6 +1601,16 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 const auto session = odh::load_session_entry(userdata, options.mode,
                     static_cast<std::uint16_t>(house), static_cast<std::uint8_t>(options.language),
                     family_overlay ? &*family_overlay : nullptr, player_character_directory);
+                std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
+#ifdef __linux__
+                if (family_journal) {
+                    const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
+                    auto plan = odh::prepare_installed_occupancy_retirement(source, *family_overlay,
+                        family_journal->lease(), static_cast<std::uint16_t>(house),
+                        odh_host::fingerprint_transfer_resource(require_file(game, session.house_file)));
+                    if (plan) occupancy_retirement = std::make_shared<odh::InstalledOccupancyRetirement>(std::move(*plan));
+                }
+#endif
                 std::shared_ptr<const odh::PreparedHouseholdTransfer> family_transfer;
 #ifdef __linux__
                 if (family_journal && family_journal->carry_ticket() && !family_journal->checkpoint_path() && !options.plan_only) {
@@ -1671,6 +1716,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 odh_host::IntegratedSessionContext session_context;
                 session_context.family_journal = std::move(family_journal);
                 session_context.family_transfer = std::move(family_transfer);
+                session_context.occupancy_retirement = std::move(occupancy_retirement);
                 options.restore_bundle.reset(); // Runtime revalidates its candidate independently.
                 session_context.resources = verified_identity;
                 session_context.restore_archive = std::move(options.restore_archive);

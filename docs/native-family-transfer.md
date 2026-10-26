@@ -27,7 +27,9 @@ household budget comes from the post-purchase overlay.
 Purchases are now prepared, not immediately charged. The journal checks that
 the proposal is exactly one legal move-in appended to its pinned overlay.
 The runtime uses that proposed view to initialize the lot, characters and
-execution services, then commits the purchase with CAS before starting play.
+execution services and validates a complete save/restore candidate, then
+commits the purchase with CAS before starting play. This preflight publishes
+no archive and advances neither the simulation clock nor its random state.
 Preparation failure or a conflicting overlay leaves the family unhoused and
 uncharged. Saving an uncommitted purchase is forbidden. Before a managed
 move-out, a current checkpoint and a transferable complete family are required.
@@ -61,10 +63,12 @@ Simitone baseline, not the original executable's relocation rule.
 
 The native host therefore requires each transferred member to have been
 materialized and initialized during this launch. A standing actor left in an
-old OBJM is not proof of freshness. Old selected residents or known former
-residents in a prospective purchased lot are rejected before charging. Safe
-reconstruction/cleanup of those exact actors and their object references is
-still required; unrelated NPCs and visitors must not be deleted by a heuristic.
+old OBJM is not proof of freshness. The
+[installed occupancy projection](native-occupancy-reconstruction.md) can retire
+the exact original source-family actors only after replay proves their original
+occupancy ended. It then constructs the incoming family afresh. A copied actor
+or later visitor has no such authority; unsupported destinations still reject
+before charging. Unrelated NPCs and visitors are retained.
 
 ## Explicit incomplete cases
 
@@ -107,8 +111,9 @@ fractional needs, inbound/outbound relationships and protected destination
 object relationships. The journal test exercises a real prepared/applied
 receipt, deferred commit and first destination checkpoint, rejecting internally
 valid resource-name and runtime-generation substitutions without changing
-authority. The synthetic CLI refuses old destination actors, absent saves and
-changed character resources without deducting a purchase price.
+authority. The synthetic CLI refuses destination actors without retirement
+authority, incomplete arrival resources, absent saves and changed character
+resources without deducting a purchase price.
 
 `reports/native-family-transfer/real-2/result.json` records nine completed native
 processes with Complete Collection data and two privately created adult Sims.
@@ -128,10 +133,13 @@ All 114 protected original files and both private characters have matching
 before/after hashes; processes and temporary profiles were closed/removed.
 No display was used.
 
-These installed houses have no original selected-family actors, so returning
+These earlier installed houses have no original selected-family actors, so returning
 to House01 constructs residents afresh. This does not prove reconstruction of
 an old inhabited OBJM, retention of player changes to a vacated property's
 objects, graphical family management, long sessions, transformed residents,
 original liquidation behavior or hardware support. The exploratory `real-1`
 failure exposed the overly strict attribute equality check; its subsequent
 correction follows the pinned constructor/inheritance behavior documented above.
+The later occupied-House07 reconstruction gate and its narrower authorization
+rules are documented separately in
+[native-occupancy-reconstruction.md](native-occupancy-reconstruction.md).

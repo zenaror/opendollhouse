@@ -24,6 +24,7 @@
 #include "odh/neighbor_context.hpp"
 #include "odh/avatar_neighbor.hpp"
 #include "odh/household_transfer.hpp"
+#include "odh/occupancy_projection.hpp"
 #include "odh/relationship.hpp"
 #include "odh/bootstrap.hpp"
 #include "odh/entity_next.hpp"
@@ -89,6 +90,7 @@
 #ifdef __linux__
 #include "linux_family_overlay_store.hpp"
 #include "linux_family_session_journal.hpp"
+#include "linux_family_transfer.hpp"
 #endif
 #include "linux_window.hpp"
 #include "session_resource_manifest.hpp"
@@ -1299,6 +1301,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::unique_ptr<odh::World> world_owner;
     std::vector<odh::SavedWorldEntity> restored_records;
     std::map<std::uint32_t,SavedTreeNameCatalog> saved_tree_names;
+    std::vector<std::int16_t> occupancy_retired_ids;
+    std::vector<odh::SavedWorldEntity> occupancy_source_records;
+    bool occupancy_saved_execution_invalidated=false;
     std::int16_t runtime_avatar_id=1;
     if(saved_world_main){
         if(!definition_index)throw odh::FormatError("saved World Main requires explicit object definitions");
@@ -1306,7 +1311,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             throw odh::FormatError("saved World decoded lot state unavailable");
         restored_records=saved_world_records(*objm,*objt,std::move(*saved_prefixes),std::move(*saved_common),
             std::move(*saved_tails),*definition_index);
-        if(render_saved_guid){
+        const bool projecting_occupancy=session_context&&session_context->occupancy_retirement;
+        if(render_saved_guid&&!projecting_occupancy){
             const auto matches=std::count_if(restored_records.begin(),restored_records.end(),[&](const auto& record){
                 return record.saved.guid==*render_saved_guid&&record.tail.person&&record.serialized_object_type==2;
             });
@@ -1321,7 +1327,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 render_saved_id=selected->saved.object_id;
             }
         }
-        if(render_saved_id){
+        if(render_saved_id&&!projecting_occupancy){
             const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
             if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
                 throw odh::FormatError("selected saved World entity is not the matching person resource");
@@ -1334,6 +1340,27 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         saved_world_limits.world.words=131072;
         restored_world=odh::make_saved_world(std::move(restored_records),*definition_index,
             neighbors?&*neighbors:nullptr,saved_world_limits);
+        if(projecting_occupancy){
+#ifdef __linux__
+            if(!render_saved_guid||!lot_path||!session_context->family_journal)
+                throw odh::FormatError("occupancy reconstruction requires GUID selection and a managed installed lot");
+            const auto& authorization=*session_context->occupancy_retirement;
+            const auto& overlay=session_context->family_journal->runtime_overlay();
+            if(!overlay)throw odh::FormatError("occupancy reconstruction has no pinned player state");
+            const auto overlay_bytes=odh::encode_family_overlay(*overlay);
+            if(odh::sha256(overlay_bytes.data(),overlay_bytes.size())!=authorization.overlay_identity())
+                throw odh::FormatError("occupancy reconstruction authorization differs from the runtime view");
+            auto projection=odh::project_installed_occupancy_retirement(*restored_world,authorization,
+                odh_host::fingerprint_transfer_resource(*lot_path),{},saved_world_limits);
+            occupancy_retired_ids=std::move(projection.retired_ids);
+            occupancy_source_records=std::move(projection.source_records);
+            occupancy_saved_execution_invalidated=projection.invalidated_saved_execution;
+            restored_world=std::move(projection.candidate);
+            render_saved_id.reset(); // The old numeric selection cannot follow a replacement actor.
+#else
+            throw odh::FormatError("occupancy host provenance is unavailable on this platform");
+#endif
+        }
         // Bind the exact immutable OBJD/OBJf tables to every restored entity.
         // This is static metadata only; action function IDs are not BHAV results.
         std::map<std::uint32_t,std::vector<odh::EntryPoint>> entry_point_cache;
@@ -1376,7 +1403,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto* restored_avatar=restored_world->world->find(runtime_avatar_id);
             if(!restored_avatar||restored_avatar->kind!=odh::EntityKind::avatar||!restored_avatar->position)
                 throw odh::FormatError("selected saved World avatar is not positioned in the restored World");
-        }else runtime_avatar_id=static_cast<std::int16_t>(headless_fixture_avatar->id);
+        }else if(headless_fixture_avatar){
+            runtime_avatar_id=static_cast<std::int16_t>(headless_fixture_avatar->id);
+        }else if(!render_saved_guid){
+            throw odh::FormatError("saved World has no resident selector");
+        }
+        // A GUID-selected replacement receives its actual ID only after fresh
+        // household materialization below; there is no fixture avatar here.
     }else world_owner=std::make_unique<odh::World>(odh::WorldLimits{},initialize?odh::AttributePolicy::ts1_bounded:odh::AttributePolicy::fixed);
     profile_mark("saved-world-restore-and-bindings");
     odh::RandomState random(seed.value_or(1));
@@ -1576,6 +1609,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 return true;
             };
             odh::WorldLimits limits;limits.words=131072;
+            limits.reserved_entity_ids=restored_world->world->reserved_entity_ids();
             auto result=odh::verify_household_members(source,requests,active_family->chunk_id,prepare,mailbox,
                 static_cast<std::uint16_t>(prepared.width),static_cast<std::uint16_t>(prepared.height),
                 [&](odh::World& candidate,std::int16_t id,const odh::EntityPosition& position){
@@ -1752,6 +1786,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 active_family->family.budget=*session_restore->family_budget();
             auto candidate=session_restore->take_world();
             if(!candidate)throw odh::FormatError("single-resident session World candidate is absent");
+            if(!candidate->install_reserved_entity_ids(occupancy_retired_ids))
+                throw odh::FormatError("saved session reuses an expired occupancy entity ID");
             restored_world->world=std::move(candidate);
         }else{
             household_restore=odh::HouseholdSessionRestore::prepare(session_context->restore_archive,
@@ -1762,6 +1798,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 active_family->family.budget=*household_restore->family_budget();
             auto candidate=household_restore->take_world();
             if(!candidate)throw odh::FormatError("household session World candidate is absent");
+            if(!candidate->install_reserved_entity_ids(occupancy_retired_ids))
+                throw odh::FormatError("saved household reuses an expired occupancy entity ID");
             // Execution services bind below, after the unpublished candidate's
             // complete resource/world validation. Preserve legitimate ID reuse.
             restored_world->world=std::move(candidate);
@@ -3172,6 +3210,18 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!imported->restore_snapshot(resume_state->vm)||!saved_phone_sleep->bind(*imported)||
                !saved_phone_sleep->restore_snapshot(resume_state->sleep))
                 throw odh::FormatError("PhoneLine saved Main or Sleep state does not match rebuilt resources");
+        }else if(occupancy_saved_execution_invalidated){
+            // The saved record is code provenance only after an occupancy change.
+            // None of its old locals/params/temps or dormant continuation may run.
+            if(!saved_phone_sleep->bind(*imported)||
+               imported->start(odh::routine_key(4096),{phone_id,phone_id,phone_id,phone_owner},
+                   std::vector<std::int16_t>(4))==odh::VmStatus::fault)
+                throw odh::FormatError("PhoneLine fresh Main could not start after occupancy reconstruction");
+            odh::SleepSnapshot ready;
+            ready.actor=odh::SleepActorSnapshot{phone_id,target->generation,imported->run_generation()};
+            ready.clock=ticks;ready.last_tick=ticks;
+            if(!saved_phone_sleep->restore_snapshot(ready))
+                throw odh::FormatError("PhoneLine fresh controller could not join the current save boundary");
         }else{
             odh::restore_simitone_saved_thread_plan(*imported,plan);
             if(!saved_phone_sleep->bind(*imported)||!imported->activate_dormant_state()||
@@ -5811,7 +5861,7 @@ struct PlacementCandidateProbe {
         if(saved_owner_ids_exhausted){reject("saved object code-owner identity space exhausted");return;}
         std::int16_t marker_id=0;
         for(std::int32_t id=32767;id>0;--id)
-            if(!world.find(static_cast<std::int16_t>(id))){marker_id=static_cast<std::int16_t>(id);break;}
+            if(world.entity_id_available(static_cast<std::int16_t>(id))){marker_id=static_cast<std::int16_t>(id);break;}
         if(!marker_id){reject("no free World identity is available for the temporary destination");return;}
         if(!world.create(marker_id,odh::EntityKind::object)||!world.define_type(marker_id,0x7c4)){
             if(world.find(marker_id))world.remove(marker_id);
@@ -5983,7 +6033,7 @@ struct PlacementCandidateProbe {
         return runtime_routing?runtime_routing->capture_local_session_route(
             primary_route_dynamic_owner(),rejection_reason):std::nullopt;
     };
-    const auto save_live_session=[&]()->std::string {
+    const auto save_live_session=[&](bool validate_only=false)->std::string {
 #ifdef __linux__
         if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
             throw odh::FormatError("saving requires a selected game installation");
@@ -6453,6 +6503,7 @@ struct PlacementCandidateProbe {
         }catch(const std::exception& error){
             throw odh::FormatError(std::string("this session cannot yet be restored: ")+error.what());
         }
+        if(validate_only)return {}; // Complete codec and restore validation, no filesystem publication.
         if(session_context->family_journal){
             save_path=session_context->family_journal->publish(std::move(bundle));
             if(session_context->family_journal->durability_uncertain())
@@ -6789,7 +6840,7 @@ struct PlacementCandidateProbe {
                 auto private_tuning=load_saved_action_tuning(*candidate);
 
                 std::int32_t candidate_id=1;
-                while(candidate_id<=32767&&world.find(static_cast<std::int16_t>(candidate_id)))++candidate_id;
+                while(candidate_id<=32767&&!world.entity_id_available(static_cast<std::int16_t>(candidate_id)))++candidate_id;
                 if(candidate_id>32767)throw odh::FormatError("runtime object ID range exhausted");
                 const auto object_id=static_cast<std::int16_t>(candidate_id);
                 const auto materialized=pending.request.position()==odh::CreateObjectPosition::out_of_world?
@@ -7226,6 +7277,11 @@ struct PlacementCandidateProbe {
         if(!neighborhood_path||odh_host::linux_neighborhood_identity(*neighborhood_path)!=
             session_context->family_journal->lease().neighborhood_identity)
             throw odh::FormatError("neighborhood source changed before household activation");
+        if(session_context->occupancy_retirement&&(!lot_path||
+            odh_host::fingerprint_transfer_resource(*lot_path)!=session_context->occupancy_retirement->house_identity()))
+            throw odh::FormatError("installed house changed before occupancy activation");
+        if(session_context->family_journal->pending_purchase())
+            (void)save_live_session(true);
         session_context->family_journal->commit_move_in();
     }
 #endif
@@ -8485,6 +8541,9 @@ struct PlacementCandidateProbe {
         <<",\"resumed_tick\":"<<resumed_tick<<",\"saved_session_path\":"
         <<(saved_session_path?json_bytes(*saved_session_path):"null")
         <<",\"family_transfer_applied\":"<<(family_carry_applied?"true":"false")
+        <<",\"occupancy_retired_ids\":[";
+    for(std::size_t n=0;n<occupancy_retired_ids.size();++n){if(n)std::cout<<',';std::cout<<occupancy_retired_ids[n];}
+    std::cout<<"],\"occupancy_execution_invalidated\":"<<(occupancy_saved_execution_invalidated?"true":"false")
         <<",\"integrated_session_context\":";
     if(session_context){
         std::cout<<"{\"neighborhood_mode\":"<<static_cast<unsigned>(session_context->neighborhood_mode)

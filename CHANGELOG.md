@@ -7,6 +7,10 @@ validação indicados por versão.
 
 ### Corrigido
 
+- A compra de uma casa agora verifica se a partida pode ser salva e restaurada
+  antes de confirmar a cobrança. O retorno imediato à Casa 07 também prepara
+  corretamente o controlador do telefone para o primeiro salvamento.
+
 - Ao cancelar a geladeira, a limpeza passa a conservar os dados da comida até
   terminar de usá-los, evitando apagar o objeto antes de concluir a ação.
 
@@ -16,10 +20,16 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Reconstrução nativa dos moradores quando o histórico comprova a saída da
+  família original da casa. Móveis, visitantes e relações de vizinhos são
+  preservados; os novos moradores recebem identidades próprias. Casos com
+  objetos carregados ainda são recusados. Contrato e validação em
+  `docs/native-occupancy-reconstruction.md`.
+
 - Famílias criadas podem mudar entre casas vazias conservando dados pessoais,
   necessidades e relações no perfil nativo validado. O ciclo Casa01→Casa09→Casa01
   passou com dois adultos e reabertura. Compras são cobradas após a preparação;
-  casas com moradores antigos e estados ainda incompatíveis continuam limitados.
+  moradores sem prova de reconstrução e estados incompatíveis continuam limitados.
 
 - Famílias que entram em uma casa passam a vincular o dinheiro e o save à
   ocupação atual. A retomada procura o último save confirmado; saves antigos

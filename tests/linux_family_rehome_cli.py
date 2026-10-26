@@ -2,8 +2,9 @@
 
 The initial managed authority seed is a fixture only. All subsequent relocation
 commands use the integrated production planners, carry preparation and journal.
-Existing destination OBJM actors currently lack fresh Init/EP8 proof and must
-reject; this fixture does not claim a completed relocation lifecycle.
+The copied destination has no authority to retire its actors; the original
+destination lacks the mailbox/arrival resources required after retirement.
+Both reject safely; this fixture does not prove a completed relocation lifecycle.
 """
 import hashlib
 import json
@@ -127,7 +128,7 @@ def main():
             return records
 
         env = profile('primary')
-        overlay, identity, family = seed_managed_profile(root, env)
+        overlay, identity, family = seed_managed_profile(root, env, binary)
         no_head_env = profile('no-head')
         no_head_overlay, _, _ = seed_managed_profile(root, no_head_env)
         no_head_bytes = no_head_overlay.read_bytes()
@@ -136,7 +137,7 @@ def main():
 
         first = run(['--house','7','--resident-id','11','--headless-ticks','2','--save-session-on-exit'], env)[0]
         first_path = Path(first['saved_session_path'])
-        first_bytes, first_fractions, first_mapping = archive_state(first_path,overlay,identity,family,7,2)
+        first_bytes, first_fractions, first_mapping = archive_state(first_path,overlay,identity,family,7,1)
         assert set(first_mapping.values()) == set(GUIDS) and set(first_fractions) == set(GUIDS)
         live_budget = overlay_state(overlay)['budget']
         before_zero = overlay.read_bytes()
@@ -168,10 +169,9 @@ def main():
         run(['--house','8','--headless-move-in-family','201','--headless-ticks','0','--save-session-on-exit'],bad_env,False,game=bad_root)
         assert bad_overlay.read_bytes() == before and overlay_state(bad_overlay)['budget'] == live_budget
 
-        # Standing OBJM actors still contain old lot-specific VM/ObjectData
-        # banks. Until the host can safely rebuild those existing GUIDs, both
-        # another copied house and return to the original house must reject.
-        # Never weaken the fresh-construction guard to make this fixture pass.
+        # House8 has copied actors without original-occupancy retirement authority.
+        # House7 can retire its original actors, but this fixture has no mailbox/
+        # arrival resources to construct replacements. Both must remain uncharged.
         for house in (8,7):
             before = overlay.read_bytes()
             run(['--house',str(house),'--resident-id','11','--headless-move-in-family','201',
@@ -184,7 +184,7 @@ def main():
 
         assert protected == {p.relative_to(root): hashlib.sha256(p.read_bytes()).digest()
                              for p in root.rglob('*') if p.is_file()}, 'rehome modified source game resources'
-    print('Native synthetic move-out retains current checkpoint; unsupported existing destination actors, missing lots, changed resources and missing heads reject without spending budget or replacing archives')
+    print('Native synthetic move-out retains current checkpoint; unproven destination actors, incomplete arrival resources, missing lots, changed resources and missing heads reject without spending budget or replacing archives')
 
 
 if __name__ == '__main__':

@@ -78,6 +78,10 @@ struct WorldLimits {
     std::size_t bank_words = 4096;
     std::size_t bound_appearance_names = 16;
     std::size_t bound_appearance_name_bytes = 4096;
+    // Launch policy derived from the immutable lot retirement plan, not wire
+    // state. At most 4096 positive, unique IDs; World canonicalizes their order.
+    // Callers must supply the same policy to every candidate and restore host.
+    std::vector<std::int16_t> reserved_entity_ids{};
 };
 // Owned values only; no VM callbacks, resource pointers, queues or clocks.
 struct WorldSnapshot {
@@ -94,12 +98,23 @@ public:
     // ts1_bounded reads absent attribute words as zero and grows on write,
     // within bank_words and the nonnegative signed VM index range (32768 words).
     // This bounded profile does not implement the reference's full ushort range.
-    explicit World(WorldLimits limits = {}, AttributePolicy attributes = AttributePolicy::fixed)
-        : limits_(limits), attribute_policy_(attributes) {}
+    // Invalid reservation policy throws std::invalid_argument before use.
+    explicit World(WorldLimits limits = {}, AttributePolicy attributes = AttributePolicy::fixed);
     World(const World&) = delete;
     World& operator=(const World&) = delete;
     World(World&&) = delete;
     World& operator=(World&&) = delete;
+    // Reservations are not entities, never enumerate, and survive snapshot
+    // publication/removal. Snapshot codecs intentionally do not serialize them.
+    // Atomically unions launch-derived exclusions after a full-session restore,
+    // preserving this World address, entity pointers, callbacks and counters.
+    // Positive, unique input IDs and the union are bounded to 4096. Overlap
+    // with existing reservations is allowed; any matching live entity rejects.
+    // Invalid input returns false; allocation exceptions precede publication.
+    // Existing reservations can never be cleared by this method.
+    bool install_reserved_entity_ids(std::vector<std::int16_t> ids);
+    bool entity_id_available(std::int16_t id) const;
+    const std::vector<std::int16_t>& reserved_entity_ids() const { return limits_.reserved_entity_ids; }
     WorldSnapshot snapshot() const;
     // Fresh empty destination only (no entities or prior generation/spatial
     // history), using its capacity limits. Invalid values return false;

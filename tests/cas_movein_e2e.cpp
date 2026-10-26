@@ -10,6 +10,7 @@
 #include "odh/session_entry.hpp"
 
 #include <filesystem>
+#include <charconv>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -79,9 +80,18 @@ std::vector<std::uint8_t> template_person(const fs::path& game) {
 }
 
 int main(int argc, char** argv) try {
-    if ((argc != 3 && argc != 4) || (argc == 4 && std::string(argv[3]) != "--create-only"))
-        throw std::runtime_error("usage: odh-cas-movein-e2e GAME_ROOT PRIVATE_PROFILE_ROOT [--create-only]");
-    const bool create_only = argc == 4;
+    const bool source_occupied = argc == 5 && std::string(argv[3]) == "--create-only-occupied-house";
+    if ((argc != 3 && argc != 4 && !source_occupied) ||
+        (argc == 4 && std::string(argv[3]) != "--create-only"))
+        throw std::runtime_error("usage: odh-cas-movein-e2e GAME_ROOT PRIVATE_PROFILE_ROOT [--create-only | --create-only-occupied-house HOUSE]");
+    const bool create_only = argc >= 4;
+    unsigned selected_source_house = 0;
+    if (source_occupied) {
+        const std::string text = argv[4];
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), selected_source_house);
+        if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || selected_source_house < 1 || selected_source_house > 98)
+            throw std::runtime_error("source occupied house must be in 1..98");
+    }
     const fs::path game = fs::canonical(argv[1]);
     const fs::path profile = fs::absolute(argv[2]);
     const fs::path user = game / "UserData";
@@ -92,7 +102,24 @@ int main(int argc, char** argv) try {
     fs::path house_path;
     std::int32_t price = 0, second_price = 0;
     std::uint16_t second_house = 0;
-    for (const auto& lot : locations(user / "LotLocations.iff").lots) {
+    const odh::FamilyEntry* source_family = nullptr;
+    std::optional<odh::SessionEntry> source_session;
+    const auto lot_locations = locations(user / "LotLocations.iff");
+    if (source_occupied) {
+        house = static_cast<std::uint16_t>(selected_source_house);
+        source_family = family_context.by_house(static_cast<std::int16_t>(house));
+        if (!source_family) throw std::runtime_error("selected source house has no original family");
+        bool listed = false;
+        for (const auto& lot : lot_locations.lots) if (lot.house == house) listed = true;
+        if (!listed) throw std::runtime_error("selected source house is absent from LotLocations");
+        std::ostringstream name;
+        name << "House" << (house < 10 ? "0" : "") << house << ".iff";
+        house_path = user / "Houses" / name.str();
+        price = purchase_price(house_path);
+        if (price < 0) throw std::runtime_error("selected source house has negative purchase price");
+        source_session = odh::load_session_entry(user, 1, house, 1);
+    }
+    for (const auto& lot : lot_locations.lots) {
         if (lot.house < 1 || lot.house > 98 || family_context.by_house(static_cast<std::int16_t>(lot.house))) continue;
         std::ostringstream name;
         name << "House" << (lot.house < 10 ? "0" : "") << lot.house << ".iff";
@@ -157,6 +184,13 @@ int main(int argc, char** argv) try {
         "ODH CAS Gate", {first_draft, second_draft}, initial_budget);
     auto overlay = odh_host::read_linux_family_overlay(overlay_path);
     if (!overlay) throw std::runtime_error("CAS creation did not persist a player overlay");
+    if (source_occupied) {
+        // Explicit test setup: expire only the selected original occupancy via
+        // the native legacy planner, leaving all commercial resources untouched.
+        const auto vacated = odh::plan_family_move_out_overlay(families, identity, &*overlay, source_family->chunk_id);
+        odh_host::compare_exchange_linux_family_overlay_atomic(overlay_path, overlay, vacated);
+        overlay = vacated;
+    }
     const auto moved = create_only ?
         odh::plan_family_managed_move_in_overlay(families, identity, &*overlay, created.family_chunk_id, house, price) :
         odh::plan_family_move_in_overlay(families, identity, &*overlay, created.family_chunk_id, house, price);
@@ -184,7 +218,19 @@ int main(int argc, char** argv) try {
               << "\",\"create_only\":" << (create_only ? "true" : "false")
               << ",\"initial_budget\":" << initial_budget
               << ",\"second_house\":" << second_house << ",\"second_purchase_price\":" << second_price
-              << ",\"members\":[";
+              << ",\"source_house\":" << (source_occupied ? house : 0)
+              << ",\"source_vacated_family_id\":" << (source_family ? source_family->chunk_id : 0)
+              << ",\"source_expired_guids\":[";
+    if (source_session) for (std::size_t i = 0; i < source_session->members.size(); ++i) {
+        if (i) std::cout << ',';
+        std::cout << source_session->members[i].guid;
+    }
+    std::cout << "],\"source_expired_neighbor_ids\":[";
+    if (source_session) for (std::size_t i = 0; i < source_session->members.size(); ++i) {
+        if (i) std::cout << ',';
+        std::cout << source_session->members[i].neighbor_id;
+    }
+    std::cout << "],\"members\":[";
     constexpr char hex[] = "0123456789abcdef";
     for (std::size_t i = 0; i < session.members.size(); ++i) {
         if (i) std::cout << ',';
