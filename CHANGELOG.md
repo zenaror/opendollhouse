@@ -16,6 +16,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Saves de famílias podem recuperar vários moradores após sentar, incluindo
+  famílias com moradores sentados e em pé. Cada Sim pode levantar após reabrir.
+  Metadados extras de animação, ignorados pelo Simitone, deixam de parar o jogo.
+
 - A interface nativa permite várias ordens por Sim, mostra a fila e permite
   cancelar uma ordem clicando nela. Ordens pendentes reaparecem ao carregar;
   trocar de Sim preserva a fila do outro morador.

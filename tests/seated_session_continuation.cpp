@@ -1,5 +1,6 @@
 #include "odh/seated_session_continuation.hpp"
 #include "odh/single_resident_session_restore.hpp"
+#include "odh/household_session_restore.hpp"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -210,8 +211,152 @@ void loaded_bank_fingerprint_cases() {
     }
 }
 
+// Household SEAT proves each completed boundary while GEXP preserves complete
+// installed banks (whose digest intentionally differs from the Sit closure).
+void household_seated_cases(){
+    Fixture f;
+    odh::World world;
+    require(world.restore_snapshot(f.bundle.world),"copy seated household World");
+    require(world.create(3,odh::EntityKind::avatar,{0,88,0})&&world.define_type(3,124)&&
+        world.create(4,odh::EntityKind::object,{0,0,1})&&world.define_type(4,789),"second household actor and seat");
+    require(world.define_entry_points(4,*world.find(2)->entry_points)&&world.set_position(3,{80,80,1,0})&&
+        world.set_position(4,{96,112,1,0})&&world.attach(4,0,3)&&world.place_in_slot(4,0,3)&&
+        world.set_person_data(3,0,1),"seat secondary household actor");
+    odh::EntityThreadControllers first(world,1),second(world,3);
+    odh::Vm vm1(odh::RoutineSet{},world.vm_memory(),{},first.sleep_primitive(),{{1,main_program()}});
+    odh::Vm vm3(odh::RoutineSet{},world.vm_memory(),{},second.sleep_primitive(),{{3,main_program()}});
+    require(first.bind(vm1)&&second.bind(vm3)&&
+        vm1.start(odh::routine_key(4096),{1,1,1,1},{6})==odh::VmStatus::running&&
+        vm3.start(odh::routine_key(4096),{3,3,3,3},{6})==odh::VmStatus::running,"start household Main graphs");
+    odh::EntityVmScheduler scheduler(4);
+    require(scheduler.add(1,vm1,[&](auto tick){return first.advance(tick);},[&]{return first.observe();},[&]{return first.notify();})&&
+        scheduler.add(3,vm3,[&](auto tick){return second.advance(tick);},[&]{return second.observe();},[&]{return second.notify();})&&
+        scheduler.tick(1,8,8)&&scheduler.tick(2,8,8),"stabilize household Main graphs");
+    auto saved=f.bundle;saved.seated_continuation.reset();saved.generic_execution=true;
+    saved.next_code_owner=0x80000002U;saved.host.resident_neighbor_id=41;
+    saved.world=world.snapshot();saved.scheduler=scheduler.snapshot();
+    saved.runtime_entities={{1,vm1.snapshot(),first.snapshot(),{}},{3,vm3.snapshot(),second.snapshot(),{}}};
+    auto bank=action(4097);const auto stand=action(4102);bank.insert(stand.begin(),stand.end());
+    for(std::size_t n=0;n<2;++n){
+        const auto id=static_cast<std::int16_t>(n?3:1),target=static_cast<std::int16_t>(n?4:2);
+        auto c=*f.bundle.seated_continuation;c.actor_id=id;c.actor_generation=world.find(id)->generation;
+        c.target_id=target;c.target_generation=world.find(target)->generation;c.target_guid=world.find(target)->definition->guid;
+        if(n)c.asset="otherchair.iff";
+        c.code_owners.clear();saved.household_seated_continuations.push_back(c);
+        auto& runtime=saved.runtime_entities[n];auto& queue=runtime.controllers.interactions;
+        queue.sequence=1;queue.completion=c.completion;
+        auto carry=*f.bundle.runtime_entities.front().playback.carry;
+        carry.caller=id;carry.callee=target;carry.stack_object=target;carry.code_owner=0x80000000U+static_cast<odh::CodeOwner>(n);
+        runtime.playback.carry=carry;
+        odh::SessionResourceCodeOwner owner;owner.owner=carry.code_owner;owner.resource_guid=c.target_guid;
+        owner.source=c.source;owner.asset=c.asset;owner.definition_chunk_id=c.definition_chunk_id;owner.tree_table_id=c.tree_table_id;
+        owner.root_routine=4097;owner.bank_kind=odh::SessionCodeBankKind::complete_private;
+        owner.routine_fingerprint=odh::session_loaded_bank_fingerprint(bank);runtime.resource_owners.push_back(owner);
+        odh::SessionHouseholdMember member;member.id=id;member.generation=c.actor_generation;
+        member.guid=world.find(id)->definition->guid;member.neighbor_id=static_cast<std::int16_t>(41+n);
+        member.object_definition_id=static_cast<std::uint16_t>(101+n);
+        member.character_asset="UserData/Characters/User"+std::to_string(id)+".iff";member.character_fingerprint.fill(static_cast<std::uint8_t>(id));
+        saved.household_roster.push_back(member);
+    }
+    const auto bytes=odh::encode_session_bundle(saved);
+    const auto decoded=odh::decode_session_bundle(bytes,saved.resources);
+    require(odh::encode_session_bundle(decoded)==bytes&&decoded.household_seated_continuations.size()==2&&
+        !decoded.seated_continuation,"canonical two seated household roundtrip");
+    const auto bad=[&](auto mutate){auto changed=saved;mutate(changed);
+        rejects([&]{odh::encode_session_bundle(changed);},"invalid household seated state accepted");};
+    bad([](auto& b){b.household_seated_continuations.pop_back();});
+    bad([](auto& b){b.household_seated_continuations.clear();});
+    bad([](auto& b){b.household_seated_continuations[1]=b.household_seated_continuations[0];});
+    bad([](auto& b){std::swap(b.household_seated_continuations[0],b.household_seated_continuations[1]);});
+    bad([](auto& b){++b.household_seated_continuations[1].actor_generation;});
+    bad([](auto& b){++b.household_seated_continuations[1].target_generation;});
+    bad([](auto& b){b.household_seated_continuations[1].actor_id=99;});
+    bad([](auto& b){b.household_seated_continuations[1].target_id=2;});
+    bad([](auto& b){std::swap(b.runtime_entities[0].playback.carry,b.runtime_entities[1].playback.carry);});
+    bad([](auto& b){b.runtime_entities[1].playback.carry->code_owner=0x80000000U;});
+    bad([](auto& b){b.runtime_entities[1].resource_owners[0].asset="foreign.iff";});
+    bad([&](auto& b){b.seated_continuation=f.bundle.seated_continuation;});
+    auto mixed=saved;mixed.household_seated_continuations.resize(1);
+    mixed.world.entities[2].attachment.reset();mixed.world.entities[2].person_data[0]=0;mixed.world.entities[3].slots[0]=0;
+    mixed.runtime_entities[1].playback.carry.reset();
+    require(odh::decode_session_bundle(odh::encode_session_bundle(mixed)).household_seated_continuations.size()==1,
+        "mixed seated and standing household roundtrip");
+    auto secondary_only=saved;secondary_only.household_seated_continuations.erase(secondary_only.household_seated_continuations.begin());
+    secondary_only.world.entities[0].attachment.reset();secondary_only.world.entities[0].person_data[0]=0;
+    secondary_only.world.entities[1].slots[0]=0;secondary_only.runtime_entities[0].playback.carry.reset();
+    require(odh::decode_session_bundle(odh::encode_session_bundle(secondary_only)).household_seated_continuations.front().actor_id==3,
+        "secondary seated actor survives standing primary household roundtrip");
+    Fixture sofa(odh::SessionLinkedSemiglobal{"SofaGlobals","GameData/Global/Global.far","SofaGlobals.iff"},8213,8216);
+    auto linked=saved;
+    for(std::size_t n=0;n<linked.household_seated_continuations.size();++n){
+        auto& c=linked.household_seated_continuations[n];c.action=8213;c.stand_action=8216;
+        c.linked_semiglobal=sofa.linked;c.sit_routine_fingerprint=odh::session_action_routine_fingerprint(sofa.linked_owner);
+        c.stand_routine_fingerprint=c.sit_routine_fingerprint;
+        (*linked.world.entities[n*2+1].entry_points)[27].action=8216;
+        auto& owner=linked.runtime_entities[n].resource_owners[0];owner.root_routine=8213;
+        owner.bank_kind=odh::SessionCodeBankKind::private_and_semiglobal;owner.linked_semiglobal=sofa.linked;
+        owner.routine_fingerprint=odh::session_loaded_bank_fingerprint(sofa.linked_owner);
+    }
+    const auto linked_loaded=odh::decode_session_bundle(odh::encode_session_bundle(linked));
+    auto sofa_candidate=f.definition;
+    require(odh::resolve_seated_session_owners(linked_loaded,linked_loaded.household_seated_continuations[0],sofa_candidate,
+        *linked_loaded.world.entities[1].entry_points,[&](const auto&,auto){
+            return odh::SessionActionRoutineSource{sofa.linked_owner,sofa.linked};}).empty(),
+        "household sofa verifies semiglobal closures while retaining full GEXP banks");
+    auto baseline=saved.world;
+    for(const auto& c:saved.household_seated_continuations){
+        for(auto& e:baseline.entities){if(e.id==c.actor_id){e.attachment.reset();e.person_data[0]=0;}
+            if(e.id==c.target_id)e.slots[c.target_slot]=0;}}
+    const auto prepare=[&]{return odh::HouseholdSessionRestore::prepare(bytes,saved.resources,saved.host,saved.household_roster,
+        baseline,f.lot,f.bootstrap,21);};
+    const auto load=[&](const auto&,auto id){return odh::SessionActionRoutineSource{action(id),{}};};
+    auto candidate_for=[&](std::size_t n){auto candidate=f.definition;
+        const auto& c=saved.household_seated_continuations[n];candidate.asset=c.asset;candidate.definition.guid=c.target_guid;return candidate;};
+    const auto restore_case=[&](int mode){
+        auto candidate=prepare();auto& fresh=candidate->world();
+        odh::EntityThreadControllers a(fresh,1),b(fresh,3);odh::Playback pa(fresh,{}),pb(fresh,{});
+        odh::Vm va(odh::RoutineSet{},fresh.vm_memory(),{},a.sleep_primitive(),{{1,main_program()}});
+        odh::Vm vb(odh::RoutineSet{},fresh.vm_memory(),{},b.sleep_primitive(),{{3,main_program()}});
+        require(a.bind(va)&&b.bind(vb)&&pa.bind(va)&&pb.bind(vb),"bind fresh household seated graphs");
+        odh::EntityVmScheduler clock(4);
+        require(clock.add(1,va,[&](auto tick){return a.advance(tick);},[&]{return a.observe();},[&]{return a.notify();})&&
+            clock.add(3,vb,[&](auto tick){return b.advance(tick);},[&]{return b.observe();},[&]{return b.notify();}),"schedule restored seated household");
+        rejects([&]{candidate->install_seated_continuation_owners(1,va,candidate_for(0),*fresh.find(2)->entry_points,load);},
+            "seated verification preceded installed resource bank");
+        const auto resource_load=[&](const auto&){return std::make_pair(bank,std::optional<odh::SessionLinkedSemiglobal>{});};
+        candidate->install_resource_owners(1,va,resource_load);candidate->install_resource_owners(3,vb,resource_load);
+        rejects([&]{candidate->install_seated_continuation_owners(3,vb,candidate_for(0),*fresh.find(4)->entry_points,load);},
+            "swapped household seat resource candidate accepted");
+        rejects([&]{candidate->install_seated_continuation_owners(3,va,candidate_for(1),*fresh.find(4)->entry_points,load);},
+            "seated actor resource verification accepted another resident VM");
+        candidate->install_seated_continuation_owners(1,va,candidate_for(0),*fresh.find(2)->entry_points,load);
+        rejects([&]{candidate->install_seated_continuation_owners(1,va,candidate_for(0),*fresh.find(2)->entry_points,load);},
+            "duplicate household seated verification accepted");
+        if(mode!=1)candidate->install_seated_continuation_owners(3,vb,candidate_for(1),*fresh.find(4)->entry_points,load);
+        auto clip=std::make_shared<odh::AnimationHeader>();clip->name="household-seated-carry";
+        const odh::PlaybackRestoreResolver resolver=[&](const auto&){return clip;};
+        odh::RandomState random{999};std::uint64_t tick=999;
+        std::vector<odh::SessionExecutionBinding> bindings{{1,&va,&a,&pa,resolver},{3,&vb,&b,&pb,resolver}};
+        if(mode==2)std::swap(bindings[0].vm,bindings[1].vm);
+        if(mode){rejects([&]{candidate->restore_execution(bindings,clock,random,tick);},"missing or foreign household seated verification accepted");
+            require(tick==999&&random.seed()==999,"failed household seated restore published host state");}
+        else {candidate->restore_execution(bindings,clock,random,tick);
+            require(tick==2&&pa.carry_clip()==clip&&pb.carry_clip()==clip&&
+                fresh.find(1)->attachment->container==2&&fresh.find(3)->attachment->container==4,
+                "both household seats and carries survived restore");
+            require(clock.tick(3,8,8),"both household Main threads continue after seated restore");}
+    };
+    restore_case(0);restore_case(1);restore_case(2);
+    auto archive=odh::decode_session_archive(bytes);
+    auto section=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& entry){return entry.id==std::array<char,4>{{'S','E','A','T'}};});
+    require(section!=archive.sections.end()&&section->data[0]==3,"household seats use required SEAT v3");
+    section->data[2]=0;section->data[3]=0;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"empty household SEAT v3 accepted");
+}
+
 int main(){try{
     loaded_bank_fingerprint_cases();
+    household_seated_cases();
     Fixture f;const auto bytes=odh::encode_session_bundle(f.bundle);const auto loaded=odh::decode_session_bundle(bytes,f.bundle.resources);
     require(odh::encode_session_bundle(loaded)==bytes&&f.resolve(loaded).count(0x80000000U),"canonical seated owner roundtrip");
     auto unverified_carry=f.bundle;
@@ -317,7 +462,7 @@ int main(){try{
     ++rejections;
     auto archive=odh::decode_session_archive(bytes);
     auto seat=std::find_if(archive.sections.begin(),archive.sections.end(),[](const auto& s){return s.id==std::array<char,4>{{'S','E','A','T'}};});
-    require(seat!=archive.sections.end(),"SEAT section exists");seat->data[0]=3;
+    require(seat!=archive.sections.end(),"SEAT section exists");seat->data[0]=4;
     rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"unknown SEAT payload version accepted");
     archive=odh::decode_session_archive(bytes);archive.sections.back().required=false;
     rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"optional SEAT section accepted");

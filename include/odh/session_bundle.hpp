@@ -178,7 +178,10 @@ struct SessionBundle {
     std::vector<SessionRuntimeEntity> runtime_entities; // Strictly ascending IDs.
     std::vector<SessionObjectThread> object_threads; // Strictly ascending IDs, disjoint from avatars.
     EntityVmSchedulerSnapshot scheduler;
-    std::optional<SessionSeatedContinuation> seated_continuation;
+    std::optional<SessionSeatedContinuation> seated_continuation; // Legacy HOST v1 / SEAT v1-v2.
+    // HOST v2 / required SEAT v3; ascending actor IDs, only seated residents.
+    // Mutually exclusive with the legacy singular continuation.
+    std::vector<SessionSeatedContinuation> household_seated_continuations;
     // GEXP v1 is required when true: older readers must reject this profile.
     bool generic_execution = false;
     CodeOwner next_code_owner = 0x80000000U;

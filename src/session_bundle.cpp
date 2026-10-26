@@ -321,6 +321,30 @@ SessionSeatedContinuation decode_seated(const std::vector<std::uint8_t>& bytes) 
     return c;
 }
 
+std::vector<std::uint8_t> encode_household_seated(const SessionBundle& bundle,const SessionBundleLimits& limits) {
+    const auto& entries=bundle.household_seated_continuations;
+    if(entries.empty()||entries.size()>limits.max_runtime_entities||entries.size()>UINT16_MAX)
+        throw FormatError("household seated roster exceeds limits");
+    Writer w(limits.archive.max_section_bytes);w.u16(3);w.u16(static_cast<std::uint16_t>(entries.size()));
+    for(const auto& c:entries){const auto bytes=encode_seated(c,limits);
+        if(bytes.size()>UINT32_MAX)throw FormatError("household seated record exceeds format");
+        w.u32(static_cast<std::uint32_t>(bytes.size()));w.append(bytes);}
+    return w.take();
+}
+void decode_household_seated(const std::vector<std::uint8_t>& bytes,SessionBundle& bundle,const SessionBundleLimits& limits) {
+    Reader r(bytes);if(r.u16()!=3)throw FormatError("unsupported household seated version");
+    const auto count=r.u16();
+    if(!count||count>limits.max_runtime_entities||count>bundle.runtime_entities.size())
+        throw FormatError("household seated roster exceeds runtime roster");
+    for(unsigned i=0;i<count;++i){const auto length=r.u32();
+        if(length>limits.archive.max_section_bytes)throw FormatError("household seated record exceeds limit");
+        const auto record=r.bytes(length);
+        if(record.size()<2||record[0]!=2||record[1]!=0)
+            throw FormatError("household seated record requires version 2 fields");
+        bundle.household_seated_continuations.push_back(decode_seated(record));}
+    if(!r.done())throw FormatError("household seated roster has trailing data");
+}
+
 template<class Encoder>
 std::vector<std::uint8_t> encode_roster(const std::vector<SessionRuntimeEntity>& entities,
                                         const SessionBundleLimits& limits,Encoder encode) {
@@ -1120,7 +1144,7 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
     validate_host(bundle.host,limits);
     validate_household(bundle);
     validate_generic_execution(bundle,limits);
-    if(bundle.seated_continuation)validate_seated_session_continuation(bundle);
+    validate_seated_session_continuations(bundle);
     if(bundle.runtime_entities.empty()||bundle.runtime_entities.size()>limits.max_runtime_entities||
        bundle.object_threads.size()>limits.max_object_threads||
        bundle.runtime_entities.size()>UINT16_MAX||
@@ -1164,7 +1188,7 @@ void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limit
         }
         validate_controller_vm_links(entity);
         validate_dynamic_action_owners(entity,bundle.world.entities,
-            bundle.seated_continuation?&*bundle.seated_continuation:nullptr);
+            find_seated_session_continuation(bundle,entity.id));
         validate_local_route_links(entity,*world_actor,bundle.world.entities,limits);
         validate_playback_links(entity,*world_actor,bundle.host,limits);
         found_primary|=entity.id==bundle.host.runtime_avatar_id;
@@ -1436,6 +1460,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
         [](const auto& entity){return !entity.dynamic_action_owners.empty();}))
         archive.sections.push_back({dynamic_owner_id,false,encode_dynamic_owners(bundle.runtime_entities,limits)});
     if(bundle.seated_continuation)archive.sections.push_back({seated_id,true,encode_seated(*bundle.seated_continuation,limits)});
+    if(!bundle.household_seated_continuations.empty())archive.sections.push_back({seated_id,true,encode_household_seated(bundle,limits)});
     if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
     if(bundle.generic_execution)archive.sections.push_back({generic_execution_id,true,encode_generic_execution(bundle,limits)});
     return encode_session_archive(archive,limits.archive);
@@ -1484,7 +1509,9 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     }
     for(const auto& section:archive.sections)if(section.id==seated_id){
         if(!section.required)throw FormatError("seated continuation must be a required section");
-        result.seated_continuation=decode_seated(section.data);
+        Reader seated_version(section.data);
+        if(seated_version.u16()==3)decode_household_seated(section.data,result,limits);
+        else result.seated_continuation=decode_seated(section.data);
     }
     for(const auto& section:archive.sections)if(section.id==simulation_id){
         if(!section.required)throw FormatError("session simulation section must be required");

@@ -239,7 +239,8 @@ validation recognizes an ordinary Main subroutine and matching animation wait
 under its declared Sit owner. It verifies all owner references and restores
 resource metadata before animation resolution. Pending interaction queues and
 unknown owners remain unsupported in this legacy profile. Whole-household
-code-owner capture is a separate path. See `session-save-design.md` for evidence.
+code-owner capture uses GEXP and now supports completed seated boundaries via
+[SEAT v3](native-household-seated.md). See `session-save-design.md` for evidence.
 
 ## Pinned authority
 

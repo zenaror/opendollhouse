@@ -100,6 +100,7 @@ struct Options {
     struct SingleResidentGoHere {unsigned actor_id,x,y,level,tick;};
     struct ResidentSit {unsigned actor_id,object_id,stand_tick;};
     struct ResidentInteraction {unsigned actor_id,object_id,tick;};
+    struct ResidentStand {unsigned actor_id,tick;};
     std::filesystem::path game_root;
     unsigned mode = 0;
     unsigned language = 1;
@@ -121,6 +122,7 @@ struct Options {
     // Retain the first request for existing launch-profile guards; later
     // requests keep CLI order, including requests at the same relative tick.
     std::vector<ResidentInteraction> headless_resident_interactions;
+    std::vector<ResidentStand> headless_resident_stands;
     std::optional<unsigned> headless_cancel_interaction_tick;
     std::optional<ResidentGoHere> headless_resident_go_here;
     std::optional<SingleResidentGoHere> headless_single_resident_go_here;
@@ -157,6 +159,22 @@ Options parse_options(int argc, char** argv) {
         }
         if (key == "--headless-stand" && !result.headless_stand) {
             result.headless_stand = true;
+            continue;
+        }
+        if (key == "--headless-resident-stand") {
+            if (i + 2 >= argc) throw odh::FormatError("missing resident Stand values");
+            if (result.headless_resident_stands.size() >= 8)
+                throw odh::FormatError("resident Stand sequence exceeds eight requests");
+            const auto actor_id=parse_number(argv[++i],32767,"resident Stand actor ID");
+            const auto tick=parse_number(argv[++i],4096,"resident Stand tick");
+            if (!actor_id || !tick)
+                throw odh::FormatError("resident Stand actor and tick must be nonzero");
+            if (!result.headless_resident_stands.empty() && tick < result.headless_resident_stands.back().tick)
+                throw odh::FormatError("resident Stand sequence ticks must be nondecreasing");
+            if (std::any_of(result.headless_resident_stands.begin(),result.headless_resident_stands.end(),
+                    [&](const auto& request) { return request.actor_id == actor_id; }))
+                throw odh::FormatError("resident Stand sequence repeats an actor");
+            result.headless_resident_stands.push_back({actor_id,tick});
             continue;
         }
         if (key == "--headless-resident-go-here" && !result.headless_resident_go_here &&
@@ -332,6 +350,23 @@ Options parse_options(int argc, char** argv) {
     if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
         result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
         throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
+    if (!result.headless_resident_stands.empty()) {
+        if (!result.load_session || !result.headless_ticks || result.plan_only || result.single_resident_session ||
+            !result.restore_bundle || result.restore_bundle->household_roster.empty() ||
+            result.headless_stand || result.headless_sit_object || result.headless_stand_tick ||
+            result.headless_resident_sit || result.headless_resident_interaction ||
+            result.headless_cancel_interaction_tick || result.headless_resident_go_here ||
+            result.headless_single_resident_go_here || !result.headless_travel_houses.empty())
+            throw odh::FormatError("--headless-resident-stand requires a bounded saved whole-household session without other action schedules");
+        for (const auto& request : result.headless_resident_stands) {
+            if (request.tick > *result.headless_ticks)
+                throw odh::FormatError("resident Stand sequence ticks must fit within the bounded run");
+            const auto& seats=result.restore_bundle->household_seated_continuations;
+            if (std::none_of(seats.begin(),seats.end(),
+                    [&](const auto& seat) { return seat.actor_id == request.actor_id; }))
+                throw odh::FormatError("resident Stand actor has no verified saved household seat");
+        }
+    }
     if(result.headless_resident_go_here&&(!result.headless_ticks||result.plan_only||result.load_session||
        result.single_resident_session||result.headless_resident_go_here->tick>*result.headless_ticks))
         throw odh::FormatError("--headless-resident-go-here requires an in-range tick in a new whole-household headless run");
@@ -363,6 +398,9 @@ Options parse_options(int argc, char** argv) {
             "[--house 1..98] [--resident-id 1..32767] [--single-resident-session] "
             "[--headless-sit-object ID --headless-stand-tick N] "
             "[--headless-single-resident-go-here X Y LEVEL TICK] "
+            "[--headless-resident-interaction ACTOR TARGET TICK (repeat up to 32, nondecreasing ticks)] "
+            "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
+            "[--headless-stand (legacy saved single-resident seat)] "
             "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -780,6 +818,17 @@ RuntimePlan build_runtime_arguments(const Options& options,
             throw odh::FormatError("Stand request has no verified saved seat");
         append(args, {"--headless-stand",
             std::to_string(options.restore_bundle->seated_continuation->target_id), "1"});
+    }
+    for (const auto& request : options.headless_resident_stands) {
+        if (!options.restore_bundle)
+            throw odh::FormatError("resident Stand request has no saved household session");
+        const auto& seats=options.restore_bundle->household_seated_continuations;
+        const auto seat=std::find_if(seats.begin(),seats.end(),
+            [&](const auto& saved) { return saved.actor_id == request.actor_id; });
+        if (seat == seats.end())
+            throw odh::FormatError("resident Stand actor has no verified saved household seat");
+        append(args,{"--headless-resident-stand",std::to_string(request.actor_id),
+            std::to_string(seat->target_id),std::to_string(request.tick)});
     }
     for (const auto& resource : architecture)
         append(args, {"--architecture-resource", resource.string()});

@@ -17,12 +17,18 @@ std::array<std::uint8_t,32> session_action_routine_fingerprint(const RoutineSet&
 // loads more code. Domain is distinct from legacy closures.
 std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet&);
 
-// Value-only checks. Requires the continuation and exactly one idle resident,
+// Value-only checks. The singular wrapper retains the legacy one-resident profile.
+// The record overload validates one idle household actor using its GEXP banks.
+// Requires the continuation,
 // a successful completed Sit, reciprocal positioned containment and matching
 // Stand EP27. Dynamic owner declarations must equal the referenced owner set.
 // A blocking idle animation may remain only in the resident's own Main frame;
 // its Playback wait must match the current VM pending opcode 44 completely.
 void validate_seated_session_continuation(const SessionBundle&);
+void validate_seated_session_continuation(const SessionBundle&, const SessionSeatedContinuation&);
+// Validates profile selection, ordering and complete seated actor coverage.
+void validate_seated_session_continuations(const SessionBundle&);
+const SessionSeatedContinuation* find_seated_session_continuation(const SessionBundle&, std::int16_t);
 
 struct SessionActionRoutineSource {
     RoutineSet routines;
@@ -34,6 +40,9 @@ using SessionActionRoutineLoader = std::function<SessionActionRoutineSource(
 // Load only from the caller's unique immutable DefinitionCandidate. Verifies
 // exact provenance, live EntryPoint table and both Sit/Stand closure digests
 // before returning any owner. No VM, World or live session is modified.
+RoutineOwners resolve_seated_session_owners(const SessionBundle&, const SessionSeatedContinuation&,
+    const DefinitionCandidate&, const std::vector<EntryPoint>&,
+    const SessionActionRoutineLoader&);
 RoutineOwners resolve_seated_session_owners(const SessionBundle&,
     const DefinitionCandidate&, const std::vector<EntryPoint>&,
     const SessionActionRoutineLoader&);

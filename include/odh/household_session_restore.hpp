@@ -66,6 +66,11 @@ public:
     bool code_owner_ids_exhausted() const {return bundle_.code_owner_ids_exhausted;}
     const std::vector<SessionCreatedObject>& created_objects() const {return bundle_.created_objects;}
     const std::vector<SessionDeferredRemoval>& deferred_removals() const {return bundle_.deferred_removals;}
+    const SessionSeatedContinuation* seated_continuation(std::int16_t id) const {
+        return find_seated_session_continuation(bundle_,id);
+    }
+    void install_seated_continuation_owners(std::int16_t id, Vm&, const DefinitionCandidate&,
+        const std::vector<EntryPoint>&, const SessionActionRoutineLoader&);
     const std::vector<SessionResourceCodeOwner>& resource_owners(std::int16_t id) const;
     void install_resource_owners(std::int16_t id,Vm&,const ResourceOwnerLoader&);
     const std::vector<SessionDynamicActionOwner>& dynamic_action_owners(std::int16_t id) const;
@@ -95,6 +100,7 @@ private:
     const Vm* dynamic_owner_vm_ = nullptr;
     bool dynamic_owners_verified_ = false;
     std::map<std::int16_t,const Vm*> resource_owner_vms_;
+    std::map<std::int16_t,const Vm*> seated_owner_vms_;
 };
 
 } // namespace odh

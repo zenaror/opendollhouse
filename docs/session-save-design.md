@@ -325,3 +325,13 @@ The same binary also passes the House07 fridge roundtrip in
 reopen with 12 identical sections and match uninterrupted execution at tick4096;
 legacy save loads, 25 protected files remain unchanged, and processes/profiles
 are cleaned up. This covers the existing whole-household fridge path separately.
+
+
+## Completed household seated continuation (2026-10-26)
+
+[native-household-seated.md](native-household-seated.md) supersedes the historical
+whole-household seated restriction above for completed idle Sit boundaries.
+Required SEAT v3 stores an ordered per-actor list alongside GEXP; old singular
+SEAT v1/v2 remains readable. Every seated resident verifies its own exact
+Sit/Stand resources and fresh VM before restoring execution. Arbitrary postures
+and unfinished seated actions remain outside this profile.

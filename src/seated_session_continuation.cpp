@@ -101,7 +101,44 @@ std::array<std::uint8_t,32> session_loaded_bank_fingerprint(const RoutineSet& ro
 
 void validate_seated_session_continuation(const SessionBundle& bundle) {
     if(!bundle.seated_continuation)throw FormatError("seated continuation metadata is absent");
-    const auto& c=*bundle.seated_continuation;
+    if(!bundle.household_roster.empty()||!bundle.household_seated_continuations.empty())
+        throw FormatError("singular seated validator requires the legacy resident profile");
+    validate_seated_session_continuation(bundle,*bundle.seated_continuation);
+}
+
+const SessionSeatedContinuation* find_seated_session_continuation(const SessionBundle& bundle,std::int16_t id) {
+    if(bundle.seated_continuation&&bundle.seated_continuation->actor_id==id)return &*bundle.seated_continuation;
+    const auto found=std::find_if(bundle.household_seated_continuations.begin(),bundle.household_seated_continuations.end(),
+        [&](const auto& value){return value.actor_id==id;});
+    return found==bundle.household_seated_continuations.end()?nullptr:&*found;
+}
+
+void validate_seated_session_continuations(const SessionBundle& bundle) {
+    if(bundle.seated_continuation){
+        if(!bundle.household_roster.empty()||!bundle.household_seated_continuations.empty())
+            throw FormatError("legacy seated continuation cannot coexist with a household profile");
+        validate_seated_session_continuation(bundle);
+    }
+    if(!bundle.household_seated_continuations.empty()&&bundle.household_roster.empty())
+        throw FormatError("household seated continuation requires HOST v2 roster");
+    std::int16_t previous=0;
+    for(const auto& c:bundle.household_seated_continuations){
+        if(c.actor_id<=previous)throw FormatError("household seated actor roster is duplicated or unordered");
+        validate_seated_session_continuation(bundle,c);previous=c.actor_id;
+    }
+    if(!bundle.household_roster.empty())for(const auto& state:bundle.runtime_entities){
+        const auto& actor=entity(bundle,state.id);
+        const bool seated=!actor.person_data.empty()&&actor.person_data[0]==1;
+        const bool declared=find_seated_session_continuation(bundle,state.id)!=nullptr;
+        if(seated!=declared||(!declared&&actor.attachment))
+            throw FormatError("household seated actor coverage is incomplete or stale");
+    }
+}
+
+void validate_seated_session_continuation(const SessionBundle& bundle,const SessionSeatedContinuation& c) {
+    const bool household=!bundle.household_roster.empty();
+    const auto member=std::find_if(bundle.household_roster.begin(),bundle.household_roster.end(),
+        [&](const auto& value){return value.id==c.actor_id;});
     const auto sit_scope=routine_key(c.action).scope;
     const auto stand_scope=routine_key(c.stand_action).scope;
     const bool private_profile=c.action==4097&&c.stand_action==4102&&
@@ -114,17 +151,20 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
         canonical_relative_path(c.linked_semiglobal->archive)&&
         c.linked_semiglobal->entry==c.linked_semiglobal->name+".iff"&&
         c.linked_semiglobal->entry.find('/')==std::string::npos;
-    if(c.actor_id<=0||c.actor_id!=bundle.host.runtime_avatar_id||c.target_id<=0||c.actor_id==c.target_id||
+    if(c.actor_id<=0||(!household&&c.actor_id!=bundle.host.runtime_avatar_id)||
+       (household&&(member==bundle.household_roster.end()||member->generation!=c.actor_generation))||
+       c.target_id<=0||c.actor_id==c.target_id||
        !c.actor_generation||!c.target_generation||!c.target_guid||!c.tree_table_id||
        (!private_profile&&!linked_profile)||c.stand_entry_point!=27||
        !valid_text(c.source,false)||!valid_text(c.asset,true)||
        !nonzero(c.sit_routine_fingerprint)||!nonzero(c.stand_routine_fingerprint)||
        c.code_owners.size()>1||!c.completion.uid||!c.completion.ticket||!c.completion.result||
-       c.completion.tick>=bundle.host.tick||bundle.runtime_entities.size()!=1||bundle.scheduler.faulted)
+       c.completion.tick>=bundle.host.tick||(!household&&bundle.runtime_entities.size()!=1)||
+       (household&&(!bundle.generic_execution||!c.code_owners.empty()))||bundle.scheduler.faulted)
         throw FormatError("unsupported seated continuation identity or boundary");
     const auto& actor=entity(bundle,c.actor_id);const auto& target=entity(bundle,c.target_id);
     if(actor.kind!=EntityKind::avatar||actor.generation!=c.actor_generation||!actor.definition||
-       actor.definition->guid!=bundle.host.resident_guid||actor.person_data.empty()||actor.person_data[0]!=1||
+       actor.definition->guid!=(household?member->guid:bundle.host.resident_guid)||actor.person_data.empty()||actor.person_data[0]!=1||
        !actor.attachment||actor.attachment->container!=c.target_id||actor.attachment->slot!=c.target_slot||
        !actor.attachment->positioned||!actor.position||!actor.static_footprint||actor.ui_ghost||
        target.kind!=EntityKind::object||target.generation!=c.target_generation||!target.definition||
@@ -134,7 +174,10 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
        target.position->level!=actor.position->level||!target.entry_points||target.entry_points->size()<=27||
        (*target.entry_points)[27].condition!=c.stand_condition||(*target.entry_points)[27].action!=c.stand_action)
         throw FormatError("seated continuation posture, target or reciprocal slot is stale");
-    const auto& state=bundle.runtime_entities.front();const auto& queue=state.controllers.interactions;
+    const auto found=std::find_if(bundle.runtime_entities.begin(),bundle.runtime_entities.end(),
+        [&](const auto& value){return value.id==c.actor_id;});
+    if(found==bundle.runtime_entities.end())throw FormatError("seated resident has no runtime execution state");
+    const auto& state=*found;const auto& queue=state.controllers.interactions;
     if(state.id!=c.actor_id||queue.actor_id!=c.actor_id||queue.actor_generation!=c.actor_generation||
        queue.run_generation!=state.vm.run_generation)
         throw FormatError("seated continuation controller actor/run identity is stale");
@@ -158,8 +201,17 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
            !declared.insert(binding.owner).second)
             throw FormatError("seated continuation code owner has mismatched resource provenance");
     }
+    // Household GEXP already carries exact full loaded banks. SEAT separately
+    // proves Sit/Stand closures without reinstalling a smaller legacy closure.
+    std::set<CodeOwner> resource_declared;
+    if(household)for(const auto& binding:state.resource_owners){
+        if(binding.resource_guid==c.target_guid&&binding.source==c.source&&binding.asset==c.asset&&
+           binding.definition_chunk_id==c.definition_chunk_id&&binding.tree_table_id==c.tree_table_id&&
+           binding.linked_semiglobal==c.linked_semiglobal)
+            resource_declared.insert(binding.owner);
+    }
     const auto allowed_owner=[&](CodeOwner value){
-        return value==static_cast<CodeOwner>(c.actor_id)||declared.count(value)!=0;
+        return value==static_cast<CodeOwner>(c.actor_id)||declared.count(value)!=0||resource_declared.count(value)!=0;
     };
     const bool main_animation_wait=state.playback.state&&state.playback.state->wait;
     if(main_animation_wait) {
@@ -215,13 +267,21 @@ void validate_seated_session_continuation(const SessionBundle& bundle) {
     for(const auto& value:state.vm.suspended_pending)pending(value,false);
     if(state.playback.state)owner(state.playback.state->resource.code_owner);
     if(state.playback.carry)owner(state.playback.carry->code_owner);
+    for(const auto owner:resource_declared)referenced.erase(owner);
     if(referenced!=declared)throw FormatError("seated continuation dynamic owner roster is incomplete or excessive");
 }
 
 RoutineOwners resolve_seated_session_owners(const SessionBundle& bundle,
     const DefinitionCandidate& candidate,const std::vector<EntryPoint>& entry_points,
     const SessionActionRoutineLoader& load) {
-    validate_seated_session_continuation(bundle);const auto& c=*bundle.seated_continuation;
+    validate_seated_session_continuation(bundle);
+    return resolve_seated_session_owners(bundle,*bundle.seated_continuation,candidate,entry_points,load);
+}
+
+RoutineOwners resolve_seated_session_owners(const SessionBundle& bundle,const SessionSeatedContinuation& c,
+    const DefinitionCandidate& candidate,const std::vector<EntryPoint>& entry_points,
+    const SessionActionRoutineLoader& load) {
+    validate_seated_session_continuation(bundle,c);
     if(!load||candidate.source!=c.source||candidate.asset!=c.asset||candidate.chunk_id!=c.definition_chunk_id||
        candidate.definition.guid!=c.target_guid||candidate.definition.tree_table_id!=c.tree_table_id||
        entry_points.size()<=27||entry_points[27].condition!=c.stand_condition||entry_points[27].action!=c.stand_action)

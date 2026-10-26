@@ -540,6 +540,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<bool> headless_portal_result;
     std::optional<odh::EntityPosition> headless_portal_actor_start_position;
     std::optional<odh::EntityPosition> headless_portal_start_position;
+    struct ScheduledResidentStand {std::int16_t actor,target;std::uint64_t tick;};
+    std::vector<ScheduledResidentStand> headless_resident_stands;
+    std::size_t headless_resident_stand_index=0;
     std::optional<HeadlessInteraction> headless_stand;
     bool headless_stand_applied=false,headless_stand_precondition_met=false;
     std::string stand_trigger;
@@ -809,6 +812,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless Portal15 target/tick is outside the supported profile");
             headless_portal=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
+        else if(option=="--headless-resident-stand"&&n+3<argc){
+            const auto actor=selector(argv[++n]),target=selector(argv[++n]),tick=selector(argv[++n]);
+            if(!actor||actor>32767||!target||target>32767||!tick||headless_resident_stands.size()>=8||
+               (!headless_resident_stands.empty()&&tick<headless_resident_stands.back().tick)||
+               std::any_of(headless_resident_stands.begin(),headless_resident_stands.end(),
+                   [&](const auto& request){return request.actor==actor;}))
+                throw odh::FormatError("resident Stand sequence needs up to eight distinct actors and nondecreasing positive ticks");
+            headless_resident_stands.push_back({static_cast<std::int16_t>(actor),static_cast<std::int16_t>(target),tick});
+        }
         else if(option=="--headless-stand"&&!headless_stand&&n+2<argc){
             const auto id=selector(argv[++n]),tick=selector(argv[++n]);
             if(id==0||id>32767||tick==0)throw odh::FormatError("headless Stand target/tick is outside the supported profile");
@@ -882,6 +894,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-go-here-interrupt-after-movements requires Go Here and no tick cancel or world mutation");
     if(headless_portal&&(!headless_main||headless_portal->tick>ticks_limit||headless_interaction||headless_stand||headless_go_here))
         throw odh::FormatError("--headless-portal requires --headless-main, an in-range tick, and an otherwise idle action probe");
+    if(!headless_resident_stands.empty()){
+        if(!headless_main||!session_context||session_context->restore_archive.empty()||
+           session_context->single_resident_session||headless_stand||headless_interaction||
+           !headless_player_interactions.empty()||headless_go_here||headless_portal||
+           headless_cancel_interaction_tick||headless_resident_stands.back().tick>ticks_limit)
+            throw odh::FormatError("resident Stand sequence requires a loaded bounded whole-household session without other action schedules");
+    }
     if(headless_stand&&(!headless_main||
        (!headless_interaction&&(!session_context||session_context->restore_archive.empty()))||
        headless_stand->tick>ticks_limit||
@@ -3522,6 +3541,19 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             for(const auto& owner:household_restore->resource_owners(execution.id))
                 note_installed_resource_owner(*execution.vm,owner.owner);
         }
+        for(const auto& execution:bindings)if(const auto* seated=household_restore->seated_continuation(execution.id)){
+            if(!definition_index||!session_context)throw odh::FormatError("household seat needs the exact game catalog");
+            const auto* target=world.find(seated->target_id);
+            if(!target||!target->entry_points)throw odh::FormatError("household seat target is unavailable");
+            const auto& exact=exact_session_definition(*definition_index,seated->target_guid,seated->source,
+                seated->asset,seated->definition_chunk_id,session_context->game_root);
+            auto portable=exact;portable.source=seated->source;
+            household_restore->install_seated_continuation_owners(execution.id,*execution.vm,portable,*target->entry_points,
+                [&](const odh::DefinitionCandidate&,std::uint16_t root){
+                    return load_session_action_source(exact,root,seated->linked_semiglobal,
+                        session_context->game_root,globals,&*definition_index);
+                });
+        }
         household_restore->restore_execution(bindings,entity_scheduler,random,ticks);
         if(household_restore->generic_execution()){
             next_saved_code_owner=household_restore->next_code_owner();
@@ -3545,6 +3577,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     if(restoring_session)for(auto& request:headless_player_interactions){
         if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed player request tick overflows the session clock");
+        request.tick+=resumed_tick;
+    }
+    if(restoring_session)for(auto& request:headless_resident_stands){
+        if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("resumed Stand tick overflows the session clock");
         request.tick+=resumed_tick;
     }
     if(headless_cancel_interaction_tick){
@@ -3985,6 +4022,19 @@ struct PlacementCandidateProbe {
         if(found==household_runtime.end())return {nullptr,nullptr,nullptr};
         return {&(*found)->seated_action_target,&(*found)->seated_action_actor_generation,&(*found)->seated_action_code};
     };
+    if(household_restore){
+        const auto bind_seat=[&](std::int16_t id){
+            const auto* seated=household_restore->seated_continuation(id);if(!seated)return;
+            const auto [target,generation,code]=actor_seated_binding(id);
+            const auto* actor=world.find(id);const auto* object=world.find(seated->target_id);
+            if(!target||!generation||!code||!actor||actor->generation!=seated->actor_generation||
+               !object||object->generation!=seated->target_generation)
+                throw odh::FormatError("restored household seat identity changed before input binding");
+            *target=SavedObjectSelection{seated->target_id,seated->target_guid,seated->target_generation,seated->tree_table_id};
+            *generation=seated->actor_generation;*code=seated->action;
+        };
+        bind_seat(runtime_avatar_id);for(const auto& member:household_runtime)bind_seat(member->id);
+    }
     const auto observe_player_requests=[&]{
         const auto observe=[&](odh::InteractionQueue& native){
             const auto state=native.snapshot();
@@ -4331,8 +4381,15 @@ struct PlacementCandidateProbe {
             actor->attachment->container==selected.id&&target&&target->generation==selected.generation&&
             target->kind==odh::EntityKind::object&&target->definition&&target->definition->guid==selected.guid;
     };
+    struct ResidentStandEvidence {
+        odh::UserInteractionIdentity identity;
+        std::int16_t target=0;
+        std::uint64_t tick=0;
+        std::optional<bool> result;
+        std::string status,diagnostic;
+    };
+    std::deque<ResidentStandEvidence> resident_stand_requests;
     const auto request_stand=[&](const SavedObjectSelection& selected,const std::string& trigger,std::uint64_t request_tick){
-        if(headless_stand_status=="queued")return;
         const auto actor_id=active_household_actor;
         auto* actor_queue=actor_queue_for(actor_id);
         auto* actor_vm=actor_vm_for(actor_id);
@@ -4344,7 +4401,7 @@ struct PlacementCandidateProbe {
         headless_stand_applied=true;stand_trigger=trigger;stand_request_tick=request_tick;stand_request_target=selected.id;
         stand_actor_id=actor_id;
         headless_stand_precondition_met=false;headless_stand_action.reset();headless_stand_owner.reset();
-        headless_stand_result.reset();headless_stand_diagnostic.clear();
+        headless_stand_result.reset();headless_stand_diagnostic.clear();headless_stand_status="preparing";
         headless_stand_posture_before.reset();headless_stand_attachment_before.reset();
         const auto fail_stand=[&](const std::string& reason){headless_stand_status="unsupported";headless_stand_diagnostic=reason;};
         const auto completion=actor_queue->completion();
@@ -4389,18 +4446,28 @@ struct PlacementCandidateProbe {
                             if(!routines.count(key))fail_stand("Stand function is absent from its exact private or linked semiglobal owner");
                             else {
                                 const auto code_owner=next_saved_code_owner;
+                                const auto source=load_session_action_source(*candidate,stand_action,{},
+                                    session_context?session_context->game_root:std::filesystem::path{},
+                                    globals,definition_index?&*definition_index:nullptr);
+                                const auto provenance=session_resource_owner(code_owner,*candidate,stand_action,
+                                    source.linked_semiglobal?odh::SessionCodeBankKind::private_and_semiglobal:
+                                        odh::SessionCodeBankKind::private_closure,routines,source.linked_semiglobal);
+                                const auto tuning=load_saved_action_tuning(*candidate);
                                 if(!actor_vm->install_owner(code_owner,std::move(routines)))
                                     fail_stand("selected resident VM rejected saved Stand code owner");
                                 else {
                                     if(next_saved_code_owner==std::numeric_limits<odh::CodeOwner>::max())saved_owner_ids_exhausted=true;
                                     else ++next_saved_code_owner;
+                                    resource_owner_provenance.emplace(code_owner,provenance);
+                                    saved_action_tuning.emplace(code_owner,tuning);
+                                    note_installed_resource_owner(*actor_vm,code_owner);
                                     owner=owner_map->emplace(owner_key,code_owner).first;
                                 }
                             }
                         } catch(const std::exception& error){fail_stand(error.what());}
                     }
                 }
-                if(owner!=owner_map->end()){
+                if(owner!=owner_map->end()&&headless_stand_status!="unsupported"){
                     saved_action_resources.emplace(owner->second,Resource{candidate->source,candidate->asset,candidate->asset.empty()});
                     const odh::VmContext context{actor_id,selected.id,selected.id,owner->second};
                     if(!stand_selection_is_current(selected))
@@ -4414,6 +4481,16 @@ struct PlacementCandidateProbe {
                     }
                 }
             }
+        }
+        const auto snapshot=actor_queue->snapshot();
+        resident_stand_requests.push_back({{actor_id,snapshot.actor_generation,snapshot.run_generation,
+            headless_stand_status=="queued"?actor_queue->last_enqueued_uid():0},selected.id,request_tick,
+            {},headless_stand_status,headless_stand_diagnostic});
+        while(resident_stand_requests.size()>64){
+            const auto terminal=std::find_if(resident_stand_requests.begin(),resident_stand_requests.end(),
+                [](const auto& request){return request.status!="queued";});
+            if(terminal==resident_stand_requests.end())break;
+            resident_stand_requests.erase(terminal);
         }
     };
     std::optional<std::string> current_overlay_text;
@@ -5830,26 +5907,17 @@ struct PlacementCandidateProbe {
         if(!save_actor||save_actor->person_data.empty())
             throw odh::FormatError("this session cannot yet be restored: resident posture is unavailable");
         const bool seated=save_actor->person_data[0]==1||save_actor->attachment.has_value();
-        if(!session_context->single_resident_session&&seated)
-            throw odh::FormatError("household session cannot yet restore seated continuation or attachment");
-        if(!session_context->single_resident_session&&std::any_of(household_runtime.begin(),
-            household_runtime.end(),[&](const auto& member){
-                const auto* resident=world.find(member->id);
-                return !resident||resident->person_data.empty()||resident->person_data[0]!=0||
-                    resident->attachment.has_value();
-            }))
-            throw odh::FormatError("household session cannot yet restore a seated or attached additional resident");
-        // Installed action banks can outlive a completed interaction. The
-        // HouseholdSessionRestore candidate below validates references in every
-        // captured VM/controller/Playback, including carry, before any write;
-        // unreferenced cached banks do not need to survive a fresh process.
-        if(seated&&(!seated_action_target||!seated_action_actor_generation||!seated_action_code||
-           !save_actor->attachment||
-           save_actor->person_data[0]!=1||save_actor->attachment->container!=seated_action_target->id||
-           save_actor->generation!=*seated_action_actor_generation||!*seated_action_code))
-            throw odh::FormatError("this seated state has no verified completed Sit action to resume safely");
-        if(!seated&&(save_actor->attachment||save_actor->person_data[0]!=0))
-            throw odh::FormatError("this session cannot yet be restored: the resident posture is unsupported");
+        const auto validate_seated_binding=[&](std::int16_t id){
+            const auto* actor=world.find(id);
+            if(!actor||actor->person_data.empty())throw odh::FormatError("resident posture is unavailable");
+            if(actor->person_data[0]==0&&!actor->attachment)return;
+            const auto [target,generation,code]=actor_seated_binding(id);
+            if(actor->person_data[0]!=1||!actor->attachment||!target||!*target||!generation||!*generation||
+               !code||!*code||actor->generation!=**generation||actor->attachment->container!=(*target)->id)
+                throw odh::FormatError("resident seated state has no verified completed Sit binding");
+        };
+        validate_seated_binding(runtime_avatar_id);
+        for(const auto& member:household_runtime)validate_seated_binding(member->id);
         if(!session_baseline||!lot||!bootstrap_globals)
             throw odh::FormatError("this session cannot yet be restored: original lot baseline is unavailable");
         const char* data_home=std::getenv("XDG_DATA_HOME");
@@ -6116,24 +6184,30 @@ struct PlacementCandidateProbe {
         }
         std::sort(bundle.object_threads.begin(),bundle.object_threads.end(),[](const auto& a,const auto& b){return a.id<b.id;});
         bundle.scheduler=entity_scheduler.snapshot();
-        if(seated){
-            const auto& selected=*seated_action_target;
+        const auto capture_seated_continuation=[&](const odh::SessionRuntimeEntity& runtime){
+            const auto actor_id=runtime.id;
+            const auto* actor=world.find(actor_id);
+            if(!actor||!actor->attachment||actor->person_data.empty()||actor->person_data[0]!=1)return;
+            const auto [selected_binding,generation_binding,code_binding]=actor_seated_binding(actor_id);
+            const auto& selected=**selected_binding;
             const auto* target=world.find(selected.id);
             const auto* candidate=definition_index?definition_index->unique(selected.guid):nullptr;
-            const auto completion=queue.completion();
+            const auto completion=runtime.controllers.interactions.completion;
             if(!target||target->generation!=selected.generation||target->kind!=odh::EntityKind::object||
                !target->definition||target->definition->guid!=selected.guid||!target->entry_points||
                target->entry_points->size()<=27||!completion||!completion->result||
-               !seated_action_code||!candidate||
+               !code_binding||!*code_binding||!candidate||
                candidate->definition.tree_table_id!=selected.tree_table_id)
                 throw odh::FormatError("this seated state is missing its exact completed Sit/Stand object binding");
             odh::SessionSeatedContinuation continuation;
-            continuation.actor_id=runtime_avatar_id;continuation.actor_generation=*seated_action_actor_generation;
+            continuation.actor_id=actor_id;continuation.actor_generation=**generation_binding;
             continuation.target_id=selected.id;continuation.target_generation=selected.generation;
             continuation.target_guid=selected.guid;
-            continuation.target_slot=static_cast<std::uint32_t>(save_actor->attachment->slot);
-            continuation.action=*seated_action_code;continuation.completion=*completion;
-            continuation.source=candidate->source;continuation.asset=candidate->asset;
+            continuation.target_slot=static_cast<std::uint32_t>(actor->attachment->slot);
+            continuation.action=**code_binding;continuation.completion=*completion;
+            continuation.source=generic_execution?
+                odh_host::generic_session_source_key(session_context->game_root,candidate->source):candidate->source;
+            continuation.asset=candidate->asset;
             continuation.definition_chunk_id=candidate->chunk_id;
             continuation.tree_table_id=candidate->definition.tree_table_id;
             continuation.stand_entry_point=27;
@@ -6150,11 +6224,11 @@ struct PlacementCandidateProbe {
             continuation.linked_semiglobal=sit_source.linked_semiglobal;
             continuation.sit_routine_fingerprint=odh::session_action_routine_fingerprint(sit_source.routines);
             continuation.stand_routine_fingerprint=odh::session_action_routine_fingerprint(stand_source.routines);
+            if(!generic_execution){
             std::set<odh::CodeOwner> referenced_owners;
             const auto add_owner=[&](odh::CodeOwner owner){
-                if(owner!=static_cast<odh::CodeOwner>(runtime_avatar_id))referenced_owners.insert(owner);
+                if(owner!=static_cast<odh::CodeOwner>(actor_id))referenced_owners.insert(owner);
             };
-            const auto& runtime=bundle.runtime_entities.front();
             for(const auto& frame:runtime.vm.stack)add_owner(frame.context.code_owner);
             if(runtime.vm.pending)add_owner(runtime.vm.pending->context.code_owner);
             for(const auto& pending:runtime.vm.suspended_pending)add_owner(pending.context.code_owner);
@@ -6180,8 +6254,11 @@ struct PlacementCandidateProbe {
             }
             std::sort(continuation.code_owners.begin(),continuation.code_owners.end(),
                 [](const auto& a,const auto& b){return a.owner<b.owner;});
-            bundle.seated_continuation=std::move(continuation);
-        }
+            }
+            if(generic_execution)bundle.household_seated_continuations.push_back(std::move(continuation));
+            else bundle.seated_continuation=std::move(continuation);
+        };
+        for(const auto& runtime:bundle.runtime_entities)capture_seated_continuation(runtime);
         std::vector<std::uint8_t> encoded;
         try{
             encoded=odh::encode_session_bundle(bundle);
@@ -7533,6 +7610,17 @@ struct PlacementCandidateProbe {
                 }
             } catch(const std::exception& error){fail_portal(error.what());}
         }
+        while(headless_resident_stand_index<headless_resident_stands.size()&&
+              ticks==headless_resident_stands[headless_resident_stand_index].tick){
+            const auto request=headless_resident_stands[headless_resident_stand_index++];
+            const auto previous_actor=active_household_actor;active_household_actor=request.actor;
+            const auto [target,generation,code]=actor_seated_binding(request.actor);
+            if(target&&*target&&(*target)->id==request.target)
+                request_stand(**target,"headless_resident_stand",ticks);
+            else resident_stand_requests.push_back({{request.actor,0,0,0},request.target,ticks,{},
+                "unsupported","requested resident has no matching restored seat"});
+            active_household_actor=previous_actor;
+        }
         if(headless_stand&&!headless_stand_applied&&ticks==*scheduled_stand_tick){
             if(render_interaction_target&&render_interaction_target->id==headless_stand->id)
                 request_stand(*render_interaction_target,"headless_stand_request",ticks);
@@ -7742,25 +7830,35 @@ struct PlacementCandidateProbe {
         // terminal result so later Main instructions cannot overwrite the
         // route diagnostic or append unrelated movement to the probe.
         if(headless_portal_applied&&headless_portal_status!="queued")break;
-        const auto stand_actor=stand_actor_id.value_or(runtime_avatar_id);
-        auto* stand_queue=actor_queue_for(stand_actor);
-        auto* stand_vm=actor_vm_for(stand_actor);
-        if(headless_stand_applied&&headless_stand_status=="queued"&&stand_queue&&stand_queue->completion()&&
-           (!headless_stand_previous_completion||stand_queue->completion()->uid!=*headless_stand_previous_completion)){
-            headless_stand_result=stand_queue->completion()->result;
-            headless_stand_status=*headless_stand_result?"returned_true":"returned_false";
-            if(*headless_stand_result){
-                const auto* resident=world.find(stand_actor);
-                if(resident&&(!resident->person_data.empty()&&resident->person_data[0]!=1)&&!resident->attachment){
-                    const auto [seated_target,seated_generation,seated_code]=actor_seated_binding(stand_actor);
-                    if(seated_target&&seated_generation&&seated_code){
-                        seated_target->reset();seated_generation->reset();seated_code->reset();}
+        for(auto& request:resident_stand_requests)if(request.status=="queued"){
+            auto* native=actor_queue_for(request.identity.actor);auto* actor_vm=actor_vm_for(request.identity.actor);
+            const auto* actor=world.find(request.identity.actor);
+            if(!native||!actor_vm||!actor||actor->generation!=request.identity.actor_generation||
+               actor_vm->run_generation()!=request.identity.run_generation){request.status="invalidated";continue;}
+            const auto completion=native->completion();
+            if(completion&&completion->uid==request.identity.uid){
+                request.result=completion->result;request.status=*request.result?"returned_true":"returned_false";
+                if(*request.result&&!actor->attachment&&!actor->person_data.empty()&&actor->person_data[0]==0){
+                    const auto [target,generation,code]=actor_seated_binding(request.identity.actor);
+                    if(target&&generation&&code){target->reset();generation->reset();code->reset();}
+                }
+            }else if(actor_vm->status()==odh::VmStatus::fault){request.status="vm_fault";request.diagnostic=actor_vm->diagnostic();}
+            else {
+                const auto snapshot=native->snapshot();
+                if(std::none_of(snapshot.actions.begin(),snapshot.actions.end(),
+                    [&](const auto& action){return action.uid==request.identity.uid;})){
+                    request.status="dropped";request.diagnostic="Stand left the native queue without a matching completion";
                 }
             }
-        }else if(headless_stand_applied&&headless_stand_status=="queued"&&stand_vm&&stand_vm->status()==odh::VmStatus::fault){
-            headless_stand_status="vm_fault";headless_stand_diagnostic=stand_vm->diagnostic();
-        }else if(headless_stand_applied&&headless_stand_status=="queued"&&host_failed){
-            headless_stand_status="host_failed";headless_stand_diagnostic=host_diagnostic;
+        }
+        if(headless_stand_applied&&stand_actor_id){
+            const auto found=std::find_if(resident_stand_requests.rbegin(),resident_stand_requests.rend(),
+                [&](const auto& request){return request.identity.actor==*stand_actor_id&&
+                    request.tick==stand_request_tick&&request.target==stand_request_target;});
+            if(found!=resident_stand_requests.rend()){
+                headless_stand_result=found->result;headless_stand_status=found->status;
+                headless_stand_diagnostic=found->diagnostic;
+            }
         }
         if(render_interaction_requested){
             const auto status_before=render_interaction_status;
@@ -8721,6 +8819,17 @@ struct PlacementCandidateProbe {
         else std::cout<<"null";
         std::cout<<"}";
     }
+    std::cout<<",\"resident_stand_requests\":[";
+    for(std::size_t n=0;n<resident_stand_requests.size();++n){
+        if(n)std::cout<<',';const auto& request=resident_stand_requests[n];const auto* actor=world.find(request.identity.actor);
+        std::cout<<"{\"actor\":"<<request.identity.actor<<",\"uid\":"<<request.identity.uid
+            <<",\"tick\":"<<request.tick<<",\"target\":"<<request.target<<",\"status\":"<<json_bytes(request.status)
+            <<",\"result\":"<<(request.result?(*request.result?"true":"false"):"null")
+            <<",\"diagnostic\":"<<json_bytes(request.diagnostic)<<",\"posture\":"
+            <<(actor&&!actor->person_data.empty()?std::to_string(actor->person_data[0]):"null")
+            <<",\"attached\":"<<(actor&&actor->attachment?"true":"false")<<'}';
+    }
+    std::cout<<']';
     std::cout<<",\"stand_runtime\":";
     if(!headless_stand_applied)std::cout<<"null";
     else {

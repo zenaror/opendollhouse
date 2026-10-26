@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `e88cedd2ceedaa858c1199c396470c86a28546b8`.
+Base publicada antes da etapa atual: `b23bae13d43811c9c112942b18798acb36f971cd`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,46 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Várias ordens do jogador na interface (etapa atual)
+### Salvar e reabrir famílias com moradores sentados (etapa atual)
+
+O save agora guarda um vínculo de assento para cada morador sentado após um Sit
+concluído. SEAT v3 contém uma lista ordenada por ator junto de HOST/HHRD e GEXP;
+SEAT v1/v2 singular permanece legível. Cada ator verifica seus próprios bancos
+instalados na VM correta e as funções exatas de Sit/Stand antes da recuperação.
+O host recupera os vínculos por morador e permite levantar independentemente.
+Famílias com alguns moradores em pé e outros sentados também são recuperadas.
+Fila ainda ocupada por Sit/Stand e posturas arbitrárias continuam fora deste gate.
+
+A opção de diagnóstico `--headless-resident-stand ACTOR TICK` aceita até oito
+moradores distintos com assento salvo; ticks relativos não decrescentes.
+Cada pedido de levantar acompanha seu próprio ator, geração, execução e UID;
+conclusões alheias não fornecem seu resultado. Desaparecimento sem conclusão gera
+diagnóstico, pedidos pendentes sobrevivem ao histórico e falha na carga impede
+submissão. A interface normal usa o vínculo do morador selecionado.
+
+O teste real da Casa05 revelou uma animação de outro morador com metadado `foo`.
+A referência fixada ignora chaves que não consulta; o player nativo agora segue
+isso, preservando limites e diagnósticos. `sound`, `dress` e `undress` ainda geram
+erro explícito por exigirem serviços não implementados.
+
+Binário final SHA256:
+`249988e4724a8a65bbde0b67db05b25d303a17aa7ec76d6c2388dbfed4eea6f3`.
+20 CTests passaram. Em `reports/native-household-seated/roundtrips-final/`, doze
+processos provam dois Sims sentados, reabertura com 13 seções iguais, ambos
+levantando, corte1536 e continuação2048 igual ao controle nas 12 seções finais,
+e os dois casos mistos. `linked-final/` prova Sit21/bench173 na Casa05 inteira,
+reabertura com 12 seções iguais e Stand concluído; são três processos.
+`reports/native-menu-checks/household-seat-regression-final/` preserva os dois
+fluxos individuais antigos em seis processos. Cinco sequências inválidas são
+recusadas em `rejections-final/`. Dados originais intactos, processos e perfis
+encerrados; nenhuma tela virtual criada. Detalhes, falhas intermediárias e limites
+em [native-household-seated.md](native-household-seated.md).
+
+Próximo avanço: ampliar serviços reais de animação e fluxos de interação, junto
+dos callbacks/RunImmediately, lifecycle e RunTreeByName gerais ainda pendentes.
+Interface original, sete expansões completas e ports continuam requisitos finais.
+
+### Várias ordens do jogador na interface (commit `b23bae1`)
 
 A interface C++ permite reabrir menus e enfileirar enquanto há trabalho ativo,
 trocar de Sim e cancelar uma ordem pelo seu botão. A lista provisória é por Sim,
@@ -81,8 +120,8 @@ hashes; todos os processos e perfis temporários foram encerrados.
 
 Não forçar interrupção de Sleep ao enfileirar: a referência não faz isso.
 O pedido ainda pendente no tick 10 da janela é coerente com essa regra.
-Salvar famílias sentadas, interface original, expansões e ports continuam
-pendentes. A lista provisória mostra pedidos do jogador; os ícones de ações
+A etapa acima cobre famílias sentadas após Sit concluído; interface original,
+expansões e ports continuam pendentes. A lista provisória mostra pedidos do jogador; os ícones de ações
 autônomas ainda não estão cobertos.
 
 ### Cancelamento automático após entrada de uma nova ordem (commit `e88cedd`)

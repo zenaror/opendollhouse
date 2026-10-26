@@ -228,7 +228,11 @@ std::optional<Playback::State> Playback::prepare(std::shared_ptr<const Animation
             for(const auto& pair:event.pairs){
                 if(pairs>=limits_.events)return reject("animation property budget exceeded");
                 ++pairs;
-                if(pair.first!="xevt"&&pair.first!="footstep"&&pair.first!="lefthand"&&pair.first!="righthand")return reject("animation property service not implemented: "+pair.first);
+                // The pinned avatar handler queries known keys; other metadata
+                // (including original clips' "foo") has no simulation effect.
+                // These known services still need real native implementations.
+                if(pair.first=="sound"||pair.first=="dress"||pair.first=="undress")
+                    return reject("animation property service not implemented: "+pair.first);
                 if(pair.first=="xevt"){
                     if(counted>=limits_.events)return reject("animation queue budget exceeded");
                     ++counted;

@@ -38,7 +38,8 @@ currently selected Sim are presentation state and are not added to the save.
 An explicitly stopping order may therefore reopen with its native active/pending
 state; the native cancel flags still govern execution. This list covers player
 requests; autonomous continuation icons and the final original interface remain
-future work. Whole-household seated saves remain a separate existing limitation.
+future work. Completed household Sit boundaries are covered separately in
+[native-household-seated.md](native-household-seated.md).
 
 ## Input and diagnostics
 

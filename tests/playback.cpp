@@ -222,8 +222,15 @@ int main(){try{
     {Fixture f(0,0,1,{4096,0xffffffffU,10});f.a->motions[0].frames=0xffffffffU;f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"host frame limits cannot permit clips beyond signed reference frame range");}
     {Fixture f(17,0,0);f.start();require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.progress(),"ID0 mode3 cancels carry without starting primary animation");}
-    {Fixture f;f.a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};f.start();
-     require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"missing property service does not silently succeed");}
+    for(const auto* service:{"sound","dress","undress"}){
+     Fixture f;f.a->motions[0].time_properties={{{0,{{service,"missing"}}}}};f.start();
+     require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"known missing property service does not silently succeed");}
+    for(const auto* metadata:{"foo","unrecognized-metadata"}){
+     Fixture f;f.a->motions[0].time_properties={{{0,{{metadata,"retained"},{"xevt","7"},{"lefthand","2"}}}}};
+     f.start();require(f.vm.status()==odh::VmStatus::waiting&&f.player.progress(),"unqueried metadata does not reject an original animation");
+     f.player.tick(1);f.player.tick(2);
+     require(f.vm.stack().back().arguments[0]==7&&static_cast<int>(f.player.hands()->left)==2,
+         "unqueried metadata leaves xevt and hand dispatch intact");}
     {Fixture f;f.a.reset();f.start();require(f.vm.status()==odh::VmStatus::fault,"missing clip is explicit fault");}
     {Fixture f;f.a->motions[0].time_properties={{{1000,{{"xevt","1"}}},{0,{{"xevt","2"}}}}};f.start();f.player.tick(1);
      require(f.player.progress()->queued_events==0,"unsorted later event remains blocked by file-order head");}

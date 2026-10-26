@@ -126,7 +126,7 @@ void validate_baseline(const SessionBundle& bundle,const WorldSnapshot& original
         [&](const auto& entity){return entity.id==bundle.host.runtime_avatar_id;});
     if(actor==bundle.world.entities.end()||!actor->definition||
        actor->definition->guid!=bundle.host.resident_guid||
-       (!bundle.seated_continuation&&(actor->attachment||
+       (!find_seated_session_continuation(bundle,bundle.host.runtime_avatar_id)&&(actor->attachment||
        (!actor->person_data.empty()&&actor->person_data[0]!=0))))
         throw FormatError("session resident identity or seated-action binding is unsupported");
 }
@@ -140,13 +140,14 @@ void validate_owner(const VmContext& context,const SessionRuntimeEntity& state) 
         throw FormatError("session requires an unserialized dynamic code owner");
 }
 void validate_runtime(const SessionBundle& bundle) {
-    if(bundle.seated_continuation)throw FormatError("household seated continuation is not supported by this restore profile");
+    validate_seated_session_continuations(bundle);
     if(bundle.household_roster.empty()||bundle.scheduler.faulted)
         throw FormatError("household restore requires a complete nonfaulted version-2 roster");
     for(const auto& state:bundle.runtime_entities) {
     const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
         [&](const auto& entity){return entity.id==state.id;});
-    if(actor==bundle.world.entities.end()||actor->attachment||(!actor->person_data.empty()&&actor->person_data[0]!=0))
+    const auto* seated=find_seated_session_continuation(bundle,state.id);
+    if(actor==bundle.world.entities.end()||(!seated&&(actor->attachment||(!actor->person_data.empty()&&actor->person_data[0]!=0))))
         throw FormatError("household resident seated-action binding is unsupported");
     if(state.vm.status==VmStatus::fault||state.vm.status==VmStatus::dormant)
         throw FormatError("session VM is faulted or dormant");
@@ -196,6 +197,21 @@ const std::vector<SessionDynamicActionOwner>& HouseholdSessionRestore::dynamic_a
         [&](const auto& state){return state.id==id;});
     if(found==bundle_.runtime_entities.end())throw FormatError("household dynamic owner resident is absent");
     return found->dynamic_action_owners;
+}
+
+void HouseholdSessionRestore::install_seated_continuation_owners(std::int16_t id,Vm& vm,
+    const DefinitionCandidate& candidate,const std::vector<EntryPoint>& entry_points,
+    const SessionActionRoutineLoader& load) {
+    const auto* c=seated_continuation(id);
+    if(attempted_||!c||seated_owner_vms_.count(id))
+        throw FormatError("seated resources must be verified once for their resident before execution restore");
+    const auto installed=resource_owner_vms_.find(id);
+    if(!resource_owners(id).empty()&&(installed==resource_owner_vms_.end()||installed->second!=&vm))
+        throw FormatError("seated verification requires this resident's installed resource banks");
+    const auto owners=resolve_seated_session_owners(bundle_,*c,candidate,entry_points,load);
+    // Household SEAT uses full GEXP banks, never a second legacy closure bank.
+    if(!owners.empty())throw FormatError("household seated continuation has legacy closure owners");
+    seated_owner_vms_.emplace(id,&vm);
 }
 
 const std::vector<SessionResourceCodeOwner>& HouseholdSessionRestore::resource_owners(std::int16_t id) const {
@@ -321,6 +337,11 @@ void HouseholdSessionRestore::restore_execution(const std::vector<SessionExecuti
         if(binding==bindings.end()||!dynamic_owners_verified_||
            dynamic_owner_resident_!=binding->id||dynamic_owner_vm_!=binding->vm)
             throw FormatError("routed resident dynamic action resources were not verified and installed into this VM");
+    }
+    for(const auto& binding:bindings)if(seated_continuation(binding.id)){
+        const auto verified=seated_owner_vms_.find(binding.id);
+        if(verified==seated_owner_vms_.end()||verified->second!=binding.vm)
+            throw FormatError("seated resident closures were not verified in this execution graph");
     }
     for(const auto& binding:bindings){
         if(resource_owners(binding.id).empty())continue;
