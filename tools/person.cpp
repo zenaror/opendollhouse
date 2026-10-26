@@ -501,6 +501,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::array<std::int32_t,2>> headless_window_go_here_click;
     std::optional<SavedGroundSelection> headless_window_go_here_ground;
     std::optional<std::uint64_t> headless_window_neighborhood_tick;
+    bool headless_window_neighborhood_relative=false;
     bool headless_window_stand_input_sent=false,headless_window_neighborhood_input_sent=false;
     std::optional<std::uint16_t> headless_window_neighborhood_house;
     bool neighborhood_resume_requested=false,neighborhood_resume_same_lot=false;
@@ -772,6 +773,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             headless_window_go_here=HeadlessWindowGoHere{static_cast<std::uint32_t>(x),
                 static_cast<std::uint32_t>(y),static_cast<std::uint8_t>(level),tick};
         }
+        else if(option=="--headless-window-neighborhood-relative"&&!headless_window_neighborhood_relative)
+            headless_window_neighborhood_relative=true;
         else if(option=="--headless-window-neighborhood-tick"&&!headless_window_neighborhood_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
             if(!tick)throw odh::FormatError("headless window neighborhood tick must be positive");
@@ -932,6 +935,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("--headless-window-go-here requires a later tick after window Sit/Stand and an in-range target");
     if(headless_window_neighborhood_tick&&(!headless_main||!lot_id||*headless_window_neighborhood_tick>=ticks_limit))
         throw odh::FormatError("--headless-window-neighborhood-tick requires a headless Main lot and a tick below the limit");
+    if(headless_window_neighborhood_relative&&!headless_window_neighborhood_tick)
+        throw odh::FormatError("relative neighborhood schedule requires a requested tick");
     if(headless_window_neighborhood_house&&!headless_window_neighborhood_tick)
         throw odh::FormatError("--headless-window-neighborhood-house requires --headless-window-neighborhood-tick");
     if(ui_graphics_far&&!render_window)
@@ -3623,6 +3628,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         throw odh::FormatError("simulation clock differs from restored host tick");
     if(simulation_clock)for(const auto& member:household_runtime)simulation_motives.try_emplace(member->id);
     const auto resumed_tick=ticks;
+    if(headless_window_neighborhood_relative&&headless_window_neighborhood_tick){
+        if(*headless_window_neighborhood_tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+            throw odh::FormatError("relative neighborhood schedule overflows the session clock");
+        *headless_window_neighborhood_tick+=resumed_tick;
+    }
     std::optional<std::uint64_t> scheduled_interaction_tick;
     std::optional<std::uint64_t> scheduled_cancel_interaction_tick;
     if(headless_interaction){

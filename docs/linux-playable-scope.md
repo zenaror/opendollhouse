@@ -48,8 +48,9 @@ e um caso de tradução ausente, é suficiente para o primeiro gate de idioma.
   continua obrigatório para o OpenDollhouse mesmo que o caminho de exclusão
   esteja incompleto na referência Simitone consultada.
 - **Lotes residenciais e comunidade:** abrir, jogar e salvar lotes da edição
-  base e das expansões. “O Bicho Vai Pegar” (House Party) entra nesta cobertura
-  de lotes e objetos.
+  base e das expansões. House Party (“Fazendo a Festa”) e Unleashed
+  (“O Bicho Vai Pegar”) entram nesta cobertura de lotes e objetos; nomes em
+  português na [lista oficial da EA](https://www.ea.com/pt-br/games/the-sims/the-sims-25th-anniv-edition).
 - **Destinos das expansões:** oferecer acesso jogável ao Centro (Hot Date),
   às Férias (Vacation), à Cidade Mágica (Makin' Magic) e à Cidade Estúdio
   (Superstar), incluindo ida, permanência e retorno ao lote residencial.

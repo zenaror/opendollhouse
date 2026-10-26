@@ -113,6 +113,7 @@ struct Options {
     std::optional<std::filesystem::path> status_frame;
     std::optional<unsigned> status_tick;
     std::vector<unsigned> headless_travel_houses;
+    std::optional<unsigned> headless_travel_tick;
     bool save_on_exit = false;
     bool audio_enabled=false,audio_disabled=false;
     unsigned audio_drain_ms=0;
@@ -164,6 +165,11 @@ Options parse_options(int argc, char** argv) {
         }
         if (key == "--plan-only" && !result.plan_only) {
             result.plan_only = true;
+            continue;
+        }
+        if(key=="--headless-travel-tick"&&!result.headless_travel_tick&&i+1<argc){
+            result.headless_travel_tick=parse_number(argv[++i],4095,"lot switch tick");
+            if(!*result.headless_travel_tick)throw odh::FormatError("lot switch tick must be positive");
             continue;
         }
         if (key == "--headless-stand" && !result.headless_stand) {
@@ -390,6 +396,9 @@ Options parse_options(int argc, char** argv) {
         (!result.headless_sit_object||!result.headless_stand_tick||
          result.headless_single_resident_go_here->tick<=*result.headless_stand_tick))))
         throw odh::FormatError("single-resident Go Here requires a fresh saved single-resident headless run with an in-range request tick");
+    if(result.headless_travel_tick&&(result.headless_travel_houses.empty()||!result.headless_ticks||
+       *result.headless_travel_tick>=*result.headless_ticks))
+        throw odh::FormatError("--headless-travel-tick requires lot switching and a tick below the per-visit limit");
     if (!result.headless_travel_houses.empty() &&
         (!result.headless_ticks || *result.headless_ticks < 2 || result.plan_only || result.load_session ||
          result.single_resident_session || !result.house))
@@ -413,6 +422,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
             "[--headless-stand (legacy saved single-resident seat)] "
             "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
+            "[--headless-travel-house HOUSE (repeat)] [--headless-travel-tick 1..N-1] "
             "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -1409,6 +1419,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
         travel_options.language = options.language;
         travel_options.single_resident_session = options.single_resident_session;
         travel_options.instruction_budget = options.instruction_budget;
+        travel_options.audio_enabled=options.audio_enabled;
+        travel_options.audio_disabled=options.audio_disabled;
+        travel_options.audio_drain_ms=options.audio_drain_ms;
+        travel_options.headless_travel_tick=options.headless_travel_tick;
         std::map<unsigned, std::filesystem::path> saved_lots;
         std::optional<Options> rollback_options;
         std::size_t headless_travel_index = 0;
@@ -1463,8 +1477,9 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }
 #endif
                 if (headless_travel_index < options.headless_travel_houses.size())
-                    append(plan.arguments, {"--headless-window-neighborhood-tick", "1",
-                        "--headless-window-neighborhood-house",
+                    append(plan.arguments, {"--headless-window-neighborhood-tick",
+                        std::to_string(options.headless_travel_tick.value_or(1)),
+                        "--headless-window-neighborhood-relative", "--headless-window-neighborhood-house",
                         std::to_string(options.headless_travel_houses[headless_travel_index])});
                 if(options.headless_resident_go_here){
                     const auto& action=*options.headless_resident_go_here;

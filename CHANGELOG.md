@@ -16,6 +16,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Trocas residenciais agora preservam as preferências de áudio. O roteiro de
+  validação permite jogar por um tempo em cada casa antes de trocar, inclusive
+  ao voltar a uma casa salva; o ciclo comercial Casa07→Casa05→Casa07 passou.
+
 - Primeira ligação do áudio ao jogo nativo: sons de objetos e animações podem
   usar a saída de som. Sons incompatíveis têm diagnóstico; falha ao abrir o
   dispositivo não impede a simulação. Testes confirmam sons de cadeira e vozes.

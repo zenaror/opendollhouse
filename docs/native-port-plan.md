@@ -23,7 +23,42 @@ paralelas do mesmo sistema. O código Simitone é referência para a implementa�
 não o aplicativo em que novas funções serão desenvolvidas. A ponte gerenciada
 anterior e seu trabalho pendente ficam preservados fora desta frente.
 
-## Estado real
+## Estado nativo atual (`6a3c889`, 2026-10-26)
+
+O aplicativo atual executa VM, filas, moradores, cena, entrada e persistência
+no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
+[métrica por fluxo](playable-feature-matrix.md) e
+[checkpoint com evidências](current-handoff.md).
+
+- `b23bae1`: ordens por Sim podem ser enfileiradas, canceladas e reconstruídas
+  após carga, com identidade do ator/geração/execução/UID; lista paginada e
+  controles ainda provisórios ([fila](native-player-queue.md)).
+- `40057ae`: SEAT v3 guarda vários moradores após Sit concluído, incluindo
+  famílias mistas em pé/sentadas. House05 banco173 e House07 têm gates de
+  reabertura/Stand; Sit/Stand em andamento e posturas arbitrárias continuam
+  fora desse perfil ([assentos](native-household-seated.md)).
+- `6a3c889`: GameAudio recebe pedidos BHAV e eventos de animação pela cadeia
+  HIT/XA/PCM, com saída injetada e criação de dispositivo SDL/Linux no host.
+  PCM dummy não nulo e preservação de estado/RNG são evidência de integração,
+  sem audição física ou paridade completa. Som reinicia na carga; loops,
+  espacialização, HIT geral e outros serviços seguem pendentes
+  ([áudio](native-session-audio.md)).
+
+Trocar lotes residenciais salva a origem e abre a família do destino; isso não
+transporta a família de origem nem estabelece viagem de expansão. O gate
+comercial House07→House05→House07 passou com partidas adiadas, continuação igual
+à execução contínua, Sim sentado preservado, Stand após reabrir e recuperação de
+destino inválido; opções de áudio seguem entre visitas. Ver
+[troca residencial e limites](neighborhood-return-validation.md). A janela/mapa
+ainda exige validação desse fluxo. Famílias/edição, compra/construção, atividades
+das sete expansões, CC e interface original continuam exigindo fluxos completos.
+As camadas portáveis e serviços substituíveis por plataforma continuam requisitos;
+a integração Linux não estabelece suporte nos consoles.
+
+## Histórico da integração inicial de VMExpression e estado
+
+O retrato abaixo pertence ao início da integração, anterior aos checkpoints
+nativos de filas, assentos e áudio acima; não é a lista atual de funcionalidades.
 
 O candidato anterior baseado no Simitone ainda depende principalmente de
 C#/.NET e não é o produto final. A frente atual executa diretamente no
@@ -72,6 +107,9 @@ revisão FreeSO para C/C++ como trabalho principal. Testes servem para verificar
 essas entregas; componentes isolados não substituem a migração do aplicativo.
 Cada etapa deve conectar uma funcionalidade ao programa nativo e registrar o
 que ainda falta para a paridade. Não retomar desenvolvimento da ponte C#.
+
+O roteiro abaixo registra a sequência da migração inicial. As menções à ponte
+são históricas; a execução atual e os próximos fluxos são os descritos acima.
 
 1. Migrar a execução e o estado compartilhado, aproveitando BCON e fila já usados.
    O primeiro passo executado foi `VMExpression`: cálculos e comparações nativos,

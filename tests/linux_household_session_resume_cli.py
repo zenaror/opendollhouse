@@ -159,7 +159,7 @@ def main():
         seated_env=dict(env,XDG_DATA_HOME=str(seated_data),XDG_STATE_HOME=str(base/'seated-state'))
         result=subprocess.run([binary,'--game-root',str(seated_root),'--mode','1','--house','7',
             '--resident-id','11','--headless-ticks','1','--save-session-on-exit'],capture_output=True,text=True,env=seated_env,timeout=30)
-        assert result.returncode==2 and 'household session cannot yet restore a seated or attached additional resident' in result.stderr,(result.returncode,result.stdout,result.stderr)
+        assert result.returncode==2 and 'resident seated state has no verified completed Sit binding' in result.stderr,(result.returncode,result.stdout,result.stderr)
         assert path.read_bytes()==previous,'unsupported secondary posture replaced the previous save'
         # Stop after the production log confirms immutable loaded character bytes.
         # All mutations are confined to this synthetic installation.

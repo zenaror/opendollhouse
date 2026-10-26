@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `40057ae2e953ad476e756970a0df2bda304ed669`.
+Base publicada antes da etapa atual: `6a3c88953c9eada4b9935c57f782e48f0e441605`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,39 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Primeira ligação de áudio ao jogo nativo (etapa atual)
+### Troca de casas com tempo de jogo e continuação preservada (etapa atual)
+
+O roteiro de diagnóstico aceita `--headless-travel-tick N` por visita, inclusive
+quando retorna a um lote salvo. O tick absoluto interno continua disponível;
+a soma relativa com o relógio restaurado verifica overflow. As preferências de
+áudio agora seguem para destino e rollback, corrigindo sua perda na troca.
+
+`reports/native-residential-switch/real-1/result.json` registra cinco processos
+e oito sessões com dados Complete Collection em `../referencias/The Sims`.
+Casa07→Casa05→Casa07 simula300/300 e retorna do tick300 até812. O Sim105 continua
+sentado em128; as13 seções e ator/globais/RNG/ticks igualam o controle contínuo.
+Reopen0 conserva13 seções. Stand em813 termina true, postura0, sem attachment.
+Destino98 inválido recupera Casa07 e termina nas mesmas13 seções do controle.
+Áudio dummy permanece ligado nas visitas e rollback.30 hashes originais iguais,
+processos/perfis encerrados; nenhuma tela virtual criada. Binário SHA256:
+`de878b8d77057b820a4d3f37153c10dc66f130245ef48be723123c37a56e7b56`.
+
+10 CTests passaram em `reports/native-residential-switch/attempt-1/`.
+A fixture longa ganhou um loop Sleep válido, sem aumentar orçamento; a regressão
+familiar atualizou só o diagnóstico esperado de assento sem Sit concluído.
+Matriz e plano nativo foram atualizados: C# deixou de aparecer como destino,
+assentos/fila/áudio/exclusão têm estado atual e lacunas completas ficam claras.
+House Party é Fazendo a Festa; O Bicho Vai Pegar corresponde a Unleashed.
+
+Isso troca sessões e famílias residentes; não transporta a família de origem
+nem prova viagens das expansões. O caso Legacy antigo não foi reexecutado e
+permanece histórico. A passagem real pela janela ainda falta. Detalhes em
+[neighborhood-return-validation.md](neighborhood-return-validation.md).
+Próxima frente recomendada: fechar o ciclo de família criada pelo jogador,
+incluindo sair da casa, preservar saldo/personagens/save e mudar para outra casa;
+não remover a restrição atual sem verificar ValueInArch/reembolso e arquivos.
+
+### Primeira ligação de áudio ao jogo nativo (commit `6a3c889`)
 
 O jogo usa GameAudio com saída PCM injetada; SDL/Linux ficam somente no host.
 A janela liga áudio por padrão, `--no-audio` desliga; testes sem janela precisam
