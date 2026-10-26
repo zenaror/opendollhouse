@@ -53,9 +53,10 @@ original clip contains `foo` metadata. Pinned Simitone/FreeSO revision
 `righthand`, `lefthand`, `sound`, `dress` and `undress`; other keys have no effect.
 Its animation tick consumes the event in file order in both directions.
 The native player now keeps unknown metadata within the existing property/event
-budgets and diagnostics, while applying only the implemented keys. Known missing
-services `sound`, `dress` and `undress` still fail explicitly. This does not add
-animation sound or accessory support. Tests verify metadata alongside real xevt
+budgets and diagnostics, while applying only the implemented keys. At that checkpoint, known missing
+services `sound`, `dress` and `undress` still failed explicitly. The later
+[native session audio](native-session-audio.md) adds the optional sound side
+effect; `dress` and `undress` accessory services remain incomplete. Tests verify metadata alongside real xevt
 and hand changes, and rejection of each known missing service.
 
 ## Validation scope

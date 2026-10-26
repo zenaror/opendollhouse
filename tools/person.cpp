@@ -43,6 +43,10 @@
 #include "odh/objm.hpp"
 #include "odh/playback.hpp"
 #include "odh/sound.hpp"
+#ifdef ODH_HAVE_SDL_AUDIO
+#include "game_audio.hpp"
+#include "linux_pcm_sink.hpp"
+#endif
 #include "odh/look_towards.hpp"
 #include "odh/distance_to.hpp"
 #include "odh/direction_to.hpp"
@@ -450,6 +454,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::cerr<<"[odh-profile] phase="<<phase<<" elapsed_ms="<<phase_ms<<" total_ms="<<total_ms<<'\n';
         profile_previous=now;
     };
+    bool session_audio_requested=false;
+    std::uint16_t audio_drain_ms=0;
     std::optional<Resource> avatar,semi,globals,action,second_avatar;
     std::optional<std::uint16_t> second_avatar_def;
     std::vector<PersonDefinitionSource> definition_sources;
@@ -677,6 +683,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto level=selector(argv[++n]),direction=selector(argv[++n]);
             if(level<1||level>2||direction>7)throw odh::FormatError("placement candidate level/direction outside profile");
             placement_candidate=odh::EntityPosition{x,y,static_cast<std::int16_t>(level),static_cast<std::uint8_t>(direction)};
+        }
+        else if(option=="--session-audio"&&!session_audio_requested){session_audio_requested=true;}
+        else if(option=="--audio-drain-ms"&&!audio_drain_ms&&n+1<argc){
+            audio_drain_ms=selector(argv[++n]);
+            if(!audio_drain_ms||audio_drain_ms>5000)throw odh::FormatError("audio drain outside 1..5000 milliseconds");
         }
         else if(option=="--render-window"&&!render_window){render_window=true;}
         else if(option=="--ui-graphics"&&!ui_graphics_far&&n+1<argc){
@@ -2292,15 +2303,59 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             [&](const auto& frame,std::uint32_t source,std::uint16_t id){return resolve_animation(frame,source,id,{});},odh::PlaybackLimits{},
             [&](const auto& frame,std::int16_t posture){return resolve_animation(frame,0,0,posture);});
     const auto animation_handler=playback?playback->primitive():odh::VmPrimitive{};
-    struct SoundRecord {odh::SoundRequest request;std::string status;};
+    std::string audio_startup_error,audio_driver;
+    std::uint64_t audio_drain_polls=0;
+    bool audio_drain_empty=false;
+#ifdef ODH_HAVE_SDL_AUDIO
+    std::unique_ptr<odh_host::LinuxPcmSink> audio_sink;
+    std::unique_ptr<odh_host::GameAudio> game_audio;
+    if(session_audio_requested){
+        try{
+            if(!session_context)throw odh::FormatError("session audio requires the selected game installation");
+            audio_sink=std::make_unique<odh_host::LinuxPcmSink>();
+            audio_driver=audio_sink->driver();
+            game_audio=std::make_unique<odh_host::GameAudio>(world,session_context->game_root,*audio_sink);
+        }catch(const std::exception& error){
+            game_audio.reset();audio_sink.reset();audio_startup_error=error.what();
+            if(audio_startup_error.size()>1024)audio_startup_error.resize(1024);
+        }
+    }
+#else
+    if(session_audio_requested)audio_startup_error="audio output backend unavailable in this build";
+#endif
+#ifdef ODH_HAVE_LINUX_SESSION_LOG
+    if(session_audio_requested)session_log.event(audio_startup_error.empty()?"session audio enabled":"session audio unavailable: "+audio_startup_error);
+#endif
+    const odh::SoundSink game_sound_sink=[&](const odh::SoundRequest& request){
+#ifdef ODH_HAVE_SDL_AUDIO
+        return game_audio&&game_audio->submit(request);
+#else
+        (void)request;return false;
+#endif
+    };
+    // No backend is an explicit silent mode, rather than failed playback.
+    const bool audio_backend_live=session_audio_requested&&audio_startup_error.empty();
+    struct SoundRecord {odh::SoundRequest request;std::string status;bool animation=false;std::uint64_t tick=0;};
     std::vector<SoundRecord> sound_records;
+    std::uint64_t sound_record_bytes=0;
+    const auto record_sound=[&](const odh::SoundRequest& request,const std::string& status,bool animation,std::uint64_t now){
+        const auto fields=request.source_variables?request.source_variables->fields.size():0;
+        const auto bytes=sizeof(SoundRecord)+request.name.size()+status.size()+fields*sizeof(std::int32_t);
+        if(diagnostics.retain(Diagnostic::sound,sound_records.size(),4096,bytes,sound_record_bytes,256*1024)){
+            sound_records.push_back({request,status,animation,now});sound_record_bytes+=bytes;
+        }
+    };
+    std::map<odh::CodeOwner,std::map<std::uint16_t,odh::SoundEvent>> object_sound_resources;
     const auto sound_handler=odh::sound_primitive(world,[&](const odh::VmFrame& frame,std::uint16_t id)
         ->std::optional<odh::SoundEvent>{
+        if(const auto owner=saved_action_resources.find(frame.context.code_owner);owner!=saved_action_resources.end()){
+            auto sounds=object_sound_resources.find(owner->first);
+            if(sounds==object_sound_resources.end())sounds=object_sound_resources.emplace(owner->first,load_sounds(owner->second)).first;
+            if(const auto found=sounds->second.find(id);found!=sounds->second.end())return found->second;
+        }
         for(const auto& member:household_runtime)if(frame.context.code_owner==member->id){
             const auto sound=member->sounds.find(id);
             if(sound!=member->sounds.end())return sound->second;
-            const auto semi_sound=semiglobal_sounds.find(id);
-            if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
             const auto global_sound=global_sounds.find(id);
             return global_sound!=global_sounds.end()?std::optional<odh::SoundEvent>{global_sound->second}:std::nullopt;
         }
@@ -2309,13 +2364,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         const auto private_sound=private_sounds.find(id);
         if((frame.context.code_owner==runtime_avatar_id||second_owner)&&
            private_sound!=private_sounds.end())return private_sound->second;
-        const auto semi_sound=semiglobal_sounds.find(id);
-        if(semi_sound!=semiglobal_sounds.end())return semi_sound->second;
         const auto global_sound=global_sounds.find(id);
         if(global_sound!=global_sounds.end())return global_sound->second;
         return {};
-    },{},[&](const odh::SoundRequest& request,const std::string& status){
-        if(diagnostics.retain(Diagnostic::sound,sound_records.size(),4096))sound_records.push_back({request,status});
+    },audio_backend_live?game_sound_sink:odh::SoundSink{},[&](const odh::SoundRequest& request,const std::string& status){
+        record_sound(request,status,false,ticks);
     });
     const auto look_towards_handler=odh::look_towards_primitive(world);
     const auto distance_to_handler=odh::get_distance_to_primitive(world);
@@ -2916,8 +2969,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
         if(i.opcode==48){
-            // This Linux host does not start audio playback, so there are no
-            // live sound threads to cancel. Keep sound diagnostics as history.
+            // Pinned StopAllSounds uses StackObject only for flags exactly 1.
+#ifdef ODH_HAVE_SDL_AUDIO
+            const auto owner=i.operands[0]==1?f.context.stack_object:f.context.caller;
+            if(game_audio)if(const auto* entity=world.find(owner))game_audio->stop_owner(owner,entity->generation);
+#endif
             return odh::PrimitiveOutcome{odh::PrimitiveDisposition::goto_true,{}};
         }
         if(i.opcode==8)return random_handler(f,i,t,d);
@@ -7395,6 +7451,9 @@ struct PlacementCandidateProbe {
                 throw odh::FormatError("person window preview reached runtime limit without a live Playback sample");
             if(!render_window_host&&(runtime_finished||session_policy.limit_reached(ticks-resumed_tick,total_steps())))break;
             if(render_window_host){
+#ifdef ODH_HAVE_SDL_AUDIO
+                if(game_audio)game_audio->pump();
+#endif
                 if(window_paused||runtime_finished){
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));window_deadline=std::chrono::steady_clock::now();continue;
                 }
@@ -7743,6 +7802,15 @@ struct PlacementCandidateProbe {
             host_failed=true;host_diagnostic="second avatar thread controller rejected tick";break;
         }
         const auto record_animation_event=[&](const odh::PlaybackEvent& event){
+            // Events already crossed their saved playback cursor. Resolve sound
+            // separately from the bounded diagnostic-history retention gate.
+            auto* event_vm=actor_vm_for(event.actor);
+            if(headless_second_main&&event.actor==headless_second_main->avatar.id)event_vm=second_main_vm.get();
+            if(event_vm&&event_vm->run_generation()==event.vm_generation)
+                odh::animation_sound_event(world,event,audio_backend_live?game_sound_sink:odh::SoundSink{},
+                    [&](const odh::SoundRequest& request,const std::string& status){
+                        record_sound(request,status,true,event.tick);
+                    });
             std::uint64_t bytes=sizeof(odh::PlaybackEvent);
             for(const auto& pair:event.properties)bytes+=sizeof(pair)+pair.first.size()+pair.second.size();
             if(diagnostics.retain(Diagnostic::animation,animation_events.size(),10000,
@@ -7758,6 +7826,9 @@ struct PlacementCandidateProbe {
             }
             if(member->playback)member->playback->tick(ticks,record_animation_event);
         }
+#ifdef ODH_HAVE_SDL_AUDIO
+        if(game_audio)game_audio->simulation_tick();
+#endif
         if(host_failed){
             for(auto& member:household_runtime)
                 if(member->go_here)member->go_here->observe(true,host_diagnostic);
@@ -9045,9 +9116,9 @@ struct PlacementCandidateProbe {
     std::cout<<']';
     if(playback){
         std::cout<<",\"animation_profile\":"<<json_bytes(render_evidence?
-            (render_window?"silent primary Playback in paced X11 presentation window; saved position is presentation-only; no audio or saved continuation":
-             "silent primary Playback with one headless presentation-frame export; saved position is presentation-only; no audio or saved continuation"):
-            "silent primary Playback; explicit FAR catalog and STR language1; no rig/render/audio or saved continuation")
+            (render_window?"primary Playback in paced X11 window; optional sound service is reported separately":
+             "primary Playback with one headless presentation-frame export; optional sound service is reported separately"):
+            "primary Playback; explicit FAR catalog and STR language1; optional sound service is reported separately")
             <<",\"animation_resolution_diagnostic\":"<<json_bytes(animation_resolution_diagnostic)
             <<",\"animation_progress\":";
         const auto progress=playback->progress();
@@ -9067,10 +9138,30 @@ struct PlacementCandidateProbe {
             std::cout<<"]}";
         }std::cout<<']';
     }
-    std::cout<<",\"sound_profile\":\"BHAV PlaySound opcode23 resolves explicit FWAV IDs; no audio sink, accepted requests are silent\",\"sound_events\":[";
+#ifdef ODH_HAVE_SDL_AUDIO
+    if(game_audio){
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(audio_drain_ms);
+        while(audio_drain_ms&&!game_audio->output_empty()&&std::chrono::steady_clock::now()<deadline&&audio_drain_polls<5001){
+            game_audio->pump();++audio_drain_polls;
+            if(!game_audio->output_empty())std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        audio_drain_empty=game_audio->output_empty();
+    }
+#endif
+    std::cout<<",\"session_audio\":{\"requested\":"<<(session_audio_requested?"true":"false")
+        <<",\"backend\":"<<json_bytes(audio_driver)<<",\"startup_error\":"<<json_bytes(audio_startup_error)
+        <<",\"saved_audio_policy\":\"presentation reset on load; playback event cursors retain their simulation position\""
+        <<",\"drain_ms\":"<<audio_drain_ms<<",\"drain_polls\":"<<audio_drain_polls
+        <<",\"output_empty\":"<<(audio_drain_empty?"true":"false")<<",\"runtime\":";
+#ifdef ODH_HAVE_SDL_AUDIO
+    if(game_audio)game_audio->emit_json(std::cout);else
+#endif
+    std::cout<<"null";
+    std::cout<<"},\"sound_profile\":\"nonblocking BHAV FWAV and animation sound requests; optional bounded session PCM output\",\"sound_events\":[";
     for(std::size_t n=0;n<sound_records.size();++n){if(n)std::cout<<',';const auto& record=sound_records[n];
         std::cout<<"{\"event_id\":"<<record.request.event_id<<",\"name\":"<<json_bytes(record.request.name)
-            <<",\"source\":"<<record.request.source<<",\"status\":"<<json_bytes(record.status)<<'}';
+            <<",\"source\":"<<record.request.source<<",\"origin\":"<<json_bytes(record.animation?"animation":"bhav")
+            <<",\"tick\":"<<record.tick<<",\"status\":"<<json_bytes(record.status)<<'}';
     }
     std::cout<<"],\"route_runtime\":{\"state\":"<<json_bytes(route_runtime_state)
         <<",\"reason\":"<<json_bytes(route_runtime_reason)

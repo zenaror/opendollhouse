@@ -114,6 +114,8 @@ struct Options {
     std::optional<unsigned> status_tick;
     std::vector<unsigned> headless_travel_houses;
     bool save_on_exit = false;
+    bool audio_enabled=false,audio_disabled=false;
+    unsigned audio_drain_ms=0;
     bool single_resident_session = false;
     std::optional<unsigned> headless_sit_object;
     std::optional<unsigned> headless_stand_tick;
@@ -151,6 +153,13 @@ Options parse_options(int argc, char** argv) {
         }
         if (key == "--save-session-on-exit" && !result.save_on_exit) {
             result.save_on_exit = true;
+            continue;
+        }
+        if(key=="--audio"&&!result.audio_enabled&&!result.audio_disabled){result.audio_enabled=true;continue;}
+        if(key=="--no-audio"&&!result.audio_enabled&&!result.audio_disabled){result.audio_disabled=true;continue;}
+        if(key=="--audio-drain-ms"&&i+1<argc&&!result.audio_drain_ms){
+            result.audio_drain_ms=parse_number(argv[++i],5000,"audio drain milliseconds");
+            if(!result.audio_drain_ms)throw odh::FormatError("audio drain must be positive");
             continue;
         }
         if (key == "--plan-only" && !result.plan_only) {
@@ -347,6 +356,8 @@ Options parse_options(int argc, char** argv) {
            result.headless_resident_sit)
             throw odh::FormatError("--headless-cancel-interaction requires a scheduled non-Sit action and an in-range tick not before it");
     }
+    if(result.audio_drain_ms&&(result.audio_disabled||(!result.audio_enabled&&result.headless_ticks)))
+        throw odh::FormatError("--audio-drain-ms requires enabled audio");
     if (result.headless_stand && (!result.load_session || !result.headless_ticks || result.plan_only ||
         result.headless_sit_object || !result.restore_bundle || !result.restore_bundle->seated_continuation))
         throw odh::FormatError("--headless-stand requires a bounded --load-session with verified seated continuation data");
@@ -401,6 +412,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-resident-interaction ACTOR TARGET TICK (repeat up to 32, nondecreasing ticks)] "
             "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
             "[--headless-stand (legacy saved single-resident seat)] "
+            "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
             "[--load-session PATH] [--plan-only | --headless-ticks 0..4096 [--instruction-budget 1..1000000] [--headless-status-frame PATH --headless-status-tick 1..N] [--save-session-on-exit]]");
     result.choose_language = !have_language;
 #ifdef ODH_HAVE_LINUX_USER_CONFIG
@@ -772,6 +784,8 @@ RuntimePlan build_runtime_arguments(const Options& options,
     append(args, {options.headless_ticks?"--headless-main":"--saved-world-main", "--render-saved-guid", std::to_string(resident.guid),
         "--render-floors", floors.string(), "--render-walls", walls.string(), "--render-level", "1",
         "--render-wall-mode", "up", "--render-terrain-theme", "0"});
+    if(options.audio_enabled||(!options.headless_ticks&&!options.audio_disabled))append(args,{"--session-audio"});
+    if(options.audio_drain_ms)append(args,{"--audio-drain-ms",std::to_string(options.audio_drain_ms)});
     if (options.headless_ticks)
         append(args, {"--ticks", std::to_string(*options.headless_ticks)});
     else

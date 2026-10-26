@@ -24,8 +24,14 @@ private:
 using SoundThreadFactory = std::function<std::unique_ptr<SoundThreadInstance>(
     const SoundRequest&, const SoundSourceBinding&)>;
 struct SoundThreadCollectionLimits { std::size_t threads = 64, source_fields = 256; };
+struct SoundThreadFault {
+    std::int16_t source=0;
+    std::uint64_t generation=0;
+    std::string diagnostic; // At most 1024 bytes, no retry of the failed thread.
+};
 struct SoundThreadTickReport {
     std::size_t active = 0, completed = 0, owner_invalid = 0, faulted = 0;
+    std::vector<SoundThreadFault> failures; // Bounded by admitted thread capacity.
 };
 // Single-source, nonlooping threads. World/HIT resources and referenced factory
 // inputs must outlive this collection. Single owner, no callback reentrancy.
@@ -43,9 +49,13 @@ public:
     // One tick per surviving entry. Invalid owners stop before HIT executes;
     // faults are counted separately from completion, with immediate cleanup.
     SoundThreadTickReport tick();
+    // Cancel exact submission incarnation without ticking any HIT thread.
+    std::size_t stop_owner(std::int16_t source, std::uint64_t generation);
+    void clear();
     std::size_t size() const { return entries_.size(); }
 private:
-    struct Entry { SoundSourceBinding binding; std::unique_ptr<SoundThreadInstance> instance; };
+    struct Entry { SoundSourceBinding binding; std::int16_t source; std::uint64_t generation;
+                   std::unique_ptr<SoundThreadInstance> instance; };
     const World& world_;
     SoundThreadFactory factory_;
     SoundThreadCollectionLimits limits_;

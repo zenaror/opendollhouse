@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `b23bae13d43811c9c112942b18798acb36f971cd`.
+Base publicada antes da etapa atual: `40057ae2e953ad476e756970a0df2bda304ed669`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,47 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Salvar e reabrir famílias com moradores sentados (etapa atual)
+### Primeira ligação de áudio ao jogo nativo (etapa atual)
+
+O jogo usa GameAudio com saída PCM injetada; SDL/Linux ficam somente no host.
+A janela liga áudio por padrão, `--no-audio` desliga; testes sem janela precisam
+optar por `--audio`. `--audio-drain-ms` bombeia somente PCM por até 5000 ms.
+Falha de dispositivo fica no log e mantém o jogo funcionando. BHAV procura FWAV
+no recurso exato do CodeOwner e depois em Globals, incluindo ações de objetos.
+Som de animação usa a primeira chave exata sound, geração do ator e da VM e as
+variáveis do morador. Sem backend há resultado explícito, sem falsa reprodução.
+
+GameAudio descobre grupos HSM/HOT/HIT e XA/FAR com limites, recusa nomes ambíguos
+e usa sorteio próprio sem tocar no RNG do jogo. Há um poll HIT por rodada e PCM
+separado. StopAllSounds usa o dono correto e sua geração. Estado de som não é
+salvo; Playback preserva os cursores de eventos para não repetir sons já emitidos.
+O perfil atual é de um dono por som, sem loops, espacialização ou HIT arbitrário.
+
+A cena real demonstrou que o Jump de quatro bytes dos dados TS1 precisa do
+perfil Literal32 existente: a heurística FreeSO lia register2 e falhava no branch0.
+Isso é escolha explícita de compatibilidade dos dados, sem fallback automático.
+Vozes também exigem SeqGroupKill do baseline Simitone: grupo0 interrompe somente
+as notas daquela execução, outros grupos são no-op da referência. Handles seguem
+consultáveis; novas notas respeitam o orçamento da vida inteira.
+
+31 testes passaram. Binário SHA256:
+`d725c2532dc8c650948759ed36c7165d3da501da18a66ec6bb3e097497386ffa`.
+`reports/native-session-audio/real-final/result.json`: seis processos reais em
+perfis isolados com SDL dummy. Cadeira e duas vozes geraram PCM não nulo sem
+faults. Áudio/silêncio preservam 13 seções no Sit e 12 após Stand; ator, globais,
+RNG e ticks também iguais. Reabrir sem ticks mantém 13 seções e não repete eventos
+de som. Dispositivo inválido não causa falha de jogo e conserva as 13 seções.
+29 originais intactos; processos e perfis encerrados, nenhuma tela virtual.
+O relatório anterior à destruição ainda tem dois HIT pendentes após consumir PCM;
+não confundir isso com conclusão dos scripts ou audição física comprovada.
+
+Contrato, limites, medições e falhas intermediárias em
+[native-session-audio.md](native-session-audio.md). `dress`/`undress`, compartilhamento
+global de som, outras famílias de áudio, UI original, expansões e ports continuam
+pendentes. Próximo avanço deve seguir fluxos reais e falhas demonstradas, ampliando
+serviços de animação e interação sem substituir o objetivo integral por probes.
+
+### Salvar e reabrir famílias com moradores sentados (commit `40057ae`)
 
 O save agora guarda um vínculo de assento para cada morador sentado após um Sit
 concluído. SEAT v3 contém uma lista ordenada por ator junto de HOST/HHRD e GEXP;

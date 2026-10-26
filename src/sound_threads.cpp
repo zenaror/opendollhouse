@@ -38,8 +38,22 @@ bool SoundThreadCollection::submit(const SoundRequest& request) {
     auto instance=factory_(request,*binding);
     // The factory can cause World mutations while resolving resources.
     if(!instance || !binding->valid())return false;
-    entries_.push_back({*binding,std::move(instance)});
+    entries_.push_back({*binding,request.source,request.source_variables->generation,std::move(instance)});
     return true;
+}
+std::size_t SoundThreadCollection::stop_owner(std::int16_t source,std::uint64_t generation) {
+    Operation operation(busy_);
+    std::size_t removed=0;
+    for(std::size_t i=0;i<entries_.size();) {
+        if(entries_[i].source==source && entries_[i].generation==generation) {
+            entries_.erase(entries_.begin()+static_cast<std::ptrdiff_t>(i));++removed;
+        } else ++i;
+    }
+    return removed;
+}
+void SoundThreadCollection::clear() {
+    Operation operation(busy_);
+    entries_.clear();
 }
 SoundThreadTickReport SoundThreadCollection::tick() {
     Operation operation(busy_);
@@ -52,7 +66,13 @@ SoundThreadTickReport SoundThreadCollection::tick() {
             bool completed=false,faulted=false;
             try {
                 completed=entry.instance->tick()==HitThreadTick::complete;
-            }catch(...) {faulted=true;}
+            }catch(const std::exception& error) {
+                faulted=true;
+                std::string diagnostic=error.what();if(diagnostic.size()>1024)diagnostic.resize(1024);
+                result.failures.push_back({entry.source,entry.generation,std::move(diagnostic)});
+            }catch(...) {
+                faulted=true;result.failures.push_back({entry.source,entry.generation,"nonstandard sound thread failure"});
+            }
             // A backend callback may remove the owner during this tick.
             if(!entry.binding.valid()){++result.owner_invalid;remove=true;}
             else if(faulted){++result.faulted;remove=true;}

@@ -60,10 +60,32 @@ int main(){try{
         require(collection.submit(request),"failing thread submitted");
         report=collection.tick();
         require(report.faulted==1 && !report.completed && !report.active && counts.stops==4,"backend failure distinct and cleaned");
+        require(report.failures.size()==1&&report.failures.front().source==request.source&&
+            report.failures.front().generation==request.source_variables->generation&&!report.failures.front().diagnostic.empty(),
+            "backend failure retains bounded source identity and diagnostic");
         counts.fail=false;
         require(collection.submit(request),"destructor fixture submitted");
     }
     require(counts.stops==5,"collection destruction releases remaining backend even before NoteOn");
+    {
+        odh::SoundThreadCollection collection(world,factory);
+        require(world.create(2,odh::EntityKind::avatar,{0,66,0,0}),"second sound source created");
+        auto second=request;second.source=2;
+        second.source_variables=odh::sound_source_variables(*world.find(2));
+        require(collection.submit(request) && collection.submit(second),"two cancellation owners admitted");
+        require(collection.tick().active==2,"cancellation fixtures start live notes");
+        const auto starts=counts.starts,queries=counts.queries,stops=counts.stops;
+        const auto generation=request.source_variables->generation;
+        require(collection.stop_owner(1,generation+1)==0 && collection.size()==2,"different incarnation is not cancelled");
+        require(collection.stop_owner(1,generation)==1 && collection.size()==1 && counts.stops==stops+1,
+                "exact owner cancelled through RAII");
+        require(counts.starts==starts && counts.queries==queries,"owner cancellation does not tick remaining thread");
+        collection.clear();
+        require(!collection.size() && counts.stops==stops+2 && counts.starts==starts && counts.queries==queries,
+                "clear cancels remaining owners without ticking");
+        collection.clear();
+        require(counts.stops==stops+2,"clear is idempotent");
+    }
     // Source disappearing during factory cannot publish an acquired instance.
     {
         odh::SoundThreadCollection collection(world,[&](const auto& value,const auto& binding){

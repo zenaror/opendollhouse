@@ -196,7 +196,7 @@ int main(){try{
      if(failure==0)f.reset_a.reset();
      if(failure==1){f.world.create(2,odh::EntityKind::object);f.world.attach(1,0,2);}
      if(failure==2)f.reset_a->motions[0].frames=0;
-     if(failure==3)f.reset_a->motions[0].time_properties={{{0,{{"sound","missing"}}}}};
+     if(failure==3)f.reset_a->motions[0].time_properties={{{0,{{"dress","missing"}}}}};
      if(failure==4)f.reset_a->motions[0].frames=1048577;
      const auto before=f.player.progress();const auto world_before=*f.world.find(1);
      require(f.apply(0).disposition==odh::PrimitiveDisposition::unsupported,"invalid reset resources remain explicitly unsupported");
@@ -222,7 +222,28 @@ int main(){try{
     {Fixture f(0,0,1,{4096,0xffffffffU,10});f.a->motions[0].frames=0xffffffffU;f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"host frame limits cannot permit clips beyond signed reference frame range");}
     {Fixture f(17,0,0);f.start();require(f.vm.status()==odh::VmStatus::returned_true&&!f.player.progress(),"ID0 mode3 cancels carry without starting primary animation");}
-    for(const auto* service:{"sound","dress","undress"}){
+    {Fixture f;f.a->motions[0].time_properties={{{0,{{"sound","unresolved_optional"},{"xevt","7"},{"lefthand","2"}}}}};
+     f.start();require(f.vm.status()==odh::VmStatus::waiting&&f.player.progress(),"optional sound allows silent animation preparation");
+     int notifications=0;
+     f.player.tick(1,[&](const odh::PlaybackEvent& event){++notifications;
+         require(event.actor==1&&event.actor_generation==f.world.find(1)->generation&&
+                 event.vm_generation==f.vm.run_generation()&&event.properties.front().second=="unresolved_optional",
+                 "playback stamps observer event with actual actor and VM incarnation");
+         require(static_cast<int>(f.player.hands()->left)==2,"optional sound coexists with committed hand gesture");});
+     f.player.tick(2);
+     require(notifications==1&&f.vm.stack().back().arguments[0]==7,"optional sound leaves xevt delivery intact without backend");}
+    {Fixture source(1);source.a->motions[0].frames=1;
+     source.a->motions[0].time_properties={{{0,{{"sound","once"}}}}};source.start();int before=0;
+     source.player.tick(1,[&](const auto&){++before;});
+     odh::PlaybackSnapshot saved;std::string why;
+     require(before==1&&source.player.capture_snapshot(saved,&why),"capture cursor after optional sound notification");
+     Fixture resumed(1);resumed.a->motions[0].frames=1;resumed.a->motions[0].time_properties=source.a->motions[0].time_properties;
+     require(resumed.vm.restore_snapshot(source.vm.snapshot())&&
+             resumed.player.restore_snapshot(saved,resumed.vm,[&](const auto&){return resumed.a;},&why),
+             "restore consumed optional sound cursor");
+     int after=0;resumed.player.tick(2,[&](const auto&){++after;});
+     require(after==0,"snapshot resume does not replay previously emitted optional sound");}
+    for(const auto* service:{"dress","undress"}){
      Fixture f;f.a->motions[0].time_properties={{{0,{{service,"missing"}}}}};f.start();
      require(f.vm.status()==odh::VmStatus::fault&&!f.player.progress(),"known missing property service does not silently succeed");}
     for(const auto* metadata:{"foo","unrecognized-metadata"}){

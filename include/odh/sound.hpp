@@ -37,6 +37,16 @@ struct SoundRequest {
 };
 using SoundResolver = std::function<std::optional<SoundEvent>(const VmFrame&, std::uint16_t)>;
 using SoundSink = std::function<bool(const SoundRequest&)>;
+struct PlaybackEvent;
+// Optional presentation adapter for the first exact "sound" time-property key.
+// Validates the emitting actor incarnation before capturing 29 avatar variables;
+// accepts names of 1..256 bytes without embedded NUL. No audio executes here.
+// The observer caller owns VM-generation validation and dispatch policy. Sink
+// acceptance means submission only; resource resolution, event deduplication,
+// shared ownership, spatial updates and audio persistence belong to the backend.
+// Raw BHAV-only metadata stays zero; pan/zoom are true and loop is false.
+void animation_sound_event(World&,const PlaybackEvent&,SoundSink = {},
+    std::function<void(const SoundRequest&,const std::string& status)> observed = {});
 // Live source lookup guarded by the submission's entity generation. World
 // must outlive all copies. No Entity pointer or bank snapshot is retained.
 // This is an ODH lifetime guard; it does not schedule or cancel audio.

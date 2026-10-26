@@ -230,8 +230,9 @@ std::optional<Playback::State> Playback::prepare(std::shared_ptr<const Animation
                 ++pairs;
                 // The pinned avatar handler queries known keys; other metadata
                 // (including original clips' "foo") has no simulation effect.
-                // These known services still need real native implementations.
-                if(pair.first=="sound"||pair.first=="dress"||pair.first=="undress")
+                // Appearance changes still require native implementations. Sound
+                // is an optional observer effect and does not block silent playback.
+                if(pair.first=="dress"||pair.first=="undress")
                     return reject("animation property service not implemented: "+pair.first);
                 if(pair.first=="xevt"){
                     if(counted>=limits_.events)return reject("animation queue budget exceeded");
@@ -374,7 +375,8 @@ bool Playback::tick(std::uint64_t now,const std::function<void(const PlaybackEve
             // Apply both sides before observers see the event. Raw VM banks stay untouched.
             if(const auto* value=property(event.pairs,"righthand"))hands_->value.right=*gesture(*value);
             if(const auto* value=property(event.pairs,"lefthand"))hands_->value.left=*gesture(*value);
-            notifications.push_back({now,state_->actor,event.id,event.pairs});
+            notifications.push_back({now,state_->actor,event.id,event.pairs,
+                                     state_->actor_generation,state_->vm_generation});
         }
         // Truncation matches SilentFrameProgress, without an overflowing
         // float-to-integer conversion under unusually large host limits.

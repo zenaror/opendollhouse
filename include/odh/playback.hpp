@@ -9,7 +9,10 @@ namespace odh {
 using AnimationResolver = std::function<std::shared_ptr<const AnimationHeader>(const VmFrame&,std::uint32_t source,std::uint16_t id)>;
 using AnimationResetResolver = std::function<std::shared_ptr<const AnimationHeader>(const VmFrame&,std::int16_t normalized_posture)>;
 struct PlaybackLimits {std::size_t events=4096;std::uint32_t frames=1048576;std::uint64_t ticks=1048576;};
-struct PlaybackEvent {std::uint64_t tick;std::int16_t actor;std::int32_t time_id;AnimationProperties properties;};
+struct PlaybackEvent {
+    std::uint64_t tick;std::int16_t actor;std::int32_t time_id;AnimationProperties properties;
+    std::uint64_t actor_generation=0,vm_generation=0;
+};
 // Immutable resource and actor/run identity for a render sample. The shared clip
 // remains alive independently of controller cancellation. Coordinates/poses are
 // not inferred here; callers bind the sampled actor to their World graphics.
@@ -62,7 +65,9 @@ struct PlaybackSnapshot {
 };
 // Silent animation controller. Resolver supplies explicit immutable resource
 // identity, including posture reset clips. Carry mode retains its resource but
-// is not composed by the renderer yet.
+// is not composed by the renderer yet. Sound properties are optional presentation
+// notifications: the observer decides whether to submit them. Playback owns no
+// audio resources and persists only event cursors, never active sounds.
 class Playback {
 public:
     Playback(World& world,AnimationResolver resolver,PlaybackLimits limits={},AnimationResetResolver reset_resolver={}):

@@ -6,12 +6,13 @@ std::unique_ptr<odh::SoundThreadInstance> make_xa_hit_sound(
     const odh::SoundSourceBinding& binding,odh::PcmTransport& transport,const XaPatchCatalog& catalog,
     odh::HitChooser chooser,odh::PcmControls controls,odh::HitThreadLimits limits,odh::HitJumpOperand operand,
     odh::HitArguments arguments,std::function<void(std::uint8_t)> kill_group,
-    odh::SoundEventFactoryLimits factory_limits,std::optional<odh::HitNativeControls> native_controls){
+    odh::SoundEventFactoryLimits factory_limits,std::optional<odh::HitNativeControls> native_controls,
+    odh::PcmSequenceGroupProfile group_profile){
     auto owner=std::make_unique<odh::PcmHitOwner>(transport,
         [&hot,&catalog](std::uint32_t patch,std::uint64_t allowance){
             return catalog.load(hot,patch,allowance).audio;
         },controls,limits.notes);
-    auto backend=owner->backend(std::move(kill_group));
+    auto backend=owner->backend(std::move(kill_group),group_profile);
     return odh::make_hit_sound(hit,hot,request,binding,std::move(chooser),std::move(backend),
         std::move(owner),limits,operand,arguments,factory_limits,std::move(native_controls));
 }

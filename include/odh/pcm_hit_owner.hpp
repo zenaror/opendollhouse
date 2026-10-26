@@ -3,6 +3,11 @@
 #include "odh/sound_threads.hpp"
 
 namespace odh {
+// Explicit execution profile for SeqGroupKill. The default requires a supplied
+// callback. Simitone Instance (operand zero) stops this owner's current notes;
+// nonzero operands are the pinned source's unimplemented no-op path. This is
+// neither a native global group registry nor a request to stop this owner.
+enum class PcmSequenceGroupProfile { explicit_callback, simitone_instance };
 using HitPcmLoader=std::function<XaAudio(std::uint32_t patch,std::uint64_t pcm_allowance)>;
 
 // Owns all PCM note handles started by one HIT thread. The transport and any
@@ -21,7 +26,8 @@ public:
     PcmHitOwner(PcmHitOwner&&)=delete;
     PcmHitOwner& operator=(PcmHitOwner&&)=delete;
 
-    HitNoteBackend backend(std::function<void(std::uint8_t)> kill_group={});
+    HitNoteBackend backend(std::function<void(std::uint8_t)> kill_group={},
+        PcmSequenceGroupProfile = PcmSequenceGroupProfile::explicit_callback);
     void stop() noexcept override;
     bool cleanup_failed() const noexcept{return cleanup_failed_;}
 private:

@@ -1,4 +1,5 @@
 #include "odh/sound.hpp"
+#include "odh/playback.hpp"
 #include <algorithm>
 #include <utility>
 
@@ -61,6 +62,29 @@ std::optional<std::int32_t> SoundSourceBinding::read(std::int32_t source, std::i
     const auto values = refresh();
     if (!values || static_cast<std::size_t>(field) >= values->fields.size()) return std::nullopt;
     return values->fields[static_cast<std::size_t>(field)];
+}
+
+void animation_sound_event(World& world,const PlaybackEvent& event,SoundSink sink,
+    std::function<void(const SoundRequest&,const std::string&)> observed) {
+    const std::string* name=nullptr;
+    for(const auto& pair:event.properties)if(pair.first=="sound"){name=&pair.second;break;}
+    if(!name)return;
+    SoundRequest request{0,0,0,0,event.actor,{},true,true,false,{}};
+    std::string status;
+    if(name->empty()||name->size()>256||name->find('\0')!=std::string::npos)status="invalid_event";
+    else {
+        request.name=*name;
+        const auto* actor=world.find(event.actor);
+        if(!actor)status="missing_owner";
+        else if(actor->generation!=event.actor_generation)status="stale_owner";
+        else {
+            if(actor->kind==EntityKind::avatar)
+                request.source_variables=sound_source_variables(*actor,29);
+            if(!request.source_variables)status="missing_source_variables";
+            else status=!sink?"skipped_no_backend":sink(request)?"submitted":"backend_rejected";
+        }
+    }
+    if(observed)observed(request,status);
 }
 
 VmPrimitive sound_primitive(World& world, SoundResolver resolve, SoundSink sink,

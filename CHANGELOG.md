@@ -16,6 +16,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Primeira ligação do áudio ao jogo nativo: sons de objetos e animações podem
+  usar a saída de som. Sons incompatíveis têm diagnóstico; falha ao abrir o
+  dispositivo não impede a simulação. Testes confirmam sons de cadeira e vozes.
+
 - Saves de famílias podem recuperar vários moradores após sentar, incluindo
   famílias com moradores sentados e em pé. Cada Sim pode levantar após reabrir.
   Metadados extras de animação, ignorados pelo Simitone, deixam de parar o jogo.

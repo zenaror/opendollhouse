@@ -104,6 +104,44 @@ int main(){try{
         b.stop();require(!transport.usage().handles,"other owner cleans up independently");
     }
     {
+        FakeSink sink;PcmTransport transport(sink,{1024,6,2,4});
+        unsigned loads=0;
+        PcmHitOwner owner(transport,[&](auto patch,auto){
+            ++loads;const auto sample=static_cast<std::int16_t>(patch);return audio({sample,sample});
+        },{},3);
+        PcmHitOwner other(transport,[](auto,auto){return audio({300,300});});
+        auto backend=owner.backend({},PcmSequenceGroupProfile::simitone_instance);
+        auto foreign_backend=other.backend();
+        rejects([&]{owner.backend([](std::uint8_t){},PcmSequenceGroupProfile::simitone_instance);});
+        rejects([&]{owner.backend({},static_cast<PcmSequenceGroupProfile>(99));});
+        backend.kill_group(0); // Valid before the first note and does not retire owner.
+        const auto first=backend.start(100),second=backend.start(200),foreign=foreign_backend.start(1);
+        require(first && second && foreign,"instance group fixture admits independent owned notes");
+        transport.tick();
+        require(!sink.pcm.empty() && sink.pcm.front()==600,"fixture mixed owned and foreign active notes");
+        const auto clears=sink.clears;
+        backend.kill_group(7);
+        require(sink.clears==clears && backend.status(*first)==HitNoteStatus::active &&
+                backend.status(*second)==HitNoteStatus::active,"nonzero Simitone group is a no-op");
+        backend.kill_group(0);
+        require(backend.status(*first)==HitNoteStatus::complete && backend.status(*second)==HitNoteStatus::complete,
+                "instance group stops all own notes while retaining queryable handles");
+        require(foreign_backend.status(*foreign)==HitNoteStatus::active && transport.usage().handles==3,
+                "instance group preserves foreign owner and does not release note handles");
+        transport.tick();
+        require(!sink.pcm.empty() && sink.pcm.front()==300,"pending cancelled samples discarded and foreign PCM preserved");
+        const auto later=backend.start(400);
+        require(later && backend.status(*later)==HitNoteStatus::active && loads==3,
+                "instance group permits a new note after cancellation");
+        backend.kill_group(0);
+        require(backend.status(*later)==HitNoteStatus::complete && !backend.start(500) && loads==3,
+                "instance cancellation retains cumulative lifetime note budget");
+        owner.stop();
+        require(transport.usage().handles==1 && foreign_backend.status(*foreign)==HitNoteStatus::active,
+                "final instance owner teardown releases its handles only");
+        rejects([&]{backend.kill_group(0);});
+    }
+    {
         FakeSink sink;PcmTransport transport(sink,{1024,4,2,4});
         PcmHitOwner owner(transport,[](auto,auto){return audio({1,2,3});});
         int group_effects=0;

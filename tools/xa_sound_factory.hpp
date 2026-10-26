@@ -10,10 +10,13 @@ namespace odh_host {
 // Decoding is deferred until NoteOn, with current aggregate PCM allowance.
 // Controls, HIT arguments/jump profile and group effects remain explicit;
 // PlaySound volume/sample-rate and spatial flags are not converted here.
+// simitone_instance is an explicit SeqGroupKill profile and requires an empty
+// kill_group callback; its group-zero effect belongs only to this instance.
 std::unique_ptr<odh::SoundThreadInstance> make_xa_hit_sound(
     const odh::HitFile&,const odh::Hot&,const odh::SoundRequest&,
     const odh::SoundSourceBinding&,odh::PcmTransport&,const XaPatchCatalog&,
     odh::HitChooser,odh::PcmControls,odh::HitThreadLimits,odh::HitJumpOperand,
     odh::HitArguments,std::function<void(std::uint8_t)> kill_group,
-    odh::SoundEventFactoryLimits = {}, std::optional<odh::HitNativeControls> = {});
+    odh::SoundEventFactoryLimits = {}, std::optional<odh::HitNativeControls> = {},
+    odh::PcmSequenceGroupProfile = odh::PcmSequenceGroupProfile::explicit_callback);
 }

@@ -1,4 +1,5 @@
 #include "odh/sound.hpp"
+#include "odh/playback.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -96,6 +97,68 @@ int main() {try {
             [&](const odh::SoundRequest& request){captured=request;return true;});
         require(invoke(removing).disposition==odh::PrimitiveDisposition::goto_true && captured.source_variables &&
                 captured.source_variables->fields.size()==29,"resolver mutation cannot invalidate the captured source bank");
+    }
+
+    {
+        odh::World animation_world;
+        require(animation_world.create(1,odh::EntityKind::avatar,{0,66,0,0}),"create animation sound actor");
+        require(animation_world.set_person_data(1,58,21)&&animation_world.set_person_data(1,65,1),"set animation avatar identity variables");
+        odh::PlaybackEvent event{7,1,33,{{"sound","First_Event"},{"sound","ignored_second"}},
+                                 animation_world.find(1)->generation,42};
+        odh::SoundRequest captured{};std::string result;int submitted=0,observed_count=0;
+        const auto observe=[&](const odh::SoundRequest& r,const std::string& status){captured=r;result=status;++observed_count;};
+        const odh::SoundSink accept=[&](const odh::SoundRequest& r){captured=r;++submitted;return true;};
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="submitted"&&submitted==1&&observed_count==1&&captured.name=="First_Event",
+                "animation submits first exact sound key and preserves event name spelling");
+        require(captured.source==1&&captured.pan&&captured.zoom&&!captured.loop&&captured.event_id==0&&
+                captured.sample_rate==0&&captured.flags==0&&captured.volume==0,
+                "animation source and presentation flags use no invented BHAV metadata");
+        require(captured.source_variables&&captured.source_variables->fields.size()==29&&
+                captured.source_variables->fields[0]==1&&captured.source_variables->fields[14]==21&&
+                captured.source_variables->generation==event.actor_generation,
+                "animation snapshots complete avatar HIT variables and incarnation");
+        const auto snapshot=captured.source_variables->fields;
+        require(animation_world.set_person_data(1,58,17)&&captured.source_variables->fields==snapshot,
+                "animation request owns variables after live bank changes");
+        odh::animation_sound_event(animation_world,event,{},observe);
+        require(result=="skipped_no_backend"&&submitted==1&&captured.source_variables->fields[0]==2,
+                "silent animation dispatch refreshes variables without claiming audio playback");
+        odh::animation_sound_event(animation_world,event,[](const auto&){return false;},observe);
+        require(result=="backend_rejected","animation backend refusal is observed");
+        const auto prior=observed_count;
+        event.properties={{"Sound","wrong-case"},{"xevt","7"}};
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(observed_count==prior&&submitted==1,"case-mismatched key is unqueried metadata");
+        for(const auto& name:std::vector<std::string>{{},std::string(257,'x'),std::string("ok\0tail",7)}){
+            event.properties={{"sound",name},{"sound","valid_second"}};
+            odh::animation_sound_event(animation_world,event,accept,observe);
+            require(result=="invalid_event"&&captured.name.empty()&&!captured.source_variables&&submitted==1,
+                    "invalid first sound value rejects before copy and never falls through to duplicate");
+        }
+        event.properties={{"sound",std::string(256,'x')}};
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="submitted"&&captured.name.size()==256&&submitted==2,"exact animation event name byte budget accepted");
+        event.properties={{"sound","valid"}};
+        require(animation_world.remove(1),"remove emitting avatar");
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="missing_owner"&&!captured.source_variables&&submitted==2,"missing animation actor never reaches backend");
+        require(animation_world.create(1,odh::EntityKind::avatar,{0,66,0,0}),"reuse animation actor ID");
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="stale_owner"&&!captured.source_variables&&submitted==2,"reused actor ID cannot receive an older animation sound");
+        event.actor_generation=0;
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="stale_owner"&&!captured.source_variables,"legacy unstamped event is not assigned to a live actor");
+        require(animation_world.remove(1)&&animation_world.create(1,odh::EntityKind::avatar,{0,65,0,0}),"create incomplete animation source bank");
+        event.actor_generation=animation_world.find(1)->generation;
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="missing_source_variables"&&!captured.source_variables&&submitted==2,
+                "incomplete animation source variables are explicitly diagnosed");
+        require(animation_world.remove(1)&&animation_world.create(1,odh::EntityKind::object),"replace actor with nonavatar");
+        event.actor_generation=animation_world.find(1)->generation;
+        odh::animation_sound_event(animation_world,event,accept,observe);
+        require(result=="missing_source_variables"&&!captured.source_variables&&submitted==2,
+                "animation bridge cannot invent avatar variables for an object");
     }
 
     odh::World world;world.create(1,odh::EntityKind::avatar);world.create(2,odh::EntityKind::object);

@@ -44,11 +44,27 @@ HitNoteStatus PcmHitOwner::status(std::uint64_t handle) const {
     }
     throw FormatError("PCM HIT owner: invalid note state");
 }
-HitNoteBackend PcmHitOwner::backend(std::function<void(std::uint8_t)> kill_group){
+HitNoteBackend PcmHitOwner::backend(std::function<void(std::uint8_t)> kill_group,
+                                      PcmSequenceGroupProfile profile){
+    if(profile!=PcmSequenceGroupProfile::explicit_callback &&
+       profile!=PcmSequenceGroupProfile::simitone_instance)
+        throw FormatError("PCM HIT owner: invalid sequence group profile");
+    if(profile==PcmSequenceGroupProfile::simitone_instance && kill_group)
+        throw FormatError("PCM HIT owner: sequence group profile cannot combine with callback");
     HitNoteBackend result;
     result.start=[this](std::uint32_t patch){return start(patch);};
     result.status=[this](std::uint64_t handle){return status(handle);};
-    if(kill_group)result.kill_group=[this,handler=std::move(kill_group)](std::uint8_t group){
+    if(profile==PcmSequenceGroupProfile::simitone_instance)result.kill_group=[this](std::uint8_t group){
+        CallbackGuard guard(callback_busy_);
+        if(stopped_)throw FormatError("PCM HIT owner: group callback after stop");
+        if(transport_.failed())throw FormatError("PCM HIT owner: transport failed");
+        if(group!=0)return;
+        for(const auto handle:handles_){
+            const auto state=transport_.state(handle);
+            if(state==PcmNoteState::active || state==PcmNoteState::rendered)transport_.stop(handle);
+        }
+    };
+    else if(kill_group)result.kill_group=[this,handler=std::move(kill_group)](std::uint8_t group){
         CallbackGuard guard(callback_busy_);
         if(stopped_)throw FormatError("PCM HIT owner: group callback after stop");
         if(transport_.failed())throw FormatError("PCM HIT owner: transport failed");

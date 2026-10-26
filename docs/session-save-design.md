@@ -335,3 +335,12 @@ Required SEAT v3 stores an ordered per-actor list alongside GEXP; old singular
 SEAT v1/v2 remains readable. Every seated resident verifies its own exact
 Sit/Stand resources and fresh VM before restoring execution. Arbitrary postures
 and unfinished seated actions remain outside this profile.
+
+
+## Optional native sound presentation (2026-10-26)
+
+[Native session audio](native-session-audio.md) does not change save sections.
+HIT/PCM presentation resets on load; persisted Playback event cursors prevent
+re-emitting consumed sound properties. The real gate compares audio-enabled and
+silent Sit/Stand runs, zero-tick reopen and unavailable output without changing
+World/RNG state. Pending notes are not promised to resume mid-sample.
