@@ -356,7 +356,8 @@ struct SceneRenderer::Impl {
     }
 
     odh::CompositeFrame render(const SceneState& state, const odh::WorldProjection& camera,
-                               odh::RasterOptions options,const HeadPortraitCamera* portrait=nullptr) {
+                               odh::RasterOptions options,const HeadPortraitCamera* portrait=nullptr,
+                               ScenePoseAnchors* anchors=nullptr) {
         if (state.avatar_direction > 7 || state.object_direction > 7)
             throw odh::FormatError("scene renderer direction must be 0..7");
         if (!odh::valid_hand_gesture(state.hands.left) || !odh::valid_hand_gesture(state.hands.right))
@@ -376,16 +377,34 @@ struct SceneRenderer::Impl {
         // The provider is authoritative when installed: a rejection or missing
         // result never falls back to the base rig archive. Keep its owner alive
         // through sampling/rasterization without retaining a second CFP cache.
-        std::shared_ptr<const odh::CfpPlanes> external;
-        const odh::CfpPlanes* cfp = nullptr;
-        if (state.animation) {
-            if (cfp_resolver) {
-                external = cfp_resolver(*state.animation);
-                if (!external) throw odh::FormatError("scene renderer CFP resolver returned no planes");
-                cfp = external.get();
-            } else cfp = &planes(*state.animation);
+        std::shared_ptr<const odh::CfpPlanes> external,carry_external;
+        const auto resolve_planes=[&](const odh::AnimationHeader* animation,
+                                     std::shared_ptr<const odh::CfpPlanes>& owner)->const odh::CfpPlanes* {
+            if(!animation)return nullptr;
+            if(cfp_resolver){
+                owner=cfp_resolver(*animation);
+                if(!owner)throw odh::FormatError("scene renderer CFP resolver returned no planes");
+                return owner.get();
+            }
+            return &planes(*animation);
+        };
+        const auto* cfp=resolve_planes(state.animation,external);
+        const auto* carry_cfp=resolve_planes(state.carry_animation,carry_external);
+        auto pose = odh::sample_pose(skeleton,state.animation,cfp,state.frame,state.carry_animation,carry_cfp);
+        ScenePoseAnchors prepared_anchors;
+        if(anchors){
+            constexpr std::array<const char*,3> names{"r_finger0","head","pelvis"};
+            for(const auto& bone:pose.bones)for(std::size_t slot=0;slot<names.size();++slot){
+                if(fold(bone.name)!=names[slot])continue;
+                if(prepared_anchors.avatar_slots[slot])
+                    throw odh::FormatError("scene renderer avatar slot bone is ambiguous");
+                const auto point=rotate_avatar(bone.absolute_position,state.avatar_direction);
+                prepared_anchors.avatar_slots[slot]=std::array<float,3>{
+                    finite_float(double(point[0])/3+state.avatar_tile[0]-.5),
+                    finite_float(double(point[2])/3+state.avatar_tile[1]-.5),
+                    finite_float(double(point[1])/3+state.avatar_tile[2])};
+            }
         }
-        auto pose = odh::sample_pose(skeleton, state.animation, cfp, state.frame);
         std::optional<std::array<float,3>> head_position;
         if(state.head_only) {
             std::optional<std::size_t> head;
@@ -449,7 +468,10 @@ struct SceneRenderer::Impl {
         if(portrait)options.perspective_correct=true;
         const auto base = portrait ? odh::rasterize(74,74,triangles,textures,options)
                                    : odh::rasterize(camera.width,camera.height,triangles,textures,options);
-        if (!image) return {base};
+        if (!image) {
+            if(anchors)*anchors=prepared_anchors;
+            return {base};
+        }
         std::vector<odh::SpriteLayer> layers;
         layers.reserve(image->sprites.size());
         for (const auto& reference : image->sprites) {
@@ -458,7 +480,9 @@ struct SceneRenderer::Impl {
                 finite_float((state.object_direction%2==0?state.object_direction:0) * std::acos(-1.0) / 4));
             layers.push_back({&frame, placement.x, placement.y, placement.back_depth, placement.front_depth_delta, placement.flip});
         }
-        return odh::composite_sprites(base, layers);
+        auto composite=odh::composite_sprites(base,layers);
+        if(anchors)*anchors=prepared_anchors;
+        return composite;
     }
 };
 
@@ -467,9 +491,9 @@ SceneRenderer::~SceneRenderer() = default;
 SceneRenderer::SceneRenderer(SceneRenderer&&) noexcept = default;
 SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
 
-odh::CompositeFrame SceneRenderer::render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options) {
+odh::CompositeFrame SceneRenderer::render(const SceneState& state, const odh::WorldProjection& camera, odh::RasterOptions options, ScenePoseAnchors* anchors) {
     if (!impl_) throw odh::FormatError("scene renderer used after move");
-    return impl_->render(state, camera, options);
+    return impl_->render(state,camera,options,nullptr,anchors);
 }
 
 odh::CompositeFrame SceneRenderer::render_head_portrait(const SceneState& state,

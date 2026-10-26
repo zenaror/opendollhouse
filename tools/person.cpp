@@ -3987,6 +3987,15 @@ struct PlacementCandidateProbe {
     std::optional<SavedGroundSelection> render_ground_selection;
     std::optional<std::array<std::int32_t,2>> render_menu_anchor;
     std::int16_t active_household_actor=runtime_avatar_id;
+    const auto restored_ui_state=household_restore?household_restore->ui_state():
+        session_restore?session_restore->ui_state():std::optional<odh::SessionUiState>{};
+    if(restored_ui_state){
+        const auto* selected=world.find(restored_ui_state->active_actor);
+        if(!selected||selected->kind!=odh::EntityKind::avatar||!selected->definition||
+           selected->generation!=restored_ui_state->generation||selected->definition->guid!=restored_ui_state->guid)
+            throw odh::FormatError("saved selected Sim no longer matches the restored household");
+        active_household_actor=selected->id;
+    }
     bool household_selector_open=false;
     struct CachedHouseholdPortrait {
         std::uint32_t guid=0;
@@ -6160,6 +6169,12 @@ struct PlacementCandidateProbe {
             "-family-"+std::to_string(session_context->family_number)+".odhs");
         odh::SessionBundle bundle;
         bundle.generic_execution=generic_execution;
+        if(restored_ui_state||active_household_actor!=runtime_avatar_id){
+            const auto* selected=world.find(active_household_actor);
+            if(!selected||!selected->definition)
+                throw odh::FormatError("selected Sim identity is unavailable for saving");
+            bundle.ui_state=odh::SessionUiState{selected->id,selected->generation,selected->definition->guid};
+        }
         const auto portable_owner=[&](odh::SessionResourceCodeOwner record){
             record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);
             return record;
@@ -6668,13 +6683,25 @@ struct PlacementCandidateProbe {
         }
         SceneState scene_state;scene_state.animation=sample->clip.get();scene_state.frame=sample->frame;
         scene_state.hands=sample->hands;scene_state.avatar_direction=render_direction;scene_state.avatar_tile=render_position;
+        const auto carry_clip=playback->carry_clip();scene_state.carry_animation=carry_clip.get();
         const bool track_actor_pixels=(headless_main||saved_world_main)&&render_output;
         if(track_actor_pixels)scene_state.owner_id=std::numeric_limits<std::uint16_t>::max();
         else if(render_window||headless_window_interaction)
             scene_state.owner_id=static_cast<std::uint16_t>(runtime_avatar_id);
         odh::RasterOptions scene_options;
         scene_options.record_owner_ids=track_actor_pixels||render_window||headless_window_interaction.has_value();
-        auto frame=render_renderer->render(scene_state,render_camera,scene_options);
+        ScenePoseAnchors primary_anchors;
+        auto frame=render_renderer->render(scene_state,render_camera,scene_options,&primary_anchors);
+        std::vector<SavedLotAvatarSlotAnchor> avatar_slot_anchors;
+        const auto retain_avatar_anchors=[&](std::int16_t id,std::uint64_t generation,const ScenePoseAnchors& anchors){
+            const auto* actor=world.find(id);
+            if(!actor||actor->generation!=generation||!actor->position)
+                throw odh::FormatError("animated avatar slot actor changed during capture");
+            for(std::size_t slot=0;slot<anchors.avatar_slots.size()&&slot<actor->slots.size();++slot)
+                if(anchors.avatar_slots[slot])avatar_slot_anchors.push_back({id,generation,*actor->position,
+                    slot,*anchors.avatar_slots[slot]});
+        };
+        retain_avatar_anchors(sample->actor,sample->actor_generation,primary_anchors);
         std::uint64_t actor_raster_pixels=0;
         if(track_actor_pixels&&frame.image.owner_ids.size()==frame.image.pixels.size())
             actor_raster_pixels=std::count(frame.image.owner_ids.begin(),frame.image.owner_ids.end(),scene_state.owner_id);
@@ -6684,7 +6711,7 @@ struct PlacementCandidateProbe {
                 static_cast<std::uint16_t>(render_window||headless_window_interaction||track_actor_pixels?
                     runtime_avatar_id:0)});
         }
-        if((render_window||headless_window_interaction)&&render_lot){
+        if((render_window||headless_window_interaction||track_actor_pixels)&&render_lot){
             for(auto& member:household_runtime){
                 if(!member->scene_renderer||!member->playback)continue;
                 const auto member_sample=member->playback->sample();
@@ -6695,15 +6722,33 @@ struct PlacementCandidateProbe {
                 const auto graphics=render_lot->entity_graphics(member->id);
                 SceneState member_state;member_state.animation=member_sample->clip.get();
                 member_state.frame=member_sample->frame;member_state.hands=member_sample->hands;
+                const auto member_carry=member->playback->carry_clip();member_state.carry_animation=member_carry.get();
                 member_state.avatar_direction=graphics.direction;member_state.avatar_tile=graphics.tile_position;
                 member_state.owner_id=static_cast<std::uint16_t>(member->id);
                 auto member_options=scene_options;
-                member_options.record_owner_ids=render_window||headless_window_interaction.has_value();
-                auto member_frame=member->scene_renderer->render(member_state,render_camera,member_options);
+                member_options.record_owner_ids=render_window||headless_window_interaction.has_value()||track_actor_pixels;
+                ScenePoseAnchors member_anchors;
+                auto member_frame=member->scene_renderer->render(member_state,render_camera,member_options,&member_anchors);
+                retain_avatar_anchors(member->id,member_sample->actor_generation,member_anchors);
                 avatar_layers.push_back({std::move(member_frame.image),static_cast<std::uint16_t>(member->id)});
             }
         }
         if(render_lot){
+            std::vector<SavedLotRuntimeObject> runtime_visuals;
+            runtime_visuals.reserve(created_object_origins.size());
+            for(const auto& [id,origin]:created_object_origins){
+                const auto* object=world.find(id);
+                if(!object||object->generation!=origin.generation)continue;
+                const auto* candidate=definition_index?definition_index->unique(origin.guid):nullptr;
+                if(!candidate||candidate->asset!=origin.asset||candidate->chunk_id!=origin.definition_chunk_id||
+                   (candidate->source!=origin.source&&(!session_context||
+                    odh_host::generic_session_source_key(session_context->game_root,candidate->source)!=origin.source)))
+                    throw odh::FormatError("runtime object visual no longer matches its creation resource");
+                runtime_visuals.push_back({id,origin.generation,origin.guid,
+                    candidate->source,candidate->asset,candidate->chunk_id});
+            }
+            render_lot->set_runtime_objects(runtime_visuals);
+            render_lot->set_avatar_slot_anchors(avatar_slot_anchors);
             auto lot=render_lot->render(render_camera,avatar_layers,
                 render_window||headless_window_interaction.has_value()||track_actor_pixels,
                 !render_hide_lot_objects);
@@ -8787,6 +8832,22 @@ struct PlacementCandidateProbe {
         std::cout<<",\"attachment\":";
         if(entity&&entity->attachment)std::cout<<'['<<entity->attachment->container<<','<<entity->attachment->slot<<']';
         else std::cout<<"null";
+        std::cout<<",\"rendered_pixels\":";
+        if(render_lot&&render_lot_evidence&&!render_lot_evidence->object_pick_ids.empty()){
+            const auto& pixels=render_lot_evidence->object_pick_ids;
+            const auto token=static_cast<std::uint16_t>(id);
+            const auto count=std::count(pixels.begin(),pixels.end(),token);
+            std::cout<<count<<",\"render_pick_matches\":";
+            const auto first=std::find(pixels.begin(),pixels.end(),token);
+            if(first!=pixels.end()&&render_lot_evidence->pick_width){
+                const auto pixel=static_cast<std::size_t>(first-pixels.begin());
+                const auto selected=render_lot->pick(*render_lot_evidence,
+                    static_cast<std::int32_t>(pixel%render_lot_evidence->pick_width),
+                    static_cast<std::int32_t>(pixel/render_lot_evidence->pick_width));
+                std::cout<<(selected&&entity&&selected->id==id&&selected->generation==entity->generation&&
+                    entity->definition&&selected->guid==entity->definition->guid?"true":"false");
+            }else std::cout<<"null";
+        }else std::cout<<"null,\"render_pick_matches\":null";
         std::cout<<'}';
     }
     std::cout<<"],\"remove_object_instance\":{\"pending_requests\":"<<pending_remove_objects.size()

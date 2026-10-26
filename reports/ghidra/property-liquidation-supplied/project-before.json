@@ -1,0 +1,42 @@
+{
+  "project.prp": {
+    "size": 159,
+    "mtime_ns": 1791970112488379900,
+    "sha256": "e5707b3d12f27c9422b3164ba5a67245cdb8340073766b618c39036578d2a148"
+  },
+  "user/~index.dat": {
+    "size": 59,
+    "mtime_ns": 1791970112498888300,
+    "sha256": "0a5034997e47499d758115fa580ad21d96557d2a32c89f2263bcfd3fa8a9a6e5"
+  },
+  "idata/~index.bak": {
+    "size": 92,
+    "mtime_ns": 1792937006449861814,
+    "sha256": "eaaab2adc536e5f8cb6ac4a9b7708b6beac3cb39e04b3403d6e88545387e2393"
+  },
+  "idata/~index.dat": {
+    "size": 92,
+    "mtime_ns": 1792937491916936490,
+    "sha256": "eaaab2adc536e5f8cb6ac4a9b7708b6beac3cb39e04b3403d6e88545387e2393"
+  },
+  "versioned/~index.bak": {
+    "size": 59,
+    "mtime_ns": 1792937006449371472,
+    "sha256": "0a5034997e47499d758115fa580ad21d96557d2a32c89f2263bcfd3fa8a9a6e5"
+  },
+  "versioned/~index.dat": {
+    "size": 59,
+    "mtime_ns": 1792937491916432078,
+    "sha256": "0a5034997e47499d758115fa580ad21d96557d2a32c89f2263bcfd3fa8a9a6e5"
+  },
+  "idata/00/00000000.prp": {
+    "size": 472,
+    "mtime_ns": 1791970207113828700,
+    "sha256": "61e7ac81ca2389f1f890309e4470ceea612e5192dda654472301a5a7f01c47c6"
+  },
+  "idata/00/~00000000.db/db.1.gbf": {
+    "size": 60571648,
+    "mtime_ns": 1791970210638245100,
+    "sha256": "5cc4e386bf867507b97edc6257bb6e0ae3301b0acf2a35e8bc45eeafbea5698f"
+  }
+}

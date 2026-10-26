@@ -55,9 +55,9 @@ std::string container_fixture(std::uint32_t guid,std::uint16_t type=0,bool dupli
 }
 void write(const std::filesystem::path& path,const std::string& data){std::ofstream file(path,std::ios::binary);file<<data;if(!file)throw std::runtime_error("container fixture write failed");}
 odh::DefinitionCandidate candidate(const std::filesystem::path&,std::uint32_t);
-std::string object_fixture(const odh::WorldProjection& camera,std::size_t pixel){
+std::string object_fixture(const odh::WorldProjection& camera,std::size_t pixel,std::uint32_t guid=123){
  std::string b="IFF FILE 2.5:TYPE FOLLOWED BY SIZE JAMIE DOORNBOS & MAXIS 1";b.resize(64,'\0');
- std::string objd(216,'\0');set(objd,0,138);set(objd,6,10,2);set(objd,8,2,2);set(objd,18,4,2);set(objd,28,123);set(objd,40,128,2);
+ std::string objd(216,'\0');set(objd,0,138);set(objd,6,10,2);set(objd,8,2,2);set(objd,18,4,2);set(objd,28,guid);set(objd,40,128,2);
  set(objd,128,5,2);set(objd,130,1,2);b+=chunk("OBJD",1,objd);
  std::string pal(19,'\0');set(pal,0,1);set(pal,4,1);pal[16]=static_cast<char>(210);pal[17]=10;pal[18]=20;b+=chunk("PALT",7,pal);
  std::string spr(32,'\0');set(spr,0,1000);set(spr,4,1);set(spr,8,7);set(spr,12,16);set(spr,16,1,2);set(spr,18,1,2);set(spr,20,7);
@@ -122,6 +122,78 @@ void object_checks(const Temp& temp,const std::filesystem::path& floors,const st
  check(world.create_saved_entity(2,odh::EntityKind::object,123,{},{},{},words,{},0));check(world.set_position(2,{24,24,1,0}));rejects([&]{renderer.render(camera,empty);});check(!renderer.pick(near,static_cast<std::int32_t>(wall_pixel%camera.width),static_cast<std::int32_t>(wall_pixel/camera.width)));
 }
 odh::DefinitionCandidate candidate(const std::filesystem::path& path,std::uint32_t guid){return {path.string(),"",1,{138,guid,4,0,0,false,32,10,128}};}
+void runtime_object_checks(const Temp& temp,const std::filesystem::path& floors,
+                           const odh::WorldProjection& camera,std::size_t pixel){
+ const auto original=temp.p/"runtime-original.iff",created=temp.p/"runtime-created.iff";
+ write(original,object_fixture(camera,pixel));write(created,object_fixture(camera,pixel,124));
+ odh::DefinitionIndex definitions({candidate(original,123),candidate(created,124)});
+ odh::SavedWorld saved;saved.world=std::make_unique<odh::World>();auto& world=*saved.world;
+ std::array<std::int16_t,68> words{};
+ const auto make=[&](std::int16_t id,std::uint32_t guid){
+  check(world.create_saved_entity(id,odh::EntityKind::object,guid,{},{},{},words,{},0));
+  check(world.set_position(id,{24,24,1,0}));check(world.set_dynamic_sprite_flag(id,0,true));
+ };
+ make(2,123);odh::SavedWorldEntity raw{};raw.saved.object_id=2;raw.saved.guid=123;
+ raw.common.dynamic_sprite_flags={1};saved.records.push_back(raw);
+ SavedLotRenderer renderer(architecture(),saved,definitions,floors.string(),{});
+ const auto empty=odh::rasterize(camera.width,camera.height,{},{});
+ const auto x=static_cast<std::int32_t>(pixel%camera.width),y=static_cast<std::int32_t>(pixel/camera.width);
+ const auto old=renderer.render(camera,empty,true);check(old.objects==1&&renderer.pick(old,x,y).has_value());
+ make(4,124);check(world.write({odh::routine_key(4096),0,{2,2,2,0},{},{}},3,34,1));
+ check(renderer.render(camera,empty,true).objects==0); // World alone grants no artwork authority.
+ SavedLotRuntimeObject binding{4,world.find(4)->generation,124,created.string(),"",1};
+ renderer.set_runtime_objects({binding});const auto live=renderer.render(camera,empty,true);
+ check(live.objects==1&&live.object_pick_ids[pixel]==4&&renderer.pick(live,x,y)->guid==124);
+ auto invalid=binding;invalid.asset="wrong.iff";
+ rejects([&]{renderer.set_runtime_objects({invalid});});
+ rejects([&]{renderer.set_runtime_objects({binding,binding});});
+ invalid=binding;++invalid.generation;rejects([&]{renderer.set_runtime_objects({invalid});});
+ invalid=binding;invalid.definition_chunk_id=2;rejects([&]{renderer.set_runtime_objects({invalid});});
+ check(renderer.render(camera,empty,true).object_pick_ids[pixel]==4); // Invalid refresh is atomic.
+ check(world.set_dynamic_sprite_flag(4,0,false));check(renderer.render(camera,empty,true).object_layers==0);
+ check(world.set_dynamic_sprite_flag(4,0,true));check(world.set_position(4,{32,24,1,0}));
+ check(renderer.render(camera,empty,true).image.pixels!=live.image.pixels);
+ check(world.set_position(4,{24,24,1,0}));
+ // Runtime container/SLOT placement uses this same World, with no renderer clone.
+ check(world.create_saved_entity(3,odh::EntityKind::object,123,{},{},{},words,{},1));
+ check(world.set_position(3,{24,24,1,0}));check(world.attach(3,0,4));
+ check(renderer.entity_graphics(4).container==3);
+ check(world.set_position(3,{24,24,2,0}));check(renderer.render(camera,empty,true).object_above_level==1);
+ check(world.detach(3,0));check(world.set_position(4,{24,24,1,0}));
+ // Avatar slots use the exported animated anchor, never an object-SLOT or
+ // guessed center; the visual includes terrain already and is not raised twice.
+ check(world.create(5,odh::EntityKind::avatar,{0,0,1,0}));
+ check(world.set_position(5,{24,24,1,0}));check(world.attach(5,0,4));
+ rejects([&]{(void)renderer.render(camera,empty,true);});
+ SavedLotAvatarSlotAnchor hand{5,world.find(5)->generation,*world.find(5)->position,0,{1,1,1.25f}};
+ renderer.set_avatar_slot_anchors({hand});const auto held=renderer.entity_graphics(4);
+ check(held.container==5&&held.tile_position==hand.tile_position);
+ check(renderer.render(camera,empty,true).objects==1);
+ auto stale=hand;++stale.generation;rejects([&]{renderer.set_avatar_slot_anchors({stale});});
+ check(renderer.entity_graphics(4).tile_position==hand.tile_position); // Invalid refresh is atomic.
+ check(world.set_position(5,{40,24,1,0}));rejects([&]{(void)renderer.entity_graphics(4);});
+ hand.logical_position=*world.find(5)->position;hand.tile_position[0]+=1;
+ renderer.set_avatar_slot_anchors({hand});check(renderer.entity_graphics(4).tile_position==hand.tile_position);
+ check(world.detach(5,0));renderer.set_avatar_slot_anchors({});check(world.set_position(4,{24,24,1,0}));
+ check(world.remove(4));check(renderer.render(camera,empty,true).object_removed==1);
+ check(!renderer.pick(live,x,y));renderer.set_runtime_objects({});
+ // An authenticated creation may reuse an original ID with a different GUID.
+ check(world.remove(2));make(2,124);binding.id=2;binding.generation=world.find(2)->generation;
+ renderer.set_runtime_objects({binding});const auto reused=renderer.render(camera,empty,true);
+ check(reused.objects==1&&reused.object_pick_ids[pixel]==2&&renderer.pick(reused,x,y)->guid==124);
+ check(!renderer.pick(old,x,y)); // Old pixels must not select the reused identity.
+ // Full World restore + retained old source records + GEXP-derived rebinding.
+ odh::SavedWorld reopened;reopened.records=saved.records;reopened.world=std::make_unique<odh::World>();
+ check(reopened.world->restore_snapshot(world.snapshot()));
+ SavedLotRenderer restored(architecture(),reopened,definitions,floors.string(),{});
+ restored.set_runtime_objects({binding});const auto again=restored.render(camera,empty,true);
+ check(again.objects==1&&again.image.pixels==reused.image.pixels&&restored.pick(again,x,y)->guid==124);
+ check(!restored.pick(old,x,y));
+ check(world.remove(2));make(2,124);check(!renderer.pick(reused,x,y));
+ rejects([&]{renderer.render(camera,empty,true);});
+ binding.generation=world.find(2)->generation;renderer.set_runtime_objects({binding});
+ check(renderer.render(camera,empty,true).objects==1&& !renderer.pick(reused,x,y));
+}
 void contained_checks(const Temp& temp,const std::filesystem::path& floors){
  const auto path=temp.p/"chair.iff";write(path,container_fixture(123));
  odh::DefinitionIndex definitions({candidate(path,123)});
@@ -257,6 +329,7 @@ int main(){try{
  live.depth[wall_pixel]=wall_frame.image.depth[wall_pixel]+1;
  check(walled.render(camera,live).image.pixels[wall_pixel]==wall_frame.image.pixels[wall_pixel]);
  object_checks(temp,path,walls,camera,wall_pixel);
+ runtime_object_checks(temp,path,camera,wall_pixel);
  auto custom=architecture();custom.maps.push_back({"FLRm",{}});custom.maps.back().second.entries.push_back({});
  rejects([&]{SavedLotRenderer r(std::move(custom),saved,definitions,path.string(),{},view);});
  odh::SavedWorld missing;rejects([&]{SavedLotRenderer r(architecture(),missing,definitions,path.string(),{},view);});

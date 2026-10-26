@@ -64,8 +64,10 @@ struct PlaybackSnapshot {
     std::optional<std::uint64_t> last_tick;
 };
 // Silent animation controller. Resolver supplies explicit immutable resource
-// identity, including posture reset clips. Carry mode retains its resource but
-// is not composed by the renderer yet. Sound properties are optional presentation
+// identity, including posture reset clips. Carry mode retains its resource,
+// composed by the renderer at the native carry state's static frame0.
+// Imported nonzero-frame carry states need a separate provenance profile.
+// Sound properties are optional presentation
 // notifications: the observer decides whether to submit them. Playback owns no
 // audio resources and persists only event cursors, never active sounds.
 class Playback {
@@ -83,8 +85,8 @@ public:
     bool tick(std::uint64_t,const std::function<void(const PlaybackEvent&)>& observed={});
     void cancel(); // Explicit host cancellation clears clip and any matching wait (false).
     std::optional<PlaybackProgress> progress() const;
-    // Resolved carry resource retained by AnimMode 2; the renderer does not
-    // compose this secondary pose yet.
+    // Resolved carry resource retained by AnimMode 2; the renderer
+    // composes this secondary pose after the ordinary animation at frame0.
     std::shared_ptr<const AnimationHeader> carry_clip() const {return carry_clip_;}
     // Read-only. Rejects stale actor/run/wait identity before the next tick;
     // terminal nonblocking loops remain valid while their VM run is unchanged.

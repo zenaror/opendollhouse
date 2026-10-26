@@ -125,5 +125,21 @@ int main(){try{
     {Clip c;c.animation.translations=200000;c.animation.rotations=200000;reject([&]{c.sample(s);},"combined translation and rotation plane budget rejected before allocation");}
     {auto h=skeleton();h.name.resize(4194305,'x');reject([&]{odh::sample_pose(h);},"copied text budget checked");}
     {auto h=skeleton();h.bones[1].parent.resize(4194305,'x');reject([&]{odh::sample_pose(h);},"manual parent text budget checked before hierarchy lookup");}
+    {auto rig=skeleton();rig.bones.push_back(bone("OTHER","ROOT",{2,4,6}));
+     Clip ordinary;ordinary.translations({{2,3,4}});ordinary.rotations({{0,0,0,-1}});
+     ordinary.motion("ROOT",1,0);ordinary.motion("CHILD",1,-1,0);
+     Clip carry;carry.translations({{8,9,10},{80,90,100}});carry.motion("CHILD",2,0);
+     const auto before=ordinary.sample(rig);
+     const auto combined=odh::sample_pose(rig,&ordinary.animation,&ordinary.cfp,0,&carry.animation,&carry.cfp);
+     require(combined.bones[0].translation==before.bones[0].translation,"carry does not reset ordinary root");
+     require(combined.bones[1].translation==std::array<float,3>{-8,9,10},"carry samples frame0 at weight1");
+     require(combined.bones[1].rotation==before.bones[1].rotation,"carry translation leaves ordinary rotation");
+     require(combined.bones[2].absolute_matrix==before.bones[2].absolute_matrix,"unmentioned branch unaffected by carry");
+     close(combined.bones[1].absolute_position[0],-10,"global matrix rebuilt after local carry overlay");
+     carry.animation.motions[0].has_translation=0;carry.animation.motions[0].first_translation=-1;
+     const auto inactive=odh::sample_pose(rig,&ordinary.animation,&ordinary.cfp,0,&carry.animation,&carry.cfp);
+     require(inactive.bones[1].translation==before.bones[1].translation,"inactive carry channel preserves ordinary pose");
+     reject([&]{odh::sample_pose(rig,nullptr,nullptr,0,&carry.animation,nullptr);},"carry requires paired CFP");
+     carry.cfp.bits[0].clear();reject([&]{odh::sample_pose(rig,nullptr,nullptr,0,&carry.animation,&carry.cfp);},"carry plane bounds validated");}
     std::cout<<checks<<" pose checks passed (synthetic CPU transforms only)\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Pose test failed: "<<e.what()<<'\n';return 1;}}

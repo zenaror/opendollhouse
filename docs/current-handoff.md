@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `9ec4546c0b7648a2a695c24d27ff02a037472e8c`.
+Base publicada antes da etapa atual: `6719794957df71afd6ffeb781c6cee452225cbfe`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -39,7 +39,49 @@ VMExpression abaixo foi implementada e validada; o port completo segue incomplet
 
 ## Checkpoint nativo validado (2026-10-26)
 
-### Gestão pela janela sem reiniciar o aplicativo (etapa atual)
+### Objetos criados, comida na mão e seleção persistida (etapa atual)
+
+Renderer recebe origens de objetos criados no World/GEXP, com ID/geração/GUID e
+recurso exatos. Reuso de ID substitui o desenho antigo; o frame guarda identidade
+para não selecionar outra entidade por pixels velhos. Carry frame0 sobrepõe só
+canais animados da pose normal; SceneRenderer desenha e exporta R_FINGER0/HEAD/
+PELVIS dessa mesma pose. SavedLotRenderer valida âncoras por ator/geração/posição
+lógica e vínculo recíproco; altura do terreno entra uma só vez, direção/depth do
+objeto seguem normais. Sem centrar comida artificialmente ou forçar camada frontal.
+
+O teste também achou seleção de Sim perdida na retomada: painel105 virava137,
+apesar dos12 estados de jogo iguais. UISTv1 opcional salva ator/geração/GUID com
+validação World/HHRD; não muda HOST/VM principal. Saves antigos semUIST ficam
+byte-idênticos se seleção continua default; UIST existente é preservado.
+
+`reports/native-runtime-object-visuals/attempt-5/result.json` passou: comida180/
+GUID4076987253 criada em512 e ligada ao ator105; janela real800x600 apósretomar
+mostra528pixels e pick exato. Zero reopen archiveinteiroigual. Retomada513 bate
+controle contínuo em13seções, ator/globals/RNG/tick e PNGinteiro, sem recortarHUD.
+Em4096 comida ausente doWorld/registry eCTRL105 vazio, completiontrue em643.
+116originais intactos, seis jogos eXvfb encerrados, perfis removidos. Binário
+`a02ef9c37dfde50a51831d69e3716d558805cf4c6c95b8d3c17cf049c906d9ba`.
+17CTestspassaram apósbuildsABI; revisões independentes sembloqueio. Fonte/gates/
+limites em `docs/native-runtime-object-visuals.md`.
+
+Persistência do imóvel após saída da família ainda NÃO implementada. A auditoria
+do manual EA confirma recebimento da venda da casa e bens; não conservar todos
+os móveis nem usar refundzero doSimitone como regraoriginal. Fórmula/objetos que
+ficam precisam prova. `docs/native-property-persistence-design.md` define head de
+propriedade e uma operação única no overlay para vacancy/refund/head; nunca dois
+commits independentes. `docs/property-liquidation-reference-audit.md` separa
+manual, omissões Simitone e GhidraLegacy inconclusivo por imagem protegida.
+Auditoria estática da amostra de comparação encontrou filtro de objetos de
+compra/atores, retenção de objetos de construção e flag especial, atualização
+do valor patrimonial no save e reembolso único no despejo. Soma inclui fator de
+arquitetura configurável, default próximo de0.7. Relatório compartilhável em
+`reports/ghidra/property-liquidation-supplied/audit-summary.md`; decompilações
+intermediárias não publicadas. Nenhum executável comercial rodado; hashes dos
+dados/projeto Ghidra iguais, embora quatro índices tenham datas atualizadas
+pelo Ghidra. Fórmula completa, master/multitile, containment e falhas de escrita
+ainda exigem validação antes da política nativa de venda.
+
+### Gestão pela janela sem reiniciar o aplicativo (checkpoint anterior)
 
 No lote, M abre o mapa vivo; E ou botão pede gestão. Pedido tipado não escreve
 no overlay: `person.cpp` salva e retorna, destruindo runtime/VMs antes de abrir

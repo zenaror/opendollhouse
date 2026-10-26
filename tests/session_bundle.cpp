@@ -544,7 +544,68 @@ void generic_execution_cases() {
         interactions.actions.front().uid==3,"push-head queue order and prior completion UID are preserved");
 }
 
+void ui_state_cases() {
+    const std::array<char,4> id{{'U','I','S','T'}};
+    auto legacy=fixture();
+    require(!odh::decode_session_bundle(odh::encode_session_bundle(legacy)).ui_state,
+        "old absent UI state must remain absent");
+    for(auto& actor:legacy.world.entities)
+        actor.definition=odh::EntityType{legacy.host.resident_guid+static_cast<std::uint32_t>(actor.id-1),std::nullopt};
+    legacy.ui_state=odh::SessionUiState{1,legacy.world.entities[0].generation,legacy.host.resident_guid};
+    const auto old=odh::decode_session_bundle(odh::encode_session_bundle(legacy));
+    require(old.ui_state&&old.ui_state->active_actor==1,"legacy HOST resident UI selection roundtrip");
+    auto outside=legacy;outside.ui_state=odh::SessionUiState{2,legacy.world.entities[1].generation,legacy.world.entities[1].definition->guid};
+    rejects([&]{odh::encode_session_bundle(outside);},"legacy UI selected non-HOST family actor");
+    auto household=legacy;
+    for(const auto& actor:household.world.entities){
+        odh::SessionHouseholdMember member;
+        member.id=actor.id;member.generation=actor.generation;member.guid=actor.definition->guid;
+        member.neighbor_id=static_cast<std::int16_t>(household.host.resident_neighbor_id+actor.id-1);
+        member.object_definition_id=128;member.character_asset="PlayerData/Characters/User"+std::to_string(actor.id)+".iff";
+        member.character_fingerprint.fill(0x61);household.household_roster.push_back(member);
+    }
+    household.ui_state=odh::SessionUiState{2,household.world.entities[1].generation,household.world.entities[1].definition->guid};
+    const auto bytes=odh::encode_session_bundle(household);
+    const auto decoded=odh::decode_session_bundle(bytes);
+    require(decoded.ui_state&&decoded.ui_state->active_actor==2&&
+        decoded.ui_state->generation==household.ui_state->generation&&decoded.ui_state->guid==household.ui_state->guid,
+        "nonprimary household selection roundtrip");
+    require(odh::encode_session_bundle(decoded)==bytes,"UI state roundtrip byte stable");
+    auto bad=household;++bad.ui_state->generation;
+    rejects([&]{odh::encode_session_bundle(bad);},"stale UI actor generation accepted");
+    bad=household;++bad.ui_state->guid;
+    rejects([&]{odh::encode_session_bundle(bad);},"wrong UI actor GUID accepted");
+    bad=household;bad.ui_state->active_actor=3;
+    rejects([&]{odh::encode_session_bundle(bad);},"missing UI actor accepted");
+    bad=household;bad.world.entities[1].ui_ghost=true;
+    rejects([&]{odh::encode_session_bundle(bad);},"ghost UI actor accepted");
+    bad=household;bad.world.entities[1].kind=odh::EntityKind::object;
+    rejects([&]{odh::encode_session_bundle(bad);},"object UI selection accepted");
+    auto archive=odh::decode_session_archive(bytes);
+    auto selected=std::find_if(archive.sections.begin(),archive.sections.end(),[&](const auto& section){return section.id==id;});
+    require(selected!=archive.sections.end()&&!selected->required&&selected->data.size()==16,
+        "UIST must be optional exact v1 extent");
+    selected->data[4]^=1;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"decoded stale UI generation accepted");
+    archive=odh::decode_session_archive(bytes);selected=std::find_if(archive.sections.begin(),archive.sections.end(),[&](const auto& section){return section.id==id;});
+    selected->data.pop_back();
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"truncated UIST accepted");
+    archive=odh::decode_session_archive(bytes);selected=std::find_if(archive.sections.begin(),archive.sections.end(),[&](const auto& section){return section.id==id;});
+    selected->data[0]=2;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"unknown UIST version accepted");
+    archive=odh::decode_session_archive(bytes);selected=std::find_if(archive.sections.begin(),archive.sections.end(),[&](const auto& section){return section.id==id;});
+    selected->required=true;
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"required UIST accepted");
+    selected->required=false;archive.sections.push_back(*selected);
+    rejects([&]{odh::decode_session_bundle(odh::encode_session_archive(archive));},"duplicate UIST accepted");
+    archive=odh::decode_session_archive(bytes);
+    archive.sections.erase(std::remove_if(archive.sections.begin(),archive.sections.end(),[&](const auto& section){return section.id==id;}),archive.sections.end());
+    const auto absent=odh::decode_session_bundle(odh::encode_session_archive(archive));
+    require(!absent.ui_state&&absent.household_roster.size()==2,"older household archive without UIST accepted");
+}
+
 int main() {
+    ui_state_cases();
     generic_execution_cases();
     {
         auto managed=fixture();managed.generic_execution=true;

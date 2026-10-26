@@ -30,6 +30,10 @@ no motor C++ existente, sem hospedar C#. A cobertura continua parcial:
 [métrica por fluxo](playable-feature-matrix.md) e
 [checkpoint com evidências](current-handoff.md).
 
+- Objetos criados ganham representação e seleção autenticadas no renderer;
+  comida na mão usa pose normal+carry e âncoras do mesmo frame. Geladeira até
+  consumo, save/reopen e imagem contínua iguais passaram; seleção do Sim usa
+  UIST opcional ([visuais e limites](native-runtime-object-visuals.md)).
 - `b23bae1`: ordens por Sim podem ser enfileiradas, canceladas e reconstruídas
   após carga, com identidade do ator/geração/execução/UID; lista paginada e
   controles ainda provisórios ([fila](native-player-queue.md)).

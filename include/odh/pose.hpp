@@ -28,6 +28,10 @@ struct SkeletonPose {
 // frames split into floor/fraction before clamping to the clip frame count.
 // Invalid hierarchy, resource pairing, ranges, nonfinite values or overflow
 // throws FormatError before returning a pose. Inputs are never mutated.
+// Optional carry channels override only their active local transforms at frame0,
+// weight1 after the ordinary clip, before rebuilding global matrices.
 SkeletonPose sample_pose(const Skeleton&,const AnimationHeader* =nullptr,
-                         const CfpPlanes* =nullptr,double frame=0);
+                         const CfpPlanes* =nullptr,double frame=0,
+                         const AnimationHeader* carry_animation=nullptr,
+                         const CfpPlanes* carry_cfp=nullptr);
 }

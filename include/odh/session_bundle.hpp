@@ -174,6 +174,13 @@ struct SessionFamilyLease {
     std::uint16_t family_chunk_id = 0;
 };
 
+// Optional presentation selection; it grants no simulation/family authority.
+struct SessionUiState {
+    std::int16_t active_actor = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t guid = 0;
+};
+
 // Values only. The host must rebuild matching resources, programs, callbacks,
 // and presentation state before applying these snapshots to a fresh session.
 struct SessionBundle {
@@ -200,6 +207,8 @@ struct SessionBundle {
     // Required FAML v1 when present. The overlay owns the checkpoint head;
     // this identifies the occupancy, not permission to overwrite a newer save.
     std::optional<SessionFamilyLease> family_lease;
+    // Optional UIST v1; absent archives retain the host's legacy selection fallback.
+    std::optional<SessionUiState> ui_state;
 };
 
 struct SessionBundleLimits {

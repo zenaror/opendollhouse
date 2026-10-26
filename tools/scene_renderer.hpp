@@ -40,6 +40,16 @@ struct SceneState {
     // Simitone's head icon leaves the HEAD bone intact and collapses every
     // other absolute bone transform to zero. Camera framing remains caller-owned.
     bool head_only = false;
+    // Native fresh carry profile: frame0 weight1 local-channel overlay after
+    // the ordinary clip. Imported nonzero carry frames are not represented.
+    const odh::AnimationHeader* carry_animation = nullptr;
+};
+
+// Final same-draw scale-one bone attachment points in graphics tile coordinates.
+// Slot order is R_FINGER0, HEAD, PELVIS; missing bones remain absent.
+// Positions already include SceneState.avatar_tile (and its terrain offset).
+struct ScenePoseAnchors {
+    std::array<std::optional<std::array<float,3>>,3> avatar_slots{};
 };
 
 // CPU portrait profile based on Simitone's UIIconCache defaults. Projection is
@@ -78,7 +88,7 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     odh::CompositeFrame render(const SceneState&, const odh::WorldProjection&,
-                               odh::RasterOptions = {});
+                               odh::RasterOptions = {}, ScenePoseAnchors* anchors=nullptr);
     // Fixed 74x74 portrait view around HEAD; always applies the head-only pose.
     odh::CompositeFrame render_head_portrait(const SceneState&,
         HeadPortraitCamera = {}, odh::RasterOptions = {});

@@ -28,6 +28,7 @@ constexpr std::array<char,4> object_vm_id{{'O','B','V','M'}};
 constexpr std::array<char,4> dynamic_owner_id{{'D','Y','N','O'}};
 constexpr std::array<char,4> generic_execution_id{{'G','E','X','P'}};
 constexpr std::array<char,4> family_lease_id{{'F','A','M','L'}};
+constexpr std::array<char,4> ui_state_id{{'U','I','S','T'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
 constexpr std::uint16_t payload_version = 1;
 static_assert(sizeof(float)==sizeof(std::uint32_t),"session Playback codec requires 32-bit float");
@@ -1267,6 +1268,33 @@ SessionFamilyLease decode_family_lease(const std::vector<std::uint8_t>& data) {
     for(auto& b:lease.family_identity)b=r.u8();
     return lease;
 }
+void validate_ui_state(const SessionBundle& bundle) {
+    if(!bundle.ui_state)return;
+    const auto& ui=*bundle.ui_state;
+    const auto actor=std::find_if(bundle.world.entities.begin(),bundle.world.entities.end(),
+        [&](const auto& entity){return entity.id==ui.active_actor;});
+    if(ui.active_actor<=0||!ui.generation||!ui.guid||actor==bundle.world.entities.end()||
+       actor->kind!=EntityKind::avatar||actor->ui_ghost||actor->generation!=ui.generation||
+       !actor->definition||actor->definition->guid!=ui.guid)
+        throw FormatError("session UI selected avatar is missing or stale");
+    if(bundle.household_roster.empty()){
+        if(ui.active_actor!=bundle.host.runtime_avatar_id||ui.guid!=bundle.host.resident_guid)
+            throw FormatError("legacy session UI selection differs from HOST resident");
+    }else{
+        const auto member=std::find_if(bundle.household_roster.begin(),bundle.household_roster.end(),
+            [&](const auto& entry){return entry.id==ui.active_actor&&entry.generation==ui.generation&&entry.guid==ui.guid;});
+        if(member==bundle.household_roster.end())
+            throw FormatError("session UI selection is outside household roster");
+    }
+}
+std::vector<std::uint8_t> encode_ui_state(const SessionUiState& ui,std::size_t limit) {
+    Writer w(limit);w.u16(1);w.i16(ui.active_actor);w.u64(ui.generation);w.u32(ui.guid);return w.take();
+}
+SessionUiState decode_ui_state(const std::vector<std::uint8_t>& data) {
+    if(data.size()!=16)throw FormatError("invalid session UI state extent");
+    Reader r(data);if(r.u16()!=1)throw FormatError("unsupported session UI state version");
+    SessionUiState ui;ui.active_actor=r.i16();ui.generation=r.u64();ui.guid=r.u32();return ui;
+}
 void validate_simulation(const SessionBundle& bundle) {
     if(!bundle.simulation)return;
     const auto& sim=*bundle.simulation;Ts1Clock clock;
@@ -1370,7 +1398,7 @@ void decode_routes(const std::vector<std::uint8_t>& bytes,std::vector<SessionRun
 bool recognized(const std::array<char,4>& id) {
     return id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||
-           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==family_lease_id;
+           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==family_lease_id||id==ui_state_id;
 }
 
 void write_sleep_snapshot(Writer& w,const SleepSnapshot& state) {
@@ -1461,6 +1489,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     validate_links(bundle,limits);
     validate_simulation(bundle);
     validate_family_lease(bundle);
+    validate_ui_state(bundle);
     SessionArchive archive;
     archive.sections={
         {meta_id,true,encode_session_resource_identity(bundle.resources)},
@@ -1489,6 +1518,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
     if(bundle.generic_execution)archive.sections.push_back({generic_execution_id,true,encode_generic_execution(bundle,limits)});
     if(bundle.family_lease)archive.sections.push_back({family_lease_id,true,encode_family_lease(*bundle.family_lease,limits.archive.max_section_bytes)});
+    if(bundle.ui_state)archive.sections.push_back({ui_state_id,false,encode_ui_state(*bundle.ui_state,limits.archive.max_section_bytes)});
     return encode_session_archive(archive,limits.archive);
 }
 
@@ -1551,9 +1581,14 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
         if(!section.required)throw FormatError("family lease section must be required");
         result.family_lease=decode_family_lease(section.data);
     }
+    for(const auto& section:archive.sections)if(section.id==ui_state_id){
+        if(section.required)throw FormatError("session UI state section must remain optional");
+        result.ui_state=decode_ui_state(section.data);
+    }
     validate_links(result,limits);
     validate_simulation(result);
     validate_family_lease(result);
+    validate_ui_state(result);
     return result;
 }
 

@@ -7,6 +7,13 @@ validação indicados por versão.
 
 ### Corrigido
 
+- Objetos criados durante a partida agora podem aparecer e ser selecionados,
+  inclusive a comida na mão do Sim. O desenho usa a mesma animação do corpo e
+  continua após salvar/reabrir; objetos removidos não deixam seleções antigas.
+  A escolha do Sim no painel também é preservada. O ciclo da geladeira passou
+  até a comida ser consumida, com continuação idêntica à execução sem interrupção.
+  Veja `docs/native-runtime-object-visuals.md`.
+
 - A compra de uma casa agora verifica se a partida pode ser salva e restaurada
   antes de confirmar a cobrança. O retorno imediato à Casa 07 também prepara
   corretamente o controlador do telefone para o primeiro salvamento.

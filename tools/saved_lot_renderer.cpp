@@ -3,6 +3,7 @@
 #include "odh/compositor.hpp"
 #include "odh/ground_owner.hpp"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace {
@@ -121,6 +122,54 @@ SavedLotRenderer::SavedLotRenderer(SavedArchitectureResource architecture,
     if(walls)walls_=std::make_unique<SavedWallRenderer>(*walls,definitions_,material_catalog(materials));
 }
 
+void SavedLotRenderer::set_runtime_objects(const std::vector<SavedLotRuntimeObject>& objects) {
+    if(objects.size()>4096)
+        throw odh::FormatError("live runtime object binding budget exceeded");
+    std::map<std::int16_t,SavedLotRuntimeObject> replacement;
+    std::size_t names=0;
+    for(const auto& object:objects){
+        if(object.id<=0||!object.generation||!object.guid||object.source.empty()||
+           !object.definition_chunk_id||replacement.count(object.id))
+            throw odh::FormatError("live runtime object binding identity invalid");
+        if(object.source.size()>256*1024-names)
+            throw odh::FormatError("live runtime object binding provenance budget exceeded");
+        names+=object.source.size();
+        if(object.asset.size()>256*1024-names)
+            throw odh::FormatError("live runtime object binding provenance budget exceeded");
+        names+=object.asset.size();
+        const auto* entity=saved_.world->find(object.id);
+        const auto* candidate=definitions_.unique(object.guid);
+        if(!entity||entity->kind!=odh::EntityKind::object||entity->ui_ghost||
+           entity->generation!=object.generation||!entity->definition||
+           entity->definition->guid!=object.guid||!candidate||
+           candidate->source!=object.source||candidate->asset!=object.asset||
+           candidate->chunk_id!=object.definition_chunk_id||candidate->definition.is_multitile)
+            throw odh::FormatError("live runtime object binding World/resource mismatch");
+        replacement.emplace(object.id,object);
+    }
+    std::size_t total=object_generations_.size();
+    for(const auto& [id,binding]:replacement){
+        (void)binding;if(!object_generations_.count(id))++total;
+    }
+    if(total>4096)throw odh::FormatError("live runtime and saved object binding budget exceeded");
+    runtime_objects_.swap(replacement);
+}
+
+void SavedLotRenderer::set_avatar_slot_anchors(const std::vector<SavedLotAvatarSlotAnchor>& anchors) {
+    if(anchors.size()>64*3)throw odh::FormatError("avatar visual slot anchor budget exceeded");
+    std::map<std::pair<std::int16_t,std::size_t>,SavedLotAvatarSlotAnchor> replacement;
+    for(const auto& anchor:anchors){
+        const auto* actor=saved_.world->find(anchor.actor);
+        if(!actor||actor->kind!=odh::EntityKind::avatar||actor->generation!=anchor.generation||
+           !actor->position||!(*actor->position==anchor.logical_position)||anchor.slot>=3||
+           anchor.slot>=actor->slots.size()||
+           !std::all_of(anchor.tile_position.begin(),anchor.tile_position.end(),[](float n){return std::isfinite(n);})||
+           !replacement.emplace(std::make_pair(anchor.actor,anchor.slot),anchor).second)
+            throw odh::FormatError("avatar visual slot anchor identity or pose is invalid");
+    }
+    avatar_slot_anchors_.swap(replacement);
+}
+
 odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
     auto graphics=entity_graphics(id);
     const auto* entity=saved_.world->find(graphics.container?graphics.container:id);
@@ -131,13 +180,26 @@ odh::GraphicsEntity SavedLotRenderer::avatar(std::int16_t id) {
 }
 
 odh::GraphicsEntity SavedLotRenderer::entity_graphics(std::int16_t id) {
+    const auto* child=saved_.world->find(id);
+    const auto* parent=child&&child->attachment?saved_.world->find(child->attachment->container):nullptr;
+    if(parent&&parent->kind==odh::EntityKind::avatar){
+        const auto slot=child->attachment->slot;
+        const auto anchor=avatar_slot_anchors_.find({parent->id,slot});
+        if(child->kind!=odh::EntityKind::object||!child->position||child->position->direction>7||
+           !parent->position||slot>=parent->slots.size()||parent->slots[slot]!=id||
+           anchor==avatar_slot_anchors_.end()||anchor->second.generation!=parent->generation||
+           !(anchor->second.logical_position==*parent->position))
+            throw odh::FormatError("held object has no matching animated avatar slot anchor");
+        return {id,child->generation,child->kind,anchor->second.tile_position,
+            child->position->direction,parent->id};
+    }
     auto graphics=graphics_.entity(*saved_.world,id);
     const auto* entity=saved_.world->find(graphics.container?graphics.container:id);
     if(!entity||!entity->position)
         throw odh::FormatError("live saved lot graphics anchor unavailable");
     std::array<float,2> xy{static_cast<float>(entity->position->x)/16,static_cast<float>(entity->position->y)/16};
     if(entity->kind==odh::EntityKind::object){
-        const auto center=group_centers_.find(entity->id);if(center!=group_centers_.end())xy=center->second;
+        const auto center=group_centers_.find(entity->id);if(center!=group_centers_.end()&&!runtime_objects_.count(entity->id))xy=center->second;
     }
     graphics.tile_position[2]+=odh::terrain_interp_altitude(render_architecture(),xy[0],xy[1]);
     return graphics;
@@ -223,35 +285,44 @@ SavedLotFrame SavedLotRenderer::render(const odh::WorldProjection& camera,
         return result;
     }
     std::vector<SavedObjectVisual> visuals;
-    for(const auto& raw:saved_.records){
-        const auto id=static_cast<std::int16_t>(raw.saved.object_id);
-        const auto identity=object_generations_.find(id);
-        if(identity==object_generations_.end())continue;
+    const auto append=[&](std::int16_t id,std::uint64_t generation,std::uint32_t guid,
+                          const std::vector<std::int16_t>& flags){
         const auto* entity=saved_.world->find(id);
-        if(!entity){++result.object_removed;continue;}
-        if(entity->generation!=identity->second||entity->kind!=odh::EntityKind::object||
-           !entity->definition||entity->definition->guid!=raw.saved.guid)
+        if(!entity){++result.object_removed;return;}
+        if(entity->generation!=generation||entity->kind!=odh::EntityKind::object||
+           entity->ui_ghost||!entity->definition||entity->definition->guid!=guid)
             throw odh::FormatError("live saved object identity changed; refresh renderer");
-        if(!entity->position){++result.object_outside;continue;}
+        if(!entity->position){++result.object_outside;return;}
         const odh::VmFrame frame{odh::routine_key(4096),0,{id,id,id,0},{},{}};
         const auto hidden=saved_.world->read(frame,3,34),graphic=saved_.world->read(frame,3,0);
         if(!hidden||!graphic)throw odh::FormatError("live saved object visibility/graphic unavailable");
-        if(*hidden){++result.object_hidden;continue;}
-        const auto graphics=graphics_.entity(*saved_.world,id);
+        if(*hidden){++result.object_hidden;return;}
+        const auto graphics=entity_graphics(id);
         const auto* anchor=saved_.world->find(graphics.container?graphics.container:id);
         if(!anchor||!anchor->position)throw odh::FormatError("live saved object graphics anchor unavailable");
-        if(anchor->position->level>view_.level){++result.object_above_level;continue;}
+        if(anchor->position->level>view_.level){++result.object_above_level;return;}
         if(view_.walls_down&&anchor->position->level==view_.level){
             const auto flags=saved_.world->read(frame,3,8);
             if(!flags)throw odh::FormatError("live saved object cutaway flags unavailable");
             if(static_cast<std::uint16_t>(*flags)&1024U)
                 throw odh::FormatError("HideForCutaway needs runtime wall occupancy reconstruction");
         }
-        auto position=graphics.tile_position;
-        std::array<float,2> xy{static_cast<float>(anchor->position->x)/16,static_cast<float>(anchor->position->y)/16};
-        const auto center=group_centers_.find(anchor->id);if(center!=group_centers_.end())xy=center->second;
-        position[2]+=odh::terrain_interp_altitude(render_architecture(),xy[0],xy[1]);
-        visuals.push_back({id,raw.saved.guid,*graphic,graphics.direction,position,raw.common.dynamic_sprite_flags});
+        visuals.push_back({id,guid,*graphic,graphics.direction,graphics.tile_position,flags});
+        if(record_picks)result.object_pick_identities.emplace(id,SavedLotObjectIdentity{guid,generation});
+    };
+    for(const auto& raw:saved_.records){
+        const auto id=static_cast<std::int16_t>(raw.saved.object_id);
+        const auto identity=object_generations_.find(id);
+        if(identity!=object_generations_.end()&&!runtime_objects_.count(id))
+            append(id,identity->second,raw.saved.guid,raw.common.dynamic_sprite_flags);
+    }
+    for(const auto& [id,binding]:runtime_objects_){
+        std::vector<std::int16_t> flags;
+        if(const auto* entity=saved_.world->find(id)){
+            auto bits=entity->dynamic_sprite_flags;
+            for(unsigned bit=0;bits;++bit,bits>>=1)flags.push_back((bits&1U)?1:0);
+        }
+        append(id,binding.generation,binding.guid,flags);
     }
     // Walls have binary alpha and establish the opaque base before objects;
     // reversing these passes loses the wall color behind translucent objects.
@@ -276,22 +347,32 @@ std::optional<SavedObjectSelection> SavedLotRenderer::pick(const SavedLotFrame& 
                                                          std::int32_t x,std::int32_t y) const {
     const auto count=std::uint64_t{frame.pick_width}*frame.pick_height;
     if(!frame.pick_width||!frame.pick_height||frame.pick_width>2048||frame.pick_height>2048||
-       count>1048576||count!=frame.object_pick_ids.size())
+       count>1048576||count!=frame.object_pick_ids.size()||frame.object_pick_identities.size()>4096)
         throw odh::FormatError("live saved object pick buffer invalid");
     if(x<0||y<0||static_cast<std::uint32_t>(x)>=frame.pick_width||static_cast<std::uint32_t>(y)>=frame.pick_height)
         return {};
     const auto token=frame.object_pick_ids[std::size_t(y)*frame.pick_width+static_cast<std::uint32_t>(x)];
     if(!token||token>32767)return {};
     const auto id=static_cast<std::int16_t>(token);
-    const auto identity=object_generations_.find(id);
     const auto* entity=saved_.world->find(id);
-    if(identity==object_generations_.end()||!entity||entity->generation!=identity->second||
-       entity->kind!=odh::EntityKind::object||!entity->definition)return {};
+    if(!entity||entity->kind!=odh::EntityKind::object||entity->ui_ghost||
+       !entity->definition||!entity->position)return {};
+    const auto presented=frame.object_pick_identities.find(id);
+    if(presented==frame.object_pick_identities.end()||
+       presented->second.generation!=entity->generation||
+       presented->second.guid!=entity->definition->guid)return {};
+    const auto runtime=runtime_objects_.find(id);
+    if(runtime!=runtime_objects_.end()){
+        if(entity->generation!=runtime->second.generation||entity->definition->guid!=runtime->second.guid)return {};
+    }else{
+        const auto identity=object_generations_.find(id);
+        const auto record=std::find_if(saved_.records.begin(),saved_.records.end(),
+            [&](const auto& raw){return raw.saved.object_id==token;});
+        if(identity==object_generations_.end()||entity->generation!=identity->second||
+           record==saved_.records.end()||record->saved.guid!=entity->definition->guid)return {};
+    }
     const auto* definition=definitions_.unique(entity->definition->guid);
     if(!definition)return {};
-    const auto record=std::find_if(saved_.records.begin(),saved_.records.end(),
-        [&](const auto& raw){return raw.saved.object_id==token;});
-    if(record==saved_.records.end()||record->saved.guid!=entity->definition->guid||!entity->position)return {};
     const odh::VmFrame context{odh::routine_key(4096),0,{id,id,id,0},{},{}};
     const auto hidden=saved_.world->read(context,3,34);
     if(!hidden||*hidden)return {};

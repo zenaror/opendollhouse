@@ -1,0 +1,14 @@
+{
+  "sample_sha256": "6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2",
+  "sample_expected_sha256": "6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2",
+  "sample_unchanged": true,
+  "project_before_after_identical": false,
+  "project_file_count": 8,
+  "project_changes": [
+    "versioned/~index.bak",
+    "versioned/~index.dat",
+    "idata/~index.bak",
+    "idata/~index.dat"
+  ],
+  "project_content_identical": true
+}

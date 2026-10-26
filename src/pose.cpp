@@ -75,10 +75,12 @@ void motion_range(std::uint32_t active,std::int32_t start,std::uint32_t frames,s
     if(start<0||static_cast<std::uint64_t>(start)+frames>count)throw FormatError("pose motion sample range outside CFP");
 }
 }
-SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animation,const CfpPlanes* cfp,double requested) {
+SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animation,const CfpPlanes* cfp,double requested,
+    const AnimationHeader* carry_animation,const CfpPlanes* carry_cfp) {
     if(!std::isfinite(requested)||requested<std::numeric_limits<std::int32_t>::min()||requested>std::numeric_limits<std::int32_t>::max())
         throw FormatError("pose requested frame outside finite signed range");
     if(bool(animation)!=bool(cfp))throw FormatError("pose animation and CFP must be supplied together");
+    if(bool(carry_animation)!=bool(carry_cfp))throw FormatError("pose carry animation and CFP must be supplied together");
     if(skeleton.bones.empty()||skeleton.bones.size()>max_bones)throw FormatError("pose skeleton bone budget exceeded");
     std::size_t text=0;
     const auto budget_text=[&](const std::string& value){
@@ -102,10 +104,11 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
         pose.bones.push_back({bone.name,parent,translation(bone.translation_bits),rotation(bone.rotation_bits),{}, {}});
     }
     if(roots!=1)throw FormatError("pose skeleton requires one NULL root");
-    if(animation){
+    const auto apply_clip=[&](const AnimationHeader* animation,const CfpPlanes* cfp,bool carry){
+        if(!animation)return;
         if(animation->motions.size()>max_motions||3ULL*animation->translations+4ULL*animation->rotations>max_samples)
             throw FormatError("pose animation budget exceeded");
-        budget_text(animation->name);pose.animation=animation->name;
+        budget_text(animation->name);if(!carry)pose.animation=animation->name;
         for(std::size_t p=0;p<cfp->bits.size();++p){
             if(cfp->bits[p].size()!=(p<3?animation->translations:animation->rotations))throw FormatError("pose CFP plane size differs from animation");
             for(const auto bits:cfp->bits[p])real(bits);
@@ -117,31 +120,37 @@ SkeletonPose sample_pose(const Skeleton& skeleton,const AnimationHeader* animati
             motion_range(motion.has_rotation,motion.first_rotation,motion.frames,animation->rotations);
             frames=std::max(frames,motion.frames);
         }
-        if(requested<0){pose.completed=true;pose.frame=0;pose.fraction=0;}
-        else {const auto whole=static_cast<std::uint32_t>(std::floor(requested));
-            pose.frame=std::min(whole,frames);pose.fraction=static_cast<float>(requested-std::floor(requested));
-            pose.completed=whole>frames||static_cast<std::uint64_t>(pose.frame)+1>frames;
-            if(whole>frames)pose.fraction=0;
+        std::uint32_t frame=0;float fraction=0;
+        if(!carry){
+            if(requested<0){pose.completed=true;pose.frame=0;pose.fraction=0;}
+            else {const auto whole=static_cast<std::uint32_t>(std::floor(requested));
+                pose.frame=std::min(whole,frames);pose.fraction=static_cast<float>(requested-std::floor(requested));
+                pose.completed=whole>frames||static_cast<std::uint64_t>(pose.frame)+1>frames;
+                if(whole>frames)pose.fraction=0;
+            }
+            frame=pose.frame;fraction=pose.fraction;
         }
         for(const auto& motion:animation->motions){
             const auto it=indices.find(motion.bone);
             if(it==indices.end()){budget_text(motion.bone);pose.missing_motion_bones.push_back(motion.bone);continue;}
             if(!motion.has_translation&&!motion.has_rotation)continue;
             auto& bone=pose.bones[it->second];
-            const auto current=std::min(pose.frame,motion.frames-1);
-            const auto next=static_cast<std::uint64_t>(pose.frame)+1>=motion.frames?current:current+1;
+            const auto current=std::min(frame,motion.frames-1);
+            const auto next=static_cast<std::uint64_t>(frame)+1>=motion.frames?current:current+1;
             if(motion.has_translation){
                 const auto start=static_cast<std::size_t>(motion.first_translation);
                 auto a=translation(*cfp,start+current);const auto b=translation(*cfp,start+next);
-                if(pose.fraction!=0)for(std::size_t j=0;j<a.size();++j)a[j]=a[j]+(b[j]-a[j])*pose.fraction;
+                if(fraction!=0)for(std::size_t j=0;j<a.size();++j)a[j]=a[j]+(b[j]-a[j])*fraction;
                 finite(a);bone.translation=a;
             }
             if(motion.has_rotation){
                 const auto start=static_cast<std::size_t>(motion.first_rotation);
-                bone.rotation=slerp(rotation(*cfp,start+current),rotation(*cfp,start+next),pose.fraction);
+                bone.rotation=slerp(rotation(*cfp,start+current),rotation(*cfp,start+next),fraction);
             }
         }
-    }
+    };
+    apply_clip(animation,cfp,false);
+    apply_clip(carry_animation,carry_cfp,true);
     // Walk parent chains iteratively so file order and deep trees cannot cause
     // stack recursion. Every chain must reach the unique root without a cycle.
     std::vector<std::uint8_t> state(pose.bones.size(),0);std::vector<std::size_t> path;path.reserve(pose.bones.size());

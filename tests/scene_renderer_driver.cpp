@@ -6,6 +6,9 @@
 #endif
 #include "resource.hpp"
 #include <cstring>
+#include <cmath>
+#include <filesystem>
+#include <vector>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -16,6 +19,66 @@ void save(const odh::RasterFrame& image,const std::string& prefix){
     for(const auto& p:image.pixels)for(unsigned c=0;c<3;++c)ppm.put(static_cast<char>(p[c]));
     for(float z:image.depth){std::uint32_t b;std::memcpy(&b,&z,4);for(unsigned c=0;c<4;++c)depth.put(static_cast<char>((b>>(8*c))&255));}
     ppm.close();depth.close();if(!ppm||!depth)throw std::runtime_error("fixture output failed");
+}
+void anchor_checks(const SceneConfig& base,const odh::AnimationHeader& ordinary,
+                   const odh::WorldProjection& camera,const std::string& prefix){
+    const auto number=[](std::uint32_t n){std::string out(4,'\0');for(unsigned i=0;i<4;++i)out[i]=static_cast<char>((n>>(i*8))&255);return out;};
+    const auto real=[&](float value){std::uint32_t n;std::memcpy(&n,&value,4);return number(n);};
+    const auto text=[](const std::string& value){return std::string(1,static_cast<char>(value.size()))+value;};
+    std::vector<std::pair<std::string,std::string>> entries;
+    for(const auto* name:{"rig.bcf","app.bcf","mesh.bmf","anim.bcf","POSE.cfp"}){
+        std::string bytes;with_far_entry(base.animation_far,name,[&](const auto& view){
+            bytes.resize(static_cast<std::size_t>(view.size()));view.read(0,bytes.data(),bytes.size());});
+        entries.emplace_back(name,std::move(bytes));
+    }
+    auto& rig=entries[0].second;
+    if(rig.size()<18||rig[8]!=1||rig[9]!=0)throw std::runtime_error("anchor test requires its synthetic one-bone rig");
+    rig.resize(rig.size()-8);rig[8]=4;
+    for(const auto* name:{"R_FINGER0","HEAD","PELVIS"}){
+        rig+=text(name)+text("ROOT")+number(0)+real(-3)+real(6)+real(9)+
+            real(0)+real(0)+real(0)+real(1)+number(1)+number(1)+number(0)+real(0)+real(0);
+    }
+    rig+=number(0)+number(0);
+    std::string far="FAR!byAZ"+number(1)+number(0),index=number(static_cast<std::uint32_t>(entries.size()));
+    for(const auto& [name,bytes]:entries){
+        index+=number(static_cast<std::uint32_t>(bytes.size()))+number(static_cast<std::uint32_t>(bytes.size()))+
+            number(static_cast<std::uint32_t>(far.size()))+number(static_cast<std::uint32_t>(name.size()))+name;
+        far+=bytes;
+    }
+    const auto index_offset=number(static_cast<std::uint32_t>(far.size()));far.replace(12,4,index_offset);far+=index;
+    const auto resource=prefix+"-anchors.far";{std::ofstream output(resource,std::ios::binary);output<<far;if(!output)throw std::runtime_error("anchor fixture write failed");}
+    auto config=base;config.animation_far=resource;config.object_far.clear();config.object_entry.clear();config.object_id=0;
+    odh::CfpPlanes planes;with_far_entry(base.animation_far,"POSE.cfp",[&](const auto& v){planes=odh::read_cfp(v,ordinary.translations,ordinary.rotations);});
+    auto carry=ordinary;carry.name="carry";carry.motions[0].bone="R_FINGER0";
+    auto shared=std::make_shared<const odh::CfpPlanes>(planes);unsigned resolved=0;
+    SceneRenderer renderer(config,[&](const auto& selected){
+        if(&selected!=&ordinary && &selected!=&carry)throw std::runtime_error("resolver lost selected header identity");
+        ++resolved;return shared;
+    });
+    SceneState state;state.animation=&ordinary;state.frame=.5;state.avatar_tile={10,20,2};
+    ScenePoseAnchors plain,held;
+    renderer.render(state,camera,{},&plain);state.carry_animation=&carry;
+    renderer.render(state,camera,{},&held);
+    if(resolved!=3||renderer.cache_samples()!=0||renderer.cache_clips()!=0)throw std::runtime_error("secondary pose duplicated provider-owned CFP cache");
+    for(unsigned slot=0;slot<3;++slot)if(!plain.avatar_slots[slot]||!held.avatar_slots[slot])throw std::runtime_error("final pose attachment bone absent");
+    if(plain.avatar_slots[1]!=held.avatar_slots[1]||plain.avatar_slots[2]!=held.avatar_slots[2]||plain.avatar_slots[0]==held.avatar_slots[0])
+        throw std::runtime_error("carry overlay changed unrelated attachment bones or missed right hand");
+    // Ordinary ROOT x=-.5. Carry frame0 sets local right-hand x/y/z=0,
+    // so facing north rotates ROOT's x to +.5. HEAD retains local(-x,y,z)=(3,6,9).
+    const std::array<float,3> expected_hand{10-.5f+.5f/3,20-.5f,2};
+    const std::array<float,3> expected_head{10-.5f-2.5f/3,20-.5f-3,4};
+    for(unsigned axis=0;axis<3;++axis)
+        if(std::abs((*held.avatar_slots[0])[axis]-expected_hand[axis])>.00002f||
+           std::abs((*held.avatar_slots[1])[axis]-expected_head[axis])>.00002f)
+            throw std::runtime_error("attachment export differs from same final render pose");
+    auto invalid=state;invalid.frame=std::numeric_limits<double>::quiet_NaN();bool rejected=false;
+    const auto original=held.avatar_slots;
+    try{renderer.render(invalid,camera,{},&held);}catch(const odh::FormatError&){rejected=true;}
+    if(!rejected||held.avatar_slots!=original)throw std::runtime_error("failed render published partial anchors");
+    // Legacy cache also shares ordinary/carry resources rather than storing a duplicate.
+    SceneRenderer cached(config);cached.render(state,camera,{},&held);
+    if(cached.cache_clips()!=1||cached.cache_samples()!=14)throw std::runtime_error("carry reused CFP duplicated legacy cache");
+    std::filesystem::remove(resource);
 }
 int main(int argc,char**argv){try{
     if(argc!=5&&argc!=6)throw std::runtime_error("driver expects animation/textures/objects/prefix");
@@ -28,6 +91,7 @@ int main(int argc,char**argv){try{
     if(renderer.cache_clips()!=1||renderer.cache_samples()!=14)throw std::runtime_error("CFP cache duplicated samples");
     auto bad=clips.animations[0];++bad.translations;state.animation=&bad;bool rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("mismatched cached header accepted or cache mutated");
     state.animation=&clips.animations[0];state.frame=std::numeric_limits<double>::quiet_NaN();rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected||renderer.cache_samples()!=14)throw std::runtime_error("nonfinite frame accepted");
+    anchor_checks(config,clips.animations[0],camera,argv[4]);
     save(second.image,argv[4]);SceneRenderer moved(std::move(renderer));state.frame=.5;rejected=false;try{renderer.render(state,camera);}catch(const odh::FormatError&){rejected=true;}if(!rejected)throw std::runtime_error("moved renderer accepted");
     auto avatar_config=config;avatar_config.object_far.clear();avatar_config.object_entry.clear();avatar_config.object_id=0;
     SceneRenderer avatar_only(avatar_config);

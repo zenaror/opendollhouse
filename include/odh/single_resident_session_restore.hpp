@@ -48,6 +48,7 @@ public:
     const std::optional<SessionSimulationState>& simulation() const {return bundle_.simulation;}
     const std::optional<std::int32_t>& family_budget() const {return bundle_.host.family_budget;}
     const SessionHostState& host() const { return bundle_.host; }
+    const std::optional<SessionUiState>& ui_state() const { return bundle_.ui_state; }
     const std::vector<SessionObjectThread>& object_threads() const { return bundle_.object_threads; }
     const std::vector<SessionDynamicActionOwner>& dynamic_action_owners() const {
         return bundle_.runtime_entities.front().dynamic_action_owners;

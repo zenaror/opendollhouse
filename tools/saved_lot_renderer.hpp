@@ -40,11 +40,16 @@ struct SavedLotView {
     bool walls_down=false;
     std::optional<odh::TerrainTheme> terrain_theme;
 };
+struct SavedLotObjectIdentity {
+    std::uint32_t guid=0;
+    std::uint64_t generation=0;
+};
 struct SavedLotFrame {
     odh::RasterFrame image;
     std::uint32_t pick_width=0,pick_height=0;
     std::vector<std::uint16_t> avatar_pick_ids; // Separate per-pixel avatar token buffer when requested.
     std::vector<std::uint16_t> object_pick_ids; // <=1Mi pixels, zero is scenery.
+    std::map<std::int16_t,SavedLotObjectIdentity> object_pick_identities; // Presented GUID/generation, <=4096.
     std::vector<std::uint16_t> ground_pick_ids; // Separate so the display image can be moved.
     std::uint64_t floor_draws=0,floor_triangles=0,floor_texture_bytes=0;
     std::uint64_t terrain_triangles=0,terrain_reserved_bytes=0;
@@ -59,6 +64,24 @@ struct SavedLotFrame {
 struct SavedLotAvatarLayer {
     odh::RasterFrame image;
     std::uint16_t pick_id=0;
+};
+// Host-authenticated World/GEXP origin, resolved to this catalog's resource paths.
+// This binds artwork only; it creates no entity or execution state.
+struct SavedLotRuntimeObject {
+    std::int16_t id=0;
+    std::uint64_t generation=0;
+    std::uint32_t guid=0;
+    std::string source,asset;
+    std::uint16_t definition_chunk_id=0;
+};
+// A slot exported from the same animated pose used to draw this avatar.
+// Position already includes its visual container and terrain height.
+struct SavedLotAvatarSlotAnchor {
+    std::int16_t actor=0;
+    std::uint64_t generation=0;
+    odh::EntityPosition logical_position{};
+    std::size_t slot=0;
+    std::array<float,3> tile_position{};
 };
 struct SavedObjectSelection {
     std::int16_t id;
@@ -77,9 +100,10 @@ struct SavedGroundSelection {
 // Ground/floors -> opaque live avatar -> binary-alpha walls -> object sprites.
 // Objects can blend over nearer opaque scene surfaces while depth rejects
 // sprites behind them. Intra-object order retains SavedObjectRenderer's profile.
-// Dynamic sprite flags and group centers are snapshots; live logical position,
-// graphic, direction and visibility are read on every capture. New/reused object
-// identities require a renderer refresh. Other avatars remain in World.
+// Original dynamic sprite flags and group centers are snapshots. Runtime-created
+// sprite flags, and all logical positions, graphics, directions and visibility
+// are read from the borrowed World on every capture. New/reused object
+// identities require an explicit binding refresh. Other avatars remain in World.
 class SavedLotRenderer {
 public:
     SavedLotRenderer(SavedArchitectureResource,const odh::SavedWorld&,
@@ -115,6 +139,15 @@ public:
     // and a prepared room map can resolve the cell center.
     std::optional<SavedGroundSelection> pick_ground(const SavedLotFrame&,
                                                      std::int32_t x,std::int32_t y) const;
+    // Atomically replace only the runtime-created artwork bindings (<=4096,
+    // <=256 KiB resource names). Supply live, unique IDs with exact
+    // World generation/GUID and uniquely indexed resource provenance. A runtime
+    // binding shadows any original saved row with that ID after host-verified
+    // removal/reuse (including the old row's terrain group metadata). Removed
+    // entities stop drawing without a refresh; reused IDs require a new binding.
+    // Reapply authenticated GEXP origins after restoring the borrowed World.
+    void set_runtime_objects(const std::vector<SavedLotRuntimeObject>&);
+    void set_avatar_slot_anchors(const std::vector<SavedLotAvatarSlotAnchor>&);
     const SavedLotView& view() const{return view_;}
 private:
     SavedArchitectureResource architecture_;
@@ -130,6 +163,8 @@ private:
     SavedGraphicsResources graphics_;
     std::map<std::int16_t,std::array<float,2>> group_centers_;
     std::map<std::int16_t,std::uint64_t> object_generations_;
+    std::map<std::int16_t,SavedLotRuntimeObject> runtime_objects_;
+    std::map<std::pair<std::int16_t,std::size_t>,SavedLotAvatarSlotAnchor> avatar_slot_anchors_;
     SavedLotView view_;
     SavedFloorRenderer floors_;
     std::unique_ptr<SavedWallRenderer> walls_;
