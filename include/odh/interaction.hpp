@@ -39,11 +39,13 @@ struct InteractionQueueSnapshot {
     std::string diagnostic;
     InteractionQueueProfile profile=InteractionQueueProfile::ts1_priority;
     std::uint16_t next_queue_uid=0;
+    // Protected action ancestors, ordered outermost to innermost parent. The
+    // active action is stored separately and is always the innermost frame.
+    std::vector<InteractionActiveSnapshot> suspended_active;
 };
 // Native queue for one avatar/VM. The TS1 profile currently implements priority
-// insertion and its persisted action metadata, while nested active prefixes,
-// full eligibility, nested dispatch, and cancellation remain
-// unsupported. World and VM must outlive it. Host observes before each run/budget
+// insertion and its persisted action metadata. World and VM must outlive it.
+// Host observes before each run/budget
 // slice and after completion, then ticks once per consecutive simulation tick.
 class InteractionQueue {
 public:
@@ -108,7 +110,8 @@ private:
     VmPrimitive check_primitive_;
     Vm* vm_=nullptr;std::uint64_t actor_generation_=0,run_generation_=0,sequence_=0;
     std::uint64_t clock_=0,idle_start_=0;std::optional<std::uint64_t> last_tick_,resume_tick_;
-    std::deque<Action> queue_;std::optional<Active> active_;std::optional<Wait> wait_;
+    std::deque<Action> queue_;std::vector<Active> suspended_active_;
+    std::optional<Active> active_;std::optional<Wait> wait_;
     InteractionQueueProfile profile_=InteractionQueueProfile::ts1_priority;
     std::uint16_t next_queue_uid_=0;
     std::optional<InteractionCompletion> completion_;bool interrupted_=false,executing_=false;

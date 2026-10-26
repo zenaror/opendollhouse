@@ -39,7 +39,7 @@ InteractionQueueSnapshot InteractionQueue::snapshot() const {
     if(executing_)throw std::logic_error("interaction callbacks must not capture controller state");
     if(vm_)(void)vm_->snapshot(); // Reject capture inside another VM primitive/trace callback too.
     return {actor_id_,capacity_,actor_generation_,run_generation_,sequence_,clock_,idle_start_,last_tick_,resume_tick_,
-            queue_,active_,wait_,completion_,interrupted_,diagnostic_,profile_,next_queue_uid_};
+            queue_,active_,wait_,completion_,interrupted_,diagnostic_,profile_,next_queue_uid_,suspended_active_};
 }
 bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) const {
     if(executing_)throw std::logic_error("interaction callbacks must not restore controller state");
@@ -53,6 +53,9 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
        state.actions.size()>state.capacity||state.clock>max_clock||state.idle_start>state.clock||
        state.profile>InteractionQueueProfile::ts1_priority||
        (state.last_tick?*state.last_tick!=state.clock:state.clock!=0))return false;
+    const auto protected_count=state.suspended_active.size()+(state.active?1U:0U);
+    if((!state.active&&!state.suspended_active.empty())||protected_count>state.actions.size()||
+       (state.profile==InteractionQueueProfile::legacy_fifo&&!state.suspended_active.empty()))return false;
     std::set<std::uint64_t> action_uids;
     for(const auto& action:state.actions){
         const auto& call=action.call;
@@ -66,29 +69,46 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
                             !vm_->has_routine(*action.check,call.context.code_owner))))
             return false;
     }
+    std::set<std::uint64_t> active_tickets;
+    for(std::size_t n=0;n<state.suspended_active.size();++n){
+        const auto& parent=state.suspended_active[n];
+        if(!parent.uid||!parent.ticket||parent.ticket>vm.ticket_sequence||
+           state.actions[n].uid!=parent.uid||!active_tickets.insert(parent.ticket).second)return false;
+    }
+    if(state.active){
+        if(!state.active->uid||!state.active->ticket||state.active->ticket>vm.ticket_sequence||
+           state.actions[state.suspended_active.size()].uid!=state.active->uid||
+           !active_tickets.insert(state.active->ticket).second)return false;
+    }
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
-    bool action_frame=false;
+    std::size_t action_frames=0;
     for(const auto& frame:vm.stack){
         if(frame.return_mode!=VmCallReturnMode::interaction_next_tick)continue;
-        if(!state.active||state.actions.empty()||frame.invocation_ticket!=state.active->ticket)return false;
-        const auto& call=state.actions.front().call;
+        if(action_frames>=protected_count)return false;
+        const auto expected=action_frames<state.suspended_active.size()?
+            state.suspended_active[action_frames]:*state.active;
+        if(frame.invocation_ticket!=expected.ticket)return false;
+        const auto& call=state.actions[action_frames].call;
         if(frame.key.scope!=call.key.scope||frame.key.id!=call.key.id||frame.context.caller!=call.context.caller||
            frame.context.callee!=call.context.callee||frame.context.code_owner!=call.context.code_owner||
            frame.arguments.size()<call.arguments.size())return false;
-        action_frame=true;
+        ++action_frames;
     }
+    const bool returned_unobserved_child=state.active&&vm.interaction_return&&
+        vm.interaction_return->ticket==state.active->ticket&&!state.resume_tick&&
+        vm.interaction_return->run_generation==state.run_generation&&
+        vm.interaction_return->code_owner==state.actions[state.suspended_active.size()].call.context.code_owner;
+    if(action_frames!=protected_count-(returned_unobserved_child?1U:0U))return false;
     if(state.active){
-        if(state.actions.empty()||state.active->uid!=state.actions.front().uid||
-           !valid_ticket(state.active->ticket)||state.resume_tick||
-           (state.wait?!action_frame:state.idle_start!=0))return false;
-        if(vm.interaction_return){
-            if(action_frame||vm.interaction_return->ticket!=state.active->ticket||
-               vm.interaction_return->code_owner!=state.actions.front().call.context.code_owner)return false;
-        }else if(!action_frame&&vm.status!=VmStatus::fault)return false;
-    }
+        if(state.wait&&action_frames==0)return false;
+        if(!state.wait&&state.idle_start!=0&&!state.resume_tick&&
+           ((vm.status!=VmStatus::running&&vm.status!=VmStatus::budget_exhausted)||
+            vm.pending||vm.interaction_return||vm.external_frame_return||
+            !vm.suspended_pending.empty()||vm.stack.empty()))return false;
+    }else if(!state.suspended_active.empty())return false;
     if(state.wait){
         if((state.resume_tick)||!valid_ticket(state.wait->ticket)||
-           (state.active&&!action_frame)||
+           (state.active&&!action_frames)||
            state.wait->deadline<=state.clock||state.wait->deadline>max_clock||
            vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=state.wait->ticket||
            vm.pending->context.caller!=actor_id_||vm.pending->instruction.instruction.opcode!=17||vm.stack.empty())return false;
@@ -97,7 +117,14 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
         const auto allow=static_cast<unsigned>(operands[2]|(static_cast<unsigned>(operands[3])<<8));
         if(index>=vm.stack.back().arguments.size()||index>32767||allow>1)return false;
         const auto remaining=vm.stack.back().arguments[index];
-        if(remaining<0||state.wait->deadline!=state.idle_start+(allow==1?1:static_cast<std::uint64_t>(remaining)+1))return false;
+        if(remaining<0)return false;
+        const auto legacy_delay=static_cast<std::uint64_t>(remaining)+1;
+        const auto current_delay=allow==1?std::uint64_t{1}:legacy_delay;
+        // Older Main waits persisted the full countdown even with AllowPush=1.
+        // Preserve those deadlines when reopening v1-v4 snapshots, while new
+        // waits poll once per tick; action-tree AllowPush=1 also polls per tick.
+        if(state.wait->deadline!=state.idle_start+current_delay&&
+           !(allow==1&&!state.active&&state.wait->deadline==state.idle_start+legacy_delay))return false;
     }else if(vm.pending&&vm.pending->instruction.instruction.opcode==17&&vm.pending->context.caller==actor_id_)
         return false;
     if(state.completion){
@@ -106,18 +133,26 @@ bool InteractionQueue::valid_snapshot(const InteractionQueueSnapshot& state) con
            action_uids.count(completion.uid))return false;
     }
     if(state.resume_tick){
-        if(!state.completion||state.active||state.wait||*state.resume_tick>max_clock||
+        if(!state.completion||state.wait||*state.resume_tick>max_clock||
            *state.resume_tick<=state.clock||*state.resume_tick!=state.completion->tick+1||!vm.interaction_return||
            vm.interaction_return->ticket!=state.completion->ticket||vm.interaction_return->result!=state.completion->result)
             return false;
     }
-    if(vm.interaction_return&&!state.active&&!state.resume_tick)return false;
+    if(vm.interaction_return){
+        const bool matches_unobserved=returned_unobserved_child&&
+            vm.interaction_return->code_owner==state.actions[state.suspended_active.size()].call.context.code_owner;
+        const bool matches_observed=state.completion&&vm.interaction_return->ticket==state.completion->ticket&&
+            vm.interaction_return->result==state.completion->result&&
+            (!state.resume_tick||*state.resume_tick==state.completion->tick+1);
+        if(!matches_unobserved&&!matches_observed)return false;
+    }
     return true;
 }
 void InteractionQueue::publish_snapshot(InteractionQueueSnapshot&& state) noexcept {
     capacity_=state.capacity;actor_generation_=state.actor_generation;run_generation_=state.run_generation;
     sequence_=state.sequence;clock_=state.clock;idle_start_=state.idle_start;last_tick_=state.last_tick;
-    resume_tick_=state.resume_tick;queue_.swap(state.actions);active_=state.active;wait_=state.wait;
+    resume_tick_=state.resume_tick;queue_.swap(state.actions);suspended_active_.swap(state.suspended_active);
+    active_=state.active;wait_=state.wait;
     completion_=state.completion;interrupted_=state.interrupted;diagnostic_.swap(state.diagnostic);
     profile_=state.profile;next_queue_uid_=state.next_queue_uid;fresh_=false;
 }
@@ -146,31 +181,40 @@ bool InteractionQueue::validate() {
         if(queue_.empty()&&!active_&&!wait_&&!completion_){
             run_generation_=vm_->run_generation();diagnostic_.clear();
         }else{
-        queue_.clear();active_.reset();wait_.reset();resume_tick_.reset();completion_.reset();
+        queue_.clear();suspended_active_.clear();active_.reset();wait_.reset();resume_tick_.reset();completion_.reset();
         interrupted_=false;idle_start_=0;run_generation_=vm_->run_generation();
         diagnostic_="VM restart invalidated queued interactions";
         }
     }
-    if(active_) {
-        if(queue_.empty() || active_->uid!=queue_.front().uid){diagnostic_="active FIFO identity mismatch";return false;}
-        const auto* target=world_.find(queue_.front().call.context.callee);
-        if(!target || target->generation!=queue_.front().target_generation){diagnostic_="active interaction target identity stale";return false;}
+    const auto protected_count=suspended_active_.size()+(active_?1U:0U);
+    if((!active_&&!suspended_active_.empty())||protected_count>queue_.size()){
+        diagnostic_="active interaction prefix identity mismatch";return false;
+    }
+    for(std::size_t n=0;n<protected_count;++n){
+        const auto expected=n<suspended_active_.size()?suspended_active_[n]:*active_;
+        if(queue_[n].uid!=expected.uid){diagnostic_="active interaction prefix identity mismatch";return false;}
+        const auto* target=world_.find(queue_[n].call.context.callee);
+        if(!target||target->generation!=queue_[n].target_generation){
+            diagnostic_="active interaction target identity stale";return false;
+        }
     }
     return true;
 }
 bool InteractionQueue::evaluate_queue_priorities() {
-    if(!active_||queue_.empty())return true;
+    const auto protected_count=suspended_active_.size()+(active_?1U:0U);
+    if(!active_||!protected_count||queue_.size()<protected_count)return true;
     const auto* actor=world_.find(actor_id_);
     if(!actor||actor->kind!=EntityKind::avatar){diagnostic_="interaction priority actor identity stale";return false;}
     if(actor->person_data.size()<=33)return true;
 
     auto candidate=queue_;
-    const auto& active=candidate.front();
+    const auto active_index=protected_count-1;
+    const auto& active=candidate[active_index];
     std::int16_t current_priority=actor->person_data[33];
     if(current_priority==2)--current_priority; // TS1 autonomous actions yield to other autonomous actions.
     bool notify_idle=active.priority!=0&&current_priority==0;
     bool interaction_canceled=false;
-    for(auto it=std::next(candidate.begin());it!=candidate.end();){
+    for(auto it=candidate.begin()+static_cast<std::ptrdiff_t>(protected_count);it!=candidate.end();){
         const auto* target=world_.find(it->call.context.callee);
         if(!target||target->generation!=it->target_generation){
             it=candidate.erase(it);continue;
@@ -181,7 +225,7 @@ bool InteractionQueue::evaluate_queue_priorities() {
         }
         ++it;
     }
-    candidate.front().notify_idle=notify_idle;
+    candidate[active_index].notify_idle=notify_idle;
     if(interaction_canceled){
         const auto flags=actor->object_words.find(8);
         if(flags==actor->object_words.end()){
@@ -239,7 +283,7 @@ bool InteractionQueue::enqueue_impl(RoutineKey key,VmContext context,const std::
         next_queue_uid_,priority,mode,flags,false,check,check_permissions};
     const bool migrating_legacy=ts1_request&&profile_==InteractionQueueProfile::legacy_fifo;
     const bool use_ts1_profile=profile_==InteractionQueueProfile::ts1_priority||ts1_request;
-    const auto protected_prefix=active_?std::size_t{1}:std::size_t{0};
+    const auto protected_prefix=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
     auto position=queue_.end();
     if(!use_ts1_profile){
         position=push_head?queue_.begin()+static_cast<std::ptrdiff_t>(protected_prefix):queue_.end();
@@ -294,27 +338,111 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     if(index<0 || static_cast<std::size_t>(index)>=frame.arguments.size() || allow>1)
         return unsupported("IdleForInput argument/AllowPush outside explicit profile");
     const auto& stack=dispatch.origin->stack();
-    const bool action_tree=active_&&!queue_.empty()&&
+    const auto protected_count=suspended_active_.size()+(active_?std::size_t{1}:std::size_t{0});
+    const auto active_index=protected_count?protected_count-1:0;
+    const bool action_tree=active_&&queue_.size()>=protected_count&&protected_count!=0&&
         std::any_of(stack.begin(),stack.end(),[&](const VmFrame& action_frame){
-            const auto& call=queue_.front().call;
+            const auto& call=queue_[active_index].call;
             return action_frame.return_mode==VmCallReturnMode::interaction_next_tick&&
                 action_frame.invocation_ticket==active_->ticket&&
                 action_frame.key.scope==call.key.scope&&action_frame.key.id==call.key.id&&
                 action_frame.context.caller==call.context.caller&&
                 action_frame.context.callee==call.context.callee&&
-                action_frame.context.stack_object==call.context.stack_object&&
                 action_frame.context.code_owner==call.context.code_owner;
         });
     if(action_tree){
         if(wait_||resume_tick_)
             return unsupported("action-tree IdleForInput has no matching active interaction");
-        // TS1's action-tree wrapper waits in the current interaction. AllowPush
-        // can hand control back to the main thread and is a separate profile.
-        if(allow!=0)return unsupported("action-tree IdleForInput AllowPush is outside this profile");
         const auto elapsed=idle_start_!=0&&idle_start_<clock_?clock_-idle_start_:1;
         const auto remaining=word(static_cast<std::uint16_t>(frame.arguments[static_cast<std::size_t>(index)])-elapsed);
         const VmFrameWrite output{VmFrameBank::arguments,static_cast<std::size_t>(index),remaining};
-        if(!queue_.empty()&&queue_.front().notify_idle){
+        if(allow==1){
+            if(profile_!=InteractionQueueProfile::ts1_priority)
+                return unsupported("nested AllowPush requires the TS1 priority queue profile");
+            std::optional<std::int32_t> priority_threshold;
+            if(profile_==InteractionQueueProfile::ts1_priority){
+                const auto* actor=world_.find(actor_id_);
+                if(actor&&actor->person_data.size()>33){
+                    priority_threshold=actor->person_data[33];
+                    if(*priority_threshold<=2)--*priority_threshold;
+                }
+            }
+            while(queue_.size()>protected_count){
+                const auto candidate=queue_[protected_count];
+                if(priority_threshold&&candidate.priority<=*priority_threshold)break;
+                if(profile_==InteractionQueueProfile::ts1_priority){
+                    const auto* actor=world_.find(actor_id_);
+                    if(actor&&actor->object_words.count(8)){
+                        auto flags=static_cast<std::uint16_t>(actor->object_words.at(8));
+                        if(candidate.notify_idle){
+                            flags|=0x0080U;
+                            if(!world_.declare_object_word(actor_id_,8,word(flags)))
+                                return unsupported("nested action notification could not set InteractionCanceled");
+                        }
+                        if(candidate.mode==InteractionQueueMode::parent_idle&&(flags&0x0080U)){
+                            queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                        }
+                    }
+                }
+                const auto* candidate_target=world_.find(candidate.call.context.callee);
+                if(!candidate_target||candidate_target->generation!=candidate.target_generation){
+                    return unsupported("nested queued interaction target identity stale");
+                }
+                if(candidate.check_permissions){
+                    const auto permission=ts1_interaction_permission(world_.find(actor_id_),candidate.flags);
+                    if(permission==InteractionPermission::unsupported)
+                        return unsupported("interaction permissions require complete avatar person data");
+                    if(permission==InteractionPermission::denied){
+                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                    }
+                }
+                if(candidate.check){
+                    const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
+                        {0,0,0,0},10000,check_primitive_);
+                    if(!result.started||(result.status!=VmStatus::returned_true&&
+                                         result.status!=VmStatus::returned_false))
+                        return unsupported("nested interaction check did not return synchronously: "+result.diagnostic);
+                    if(!validate())return unsupported(diagnostic_);
+                    if(result.status==VmStatus::returned_false){
+                        queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+                    }
+                }
+                const auto* target=world_.find(candidate.call.context.callee);
+                if(!target||target->generation!=candidate.target_generation||
+                   queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
+                    return unsupported("nested interaction target identity changed during eligibility check");
+                if(!vm_->can_accept_call(candidate.call))
+                    return unsupported("interaction VM cannot accept the nested action frame");
+                // Allocate the suspended-parent slot before the VM publishes
+                // the child frame or the commit callback changes PersonData.
+                suspended_active_.reserve(suspended_active_.size()+1);
+                const auto uid=candidate.uid;const auto priority=candidate.priority;
+                const auto parent=*active_;
+                const auto ticket=dispatch.ticket;
+                PrimitiveOutcome outcome{PrimitiveDisposition::call,{},output,candidate.call};
+                outcome.call_commit=[this,uid,priority,ticket,parent]{
+                    if(!active_||active_->uid!=parent.uid||active_->ticket!=parent.ticket||
+                       queue_.size()<=suspended_active_.size()+1||
+                       queue_[suspended_active_.size()+1].uid!=uid)return false;
+                    suspended_active_.push_back(parent);
+                    if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
+                       !world_.set_person_data(actor_id_,33,priority)){
+                        suspended_active_.pop_back();return false;
+                    }
+                    if(const auto* actor=world_.find(actor_id_);actor&&actor->object_words.count(8)&&
+                       !world_.declare_object_word(actor_id_,8,
+                           word(static_cast<std::uint16_t>(actor->object_words.at(8))&~0x0080U))){
+                        if(const auto* current=world_.find(actor_id_);current&&current->person_data.size()>33)
+                            world_.set_person_data(actor_id_,33,
+                                queue_[suspended_active_.size()-1].priority);
+                        suspended_active_.pop_back();return false;
+                    }
+                    active_=Active{uid,ticket};idle_start_=0;return true;
+                };
+                return outcome;
+            }
+        }
+        if(queue_.size()>active_index&&queue_[active_index].notify_idle){
             const auto* actor=world_.find(actor_id_);
             if(!actor||!actor->object_words.count(8)||
                !world_.declare_object_word(actor_id_,8,word(static_cast<std::uint16_t>(actor->object_words.at(8))|64U)))
@@ -325,7 +453,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         if(interrupted_||thread_interrupted||remaining<0){
             interrupted_=false;idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
         }
-        const auto delay=static_cast<std::uint64_t>(remaining)+1;
+        const auto delay=allow==1?std::uint64_t{1}:static_cast<std::uint64_t>(remaining)+1;
         if(delay>std::numeric_limits<std::uint32_t>::max()-clock_)
             return unsupported("action-tree IdleForInput deadline exceeds uint32 clock");
         wait_=Wait{dispatch.ticket,clock_+delay};idle_start_=clock_;
@@ -344,10 +472,10 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
             if(*priority_threshold<=2)--*priority_threshold;
         }
     }
-    while(allow==1 && !queue_.empty()) {
+    while(allow==1 && queue_.size()>protected_count) {
         // The check can mutate World and thread registers even when it returns
         // false. Keep a value copy and resolve identities again after it runs.
-        const auto candidate=queue_.front();
+        const auto candidate=queue_[protected_count];
         if(priority_threshold&&candidate.priority<=*priority_threshold)break;
         if(profile_==InteractionQueueProfile::ts1_priority){
             const auto* actor=world_.find(actor_id_);
@@ -358,7 +486,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                     world_.declare_object_word(actor_id_,8,word(flags));
                 }
                 if(candidate.mode==InteractionQueueMode::parent_idle&&(flags&0x0080U)){
-                    queue_.pop_front();continue;
+                    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
                 }
             }
         }
@@ -369,7 +497,9 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
             const auto permission=ts1_interaction_permission(world_.find(actor_id_),candidate.flags);
             if(permission==InteractionPermission::unsupported)
                 return unsupported("interaction permissions require complete avatar person data");
-            if(permission==InteractionPermission::denied){queue_.pop_front();continue;}
+            if(permission==InteractionPermission::denied){
+                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+            }
         }
         if(candidate.check){
             const auto result=vm_->evaluate_check(*candidate.check,candidate.call.context,
@@ -378,9 +508,13 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
                                    result.status!=VmStatus::returned_false))
                 return unsupported("interaction check did not return synchronously: "+result.diagnostic);
             if(!validate())return unsupported(diagnostic_);
-            if(result.status==VmStatus::returned_false){queue_.pop_front();continue;}
+            if(result.status==VmStatus::returned_false){
+                queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(protected_count));continue;
+            }
         }
-        const auto& action=queue_.front();const auto* target=world_.find(action.call.context.callee);
+        if(queue_.size()<=protected_count||queue_[protected_count].uid!=candidate.uid)
+            return unsupported("queued action identity changed during eligibility check");
+        const auto& action=queue_[protected_count];const auto* target=world_.find(action.call.context.callee);
         if(!target || target->generation!=action.target_generation)
             return unsupported("queued interaction target identity stale");
         if(!vm_->can_accept_call(action.call))
@@ -389,7 +523,9 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         const auto priority=action.priority;
         const auto ticket=dispatch.ticket;
         PrimitiveOutcome outcome{PrimitiveDisposition::call,{},output,action.call};
-        outcome.call_commit=[this,uid,priority,ticket]{
+        outcome.call_commit=[this,uid,priority,ticket,protected_count]{
+            if(active_||!suspended_active_.empty()||queue_.size()<=protected_count||
+               queue_[protected_count].uid!=uid)return false;
             if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
                !world_.set_person_data(actor_id_,33,priority))return false;
             if(const auto* actor=world_.find(actor_id_);actor&&actor->object_words.count(8))
@@ -399,7 +535,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
         };
         return outcome;
     }
-    if(!queue_.empty()) {
+    if(queue_.size()>protected_count) {
         const auto* actor=world_.find(actor_id_);const auto flags=actor->object_words.find(8);
         if(flags==actor->object_words.end())return unsupported("IdleForInput notification requires explicit Flags word8");
         if(!world_.declare_object_word(actor_id_,8,word(static_cast<std::uint16_t>(flags->second)|64U)))
@@ -410,7 +546,7 @@ PrimitiveOutcome InteractionQueue::request(const VmFrame& frame,const Instructio
     if(interrupted_||thread_interrupted||remaining<0) {
         interrupted_=false;idle_start_=0;return {PrimitiveDisposition::goto_true,{},output};
     }
-    const auto delay=allow==1?1:static_cast<std::uint64_t>(remaining)+1;
+    const auto delay=allow==1?std::uint64_t{1}:static_cast<std::uint64_t>(remaining)+1;
     if(delay>std::numeric_limits<std::uint32_t>::max()-clock_)
         return unsupported("IdleForInput deadline exceeds uint32 clock");
     wait_=Wait{dispatch.ticket,clock_+delay};idle_start_=clock_;
@@ -424,26 +560,60 @@ bool InteractionQueue::observe() {
     const auto& result=vm_->interaction_return();
     if(!result)return true;
     if(completion_ && completion_->ticket==result->ticket)return true;
-    if(!active_ || queue_.empty() || active_->uid!=queue_.front().uid || active_->ticket!=result->ticket ||
+    const auto active_index=suspended_active_.size();
+    if(!active_||queue_.size()<=active_index||active_->uid!=queue_[active_index].uid||
+       active_->ticket!=result->ticket||
+       result->code_owner!=queue_[active_index].call.context.code_owner||
        result->run_generation!=run_generation_) {
         diagnostic_="interaction completion identity mismatch";return false;
     }
     if(clock_==std::numeric_limits<std::uint32_t>::max()){diagnostic_="interaction resume exceeds uint32 clock";return false;}
-    if(!world_.clear_motive_changes(actor_id_)){
+    const bool outermost=suspended_active_.empty();
+    if(outermost){
+        const auto* actor=world_.find(actor_id_);
+        if(actor&&actor->person_data.size()>71&&!world_.set_person_data(actor_id_,71,0)){
+            diagnostic_="interaction completion could not clear NonInterruptable";return false;
+        }
+    }
+    if(outermost&&!world_.clear_motive_changes(actor_id_)){
         diagnostic_="interaction completion could not clear avatar motive changes";return false;
     }
-    if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
-       !world_.set_person_data(actor_id_,33,0)){
-        diagnostic_="interaction completion could not restore PersonData[33] priority";return false;
+    const auto restored_priority=outermost?std::int16_t{0}:
+        queue_[active_index-1].priority;
+    if(!outermost){
+        const auto* actor=world_.find(actor_id_);
+        if(actor&&actor->person_data.size()>33){
+            auto threshold=restored_priority;
+            if(threshold==2)--threshold;
+            bool higher_pending=false;
+            for(std::size_t n=active_index+1;n<queue_.size();++n){
+                const auto* target=world_.find(queue_[n].call.context.callee);
+                if(target&&target->generation==queue_[n].target_generation&&
+                   queue_[n].priority>threshold){higher_pending=true;break;}
+            }
+            if(higher_pending&&!actor->object_words.count(8)){
+                diagnostic_="queue priority change requires avatar ObjectData[8] flags";return false;
+            }
+        }
     }
-    if(queue_.front().mode!=InteractionQueueMode::parent_idle){
+    if(const auto* actor=world_.find(actor_id_);actor&&actor->person_data.size()>33&&
+       !world_.set_person_data(actor_id_,33,restored_priority)){
+        diagnostic_="interaction completion could not restore parent PersonData[33] priority";return false;
+    }
+    if(queue_[active_index].mode!=InteractionQueueMode::parent_idle){
         if(const auto* actor=world_.find(actor_id_);actor&&actor->object_words.count(8))
             world_.declare_object_word(actor_id_,8,
                 word(static_cast<std::uint16_t>(actor->object_words.at(8))&~0x0080U));
     }
     completion_=InteractionCompletion{active_->uid,result->ticket,clock_,result->result};
-    queue_.pop_front();active_.reset();idle_start_=clock_;
-    resume_tick_=clock_+1;diagnostic_.clear();return true;
+    queue_.erase(queue_.begin()+static_cast<std::ptrdiff_t>(active_index));
+    if(!suspended_active_.empty()){
+        active_=suspended_active_.back();suspended_active_.pop_back();
+    }else active_.reset();
+    idle_start_=clock_;
+    resume_tick_=clock_+1;
+    if(!evaluate_queue_priorities())return false;
+    diagnostic_.clear();return true;
 }
 bool InteractionQueue::tick(std::uint64_t now) {
     if(executing_)throw std::logic_error("interaction callbacks must not reenter tick");
@@ -455,7 +625,7 @@ bool InteractionQueue::tick(std::uint64_t now) {
     last_tick_=now;clock_=now;
     if(resume_tick_ && now>=*resume_tick_) {
         if(!completion_ || !vm_->resume_interaction(completion_->ticket))return false;
-        resume_tick_.reset();
+        resume_tick_.reset();idle_start_=0;
     }
     if(wait_ && (now>=wait_->deadline || (!active_&&!queue_.empty()) || interrupted_)) {
         const auto ticket=wait_->ticket;

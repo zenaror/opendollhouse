@@ -110,10 +110,6 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
     if (mode != VmCallReturnMode::ordinary && mode != VmCallReturnMode::interaction_next_tick &&
         mode != VmCallReturnMode::external_frame_next_tick)
         throw VmError("invalid child return mode");
-    if (mode == VmCallReturnMode::interaction_next_tick &&
-        std::any_of(stack_.begin(), stack_.end(), [](const auto& frame) {
-            return frame.return_mode == VmCallReturnMode::interaction_next_tick;
-        })) throw VmError("nested interaction invocation unsupported");
     if(context.code_owner!=0 && owners_.find(context.code_owner)==owners_.end())
         throw VmError("code owner not supplied: " + std::to_string(context.code_owner));
     const auto* found = resolve(key,context.code_owner);
@@ -139,10 +135,6 @@ void Vm::push(RoutineKey key, VmContext context, const std::vector<std::int16_t>
 bool Vm::can_accept_call(const VmCall& call) const {
     if(call.return_mode!=VmCallReturnMode::ordinary&&
        call.return_mode!=VmCallReturnMode::interaction_next_tick)return false;
-    if(call.return_mode==VmCallReturnMode::interaction_next_tick&&
-       std::any_of(stack_.begin(),stack_.end(),[](const auto& frame){
-           return frame.return_mode==VmCallReturnMode::interaction_next_tick;
-       }))return false;
     if(call.context.code_owner!=0&&owners_.find(call.context.code_owner)==owners_.end())return false;
     const auto* routine=resolve(call.key,call.context.code_owner);
     if(!routine)return false;
@@ -176,10 +168,10 @@ bool Vm::restore_snapshot(const VmSnapshot& state) {
     const auto ticket_valid = [&](std::uint64_t ticket) {
         return ticket != 0 && ticket <= state.ticket_sequence;
     };
-    // Count each live invocation once; external children deliberately share
-    // their ticket with the parent wait retained in suspended_pending.
+    // External children deliberately share their ticket with the parent wait
+    // retained in suspended_pending.
     std::vector<std::uint64_t> tickets;
-    std::size_t external_count = 0, interaction_count = 0;
+    std::size_t external_count = 0;
     std::uint64_t last_ticket = 0;
     for (std::size_t depth = 0; depth < state.stack.size(); ++depth) {
         const auto& frame = state.stack[depth];
@@ -197,7 +189,7 @@ bool Vm::restore_snapshot(const VmSnapshot& state) {
         switch (frame.return_mode) {
         case VmCallReturnMode::ordinary: break;
         case VmCallReturnMode::interaction_next_tick:
-            if (++interaction_count > 1 || !ticket_valid(frame.invocation_ticket)) return false;
+            if (!ticket_valid(frame.invocation_ticket)) return false;
             break;
         case VmCallReturnMode::external_frame_next_tick:
             if (!ticket_valid(frame.invocation_ticket) || external_count >= state.suspended_pending.size()) return false;
@@ -246,7 +238,7 @@ bool Vm::restore_snapshot(const VmSnapshot& state) {
             owner_valid(event.code_owner) && event.run_generation == state.run_generation;
     };
     if (state.interaction_return) {
-        if (!valid_return(*state.interaction_return) || interaction_count || state.stack.empty()) return false;
+        if (!valid_return(*state.interaction_return) || state.stack.empty()) return false;
         tickets.push_back(state.interaction_return->ticket);
     }
     if (state.external_frame_return && (!valid_return(*state.external_frame_return) ||

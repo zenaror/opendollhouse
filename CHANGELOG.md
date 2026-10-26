@@ -13,6 +13,10 @@ validação indicados por versão.
 
 ### Adicionado
 
+- Uma ação do Sim pode aguardar outra de prioridade maior e depois continuar
+  do mesmo ponto. Salvar e reabrir essa sequência foi validado em testes do
+  motor nativo; o conjunto completo de interações ainda está em desenvolvimento.
+
 - Ações escolhidas no menu passam a repetir a verificação de disponibilidade
   antes de começar, inclusive após salvar e carregar. Menu e execução compartilham
   as regras de idade, visitantes, gatos e cães da referência TS1.

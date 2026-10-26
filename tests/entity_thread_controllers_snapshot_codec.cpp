@@ -130,6 +130,29 @@ std::vector<std::uint8_t> legacy_v3_checked_queue_fixture() {
     u8(0); // thread interrupt
     return bytes;
 }
+std::vector<std::uint8_t> legacy_v4_checked_queue_fixture() {
+    std::vector<std::uint8_t> bytes;
+    const auto u8=[&](std::uint8_t value){bytes.push_back(value);};
+    const auto u16=[&](std::uint16_t value){u8(static_cast<std::uint8_t>(value));u8(static_cast<std::uint8_t>(value>>8));};
+    const auto i16=[&](std::int16_t value){u16(static_cast<std::uint16_t>(value));};
+    const auto u32=[&](std::uint32_t value){for(unsigned n=0;n<32;n+=8)u8(static_cast<std::uint8_t>(value>>n));};
+    const auto u64=[&](std::uint64_t value){for(unsigned n=0;n<64;n+=8)u8(static_cast<std::uint8_t>(value>>n));};
+    u16(4); // controller codec v4
+    u8(0);u8(0);u8(0);u64(0);u8(0);u8(0);u32(0); // empty Sleep state
+    i16(1);u64(2);u64(7);u64(3);u64(1);u64(0);u64(0);
+    u8(0);u8(0);u32(1); // Interaction actor/clock, then one action
+    u64(1);u64(8);
+    u8(static_cast<std::uint8_t>(odh::routine_key(4096).scope));u16(4096);
+    i16(1);i16(2);i16(2);u32(22);
+    u32(0);u8(static_cast<std::uint8_t>(odh::VmCallReturnMode::interaction_next_tick));
+    u16(4);i16(50);u8(static_cast<std::uint8_t>(odh::InteractionQueueMode::normal));
+    u32(1U<<28);u8(0);
+    u8(1);u8(static_cast<std::uint8_t>(odh::routine_key(4098).scope));u16(4098);u8(0);
+    u8(0);u8(0);u8(0);u8(0);u32(0);
+    u8(static_cast<std::uint8_t>(odh::InteractionQueueProfile::ts1_priority));u16(5);
+    u8(0);
+    return bytes;
+}
 void same(const odh::EntityThreadControllersSnapshot& left,
           const odh::EntityThreadControllersSnapshot& right) {
     const auto& a = left.sleep; const auto& b = right.sleep;
@@ -148,8 +171,13 @@ void same(const odh::EntityThreadControllersSnapshot& left,
         x.active.has_value() == y.active.has_value() && x.wait.has_value() == y.wait.has_value() &&
         x.completion.has_value() == y.completion.has_value() && x.interrupted == y.interrupted &&
         x.diagnostic == y.diagnostic && x.profile == y.profile && x.next_queue_uid == y.next_queue_uid &&
+        x.suspended_active.size()==y.suspended_active.size() &&
         left.thread_interrupt == right.thread_interrupt,
         "interaction controller fields round-trip");
+    for(std::size_t i=0;i<x.suspended_active.size();++i)
+        require(x.suspended_active[i].uid==y.suspended_active[i].uid&&
+            x.suspended_active[i].ticket==y.suspended_active[i].ticket,
+            "suspended parent prefix round-trips");
     for (std::size_t i = 0; i < x.actions.size(); ++i) {
         const auto& p = x.actions[i]; const auto& q = y.actions[i];
         require(p.uid == q.uid && p.target_generation == q.target_generation &&
@@ -178,6 +206,23 @@ int main() {
         const auto state = fixture();
         const auto encoded = odh::encode_entity_thread_controllers_snapshot(state);
         same(state, odh::decode_entity_thread_controllers_snapshot(encoded));
+        auto nested=state;
+        nested.interactions.suspended_active={{1,6}};
+        nested.interactions.active=odh::InteractionActiveSnapshot{2,7};
+        const auto nested_bytes=odh::encode_entity_thread_controllers_snapshot(nested);
+        same(nested,odh::decode_entity_thread_controllers_snapshot(nested_bytes));
+        auto idle_retry=state;
+        idle_retry.interactions.idle_start=4;
+        const auto idle_retry_bytes=odh::encode_entity_thread_controllers_snapshot(idle_retry);
+        same(idle_retry,odh::decode_entity_thread_controllers_snapshot(idle_retry_bytes));
+        auto nested_resume=nested;
+        nested_resume.interactions.actions.pop_back();
+        nested_resume.interactions.suspended_active.clear();
+        nested_resume.interactions.active=odh::InteractionActiveSnapshot{1,6};
+        nested_resume.interactions.completion=odh::InteractionCompletion{2,7,5,true};
+        nested_resume.interactions.resume_tick=6;
+        const auto nested_resume_bytes=odh::encode_entity_thread_controllers_snapshot(nested_resume);
+        same(nested_resume,odh::decode_entity_thread_controllers_snapshot(nested_resume_bytes));
         auto push_head = state;
         push_head.interactions.sequence = 3;
         push_head.interactions.next_queue_uid = 3;
@@ -208,7 +253,7 @@ int main() {
             rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(truncated); }, "every truncated prefix rejected");
         }
         auto changed = encoded;
-        changed[0] = 5;
+        changed[0] = 6;
         rejects([&] { (void)odh::decode_entity_thread_controllers_snapshot(changed); }, "unsupported version rejected");
         changed = encoded;
         changed[2] = 2;
@@ -257,6 +302,15 @@ int main() {
                 v3.interactions.actions.front().check->scope==odh::routine_key(4098).scope&&
                 !v3.interactions.actions.front().check_permissions,
                 "legacy v3 check routine is retained with permission checks disabled");
+        const auto v4=odh::decode_entity_thread_controllers_snapshot(legacy_v4_checked_queue_fixture());
+        require(v4.interactions.actions.size()==1&&v4.interactions.actions.front().check&&
+                v4.interactions.actions.front().check->id==4098&&
+                v4.interactions.actions.front().check->scope==odh::routine_key(4098).scope&&
+                !v4.interactions.actions.front().check_permissions&&v4.interactions.suspended_active.empty(),
+                "legacy v4 routine check survives with an empty nested prefix");
+        require(legacy.interactions.suspended_active.empty()&&legacy_queued.interactions.suspended_active.empty()&&
+                v2.interactions.suspended_active.empty()&&v3.interactions.suspended_active.empty(),
+                "legacy controller codecs default to a flat interaction prefix");
 
         auto invalid_check=state;
         invalid_check.interactions.actions.front().check=odh::RoutineKey{static_cast<odh::RoutineScope>(99),4098};
@@ -313,6 +367,18 @@ int main() {
         invalid = state;
         invalid.interactions.active->uid = 2;
         rejects([&] { (void)odh::encode_entity_thread_controllers_snapshot(invalid); }, "active FIFO mismatch rejected");
+        invalid=nested;
+        invalid.interactions.suspended_active[0].uid=2;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "suspended parent UID mismatch rejected");
+        invalid=nested;
+        invalid.interactions.suspended_active[0].ticket=8;
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "parent ticket after child rejected");
+        invalid=nested;
+        invalid.interactions.active.reset();
+        rejects([&]{(void)odh::encode_entity_thread_controllers_snapshot(invalid);},
+            "suspended parent without active child rejected");
 
         std::cout << checks << " thread controller snapshot codec checks passed (synthetic values only)\n";
     } catch (const std::exception& error) {

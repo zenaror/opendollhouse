@@ -106,6 +106,59 @@ odh::SessionBundle live_playback_wait_fixture() {
     return bundle;
 }
 
+odh::SessionBundle nested_interaction_fixture(unsigned phase) {
+    auto bundle=fixture();
+    bundle.runtime_entities.resize(1);bundle.scheduler.entities.resize(1);
+    auto& runtime=bundle.runtime_entities.front();
+    const odh::VmContext context{1,2,2,0};
+    const auto main_key=odh::routine_key(4095),parent_key=odh::routine_key(4096),middle_key=odh::routine_key(4097),
+        child_key=odh::routine_key(4098);
+    odh::VmSnapshot vm;vm.status=phase==0?odh::VmStatus::running:odh::VmStatus::yielded;
+    vm.run_generation=1;vm.steps=10;vm.ticket_sequence=3;
+    const auto frame=[&](odh::RoutineKey key,odh::VmContext frame_context,
+                         odh::VmCallReturnMode mode,std::uint64_t ticket){
+        return odh::VmFrame{key,0,frame_context,{0,0,0,0},{0,0,0,0},mode,ticket};
+    };
+    vm.stack={frame(main_key,{1,1,1,0},odh::VmCallReturnMode::ordinary,0),
+              frame(parent_key,context,odh::VmCallReturnMode::interaction_next_tick,1),
+              frame(middle_key,context,odh::VmCallReturnMode::interaction_next_tick,2)};
+    if(phase==0)vm.stack.push_back(frame(child_key,context,
+        odh::VmCallReturnMode::interaction_next_tick,3));
+    if(phase!=0)vm.interaction_return=odh::VmInteractionReturn{3,true,0,vm.run_generation};
+    odh::RoutineSet routines;
+    const auto routine=odh::Bhav{0x8002,{{17,0,255,{0,0,0,0,0,0,0,0}}},{},
+        odh::Bhav::Metadata{0,4,4,0}};
+    routines.emplace(main_key,routine);routines.emplace(parent_key,routine);
+    routines.emplace(middle_key,routine);routines.emplace(child_key,routine);
+    odh::Vm snapshot_validator(routines);
+    require(snapshot_validator.restore_snapshot(vm),"nested fixture is a structurally valid restorable VM snapshot");
+    runtime.vm=vm;
+    auto& queue=runtime.controllers.interactions;
+    queue.actor_id=1;queue.capacity=32;queue.actor_generation=bundle.world.entities[0].generation;
+    queue.run_generation=vm.run_generation;queue.sequence=3;queue.profile=odh::InteractionQueueProfile::ts1_priority;
+    queue.actions={{1,bundle.world.entities[1].generation,
+        {parent_key,context,{},odh::VmCallReturnMode::interaction_next_tick}},
+        {2,bundle.world.entities[1].generation,
+        {middle_key,context,{},odh::VmCallReturnMode::interaction_next_tick}}};
+    queue.suspended_active={{1,1}};
+    if(phase==0){
+        queue.actions.push_back({3,bundle.world.entities[1].generation,
+            {child_key,context,{},odh::VmCallReturnMode::interaction_next_tick}});
+        queue.suspended_active.push_back({2,2});queue.active=odh::InteractionActiveSnapshot{3,3};
+    }else if(phase==1){
+        queue.actions.push_back({3,bundle.world.entities[1].generation,
+            {child_key,context,{},odh::VmCallReturnMode::interaction_next_tick}});
+        queue.suspended_active.push_back({2,2});queue.active=odh::InteractionActiveSnapshot{3,3};
+    }else{
+        queue.active=odh::InteractionActiveSnapshot{2,2};
+        queue.completion=odh::InteractionCompletion{3,3,0,true};queue.resume_tick=1;
+    }
+    auto& scheduled=bundle.scheduler.entities.front();
+    scheduled.id=1;scheduled.steps=vm.steps;scheduled.status=vm.status;
+    scheduled.run_generation=vm.run_generation;
+    return bundle;
+}
+
 odh::SessionBundle local_route_fixture() {
     auto bundle=fixture();odh::World world;
     require(world.create(1,odh::EntityKind::avatar,{0,88,1})&&
@@ -506,6 +559,64 @@ int main() {
             !restored.runtime_entities[0].playback.hands,
             "empty Playback state round-trips for each resident");
     require(!restored.simulation,"legacy archive without SIMS stays decodable");
+    for(unsigned phase=0;phase<3;++phase){
+        const auto nested=nested_interaction_fixture(phase);
+        const auto nested_bytes=odh::encode_session_bundle(nested);
+        const auto nested_restored=odh::decode_session_bundle(nested_bytes,nested.resources);
+        const auto& interactions=nested_restored.runtime_entities[0].controllers.interactions;
+        require(odh::encode_session_bundle(nested_restored)==nested_bytes&&
+            interactions.actions.size()==(phase==2?2u:3u)&&
+            interactions.suspended_active.size()==(phase==2?1u:2u)&&interactions.active&&
+            nested_restored.runtime_entities[0].vm.stack.size()==(phase==0?4u:3u),
+            "nested interaction frames and save phase round-trip in outer-to-inner order");
+    }
+    auto mutable_stack_object=nested_interaction_fixture(0);
+    mutable_stack_object.runtime_entities[0].vm.stack[2].context.stack_object=1;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(mutable_stack_object)).
+        runtime_entities[0].vm.stack[2].context.stack_object==1,
+        "mutable current StackObjectID does not invalidate its saved action call");
+    auto idle_retry=nested_interaction_fixture(0);
+    auto& idle_queue=idle_retry.runtime_entities[0].controllers.interactions;
+    idle_queue.clock=1;idle_queue.last_tick=1;idle_queue.idle_start=1;
+    idle_retry.host.tick=1;idle_retry.scheduler.last_tick=1;
+    const auto idle_retry_bytes=odh::encode_session_bundle(idle_retry);
+    const auto idle_retry_restored=odh::decode_session_bundle(idle_retry_bytes,idle_retry.resources);
+    require(idle_retry_restored.runtime_entities[0].controllers.interactions.idle_start==1&&
+        !idle_retry_restored.runtime_entities[0].controllers.interactions.wait&&
+        odh::encode_session_bundle(idle_retry_restored)==idle_retry_bytes,
+        "active IdleForInput retry cut survives save before the VM retries it");
+    auto invalid_idle_retry=idle_retry;
+    invalid_idle_retry.runtime_entities[0].vm.status=odh::VmStatus::yielded;
+    invalid_idle_retry.scheduler.entities[0].status=odh::VmStatus::yielded;
+    rejects([&]{odh::encode_session_bundle(invalid_idle_retry);},
+        "active IdleForInput retry cut with a yielded VM is rejected");
+    auto invalid_nested=nested_interaction_fixture(0);
+    invalid_nested.runtime_entities[0].vm.stack[2].invocation_ticket=3;
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "nested middle frame with a ticket from another queue depth is rejected");
+    invalid_nested=nested_interaction_fixture(0);
+    invalid_nested.runtime_entities[0].vm.stack[2].key=odh::routine_key(4098);
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "nested frame key that differs from its ordered action is rejected");
+    invalid_nested=nested_interaction_fixture(1);
+    invalid_nested.runtime_entities[0].vm.interaction_return->ticket=2;
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "unobserved deepest return with a parent ticket is rejected");
+    invalid_nested=nested_interaction_fixture(2);
+    invalid_nested.runtime_entities[0].controllers.interactions.actions.push_back(
+        {3,invalid_nested.world.entities[1].generation,{odh::routine_key(4098),{1,2,2,0},{},
+            odh::VmCallReturnMode::interaction_next_tick}});
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "observed child remains in queue beside its completion record");
+    invalid_nested=nested_interaction_fixture(0);
+    invalid_nested.runtime_entities[0].controllers.interactions.profile=odh::InteractionQueueProfile::legacy_fifo;
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "legacy FIFO queue profile cannot claim nested active frames");
+    invalid_nested=nested_interaction_fixture(2);
+    invalid_nested.runtime_entities[0].vm.status=odh::VmStatus::running;
+    invalid_nested.scheduler.entities[0].status=odh::VmStatus::running;
+    rejects([&]{odh::encode_session_bundle(invalid_nested);},
+        "interaction return cannot be saved while the VM is running");
     const auto object_bundle=object_thread_fixture();
     const auto object_bytes=odh::encode_session_bundle(object_bundle);
     const auto object_restored=odh::decode_session_bundle(object_bytes,object_bundle.resources);
@@ -689,6 +800,33 @@ int main() {
         require(odh::encode_session_bundle(waiting_restored)==waiting_bytes,
                 "real Sleep and IdleForInput waits survive bundle round-trip");
     }
+    auto legacy_main_allow=live_wait_fixture(false);
+    legacy_main_allow.runtime_entities[0].vm.pending->instruction.instruction.operands[2]=1;
+    const auto legacy_allow_bytes=odh::encode_session_bundle(legacy_main_allow);
+    const auto legacy_allow_restored=odh::decode_session_bundle(legacy_allow_bytes,legacy_main_allow.resources);
+    require(legacy_allow_restored.runtime_entities[0].controllers.interactions.wait->deadline==
+            legacy_main_allow.runtime_entities[0].controllers.interactions.wait->deadline&&
+            odh::encode_session_bundle(legacy_allow_restored)==legacy_allow_bytes,
+            "Main AllowPush=1 keeps legacy remaining-time wait deadlines on save and reopen");
+    auto current_main_allow=legacy_main_allow;
+    current_main_allow.runtime_entities[0].controllers.interactions.wait->deadline=
+        current_main_allow.runtime_entities[0].controllers.interactions.idle_start+1;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(current_main_allow)).
+        runtime_entities[0].controllers.interactions.wait->deadline==
+        current_main_allow.runtime_entities[0].controllers.interactions.wait->deadline,
+        "Main AllowPush=1 also accepts the current one-tick polling deadline");
+    auto active_allow=generic_action_fixture();
+    active_allow.runtime_entities[0].vm.pending->instruction.instruction.operands[2]=1;
+    active_allow.runtime_entities[0].controllers.interactions.wait->deadline=
+        active_allow.runtime_entities[0].controllers.interactions.idle_start+1;
+    require(odh::decode_session_bundle(odh::encode_session_bundle(active_allow)).
+        runtime_entities[0].controllers.interactions.wait->deadline==
+        active_allow.runtime_entities[0].controllers.interactions.wait->deadline,
+        "active action AllowPush=1 uses its one-tick wait");
+    auto stale_active_allow=generic_action_fixture();
+    stale_active_allow.runtime_entities[0].vm.pending->instruction.instruction.operands[2]=1;
+    rejects([&]{(void)odh::encode_session_bundle(stale_active_allow);},
+        "active action AllowPush=1 rejects a legacy remaining-time deadline");
     const auto animation_waiting=live_playback_wait_fixture();
     const auto animation_bytes=odh::encode_session_bundle(animation_waiting);
     const auto animation_restored=odh::decode_session_bundle(animation_bytes,animation_waiting.resources);

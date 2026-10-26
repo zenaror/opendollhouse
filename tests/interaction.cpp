@@ -387,6 +387,75 @@ int main(int argc,char** argv){try {
           "Main resumes on the following tick after action-tree idle and successful completion");
   require(!queue.references_target(2),"completed interaction releases its target for deferred object removal");
  }
+ { // AllowPush inside an action protects its parent and runs the higher-priority child above it.
+  for(const bool child_result:{true,false}){
+   odh::World world;world.create(1,odh::EntityKind::avatar,{0,70,0,0});
+   world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,0);
+   world.set_person_data(1,33,0);
+   odh::InteractionQueue queue(world,1,4);
+   const odh::RoutineSet main{{key(4096),bhav({idle(1,1),set(2,99)})}};
+   const auto child=child_result?bhav({set(1,33)}):bhav({set(1,33,255)});
+   const odh::RoutineOwners owners{{22,{{key(4096),bhav({set(3,77,1),idle(1,1),set(0,22)})},
+                                       {key(4097),child}}}};
+   odh::Vm vm(main,world.vm_memory(),{},queue.primitive(),owners);
+   require(queue.bind(vm),"nested AllowPush queue binds");vm.start(key(4096),{1,1,1,0},{4});
+   require(queue.enqueue_ts1(key(4096),{1,2,2,22},{4},40,odh::InteractionQueueMode::normal,0,false,false),
+       "outer action enters ahead of idle Main");
+   require(vm.run(20)==odh::VmStatus::waiting&&queue.active()&&queue.size()==1&&
+       vm.stack().size()==2&&vm.stack()[1].key.id==4096&&vm.temps()[3]==77,
+       "outer action reaches its own AllowPush wait with its frame and registers intact");
+   const auto parent_uid=queue.snapshot().active->uid;
+   require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false),
+       "higher-priority action queues behind the protected parent");
+   require(queue.tick(1)&&vm.run(20)==odh::VmStatus::yielded,
+       "parent IdleForInput hands control to the queued child");
+   const auto child_state=queue.snapshot();
+   require(child_state.suspended_active.size()==1&&child_state.active&&child_state.actions.size()==2&&
+       child_state.actions[0].uid==parent_uid&&child_state.suspended_active[0].uid==parent_uid&&
+       child_state.actions[1].uid==child_state.active->uid&&vm.interaction_return()&&
+       vm.interaction_return()->ticket==child_state.active->ticket&&
+       vm.interaction_return()->result==child_result&&vm.stack().size()==2&&
+       vm.stack()[1].key.id==4096&&vm.temps()[3]==77,
+       "nested child starts above the protected parent");
+   const auto parent_frame_after_child=vm.stack()[1];
+   require(queue.observe()&&queue.completion()&&queue.completion()->uid==child_state.active->uid&&
+       queue.completion()->result==child_result&&queue.active()&&queue.snapshot().active->uid==parent_uid&&
+       queue.snapshot().resume_tick==2&&queue.snapshot().suspended_active.empty()&&
+       world.find(1)->person_data[33]==40&&vm.stack()[1].key.id==parent_frame_after_child.key.id&&
+       vm.stack()[1].pc==parent_frame_after_child.pc&&
+       vm.stack()[1].arguments==parent_frame_after_child.arguments&&
+       vm.stack()[1].context.caller==parent_frame_after_child.context.caller&&
+       vm.stack()[1].context.callee==parent_frame_after_child.context.callee&&
+       vm.stack()[1].context.code_owner==parent_frame_after_child.context.code_owner,
+       "child completion promotes its parent and restores the parent priority");
+   require(queue.tick(2)&&vm.run(20)==odh::VmStatus::waiting&&queue.active()&&
+       queue.snapshot().active->uid==parent_uid&&vm.stack().size()==2&&vm.stack()[1].key.id==4096&&
+       vm.stack()[1].context.code_owner==parent_frame_after_child.context.code_owner&&
+       vm.temps()[3]==77&&vm.temps()[1]==33,
+       "next tick resumes the same parent action with its VM registers preserved");
+  }
+ }
+ { // Completing a child immediately reevaluates pending work against the restored parent priority.
+  odh::World world;world.create(1,odh::EntityKind::avatar,{0,70,0,0});
+  world.create(2,odh::EntityKind::object);world.declare_object_word(1,8,0);
+  world.set_person_data(1,33,0);odh::InteractionQueue queue(world,1,4);
+  const odh::RoutineSet main{{key(4096),bhav({idle(1,1),set(2,99)})}};
+  const odh::RoutineOwners owners{{22,{{key(4096),bhav({idle(1,1),set(0,22)})},
+                                      {key(4097),bhav({set(1,33)})}}}};
+  odh::Vm vm(main,world.vm_memory(),{},queue.primitive(),owners);queue.bind(vm);
+  vm.start(key(4096),{1,1,1,0},{4});
+  require(queue.enqueue_ts1(key(4096),{1,2,2,22},{4},40,odh::InteractionQueueMode::normal,0,false,false)&&
+      vm.run(20)==odh::VmStatus::waiting,"priority reevaluation fixture starts its parent action");
+  require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},50,odh::InteractionQueueMode::normal,0,false,false)&&
+      queue.tick(1)&&vm.run(20)==odh::VmStatus::yielded,
+      "priority reevaluation fixture starts its child action");
+  require(queue.enqueue_ts1(key(4097),{1,2,2,22},{},60,odh::InteractionQueueMode::normal,0,false,false),
+      "higher-priority work remains pending behind the active child");
+  require(queue.observe()&&queue.snapshot().active&&queue.snapshot().active->uid==queue.snapshot().actions[0].uid&&
+      queue.snapshot().actions[0].notify_idle&&
+      (static_cast<std::uint16_t>(world.find(1)->object_words.at(8))&0x0080U),
+      "child completion restores the parent then immediately recalculates NotifyIdle and InteractionCanceled");
+ }
  { // An inactive TS1 queue has ActiveQueueBlock=-1, so head inserts at zero.
   Fixture f(1,3);require(f.enqueue()&&f.enqueue(4097),"inactive PushHead fixture queues ordinary actions");
   require(f.queue.enqueue(key(4096),{1,2,2,22},{},true),"inactive PushHead accepts a continuation");

@@ -12,7 +12,7 @@ Intel e Apple Silicon; Wii U é alvo desejado. Não prometer ports sem evidênci
 
 Checkout único: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`.
 Origin: `https://git.home.zsrv.com.br/zenaror/opendollhouse.git`, branch `main`.
-Base publicada antes da etapa atual: `ef9dd70b10efbd6f1c516034daee4dd4cdb39700`.
+Base publicada antes da etapa atual: `6dc587ec1b3420ef6460130991eeeef3c336b178`.
 Consultar OMM `OpenDollhouse` e Git para estado posterior; ler antes de atualizar
 handoff com CAS e SHA Git completo. Nunca usar o antigo checkout `/media`.
 
@@ -38,6 +38,42 @@ por etapas, mas a conclusão exige o aplicativo nativo completo. A migração de
 VMExpression abaixo foi implementada e validada; o port completo segue incompleto.
 
 ## Checkpoint nativo validado (2026-10-26)
+
+### Uma ação pode aguardar outra e depois continuar (etapa atual)
+
+AllowPush dentro de uma ação pode iniciar outra de prioridade maior. A fila
+preserva os pais na ordem, restaura a prioridade ao retornar e só encerra as
+mudanças de necessidades e NonInterruptable quando a ação externa termina.
+Retorno verdadeiro ou falso da filha não desvia a ação pai: ela volta à mesma
+instrução no próximo tick. Os registradores compartilhados conservam os efeitos.
+A identidade do frame usa rotina/ticket/caller/callee/owner; StackObjectID pode
+mudar durante a execução. Fila legada não pode inventar pais protegidos.
+
+Controller codec v5 conserva os pais suspensos e lê v1–v4 sem inventá-los; VM
+codec continua v2. Novas esperas AllowPush=1 conferem fila a cada tick; waits Main
+antigos mantêm o prazo salvo. Capturas após avanço do relógio, antes da observação
+do retorno e entre retorno da filha e retomada do pai são restauráveis. A sessão
+rejeita combinações inconsistentes de frame, prefixo, ticket e estado da VM.
+Alvo reciclado durante despacho gera diagnóstico antes da saída de frame.
+
+Build C++ e 15 CTests passaram em `reports/native-nested-actions/attempt-1/`.
+O teste integrado compara a continuação sem interrupção com reaberturas repetidas,
+para filha com retorno verdadeiro e falso, incluindo Sleep/Idle, World e TEMP/XL.
+Isto é evidência sintética; cancelamento completo, callbacks e RunImmediately
+seguem pendentes. Ver `native-queue-migration.md` para contrato e limites.
+
+Regressões com o mesmo binário SHA256
+`6df60219ced71276479606d2a9eeb2d824921bd902426c7a75254f7da20a0e14`:
+`reports/native-active-interaction/attempt-22/result.json` confirma cortes256/512
+com 12 seções iguais na reabertura e no final4096, save legado carregado e
+25 originais intactos. `reports/native-menu-checks/seated-9/result.json` confirma
+Sit/save/reopen0/Stand nas Casas05/07, bytes iguais ao reabrir e fim em pé, sem
+vínculo ao assento; 26 originais intactos. Os 14 processos terminaram e perfis
+isolados foram removidos. Nenhuma tela virtual criada. Esses cenários reais são
+regressões de continuidade; não demonstram nesting dentro de uma interação do
+jogo. Revisor independente aprovou o contrato estático sem bloqueadores.
+
+
 
 ### Save/reopen de ação em andamento (commit `4a6e0c2`)
 
@@ -114,7 +150,7 @@ Esse perfil antigo não admite salvar qualquer ação manual pendente: seu supor
 a donos dinâmicos continua limitado a rotas e à continuação sentada dedicada.
 O caminho de família usa o registro completo de bancos de código.
 
-### Continuação do Sim sentado no banco (etapa atual)
+### Continuação do Sim sentado no banco (commit `6dc587e`)
 
 RunTreeByName destino 2 reutiliza um banco já instalado na VM chamadora somente
 quando source/asset correspondem ao objeto alvo e a rotina existe nesse owner.

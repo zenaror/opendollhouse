@@ -112,6 +112,34 @@ int main() {
                 call_commit_throw.stack()[0].key.id==4096&&call_commit_throw.stack()[0].pc==0,
                 "throwing child-state commit removes the created frame before propagating");
 
+        const odh::Instruction interaction_call{49,254,255,{}};
+        const odh::RoutineSet nested_program{{key(),routine({interaction_call})},
+            {key(4097),routine({interaction_call})},{key(4098),routine({expr(2,0,0)})}};
+        const auto nested_primitive=[](const auto& frame,const auto& instruction,const auto&,const auto&){
+            if(instruction.opcode!=49)return odh::PrimitiveOutcome{};
+            const auto target=frame.key.id==4096?4097U:4098U;
+            return odh::PrimitiveOutcome{odh::PrimitiveDisposition::call,{}, {},
+                odh::VmCall{key(target),frame.context,{},odh::VmCallReturnMode::interaction_next_tick}};
+        };
+        odh::Vm nested_action_vm(nested_program,{}, {},nested_primitive);
+        nested_action_vm.start(key(),{1,2,3,0});
+        require(nested_action_vm.run(2)==odh::VmStatus::budget_exhausted&&nested_action_vm.stack().size()==3&&
+            nested_action_vm.stack()[1].return_mode==odh::VmCallReturnMode::interaction_next_tick&&
+            nested_action_vm.stack()[2].return_mode==odh::VmCallReturnMode::interaction_next_tick,
+            "VM accepts an interaction child above an existing interaction frame");
+        const auto nested_action_vm_state=nested_action_vm.snapshot();
+        odh::Vm nested_restored(nested_program,{}, {},nested_primitive);
+        require(nested_restored.restore_snapshot(nested_action_vm_state)&&nested_restored.stack().size()==3,
+            "VM snapshot restores a nested interaction prefix");
+        require(nested_action_vm.run(1)==odh::VmStatus::yielded&&nested_action_vm.interaction_return()&&
+            nested_action_vm.stack().size()==2&&nested_action_vm.stack()[1].return_mode==odh::VmCallReturnMode::interaction_next_tick,
+            "nested action return keeps its parent frame and publishes only the child's ticket");
+        odh::Vm returned_child_restored(nested_program,{}, {},nested_primitive);
+        require(returned_child_restored.restore_snapshot(nested_action_vm.snapshot())&&
+            returned_child_restored.stack().size()==2&&returned_child_restored.interaction_return()&&
+            returned_child_restored.interaction_return()->ticket==nested_action_vm.interaction_return()->ticket,
+            "VM snapshot accepts a child return while its parent interaction remains active");
+
         std::optional<std::uint16_t> read_flag;
         odh::VmMemory sprite_memory;
         sprite_memory.dynamic_sprite_flag=[&](const odh::VmFrame&,std::uint16_t flag)->std::optional<bool>{

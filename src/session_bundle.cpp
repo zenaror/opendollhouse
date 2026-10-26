@@ -393,34 +393,87 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
     for(const auto& action:interactions.actions)if(action.check&&
        action.check->scope!=routine_key(action.check->id).scope)
         throw FormatError("session queued interaction check key does not match its routine ID");
+    if(vm.interaction_return&&vm.status!=VmStatus::yielded)
+        throw FormatError("session interaction return does not match yielded VM status");
     const auto valid_ticket=[&](std::uint64_t ticket){return ticket&&ticket<=vm.ticket_sequence;};
-    bool action_frame=false;
+    const auto parent_count=interactions.suspended_active.size();
+    if(parent_count>interactions.actions.size()||
+       (!interactions.suspended_active.empty()&&!interactions.active)||
+       (interactions.profile==InteractionQueueProfile::legacy_fifo&&!interactions.suspended_active.empty()))
+        throw FormatError("session nested interaction prefix is invalid");
+    std::uint64_t previous_parent_ticket=0;
+    for(std::size_t i=0;i<parent_count;++i){
+        const auto& parent=interactions.suspended_active[i];
+        if(parent.uid!=interactions.actions[i].uid||!valid_ticket(parent.ticket)||
+           parent.ticket<=previous_parent_ticket)
+            throw FormatError("session suspended interaction parent does not match queue order");
+        previous_parent_ticket=parent.ticket;
+    }
+    if(interactions.active&&(interactions.actions.size()<=parent_count||
+       interactions.active->uid!=interactions.actions[parent_count].uid||
+       !valid_ticket(interactions.active->ticket)||interactions.active->ticket<=previous_parent_ticket))
+        throw FormatError("session active interaction does not match nested queue prefix");
+    std::vector<const VmFrame*> interaction_frames;
     for(const auto& frame:vm.stack) {
         if(frame.return_mode!=VmCallReturnMode::interaction_next_tick)continue;
-        if(!interactions.active||interactions.actions.empty()||
-           frame.invocation_ticket!=interactions.active->ticket)
-            throw FormatError("session interaction frame has no active controller action");
-        const auto& call=interactions.actions.front().call;
-        if(frame.key.scope!=call.key.scope||frame.key.id!=call.key.id||
-           frame.context.caller!=call.context.caller||frame.context.callee!=call.context.callee||
-           frame.context.code_owner!=call.context.code_owner||
-           frame.arguments.size()<call.arguments.size())
-            throw FormatError("session active interaction frame does not match queued call");
-        action_frame=true;
+        interaction_frames.push_back(&frame);
+    }
+    const auto frame_matches=[&](const VmFrame& frame,const InteractionActionSnapshot& action,
+                                  std::uint64_t ticket){
+        const auto& call=action.call;
+        return frame.invocation_ticket==ticket&&
+           frame.key.scope==call.key.scope&&frame.key.id==call.key.id&&
+           frame.context.caller==call.context.caller&&frame.context.callee==call.context.callee&&
+           frame.context.code_owner==call.context.code_owner&&
+           frame.arguments.size()>=call.arguments.size();
+    };
+    bool action_frame=false;
+    if(interactions.active){
+        const bool returned_unobserved=vm.interaction_return&&!interactions.resume_tick&&
+            vm.interaction_return->ticket==interactions.active->ticket;
+        const auto expected_frames=parent_count+(returned_unobserved?0:1);
+        if(interaction_frames.size()!=expected_frames)
+            throw FormatError("session interaction VM frame roster differs from active prefix");
+        for(std::size_t i=0;i<interaction_frames.size();++i){
+            const auto& saved=i<parent_count?interactions.suspended_active[i]:*interactions.active;
+            const auto& action=interactions.actions[i];
+            if(!frame_matches(*interaction_frames[i],action,saved.ticket))
+                throw FormatError("session interaction VM frame does not match queue key, context, or ticket");
+        }
+        action_frame=interaction_frames.size()>parent_count;
+    }else if(!interaction_frames.empty()){
+        throw FormatError("session interaction frame has no active controller prefix");
     }
     if(interactions.active) {
-        if(interactions.actions.empty()||
-           interactions.active->uid!=interactions.actions.front().uid||
-           !valid_ticket(interactions.active->ticket)||interactions.resume_tick||
-           (interactions.wait?!action_frame:interactions.idle_start!=0))
-            throw FormatError("session active interaction is invalid");
-        if(vm.interaction_return) {
-            if(action_frame||vm.interaction_return->ticket!=interactions.active->ticket||
-               vm.interaction_return->code_owner!=
-                   interactions.actions.front().call.context.code_owner)
-                throw FormatError("session interaction return does not match active action");
-        }else if(!action_frame&&vm.status!=VmStatus::fault)
+        const auto& active_call=interactions.actions[parent_count].call;
+        if(vm.interaction_return&&!interactions.resume_tick&&
+           (action_frame||vm.interaction_return->ticket!=interactions.active->ticket||
+            vm.interaction_return->code_owner!=active_call.context.code_owner||
+            vm.interaction_return->run_generation!=vm.run_generation))
+            throw FormatError("session nested interaction return does not match deepest action");
+        if(interactions.resume_tick){
+            if(!interactions.completion||!vm.interaction_return||
+               vm.interaction_return->ticket!=interactions.completion->ticket||
+               vm.interaction_return->result!=interactions.completion->result||
+               vm.interaction_return->run_generation!=vm.run_generation||
+               interactions.completion->ticket<=interactions.active->ticket)
+                throw FormatError("session nested parent resume does not match completed child");
+        }
+    }
+    /* active parent and completed child coexist until the scheduled resume tick */
+    if(interactions.active) {
+        // Value-only session data cannot inspect the BHAV at the saved PC; require
+        // the complete active prefix and a runnable VM with no suspended service.
+        const bool idle_retry_cut=!interactions.wait&&!interactions.resume_tick&&interactions.idle_start&&
+            action_frame&&!vm.pending&&!vm.interaction_return&&!vm.external_frame_return&&
+            vm.suspended_pending.empty()&&
+            (vm.status==VmStatus::running||vm.status==VmStatus::budget_exhausted);
+        if(!valid_ticket(interactions.active->ticket)||
+           (!interactions.wait&&!interactions.resume_tick&&interactions.idle_start&&!idle_retry_cut))
+            throw FormatError("session active interaction boundary is invalid");
+        if(!vm.interaction_return&&!action_frame&&vm.status!=VmStatus::fault) {
             throw FormatError("session active interaction has no VM frame");
+        }
     }
     if(interactions.wait) {
         if(interactions.resume_tick||(interactions.active&&!action_frame)||
@@ -437,8 +490,13 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
         if(index>=vm.stack.back().arguments.size()||index>32767||allow>1)
             throw FormatError("session interaction wait arguments are invalid");
         const auto remaining=vm.stack.back().arguments[index];
-        if(remaining<0||interactions.wait->deadline!=interactions.idle_start+
-           (allow==1?1:static_cast<std::uint64_t>(remaining)+1))
+        if(remaining<0)throw FormatError("session interaction wait argument is negative");
+        const auto legacy_delay=static_cast<std::uint64_t>(remaining)+1;
+        const auto current_delay=allow==1?std::uint64_t{1}:legacy_delay;
+        const bool current_deadline=interactions.wait->deadline==interactions.idle_start+current_delay;
+        const bool legacy_main_deadline=allow==1&&!interactions.active&&
+            interactions.wait->deadline==interactions.idle_start+legacy_delay;
+        if(!current_deadline&&!legacy_main_deadline)
             throw FormatError("session interaction wait deadline does not match VM argument");
     }else if(vm.pending&&vm.pending->instruction.instruction.opcode==17&&
              vm.pending->context.caller==entity.id)
@@ -452,13 +510,15 @@ void validate_controller_vm_links(const SessionRuntimeEntity& entity) {
             throw FormatError("session interaction completion is invalid");
     }
     if(interactions.resume_tick) {
-        if(!interactions.completion||interactions.active||interactions.wait||
+        if(!interactions.completion||interactions.wait||
            *interactions.resume_tick>max_clock||
            *interactions.resume_tick<=interactions.clock||
            *interactions.resume_tick!=interactions.completion->tick+1||
            !vm.interaction_return||
            vm.interaction_return->ticket!=interactions.completion->ticket||
-           vm.interaction_return->result!=interactions.completion->result)
+           vm.interaction_return->result!=interactions.completion->result||
+           vm.interaction_return->run_generation!=vm.run_generation||
+           (!interactions.active&&!interactions.suspended_active.empty()))
             throw FormatError("session interaction resume does not match VM return");
     }
     if(vm.interaction_return&&!interactions.active&&!interactions.resume_tick)

@@ -86,7 +86,9 @@ int main() {
             waiting.run_generation()>old_generation && !waiting.resume_interaction(invocation),"faulted start also invalidates event");
 
         for(unsigned variant=0;variant<4;++variant) {
-            odh::Vm invalid({{key(4096),routine({op(17)})}}, {}, {},
+            odh::VmLimits limits;
+            if(variant==3)limits.stack_depth=2;
+            odh::Vm invalid({{key(4096),routine({op(17)})}}, {}, limits,
                 [&](const auto&,const auto& i,const auto&,const auto&) {
                     auto out=action();out.write=odh::VmFrameWrite{odh::VmFrameBank::arguments,0,55};
                     if(variant==0)out.call->context.code_owner=99;
@@ -96,11 +98,11 @@ int main() {
                     return out;
                 },{{7,{{key(4097),routine({op(20)})},{key(4098),routine({op(21)})}}}});
             invalid.start(key(4096),{}, {10});
-            require(invalid.run(variant==3?10:1)==odh::VmStatus::fault,"invalid call or nested interaction faults");
+            require(invalid.run(variant==3?10:1)==odh::VmStatus::fault,"invalid call or exhausted interaction depth faults");
             if(variant<3)require(invalid.stack().size()==1 && invalid.stack()[0].arguments[0]==10 &&
                 invalid.stack()[0].pc==0,"invalid child and output leave parent atomic");
             else require(invalid.stack().size()==2 && invalid.stack()[1].arguments[0]==99 &&
-                !invalid.interaction_return(),"nested action rejected before frame output or push");
+                !invalid.interaction_return(),"depth-limited child rejected before frame output or push");
         }
         // Default explicit calls preserve the original branch-return behavior.
         odh::Vm ordinary({{key(4096),routine({op(17,254,255)})}}, {}, {},

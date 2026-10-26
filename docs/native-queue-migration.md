@@ -4,14 +4,16 @@ Status: **partial native implementation in progress**, 2026-10-26. The current
 working tree parses all seven TS1 `PushInteraction` priorities, maps them to
 signed priorities/modes, carries TTAB action flags into the native queue, and
 orders pending actions by the TS1 normal, ParentIdle/ParentExit, PushHead and
-PushTail rules that fit its existing one-active-action model. It reevaluates the
+PushTail rules around a protected prefix of active actions. It reevaluates the
 active action when work is queued and at tick boundaries: a higher-priority
 pending action, or active priority changing to zero, marks the action to notify.
 The existing `IdleForInput` wait keeps its scheduled wake time; when it next runs,
 it sets the avatar's notified flag. Starting and finishing the outer action
 update PersonData[33] when that bank is present. The VM checks routine ownership,
 frame limits and stack depth before the queue publishes an action as active.
-Controller codec v4 persists priority, mode, flags, notification bit, public
+Controller codec v5 also persists the suspended parent prefix. It preserves v4
+permission metadata and reads v1–v4 with an empty parent prefix. It persists
+priority, mode, flags, notification bit, public
 queue UID, queue profile, optional check routine identity and whether a
 player request requires permission checks. It reads v3 without adding that
 permission requirement to older actions, and reads v2
@@ -20,7 +22,8 @@ profile; the first new TS1 push adopts priority ordering while keeping old
 pending actions in their existing order and assigning unique queue UIDs.
 
 This is a queue-ordering and notification milestone, **not full TS1 queue
-fidelity**. The current native runtime still protects only one active action.
+fidelity**. An action-tree AllowPush can now start a higher-priority child while
+retaining its parents in the protected prefix.
 PushInteraction now retains its TTAB check routine under the same code owner.
 At AllowPush dispatch, the check runs synchronously with four zero arguments and
 shared TEMP/TempXL and World state. False removes that candidate and tries the
@@ -37,20 +40,21 @@ and BHAV checks against the current World; a check-time change can reject an
 action that was available at click time. Other direct host enqueues and legacy
 saves retain their old semantics. Check primitive coverage remains incomplete.
 
-It does not dispatch nested actions from an
-action-tree `AllowPush`, cancel or skip followups, inject RunImmediately at a
-tick boundary, or support nested protected action frames and their callbacks.
+It does not implement full cancellation or followup skipping, inject
+RunImmediately at a tick boundary, or support action callbacks.
 RunImmediately requests are rejected explicitly so they cannot masquerade as
-ordinary queued work. Priority reevaluation is limited to the single active
-action model; it runs on each tick instead of FreeSO's QueueDirty-only schedule,
+ordinary queued work. Priority reevaluation protects the entire active prefix; it runs on each tick
+and when a nested action completes instead of FreeSO's QueueDirty-only schedule,
 and does nothing when the avatar lacks PersonData[33]. Setting the cancellation
 flag also requires ObjectData[8]. Keep extending the existing `Vm`,
 `InteractionQueue`, World and session codecs; keep one authoritative native
 simulation. Do not present this slice as game parity.
 
-Current gates: eight focused CTests passed for VM checks, queue execution, controller
-codec v1/v2/v3/v4, session bundle, menu discovery, seated continuation and both
-resident restore profiles. Output: `reports/native-menu-checks/attempt-1/ctest-final.log`.
+Current gates: 15 focused CTests passed for VM execution/snapshots, queue,
+controller codec v1–v5, session bundle, seated continuation and resident restore
+(including cross-process fixtures). Output:
+`reports/native-nested-actions/attempt-1/final-ctest.log`; build:
+`reports/native-nested-actions/attempt-1/final-build.log`.
 The earlier cross-resident PushInteraction assertion remains covered.
 Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
 zero check arguments, missing/unsupported checks, independent instruction budgets,
@@ -61,13 +65,33 @@ unknown avatar data, pet/visitor/age flags, and rejected requests without fabric
 completion. These are synthetic interpreter/World fixtures, not original-executable evidence.
 
 House07 active-save/reopen rerun:
-`reports/native-active-interaction/attempt-17/result.json`, binary SHA256
-`189a48cb3583e9bd81828918659bb3831ccfd0c1d98d634415d030ed4b9b1e80`.
+`reports/native-active-interaction/attempt-22/result.json`, binary SHA256
+`6df60219ced71276479606d2a9eeb2d824921bd902426c7a75254f7da20a0e14`.
 Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
 continuations matched the uninterrupted run through tick 4096. The legacy save
 loaded and 25 original game files retained their hashes. Processes ended and
 isolated profiles were removed. This verifies continuity of the fridge action;
 it does not establish coverage of all checks, competing priorities or game parity.
+
+## Nested AllowPush execution
+
+A child keeps its parent's PC and arguments. True and false child returns are
+recorded as completion events without branching the parent; the parent retries
+its own IdleForInput instruction on the next tick. TEMP/TempXL and World are
+thread-shared, so child effects remain. Completion restores parent priority;
+NonInterruptable and motive changes clear only when the outermost action ends.
+StackObjectID may change inside an action and is not its identity: routine,
+invocation ticket, caller, callee and code owner identify each frame.
+
+New AllowPush=1 waits poll every tick. Restore still accepts the older full
+countdown deadline for a Main wait and preserves that deadline. AllowPush=0
+keeps its full countdown. Captures before return observation, after observation,
+and after a clock advance before VM execution preserve the same continuation.
+Nested dispatch requires the TS1 priority profile; legacy FIFO snapshots cannot
+fabricate suspended ancestors. RunImmediately and full callbacks/cancellation
+remain explicit gaps. The synthetic integration test covers one parent and one
+child for both return values, comparing uninterrupted and repeatedly reopened
+VM/controller/World state; this is not evidence of a complete game flow.
 
 ## Player requests and code ownership
 
@@ -85,7 +109,7 @@ source semantics rather than imposing new game rules.
 
 Legacy single-resident regression probe: House05 bench173 and House07 chair128
 both pass Sit/save/fresh reopen/Stand in
-`reports/native-menu-checks/seated-8/result.json`, including byte-identical
+`reports/native-menu-checks/seated-9/result.json`, including byte-identical
 zero-tick reopen. The earlier House05 failures are retained as historical
 evidence. The host now reuses the target's exact installed resource bank for
 RunTreeByName destination 2 and loads its linked BCON constants. Dedicated SEAT
@@ -151,7 +175,7 @@ threshold; equal autonomous or inherited-low-priority actions can therefore nest
 An unsuitable ParentIdle/check-failed candidate is removed and the next examined.
 A valid action clears InteractionCanceled, writes its priority, pushes an action
 frame and extends the protected prefix. TS1 AllowPush=1 permits this from an
-existing action tree, unlike the current native adapter.
+existing action tree, as now implemented by the native adapter.
 
 QueueDirty is set by queue changes and by writes to PersonData[33]. At the tick
 boundary EvaluateQueuePriorities runs, then TryRunImmediately. Evaluation treats
@@ -190,12 +214,11 @@ reinterpret it as ordinary deletion.
 
 ## State and codec coordination
 
-Current native state has one active front/return event, priority/mode/check/
-NotifyIdle metadata, and explicitly rejects nested interaction frames. Completing
-the queue requires extending these same structures with protected-prefix/action
-frame associations, action/check provenance, priority/mode/TS1 flags, notification
-and cancellation state, interaction number, arguments, callback descriptors and
-any behaviorally used result state. Keep native lifetime/generation identities
+Current native state has one innermost active action, an ordered vector of
+suspended ancestors, one return event and priority/mode/check/NotifyIdle metadata.
+Entries through the active action form a protected prefix. Completing the queue
+requires extending these same structures with full cancellation, interaction
+number, callback descriptors and any behaviorally used result state. Keep native lifetime/generation identities
 separate from the source's wrapping public UID. Never persist raw callbacks or
 resource pointers. Queue callbacks/checks/entry-point4 may alter World or enqueue
 work; resolve identities afresh across those calls.
@@ -203,7 +226,7 @@ work; resolve identities afresh across those calls.
 Coordinate changes to `InteractionQueueSnapshot`, `VmSnapshot`,
 `entity_thread_controllers_snapshot_codec.cpp`, `vm_snapshot_codec.cpp`, and
 `session_bundle.cpp::validate_controller_vm_links` with the active-save work.
-Current controller codec is v4 (reads v1/v2/v3) and VM codec v2. Active-save validation is already
+Current controller codec is v5 (reads v1/v2/v3/v4) and VM codec v2. Active-save validation is already
 changing the same active/wait/frame invariants: do not independently replace its
 schema. Add versioned fields only after agreeing the shared shape; old FIFO saves
 must not silently acquire invented TS1 priority metadata. Upstream load rebuilds

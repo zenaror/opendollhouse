@@ -1,5 +1,6 @@
 #include "odh/entity_thread_controllers.hpp"
 #include "odh/entity_thread_controllers_snapshot_codec.hpp"
+#include "odh/vm_snapshot_codec.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -28,13 +29,18 @@ odh::Bhav routine(std::initializer_list<odh::Instruction> code){return {0x8002,c
 odh::Instruction sleep(unsigned yes=1){return {0,static_cast<std::uint8_t>(yes),255,{}};}
 odh::Instruction idle(unsigned allow=1,unsigned yes=1){return {17,static_cast<std::uint8_t>(yes),255,{0,0,static_cast<std::uint8_t>(allow),0,0,0,0,0}};}
 odh::Instruction set(unsigned temp,unsigned value,unsigned yes=254){return {2,static_cast<std::uint8_t>(yes),255,{static_cast<std::uint8_t>(temp),0,static_cast<std::uint8_t>(value),0,0,5,8,7}};}
-enum class Kind{sleep,idle,actions,notification_chain};
+enum class Kind{sleep,idle,actions,notification_chain,nested};
 odh::RoutineSet program(Kind kind){
     if(kind==Kind::sleep)return {{key(4096),routine({sleep(),set(2,99)})}};
     if(kind==Kind::notification_chain)return {{key(4096),routine({idle(0),sleep(2),set(2,99)})}};
-    return {{key(4096),routine({idle(kind==Kind::actions?1:0),set(2,99)})}};
+    return {{key(4096),routine({idle(kind==Kind::actions||kind==Kind::nested?1:0),set(2,99)})}};
 }
-odh::RoutineOwners owners(){return {{22,{{key(4096),routine({sleep(),set(0,22)})},{key(4097),routine({set(1,33,255)})}}}};}
+odh::RoutineOwners owners(){return {{22,{
+    {key(4096),routine({sleep(),set(0,22)})},
+    {key(4097),routine({set(1,33,255)})},
+    {key(4098),routine({{2,1,255,{0,0,1,0,0,5,10,7}},idle(1,2),set(3,77)})},
+    {key(4099),routine({sleep(),set(4,88)})},
+    {key(4100),routine({sleep(),set(4,88,255)})}}}};}
 template<class T>void optional(std::ostream& out,const std::optional<T>& value){out<<bool(value)<<':';if(value)out<<*value;out<<';';}
 void context(std::ostream& out,const odh::VmContext& c){out<<c.caller<<','<<c.callee<<','<<c.stack_object<<','<<c.code_owner<<';';}
 void trace(std::ostream& out,const odh::VmTrace& t){
@@ -55,6 +61,7 @@ std::string values(const odh::EntityThreadControllersSnapshot& s){
         context(out,action.call.context);out<<action.call.arguments.size()<<';';for(auto v:action.call.arguments)out<<v<<',';
     }
     out<<bool(q.active)<<';';if(q.active)out<<q.active->uid<<','<<q.active->ticket<<';';
+    out<<q.suspended_active.size()<<';';for(const auto& parent:q.suspended_active)out<<parent.uid<<','<<parent.ticket<<';';
     out<<bool(q.wait)<<';';if(q.wait)out<<q.wait->ticket<<','<<q.wait->deadline<<';';
     out<<bool(q.completion)<<';';if(q.completion)out<<q.completion->uid<<','<<q.completion->ticket<<','<<q.completion->tick<<','<<q.completion->result<<';';
     out<<q.interrupted<<';'<<q.diagnostic.size()<<':'<<q.diagnostic<<';';return out.str();
@@ -62,6 +69,7 @@ std::string values(const odh::EntityThreadControllersSnapshot& s){
 std::string values(const odh::VmSnapshot& s){
     std::ostringstream out;out<<int(s.status)<<','<<s.steps<<','<<s.ticket_sequence<<','<<s.run_generation<<';'
        <<s.diagnostic.size()<<':'<<s.diagnostic<<';';for(auto v:s.temps)out<<v<<',';
+    for(auto v:s.temp_xl)out<<v<<',';
     out<<s.stack.size()<<';';for(const auto& frame:s.stack){
         out<<int(frame.key.scope)<<','<<frame.key.id<<','<<frame.pc<<','<<int(frame.return_mode)<<','<<frame.invocation_ticket<<';';
         context(out,frame.context);out<<frame.arguments.size()<<';';for(auto v:frame.arguments)out<<v<<',';
@@ -89,9 +97,9 @@ struct Fixture{
             return odh::PrimitiveOutcome{};
         },owners()){
         if(!initialize)return;
-        require(world.create(1,odh::EntityKind::avatar)&&world.create(2,odh::EntityKind::object)&&
+        require(world.create(1,odh::EntityKind::avatar,kind==Kind::nested?odh::EntityLayout{0,80,0,16}:odh::EntityLayout{})&&world.create(2,odh::EntityKind::object)&&
                 world.declare_object_word(1,8,16),"World fixture");
-        vm.start(key(4096),{1,1,1,0},{kind==Kind::actions?std::int16_t{0}:std::int16_t{6}});
+        vm.start(key(4096),{1,1,1,0},{kind==Kind::actions||kind==Kind::nested?std::int16_t{0}:std::int16_t{6}});
         require(controllers.bind(vm),"bind fixture controllers after VM initialization");
     }
     bool enqueue(unsigned action=4096){return controllers.interactions().enqueue(key(action),{1,2,2,22},{3,91,-7});}
@@ -106,7 +114,7 @@ struct Fixture{
 std::unique_ptr<Fixture> destination(const Fixture& source){
     auto result=std::make_unique<Fixture>(source.kind,false,source.has_rng);
     require(result->world.restore_snapshot(source.world.snapshot()),"restore surrounding World first");
-    require(result->vm.restore_snapshot(source.vm.snapshot()),"restore bound VM execution before services");
+    require(result->vm.restore_snapshot(odh::decode_vm_snapshot(odh::encode_vm_snapshot(source.vm.snapshot()))),"restore bound VM execution before services");
     require(result->controllers.bind(result->vm),"bind fresh destination services");
     result->rng_cycles=source.rng_cycles;return result;
 }
@@ -116,7 +124,8 @@ void same(const Fixture& a,const Fixture& b){
     require(a.rng_cycles==b.rng_cycles,"external RNG callback counts match");
     const auto x=a.world.snapshot(),y=b.world.snapshot();
     require(x.word_count==y.word_count&&x.generation_sequence==y.generation_sequence&&x.spatial_revision==y.spatial_revision&&
-            x.entities.size()==y.entities.size()&&x.entities[0].object_words==y.entities[0].object_words,
+            x.entities.size()==y.entities.size()&&x.entities[0].object_words==y.entities[0].object_words&&
+            x.entities[0].person_data==y.entities[0].person_data,
             "fixture World flags and accounting match");
 }
 std::unique_ptr<Fixture> restored(const Fixture& source,bool composed=true){
@@ -189,6 +198,70 @@ void actions_and_boundaries(){
     auto unobserved_copy=restored(unobserved);
     require(unobserved.controllers.observe()&&unobserved_copy->controllers.observe(),"restored unobserved return removes the same FIFO front");
     same(unobserved,*unobserved_copy);advance_same(unobserved,*unobserved_copy,1,8);
+}
+void nested_save_continuation(){
+    for(const bool child_result:{true,false}){
+        Fixture source(Kind::nested);
+        require(source.world.set_person_data(1,33,0)&&source.world.set_person_data(1,71,1),"nested priority and noninterruptable state");
+        auto& queue=source.controllers.interactions();
+        require(queue.enqueue_ts1(key(4098),{1,2,2,22},{4},10,
+            odh::InteractionQueueMode::normal,0,false,false),"enqueue parent action");
+        source.run(1);
+        require(queue.active(),"parent dispatched before child insertion");
+        require(queue.enqueue_ts1(key(child_result?4099:4100),{1,2,2,22},{2},20,
+            odh::InteractionQueueMode::normal,0,false,false),"enqueue higher-priority child");
+        source.run(2);
+        require(queue.snapshot().suspended_active.size()==1&&queue.size()==2&&
+            source.vm.stack()[1].context.stack_object==1&&queue.snapshot().actions[0].call.context.stack_object==2,
+            "AllowPush protects the parent including its changed StackObjectID");
+        source.vm.temp_xl()[0]=0x12345678;
+        source.run(1);
+        require(source.controllers.sleep().snapshot().job.has_value(),"child is suspended in Sleep");
+        auto legacy_state=source.controllers.snapshot();legacy_state.interactions.profile=odh::InteractionQueueProfile::legacy_fifo;
+        auto invalid_legacy=destination(source);
+        require(!invalid_legacy->controllers.restore_snapshot(legacy_state),"legacy profile cannot acquire a fabricated active prefix");
+        std::vector<std::unique_ptr<Fixture>> copies;
+        copies.push_back(restored(source));
+        bool resumed_parent=false;
+        for(std::uint64_t tick=1;tick<=16;++tick){
+            require(source.controllers.advance(tick),"advance nested source");
+            auto after_advance=restored(source);
+            std::ostringstream instruction_trace;
+            source.vm.run(8,[&](const auto& value){trace(instruction_trace,value);});
+            std::unique_ptr<Fixture> before_observe;
+            if(source.vm.interaction_return()&&
+               !source.controllers.snapshot().interactions.suspended_active.empty())
+                before_observe=restored(source);
+            require(source.controllers.observe(),"observe nested child return");
+            const auto expected=instruction_trace.str();
+            for(auto& copy:copies){
+                require(copy->step(tick,8)==expected,"nested restored trace matches uninterrupted trace");
+                same(source,*copy);
+            }
+            require(after_advance->run(8)==expected,"restore between clock advance and VM run preserves execution");
+            same(source,*after_advance);copies.push_back(std::move(after_advance));
+            if(before_observe){
+                require(before_observe->controllers.observe(),"observe child return restored before controller observation");
+                same(source,*before_observe);
+                copies.push_back(std::move(before_observe));
+            }
+            const auto state=source.controllers.snapshot();
+            if(state.interactions.resume_tick&&state.interactions.active){
+                require(state.interactions.suspended_active.empty()&&
+                    state.interactions.completion&&state.interactions.completion->result==child_result&&
+                    source.world.find(1)->person_data[33]==10&&source.world.find(1)->person_data[71]==1,
+                    "child result preserves parent and restores its priority before next tick");
+                resumed_parent=true;
+            }
+            // Every cut restores both codecs/controllers, including the gap
+            // between child completion and the parent's next-tick resumption.
+            copies.push_back(restored(source));
+        }
+        require(resumed_parent&&source.vm.temps()[3]==77&&source.vm.temps()[4]==88&&
+            source.vm.temp_xl()[0]==0x12345678&&!queue.active()&&queue.size()==0&&
+            source.world.find(1)->person_data[33]==0&&source.world.find(1)->person_data[71]==0,
+            "true and false children both return control to their parent without losing registers");
+    }
 }
 void rejection_and_atomicity(){
     Fixture source(Kind::actions);require(source.enqueue()&&source.enqueue(4097),"validation actions");source.run(1);source.run(1);
@@ -271,7 +344,7 @@ void rejection_and_atomicity(){
 }
 }
 int main(){
-    try{wait_and_notifications();actions_and_boundaries();rejection_and_atomicity();
+    try{wait_and_notifications();actions_and_boundaries();nested_save_continuation();rejection_and_atomicity();
         std::cout<<"thread_controller_snapshot: "<<checks<<" checks passed (synthetic in-memory continuation only)\n";}
     catch(const std::exception& error){allocation_countdown=-1;std::cerr<<"thread_controller_snapshot: "<<error.what()<<'\n';return 1;}
 }

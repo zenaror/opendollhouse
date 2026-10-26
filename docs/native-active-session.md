@@ -56,9 +56,8 @@ The new profile targets household execution first. The single-resident legacy
 loader rejects it explicitly until that loader receives the same graph support.
 Pending Create or non-deferred Remove service requests still require explicit
 support before they can be checkpointed; they must never disappear silently.
-The current resident queue still implements inherited FIFO behavior. Full
-priorities, nested queue execution and cancellation are a subsequent migration
-described in [native-queue-migration.md](native-queue-migration.md).
+The resident queue supports TS1 priorities and nested AllowPush with a protected
+parent prefix. Full cancellation and callbacks remain pending, as described in [native-queue-migration.md](native-queue-migration.md).
 Portal and other unsupported external services remain explicit limitations.
 Do not describe the profile as saving at every possible game instruction.
 

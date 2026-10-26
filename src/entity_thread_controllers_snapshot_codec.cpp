@@ -7,7 +7,7 @@
 
 namespace odh {
 namespace {
-constexpr std::uint16_t codec_version = 4;
+constexpr std::uint16_t codec_version = 5;
 constexpr std::uint16_t legacy_codec_version = 1;
 constexpr std::size_t minimum_size = 84;
 constexpr std::size_t minimum_action_size_v1 = 34;
@@ -231,6 +231,8 @@ void write_interactions(Writer& writer, const InteractionQueueSnapshot& state) {
     }
     writer.boolean(state.active.has_value());
     if (state.active) { writer.u64(state.active->uid); writer.u64(state.active->ticket); }
+    writer.count(state.suspended_active.size());
+    for(const auto& parent:state.suspended_active){writer.u64(parent.uid);writer.u64(parent.ticket);}
     writer.boolean(state.wait.has_value());
     if (state.wait) { writer.u64(state.wait->ticket); writer.u64(state.wait->deadline); }
     writer.boolean(state.completion.has_value());
@@ -281,6 +283,11 @@ InteractionQueueSnapshot read_interactions(Reader& reader,
         if(version>=4)action.check_permissions=reader.boolean();
     }
     if (reader.boolean()) state.active = InteractionActiveSnapshot{reader.u64(), reader.u64()};
+    if(version>=5){
+        const auto parents=reader.count(limits.max_queue_actions,16);
+        state.suspended_active.resize(parents);
+        for(auto& parent:state.suspended_active)parent={reader.u64(),reader.u64()};
+    }
     if (reader.boolean()) state.wait = InteractionWaitSnapshot{reader.u64(), reader.u64()};
     if (reader.boolean()) state.completion = InteractionCompletion{reader.u64(), reader.u64(), reader.u64(), reader.boolean()};
     state.interrupted = reader.boolean();
@@ -333,10 +340,21 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
     if(interactions.profile>InteractionQueueProfile::ts1_priority)
         throw FormatError("invalid interaction queue profile");
     const auto valid_ticket = [](std::uint64_t ticket) { return ticket != 0; };
-    if (interactions.active && (interactions.actions.empty() ||
-        interactions.active->uid != interactions.actions.front().uid ||
-        !valid_ticket(interactions.active->ticket) || interactions.resume_tick ||
-        (!interactions.wait && interactions.idle_start)))
+    if(interactions.suspended_active.size()>interactions.actions.size()||
+       (!interactions.suspended_active.empty()&&!interactions.active)||
+       (interactions.profile==InteractionQueueProfile::legacy_fifo&&!interactions.suspended_active.empty()))
+        throw FormatError("invalid nested interaction prefix");
+    std::uint64_t previous_ticket=0;
+    for(std::size_t i=0;i<interactions.suspended_active.size();++i){
+        const auto& parent=interactions.suspended_active[i];
+        if(!valid_ticket(parent.ticket)||parent.ticket<=previous_ticket||
+           parent.uid!=interactions.actions[i].uid)
+            throw FormatError("invalid suspended interaction parent prefix");
+        previous_ticket=parent.ticket;
+    }
+    if (interactions.active && (interactions.actions.size()<=interactions.suspended_active.size()||
+        interactions.active->uid != interactions.actions[interactions.suspended_active.size()].uid ||
+        !valid_ticket(interactions.active->ticket)||interactions.active->ticket<=previous_ticket))
         throw FormatError("invalid active interaction state");
     if (interactions.wait && (interactions.resume_tick ||
         !valid_ticket(interactions.wait->ticket) || interactions.wait->deadline <= interactions.clock ||
@@ -347,9 +365,11 @@ void validate(const EntityThreadControllersSnapshot& snapshot,
         interactions.completion->tick > interactions.clock ||
         action_uids.count(interactions.completion->uid)))
         throw FormatError("invalid interaction completion state");
-    if (interactions.resume_tick && (!interactions.completion || interactions.active || interactions.wait ||
+    if (interactions.resume_tick && (!interactions.completion || interactions.wait ||
         *interactions.resume_tick > maximum_clock || *interactions.resume_tick <= interactions.clock ||
-        *interactions.resume_tick != interactions.completion->tick + 1))
+        *interactions.resume_tick != interactions.completion->tick + 1 ||
+        (!interactions.active&&!interactions.suspended_active.empty())||
+        (interactions.active&&interactions.completion->ticket<=interactions.active->ticket)))
         throw FormatError("invalid interaction resume boundary");
 }
 }
