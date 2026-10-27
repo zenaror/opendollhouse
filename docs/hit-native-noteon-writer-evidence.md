@@ -35,10 +35,9 @@ dessa escrita. A evidência é estática e não demonstra comportamento executad
 do jogo.
 
 O relatório completo, extractor, assembly e manifests estão no workspace em
-`reports/hit-native-noteon-providers-20261020/`; o relatório tem SHA256
+registro arquivado não distribuído; o relatório tem SHA256
 `c45e268157aed92476a73dc6b8b96d7af82ce6f30020929b0343834b86e6e191`. O
 extractor valida cinco ranges novos (329 bytes), cinco ranges previamente
 documentados, mapeamento PE/GNU BFD e hash do executável antes/depois. A
 evidência reutilizada dos helpers A/B conserva os limites registrados em sua
-documentação. O relatório completo também foi importado como fonte OMM no
-escopo `OpenDollhouse`.
+documentação.

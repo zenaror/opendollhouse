@@ -92,8 +92,8 @@ sintética. Ambos possuem Animation
 `a2o-standing-loop;-10;1000;75;1000;1;1;1`.
 ID105 termina em3697 bits e deixa7; ID137 em3707 e deixa5.
 
-Auditoria local ignorada: `reports/objm-tail-audit.py/.json` e
-`reports/verify-tail-state.py`. A comparação verifica todos os scalars,
+Auditoria local ignorada: registro arquivado não distribuído e
+registro arquivado não distribuído. A comparação verifica todos os scalars,
 strings/padding/start_byte, bits dos floats, decoded_words/string_bytes,
 cursores absolutos e sufixo. Fontes comerciais foram conferidas antes/depois
 e mantêm os hashes do [checkpoint de estado comum](object-state-validation.md).
@@ -105,7 +105,7 @@ O Main executa no World construído anterior; a decodificação não altera seus
 estados para atravessar um gate de simulação.
 
 Relatórios completos Debug/ASan idênticos byte a byte, ignorados em
-`reports/{bob,member47,house01,house03}-tail-native[-asan].json`:
+registro arquivado não distribuído:
 
 - Bob: `a530f0fdd9374cfea7d48b3fa3eaac2b123f3932726350a56ddb6224337cbb2a`;
 - membro47: `693bcb7f6a91607c19f4a29dd27608bc54ffdb5530178342d262d38f1882de38`;

@@ -56,8 +56,8 @@ simulation. Do not present this slice as game parity.
 Current gates: 18 focused CTests passed for VM execution/snapshots, queue,
 controller codec v1–v5, session bundle, seated continuation and resident restore
 (including cross-process fixtures). Output:
-`reports/native-auto-cancel/attempt-1/final-ctest.log`; build:
-`reports/native-auto-cancel/attempt-1/final-build.log`.
+an archived validation record (not distributed); build:
+an archived validation record (not distributed).
 The earlier cross-resident PushInteraction assertion remains covered.
 Fixtures cover true/false checks, retained World/TEMP/TempXL effects, owner/context,
 zero check arguments, missing/unsupported checks, independent instruction budgets,
@@ -68,7 +68,7 @@ unknown avatar data, pet/visitor/age flags, and rejected requests without fabric
 completion. These are synthetic interpreter/World fixtures, not original-executable evidence.
 
 House07 active-save/reopen rerun:
-`reports/native-active-interaction/attempt-24/result.json`, binary SHA256
+an archived validation record (not distributed), binary SHA256
 `0469a48014ff9cfdb3c59a342398b21a627d92a4bfd080d0a9902c1717c3a4fc`.
 Both cuts (ticks 256/512) reopened with all 12 sections matching, and both
 continuations matched the uninterrupted run through tick 4096. The legacy save
@@ -195,7 +195,7 @@ host operation after enqueue and before the tick's interpreter dispatch; equal
 enqueue/cancel ticks exercise pending cancellation. JSON and session logs retain
 cancel result/diagnostic and EP4 context/routine/steps/result.
 
-Cancellation runtime evidence: `reports/native-action-cancel/auto-regression-1/result.json`,
+Cancellation runtime evidence: an archived validation record (not distributed),
 using the same final binary as the normal fridge regression above. Tick1 removes
 the pending fridge action without starting it (its known EP4 is zero). Tick256
 signals the active action; the save at tick256 still has that action active.
@@ -231,7 +231,7 @@ source semantics rather than imposing new game rules.
 
 Legacy single-resident regression probe: House05 bench173 and House07 chair128
 both pass Sit/save/fresh reopen/Stand in
-`reports/native-menu-checks/seated-9/result.json`, including byte-identical
+an archived validation record (not distributed), including byte-identical
 zero-tick reopen. The earlier House05 failures are retained as historical
 evidence. The host now reuses the target's exact installed resource bank for
 RunTreeByName destination 2 and loads its linked BCON constants. Dedicated SEAT

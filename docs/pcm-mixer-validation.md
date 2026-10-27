@@ -64,10 +64,10 @@ Suítes finais Debug e ASan/UBSan:106 configurados,105 aprovados e um teste X11
 ignorado pelo ambiente. Sem warnings nos builds; LSan desativado, sem afirmação
 de ausência de leaks. Catálogo passou35 checks e wrapper CLI, incluindo
 allowance zero, menor/exato e tentativa de ampliar o limite configurado.
-Logs reports/pcm-mixer-build{,-asan}-final.log e
-reports/pcm-mixer-build{,-asan}-ctest.log.
+Logs registro arquivado não distribuído,-asan}-final.log e
+registro arquivado não distribuído,-asan}-ctest.log.
 
-Verificador nativo local reports/pcm-mixer-native.cpp, SHA256
+Verificador nativo local registro arquivado não distribuído, SHA256
 89fb18f331c69ab863305364554ec6a997ee31bb6539c7c86fee6fb6128b461f:
 factory HOT/HIT -> binding World -> catálogo FAR -> duas XA -> mixer -> SDL
 dummy,44100Hz estéreo, unidade/centro. Background patch2756 começa no frame0
@@ -85,7 +85,7 @@ Entradas nativas de SoundData.far:
 Debug e ASan/UBSan produziram109568 frames, incluindo padding do último bloco;
 FNV1a64 do PCM little-endian:8bca194e939e6a8d em ambos. A instância concluiu,
 o owner foi parado uma vez e nenhum registro/PCM restou. Recibos
-reports/pcm-mixer-native-{dummy,asan}.json. Hash coincidente demonstra
+registro arquivado não distribuído,asan}.json. Hash coincidente demonstra
 determinismo entre esses builds, não comparação com áudio do original.
 
 Sem audibilidade/DAC, Main retomado, ciclo World real ou hardware portátil.

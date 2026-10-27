@@ -69,7 +69,7 @@ Debug and ASan/UBSan each configure 100 tests: 99 pass, one X11 test skipped
 due to the environment. No compiler warnings. LSan disabled
 (`ASAN_OPTIONS=detect_leaks=0`), so leak absence is not claimed.
 
-Private verifier `reports/hit-thread-native.cpp`, SHA256
+Private verifier an archived validation record (not distributed), SHA256
 `9c4f06e718cbd032c04c17478ff2f7161899e8455c8810fe1d48417aeb634dce`,
 loads the actual generated HSM/HOT/HIT and event hungry_sated_vox.
 Explicit fixture arguments [1,1024,0], source1 fields20=30/0=0, choice
@@ -88,8 +88,8 @@ All receipts show one successful note, two choices, one group effect and
 54,296 delivered frames, PC85 and no Main resumed. Delivery does not prove
 audibility or physical DAC completion.
 
-Retained private receipts: `reports/hit-thread-native-dummy.json`,
-`reports/hit-thread-native-asan.json`, `reports/hit-thread-native-pulse.json`.
+Retained private receipts: an archived validation record (not distributed),
+an archived validation record (not distributed), an archived validation record (not distributed).
 Commercial resources and analysis artifacts remain external or ignored.
 
 ## Pending integration

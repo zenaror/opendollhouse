@@ -71,8 +71,8 @@ Blend de peso parcial, gestos, carry e headseek continuam pendentes.
 ## CLI e imagens de diagnóstico
 
 ```sh
-./build/odh-pose '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult --animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 80.5 --svg reports/pose-adult-80_5.svg > reports/pose-adult-80_5.json
-python3 tools/compare_pose.py '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf reports/pose-adult-80_5.json reports/pose-animation-cfp.json
+./build/odh-pose '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult --animation '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 80.5 --svg validation-output/pose-adult-80_5.svg > validation-output/pose-adult-80_5.json
+python3 tools/compare_pose.py '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf validation-output/pose-adult-80_5.json validation-output/pose-animation-cfp.json
 ```
 
 Sem --animation, amostra repouso. --frame exige animação; --svg é opcional.

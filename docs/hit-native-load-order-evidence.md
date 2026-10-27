@@ -6,8 +6,8 @@ Investigação estática de 2026-10-17, complementar a
 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`.
 Nenhum código original foi executado ou alterado. Os recortes de assembly,
 hashes dos bytes e mapeamento VA/RVA/offset estão em
-`reports/hit-native-load-order/`, reproduzíveis por
-`python3 reports/hit-native-load-order/collect.py`.
+registro arquivado não distribuído, reproduzíveis por
+`python3 registro arquivado não distribuído`.
 
 ## Arquivos de uma raiz
 

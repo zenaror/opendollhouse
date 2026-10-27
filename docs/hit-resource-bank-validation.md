@@ -60,7 +60,7 @@ controller passaram (0,02 s). A compilação global dessa configuração foi
 interrompida para limitar a rodada aos quatro targets pertinentes; o log
 intermediário foi preservado. Não há alegação de suíte completa sem SDL/X11.
 
-Os recibos desta unidade ficam em `reports/hit-resource-bank/`, ignorado pelo
+Os recibos desta unidade ficam em registro arquivado não distribuído, ignorado pelo
 Git. `audit_static.py` rederiva o mapeamento PE da imagem SHA256
 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2` e
 confere os três manifestos estáticos desta unidade: 75/75 intervalos,

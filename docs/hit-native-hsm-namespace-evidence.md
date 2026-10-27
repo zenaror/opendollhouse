@@ -3,7 +3,7 @@
 Investigação estática de 2026-10-17 sobre `../referencias/The Sims/Sims.exe`,
 SHA256 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`.
 O recibo reproduzível ignorado pelo Git está em
-`reports/hit-native-hsm-namespace/EVIDENCE.md`, com `collect.py`, manifesto
+registro arquivado não distribuído, com `collect.py`, manifesto
 PE, hashes e 18 recortes pontuais de assembly. O executável não foi executado
 nem modificado.
 

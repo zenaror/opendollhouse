@@ -113,9 +113,9 @@ House07r0z3 PPM:
 `8cdf3b88e93038c71932777c676267ee55dd8f3cedaae21010cab3cfcd49cf74`;
 depth:
 `4a7eab5782482035c444c9638d00bb74ebc6f19f4f7a2293a00dfad67a010a3a`.
-Relatórios locais ignorados: `reports/verify-native-floors.py`,
-`reports/floor-export.cpp`, `reports/saved-floor-native-validation.json`,
-`reports/house{01,07,03}-floors-r*-z*.{json,ppm,depth,png}` e logs
+Relatórios locais ignorados: registro arquivado não distribuído,
+registro arquivado não distribuído, registro arquivado não distribuído,
+registro arquivado não distribuído e logs
 `floor-{debug,asan}-tests.log`. Nenhum recurso comercial está versionado.
 
 ## Reprodução

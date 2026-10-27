@@ -95,9 +95,9 @@ acessível. O sandbox da sessão não acessava X11, então gates nativos foram
 executados com acesso ao display, exclusivamente nas próprias janelas de teste.
 
 ```sh
-./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run --world-probe --route-probe --snap-probe --object-def 16808 --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff --animation-probe '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf --age 21 --sound-probe --reset-probe a2o-sit-loop.cmx.bcf --post-ticks 240 --stand-after --animation-extra adult-chair-stand-new.cmx.bcf --main-probe --hold-ticks 120 --view '../referencias/The Sims/GameData/Textures/Textures.far' --view-skeleton adult-skeleton.cmx.bcf adult --view-part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --view-part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --view-window > reports/live-manual.json
+./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run --world-probe --route-probe --snap-probe --object-def 16808 --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff --animation-probe '../referencias/The Sims/GameData/Animation/Animation.far' adult-chair-sit-new.cmx.bcf --age 21 --sound-probe --reset-probe a2o-sit-loop.cmx.bcf --post-ticks 240 --stand-after --animation-extra adult-chair-stand-new.cmx.bcf --main-probe --hold-ticks 120 --view '../referencias/The Sims/GameData/Textures/Textures.far' --view-skeleton adult-skeleton.cmx.bcf adult --view-part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --view-part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --view-window > validation-output/live-manual.json
 # Acrescentar --view-auto para sequência automática;
-# trocar janela por --view-frames reports/live-headless para observação sem display.
+# trocar janela por --view-frames validation-output/live-headless para observação sem display.
 ```
 
 ## Gates
@@ -167,7 +167,7 @@ viewport fixo. Inicialização standing/walk e interpolação de rota ainda falt
 não se usa autofit por frame para esconder a diferença. Scale/terrain/bone slots,
 OBJf/scheduler/queue geral, picking, piso/paredes/lote, RNG real/decay/áudio e
 persistência delimitada continuam pendentes. A janela mostra um probe controlado;
-a meta Linux funcional/testável permanece ativa.
+o escopo Linux funcional/testável permanece incompleto.
 
 ## Referências
 
@@ -183,5 +183,4 @@ FreeSO fixo4c6b3e8f5835b228723caea3c9f683c62f244f73, MPL2.0 declarada:
 
 Código ODH próprio; não há execução do original, projeto Ghidra TS1 importado,
 calibração completa contra screenshots originais ou hardware console validado.
-Originais preservados e derivados/outputs locais fora do Git. Continuidade OMM
-com hashes de fontes e revisão Git verificada.
+Originais preservados; recursos comerciais e saídas locais não são distribuídos.

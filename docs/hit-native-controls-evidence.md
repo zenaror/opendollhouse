@@ -89,7 +89,7 @@ O Track3410 chair_sit_metal tem volume1024,ArgStyle2,duckpri10,group1,Spl20,
 patch0 e hitlist tkd_chair_sit_metal. Portanto sua inicialização deve guardar
 ID25=10 e ID50=0 mesmo quando a escolha inicial seleciona uma XA não zero.
 Trechos adicionais e identidade reverificada em
-reports/hit-native-controls-init-selected.asm.txt.
+registro arquivado não distribuído
 
 ## Composição e fronteira com o backend
 
@@ -113,7 +113,7 @@ Branch não3D passa ID20 local em this+0x44 à vtable+0x48 em0x57fb56–0x57fb5d
 não é necessariamente o retorno do getter compartilhado anterior. Binding da
 patch0x57f9c8–0x57f9d7 aplica volume/pan/pitch antes de NoteOn0x57f88e.
 Caminho streamed reaplica controles em0x57f90a. Trechos selecionados em
-reports/hit-native-controls-selected.asm.txt; sem teste dinâmico/áudio original.
+registro arquivado não distribuído; sem teste dinâmico/áudio original.
 
 ## Espaço e lacunas
 

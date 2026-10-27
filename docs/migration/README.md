@@ -1,9 +1,7 @@
 # Native migration work inventory
 
-Planning checkpoint: 2026-10-26, native base `6890bf141250164cc06198bdbac8f87f427c59ee`.
-The human requested this bounded planning task with limited remaining quota.
-The goal is paused and stays paused: this checkpoint authorizes no game-code
-implementation, build, runtime test or automatic development continuation.
+Inventory date: 2026-10-26, native base `6890bf141250164cc06198bdbac8f87f427c59ee`.
+This is a structural source inventory and delivery plan, not a completion report.
 
 ## What this inventory proves
 
@@ -60,8 +58,7 @@ relative to FreeSO `TSOClient/`. The CSV provides complete individual paths.
 
 ## Dependency and execution policy
 
-After explicit resume, use the packages below rather than choosing the next bug
-as the roadmap. `Partial` means existing integrated evidence is linked from
+Use the dependency-ordered packages below as the roadmap. `Partial` means existing integrated evidence is linked from
 [feature matrix](../playable-feature-matrix.md); `Open` means an end-to-end
 acceptance gate is missing. No package below is declared complete.
 
@@ -141,20 +138,8 @@ the other entire package to be complete before work begins.
 
 ## Delegation and closure
 
-Coordinator: Sol medium. Default implementer: Sol medium. Small bounded lookup
-or mechanical inventory can use a cheaper model when available; serialization,
-financial state, concurrency and architectural ambiguity merit independent
-review, with Astra medium only when the added reasoning is justified.
-
-At most three workers plus coordinator. Assign disjoint native files; serialize
-shared-interface decisions, builds, frozen-binary runtime gates and publication.
-One worker implements; another verifies source/acceptance independently. A
-reviewer does not mark a feature complete from its own synthetic fixture alone.
-
-First resumed dispatch: worker A=P01/P02 investigation and native value contract;
-worker B=VM01 primitive ledger; worker C=UI01 screen/control ledger or DATA01
-provider dependency ledger. Coordinator integrates P03/P04 after the contracts
-are agreed. Do not run those workers now while the goal is paused.
+Use disjoint file ownership for parallel changes. Agree shared interfaces first;
+serialize integration checks and review stateful changes independently.
 
 Before closing any package require: source/revision + native files; supported
 and unsupported behavior; integrated acceptance run; save/reopen and failure

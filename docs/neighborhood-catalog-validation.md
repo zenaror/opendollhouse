@@ -76,14 +76,12 @@ ctest --test-dir /tmp/odh-neighborhood-build -R '^(lot_locations|neighborhood_cl
 
 Resultado do build focado: os quatro testes indicados passaram. Depois, o build
 completo e toda a suíte CTest também passaram: **165/165**, sem falhas. O teste
-foi sintético; não valida runtime, renderização, hardware ou ports. O build
-preexistente não foi reutilizado pois seu CMakeCache ainda registra o caminho
-antigo `/media/rafael/Dados/...`.
+foi sintético; não valida runtime, renderização, hardware ou ports.
 
 ## Leitura da instalação local
 
 Execução somente leitura em
-`/home/rafael/_PROJETOS/TheSims1/referencias/The Sims/UserData`, 2026-10-22.
+`../referencias/The Sims/UserData`, 2026-10-22.
 Quantidades são evidência de catálogo, sem reprodução de recursos comerciais.
 
 | Modo | Estado | Lotes | Arquivos presentes | FAMI associados | Membros | Tail STR# (bytes) |

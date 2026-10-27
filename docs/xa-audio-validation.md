@@ -52,9 +52,9 @@ Ten additional synthetic mono/stereo cases, with distinct predictors and
 1/28/29/55/56 frames, match FFmpeg's declared prefix exactly. Native stereo
 resources were not validated in this unit.
 
-Ignored reproducible evidence includes `reports/verify-xa-native.py`,
-`reports/xa-native-inputs.json`, `reports/xa-native-validation.json`, exported
-XA/WAV under `reports/xa-native/`, and build/test logs. The static inventory
+Ignored reproducible evidence includes an archived validation record (not distributed),
+an archived validation record (not distributed), an archived validation record (not distributed), exported
+XA/WAV under an archived validation record (not distributed), and build/test logs. The static inventory
 found124 standalone SoundData TV XA files, all mono11025; this is an inventory,
 not a claim that they were all decoded or played.
 

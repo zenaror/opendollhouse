@@ -33,7 +33,7 @@ no preview ODH; não há prova de UI final ou paridade geral com TS1/Simitone.
 ```sh
 python3 tests/house07_window_go_here.py \
   --binary build/linux-checkpoint/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --select-additional --save-resume
 ```
 
@@ -68,7 +68,7 @@ validados. A interface final TS1/Simitone permanece pendente.
 ```sh
 python3 tests/house07_window_go_here.py \
   --binary build/linux-checkpoint/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' --save-resume
+  --game-root '../referencias/The Sims' --save-resume
 ```
 
 ## Go Here pela janela em House07 (2026-10-25)
@@ -87,7 +87,7 @@ original nem validação de outros lotes ou andares.
 ```sh
 python3 tests/house07_window_go_here.py \
   --binary build/linux-checkpoint/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+  --game-root '../referencias/The Sims'
 ```
 
 ## House07 Go Here salvo durante a caminhada (2026-10-25)
@@ -110,7 +110,7 @@ equivalência geral com TS1/Simitone.
 ```sh
 python3 tests/house07_route_save_resume.py \
   --binary build/linux-checkpoint/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims'
+  --game-root '../referencias/The Sims'
 ```
 
 ## Entrega de interrupções em ponto seguro (2026-10-25)
@@ -239,7 +239,7 @@ python3 tests/house07_phone_subroutine_integration.py \
 ```
 
 Relatório local ignorado pelo Git:
-[`house07-phone-pizza-response.json`](../reports/phone-pizza-path/house07-phone-pizza-response.json).
+`house07-phone-pizza-response.json` (registro arquivado, não distribuído).
 
 ## Checkpoint anterior: pedido de Pizza parava antes do diálogo
 
@@ -266,7 +266,7 @@ isso e que não há retorno de sucesso falso. A integração headless verifica o
 trace, os relacionamentos, a escrita, a Main dormente e a falha final esperada.
 CTest focado passou 6/6 e os hashes dos cinco arquivos comerciais ficaram
 iguais. Relatório:
-[`house07-phone-pizza-destination1-validated.json`](../reports/phone-pizza-path/house07-phone-pizza-destination1-validated.json), SHA256
+`house07-phone-pizza-destination1-validated.json` (registro arquivado, não distribuído), SHA256
 `0f26269daa611cbd9d60135d34634853428cb1dfe07c83413a8e6ad547b82a6a`.
 
 ### Próximos dois limites do caminho da Pizza
@@ -288,7 +288,7 @@ explícita no opcode36 e fila de ação ainda ativa; não comprova entrega.
 A integração `tests/house07_phone_subroutine_integration.py` exige o evento
 41, os operandos exatos do pedido 36, o tick e a falha esperados, além de
 conferir os hashes dos cinco arquivos comerciais antes e depois. Relatório
-atual: `reports/phone-pizza-path/house07-phone-pizza-dialog-boundary.json`.
+atual: registro arquivado não distribuído.
 SHA256 `7d8bd61122b21b14f41e259df7218a28915ed63957ab5874dd1cf24d774d4793`.
 Nenhuma tela virtual é aberta para este teste.
 
@@ -368,7 +368,7 @@ headless de House07 terminou com falha controlada do host no destino1, em
 160 ticks; não abriu janela ou display virtual. House07, LotZoning,
 Neighborhood e os dois personagens conservaram seus hashes. Relatório JSON
 local, ignorado pelo Git:
-`reports/phone-pizza-path/house07-phone-pizza-object-relationship-retrace.json`,
+registro arquivado não distribuído,
 SHA256 `64acd875a24cf5a60879750a5c25d767e3bd3f5cb5d3e91f69b0148124830667`.
 
 Próximo: implementar a chamada síncrona no contexto da VM do objeto-alvo, com
@@ -772,7 +772,7 @@ Validação reproduzível com os arquivos locais do jogo:
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-go-here/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --go-here 27 26 1 --ticks 214
 ```
 
@@ -813,7 +813,7 @@ de GotoRelativePosition continuam na rota local. Reprodução com dados externos
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-race-check/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --go-here 20 20 1 --go-here-expect-cross-room --ticks 4096
 ```
 
@@ -854,7 +854,7 @@ vazia e o marcador sumiu. BHAV4096 ainda retornou `true`. Reprodução:
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-release/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --ticks 256 --go-here 25 29 1 \
   --go-here-expect-route-failure \
   --go-here-blocker-id 106 --go-here-blocker-asset DiningTables.iff
@@ -870,7 +870,7 @@ obstáculo durante a caminhada. A reprodução é:
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-release/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --ticks 256 --go-here 27 26 1 \
   --go-here-mutation 106 405 440 1 2 40 \
   --go-here-expect-interruption
@@ -891,7 +891,7 @@ House07 cobre cancelamento no começo da rota:
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-release/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --ticks 256 --go-here 27 26 1 \
   --go-here-interrupt-at-tick 2 --go-here-expect-cancelled
 ```
@@ -904,7 +904,7 @@ vez de depender do tempo do relógio:
 ```sh
 python3 tests/house07_route45_integration.py \
   --binary /tmp/odh-build-release/odh-person \
-  --game-root '/home/rafael/_PROJETOS/TheSims1/referencias/The Sims' \
+  --game-root '../referencias/The Sims' \
   --ticks 256 --go-here 27 26 1 \
   --go-here-interrupt-after-movements 1 --go-here-expect-cancelled
 ```

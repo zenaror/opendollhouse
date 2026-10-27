@@ -120,9 +120,9 @@ SHA256 dos JSON completos (os caminhos explícitos fazem parte do JSON):
 - House07: `f5cfbc29297249ac6a39e0e2ef08f5fd4571cf15349579de7cc19bc656ecc605`.
 - House03: `6e77d2a9ccbf7f7e3eacba94eb65bd62fc1cac7f6faf9235ddbb5fa21ff81e4c`.
 
-Evidência local ignorada: `reports/house{01,07,03}-world-native[-asan].json`,
-`reports/verify-saved-world.py`, `reports/saved-world-native-validation.json` e
-`reports/saved-world-ctest-{debug,asan}.txt`. Os sete inputs selecionados tiveram
+Evidência local ignorada: registro arquivado não distribuído,
+registro arquivado não distribuído, registro arquivado não distribuído e
+registro arquivado não distribuído. Os sete inputs selecionados tiveram
 seus hashes conferidos antes e depois, sem alteração. Os hashes e caminhos estão
 no relatório de validação; os hashes de referência estão nos checkpoints dos
 formatos anteriores. Sem argumentos, sem definições, com opção desconhecida ou
@@ -137,7 +137,7 @@ parcial.
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
   --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
-  > reports/house07-world-native.json
+  > validation-output/house07-world-native.json
 ```
 
 Saída 0 indica importação no perfil descrito; saída 2 indica falha. Os campos

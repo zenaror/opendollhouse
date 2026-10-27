@@ -35,15 +35,10 @@ Simitone para validar as funções e deixar a adaptação à interface original 
 a etapa final. Isso adia a execução visual, sem remover o requisito de aparência,
 menus e controles do The Sims 1 nem acoplar a simulação a essa interface temporária.
 
-Complemento humano de 2026-10-25: a meta foi recriada e inicialmente pausada;
-a instrução posterior determina respeitar seu status real, inclusive retomadas.
-Nesta retomada, `get_goal` confirmou active. Uma pausa futura impede execução;
-o texto histórico da pausa não deve cancelar uma retomada na interface.
-Linux é o primeiro ambiente
-para validar a experiência; a arquitetura deve considerar os demais alvos desde
-o início. Wii U entra como alvo desejado adicional, sem viabilidade confirmada.
+Linux é o primeiro ambiente de validação; a arquitetura considera os demais
+alvos desde o início. Wii U é um alvo desejado, sem viabilidade comprovada.
 
-Ao retomar, avaliar antes de consolidar a base como separar o jogo dos serviços
+Antes de consolidar a base, avaliar antes de consolidar a base como separar o jogo dos serviços
 de cada sistema: janela/gráficos, áudio, teclado/mouse/controles/toque, arquivos,
 configurações e logs. Evitar caminhos Linux fixos no núcleo e dependências de
 desktop espalhadas pela simulação. Identificar consumo de memória, tempo de
@@ -130,7 +125,7 @@ de sistema específicos por plataforma. C++17 é a escolha do primeiro protótip
 toolchains e orçamentos dos consoles ainda não foram validados.
 
 Decisão de 2026-10-13: desenvolver e validar primeiro uma versão funcional Linux,
-antes de implementar os ports New 3DS/Vita/Android. A meta ativa inclui leitores,
+antes de implementar os ports New 3DS/Vita/Android. O escopo inclui leitores,
 VM, renderização, interação e lote mínimo, não apenas o inspector host atual.
 Os constraints do New 3DS continuam considerados na arquitetura; a execução em
 Linux não comprova viabilidade ou desempenho nos portáteis.

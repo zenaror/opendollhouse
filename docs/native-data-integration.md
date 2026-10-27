@@ -51,7 +51,7 @@ dotnet publish refs/work/Simitone-linux/Client/Simitone/Simitone.Desktop/Simiton
 A biblioteca deve ser compilada para o destino. O parâmetro é um caminho absoluto
 com basename `libodh_data.so`, `libodh_data.dylib` ou `odh_data.dll`; passar o alias
 sem versão, não o arquivo `.so.1.0`. O SDK copia o arquivo ao publish transitivamente.
-A receita observada usou o build em `reports/portability/native-data-abi/host-build`;
+A receita observada usou o build em registro arquivado não distribuído;
 os hashes do arquivo publicado coincidiram. Windows/macOS não foram compilados
 nesta etapa. O CMake prepara nomes/exports desses hosts, não prova sua execução.
 
@@ -76,9 +76,9 @@ host é separada da portabilidade. A API nativa não depende de CLR para executa
   e testa sucesso e erros. PASS SVC+imagem, hashes ligados às fontes comuns.
   147 configurações acompanhadas iguais, processos/perfil/Xvfb encerrados.
 
-Relatórios em `reports/portability/native-data-abi/`,
-`reports/simitone-linux-evaluation/house07-native-bcon/` e
-`reports/portability/3ds-native-abi-execution/`. Binários nativos pequenos de cada
+Relatórios em registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído. Binários nativos pequenos de cada
 execução foram preservados para evitar sobrescrever a evidência aprovada.
 O primeiro probe anterior foi reconstruído de `eea8a5b`, com hashes exatamente
 iguais, e arquivado como `rebuilt-exact`, sem confundi-lo com captura original.

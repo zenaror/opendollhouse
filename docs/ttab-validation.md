@@ -20,7 +20,7 @@ de ptrace no sandbox (`ASAN_OPTIONS=detect_leaks=0`); leaks não foram validados
 O corpus local completo do perfil descrito em `validation.md` percorreu o novo
 inspector em Debug e ASan/UBSan, saída 0 e stderr vazio. Os relatórios são
 idênticos e os 14 contadores anteriores continuam coincidindo. Relatórios locais
-ignorados: `reports/corpus-ttab.json` e `reports/corpus-ttab-sanitize.json`.
+ignorados: registro arquivado não distribuído e registro arquivado não distribuído.
 
 | Estado/campo | Ocorrências |
 |---|---:|
@@ -60,8 +60,8 @@ ctest --test-dir build --output-on-failure
 cmake -S . -B build-sanitize -DODH_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-sanitize -j 2
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize --output-on-failure
-ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > reports/corpus-ttab-sanitize.json
-python3 tools/check_census.py reports/corpus-ttab-sanitize.json
+ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > validation-output/corpus-ttab-sanitize.json
+python3 tools/check_census.py validation-output/corpus-ttab-sanitize.json
 ./build/odh-ttab '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 128
 ```
 

@@ -102,13 +102,13 @@ PCM; they do not establish audible playback, original DSP, or console support.
 Final executable SHA256:
 `d725c2532dc8c650948759ed36c7165d3da501da18a66ec6bb3e097497386ffa`.
 
-`reports/native-session-audio/attempt-1/final-ctest.log` records 31 passing focused
+an archived validation record (not distributed) records 31 passing focused
 tests after rebuilding their targets in `focused-build.log`. Host link/core builds
 are recorded in `final-build.log`, `meter-build.log`, `diagnostic-build.log`,
 `ts1-jump-build.log` and finally `voices-build.log`; the final two changed shared
 audio libraries and relinked the same host. No source changed after these gates.
 
-`reports/native-session-audio/real-final/result.json` records six fresh processes
+an archived validation record (not distributed) records six fresh processes
 with isolated profiles and SDL dummy. In House07, Sim105 sits in chair128;
 voices from Sims105/137 and chair_sit_metal are admitted with zero HIT/PCM faults.
 The output accepts and consumes 110080 frames with 218984 nonzero stereo samples

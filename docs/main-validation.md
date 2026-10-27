@@ -110,8 +110,8 @@ Sem hold, outro probe retorna conforto1, Main16 dispatches, total72 e542ticks.
 O avatar final está em(48,64,1,dir6), sem recipiente e postura0. O loop final
 continua a2o-sit-loop por reset antes de Posture0, como no checkpoint anterior.
 
-Relatórios locais ignorados: reports/chair-main-sequence.json,
-reports/chair-main-no-hold.json e versão sanitizada. Inputs permanecem os hashes
+Relatórios locais ignorados: registro arquivado não distribuído,
+registro arquivado não distribuído e versão sanitizada. Inputs permanecem os hashes
 anteriores de DiningChairs/Global/BCFs; nenhum asset comercial entra no Git.
 
 ## Referências e lacunas

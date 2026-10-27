@@ -96,7 +96,7 @@ membro47 User00001 separadamente. Agora ambos:
 - exit3, host_failed=false, RNG final12162792540164244070.
 
 Relatórios Debug/ASan idênticos byte a byte, ignorados em
-`reports/{bob,member47}-inventory-native[-asan].json`:
+registro arquivado não distribuído:
 Bob SHA256 `5d7fbcbc8d18f60dcb77060d38d43680cdeb14aaea22f1d3453c696a6c1dd7eb`;
 membro47 SHA256 `3f681bb26efbf29538a62b9c132fdc899b486dc030cf7031ba65e715e75dafcb`.
 Neighborhood e House07 foram conferidos antes/depois com os mesmos hashes
@@ -114,7 +114,7 @@ pelo menos158 bits posteriores;98 offsets são ímpares. Atributos:
 Primeiro bloco: ObjectID179/type10, X280/Y360/Level1, footprint
 [MinY352,MinX272,MaxY368,MaxX288],362 bits. Último:ID203/type41,
 X440/Y744/Level1,354 bits. Evidência independente está em relatórios locais
-ignorados `reports/objm-prefix-audit.py` e `reports/objm-prefix-audit.json`.
+ignorados registro arquivado não distribuído e registro arquivado não distribuído.
 
 Próxima implementação C++ deve decodificar signed32 com larguras6/11/21/32,
 atributos limitados,8 temps/68 ObjectData/5 extras, mantendo cursor em bits e

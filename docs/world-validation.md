@@ -74,9 +74,9 @@ e a segunda entrada de tipo3 (índice1). Isso orienta a próxima investigação;
 não comprova o comportamento do original.
 
 Debug e ASan/UBSan produziram JSON idêntico para os cinco casos e a ação,
-stderr vazio. Reports locais ignorados: `reports/chair-world-matrix.json`,
-`reports/chair-world-matrix-sanitize.json`, `reports/chair-world-action.json`
-e `reports/chair-world-action-sanitize.json`. Não houve execução de Sims.exe,
+stderr vazio. Reports locais ignorados: registro arquivado não distribuído,
+registro arquivado não distribuído, registro arquivado não distribuído
+e registro arquivado não distribuído. Não houve execução de Sims.exe,
 sentar/levantar completo, janela ou teste de hardware.
 
 ```sh

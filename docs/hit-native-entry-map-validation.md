@@ -90,7 +90,7 @@ pertencem a `xpack`/`gnome`, cujos HITs têm bytes idênticos; não se conclui
 que a identidade de arquivo possa ser descartada. A varredura de bytes de
 possíveis opcodes não é um disassembler nem prova limites de instrução.
 
-`reports/hit-native-entry-map/catalog-probe.py` e `catalog-corpus.json` preservam
+registro arquivado não distribuído e `catalog-corpus.json` preservam
 o levantamento. `catalog-runtime-probe.cpp` usa o leitor e catálogo C++ com
 `catalog-inputs.tsv` em ordem lexical explicitamente diagnóstica. Resolve o
 evento real `vox_blowout_candles`, chave1340/PC16, e executa seu HIT até Call7
@@ -100,14 +100,14 @@ Esse protocolo deve ser aplicado separadamente às duas instalações externas.
 
 O primeiro probe encontrou a restrição CSV7 numérica e recusou `Cuckoo.hot`;
 os logs e o diagnóstico intermediários foram preservados em
-`reports/hit-native-entry-map/before-numeric-csv7/`. A correção decorre da
+registro arquivado não distribuído. A correção decorre da
 leitura do helper original, sem remover esses arquivos da validação.
 Depois dessa correção, o probe expôs a forma de filename com prefixo extra de
 `GuineaPig.hot`; ela também foi rastreada no parser original antes de ampliar
 o leitor. Essas falhas intermediárias não contam como sucesso do corpus.
 
 Os resultados finais de execução e os hashes dos arquivos desta unidade são
-registrados em `reports/hit-native-entry-map/validation.json` e nos logs
+registrados em registro arquivado não distribuído e nos logs
 adjacentes. Os testes incluem HOT parseado de A, entrada em B, chamadas
 B→A→C e retornos C→A→B, conservando os metadados e patch de A. Também cobrem
 limites de recurso, ENTP separado, registros substituídos, mudança de ordem,

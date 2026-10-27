@@ -48,7 +48,7 @@ O arquivo XA preservado em reports é cópia privada de recurso comercial,
 não distribuída. Decode: mono 22.050 Hz, 54.296 frames, 108.592 bytes PCM,
 zero bytes restantes. SDL dummy e PulseAudio fora do sandbox consumiram os
 54.296 frames (aproximadamente 2,46 segundos). SHA input inalterado depois.
-Recibo privado: `reports/xa-play-native-pulse.json`.
+Recibo privado: registro arquivado não distribuído.
 
 Não comprova áudio original, mixer/controllers/pan/volume, loop de notas,
 soundthread/WaitSamp, retomada do Main ou ports. A seleção HIT ainda fornece

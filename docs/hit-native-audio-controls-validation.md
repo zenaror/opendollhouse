@@ -89,8 +89,8 @@ de providers. Falhas de callback e reentrada preservam o teardown existente.
 
 ## Validação e próximos gates
 
-Recibos locais em `reports/hit-native-audio-controls/`; auditoria independente
-em `reports/hit-native-control-formulas-review/`. Um oráculo Python separado,
+Recibos locais em registro arquivado não distribuído; auditoria independente
+em registro arquivado não distribuído. Um oráculo Python separado,
 com inteiros arbitrários, máscara32 e divisão signed truncada, comparou324
 combinações de borda e20.000 entradas aleatórias determinísticas:20.324 casos,
 zero divergências em ganho, placement, pan local, XYZ e pitch. Ele não executa

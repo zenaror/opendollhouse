@@ -9,20 +9,20 @@ only. It does not implement or validate an audio adapter or original-game audio.
 
 From the repository root:
 
-```sh
-python3 reports/hit-native-common-backend/extract.py
-```
+This historical run used local tooling that is not distributed. Its recorded
+results and limitations are summarized below; that runner cannot be reproduced
+from the public checkout.
 
-The [extractor](../reports/hit-native-common-backend/extract.py) checks the full
+The extractor (registro arquivado, não distribuído) checks the full
 source hash, PE32/i386 headers, image base and section mapping; obtains bounded
 `objdump -d -Mintel` slices; verifies every displayed instruction/continuation
 byte against the source and requires contiguous coverage. The
-[manifest](../reports/hit-native-common-backend/manifest.json) records 20 ranges,
+manifest (registro arquivado, não distribuído) records 20 ranges,
 4,320 verified bytes, VA/RVA/raw offsets and per-range SHA-256. The field
 `instruction_byte_lines` includes objdump continuation lines; it is not a count
 of semantic instructions. Vtable targets and PE import names are separately
-recorded in [vtables.json](../reports/hit-native-common-backend/vtables.json) and
-[resource-routing.json](../reports/hit-native-common-backend/resource-routing.json).
+recorded in vtables.json (registro arquivado, não distribuído) and
+resource-routing.json (registro arquivado, não distribuído).
 No whole-program disassembly or fresh Ghidra analysis was needed. Existing
 Ghidra exports for `005f95ef` and `005f87ba` were reused before the bounded audit.
 The manifest's ODH revision identifies the starting investigation baseline,

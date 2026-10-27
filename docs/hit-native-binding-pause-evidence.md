@@ -43,11 +43,11 @@ uma operação vazia de áudio; isso substitui qualquer hipótese de retomada
 automática do cursor. As pendências abaixo descrevem o limite deste primeiro
 recorte; ownership completo, callbacks e efeitos físicos continuam em aberto.
 
-`reports/hit-native-binding-pause/selected.asm.txt` contém bytes, VAs,
+registro arquivado não distribuído contém bytes, VAs,
 offsets e entradas de vtables; `findings.txt` registra a cadeia completa.
 Uma auditoria independente comparou 263 linhas de instrução e os slots
 impressos com os bytes da imagem, calculando offsets pelo cabeçalho PE.
-O recibo está em `reports/hit-native-entry-map/root-static-audit.json`.
+O recibo está em registro arquivado não distribuído.
 Nos trechos escolhidos `.text`/`.rdata`, offset = VA − `0x400000` para esta
 imagem; essa igualdade não é uma regra geral para arquivos PE.
 

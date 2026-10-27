@@ -145,7 +145,7 @@ restauradas da casa.
 - Seed final16610512366814951206. Tabelas conservam seus pares iniciais.
 
 Relatórios Debug/ASan completos coincidem byte a byte, arquivos ignorados
-`reports/{bob,family3}-entry-points-native[-asan].json`:
+registro arquivado não distribuído:
 
 - bob: `4abb1300e7d3e37afe33dd7df5adbb98c41e2410bda239a7e2fbb188a447d9be`.
 - family3: `3437674f3a95cf61770b5a960a8c39ff9b8156a4a7c10c331202b49080cee57f`.

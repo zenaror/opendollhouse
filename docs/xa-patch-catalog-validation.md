@@ -69,11 +69,11 @@ ignorado pelo ambiente; sem warnings. LSan não validado (detect_leaks=0).
 SoundData.far nativo:2965 entradas,2909 XA. Patch3212 encontrada pelo filename
 do HOT como Voice\\mood\\VOX_COMFORT_SIGHM4.XA, offset109753498/length29124;
 mono22050Hz/54296frames. As12 patches do conjunto anterior coincidem em
-SHA256 encoded e metadata PCM. Recibo reports/xa-patch-native-validation.json.
+SHA256 encoded e metadata PCM. Recibo registro arquivado não distribuído
 Patch3212 encoded SHA256:
 e68b39e613b2500e40796346fb6cef6343ae97dda5eea2ae0debc3f9f6dcbd64.
 
-Verificador reports/xa-patch-factory-native.cpp
+Verificador registro arquivado não distribuído
 SHA256 4bdd901045c3f0ca5825d174122abcf27a6f3b3393cf314b02600f102c97f62f:
 factory HOT/HIT ->World source binding ->catálogo FAR ->XA ->SDL dummy.
 Args[1,1024,0], Literal32 e escolhas0/0 permanecem explícitos. World avatar
@@ -81,15 +81,15 @@ construído, não saved-frame continuation; group1 vazio explicitamente antes
 da nota. Todos os54296 samples coincidem com a referência decodificada
 anterior. Debug e ASan/UBSan concluem a instância e fazem stop uma vez.
 Sem hardcode de path/offset no loader; patch3212 só é assertion da fixture.
-Recibos reports/xa-patch-factory-native-{dummy,asan}.json.
+Recibos registro arquivado não distribuído,asan}.json.
 
 O backend do verificador ainda admite uma nota nessa fixture, sem mixer.
 Consumo da fila não prova audibilidade/DAC, playback original ou Main retomado.
 
 ## Continuidade
 
-OMM indisponível nesta sessão. Estado para sincronizar está em
-current-handoff.md. Originais, refs, reports e artefatos antigos preservados.
+A cobertura atual está na matriz pública de funcionalidades. Os resultados abaixo
+se limitam ao cenário histórico descrito.
 Mixer isolado já validado em pcm-mixer-validation.md. Pendentes: backend
 compartilhado/cancelamento, diretórios/precedência/formatos não XA,
 integração do loopWorld, caller arguments/units/ArgStyle/controllers, loops e

@@ -59,7 +59,7 @@ reais de X11 não foram validados. Não houve execução de jogo original nem
 teste desta unidade em hardware ou com ASan/UBSan.
 
 ```sh
-cmake -S /home/rafael/_PROJETOS/TheSims1/opendollhouse -B /tmp/odh-session-build \
+cmake -S . -B /tmp/odh-session-build \
   -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DODH_X11=ON
 cmake --build /tmp/odh-session-build -j 4
 ctest --test-dir /tmp/odh-session-build --output-on-failure \

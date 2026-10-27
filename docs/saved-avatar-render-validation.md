@@ -190,9 +190,9 @@ e no relatório local. Argumentos ausentes, opção desconhecida, rotation4,
 opção repetida, definições dos personagens ausentes e output alias de House07
 foram rejeitados com exit2, sem JSON nem novo PPM; hash de House07 conservado.
 
-Evidência local ignorada: `reports/house07-avatars-r{0,2}-z{2,3}.{json,ppm,depth,png}`
-(somente as três combinações acima), `reports/verify-saved-scene.py`,
-`reports/saved-scene-native-validation.json`, controles por avatar e logs de build/
+Evidência local ignorada: registro arquivado não distribuído
+(somente as três combinações acima), registro arquivado não distribuído,
+registro arquivado não distribuído, controles por avatar e logs de build/
 CTest. Nenhum asset comercial ou imagem derivada foi adicionado ao Git.
 
 ## Reproduzir
@@ -202,13 +202,13 @@ CTest. Nenhum asset comercial ou imagem derivada foi adicionado ao Git.
   '../referencias/The Sims/UserData/Houses/House07.iff' \
   '../referencias/The Sims/GameData/Animation/Animation.far' \
   '../referencias/The Sims/GameData/Textures/Textures.far' \
-  reports/house07-avatars.ppm \
+  validation-output/house07-avatars.ppm \
   --skeleton adult-skeleton.cmx.bcf adult \
   --object-definitions '../referencias/The Sims/GameData/Objects/Objects.far' \
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00000.iff' \
   --object-definition-file '../referencias/The Sims/UserData/Characters/User00001.iff' \
   --neighborhood '../referencias/The Sims/UserData/Neighborhood.iff' \
-  --depth-output reports/house07-avatars.depth
+  --depth-output validation-output/house07-avatars.depth
 ```
 
 FreeSO fixo4c6b3e8f5835b228723caea3c9f683c62f244f73, consulta local:

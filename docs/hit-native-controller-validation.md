@@ -11,7 +11,7 @@ Ela cobre 535 linhas e 1.594 bytes de instruções, com oito entradas de opcode 
 mapeamento PE conferido; o executável original não foi rodado. A nota tem SHA256
 `635e6f322f12efe922b3143872c5c4f0da58ca8573129d0005f6c8749707154f`; o assembly
 selecionado tem SHA256 `f0171402d4637498e9ada7449c7aec0303faa59e1d66eed97cd7c7f05048d9a8`;
-recibo em `reports/hit-native-controller-execution-verification.json`. A
+recibo em registro arquivado não distribuído. A
 revisão da evidência e do core terminou sem defeitos materiais após correções
 de ordem de ativação, diagnóstico, cleanup/reentrada e precondições.
 
@@ -93,18 +93,18 @@ No checkpoint inicial `0ce6cb2`, os checks diretos do core passaram 82 casos com
 configuraram 115 casos: Debug passou 114, um teste X11 foi pulado e zero
 falharam (6,97 s). ASan/UBSan teve os mesmos 114 passes e um skip (13,10 s),
 com LSan desativado. Sem SDL/X11 passaram 9/9 testes (0,66 s). Logs de configure,
-build e CTest em `reports/hit-native-controller-core-build-{configure,build,ctest}.log`,
-`reports/hit-native-controller-core-build-asan-{configure,build,ctest}.log` e
-`reports/hit-native-controller-core-build-noaudio-{configure,build,ctest}.log`.
+build e CTest em registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído.
 
 Um oráculo Python independente conferiu novamente 6.331 casos em Debug e
 6.331 em ASan/UBSan após a guarda de entry key, cobrindo ADD/NEG de 32 bits,
 INT32_MIN, igualdade estrita e flags; seed `0x57dac6`. Scripts, driver e recibos estão em
-`reports/hit-native-controller-fade-oracle.py`,
-`reports/hit-native-controller-fade-oracle-driver.cpp` e
-`reports/hit-native-controller-fade-oracle-{debug,asan}.json`. O manifesto de
+registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído. O manifesto de
 hashes, CTests, oráculo e auditoria está em
-`reports/hit-native-controller-core-validation.json`.
+registro arquivado não distribuído.
 
 Não foi feito probe da cadeira nem teste de backend físico: esta classe não está
 integrada ao host de áudio, e esse probe não exercitaria o core novo. A cobertura

@@ -66,10 +66,10 @@ Do not describe the profile as saving at every possible game instruction.
 The current working tree builds the native `odh-person` target successfully.
 Nine focused CTests pass, including bundle validation, seated continuation,
 household restore across processes and legacy single-resident restore. The
-captured result is `reports/native-active-interaction/ctest-final-current.log`.
+captured result is an archived validation record (not distributed).
 
 The real House07 test now passes from two active save points in
-`reports/native-active-interaction/attempt-7/result.json`. Resident 105 starts
+an archived validation record (not distributed). Resident 105 starts
 the fridge interaction with resident 47 selected; the control run completes at
 tick 4096. At tick 256 the fridge action is active. At tick 512 that action has
 returned true and the eating continuation is active. For each point, a fresh
@@ -98,7 +98,7 @@ approved the installed-bank tracking and its cleanup paths. This review and
 runtime gate cover this bounded save/restore path only.
 
 Baseline observations with the published native executable are in
-`reports/native-active-interaction/baseline-cuts/`. In House07, language 14,
+an archived validation record (not distributed). In House07, language 14,
 resident 105 uses fridge 112 while resident 137 continues normal simulation:
 
 - At tick 256, the action and get-food animation are active. Created object 180

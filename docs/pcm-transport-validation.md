@@ -80,16 +80,16 @@ O output é exclusivamente SDL dummy, sem audibilidade ou teste físico.
 Suítes finais Debug e ASan/UBSan:108 configurados,107 aprovados e um X11
 ignorado. Builds sem warnings; LSan desativado. Configuração separada com
 ODH_SDL_AUDIO=OFF e ODH_X11=OFF compila/roda os110checks do core. Logs em
-reports/pcm-transport-build{,-asan}-{final,ctest}.log e
-reports/pcm-transport-noaudio-{configure,build,tests}.log.
+registro arquivado não distribuído,-asan}-{final,ctest}.log e
+registro arquivado não distribuído,build,tests}.log.
 
-Verificador nativo local reports/pcm-transport-native.cpp, SHA256
+Verificador nativo local registro arquivado não distribuído, SHA256
 f23816de79bfb5b39918c061c16a6a9a03f7df258d648db37273bdf9d27d6aaf:
 repete as duas XA2756/3212 e a factory HOT/HIT do checkpoint do mixer,
 agora via PcmTransport/LinuxPcmSink, bloco1024 e fila512frames. Debug e
 ASan/UBSan:109568frames, FNV1a64 PCM little-endian8bca194e939e6a8d, igual
 ao mixer anterior. Instância termina, owner para uma vez, PCM/handles zerados.
-Recibos reports/pcm-transport-native-{dummy,asan}.json. Fontes e SHA encoded
+Recibos registro arquivado não distribuído,asan}.json. Fontes e SHA encoded
 em [pcm-mixer-validation.md](pcm-mixer-validation.md). Sem cancelamento nesse
 verificador nativo; cancelamento coberto pelos testes sintéticos acima.
 

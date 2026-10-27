@@ -17,13 +17,13 @@ offset bruto coincidem com `VA−0x400000`; `0x6f6a78` é endereço de global em
 runtime, não offset bruto. O arquivo não foi executado ou modificado.
 
 Foram consultados primeiro os exports existentes
-`reports/ghidra/supplied-functions/0057e3dc.{c,asm}.txt`,
+registro arquivado não distribuído,
 `0057dac6.{c,asm}.txt`, `0057dc59.{c,asm}.txt` e os documentos
 [opcode 69](hit-native-group-kill-evidence.md),
 [identidade de TrackID](hit-native-track-identity-evidence.md) e
 [lifecycle](hit-native-controller-lifecycle-evidence.md). A seleção de
 assembly reproduzível, com bytes, VAs, RVAs e offsets brutos, está em
-`reports/hit-native-group-registry/selected.asm.txt`; seu gerador
+registro arquivado não distribuído; seu gerador
 `make_selected.py` exige o SHA256 acima. Nenhum projeto Ghidra foi alterado.
 A inspeção não demonstra execução do jogo nem áudio físico.
 

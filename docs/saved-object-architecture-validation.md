@@ -172,7 +172,7 @@ casa expande135.168 bytes. SHA256 agregado de `u16LE(chunkID)+data`, em ordem IF
 - House03:`569675856227e2ca7bb933a7c37b32851932574ab9000e8e45247b35f9e70153`.
 
 Os inputs selecionados tiveram seus hashes conferidos antes/depois sem mudança.
-Evidência local ignorada: `reports/saved-object-native-validation.json`,
+Evidência local ignorada: registro arquivado não distribuído,
 `verify-saved-objects.py`, `object-oracle/`, `house07-objects-r{0,2}-z{1,3}.*`
 (somente três combinações verificadas), `house{01,03}-objects.*`,
 `architecture-native-validation.json`, `verify-architecture-arrays.py`,

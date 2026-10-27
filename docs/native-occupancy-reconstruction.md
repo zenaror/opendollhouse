@@ -157,7 +157,7 @@ does not erase arbitrary object banks to imitate unknown BHAV effects.
 
 ## Evidence and remaining work
 
-`reports/native-occupancy-reconstruction/ctest.log` records 19 passing checks
+an archived validation record (not distributed) records 19 passing checks
 after the final selection fix: projection, reservation policy, household
 transfer/spawn, World loading, Sleep, session codecs/restorers, journal, stores,
 overlay, managed relocation and entry/resume/travel CLIs. The synthetic
@@ -167,12 +167,11 @@ held-child rejection and rollback. The synthetic rehome fixture rejects
 unproven copied actors and incomplete arrival resources without charging.
 
 Final installed-data evidence is
-`reports/native-occupancy-reconstruction/real-5/result.json`, produced by:
+an archived validation record (not distributed), produced by:
 
-```sh
-python3 reports/native-occupancy-reconstruction/validate_real.py \
-  --output reports/native-occupancy-reconstruction/real-5/result.json
-```
+This historical run used local tooling that is not distributed. Its recorded
+results and limitations are summarized below; that runner cannot be reproduced
+from the public checkout.
 
 The runner refuses to overwrite evidence. Use a new output path when repeating
 it. Its 11 processes create two private adults, explicitly vacate the original

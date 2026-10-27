@@ -86,7 +86,7 @@ ausências, ENTP sem fallback, registros inválidos e limites. O banco é usado
 depois da destruição dos streams para resolver evento, Track e Patch globais.
 Contagens focais: leitor111, catálogo27 e banco19 verificações estritas.
 
-Recibos desta unidade ficam em `reports/hit-object-catalog/`, fora do Git.
+Recibos desta unidade ficam em registro arquivado não distribuído, fora do Git.
 As suítes completas tiveram 118 testes configurados por rodada, 117 aprovados,
 um skip X11 e zero falhas: Debug14,80 s; ASan/UBSan26,22 s, LSan desabilitado
 com `detect_leaks=0`. Após antecipar a cobrança de registros no banco, ele

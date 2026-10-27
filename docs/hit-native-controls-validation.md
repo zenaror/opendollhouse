@@ -162,7 +162,7 @@ Os checks diretos desta extensão passaram em C++17 com warnings-as-errors:
 74 de controles, 965 de seleção e 108 de thread; ASan/UBSan passou nos mesmos
 três executáveis. LSan permaneceu desativado por ptrace. A auditoria associada
 conferiu 934 linhas, 2.917 bytes de instruções e 11 destinos de vtable; recibo
-em `reports/hit-native-retrigger-verification.json`. O executável original
+em registro arquivado não distribuído. O executável original
 não foi executado. CTest global e fixture desta unidade estão registrados em
 [hit-native-retrigger-validation.md](hit-native-retrigger-validation.md).
 Contrato completo e lacunas em
@@ -175,9 +175,9 @@ Build e CTest Debug configuraram 113 testes: 112 passaram, um teste de janela
 X11 foi pulado pelo ambiente, sem falhas (14,42 s). ASan/UBSan teve o mesmo
 resultado, 112/113 mais o skip X11, sem falhas (26,33 s); LSan permaneceu
 desligado. A configuração sem SDL/X11 passou 7/7 testes selecionados (0,59 s).
-Os registros estão em `reports/hit-native-controls-build-{configure,build,ctest}.log`,
-`reports/hit-native-controls-build-asan-{configure,build,ctest}.log` e
-`reports/hit-native-controls-build-noaudio-{configure,build,ctest}.log`.
+Os registros estão em registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído.
 
 O probe Linux da cena `chair_sit_metal` usou recursos do jogo fornecidos
 externamente, `--audio-caller-args`, Jump Literal32, chooser índice zero e
@@ -190,10 +190,10 @@ scheduler de áudio, uma thread ainda ativa e 30.208 frames PCM renderizados,
 submetidos e consumidos, sem fault. O drain de host bombeou apenas PCM:
 `pcm_drained_hit_pending` descreve a thread HIT ainda pendente, não conclusão
 do som ou progresso adicional da VM. A comparação retida em
-`reports/hit-native-controls-chair-comparison.json` marca o trace/estado
+registro arquivado não distribuído marca o trace/estado
 anterior de VM e World iguais ao baseline do caller, excluindo o relatório de
-áudio. Comando e recibos ficam em `reports/hit-native-controls-chair-command.json`
-e `reports/hit-native-controls-chair-{debug,asan}.json`.
+áudio. Comando e recibos ficam em registro arquivado não distribuído
+e registro arquivado não distribuído.
 
 ## Integração Linux verificada — gate posterior
 
@@ -202,18 +202,18 @@ passaram, o teste de janela X11 foi pulado pelo ambiente e nenhum falhou
 (12,90 s). ASan/UBSan repetiu 112 passes e o mesmo skip sem falhas (25,56 s);
 LSan permaneceu desligado. Sem SDL/X11, passaram os 7 testes selecionados
 (0,63 s). Os logs são
-`reports/hit-native-group-gate-build-{build,ctest}.log`,
-`reports/hit-native-group-gate-build-asan-{build,ctest}.log` e
-`reports/hit-native-group-gate-build-noaudio-{build,ctest}.log`.
+registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído.
 
 O probe `chair_sit_metal` foi repetido em Debug e ASan com o comando exato da
 base `2604e86`. Ambos passaram; recibos de controles, requisições, estado e
 trace VM/World ficaram iguais aos da base, conforme
-`reports/hit-native-group-gate-chair-comparison.json`. Permaneceram 662 ticks
+registro arquivado não distribuído. Permaneceram 662 ticks
 World, 664 polls de áudio, 30.208 frames PCM consumidos e
 `pcm_drained_hit_pending`. Comando e recibos estão em
-`reports/hit-native-group-gate-chair-command.json` e
-`reports/hit-native-group-gate-chair-{debug,asan}.json`. Essa cena não executa
+registro arquivado não distribuído e
+registro arquivado não distribuído. Essa cena não executa
 o opcode 69 nativo; confirma regressão da rota de áudio já exercitada, não
 semântica implementada para o opcode.
 

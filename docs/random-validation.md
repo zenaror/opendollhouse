@@ -119,5 +119,5 @@ selectors inválidos e preservação do estado em fault.
 Debug e ASan/UBSan:46 testes CTest passaram,1 X11 foi pulado. LeakSanitizer
 desativado porque o ambiente ptrace impede sua execução. JSONs nativos Main e
 Init coincidem byte a byte entre Debug e ASan, com seed1. Relatórios ignorados:
-`reports/random-person-main.json` e `reports/random-person-init.json`.
+registro arquivado não distribuído e registro arquivado não distribuído.
 Sem execução do original, restauração completa de saves ou teste de hardware.

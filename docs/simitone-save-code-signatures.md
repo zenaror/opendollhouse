@@ -9,19 +9,12 @@ base PE `0x400000`. Os endereços abaixo são VA, não offsets de arquivo.
 A evidência é análise estática desse perfil; não é uma comparação executada
 com o original nem prova de que outras revisões têm o mesmo código.
 
-O projeto Ghidra `reports/ghidra/projects/ODH_TS1_Supplied`, programa `Sims.exe`,
+O projeto Ghidra registro arquivado não distribuído, programa `Sims.exe`,
 foi consultado com `-readOnly -noanalysis`. Exportações e hashes ficaram em
-`reports/ghidra/objt-version-audit/manifest.json`, ignorado no Git. Nenhum
-original ou projeto de análise foi alterado. O comando de reprodução usa:
-
-```sh
-/home/rafael/Tools/Open-GBP/ghidra_12.1.3_PUBLIC/support/analyzeHeadless \
-  reports/ghidra/projects ODH_TS1_Supplied -process Sims.exe \
-  -readOnly -noanalysis -scriptPath reports/ghidra/scripts \
-  -postScript ODHFunctions.java /tmp/odh-objt-native-functions \
-  0043a5fb 00457759 0045778a 00402741 0040204f 004020a6 \
-  00431edd 00444346 0043206d 00431c90 004331d4 004333ef 0045e8fd
-```
+registro arquivado não distribuído, ignorado no Git. Nenhum
+original ou projeto de análise foi alterado. A análise histórica usou scripts e projetos locais não distribuídos. Os
+endereços, a identidade da imagem e os contratos abaixo descrevem o resultado;
+eles não dependem da instalação desses scripts para serem lidos ou revisados.
 
 ## Comparação nativa
 
@@ -84,7 +77,7 @@ de trabalho e o parser da publicação, sem compilar o motor C++ preservado.
 
 ## Confirmação com os dados da House07
 
-`reports/simitone-linux-evaluation/house07-native-signatures/` registra a execução
+registro arquivado não distribuído registra a execução
 real do Simitone adaptado, com dados/perfil copiados e display Xvfb isolado.
 Não houve erro no diagnóstico. Os seis arquivos comerciais acompanhados
 mantiveram seus hashes; aplicação/Xvfb e cópias temporárias foram encerrados.
@@ -195,7 +188,7 @@ rejeitadas. A colocação `0x4333ef` passa por `0x432a70`, que chama `0x432771`
 para somar um ao slot solicitado antes de `0x4327d9` escrever o campo14.
 Assim, o slot0 termina com SlotNumber3=0 e SlotHierNumber14=1. Não basta ler
 apenas a subtração feita no snapshot e concluir que os dois campos usam zero.
-Exportações adicionais: `reports/ghidra/container-recovery-audit/manifest.json`.
+Exportações adicionais: registro arquivado não distribuído.
 A tabela de slots do próprio objeto fica fora do bloco de palavras limpo;
 isso não é justificativa para resetar filhos.
 
@@ -218,7 +211,7 @@ A importação atual perde limites/flags de `OBJMPerson.ObjectUses` ao convertê
 em frames; o adaptador precisa preservar os registros ordenados originais.
 `0x45e769` decrementa UseCount ao desenrolar cada uso e atualiza a ação ativa.
 
-Exportação adicional, somente leitura: `reports/ghidra/person-recovery-audit/`.
+Exportação adicional, somente leitura: registro arquivado não distribuído.
 `0x45fc43` destrói itens de uma coleção visual; `0x46e15e(0)` limpa controles
 por item, sem apagar os motivos. `0x43270d` constrói um snapshot de colocação;
 `0x432644` consulta se ele está no mundo. `0x434895` implementa busca de posição

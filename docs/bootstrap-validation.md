@@ -80,7 +80,7 @@ LeakSanitizer ficou desativado por ptrace. Não houve execução comparativa do
 original, lote jogável ou teste de consoles.
 
 Relatórios Debug/ASan completos coincidem byte a byte, nos arquivos ignorados
-`reports/{bob,family3}-bootstrap-native[-asan].json`:
+registro arquivado não distribuído:
 
 - bob: `e4a5a98eef0e54516b48d95f87c7df2e6431abff9e0d88c965ec36c1306e2986`.
 - family3: `e50ea5f8058a0b11ed19bc020a75b60d66274bba562a9ed55599ae8baeb76236`.

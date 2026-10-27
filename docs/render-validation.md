@@ -92,7 +92,7 @@ cumulativos. Output obrigatório PPM P6, sem PNG/GPU/Windows dependências;
 JSON só sai após escrita e close bem-sucedidos.
 
 ```sh
-./build/odh-render '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult '../referencias/The Sims/GameData/Textures/Textures.far' --part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 160.75 --lit --output reports/render-native-160_75.ppm > reports/render-native-160_75.json
+./build/odh-render '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult '../referencias/The Sims/GameData/Textures/Textures.far' --part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 160.75 --lit --output validation-output/render-native-160_75.ppm > validation-output/render-native-160_75.json
 ```
 
 ## Gates e resultados
@@ -129,7 +129,7 @@ mesmos327680bytes de texels, PPM SHA
 6b18cfb8e762b95af92f4e62ddf8aa2fb0c0ab68ff280e72712897d801b5e900.
 São tamanhos de payloads de buffers, não RSS total, VRAM ou validação New3DS.
 Geometria, índices/caches, alocações do loader/export e overhead permanecem por
-medir no runtime final. reports/render-native-* e bitmap-* ficam ignorados;
+medir no runtime final. registro arquivado não distribuído e bitmap-* ficam ignorados;
 nenhum asset ou imagem derivada foi versionado.
 
 ## Referências e continuidade

@@ -114,7 +114,7 @@ A origem/licença estão no [README do módulo](../managed/OpenDollhouse.Simulat
 
 A compilação real e o fluxo comprar/sentar/salvar/reabrir também passaram com
 o novo módulo. A evidência está em
-`reports/simitone-linux-evaluation/house07-shared-scheduler/`. Isso valida uma
+registro arquivado não distribuído. Isso valida uma
 separação concreta e esse fluxo Linux; o motor completo ainda referencia gráficos,
 áudio e serviços, agora com 11 projetos na sua dependência transitiva e 30 no
 aplicativo. A verificação conhecida de dependências aprova somente o módulo de
@@ -159,7 +159,7 @@ RetroArch por causa das regras XDG do Flatpak. Eles foram preservados no relató
 e removidos com autorização humana exata. A repetição final manteve iguais os
 147 arquivos de configuração acompanhados e encerrou instância própria/Xvfb.
 Não transformar isso em afirmação sobre todo o estado interno do Flatpak.
-Evidência: `reports/portability/3ds-managed-probe/report.json`,
+Evidência: registro arquivado não distribuído,
 `3ds-native-data/report.json` e `3ds-native-execution-final/final-review.json`.
 Receita e limites em [tools/portability/3ds-native-data/README.md](../tools/portability/3ds-native-data/README.md).
 
@@ -214,7 +214,7 @@ não baixa pacotes, não compila nem altera o checkout de referência. Exemplo:
 python3 tools/simitone/audit_dependencies.py \
   --source-root . \
   --entry refs/work/Simitone-linux/FreeSO/TSOClient/tso.simantics/FSO.SimAntics.csproj \
-  --output reports/portability/dependencies/simulation.json \
+  --output validation-output/portability/dependencies/simulation.json \
   --require-data-core
 ```
 
@@ -225,6 +225,6 @@ avaliadas pelo script e o restore pode estar desatualizado: ambos os hashes são
 registrados. Mesmo uma fronteira limpa não prova compatibilidade de runtime.
 
 Evidência detalhada, com fontes e limites:
-`reports/portability/desktop-android/report.json`,
-`reports/portability/runtime-targets/report.json` e
-`reports/portability/dependencies/`.
+registro arquivado não distribuído,
+registro arquivado não distribuído e
+registro arquivado não distribuído.

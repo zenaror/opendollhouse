@@ -114,7 +114,7 @@ Main14/1 tick, total193. Antes, Main parava no opcode31 em11 instruções.
 Agora current0 seleciona11; scope32/index61 lê0 do record `maid`; Main vai para
 Relationship opcode26 em PersonGlobals8211 pc1, ainda unsupported. O trace
 preserva StackObject11 nesse frame. JSON nativo Debug/ASan coincide byte a byte.
-Relatório ignorado: `reports/neighbor-main-native.json`.
+Relatório ignorado: registro arquivado não distribuído.
 
 O caller continua um template anônimo com Person31=0; selecionar vizinho11
 não o transforma no caller. A referência de relações usa Person31 do caller

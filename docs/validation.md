@@ -24,8 +24,8 @@ e UBSan ativos. Não interpretar essa configuração como ausência comprovada d
 cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DODH_SANITIZERS=ON
 cmake --build build-sanitize -j 2
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize --output-on-failure
-ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > reports/corpus-sanitize.json
-python3 tools/check_census.py reports/corpus-sanitize.json
+ASAN_OPTIONS=detect_leaks=0 ./build-sanitize/odh-inspect '../referencias/The Sims' > validation-output/corpus-sanitize.json
+python3 tools/check_census.py validation-output/corpus-sanitize.json
 ```
 
 ## Corpus local
@@ -54,7 +54,7 @@ canônico de paths relativos, tamanhos e hashes:
 174db55df3257fca3107a5269faabd143fc3d2b9025164fe9076175bfa2ff667
 ```
 
-O JSON completo fica em `reports/input-manifest.json`, ignorado pelo Git. O
+O JSON completo fica em registro arquivado não distribuído, ignorado pelo Git. O
 encoding canônico está definido em `tools/fingerprint.py` e no próprio manifesto.
 O fingerprint detecta alterações no arquivo durante sua leitura, mas não oferece
 snapshot atômico de uma instalação em execução. Fechar o jogo ao reproduzir.
@@ -76,7 +76,7 @@ de consumo, carregamento ou FPS no New 3DS.
 
 ## Engenharia reversa e próximas lacunas
 
-A instalação de Ghidra indicada pela OMM e pelo operador foi verificada em disco:
+Ferramentas usadas na análise histórica:
 application.version 12.1.3 PUBLIC, launcher headless presente, Java mínimo 21;
 OpenJDK 21.0.12.1 disponível. Nenhum projeto Ghidra TS1 foi importado/analisado
 neste checkpoint. Validar loader PE e linguagem x86 antes da primeira análise.

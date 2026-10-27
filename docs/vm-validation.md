@@ -125,7 +125,7 @@ Isso é a VM ODH interpretando instruções reais, não execução do `Sims.exe.
 Os probes Debug e ASan/UBSan produziram JSON idêntico e saída esperada 3.
 O probe com sanitizadores forneceu também `Global.iff` explicitamente; nenhuma
 rotina global foi chamada antes dessa falha. Relatórios locais ignorados:
-`reports/chair-action-vm.json` e `reports/chair-action-vm-sanitize.json`.
+registro arquivado não distribuído e registro arquivado não distribuído.
 
 ```sh
 ./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run

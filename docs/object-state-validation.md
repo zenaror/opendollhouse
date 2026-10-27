@@ -123,7 +123,7 @@ e cursores das três casas, total509 blocos/14206 campos:
 O restante por instância é24..77 bits em House01,24..2872 em House07 e
 24..84 em House03. Continua bruto: comprimentos diferentes exigem os branches
 por OBJD/objt e dados de personagens. Auditor local ignorado
-`reports/objm-common-audit.py`; `reports/verify-common-state.py` compara os
+registro arquivado não distribuído; registro arquivado não distribuído compara os
 JSONs reais do host e os resultados completos Debug/ASan.
 
 ## Checks e gates Linux
@@ -145,7 +145,7 @@ executa317/1 tick e para em GotoRoutingSlot45. Recursos resolvidos e estado
 salvo decodificado ainda não são aplicados ao runtime.
 
 Relatórios Debug/ASan idênticos byte a byte com somente Objects.far no catálogo,
-ignorados em `reports/{bob,member47,house01,house03}-common-native[-asan].json`:
+ignorados em registro arquivado não distribuído:
 
 - Bob: `31956b25bf6aa2b2217d89ae1c0b3507ee840cb129e60ced6a88ca41e596eced`;
 - membro47: `6c1a46d48b09fbcf869b68a2b8b37279a42b2fcf1326f47e32220b7ed085530a`;

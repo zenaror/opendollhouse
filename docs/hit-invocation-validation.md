@@ -73,7 +73,7 @@ Linux audio device, advance Main or restore saved threads.
 
 Debug/ASAN JSON is byte-identical, SHA256
 `827bdc69b659270c5c3860c8d3477e8139340a55a7ea300048a62b63e35ace25`.
-Ignored evidence: `reports/hit-args-world-native.cpp`, verifier binaries and
+Ignored evidence: an archived validation record (not distributed), verifier binaries and
 `hit-args-world-native-{debug,asan}.json`; `hit-args-*` build/full-test logs;
 Ghidra `thread-init`, `role-vars`, `role-construction`, `argument-storage` logs
 and selected exports. Original inputs and prior receipts remain preserved.

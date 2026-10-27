@@ -51,13 +51,13 @@ Testes diretos C++17 com warnings-as-errors passaram 74 checks de controles,
 LSan ficou desativado sob ptrace. A suite focada de factory passou
 `sound_event_factory`, `xa_sound_factory` e `bhav_audio_cli` (3/3, 5,01 s);
 os checks diretos associados passaram 76 casos de factory e 56 de XA. Logs:
-`reports/hit-native-retrigger-factory-{configure,build,ctest,repeat}.log`.
+registro arquivado não distribuído.
 
 Os CTests oficiais configuraram 114 casos em Debug: 113 passaram, um teste X11
 foi pulado, zero falhas (7,03 s). ASan/UBSan teve os mesmos 113 passes e um
 skip (13,18 s); LSan permaneceu desligado. Sem SDL/X11, passaram 8/8 testes
 (0,62 s). Logs de configure/build/CTest em
-`reports/hit-native-retrigger-{build,build-asan,build-noaudio}-{configure,build,ctest}.log`.
+registro arquivado não distribuído.
 
 O probe Linux da cadeira `chair_sit_metal` passou em Debug e ASan/UBSan:
 94 dispatches, 662 ticks World, 664 polls de áudio e 30.208 frames PCM
@@ -66,16 +66,16 @@ renderizados, submetidos e consumidos, sem fault. O estado final foi
 requisições e traces iguais ao baseline do gate anterior; o relatório de áudio também coincide em contadores e estado, com diferença no tempo de drain medido
 por relógio de parede. Não é comparação byte a byte de amostras PCM.
 Comando, recibos e comparação estão em
-`reports/hit-native-retrigger-chair-{command,debug,asan}.json` e
-`reports/hit-native-retrigger-chair-comparison.json`.
+registro arquivado não distribuído e
+registro arquivado não distribuído.
 O manifesto da unidade cobre hashes e contadores de 13 arquivos em
-`reports/hit-native-retrigger-validation.json`.
+registro arquivado não distribuído.
 
 Essa fixture não exercita `update_native_active_unpaused` nem a sentinela no
 asset real da cadeira; os ramos correspondentes são cobertos pelas regressões
 sintéticas. Os CTests e a fixture são evidência Linux/host, não equivalência ao
 executável original, implementação completa de retrigger, áudio físico ou
 validação dos ports. A auditoria estática conferiu 934 linhas e 2.917 bytes de
-instruções com 11 destinos de vtable (`reports/hit-native-retrigger-verification.json`);
+instruções com 11 destinos de vtable (registro arquivado não distribuído);
 o executável original não foi executado. A revisão do core/API e do texto da
 evidência estática terminou sem defeito material.

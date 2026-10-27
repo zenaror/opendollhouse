@@ -9,7 +9,7 @@ Ghidra ou alterar seus projetos/configurações. Complementa
 [ownership](hit-native-backend-ownership-evidence.md) e
 [lifecycle](hit-native-controller-lifecycle-evidence.md).
 
-Reprodução: `python3 reports/hit-native-binding-outcomes/extract.py`.
+Reprodução: `python3 registro arquivado não distribuído`.
 O manifesto deriva VA/RVA/raw dos cabeçalhos PE e contém SHA256 por trecho;
 os 25 recortes somam 4.070 bytes comparados com o arquivo, sem
 instruções inválidas ou `.byte` nos limites escolhidos. Contagens de linhas

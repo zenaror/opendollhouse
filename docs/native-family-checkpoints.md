@@ -76,7 +76,7 @@ and expansion travel remain separate unfinished requirements.
 
 ## Verification
 
-`reports/native-family-checkpoint/ctest.log` records ten passing checks covering
+an archived validation record (not distributed) records ten passing checks covering
 the codecs, private stores, journal and native CLI. The new CLI case exercises
 a synthetic managed occupancy through first save, a new process, unchanged
 save, continued play, stale-save rejection, copied current bytes, missing
@@ -87,7 +87,7 @@ carry tickets. The overlay store also reopens a valid 225434-byte v6 history
 above its former host limit. These checks do not prove UI rehome or original
 game parity.
 
-`reports/native-family-checkpoint/real-1/result.json` adds six completed native
+an archived validation record (not distributed) adds six completed native
 processes using the external Complete Collection data. House07 runs for two
 ticks, reopens unchanged, then continues to four ticks; its complete archive
 and all 13 sections equal a continuous four-tick control. Loading the earlier

@@ -83,7 +83,7 @@ and 296 ticks: opcode23, PersonGlobals8219 pc27, operands
 
 All three native JSON outputs are byte-identical Debug/ASAN. Seven original
 input hashes match the preceding checkpoint before and after these probes.
-Evidence: ignored `reports/person-hands-ticks*-{debug,asan}.json`.
+Evidence: ignored an archived validation record (not distributed).
 This constructs actor1; saved105/137 frames/queues/clock remain dormant, without
 reinitialization. No animated Main pixels or audio device playback is claimed.
 
@@ -112,7 +112,7 @@ The complete ordered RGB/depth dump matches Debug/ASAN byte-for-byte, SHA256
 Idle/None PNG exports were visually inspected; both show the complete avatar,
 with hand meshes absent in the latter. Textures FAR SHA256 remains
 `d4848bdf01c8e4e01067204d4a5c89011948c7ce7c1bf97b39202eafd002993e`.
-Ignored native helper/logs/dumps are `reports/native-hand-visual*`; commercial
+Ignored native helper/logs/dumps are an archived validation record (not distributed); commercial
 resources/images are not versioned.
 
 Next: resolve the actual sound service and its resource/backend contract;

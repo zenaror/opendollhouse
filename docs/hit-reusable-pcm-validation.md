@@ -116,7 +116,7 @@ handles/bytes. O sink é sintético, com unity-Q15 explícito e saída22050Hz;
 não é mixer/DSP/streaming original. O checksum FNV do PCM é só um recibo de
 regressão, não hash criptográfico. Há SHA256 dos81 recursos HIT/HOT/HSM mais
 SoundData.far, fontes e binários nos receipts; os inputs foram conferidos
-antes/depois e preservados. Relatórios em `reports/hit-reusable-pcm/`, com
+antes/depois e preservados. Relatórios em registro arquivado não distribuído, com
 `validation.json`, logs finais, runner e probes locais ignorados pelo Git.
 
 ## Próximos contratos necessários

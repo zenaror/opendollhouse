@@ -18,10 +18,9 @@ documentos de [identidade](hit-native-track-identity-evidence.md),
 [parada por opcode69](hit-native-group-kill-evidence.md) e
 [retrigger](hit-native-retrigger-evidence.md), com confirmação em assembly.
 
-`reports/hit-native-controller-lifecycle-selected.asm.txt` guarda bytes,
+registro arquivado não distribuído guarda bytes,
 VAs, offsets, entradas da jump table e slots de vtable. Nenhum original foi
-executado ou alterado; nenhum projeto Ghidra foi modificado. A leitura da
-OMM confirmou o checkpoint, sem substituir os bytes como fonte da análise.
+executado ou alterado; nenhum projeto Ghidra foi modificado. Os registros de continuidade não substituem os bytes como fonte da análise.
 
 ## Slots e identidade dos objetos
 

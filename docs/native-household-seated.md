@@ -71,13 +71,13 @@ support, hardware behavior, arbitrary postures, or saves during all interactions
 Final executable SHA256:
 `249988e4724a8a65bbde0b67db05b25d303a17aa7ec76d6c2388dbfed4eea6f3`.
 
-- `reports/native-household-seated/attempt-1/playback-build.log` is the final host
+- an archived validation record (not distributed) is the final host
   link and playback-test build after the metadata fix. `final-focused-build.log`
   and `final-20-ctest.log` record the rebuilt focused targets and 20 passing CTests.
   The earlier `build.log` built the host but stopped on a nonexistent extra target;
   the first core test build exposed a misplaced test brace, repaired before the
   passing runs. Intermediate reports are not final-binary evidence.
-- `reports/native-household-seated/roundtrips-final/result.json`: twelve fresh
+- an archived validation record (not distributed): twelve fresh
   processes exercise House07 Sims 105/137 with chairs 128/127. Both Sit requests
   complete true before saving at tick1024. Zero-tick reopen preserves all 13
   sections. Both Stand requests at relative tick1 succeed independently, leaving
@@ -90,7 +90,7 @@ Final executable SHA256:
   Stand21 through tick2048. This uses the exact linked semiglobal seat resources.
   Before the metadata fix, `linked-1/` correctly recorded the unrelated resident16
   `foo` animation fault and refused to overwrite the prior save.
-- `reports/native-menu-checks/household-seat-regression-final/result.json`: six
+- an archived validation record (not distributed): six
   processes repeat legacy single-resident House05 bench173 and House07 chair128
   Sit/save/reopen/Stand, with byte-identical zero-tick archives and final posture0
   without attachment. These preserve the singular save profile.

@@ -16,11 +16,11 @@ Não foi executado o original nem alterado projeto Ghidra ou recurso comercial.
 Não está estabelecida equivalência com outro arquivo executável.
 
 Foram lidos primeiro os exports existentes
-`reports/ghidra/supplied-functions/0057e3dc.{c,asm}.txt`,
+registro arquivado não distribuído,
 `0057dac6.{c,asm}.txt` e os exports de inicialização. `objdump` pontual confirmou
 os bytes e os destinos de vtables. A seleção reprodutível com hash, VAs,
 offsets e bytes está em
-`reports/hit-native-group-kill-selected.asm.txt`.
+registro arquivado não distribuído.
 
 O HSM externo `SoundData/SimsGeneratedHitSource.hsm`, SHA256
 `ca6bef035809b2cdacdc2c14a98582cd4c4702c53cc6640beceaa548c06d55b6`, nomeia

@@ -105,7 +105,7 @@ make a headless result proof of interface clicks or original-game fidelity.
 
 ## Verified gate
 
-`reports/native-family-transfer/ctest.log` records 12 passing checks. The core
+an archived validation record (not distributed) records 12 passing checks. The core
 uses two residents with changed runtime IDs and nondefault personal progress,
 fractional needs, inbound/outbound relationships and protected destination
 object relationships. The journal test exercises a real prepared/applied
@@ -115,7 +115,7 @@ authority. The synthetic CLI refuses destination actors without retirement
 authority, incomplete arrival resources, absent saves and changed character
 resources without deducting a purchase price.
 
-`reports/native-family-transfer/real-2/result.json` records nine completed native
+an archived validation record (not distributed) records nine completed native
 processes with Complete Collection data and two privately created adult Sims.
 The CAS helper creates the family only; the production launcher purchases
 House01, saves at tick2, moves the family out, purchases House09, reopens it,

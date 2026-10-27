@@ -13,9 +13,8 @@ Imagem externa `../referencias/The Sims/Sims.exe`, SHA256
 Base PE `0x400000`; offset de arquivo dos trechos selecionados = VA −
 `0x400000`. Exports existentes `0057e3dc`, `00582457` e assembly pontual;
 bytes e entradas da jump table em
-`reports/hit-native-controller-execution-selected.asm.txt`. Nenhum original
-executado, projeto Ghidra ou referência alterados. OMM consultada como
-continuidade; a prova abaixo vem dos bytes.
+registro arquivado não distribuído. Nenhum original
+executado, projeto Ghidra ou referência alterados. A prova abaixo vem dos bytes descritos neste documento.
 
 ## Encoding e fronteira das variáveis
 

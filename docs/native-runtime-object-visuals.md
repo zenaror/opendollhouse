@@ -143,13 +143,11 @@ fall back to an arbitrary center anchor. General object placement, dropping
 held children during eviction and original saved-flag mutation remain separate
 features.
 
-Final installed-data evidence is
-`reports/native-runtime-object-visuals/attempt-5/result.json`, produced by:
+The installed-data results below summarize a historical validation run.
 
-```sh
-python3 reports/native-runtime-object-visuals/validate_real.py \
-  --output reports/native-runtime-object-visuals/new-attempt
-```
+This historical run used local tooling that is not distributed. Its recorded
+results and limitations are summarized below; that runner cannot be reproduced
+from the public checkout.
 
 The runner refuses existing output. It uses commit base6719794 plus this
 checkpoint's native changes, host SHA256
@@ -160,8 +158,7 @@ hand at tick512. The existing320x240 status view has no visible food ownership
 pixels; that view obscures the hand. A fresh actual800x600 X11 window restores
 the same checkpoint, presents tick513, and shows the food:528 owned pixels and
 an exact renderer-pick identity match. No forced front layer, arbitrary
-placement, wall removal or camera rotation was needed. Root inspected the
-capture. Pausing and closing without saving preserves checkpoint bytes.
+placement, wall removal or camera rotation was needed. The capture was inspected. Pausing and closing without saving preserves checkpoint bytes.
 
 Zero-tick reopen preserves the complete archive. A one-tick continuation to513
 matches fresh continuous513 in all13 sections, including UIST, actor, globals,

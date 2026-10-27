@@ -280,7 +280,7 @@ para em BHAV1003/PC19, `unsupported primitive 46` (snap), com três frames.
 Posição/person data mudaram; sentar/levantar completo ainda não ocorreu.
 
 JSON Debug e ASan/UBSan idênticos, stderr vazio, saída3 esperada. Reports
-ignorados `reports/chair-route-probe.json` e `reports/chair-route-probe-sanitize.json`.
+ignorados registro arquivado não distribuído e registro arquivado não distribuído.
 Nenhuma execução do Sims.exe.bak, janela, animação ou teste de hardware.
 
 ## Route45 com SLOT Literal do StackObject — 2026-10-21

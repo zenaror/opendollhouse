@@ -76,8 +76,8 @@ executa Init0 e atualização8, empilha Main e depois Avatar.Init aplica BodySTR
 essa ordem e estabelecer quando a entrada Load2 é usada na restauração;
 o probe isolado não estabelece que Load pertence à sequência do construtor.
 
-Relatórios locais ignorados: `reports/person-indirect-init.json`,
-`reports/person-indirect-main.json` e `reports/person-indirect-load-isolated.json`.
+Relatórios locais ignorados: registro arquivado não distribuído,
+registro arquivado não distribuído e registro arquivado não distribuído.
 Não houve gravação em casas, recursos comerciais ou saves originais.
 
 ## Verificação e limites

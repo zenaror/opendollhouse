@@ -89,8 +89,8 @@ e continuou rodando. Isso ainda não comprova uma casa plenamente jogável.
 Os novos bancos TEMP/TempXL nativos foram validados separadamente; o `Vm`
 existente continua usando seus próprios arrays C++, sem cópia gerenciada.
 Não apresentar esses bancos como já integrados ao aplicativo. Relatórios locais:
-`reports/portability/native-state/`, `reports/native-vm-house07/`,
-`reports/native-vm-expression-comparison/` e `reports/native-vm-resident-continuation/`.
+registro arquivado não distribuído, registro arquivado não distribuído,
+registro arquivado não distribuído e registro arquivado não distribuído.
 Detalhes do checkpoint em [native-state-integration.md](native-state-integration.md).
 Os resultados anteriores com ponte C# são históricos:
 [evidência](native-expression-integration.md).

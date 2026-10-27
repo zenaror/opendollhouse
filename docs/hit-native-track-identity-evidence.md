@@ -16,15 +16,15 @@ Não foi executado o original, alterado projeto Ghidra ou recurso comercial,
 nem estabelecida equivalência com outra imagem executável.
 
 Foram consultados primeiro os exports existentes de `0057348c`, `0057376b`,
-`0057d6f8` e `0057dc59` em `reports/ghidra/supplied-functions/`. A confirmação
+`0057d6f8` e `0057dc59` em registro arquivado não distribuído. A confirmação
 pontual em assembly, com bytes, VAs, offsets e destinos da vtable
-`0x6719b4`, está em `reports/hit-native-track-identity-selected.asm.txt`.
+`0x6719b4`, está em registro arquivado não distribuído.
 O documento complementa [opcode 69](hit-native-group-kill-evidence.md) e
 [controles iniciais](hit-native-controls-evidence.md); não implementa lifecycle.
 
 Uma conferência independente comparou as 1.619 linhas de bytes selecionadas
 com a imagem identificada acima: 4.554 bytes conferidos, sem divergência.
-O recibo `reports/hit-native-track-identity-verification.json` guarda também
+O recibo registro arquivado não distribuído guarda também
 o SHA256 do relatório. Essa checagem confirma a proveniência dos trechos,
 sem converter a interpretação estática em validação de execução.
 

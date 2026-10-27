@@ -81,19 +81,19 @@ Teste separado sem SDL verifica recusa e preservação do caminho silencioso.
 Suítes finais Debug e ASan/UBSan:111 configurados,110 aprovados e um X11
 ignorado. Builds observados sem warnings; LSan desativado. Build sem SDL/X11
 passou bhav_audio_disabled_cli e bhav_cli. Logs em
-reports/bhav-audio-build{,-asan}-{final,ctest}.log e
-reports/bhav-audio-noaudio-{configure,build,tests}.log.
+registro arquivado não distribuído,-asan}-{final,ctest}.log e
+registro arquivado não distribuído,build,tests}.log.
 
 Cena nativa: comando da cadeira em stand-validation.md acrescido de
 --main-probe --hold-ticks 120 e o perfil de áudio explicitamente configurado
 com generated HSM/HOT/HIT, SoundData.far, args[2,0,0], Literal32, escolha0,
 ganho unidade e pan central. Comando exato retido em
-reports/bhav-audio-chair-command.json; trocar build-asan por build para Debug.
+registro arquivado não distribuído; trocar build-asan por build para Debug.
 Comparação silenciosa/com áudio: mesma VM final true,94dispatches totais,
 662ticks. PlaySound emite chair_sit_metal da origem2 para o pipeline real.
 Debug e ASan/UBSan entregaram30208frames ao SDL dummy sem fault; PCM vazio
 ao final, HIT ainda pendente e scheduler664polls. Não é término natural HIT.
-Recibos reports/bhav-audio-chair-{silent,diagnostic,asan}.json e summary.json.
+Recibos registro arquivado não distribuído,diagnostic,asan}.json e summary.json.
 Resultados detalhados de PCM e estado final permanecem nesses recibos; tempos
 de consumo dependem do host. Dados comerciais externos somente para leitura.
 

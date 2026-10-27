@@ -67,20 +67,20 @@ LSan ficou desativado sob ptrace. No CTest oficial, Debug configurou 114 testes:
 113 passaram, um teste X11 foi pulado e não houve falhas (13,01 s). ASan/UBSan
 teve os mesmos resultados (25,28 s), com LSan desativado. A configuração sem
 SDL/X11 passou 8/8 testes (0,62 s). Logs de configure/build/CTest estão em
-`reports/hit-source-contributions-{build,build-asan,build-noaudio}-{configure,build,ctest}.log`.
+registro arquivado não distribuído.
 O teste desta API chama-se `hit_source_contributions`.
 
 Um oráculo independente Python de precisão arbitrária conferiu os bits signed
 de 32 bits, os wraps e a divisão truncada. Debug e ASan/UBSan coincidiram em
 20.263 casos cada; cada execução também confirmou o único trap esperado
 `INT32_MIN / -1` e o limite de 65.536 amostras. Seed `0x57488f`; recibo em
-`reports/hit-source-contributions-oracle-verification.json`, script e driver
-em `reports/hit-source-contributions-oracle.py` e
-`reports/hit-source-contributions-oracle-driver.cpp`.
+registro arquivado não distribuído, script e driver
+em registro arquivado não distribuído e
+registro arquivado não distribuído.
 
 Auditoria estática independente confirmou 1.367 linhas e 3.684 bytes de
 instruções selecionadas contra a imagem identificada em
-`reports/hit-native-source-contributions-verification.json`. O original não
+registro arquivado não distribuído. O original não
 foi executado. A evidência e a aritmética nativa correspondentes estão em
 [hit-native-source-contributions-evidence.md](hit-native-source-contributions-evidence.md).
 A revisão independente do core/API, do preflight de cópia e da evidência

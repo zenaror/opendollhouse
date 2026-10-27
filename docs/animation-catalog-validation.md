@@ -69,8 +69,8 @@ validation is recorded in `linux-saved-window-validation.md`; it does not
 convert this sandbox skip into a full unsandboxed suite run. Both catalog build
 logs were warning-free.
 
-Ignored local evidence: `reports/catalog-native-dump.cpp`,
-`reports/catalog-native-{debug,asan}.json`, and `reports/catalog-full-*.log`.
+Ignored local evidence: an archived validation record (not distributed),
+an archived validation record (not distributed), and an archived validation record (not distributed).
 No commercial resources are versioned. This establishes host resource lookup
 and owned decoding, not Main execution, animated rendering, original-game
 equivalence or console execution. Next: connect the Misc STR resolver and

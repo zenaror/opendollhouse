@@ -77,7 +77,7 @@ House07 r0 zoom3 PPM SHA256:
 `d985015ebe010d9173bd6ca6c850ea5b98c604faf4fb9675b97defb9a71ca5eb`;
 depth: `85e2479138c13187bf8203de82b9a740220785237f9444db947061abbf3e9d77`.
 
-Relatórios ignorados: `reports/verify-saved-wall-caps.py`,
+Relatórios ignorados: registro arquivado não distribuído,
 `saved-wall-cap-native-validation.json`, `house*-wall-caps-r*-z*`, logs de build e
 CTest, `walls-oracle-base.*`. Recursos/imagens comerciais não entram no Git.
 Próximo passo: contrato de down/cutaway e seleção de andar, então topologia de

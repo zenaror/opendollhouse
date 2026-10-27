@@ -103,8 +103,8 @@ Resultado Linux:
 - Seed final16610512366814951206. Relatórios Debug/ASan completos coincidem
   byte a byte, SHA256
   `d10466d8d1b0f870531a2775f773b72bfcaf84c4b95f22c6f9d54d0160723b5e`.
-  Arquivos ignorados `reports/bob-neighbor-native.json` e
-  `reports/bob-neighbor-native-asan.json`. Saída3 representa a dependência
+  Arquivos ignorados registro arquivado não distribuído e
+  registro arquivado não distribuído. Saída3 representa a dependência
   ainda unsupported, não conclusão bem-sucedida de Main.
 
 ## Verificação e próximos gates

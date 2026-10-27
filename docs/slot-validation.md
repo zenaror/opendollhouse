@@ -50,8 +50,8 @@ coincidindo; isso valida leitura do perfil, não geometria ou gameplay.
 
 Total: 1.562 tabelas, 7.142 registros, zero bytes restantes. Tipos observados:
 0=2.482, 1=66, 3=4.594. Contagens incluem cópias do corpus; não são universais.
-Reports locais ignorados: `reports/corpus-slot.json` e
-`reports/corpus-slot-sanitize.json`.
+Reports locais ignorados: registro arquivado não distribuído e
+registro arquivado não distribuído.
 
 ## Registro indicado pela cadeira
 
@@ -69,7 +69,7 @@ registro absoluto1. Campos observados:
 - height=0, facing=-2, resolution=16.
 
 JSON Debug e ASan/UBSan idênticos. Reports
-`reports/chair-global-route-slot.json` e sua variante `-sanitize` preservam
+registro arquivado não distribuído e sua variante `-sanitize` preservam
 essa consulta. `DiningChairs.iff` também contém SLOT0 versão4 com dois registros
 e SLOT128 versão10 com oito; ambos passaram pelo leitor.
 
@@ -83,8 +83,8 @@ e comparação adequadas antes de alegar percurso fiel.
 ```sh
 ./build/odh-slot '../referencias/The Sims/GameData/Global/Global.far' Global.iff 100 3 1
 ./build/odh-slot '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0
-./build/odh-inspect '../referencias/The Sims' > reports/corpus-slot.json
-python3 tools/check_census.py reports/corpus-slot.json
+./build/odh-inspect '../referencias/The Sims' > validation-output/corpus-slot.json
+python3 tools/check_census.py validation-output/corpus-slot.json
 ```
 
 Implementar posição/footprints, geração de destinos e roteamento, com retomada

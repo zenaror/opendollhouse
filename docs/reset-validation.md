@@ -85,7 +85,7 @@ recipiente2/slot0, postura1 e33 movimentos permanecem os da cena construída.
 O pedido de som metal continua `skipped_no_backend`; não há áudio real.
 
 Debug/sanitizers tiveram JSON byte a byte idêntico, saída3 e stderr vazio.
-Relatórios ignorados `reports/chair-reset.json` e versão sanitizada;
+Relatórios ignorados registro arquivado não distribuído e versão sanitizada;
 `global-walk-150.json`/`sit-reset-clip.json` guardam consultas de leitura.
 Não houve execução do original, validação visual ou hardware.
 

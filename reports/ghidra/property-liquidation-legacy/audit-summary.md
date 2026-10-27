@@ -29,7 +29,7 @@ section positions and measured entropy.
 
 The Java user.home and Ghidra settings were redirected into this directory.
 Ghidra nevertheless logged its packed database cache at
-/var/tmp/rafael-ghidra/packed-db-cache. No follow-up action modified or cleaned
+an isolated temporary analysis cache. No follow-up action modified or cleaned
 that shared cache. Logs retain the exact footprint observation.
 
 The original-rule question remains open. Useful next evidence would be a

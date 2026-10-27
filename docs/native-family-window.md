@@ -99,17 +99,16 @@ purchases and evictions through actual X11 input, including live map
 management and managed checkpoint reopen. It must not use a headless move
 command to substitute for one of those measured screen actions.
 
-Final evidence is `reports/native-family-window/attempt-3/result.json`, with
+Final evidence is an archived validation record (not distributed), with
 eight captures and the replayable `validate_real.py` driver. It uses commit
 base `9ec4546` plus this checkpoint's native UI changes. Host SHA256:
 `fe7351297137816a56787e0983aa7fd5254b95dd7bbb605cdb53010537536f33`.
 The unchanged CAS helper SHA256 is
 `5d301fb38835b042b2acdded78ce28d5bb2921c40b025bb838e9123a94ec25d1`.
 
-```sh
-python3 reports/native-family-window/validate_real.py \
-  --output reports/native-family-window/new-attempt
-```
+This historical run used local tooling that is not distributed. Its recorded
+results and limitations are summarized below; that runner cannot be reproduced
+from the public checkout.
 
 The driver refuses an existing output directory. It allocates its own Xvfb
 display using `-displayfd`, isolates all XDG/log state in a temporary profile,

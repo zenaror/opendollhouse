@@ -6,7 +6,7 @@ This is static evidence from the supplied comparison sample, not a claim about a
 
 - Input: `../referencias/The Sims/Sims.exe`.
 - SHA-256 before and after: `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`.
-- Existing project: `reports/ghidra/projects/ODH_TS1_Supplied.gpr`; program `/Sims.exe`, x86 little endian 32-bit, image base `00400000`. Embedded program SHA matches the input.
+- Analyzed program `/Sims.exe`, x86 little endian 32-bit, image base `00400000`. Embedded program SHA matches the input.
 - Ghidra 12.1.3 queried using `-readOnly -noanalysis -process Sims.exe`, at most two CPUs and 2 GiB heap. Script decompilation was bounded to 20 seconds per selected function. All new scripts, logs, settings, temporary directories and local inspection output are under this report directory.
 - No production edits, builds, tests, reference checkout updates or forced project locks.
 

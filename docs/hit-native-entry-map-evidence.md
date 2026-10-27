@@ -20,13 +20,13 @@ PE32 x86, image base `0x400000`. A revisão ODH na abertura da investigação er
 `0a3faf52bea21260006f53991dce7907b8899b34`. Nenhum executável original foi
 executado ou modificado, e não há validação de áudio físico ou hardware.
 
-O diretório ignorado `reports/hit-native-entry-map/` preserva `EVIDENCE.txt`,
+O diretório ignorado registro arquivado não distribuído preserva `EVIDENCE.txt`,
 `collect.py`, `manifest.json`, `artifact-hashes.json`, 22 recortes de assembly
 e `direct-call-xrefs.txt`. Executar, a partir do checkout:
 
-```sh
-python3 reports/hit-native-entry-map/collect.py
-```
+O roteiro automatizado desta observação usou ferramentas locais não
+distribuídas. Os resultados e limites descritos são históricos; esse roteiro
+não é um comando reproduzível a partir de um clone público.
 
 O script confirma o hash do alvo, calcula o mapeamento PE a partir dos headers,
 extrai bytes/assembly por intervalo e enumera chamadas diretas selecionadas
@@ -118,7 +118,7 @@ O lookup inicial acessa `owner+0x31c`. Em `0x57de73`, o initializer obtém
 `this+0xc4=this` em `0x57d7b4`. Portanto a indireção começa apontando para
 o próprio objeto; ela não prova um objeto de metadados sempre separado.
 Esses stores foram reconfirmados por `objdump` no alvo e também constam de
-`reports/ghidra/supplied-functions/0057d6f8.asm.txt`, SHA256
+registro arquivado não distribuído, SHA256
 `f47a09871210980300475258ba76a38511c78602918bdb52b044d77479fc20bf`.
 
 O initializer grava o destino em `controller+0x19c` e `+0x1a0` em
@@ -158,7 +158,7 @@ Preservar um alias desconhecido como não resolvido é política defensiva ODH;
 não é necessário inventar uma chave zero para admiti-lo.
 
 Os recortes adicionais estão em
-`reports/hit-native-entry-map/csv7-selected.asm.txt`. Mapeamentos e hashes
+registro arquivado não distribuído. Mapeamentos e hashes
 dos bytes originais, com fim exclusivo, são:
 
 | VA inicial–fim exclusivo | RVA / offset inicial | Bytes | SHA256 |
@@ -193,14 +193,14 @@ campos. As flags seguintes são lidas a partir do sufixo posterior ao filename.
 consumida pelo sufixo após o delimitador; `0x5d499c` copia strings. Os
 recortes frescos de `0x57b650–0x57b70e`, `0x5d4a0d–0x5d4b3c` e
 `0x5d499c–0x5d49b7`, mais os delimitadores e seus offsets, estão em
-`reports/hit-native-entry-map/patch-filename-selected.asm.txt`, SHA256
+registro arquivado não distribuído, SHA256
 `ef6d3c4e0026ea9aefc8da9e9c3dd3cfe1eab99721b709aa682d5c13fd8d4d35`.
 Cada intervalo traz o hash dos bytes originais. Isso prova extração textual;
 não prova localização, decodificação ou reprodução do arquivo de áudio.
 
 As comparações de flags seguintes aceitam exatamente o valor1. O recorte
 adicional `0x57b70e–0x57b767` está em
-`reports/hit-native-entry-map/patch-flags-selected.asm.txt`, SHA256
+registro arquivado não distribuído, SHA256
 `b71563146b57a8774f2229c11ab7e653c01d187f2d00b8e0def3105b41c0a630`.
 Seus 33 registros de instrução foram comparados aos bytes originais; o recibo
 `root-patch-flags-audit.json` conserva o intervalo e hash dos bytes. A leitura

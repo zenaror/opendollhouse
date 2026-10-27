@@ -137,8 +137,8 @@ here comes from synthetic integration tests.
 
 All six native outputs are byte-identical between Debug and ASAN/UBSAN. Seven
 original input SHA256 values match before and after the probe. Evidence remains
-ignored in `reports/person-animation-ticks*-{debug,asan}.json` and
-`reports/person-animation-input-sha256.json`. Leak detection is disabled because
+ignored in an archived validation record (not distributed) and
+an archived validation record (not distributed). Leak detection is disabled because
 of the environment; no leak-check result is claimed. Neither native execution
 here nor the FreeSO reference proves original-game equivalence or console use.
 

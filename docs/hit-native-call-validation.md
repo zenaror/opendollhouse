@@ -18,15 +18,15 @@ novo perfil HOT estão em
 A evidência nativa é a leitura estática de `../referencias/The Sims/Sims.exe`,
 SHA256 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`,
 base PE `0x400000`. Os bytes selecionados estão em
-`reports/hit-native-controller-execution-selected.asm.txt`, SHA256
+registro arquivado não distribuído, SHA256
 `f0171402d4637498e9ada7449c7aec0303faa59e1d66eed97cd7c7f05048d9a8`;
 a interpretação anterior está em
 [hit-native-controller-execution-evidence.md](hit-native-controller-execution-evidence.md),
 SHA256 `635e6f322f12efe922b3143872c5c4f0da58ca8573129d0005f6c8749707154f`.
 A prova de stop e restart está em
 [hit-native-controller-lifecycle-evidence.md](hit-native-controller-lifecycle-evidence.md)
-e em `reports/hit-native-controller-lifecycle-selected.asm.txt` e
-`reports/hit-native-retrigger-selected.asm.txt`. Nenhum resultado de execução
+e em registro arquivado não distribuído e
+registro arquivado não distribuído. Nenhum resultado de execução
 do `Sims.exe` decorre dessa análise.
 
 Simitone `4906db3156616bfaffc10ce0963cf08062975fef` é a referência técnica
@@ -85,10 +85,10 @@ execução anterior. A implementação portátil deve preservar essa distinção
 
 ## Probe de recurso e verificação
 
-`reports/hit-native-call/resource-probe.cpp` define um probe diagnóstico com
+registro arquivado não distribuído define um probe diagnóstico com
 os recursos `Downloads/BirthdayCake/bcakesnd.{hsm,hot,HIT}` fornecidos pelo
 usuário. Suas identidades estão em
-`reports/hit-native-call/resource-identities.json`. O probe fornece
+registro arquivado não distribuído. O probe fornece
 explicitamente o `TrackData` do HOT local ao resolvedor. A entrada sintética
 do controller é PC16 com patch0, sem binding de áudio. Os bytes HIT em PC34
 são `07 43 05 00 00`: Call7 consulta `0x543` (1347), salva PC39 e deve ir
@@ -109,7 +109,7 @@ O build direto passou com C++17, `-Wall -Wextra -Werror -Wconversion
 As suítes CTest Debug e ASan/UBSan configuraram 115 testes cada: 114 passaram,
 um skip X11 e zero falhas, em 66,77 s e 85,49 s respectivamente. LSan foi
 desativado no ambiente de sanitizers. Logs completos estão em
-`reports/hit-native-call/{debug,asan}-{build,ctest}.log`; a recompilação final
+registro arquivado não distribuído; a recompilação final
 dos testes está em `{debug,asan}-target-final-build.log` no mesmo diretório.
 
 O probe acima passou nas duas instalações externas (anterior e Legacy), em

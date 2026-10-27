@@ -62,7 +62,7 @@ Sem warnings. O teste da factory foi repetido em ambos após adicionar a
 checagem de banco vivo (sem alteração da implementação).
 LSan não validado: ASAN_OPTIONS=detect_leaks=0.
 
-Verificador privado reports/sound-factory-native.cpp:
+Verificador privado registro arquivado não distribuído
 SHA256 8bd36077a7abc1215917af4806e3dff7989bd21d088398451d7f9a70a7f1c2c1.
 Usa generated HSM/HOT/HIT reais, World construído com avatar1/PersonData66,
 idade27/gênero0/neatword7=300; não é retomada de entidade salva.
@@ -75,13 +75,13 @@ Group1 tem registry vazio explícito antes da nota, não efeito global no lote.
 XA SHA256 e68b39e613b2500e40796346fb6cef6343ae97dda5eea2ae0debc3f9f6dcbd64,
 mono22050Hz/54296frames, consumida pelo SDL dummy; instância concluiu e
 owner fez stop uma vez. Debug e ASan/UBSan passaram.
-Recibos: reports/sound-factory-native-dummy.json e
-reports/sound-factory-native-asan.json. Ticks dependem do host, não relógio
+Recibos: registro arquivado não distribuído e
+registro arquivado não distribuído Ticks dependem do host, não relógio
 determinístico da simulação. Main não retomado; audibilidade não verificada.
 
 ## Retenção e próximas etapas
 
-Arquivos inválidos anteriores preservados em reports/factory-before-takeover.
+Arquivos inválidos anteriores preservados em registro arquivado não distribuído
 Artefatos do build na raiz, mixer incompleto e runners antigos permanecem
 não versionados e não integrados; não são evidência de factory/mixer funcional.
 Não fazer git add -A nem descartar esses arquivos numa limpeza genérica.

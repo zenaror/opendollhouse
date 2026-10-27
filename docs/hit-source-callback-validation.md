@@ -128,7 +128,7 @@ Debug/ASAN JSON matches byte-for-byte, SHA256
 No audio/thread/Main continuation is claimed. Native resource identities remain
 those recorded in `sound-source-variable-validation.md`.
 
-Ignored evidence: `reports/hit-source-native-{debug,asan}.json`, build/full-test
+Ignored evidence: an archived validation record (not distributed), build/full-test
 logs; Ghidra `source-callback`, `source-registration`, `installed-source`,
 `source-field-provider`, `person-bank-access` logs and selected function exports,
 plus `supplied-objdump.txt`. No commercial code exports are published.

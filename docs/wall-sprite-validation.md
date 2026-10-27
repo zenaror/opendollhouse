@@ -69,9 +69,9 @@ Debug, ASAN e oracle coincidiram: 15989 candidatos, 2212 escritos,
 `31a6d687fa4e57eac635c06b7adfbe7bfb18e1e0edbdae5b3724e15e5a36bf7f`;
 depth: `26eedb852b0f849dccac1fe7919d9206774613886d977cc6bb60fb83f3b44560`.
 
-Relatórios ignorados: `reports/wall-composition-native.cpp`,
+Relatórios ignorados: registro arquivado não distribuído,
 `verify-wall-composition.py`, `wall-composition-native-validation.json`, binários,
 exports `.rgba/.depth/.z` e imagem PPM. Nenhum recurso comercial entra no Git.
 Próxima unidade após a composição isolada: topologia inicial de rooms e
 obstáculos/portais, necessária antes de usar paredes para validar destinos. A
-meta integral Linux funcional continua ativa.
+escopo integral Linux funcional continua incompleto.

@@ -83,7 +83,7 @@ Leitura de três saves externos, Debug e ASan/UBSan:
 Sobre a revisão base `52e8306`, com mudanças ainda não commitadas, o gate
 headless curto iniciou os Main dos dois moradores reais já presentes em
 House07 no mesmo World e relógio. Contra os dados em
-`/home/rafael/_PROJETOS/TheSims1/referencias/The Sims`, as threads 105/GUID
+`../referencias/The Sims`, as threads 105/GUID
 `850010198` (`--resident-id 48`) e 137/GUID `844195932`
 (`--resident-id 47`) completaram 32 ticks cada; ambas passaram com
 `scheduler_entities=2` e as posições dos moradores preservadas. Os quatro
@@ -103,7 +103,7 @@ inputs. O checkpoint de save/resume posterior está documentado abaixo.
 
 O teste opcional `tests/house07_paired_main_smoke.py`, executado com
 `/tmp/odh-host-integration/odh-person` e os dados instalados em
-`/home/rafael/_PROJETOS/TheSims1/referencias/The Sims`, confirmou que os dois
+`../referencias/The Sims`, confirmou que os dois
 moradores já presentes no save House07 podem ter seus recursos de personagem
 verificados e executar seus próprios Main no mesmo World e relógio. Os IDs
 105/GUID `850010198` e 137/GUID `844195932` ficaram `waiting` após 32 ticks,
@@ -200,7 +200,7 @@ seed final16610512366814951206. O novo gate decorre da família ativada;
 não indica que roteamento ou restauração espacial tenham sido concluídos.
 
 Relatórios completos Debug/ASan coincidem byte a byte, ignorados em
-`reports/{bob,member47}-resident-native[-asan].json`:
+registro arquivado não distribuído:
 
 - Bob SHA256 `a15b03c5091b555918706265bffa32584ddaa3856626af2547640330160b0636`;
 - membro47 SHA256 `490534a45f645f2097e7d6377ef29807d89b2dfd8a89c4e147b5c7b86a2f96fc`.

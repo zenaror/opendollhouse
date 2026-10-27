@@ -98,7 +98,7 @@ proved by these fixtures.
 Revision before independent review passed 32 cases per gate but encoded an
 incorrect Play adjustment and faulted on pre-effect refusals. Those green results
 are superseded; the exact prior sources, logs, script and receipt are retained
-under `reports/hit-track-manager-20261020/pre-fix/`.
+under an archived validation record (not distributed).
 
 The previous corrected Debug and ASan/UBSan gates each passed 6 focused CTests
 and 37 manager cases (94 checks). That receipt and its sources/logs are retained

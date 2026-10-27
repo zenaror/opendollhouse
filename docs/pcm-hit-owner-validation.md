@@ -86,10 +86,10 @@ desligam pan/zoom e não pedem loop. Não é retomada de Main ou simulação de 
 Suítes finais Debug e ASan/UBSan:110 configurados,109 aprovados e um X11
 ignorado; builds sem warnings. LSan desativado. Os dois testes novos também
 passam numa configuração com ODH_SDL_AUDIO=OFF e ODH_X11=OFF. Logs em
-reports/pcm-owner-build{,-asan}-{final,ctest}.log e
-reports/pcm-owner-noaudio-{configure,build,tests}.log.
+registro arquivado não distribuído,-asan}-{final,ctest}.log e
+registro arquivado não distribuído,build,tests}.log.
 
-Verificador nativo reports/pcm-owner-native.cpp SHA256
+Verificador nativo registro arquivado não distribuído SHA256
 f9dcaf51dc6291e9e1ecf48754fea3286ae654a0253fb5fcec8af8a01f1123ee:
 substitui o backend/owner ad hoc do checkpoint anterior por make_xa_hit_sound,
 com as mesmas XA2756/3212 e saída SDL dummy44100 estéreo. Continua exigindo
@@ -98,12 +98,11 @@ Não deriva callerargs reais. World permanece construído, sem BHAV nativo Main.
 Dois handles antes de destruir instância, um só depois (background externo),
 zero após cleanup final. Debug e ASan/UBSan produziram109568frames e
 FNV1a64 PCM little-endian8bca194e939e6a8d, iguais ao transporte anterior; detalhes
-e recibos reports/pcm-owner-native-{dummy,asan}.json.
+e recibos registro arquivado não distribuído,asan}.json.
 
 ## Continuidade
 
 Próximo: serviço de som com agendamento no loopWorld e política comprovada de
 owner/grupo/ganho espacial, sem adotar argumentos de fixture como caller real.
 Preservar gates Main/savedframes, CallReturn/loops/controllers/ArgStyle,
-precedência e demais milestones Linux. OMM indisponível nesta sessão;
-checkpoint local em current-handoff.md para sincronização posterior.
+precedência e demais requisitos Linux. Consulte a matriz pública de funcionalidades.

@@ -14,9 +14,9 @@ PE32/x86, base0x400000. Equivalência ao arquivo .bak permanece não comprovada.
 HOT externo SimsGeneratedHitSource.hot SHA256
 cf324a77668c04f15ec56e78e905e0b8b3219807ce959c60bca68b9e81afb21d.
 Para os endereços listados nesta imagem, offset de arquivo=VA-0x400000;
-não é regra geral de PE. Exportações anteriores em reports/ghidra foram
+não é regra geral de PE. Exportações anteriores em registro arquivado não distribuído foram
 conferidas com leituras objdump e bytes atuais. Trechos selecionados novamente
-em reports/hit-native-caller-args-selected.asm.txt; não são execução original.
+em registro arquivado não distribuído; não são execução original.
 
 ## Cadeia observada
 

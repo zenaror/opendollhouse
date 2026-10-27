@@ -71,7 +71,7 @@ ROOT contém 15 eventos: 14 `footstep` nos IDs733,966,1200,1466,1700,1966,2200,
 preserva esses IDs e strings. O significado temporal abaixo vem do FreeSO.
 
 As consultas normais e sanitizadas da STR129 e do BCF/CFP selecionado produziram
-JSON byte a byte idêntico, stderr vazio. Relatórios ficam em `reports/`, ignorado:
+JSON byte a byte idêntico, stderr vazio. Relatórios ficam em um diretório local de resultados, ignorado:
 `chair-animation-name.json`, `chair-animation-cfp.json`, `chair-cfp-comparison.json`.
 
 O nome de um clipe é interno à coleção BCF e pode diferir do filename.

@@ -148,7 +148,7 @@ Resultado com House01/zoning e seed1:
 - Seed após Init9848121759223504888; após BodySTR igual; Sleep de Main avança
   para16610512366814951206. Flags permanecem264 depois do Init.
 
-Relatório ignorado `reports/avatar-startup-native.json`. NBRS/scope32/Relationship
+Relatório ignorado registro arquivado não distribuído. NBRS/scope32/Relationship
 continuam a próxima dependência do Main. Aparências vazias deste template não
 são substituídas por uma skin inventada. Família/vizinho, humano salvo real,
 terreno, arquitetura e persistência ainda precisam ser ligados ao carregador.

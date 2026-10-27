@@ -13,7 +13,7 @@ tinha oito checkboxes marcados e 73 desmarcados, incluindo autonomia fiel,
 promoção/rebaixamento de fama, salvamento em férias e chamadas globais TS1.
 O bloco QA também distingue comportamento que deveria funcionar de casos
 que ainda precisam de investigação. Snapshot local:
-`reports/simitone-reference-audit-2026-10-17/issue-8.json`.
+registro arquivado não distribuído.
 
 Esses itens orientam perguntas e cenários de regressão, sem provar que todos
 os estados do checklist correspondem ao código atual. Comentários com desejos

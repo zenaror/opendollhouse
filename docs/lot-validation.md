@@ -110,8 +110,8 @@ Main lê current lot1 e sai da consulta Downtown. Init consulta zona1→0,
 retorna de Global321 como residencial e lê BCON semiglobal8195[0]=50 antes
 de pedir RandomNumber. Suas duas consultas anteriores continuam
 Global257[4]=1 e[7]=7. O contexto não substitui RNG ou SetToNext por sucesso.
-Relatórios locais ignorados: `reports/lot-person-main.json` e
-`reports/lot-person-init.json`. A inicialização completa, o Main permanente
+Relatórios locais ignorados: registro arquivado não distribuído e
+registro arquivado não distribuído. A inicialização completa, o Main permanente
 com ação real, o relógio, terreno/arquitetura e entidades salvas seguem abertos.
 
 ## Verificação

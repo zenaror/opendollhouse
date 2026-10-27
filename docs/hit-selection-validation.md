@@ -110,8 +110,8 @@ Primary references are local FreeSO revision
 is not a comparison with executing that C# runtime or the original game.
 
 The original HOT/HSM/HIT hashes match the preceding checkpoint. Ignored evidence:
-`reports/hit-native-{debug,asan}.json`, `reports/hit-input-identities.json`,
-`reports/hit-full-*.log` and build logs. The user's reported original executable
+an archived validation record (not distributed), an archived validation record (not distributed),
+an archived validation record (not distributed) and build logs. The user's reported original executable
 Sims.exe.bak was inventoried read-only: PE32 Intel80386,9 sections,4422663 bytes,
 SHA256 `32857c25e00594a9bc5d700f7b373b6df59ab76ec51b36aa1d30f3dd973eff58`.
 Sims.exe is a distinct7-section3043328-byte binary, SHA256

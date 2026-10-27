@@ -11,7 +11,7 @@ fecha a ordem de teardown, os ramos zero/ausente/tipo incorreto e as duas
 aplicações de controles. A fonte é a imagem externa identificada por SHA256
 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`,
 sem execução do original. A auditoria independente em
-`reports/hit-global-patch-binding/static-audit.json` conferiu os 25 recortes,
+registro arquivado não distribuído conferiu os 25 recortes,
 4.070 bytes, mapeamento PE e hashes; o reprodutor está ao lado do recibo.
 
 ## Controller: fonte e resultado explícitos
@@ -129,7 +129,7 @@ temporária e não deixa binding pendente antes de o controller fixar fault.
 O driver é sintético; suas contagens não são saída física ou vozes nativas.
 
 Logs, snapshots de fonte e probes desta unidade ficam em
-`reports/hit-global-patch-binding/`, ignorado pelo Git. O controller passou
+registro arquivado não distribuído, ignorado pelo Git. O controller passou
 154 verificações; registry55; integração29, esta também compilada com
 `-Werror -Wconversion -Wsign-conversion -pedantic` em C++17. Houve revisão
 independente do snapshot final, incluindo as duas correções de cleanup.

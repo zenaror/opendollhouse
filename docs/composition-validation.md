@@ -113,7 +113,7 @@ arquivo são recusados antes de escrita; falha no depth pode deixar PPM pronto,
 mas não emite sucesso JSON. Nenhum asset é distribuído ou versionado.
 
 ```sh
-./build/odh-render '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult '../referencias/The Sims/GameData/Textures/Textures.far' --part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 160.75 --scene '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 16808 --lit --output reports/scene-160_75-z3-r0.ppm --depth-output reports/scene-160_75-z3-r0.depth > reports/scene-160_75-z3-r0.json
+./build/odh-render '../referencias/The Sims/GameData/Animation/Animation.far' adult-skeleton.cmx.bcf adult '../referencias/The Sims/GameData/Textures/Textures.far' --part b001mafit_01.cmx.bcf b001mafit_01 xskin-b001mafit_01-PELVIS-BODY.bmf ExtremeMlgt_01.bmp --part c001ma_ross.cmx.bcf c001ma_ross xskin-c001ma_ross-HEAD-HEADB.bmf C001MAlgt_Ross.bmp --animation adult-chair-sit-new.cmx.bcf a2o-sit-left xskill-A2O-sit-left.cfp --frame 160.75 --scene '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 16808 --lit --output validation-output/scene-160_75-z3-r0.ppm --depth-output validation-output/scene-160_75-z3-r0.depth > validation-output/scene-160_75-z3-r0.json
 ```
 
 ## Gates e identidade

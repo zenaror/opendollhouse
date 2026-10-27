@@ -17,11 +17,11 @@ Nenhuma execução do original, escrita em referências ou alteração de projet
 Ghidra foi feita. Não se estabelece equivalência com outra imagem executável.
 
 Leitura inicial dos exports `0057376b`, `0057320a` e `0057a9a6` em
-`reports/ghidra/supplied-functions/`, seguida de `objdump` pontual. Foram
+registro arquivado não distribuído, seguida de `objdump` pontual. Foram
 procurados calls relativos para os helpers específicos e confirmados os
 callers relevantes em assembly; isso não enumera chamadas indiretas gerais.
 Bytes, VAs, offsets e identidade estão em
-`reports/hit-native-source-contributions-selected.asm.txt`.
+registro arquivado não distribuído.
 Complementa [identidade de TrackID](hit-native-track-identity-evidence.md).
 
 ## Estrutura e operações

@@ -111,7 +111,7 @@ House07r0z1 PPM:
 depth:
 `a9690ccd89ab2f4540182e008afd89b676af026f1d1e31fe6ee3db7637f5aef7`.
 
-Evidência local ignorada: `reports/verify-native-terrain.py`,
+Evidência local ignorada: registro arquivado não distribuído,
 `terrain-export.cpp`, `recheck-terrain-metadata.py`,
 `terrain-surface-native-validation.json`, logs `terrain-surface-*.log` e
 `house*-terrain-r*-z*.{json,ppm,depth,png,geometry}`. O export de terreno isolado

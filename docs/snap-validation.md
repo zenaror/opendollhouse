@@ -282,7 +282,7 @@ São18instruções totais, três frames, saída3 e diagnóstico esperado
 animação/janela, save original, execução do Sims.exe.bak ou hardware.
 
 JSON Debug e sanitizadores idênticos, stderr vazio. Reports ignorados:
-`reports/chair-snap-probe.json` e `reports/chair-snap-probe-sanitize.json`.
+registro arquivado não distribuído e registro arquivado não distribuído.
 
 ```sh
 ./build/odh-bhav '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 0x1001 --run --world-probe --route-probe --snap-probe --object-def 16808 --global '../referencias/The Sims/GameData/Global/Global.far' Global.iff

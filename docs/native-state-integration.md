@@ -57,14 +57,14 @@ consumption and strict warning builds passed. Independent review additionally
 ran 123 native-VM checks under sanitizers, exercising actual BHAV instruction
 branching, existing storage, callback failures and snapshots.
 
-Local evidence is in `reports/portability/native-state/manifest.json`,
+Local evidence is in an archived validation record (not distributed),
 `release-ctest.log`, `sanitized-ctest.log` and `independent-review.json`.
 These are synthetic component/VM checks, not original-game equivalence.
 
 The same 76-check state suite built as ARM EABI5 ELF and 3DSX, then emitted the
 exact guest marker `ODH_3DS_NATIVE_STATE_V1:PASS` in the emulator. The independent
 artifact review also checked the visible result, source/binary/log hashes and
-cleanup; see `reports/portability/3ds-native-state-execution/final-review.json`.
+cleanup; see an archived validation record (not distributed).
 The raw runner result deliberately remains unmodified: its initialized
 `emulated_component_verified: false` is not promoted by that runner. The
 independent review supplies the bounded emulated-component approval. This does
@@ -86,7 +86,7 @@ snack preparation or a fully playable household. Reopening after that completed
 false interaction does not prove persistence of an active interaction, routing,
 new bank sharing, every continuation, or unrestricted long-running play.
 Protected commercial-data hashes remained equal and temporary profiles/processes
-were cleaned up. Evidence: `reports/native-vm-house07/result.json`,
+were cleaned up. Evidence: an archived validation record (not distributed),
 `first.stdout`, `zero-reopen.json`, `zero-reopen.stdout` and `second.stdout`.
 
 ## Causal comparison and native language lookup correction
@@ -105,7 +105,7 @@ string ID 1, requested language 14. That table contains only language 1;
 `tools/person.cpp` returned no name before catalog lookup, while the pinned
 reference falls back to English US for an empty requested language set. The
 following cleanup removed newly created object 180. See
-`reports/native-vm-expression-comparison/result.json` and `cause.json`.
+an archived validation record (not distributed) and `cause.json`.
 
 The subsequent native correction adds `string_in_ts1_language_set` for both
 RunTreeByName and ChangeSuit STR304 lookup. It selects English only when the
@@ -117,7 +117,7 @@ STR, RunTreeByName and ChangeSuit source contracts were reviewed independently.
 The corrected native run entered the previously skipped named routine, then
 stopped at tick 392 on a separate existing limitation: PushInteraction accepted
 only the primary avatar's queue, whereas this request targeted another resident.
-`reports/native-vm-language-fallback/diagnostic/stdout.json` retains the fault and
+an archived validation record (not distributed) retains the fault and
 trace. The first attempt with save-on-exit rejected the failed session before
 writing the JSON report; the diagnostic rerun omitted save-on-exit and preserved
 the log. Original hashes remained unchanged; own profiles and processes ended.
@@ -146,7 +146,7 @@ full priority propagation, special queue modes and eligibility/check execution
 remain incomplete. Custom icon selection is decoded for host presentation; the
 native queue does not yet render it. Do not claim full PushInteraction parity.
 
-`reports/native-vm-resident-continuation/` records the final native executable,
+an archived validation record (not distributed) records the final native executable,
 SHA256 `2425bf514ae00260e2499315b9af88922aa533117a02da4a6c4dfe75068bc9bd`.
 Mode 1, language 14, House07, selected resident 47: the request ran on the other
 resident (entity 105), targeting fridge 112/action 4103. At tick 4,096 the
@@ -165,7 +165,7 @@ fields, original-executable equivalence or all households/expansions.
 Source-only provenance comparison confirms the consulted STR, RunTreeByName
 and PushInteraction files are identical to adopted FreeSO commit
 `7e76c1960252ddd033d8937d5edb47d326f5b69c`, excluding preserved managed WIP.
-See `reports/native-vm-language-fallback/reference-provenance.json`.
+See an archived validation record (not distributed).
 
 Further migrations still include full thread/entity state, all needed simulation
 primitives and data services, save compatibility, graphics, audio, input and the

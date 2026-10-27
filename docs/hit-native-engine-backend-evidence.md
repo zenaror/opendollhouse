@@ -109,7 +109,7 @@ mas não comprova um adapter completo nem equivalência sonora com o original.
 
 ## Reprodução
 
-`reports/hit-native-engine-backend/extract.py` verifica o SHA esperado, deriva
+registro arquivado não distribuído verifica o SHA esperado, deriva
 VA/RVA/offset dos cabeçalhos PE, extrai 44 trechos por `objdump` e compara os
 6.726 bytes impressos com a imagem. `selected.asm.txt`, `vtables.json` e
 `manifest.json` preservam a evidência; `findings.txt` detalha ramos e pendências.

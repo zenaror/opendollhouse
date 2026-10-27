@@ -85,7 +85,7 @@ Hashes:
 - Export agregado walls:`ce52d43fe68a7a8a8bfd992a3ef5502479619f8dfdfeb86a83a2c57dee916d5d`.
 - Export agregado Windows:`6fcfbe85a025c55f5e3aa025deab1c8fba23db609637e682a49594fff160b449`.
 
-Relatórios locais ignorados: `reports/spr-all-frames.cpp`,
+Relatórios locais ignorados: registro arquivado não distribuído,
 `verify-spr-native.py`, `spr-native-validation.json`,
 `spr-windows-native-validation.json`, dumps `.bin`, logs `spr-*.log` e exports
 `wall-pattern-1-near-frame0.*`/`window-mask-native.*`. Nenhum recurso comercial é
@@ -146,8 +146,8 @@ nem resultados de consoles.
 ## Reprodução
 
 ```sh
-build/odh-spr '../referencias/The Sims/GameData/walls.iff' 2049 0 --output reports/pattern1
-build/odh-spr '../referencias/The Sims/GameData/Objects/Objects.far' 350 0 --iff-entry Windows.iff --missing-palette-black --output reports/window-mask
+build/odh-spr '../referencias/The Sims/GameData/walls.iff' 2049 0 --output validation-output/pattern1
+build/odh-spr '../referencias/The Sims/GameData/Objects/Objects.far' 350 0 --iff-entry Windows.iff --missing-palette-black --output validation-output/window-mask
 ctest --test-dir build --output-on-failure
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-asan --output-on-failure
 ```

@@ -85,7 +85,7 @@ as escolhas já existentes de entrada ou mudança.
   valores e botões em português. Escape retornou ao mapa, e um segundo Escape
   encerrou a execução com `stage=neighborhood`, sem escrever nos dados do jogo.
   A captura direcionada à janela e os detalhes da execução estão em
-  `reports/linux-lot-details-panel-20261024/`.
+  registro arquivado não distribuído.
 - `cmake --build build/linux-checkpoint -j2` concluiu. Sob Xvfb, os gates
   `linux_ui_strings`, `linux_neighborhood_screen_actions`,
   `linux_game_entry_cli`, `play_linux_cli` e `neighborhood_window_cli` passaram
@@ -110,7 +110,7 @@ as escolhas já existentes de entrada ou mudança.
   mapa; um segundo Escape encerrou com `stage=neighborhood`. As capturas
   `house-01-family-picker-pt14.png` e
   `house-01-map-after-family-cancel-pt14.png` foram registradas em
-  `reports/linux-lot-details-panel-20261024/`. O perfil XDG temporário e o
+  registro arquivado não distribuído. O perfil XDG temporário e o
   display virtual foram encerrados ao fim.
 - Os testes sintéticos verificam Escape, botão de cancelar, botão de escolher e
   clique numa família. Eles não verificam retratos ou edição de nomes. A remoção
@@ -156,7 +156,7 @@ as escolhas já existentes de entrada ou mudança.
   `linux_move_out_integration`, `linux_game_entry_cli`, `play_linux_cli`,
   `neighborhood_window_cli`, `neighborhood_cli` e `person_cli` passaram 9/9
   sob Xvfb.
-- Capturas 800×600 estão em `reports/linux-neighborhood-mode-switch-41938bd/`.
+- Capturas 800×600 estão em registro arquivado não distribuído.
   Elas mostram o mapa original e as abas, mas também deixam claro que este
   acabamento ainda é provisório e não corresponde visualmente ao Simitone.
   Os nomes das abas ainda não seguem o idioma escolhido.

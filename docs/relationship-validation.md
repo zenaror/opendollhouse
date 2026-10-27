@@ -118,7 +118,7 @@ antes e depois dos dois probes:
 
 Relatórios completos Debug/ASan coincidem byte a byte:
 
-| Personagem | Arquivos ignorados em reports/ | SHA256 do JSON |
+| Personagem | Arquivos ignorados em resultados locais | SHA256 do JSON |
 |---|---|---|
 | Bob | bob-relationship-native.json, bob-relationship-native-asan.json | 47be2a1c2d14038702dc2acdcab5a9cdf7fdeba85459b011c9bdc3dba458e70d |
 | Vizinho45 | family3-relationship-native.json, family3-relationship-native-asan.json | 59d59688adb54a5a5b95457ac6ff4de340349315eeaa7fde08b14b364217cc4f |

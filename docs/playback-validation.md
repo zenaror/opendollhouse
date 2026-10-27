@@ -90,7 +90,7 @@ endfalse, fila vazia. Todos os15 eventos brutos foram observados; último4466
 `xevt100` no tick145, seguido da branch false para BHAV1003 PC15 no tick146.
 Os operandos da32 começam com GUID59C389BC. O clipe ainda não terminou.
 
-Relatórios locais ignorados: `reports/chair-playback.json` e versão sanitizada,
+Relatórios locais ignorados: registro arquivado não distribuído e versão sanitizada,
 JSON byte a byte idêntico e stderr vazio. Não houve escrita nos originais.
 Reprodução de eventos aqui significa execução deste perfil ODH com metadata
 comercial; sons, skeletons, pixels e execução do original permanecem ausentes.

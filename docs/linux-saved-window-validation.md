@@ -9,7 +9,7 @@ própria coincidiram, inputs inválidos foram rejeitados e teclas/actions/hold/
 release/câmera/quit responderam a eventos sintéticos enviados somente à própria
 janela. Não são eventos físicos de teclado. O teste fecha sua janela ao sair.
 
-Um harness adicional ignorado, `reports/saved-window-smoke.cpp`, leu os PPM
+Um harness adicional ignorado, registro arquivado não distribuído, leu os PPM
 publicados da House07: paredes erguidas com junções e paredes abaixadas no andar1,
 ambos640x400. Apresentou os dois frames na própria janela Linux e leu apenas esse
 drawable. **Todos os256.000 pixels RGB de cada frame coincidiram byte a byte**,
@@ -18,9 +18,9 @@ somente apresenta RGB exportado; não executa o renderer por eventos de câmera,
 a VM ou uma interação do lote. Não é um novo oracle da imagem do jogo original.
 
 Arquivos usados:
-`reports/house07-wall-caps-r0-z3.ppm` SHA
+registro arquivado não distribuído SHA
 `d985015ebe010d9173bd6ca6c850ea5b98c604faf4fb9675b97defb9a71ca5eb` e
-`reports/house07-wall-view-r0-z3-l1-down.ppm` SHA
+registro arquivado não distribuído SHA
 `9f721977151d35dc4e15c4cd7066290f376d69a87c65b4134bbc48639711cf95`.
 As imagens e bins/harness permanecem ignorados, com os recursos comerciais fora
 do Git. LSan desativado por ptrace; não houve leak check. Essa evidência prova

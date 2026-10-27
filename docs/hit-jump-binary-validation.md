@@ -109,7 +109,7 @@ it does not resume Main, run a sound thread, or play a sample.
 ## Reproduction and retained artifacts
 
 Projects/logs, inventories, PE comparison and exported instructions/pseudocode
-remain ignored under `reports/ghidra/`. No commercial binaries or full exported
+are archived separately and are not distributed. No commercial binaries or full exported
 functions are versioned. ODH-authored scripts under `tools/ghidra/` export only
 selected analyzed functions or address references without editing the program.
 Function exports limit references to256, instructions to8192 and decompilation
@@ -121,16 +121,16 @@ absolute settings/cache directories, without changing global Ghidra settings:
 
 ```sh
 odh_root="$(pwd)"
-ghidra_home=/home/rafael/Tools/Open-GBP/ghidra_12.1.3_PUBLIC
+ghidra_home="${GHIDRA_HOME:?Defina GHIDRA_HOME para sua instalação do Ghidra}"
 java -Xmx2G -Djava.system.class.loader=ghidra.GhidraClassLoader \
-  -Djava.awt.headless=true -Dapplication.settingsdir="$odh_root/reports/ghidra/settings" \
-  -Dapplication.cachedir="$odh_root/reports/ghidra/cache" -Djava.io.tmpdir=/tmp \
+  -Djava.awt.headless=true -Dapplication.settingsdir="$odh_root/validation-output/ghidra/settings" \
+  -Dapplication.cachedir="$odh_root/validation-output/ghidra/cache" -Djava.io.tmpdir=/tmp \
   --enable-native-access=ALL-UNNAMED \
   -cp "$ghidra_home/Ghidra/Framework/Utility/lib/Utility.jar" \
   ghidra.Ghidra ghidra.app.util.headless.AnalyzeHeadless \
-  reports/ghidra/projects ODH_TS1_Supplied -process Sims.exe -readOnly -noanalysis \
+  validation-output/ghidra/projects ODH_TS1_Supplied -process Sims.exe -readOnly -noanalysis \
   -scriptPath tools/ghidra -postScript ODHFunctions.java \
-  reports/ghidra/supplied-functions 0057e3dc 0057d0a9
+  validation-output/ghidra/supplied-functions 0057e3dc 0057d0a9
 ```
 
 This requires the existing dedicated analyzed project. To reproduce its import

@@ -41,8 +41,8 @@ alpha>31 e budgets excedidos são erros explícitos. Sem FloorCopy/ZAsAlpha.
 ## CLI e reprodutibilidade
 
 ```sh
-./build/odh-sprite '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 16808 --direction 1 --zoom 3 --output reports/chair-sprite-1-3 > reports/chair-sprite-1-3.json
-python3 tools/compare_sprite.py '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff reports/chair-sprite-1-3.json reports/chair-sprite-1-3
+./build/odh-sprite '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff 16808 --direction 1 --zoom 3 --output validation-output/chair-sprite-1-3 > validation-output/chair-sprite-1-3.json
+python3 tools/compare_sprite.py '../referencias/The Sims/GameData/Objects/Objects.far' DiningChairs.iff validation-output/chair-sprite-1-3.json validation-output/chair-sprite-1-3
 ```
 
 `--graphic`, `--direction`, `--zoom`, `--rotation`, `--layer` fazem seleção
@@ -87,7 +87,7 @@ Frame0 indexSHA2b8dbd9db32646a67e2e3abc1eb078e6b0b4216708b9c8832efa4c0f6f48a027,
 ZSHAd8f3828514e4fd6f066fb643f69d436792949f6a6d7aba1831badb628babb968.
 Direção16/zoom3 e direção1/rotação2/zoom3 selecionam frame1 com flip=true,
 offset(-37,17); ambos passaram no oracle. PNG com as seis vistas inspecionado;
-exports brutos e preview ficam em reports/, fora do Git. Controles negativos
+exports brutos e preview ficam em um diretório local de resultados, fora do Git. Controles negativos
 com um byte RGBA ou Z adulterado foram recusados pelo oracle.
 
 CTest32/32 passou em Debug e ASan/UBSan. Novos gates sintéticos:319 checks

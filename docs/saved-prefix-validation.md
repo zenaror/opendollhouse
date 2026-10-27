@@ -94,7 +94,7 @@ Todos os IDs nativos consultados resolvem entradas não zero. Comparação
 independente Python versus JSON C++ verificou todos os campos e bancos de
 cada prefixo das três casas, incluindo GUID/type, offset/paridade,
 consumed/remaining bits. Relatórios locais ignorados:
-`reports/verify-saved-prefixes.py` e `reports/objm-prefix-audit.py`.
+registro arquivado não distribuído e registro arquivado não distribuído.
 O primeiro roda hosts Debug/ASan e compara os resultados com o decoder Python.
 
 House07: Level1/UnknownData1 em182 prefixos; oito OUT_OF_WORLD; X -16..648,
@@ -111,7 +111,7 @@ Bob visitante em House01 e House03 continua317 instruções/1 tick, fault
 GotoRoutingSlot45. Nenhum gate avança por posições meramente presentes no JSON.
 
 Relatórios completos Debug/ASan idênticos byte a byte, ignorados em
-`reports/{bob,member47,house01,house03}-saved-prefix-native[-asan].json`:
+registro arquivado não distribuído:
 
 - Bob: `f936311a7fedd8667714d974e1290045f290ccfe88d5bfb34c4febcfb46e2590`;
 - membro47: `af7f78255cd471066bcf10b2c127b883449af371df4974e334983b7d69fdcfe9`;

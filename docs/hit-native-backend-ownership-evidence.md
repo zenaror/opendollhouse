@@ -5,10 +5,10 @@ PE32 x86, SHA256
 `6e598c22512a24659cbd0e533306abf3129733d67b1d120916b1b6b1581e29f2`.
 Complementa [engine e backend](hit-native-engine-backend-evidence.md).
 O original não foi executado ou modificado. Os 37 recortes em
-`reports/hit-native-backend-ownership/selected.asm.txt` têm 5.772 bytes de
+registro arquivado não distribuído têm 5.772 bytes de
 instruções comparados com o arquivo; o manifesto registra VA, RVA, offset
 raw e SHA256 de cada trecho, derivados dos cabeçalhos PE. Reprodução:
-`python3 reports/hit-native-backend-ownership/extract.py`.
+`python3 registro arquivado não distribuído`.
 
 ## Alias espacial: um objeto, um contador, duas liberações
 
@@ -120,4 +120,4 @@ bytes e a registra em **`manager+0xd8`**, não em `+0x80`. Ela não deve ser
 introduzida como um tipo que colide com Track/Patch no catálogo de objetos.
 O caminho de substituição/liberação de listas duplicadas não foi fechado
 nesta unidade. Os recortes e a cadeia completa dos endereços estão em
-`reports/hit-native-backend-ownership/findings.txt`.
+registro arquivado não distribuído.

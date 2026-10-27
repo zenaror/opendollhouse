@@ -1,114 +1,31 @@
-# Orientação do OpenDollhouse
+# OpenDollhouse
 
-- Orientação humana mais recente (2026-10-26): não usar C# nem se limitar a
-  corrigir o Simitone. Desenvolvimento e execução da frente atual são C/C++.
-  Não ampliar, compilar ou publicar a ponte gerenciada. Preservar seu WIP
-  separado. Usar o código Simitone como referência de comportamento e integrar
-  os componentes compartilhados no motor C++ existente, sem outro motor paralelo.
-  A retomada posterior à edição da meta foi confirmada como `active`; conferir
-  esse status ao retomar, sem reativar por conta própria uma meta pausada.
+Reimplementação experimental do The Sims 1 em C/C++, com Simitone/FreeSO como
+referências. O produto final não deve exigir C#/.NET/CLR. As fontes gerenciadas
+preservadas servem como referência histórica; não ampliar essa implementação.
 
-- Base comum: papel OMM `project-base`. Mapa local no README; planejamento
-  canônico em `docs/architecture.md`, evidência nos documentos de validação
-  e em `reports/`. Preservar as particularidades e autorizações abaixo.
-- Direção humana mais recente: portar TODO o jogo baseado no Simitone para
-  C/C++, incluindo simulação, dados, interface, gráficos, áudio e entrada.
-  O produto final não pode depender de C#/.NET/CLR. Isto substitui a restrição
-  antiga de não iniciar tradução integral. Plano: `docs/native-port-plan.md`.
-  A migração é incremental, mas a meta é integral. Simitone/C# serve apenas de
-  referência e ponte temporária de comparação; não ampliar recursos de jogo
-  gerenciados. Aproveitar o C++ existente e convergir para um único motor nativo.
-- O desenvolvimento inicial foi autorizado em 2026-10-13. Avançar em unidades
-  pequenas e verificáveis, mantendo as decisões humanas e os limites da evidência.
-- Git de trabalho: https://git.home.zsrv.com.br/zenaror/opendollhouse.
-- Checkout ativo: `/home/rafael/_PROJETOS/TheSims1/opendollhouse`. O build
-  incremental válido fica em `build/linux-checkpoint`; não usar o cache legado
-  em `build/` como diretório de compilação.
-- Meta ativa: primeira versão funcional e testável no Linux antes dos ports
-  New 3DS/Vita/Android (decisão humana de 2026-10-13). Seguir autonomamente em
-  milestones, com testes e checkpoints. Pela direção de 2026-10-25 abaixo,
-  restrições de New 3DS serão reavaliadas sem bloquear a base Linux;
-  resultados Linux não validam consoles.
-- Instrução humana vigente de 2026-10-25: respeitar o status real da meta.
-  Conferir `get_goal` antes de continuar: paused impede execução; active após
-  retomada permite seguir. A pausa inicial não deve sobrepor uma retomada
-  posterior na interface. Na última consulta desta retomada, status active.
-  Linux é o primeiro ambiente de validação, não o único alvo.
-  Planejar desde já separação de simulação/dados e serviços de plataforma,
-  gráficos, áudio, entrada e armazenamento, com consumo de recursos explícito
-  e dependências substituíveis. Conferir riscos de C#/.NET para os consoles
-  antes de consolidar a base; não presumir viabilidade nem adiar toda a análise
-  de portabilidade para depois do Linux.
-- Reforço humano: o código deve visar os ports desde agora. Não tratar consoles
-  como problema posterior à build Linux. O conjunto atual net9/DesktopGL não
-  está aprovado como núcleo universal. Aplicar `docs/portability.md`: extrair
-  componentes usados, identificar bloqueios de runtime e provar os ambientes
-  prioritários antes de consolidar a base ou ampliar dependências desktop.
-- Nintendo Switch também é um possível alvo futuro de build, depois do Linux e
-  dos ports prioritários; toolchain, requisitos de distribuição e validação em
-  hardware ainda não foram confirmados. Windows e macOS (Apple Silicon e Intel)
-  também permanecem alvos futuros de build.
-- Wii U é um alvo desejado adicional (2026-10-25), sujeito à investigação de
-  runtime, ferramentas, gráficos, memória e execução real; sem suporte prometido.
-- Consultar OMM no escopo `OpenDollhouse` nas retomadas. Ler o handoff antes de
-  atualizar; usar o SHA atual em `expected_sha256`. Registrar revisão, checks,
-  pendências e referências. Notas históricas de planejamento não revogam a
-  autorização posterior de desenvolvimento.
-- Prioridade humana de 2026-10-14: Simitone é a referência técnica principal
-  para The Sims Complete Collection. Consultar primeiro seu frontend em
-  `refs/upstream/Simitone/Client/` e o núcleo da revisão que ele usa em
-  `refs/upstream/Simitone/FreeSO/`, verificando os caminhos TS1 efetivamente
-  ativados. O FreeSO principal é referência secundária para comparação,
-  formatos compartilhados e correções; não importar comportamentos de TSO
-  como se fossem do TS1. As referências antigas mantêm sua proveniência;
-  não relabelar evidência anterior sem comparar as implementações.
-- Etapa inicial já executada em 2026-10-25: avaliar uma base Linux derivada do
-  Simitone e da revisão correspondente do FreeSO, provisoriamente em C#.
-  A direção mais recente acima exige o port integral para C/C++.
-  Avaliar primeiro o fork alexjyong com entrada Linux, em checkout de trabalho
-  separado dos clones de consulta. Compilar e validar o ciclo de jogo antes de
-  confirmar a base; identificar revisões, licenças e dependências. O destino é
-  a experiência do The Sims 1 original, incluindo aparência, controles e regras,
-  não reproduzir permanentemente as escolhas ou limitações do Simitone.
-- Prioridade humana adicional: usar provisoriamente a interface do Simitone
-  para validar os recursos; adaptar à interface original do The Sims 1 na
-  etapa final. Não iniciar agora uma reformulação visual. A interface original
-  continua sendo requisito de conclusão, incluindo menus e controles.
-- Preservar o motor C++, ferramentas, descobertas e alterações pendentes como
-  apoio; não manter duas implementações completas em desenvolvimento paralelo.
-  A antiga restrição à tradução integral foi superada. Novos testes devem
-  desbloquear fluxos completos ou corrigir diferenças demonstradas do original.
-  Os portáteis continuam planejados, com viabilidade a reavaliar para a nova
-  base; as restrições do New 3DS não devem bloquear o primeiro candidato Linux.
-  Esta decisão substitui a estratégia anterior de reescrita independente como
-  caminho principal. Não declarar equivalência por herdar código de terceiros.
-- Fontes FreeSO/Simitone locais em `refs/upstream/`, ignoradas no Git ODH,
-  com revisões fixadas em `docs/references.md`. Consultar primeiro com `rg` e
-  leitura de trechos; conector/web quando faltar material ou para nova revisão.
-  Preservar distinção FreeSO principal/submódulo Simitone; não rodar setup/build
-  ou atualizar os checkouts de referência durante consulta rotineira.
-- Os recursos comerciais, ISO, executáveis e saves ficam fora do checkout.
-  Instalação local atual: `../referencias/The Sims`; ISO em `../referencias/`.
-  A instalação foi movida pelo usuário em 2026-10-13; revalidar caminhos nas retomadas.
-  Não modificar os originais ou outros projetos. Fixtures versionadas devem ser
-  sintéticas ou ter licença/procedência adequada.
-- Decisão humana de 2026-10-14: o runtime exige dados do jogo, sem depender
-  de executável original, disco inserido ou checagem de CD. Priorizar uma pasta
-  de dados copiados; ISO serve como fonte de preparação/importação. Estado e
-  limites da importação ficam em `docs/architecture.md` e README.
-- Separar leitura de estrutura, interpretação semântica, execução de VM,
-  comportamento do original e testes em hardware. Não promover contagens,
-  compilação ou testes sintéticos a prova de compatibilidade.
-- Não descartar estado/simulação de entidades fora da tela como otimização.
-  Caches gráficos podem descartar representações dispensáveis.
-- Ghidra: conferir versão, loader PE e arquitetura x86 para este alvo. Usar um
-  projeto próprio sob `reports/ghidra/`, ignorado pelo Git. Preservar hashes e
-  distinção entre offset de arquivo, RVA e endereço virtual. Não reutilizar ou
-  alterar projetos e configurações do Open-GBP.
-- Rodar os checks adequados ao código alterado e atualizar a documentação de
-  cobertura. Não instalar dependências sem necessidade técnica demonstrada.
-- Leitor de dados e fila nativa compartilhada foram executados em fixtures no
-  3DS emulado e são usados pelo candidato Linux. As fixtures não executam o
-  jogo completo nem saves de famílias; não há teste em hardware. Vita, Android
-  e Switch ainda não foram executados. Não declarar esses ports funcionais
-  a partir do build Linux ou dos probes.
+## Orientação local
+
+- Leia [README.md](README.md), [arquitetura](docs/architecture.md) e o
+  [plano nativo](docs/native-port-plan.md). O índice está em [docs/README.md](docs/README.md).
+- Motor: `src/`, `include/odh/`, `native/`; programas: `tools/`; testes: `tests/`.
+- Não distribuir ou modificar dados comerciais nem saves originais. Use cópias
+  e perfis isolados para validações que gravam estado.
+- Referências externas são de terceiros: preserve revisão, licença e créditos;
+  não editar submódulos/clones de consulta como se fossem fontes do projeto.
+- Mantenha simulação e dados separados de gráficos, áudio, entrada e arquivos.
+  Sucesso no desktop não comprova funcionamento em consoles.
+- Preserve alterações preexistentes. Relate o escopo e os limites da validação;
+  não declare paridade com o jogo completo a partir de um cenário limitado.
+
+## Comandos essenciais
+
+```sh
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/native --parallel 2
+ctest --test-dir build/native --output-on-failure
+```
+
+Dependências e modo sem janela: [README.md](README.md). Para mudanças de código,
+execute os testes pertinentes; não repetir cenários sem uma alteração ou falha
+que justifique a repetição. Mudanças documentais não exigem compilar o jogo.

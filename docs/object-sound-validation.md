@@ -4,7 +4,7 @@ Esta etapa corrige a identificação dos opcodes e executa as branches reais
 da cadeira após xevt100. O trace contém números decimais:32 é TestObjectType
 (0x20),23 é PlaySound (0x17). CreateObjectInstance é42 (0x2A). A indicação
 anterior de criação32/posicionamento23 estava errada; foi corrigida no README,
-no documento anterior e na fonte OMM. O trace anterior continua válido.
+no documento anterior. O trace anterior continua válido.
 
 ## Identidade de entidade e primitiva32
 
@@ -96,7 +96,7 @@ Posição final(64,64,1,direção2), recipiente2/slot0, postura1 e33 movimentos
 permanecem os da cena construída. Não houve criação ou posicionamento novo.
 
 JSON Debug/sanitizers idêntico byte a byte, ambos saída3 e stderr vazio.
-Relatórios ignorados em `reports/chair-object-sound.json` e versão sanitizada.
+Relatórios ignorados em registro arquivado não distribuído e versão sanitizada.
 Os originais foram abertos somente para leitura. As identidades de Global,
 BCF/CFP e demais inputs permanecem nos checkpoints anteriores.
 

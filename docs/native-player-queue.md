@@ -65,7 +65,7 @@ as failed submission or inject an unsupported wakeup.
 
 ## Verified checkpoint
 
-Build: `reports/native-player-queue/attempt-1/final-build.log`.
+Build: an archived validation record (not distributed).
 Nineteen focused CTests passed in `final-ctest.log`, including the portable tracker
 matrix, controller/VM save roundtrips, actor/run reuse, child completion, native
 order, cancellation and late completion with full terminal history.
@@ -73,7 +73,7 @@ order, cancellation and late completion with full terminal history.
 Final binary SHA256:
 `6d2a3f3c76ec2d045afd3ade2dc4dbff71d61f1f9b0ee9b2bbf0ad76ac229217`.
 
-- `reports/native-player-queue/window-final/`: isolated Xvfb/X11 mouse and keyboard
+- an archived validation record (not distributed): isolated Xvfb/X11 mouse and keyboard
   input added two House07 snack requests, cancelled only UID2 by its row, selected
   Sim137, and pressed Backspace without cancelling Sim105's UID1. S wrote the save;
   Escape ended the game. The game, Xvfb and temporary profile were closed. The

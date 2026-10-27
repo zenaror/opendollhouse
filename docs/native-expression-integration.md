@@ -30,24 +30,24 @@ usa bytes little-endian e não impõe essa limitação ao chamador nativo.
 
 ## Evidência
 
-- `reports/portability/native-expression/native-implementation.json`: 792
+- registro arquivado não distribuído: 792
   verificações compartilhadas, CTest 4/4 incluindo a fila anterior, ASan/UBSan
   4/4 com warnings como erros; 16 exports conferidos.
 - `managed-adapter/report.json` no mesmo diretório: 702 comparações/verificações
   contra o Execute original com memória sintética, aliases, erros, reentrada,
   threads e resultado das escritas. Medição local: zero bytes em 10.000 chamadas
   aquecidas. Não prova toda a implementação de VMMemory.
-- `reports/portability/expression-numeric-oracle/`: mesmo programa mínimo rodou
+- registro arquivado não distribuído: mesmo programa mínimo rodou
   no CLR 9.0.21 e 10.0.13, frio/aquecido, vinculando a política de overflow,
   módulo, flags e raiz quadrada. O revisor também executou os 702 casos e a
   regressão de saída de log quebrada no CLR 9.0.21 real. Isso é evidência da
   referência gerenciada, não do executável original do The Sims.
-- `reports/portability/3ds-native-expression-execution/`: a mesma fonte nativa
+- registro arquivado não distribuído: a mesma fonte nativa
   e os 792 checks compilaram para ARMv6K e produziram PASS pelo serviço de debug
   do guest. Captura, hashes, 147 arquivos de configuração preservados e limpeza
   da instância/perfil/Xvfb conferidos. É uma execução sintética em emulador;
   não é o jogo inteiro ou uma validação em hardware.
-- `reports/simitone-linux-evaluation/house07-native-expression/`: compra de
+- registro arquivado não distribuído: compra de
   cadeira GUID26BFBB29, preço 80, saldo 665→585, Bob105 sentado usando objeto139;
   save e reabertura em processos distintos preservaram a compra e os dados do
   avatar. Amostras registram ao menos 81.920 e 16.384 chamadas nativas nos dois
@@ -59,7 +59,7 @@ usa bytes little-endian e não impõe essa limitação ao chamador nativo.
   pelo teste de família, sem significar que o processo anterior continuou vivo.
 
 
-- `reports/simitone-linux-evaluation/family-native-expression/attempt-2/`:
+- registro arquivado não distribuído:
   118 ações observadas em sete processos isolados. Criou ODHExpr/Alex, comprou
   House09 (20.000→16.500), andou, salvou/reabriu, saiu da casa e excluiu a família;
   a ausência permaneceu após reiniciar. FAMI6/GUID1545731141, NBRS estrito

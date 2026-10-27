@@ -69,7 +69,7 @@ som metal continua `skipped_no_backend`. Loop `a2o-sit-loop` segue em
 frame55.9998131 de116, looptrue/endfalse/fila vazia.
 
 Saídas Debug/sanitizers JSON idênticas byte a byte, ambas saída0, stderr vazio.
-Relatórios locais ignorados `reports/chair-facing.json` e versão sanitizada.
+Relatórios locais ignorados registro arquivado não distribuído e versão sanitizada.
 Nenhum executável original foi executado, áudio reproduzido ou skeleton
 renderizado. O returntrue prova somente este percurso BHAV no cenário ODH
 construído, com políticas de rota/velocidade já declaradas provisórias.

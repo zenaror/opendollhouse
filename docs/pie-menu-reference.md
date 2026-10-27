@@ -18,7 +18,7 @@ jogador, sem colocar imagens comerciais no código ou no Git. A janela de teste
 agora carrega `PieBack.bmp` e `PieButt.bmp` diretamente do `UIGraphics.far` do
 jogador. O fundo usa magenta como transparência, e o botão aparece junto do
 rótulo. A captura `house07-fridge-menu-assets.png` em
-`reports/pie-menu-window/` registra esse primeiro uso visual.
+registro arquivado não distribuído registra esse primeiro uso visual.
 
 Isso ainda não é a interface final: os rótulos usam caixas genéricas, o HUD é
 de diagnóstico e a posição/composição ainda não foi comparada com a instalação
@@ -127,7 +127,7 @@ captura do jogo original antes de definir sua composição.
 Depois de ajustar o raio para 60 px, `odh-person --saved-world-main
 --render-window` abriu House07 em Xvfb 800×600; um clique na geladeira exibiu
 `Have A Snack`. A captura
-`reports/pie-menu-window/house07-fridge-menu-assets-radius60.png` (SHA256
+registro arquivado não distribuído (SHA256
 `adfcabfa525f40d2b5d1f08de81eb33cfb0ccf75b322aa25ab6431ca2ceb75de`) mostra
 PieBack/PieButt carregados do `UIGraphics.far` externo. Ela não demonstra
 paridade visual.
@@ -135,7 +135,7 @@ paridade visual.
 O caminho integrado `tools/play_linux.py` também abriu House07 com idioma 1 e
 morador 48. Em Xvfb 800×600, o clique na geladeira mostrou `Have A Snack`; ao
 escolher a ação, o morador foi até a geladeira e a abriu. A captura após dez
-segundos é `reports/pie-menu-window/launcher-house07-snack-click.png` (SHA256
+segundos é registro arquivado não distribuído (SHA256
 `cf9a93d2e4b90c50f47cfba03b812634c71b05e99838801425b8594d0f9147bf`). Ela
 comprova início visível da ação, sem confirmar seu retorno ou a refeição
 completa. Uma medição controlada posterior marcou o lote pronto em 8,23s num
@@ -148,7 +148,7 @@ Em outra execução com o mesmo caminho integrado, o recibo JSON após 35 segund
 da seleção registrou `returned_true` para BHAV4103. O ator estava em
 `[377,456,1,2]`, com `a2o-eatloop-stand` no frame 20.2/31; `queue_active` ainda
 era `true`. A captura
-`reports/pie-menu-window/launcher-house07-snack-after-35s.png` (SHA256
+registro arquivado não distribuído (SHA256
 `6c0be5dedc30e10c6066b77187ca245e1a47392b8bbbcac704cc9230e00cb92d`) mostra o
 morador comendo. O resultado confirma o retorno da ação, mas não que a animação,
 a fila ou a refeição já tenham terminado.
@@ -161,7 +161,7 @@ conclusão `returned_true` continua provada apenas pelo teste headless separado.
 O comando de captura precisou receber os arquivos locais `.flr` e `.wll` como
 `--architecture-resource`; sem eles, a preparação de rota falhou em
 `prepared_architecture_unavailable`. As duas capturas e seus hashes ficam em
-`reports/pie-menu-window/`, fora do Git. O Xvfb foi encerrado após cada execução.
+registro arquivado não distribuído, fora do Git. O Xvfb foi encerrado após cada execução.
 
 ## Primeira reconstrução proposta
 

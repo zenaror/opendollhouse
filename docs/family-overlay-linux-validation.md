@@ -90,7 +90,7 @@ still enter their house.
   examinadas tratam de strings codificadas e acesso a arquivos, sem vínculo
   demonstrado com famílias. Isso descarta essa heurística como prova, não prova
   que o executável nunca grava FAMI. Projeto, scripts e saídas completos ficam
-  em `reports/ghidra/` (ignorado pelo Git).
+  em an archived validation record (not distributed) (ignorado pelo Git).
 
 - The SIMI purchase price is now calculated as
   `LotValue + ObjectsValue + (ArchitectureValue * 7) / 10`, using integer

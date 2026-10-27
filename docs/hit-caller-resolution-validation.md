@@ -67,15 +67,15 @@ Suítes Debug e ASan/UBSan:112 configurados,111 aprovados e um X11 ignorado.
 O CLI foi repetido em ambos após ampliar o caso de override da origem. Builds
 observados sem warnings; LSan desativado. Sem SDL/X11, quatro testes de recursos,
 argumentos, probe silencioso e rejeição de áudio passaram. Logs em
-reports/hit-caller-{build,build-asan}-ctest.log,
-reports/hit-caller-cli{,-asan}-final.log e reports/hit-caller-noaudio-*.log.
+registro arquivado não distribuído,build-asan}-ctest.log,
+registro arquivado não distribuído,-asan}-final.log e registro arquivado não distribuído
 
 Cena nativa da cadeira, nas mesmas condições do checkpoint de áudio: remover a
 tripla manual e usar --audio-caller-args. EventMapping chair_sit_metal na linha4786
 do HOT é kSndobPlay,3410,0,0,0,0; origem2 deriva[2,0,0]. Debug/ASan retornaram0,
 sem fault,30208frames gerados/submetidos/consumidos no SDL dummy. A simulação
 mantém94dispatches/662ticks; PCM esvaziado com HIT ainda pendente, sem forçar
-ticks de World ou conclusão. Comando e recibos em reports/hit-caller-chair-*.
+ticks de World ou conclusão. Comando e recibos em registro arquivado não distribuído
 Controles unidade/centro, Literal32 e escolha0 continuam explícitos. Não há
 afirmação de audibilidade, saída original, saved Main ou hardware portátil.
 

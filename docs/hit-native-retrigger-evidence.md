@@ -17,7 +17,7 @@ nenhum projeto Ghidra ou referência foi modificado.
 
 Foram lidos os exports existentes de `0057dc59`, `0057d6f8`, `0057d967` e
 `0057376b`, confirmados por leitura pontual de assembly. Seleção com bytes,
-VAs, offsets e vtable em `reports/hit-native-retrigger-selected.asm.txt`.
+VAs, offsets e vtable em registro arquivado não distribuído.
 Complementa [identidade/ciclo](hit-native-track-identity-evidence.md),
 [controles iniciais](hit-native-controls-evidence.md) e
 [contribuições](hit-native-source-contributions-evidence.md).

@@ -103,7 +103,7 @@ que os objetos estariam ausentes num lote runtime restaurado. Não foram
 adicionados recursos ou entidades inventadas para forçar outra branch.
 
 Relatórios Debug/ASan completos coincidem byte a byte, arquivos ignorados
-`reports/{bob,family3}-entity-next-native[-asan].json`:
+registro arquivado não distribuído:
 
 - bob: `fe1e46afd1e21929958f3c871e15e744d1571cb095044fa072e5cc36d4b2ebb2`.
 - family3: `0b8ddbd8e1d3379b3f17d076f3704525b0b0f0a6f547146fce48d64a0eb4735f`.

@@ -74,7 +74,7 @@ Usou os arquivos externos preservados em `../referencias/The Sims`:
   como fontes do catálogo de animações.
 - `GameData/Textures/Textures.far` e `adult-skeleton.cmx.bcf` para a aparência.
 
-Relatórios e imagens foram escritos em `reports/` e não alteram os dados do
+Relatórios e imagens foram escritos em um diretório local de resultados e não alteram os dados do
 jogo:
 
 | Captura | Tick | Clip | Frame | CFP amostrado | Pixels sombreados |
@@ -86,8 +86,8 @@ Uma terceira execução selecionou o Sim salvo ObjectID 105 (GUID `850010198`),
 cuja identidade confere com `User00000.iff`; seu ObjM fornece `(392,440)`, nível
 1 e direção 3. O perfil gráfico projeta isso para `[24.5,27.5,0]` e centraliza a
 câmera em `[24.5,27.5,0.75]`. O frame registra 7119 pixels sombreados. O JSON
-é `reports/odh-person-main-savedpos-verified-20261020.json` e a imagem é
-`reports/odh-person-main-savedpos-verified-20261020.ppm` (SHA256
+é registro arquivado não distribuído e a imagem é
+registro arquivado não distribuído (SHA256
 `4ee6fb0d7c829c9e95a36e5c9529b01308c301ae6a73923cb9dd59eafa2ebe49`).
 
 Ambos produziram 320×240, 684 vértices, 840 triângulos e 425.984 bytes de
@@ -113,11 +113,11 @@ CPU de captura; não valida a janela Linux nem a aparência no jogo original.
 
 Arquivos:
 
-- `reports/odh-person-main-first-sample-20261020.json`
-- `reports/odh-person-main-first-sample-20261020.ppm` (SHA256
+- registro arquivado não distribuído
+- registro arquivado não distribuído (SHA256
   `e65f626268b56d33ee1222fca0811e71e88319a74b4bdaa75ed4ed80c2940f24`)
-- `reports/odh-person-main-tick214-20261020.json`
-- `reports/odh-person-main-tick214-20261020.ppm` (SHA256
+- registro arquivado não distribuído
+- registro arquivado não distribuído (SHA256
   `f8cd00c582465e87f9c448dc4a23d7c86d72e53c5db54fc71a45d0d824d81247`)
 
 ## Verificação
@@ -151,14 +151,14 @@ ticks, Main is `waiting` with 308 VM steps and five active stack frames. The
 tick-214 sample renders the restored avatar at World position
 `[24.5,27.5,0]`, direction 3: clip `a2o-idle-neutral-mstand-look-1d`, frame
 25.2, 684 vertices, 840 triangles, 3,172 catalog CFP samples and 7,368 shaded
-samples. Its PPM is `reports/odh-person-restored-main-tick214.ppm`; JSON:
-`reports/odh-person-restored-main-tick214.json`.
+samples. Its PPM is registro arquivado não distribuído; JSON:
+registro arquivado não distribuído.
 
 At the 4,096-tick limit, Main is still `waiting` with 4,358 VM steps and five
 active frames. It executes Main through timed animation, sound requests and
 head-seek state. Four FWAV requests resolved to `hungry_sated_vox`; the host
 reports them as `skipped_no_backend`, so this is silent simulation. The receipt
-is `reports/odh-person-restored-main-tick4096-looktowards.json`. Exit code 3
+is registro arquivado não distribuído. Exit code 3
 means the requested tick budget ended; VM status is not faulted.
 
 To permit this progression, opcode 23 resolves FWAV entries from explicit actor,
@@ -396,13 +396,13 @@ sample do avatar 105/GUID 850010198. A posição de captura foi
 `[24.5,27.5,4.5]`. O frame mediu 320x240, com 684 vértices, 840 triângulos do
 avatar, 425.984 bytes de textura e 84.168 shaded samples agregados.
 
-O receipt `reports/odh-person-main-lot-house07-tick214.json` registra
+O receipt registro arquivado não distribuído registra
 6.323 triângulos/1.107.072 bytes reservados de terreno, 683 desenhos/1.365
 triângulos de piso, e 69 camadas/49 junções de parede. O PPM final foi
 inspecionado; SHA256:
 `6003498c6479da998666153da13c85da3575f9e11901be08760499b669691288`.
 PNG de consulta visual local:
-`reports/odh-person-main-lot-house07-tick214.png` (derivado do PPM, também
+registro arquivado não distribuído (derivado do PPM, também
 ignorado pelo Git). O probe terminou com código 3 porque o limite explícito de
 214 ticks foi alcançado; o receipt identifica status VM `waiting`, sem falha
 do host.
@@ -410,7 +410,7 @@ do host.
 Após integrar objetos, o mesmo comando capturou 135 objetos em 166 camadas,
 6174198 bytes de frames decodificados, 130766 amostras testadas e 27588
 sombreadas. O receipt e PPM ignorados são
-`reports/odh-person-main-lot-house07-objects-tick214.json/.ppm`; SHA256 do PPM:
+registro arquivado não distribuído; SHA256 do PPM:
 `c14edf44b16cdfe5d80fb9fc7b1251606f027dc6d5af8a4656fd2ba62bb88309`.
 A imagem CPU foi inspecionada e mostra o avatar, objetos, paredes e lote
 compostos. O limite de 214 ticks ainda termina com código 3 esperado; não valida

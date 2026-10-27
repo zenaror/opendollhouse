@@ -61,7 +61,7 @@ remain recovery evidence without becoming the next buyer's activation state.
 
 ## Authority and commit boundary
 
-The subsequent [comparison-sample audit](../reports/ghidra/property-liquidation-supplied/audit-summary.md)
+The subsequent comparison-sample audit (registro arquivado, não distribuído)
 supports a candidate disposition policy: retain build-mode and explicitly
 retained objects, remove qualifying buy objects and type-2 actors, refresh the
 cached asset value on neighborhood save, and refund it once on eviction. It

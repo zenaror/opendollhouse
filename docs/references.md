@@ -37,7 +37,7 @@ Revisões de referência identificadas em 2026-10-13:
 
 ### Checkout de avaliação separado
 
-Após a retomada da meta em 2026-10-25, a avaliação usa
+A avaliação de 2026-10-25 usa
 `refs/work/Simitone-linux`, com frontend alexjyong
 `e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab` e FreeSO
 `7e76c1960252ddd033d8937d5edb47d326f5b69c`. Essa cópia pode receber patches
@@ -80,11 +80,10 @@ binários durante consultas estáticas. Nenhum recurso comercial entra no Git.
 
 ### Fontes de terceiros
 
-Por solicitação do usuário, as fontes estão materializadas em `refs/upstream/`,
-ignorada pelo Git do ODH. Consultar primeiro esses arquivos com `rg` e ler
-somente os trechos necessários. Usar conector/web quando o material não estiver
-local ou quando for necessário verificar uma revisão externa nova. Os hashes
-fixados evitam misturar consultas de versões diferentes.
+As referências externas abaixo não são dependências de build e não acompanham
+o clone. Para consultar as mesmas fontes, obtenha os repositórios upstream
+indicados acima e selecione as revisões correspondentes. Os caminhos na tabela
+são uma organização opcional a partir da raiz do checkout.
 
 | Checkout local | Revisão |
 |---|---|
@@ -105,11 +104,6 @@ Uma pesquisa focada, sem percorrer arquivos de runtime/binários:
 ```sh
 rg --no-ignore-vcs -n 'GetTuningVariable' refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics --glob '*.cs'
 ```
-
-A economia esperada vem da reutilização dos arquivos e da leitura de trechos
-focados. O clone não mede nem garante uma quantidade específica de tokens
-poupados. Pesquisas que despejam arquivos inteiros continuam gerando contexto
-extenso, por isso devem ser evitadas.
 
 ## Proveniência anterior
 

@@ -75,7 +75,7 @@ consumidores do contrato de controller que continuam no perfil local.
 
 ## Evidência e limites
 
-O runner local `reports/hit-global-note-on-20261020/run_gate.py` registra
+O runner local registro arquivado não distribuído registra
 comandos, configuração, ambiente, SHA256 das fontes antes/depois, resultado
 por caso, resultado por teste CTest e agregado de cada gate. Cada configuração
 tem build e logs próprios. Nenhum PASS de Debug supre os demais gates.

@@ -8,7 +8,7 @@ exports existentes antes de acrescentar assembly pontual; nenhum projeto
 Ghidra foi aberto ou alterado. Complementa
 [binding e origem dos controles](hit-native-binding-outcomes-evidence.md).
 
-`python3 reports/hit-native-control-formulas/extract.py` regenera manifesto,
+`python3 registro arquivado não distribuído` regenera manifesto,
 assembly, vtables, constantes binárias e exemplos aritméticos derivados.
 São 25 recortes, 2.131 bytes comparados com a imagem, com cobertura contígua
 sem `.byte` ou instrução inválida. O manifesto deriva offsets dos cabeçalhos

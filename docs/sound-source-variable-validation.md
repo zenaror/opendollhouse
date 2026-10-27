@@ -61,7 +61,7 @@ backend skip in the sandbox. Builds have no warnings. LSan is disabled in this
 environment; leak validation is not claimed.
 
 An ignored C++ verifier imports the88-word actor bank from
-`reports/person-animation-ticks256-debug.json`, SHA256
+an archived validation record (not distributed), SHA256
 `eba41a42b9397e52c6bf869997d27afe3e8ed85ac15878bdd06a24359c8191b6`.
 That receipt is `ODH_native_BHAV_constructed_person_host`: imported neighbor
 PersonData in a constructed actor, not original execution or resumed saved
@@ -79,7 +79,7 @@ patch3212, NoteOnPC81,19 instructions/two choices. The callback returns false;
 is byte-identical, SHA256
 `8c2774f846d6bd59057ca01c6127b79ab47565baf532b246e82fdb43dc74e0ed`.
 
-Ignored artifacts: `reports/sound-vars-native.cpp`, verifier binaries,
+Ignored artifacts: an archived validation record (not distributed), verifier binaries,
 `sound-vars-native-{debug,asan}.json`, `sound-vars-native-bank.json`,
 `sound-vars-input-identities.json`, build/full-test logs. External input hashes:
 

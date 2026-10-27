@@ -110,7 +110,7 @@ continuam pendentes; essa inspeção não é comparação com screenshot origina
 House07 r0 zoom3 PPM SHA256:
 `390920c09db98db581cfd46ba4e48eeefde157ed4006d61831201b1ddcb2eff8`;
 depth: `ce0b10d0d8ee4005820a90544e2848b6b0c038c0e2239d6bbf6a6eb2a31f57d9`.
-Relatórios ignorados: `reports/verify-saved-walls.py`,
+Relatórios ignorados: registro arquivado não distribuído,
 `saved-wall-native-validation.json`, `house*-walls-r*-z*`, logs de build e
 `walls-oracle-base.*`; oracle usa também frames SPR2 anteriormente verificados
 em `object-oracle/`. Nenhum recurso/imagem comercial é versionado.

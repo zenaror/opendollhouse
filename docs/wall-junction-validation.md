@@ -85,7 +85,7 @@ parte do corpus SPR# integral verificado em `wall-resource-validation.md`.
 Esta unidade não prova sua colocação/composição visual no lote nem equivalência
 GPU/original.
 
-Relatórios ignorados: `reports/junction-export.cpp`, `junction-export[-asan]`,
+Relatórios ignorados: registro arquivado não distribuído, `junction-export[-asan]`,
 `verify-wall-junctions.py`, `house*-junction-expected.json`, exports por rotação,
 `wall-junction-native-validation.json`, mapasZ e logs. Nenhum dado comercial é
 versionado. Próxima integração resolve esses sprites no cache gráfico existente,

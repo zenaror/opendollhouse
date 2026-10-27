@@ -49,9 +49,9 @@ Execução com `tools/play_linux.py --mode 1 --house 7 --resident-id 48
 --language 1`, instalação local original e Xvfb isolado: a captura mostra Bob e
 Betty com retratos. O relatório marcou `host_failed=false`, 61 ticks e família
 House07 com GUIDs 850010198 e 844195932. Captura ignorada pelo Git:
-`reports/household-selector/household-portrait-integration.png`, SHA256
+registro arquivado não distribuído, SHA256
 `d0b6fb6275e9d9846b9c184a8816b24d53cb8539b1c7865d17b1bce9ae71a28a`. O JSON
-completo do processo está em `reports/household-selector/portrait-session-output.json`,
+completo do processo está em registro arquivado não distribuído,
 SHA256 `75972503ffb1a423273b2ed41873d83f9dc4acbfd254c9aafb647628d7b46d21`.
 `xvfb-run` encerrou a tela e não restou processo do jogo. A integração de UI é
 uma faixa de teste ainda provisória.

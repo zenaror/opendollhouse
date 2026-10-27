@@ -100,7 +100,7 @@ Não foi forçado um standing-loop para esconder a ordem dos dados.
 
 Debug e sanitizers produziram JSON byte a byte idêntico, ambas fases true,
 sem diagnósticos em stderr. Relatórios ignorados em
-`reports/chair-stand-sequence.json` e versão sanitizada. Nenhuma execução do
+registro arquivado não distribuído e versão sanitizada. Nenhuma execução do
 original, áudio, rendering ou teste em hardware foi realizado.
 
 ## Referências e continuidade
@@ -119,4 +119,4 @@ Essas referências não provam temporização/pose do executável original.
 Próximos passos: main-thread/queue/scheduler e retomada funcional de rota;
 esclarecer reset antes de Posture0/standing-loop no original; skeleton,
 interpolação/compositor Linux; depois áudio/HIT e lote/tempo/necessidades/
-persistência. A meta funcional inteira continua ativa.
+persistência. O escopo funcional completo permanece incompleto.

@@ -74,12 +74,12 @@ DOTNET_ROLL_FORWARD=Major dotnet run \
   recursos/ownership, incluindo IDs mutáveis, referências repetidas, carga em
   worker, erros, 128 destruições explícitas e coleta de 64 ciclos de VMs.
   Biblioteca ausente falha. Relatório em
-  `reports/portability/native-simulation/managed-adapter/report.json`.
+  registro arquivado não distribuído.
 - ARM emulado: mesma implementação, fixture com avanço da fila, execução aninhada,
   reset/reconstrução do agendamento, identidade e capacidade. PASS SVC exato e
   captura; 147 configurações iguais e instância/perfil/Xvfb encerrados.
-  `reports/portability/3ds-native-wake-execution/final-review.json`.
-- Candidato Linux: `reports/simitone-linux-evaluation/house07-native-wake/`,
+  registro arquivado não distribuído.
+- Candidato Linux: registro arquivado não distribuído,
   build e ciclo comprar/sentar/salvar/reabrir em dois processos passaram. Bob
   sentado, objeto139 e saldo585 conservados; seis fases de save/Load, zero erros
   e seis hashes de originais iguais. Ambos os processos carregam e executam a

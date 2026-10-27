@@ -65,7 +65,7 @@ Builds are separate Debug directories, both configured with `ODH_X11=OFF` and
 `ODH_SDL_AUDIO=OFF`. The sanitizer build enables `ODH_SANITIZERS=ON`;
 `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=halt_on_error=1` were used.
 Leak detection was not performed. Gate logs and JUnit are retained under
-`reports/scene-cfp-provider-20261020/`; `validation.json` records source,
+an archived validation record (not distributed); `validation.json` records source,
 binary and evidence hashes. Other historical CTests were not rerun.
 
 Not run: person/Main rendered frames, native-data multi-FAR rendering,

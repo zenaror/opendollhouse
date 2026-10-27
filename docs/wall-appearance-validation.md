@@ -100,7 +100,7 @@ JSON House07 SHA256:
 `59a9af82a62b70cbda9ec1d143f9b65650992da7713cb5a87a69f179df4aa674`.
 House03:
 `34364f1aa9a279b6726f2ccd02cbf568a077c3057ca7d4d9fb145a74776002e2`.
-Evidência local ignorada: `reports/verify-wall-appearance-native.py`,
+Evidência local ignorada: registro arquivado não distribuído,
 `wall-appearance-native-validation.json`, `house*-wall-appearance.json` e logs
 `wall-appearance-*.log`. Nenhum asset comercial versionado.
 

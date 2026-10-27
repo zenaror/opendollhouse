@@ -48,18 +48,18 @@ de rotinas iguais. Nenhum executável foi executado ou modificado.
 
 Artefatos locais ignorados pelo Git:
 
-- `reports/legacy-reference/inventory.py`: inventário por metadados e hashes
+- registro arquivado não distribuído: inventário por metadados e hashes
   das tabelas de áudio comuns e da amostra FAR.
-- `reports/legacy-reference/legacy-reference-inventory.json`: contagens,
+- registro arquivado não distribuído: contagens,
   extensões, caminhos exclusivos, hashes e estabilidade das duas árvores.
-- `reports/legacy-reference/pe-identities.json`: identidades dos executáveis
+- registro arquivado não distribuído: identidades dos executáveis
   da raiz, obtidas por cabeçalhos PE e SHA256.
 
 Para repetir o inventário a partir do checkout:
 
-```sh
-python3 reports/legacy-reference/inventory.py
-```
+O roteiro automatizado desta observação usou ferramentas locais não
+distribuídas. Os resultados e limites descritos são históricos; esse roteiro
+não é um comando reproduzível a partir de um clone público.
 
 Os metadados comparados antes/depois incluem caminho, tamanho, mtime, modo,
 dispositivo e inode. As duas árvores ficaram estáveis durante a leitura;

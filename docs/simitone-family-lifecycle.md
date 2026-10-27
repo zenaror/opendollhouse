@@ -7,7 +7,7 @@ Commercial files and saves are not included in Git.
 
 ## Observed baseline
 
-`reports/simitone-linux-evaluation/family-lifecycle-observation/` contains the
+an archived validation record (not distributed) contains the
 actions, captures, five process logs, profile inspections and archived save files.
 The executable was the previously published `492c4f5` candidate; it did not yet
 contain either correction below. `runner-at-start.py` matches the runner hash
@@ -58,7 +58,7 @@ test must retain the original inactive markers to validate the correction.
 
 ## Corrected runtime
 
-`reports/simitone-linux-evaluation/family-lifecycle-fixed/` uses a fresh copied
+an archived validation record (not distributed) uses a fresh copied
 installation and the rebuilt candidate with both corrections. The saved source
 patches, 11 runtime binaries and build log identify the tested implementation.
 A new ODHFlowB/Alex family uses GUID 511304174 (different from the baseline),

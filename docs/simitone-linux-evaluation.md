@@ -6,10 +6,8 @@ Receitas de checkpoints anteriores abaixo permanecem históricas.
 
 ## Estado e alcance
 
-Retomada em 2026-10-25 após `get_goal` retornar `active`. A instrução humana
-mais recente manda respeitar o status da meta; a pausa inicial não sobrepõe uma
-retomada posterior na interface. O texto da meta ainda guarda a instrução
-histórica de pausa, mas não foi editado nem falsamente marcado como concluído.
+Esta avaliação histórica descreve a base gerenciada em 2026-10-25. Seus
+resultados não demonstram os mesmos fluxos no motor C/C++ atual.
 
 O fork foi compilado e executado numa tela Xvfb isolada. A captura da vizinhança
 foi inspecionada. Dois cliques selecionaram a House07, mostrando Bob e Betty,
@@ -77,7 +75,7 @@ dotnet publish refs/work/Simitone-linux/Client/Simitone/Simitone.Desktop/Simiton
 
 python3 tools/simitone/window_smoke.py \
   --runtime-dir build/simitone-linux --game-root '../referencias/The Sims' \
-  --report-dir reports/simitone-linux-evaluation/new-observation \
+  --report-dir validation-output/simitone-linux-evaluation/new-observation \
   --seconds 40 --click 10:754:318 --click 15:100:610 --vm-diagnostics
 ```
 
@@ -96,7 +94,7 @@ assemblies principais e captura; não grava variáveis de ambiente indiscriminad
 
 ## Evidências e pendências
 
-Relatórios locais ignorados em `reports/simitone-linux-evaluation/`:
+Relatórios locais ignorados em registro arquivado não distribuído:
 `managed-startup/` registra a falha de áudio, `neighborhood-nosound/` o mapa,
 `house07-stable-input/` a seleção correta e a exceção ao entrar. As tentativas
 anteriores de cliques foram preservadas para distinguir problema da automação
@@ -178,7 +176,7 @@ FSO.Files real. Nenhum desses casos executa BHAV comercial nem prova colocação
 no motor ou recuperação completa. O projeto desktop foi compilado e publicado
 com as adaptações; os avisos antigos de dependências permanecem.
 
-Teste integrado separado: `reports/simitone-linux-evaluation/house07-recovery-direct/`.
+Teste integrado separado: registro arquivado não distribuído.
 A captura antes do segundo clique mostra Bob/Betty, 7 Sim Lane; o log confirma
 house=7. O plano compara 82 tipos (61 diferentes), todos com definições e raízes
 obrigatórias disponíveis. A validação para **antes de migrar qualquer entidade**:

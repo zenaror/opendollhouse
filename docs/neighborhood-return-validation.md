@@ -56,7 +56,7 @@ Sleep loop was corrected to reset its argument on the next cycle; increasing
 its instruction budget would only have hidden a synthetic busy loop.
 
 The complete commercial gate is
-`reports/native-residential-switch/real-1/result.json`, using
+an archived validation record (not distributed), using
 `../referencias/The Sims` (Complete Collection), executable SHA256
 `de878b8d77057b820a4d3f37153c10dc66f130245ef48be723123c37a56e7b56`.
 Five OS processes execute eight native lot sessions:
@@ -79,7 +79,7 @@ Five OS processes execute eight native lot sessions:
   original file hashes remain unchanged. No virtual display is created.
 
 Ten focused CTests passed in
-`reports/native-residential-switch/attempt-1/final-expanded-ctest.log` after the
+an archived validation record (not distributed) after the
 host build in `build.log`. A broader regression initially found an obsolete
 expected error text for a resident seated without a completed Sit; its exact
 negative assertion now names the supported-boundary error, without relaxing the

@@ -29,7 +29,7 @@ purchase price.
 
 ## Pinned Simitone and FreeSO implementation
 
-The later [supplied comparison-sample audit](../reports/ghidra/property-liquidation-supplied/audit-summary.md)
+The later supplied comparison-sample audit (registro arquivado, não distribuído)
 adds static evidence beyond the inconclusive Legacy image: normal eviction
 filters ordinary buy objects/type-2 actors while excluding a retained flag and
 build-mode objects, adds cached assets once, clears that cache and serializes
@@ -100,7 +100,7 @@ TSO per-object OwnerID assignment is guarded by `!vm.TS1`
 A separate static Ghidra audit imported the supplied Legacy Collection
 Sims.exe into a new private project. The executable was not executed, patched
 or unpacked. No old Ghidra project was opened. Local metadata and logs are in
-`reports/ghidra/property-liquidation-legacy/`.
+an archived validation record (not distributed).
 
 - SHA256 before and after:
   `b7c8765ed2383cbda8c047694d54a21d97895c8dae57dcc87716ca6e78b342e3`.
@@ -121,7 +121,7 @@ remaining implementation questions and does not justify a native formula.
 No executable payload or copied decompilation is included in this document.
 
 Settings were redirected into the audit directory. Ghidra nevertheless logged
-a shared packed database cache under /var/tmp/rafael-ghidra; no subsequent
+a shared packed database cache under an isolated temporary analysis directory; no subsequent
 cleanup or modification of that shared cache was performed.
 
 ## Native semantics and next evidence
@@ -160,3 +160,11 @@ establish which assets remain, how proceeds are calculated, when ValueInArch
 changes and what the subsequent buyer pays. Any unsupported original runtime
 or unsafe save import remains a pending gate, not a reason to test on real
 player state.
+
+## Public analysis summaries
+
+The source-image identities, selected findings and limits are recorded in the
+[legacy-image audit](../reports/ghidra/property-liquidation-legacy/audit-summary.md)
+and [supplied-image audit](../reports/ghidra/property-liquidation-supplied/audit-summary.md).
+These two summaries are versioned public documents; raw projects and exports
+are not required to read them and are not distributed.
