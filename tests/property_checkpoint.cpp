@@ -1,5 +1,7 @@
 #include "odh/property_checkpoint.hpp"
+#include "odh/neutral_property.hpp"
 #include "odh/sha256.hpp"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 
@@ -217,6 +219,64 @@ int main(){try {
     const auto historical=prepare(history_overlay,history_bytes);
     check(historical.retired_created_objects().size()==1 && historical.retired_created_objects()[0].id==5 &&
         !historical.world().entity_id_available(5),"created-then-deleted history preserved across checkpoint preparation");
+    const NeutralPropertyPins pins{NeutralArchitectureProfile::installed_unchanged,0,{}};
+    const auto vacant_bytes=encode_neutral_property(result,pins);
+    const auto expected_overlay_bytes=encode_family_overlay(overlay);
+    const auto vacant=decode_neutral_property(vacant_bytes,bundle.resources,property_base.installed_house_sha256);
+    check(vacant.world.entities.size()==1 && vacant.world.entities[0].id==4 &&
+        vacant.world.entities[0].object_words.at(41)==456 && vacant.groups.size()==1 &&
+        vacant.reserved_ids==result.world().reserved_entity_ids() && vacant.retired_entities.size()==3 &&
+        vacant.removed_original_objects.size()==2 && vacant.checkpoint_sha256==result.checkpoint_sha256() &&
+        vacant.expected_overlay_sha256==sha256(expected_overlay_bytes.data(),expected_overlay_bytes.size()),
+        "neutral archive preserves current survivors, groups, retirements and source authority pins");
+    rejects([&]{decode_session_bundle(vacant_bytes);},"occupied reader accepted a neutral property as family continuation");
+    rejects([&]{encode_neutral_property(result,{});},"implicit architecture fallback accepted");
+    auto inconsistent=pins;inconsistent.expected_property_revision=1;
+    rejects([&]{encode_neutral_property(result,inconsistent);},"prior revision without immutable head accepted");
+    std::array<std::uint8_t,32> prior_head{};prior_head.fill(0x71);inconsistent.expected_property_head=prior_head;
+    const auto with_head=decode_neutral_property(encode_neutral_property(result,inconsistent),bundle.resources,property_base.installed_house_sha256);
+    check(with_head.pins.expected_property_revision==1 && with_head.pins.expected_property_head==prior_head,
+        "explicit prior property ticket preserved without granting commit authority");
+    auto other_house=property_base.installed_house_sha256;other_house[0]^=1;
+    rejects([&]{decode_neutral_property(vacant_bytes,bundle.resources,other_house);},"cross-house neutral archive accepted");
+    rejects([&]{decode_neutral_property(vacant_bytes,resources,property_base.installed_house_sha256);},"cross-resource neutral archive accepted");
+    const auto inspect_archive=[&](SessionArchive archive){decode_neutral_property(encode_session_archive(archive),bundle.resources,property_base.installed_house_sha256);};
+    auto archive=decode_session_archive(vacant_bytes);archive.sections[0].required=false;
+    rejects([&]{inspect_archive(archive);},"optional structural property profile accepted");
+    archive=decode_session_archive(vacant_bytes);archive.sections[0].data[2]=2;
+    rejects([&]{inspect_archive(archive);},"unknown activation profile accepted as structural profile");
+    archive=decode_session_archive(vacant_bytes);archive.sections[0].data.push_back(0);
+    rejects([&]{inspect_archive(archive);},"neutral header trailing bytes ignored");
+    archive=decode_session_archive(vacant_bytes);archive.sections.back().data.push_back(0);
+    rejects([&]{inspect_archive(archive);},"neutral ownership trailing bytes ignored");
+    archive=decode_session_archive(vacant_bytes);archive.sections.back().data[2]=255;
+    archive.sections.back().data[3]=255;archive.sections.back().data[4]=255;archive.sections.back().data[5]=255;
+    rejects([&]{inspect_archive(archive);},"unbounded neutral reservation count accepted");
+    archive=decode_session_archive(vacant_bytes);archive.sections.push_back({{'V','M',' ',' '},false,{}});
+    rejects([&]{inspect_archive(archive);},"execution section sneaked into neutral property");
+    archive=decode_session_archive(vacant_bytes);archive.sections.pop_back();
+    rejects([&]{inspect_archive(archive);},"missing neutral ownership accepted");
+    auto damaged=vacant_bytes;damaged.back()^=1;
+    rejects([&]{decode_neutral_property(damaged,bundle.resources,property_base.installed_house_sha256);},"neutral checksum corruption accepted");
+    const auto empty_property=decode_neutral_property(encode_neutral_property(gone,pins),bundle.resources,property_base.installed_house_sha256);
+    check(empty_property.world.entities.empty() && empty_property.world.generation_sequence==bundle.world.generation_sequence,
+        "empty property retains generation ceiling");
+    const auto created_property=decode_neutral_property(encode_neutral_property(added_result,pins),bundle.resources,property_base.installed_house_sha256);
+    check(created_property.created_objects.size()==1 && created_property.created_objects[0].id==5 &&
+        created_property.world.entities.back().object_words.at(41)==888,"neutral archive retains created origin and current state");
+    archive=decode_session_archive(encode_neutral_property(added_result,pins));
+    auto& ownership=archive.sections.back().data;
+    const auto group_count_offset=std::size_t{6}+2*added_result.world().reserved_entity_ids().size();
+    const auto first_group_offset=group_count_offset+4;
+    ownership[group_count_offset]=1; // Forge two ordinary singletons into one group.
+    ownership[first_group_offset+3]=2;
+    ownership.erase(ownership.begin()+static_cast<std::ptrdiff_t>(first_group_offset+9),
+        ownership.begin()+static_cast<std::ptrdiff_t>(first_group_offset+16));
+    rejects([&]{inspect_archive(archive);},"malformed wire merged unrelated singleton objects into one group");
+    const auto retired_property=decode_neutral_property(encode_neutral_property(historical,pins),bundle.resources,property_base.installed_house_sha256);
+    check(retired_property.retired_created_objects.size()==1 && retired_property.retired_created_objects[0].id==5 &&
+        std::binary_search(retired_property.reserved_ids.begin(),retired_property.reserved_ids.end(),5),
+        "neutral archive retains earlier created-then-deleted provenance and reservation");
     check(encode(bundle)==bytes && encode_family_overlay(overlay)==encode_family_overlay(commit(initial,bytes)),
         "checkpoint and expected overlay untouched");
     std::cout<<"property checkpoint tests passed\n";return 0;

@@ -8,6 +8,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Formato separado para guardar a preparação estrutural de uma casa desocupada,
+  preservando objetos, relações, grupos e histórico. Ainda não permite ativar
+  a casa nem confirmar reembolso. [Formato](docs/neutral-property-format.md).
+
 - Histórico persistente de objetos criados e depois apagados, com reserva dos
   seus números ao salvar e reabrir. Saves antigos permanecem identificados como
   incompletos. [Formato e limites](docs/native-object-history.md).

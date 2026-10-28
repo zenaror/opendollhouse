@@ -28,6 +28,7 @@ public:
     const SessionFamilyLease& lease() const { return lease_; }
     const std::array<std::uint8_t,32>& checkpoint_sha256() const { return checkpoint_sha256_; }
     const SessionResourceIdentity& resources() const { return resources_; }
+    const std::array<std::uint8_t,32>& expected_overlay_sha256() const { return expected_overlay_sha256_; }
     std::uint16_t house_number() const { return house_number_; }
     std::int32_t budget() const { return budget_; }
     const std::array<std::uint8_t,32>& installed_house_sha256() const { return installed_house_sha256_; }
@@ -45,6 +46,7 @@ private:
     SessionResourceIdentity resources_;
     std::array<std::uint8_t,32> checkpoint_sha256_{};
     std::vector<std::uint8_t> expected_overlay_;
+    std::array<std::uint8_t,32> expected_overlay_sha256_{};
     std::uint16_t house_number_ = 0;
     std::int32_t budget_ = 0;
     std::array<std::uint8_t,32> installed_house_sha256_{};

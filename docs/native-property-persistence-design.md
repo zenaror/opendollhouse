@@ -9,6 +9,13 @@ WRLD/GEXP and related session sections. Resuming the same occupancy must keep
 using that complete family checkpoint. The missing boundary is preserving the
 appropriate property state when a household leaves and a later household enters.
 
+The required [neutral structural archive](neutral-property-format.md) now encodes
+the authenticated prepared World, relationships, groups, origins, reservations
+and source identities independently of occupied session execution. It is not an
+executable property profile, durable publication or financial release receipt.
+The [typed-reference audit](property-reference-audit.md) records the remaining
+source-backed field boundaries without inventing a general zeroing rule.
+
 The [structural survivor preparation](property-survivors.md) now constructs a
 private World from current state with complete group/contained-child deletion,
 exact actor approvals, relationship pruning and retired-ID reservations. This

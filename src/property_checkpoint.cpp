@@ -219,6 +219,7 @@ PreparedPropertyCheckpoint prepare_property_checkpoint(const NeighborhoodFamilyS
         result.retired_entities_.push_back({entity.id,entity.generation,entity.definition->guid});
     std::sort(result.removed_original_objects_.begin(),result.removed_original_objects_.end(),
         [](const auto& a,const auto& b){return a.id<b.id;});
-    result.expected_overlay_=encode_family_overlay(expected);return result;
+    result.expected_overlay_=encode_family_overlay(expected);
+    result.expected_overlay_sha256_=sha256(result.expected_overlay_.data(),result.expected_overlay_.size());return result;
 }
 } // namespace odh
