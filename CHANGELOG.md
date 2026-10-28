@@ -8,6 +8,11 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Preparação em C++ de uma cópia estrutural da casa após a retirada de objetos,
+  com grupos completos, conteúdo dos móveis e proteção de Sims não autorizados.
+  Ainda não confirma a mudança nem aplica reembolso.
+  [Limites](docs/property-survivors.md).
+
 - Avaliação completa da propriedade em modo de inspeção, com terreno, bens e
   construção recalculados; valores antigos do save não substituem dados ausentes.
   A operação ainda não aplica reembolso. [Alcance](docs/property-valuation.md).

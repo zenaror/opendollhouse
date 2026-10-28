@@ -9,6 +9,13 @@ WRLD/GEXP and related session sections. Resuming the same occupancy must keep
 using that complete family checkpoint. The missing boundary is preserving the
 appropriate property state when a household leaves and a later household enters.
 
+The [structural survivor preparation](property-survivors.md) now constructs a
+private World from current state with complete group/contained-child deletion,
+exact actor approvals, relationship pruning and retired-ID reservations. This
+is not yet the required executable neutral artifact or prepared release receipt;
+checkpoint/resource pinning, typed-reference/activation coverage, architecture,
+provenance and compound publication remain open.
+
 Use the existing C++ World, resource loaders, session validation, immutable archive
 store and neighborhood overlay transaction. Do not introduce a parallel simulation
 engine or overwrite installed commercial houses. See
