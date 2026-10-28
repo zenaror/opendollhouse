@@ -28,8 +28,11 @@ Essa regra inclui objetos de outros tipos, não só móveis do tipo 4.
   A ferramenta usa a cópia do prefixo legado. Em uma futura integração ao
   runtime, deve ser usado o valor atual do World, não seu banco salvo antigo.
 - A flag `0x10` tem precedência sobre a classificação de ator. A permissão de
-  apagar `0x08` não a substitui. Definições contraditórias, tipos divergentes,
-  recursos ambíguos ou campos ausentes produzem `unresolved`, sem inventar zero.
+  apagar `0x08` não a substitui. A classificação de ator usa a definição da
+  própria peça, antes de consultar a definição principal. Os tipos da peça e
+  do principal podem diferir. Para os demais objetos, a categoria vem da
+  definição efetiva. Recursos ambíguos ou campos necessários ausentes produzem
+  `unresolved`, sem inventar zero.
 - A leitura dos recursos e a importação do SavedWorld comparam também a nova
   categoria com a definição selecionada, impedindo substituir esse dado sem
   concordância de identidade.
@@ -64,9 +67,14 @@ Nenhuma dessas saídas autoriza efetivar um despejo.
 A inspeção não comprova a transformação completa de uma propriedade. Ainda é
 necessário validar grupos inteiros e flags divergentes entre peças, objetos
 carregados/contidos, limpeza de referências, definição efetiva e ordem de remoção.
-A tradução da flag no objeto do executável de comparação para ObjectData43,
-assim como a origem exata do tipo usado pelo predicado original, permanecem
-questões de mapeamento. Divergência entre o tipo da peça e o principal é recusada.
+A análise estática do predicado `0043557a` confirmou a ordem flag → tipo da
+própria peça → categoria efetiva. O mapeamento completo dos campos serializados
+ainda precisa ser fechado antes da integração que altera a propriedade.
+
+A rotina de remoção `00440f2b` também pode alcançar o grupo inteiro e remover
+objetos contidos, sem repetir a decisão de retenção para cada peça. Portanto,
+os resultados individuais desta ferramenta não podem ser usados como uma lista
+independente de remoções. A limpeza de referências ainda precisa de validação.
 
 Tipo 2 inclui visitantes e NPCs: o resultado `remove/actor` não autoriza retirar
 pessoas fora da família cuja saída está comprovada. Inventário NGBH é um conjunto
@@ -102,3 +110,8 @@ As 107 entradas comerciais selecionadas conservaram seus SHA-256 antes/depois;
 o binário do inspetor também permaneceu fixo durante a passagem final.
 Nomes legados com bytes fora de ASCII são apresentados com escapes em
 `name_bytes`, sem emitir texto UTF-8 inválido ou perder a identidade dos bytes.
+
+## Valor atual dos grupos
+
+A inspeção separada [de valores](property-values.md) usa o World importado e
+permanece sem autorização para vender objetos ou calcular o reembolso completo.

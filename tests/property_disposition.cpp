@@ -48,12 +48,16 @@ int main() {
         part.definition.is_multitile=true;master.definition.is_multitile=false;
         check(inspect({part,master}).reason==R::invalid_definition,"inconsistent master rejected");
         master.definition.is_multitile=true;master.definition.object_type=2;
-        check(inspect({part,master}).reason==R::type_mismatch,"unproven differing master type is unresolved");
+        check(inspect({part,master}).reason==R::buy_mode,"master actor type does not turn own nonactor into actor");
         part.definition.object_type=2;master.definition.object_type=4;
         const odh::DefinitionIndex actor_member({part,master});
-        for(const auto flags:{std::uint16_t{0},std::uint16_t{16}})
-            check(odh::inspect_property_disposition(actor_member,10,2,flags).reason==R::type_mismatch,
-                "actor and retained branches cannot hide an unproven master type");
+        check(odh::inspect_property_disposition(actor_member,10,2,0).reason==R::actor,
+            "own actor type precedes master lookup even with differing master type");
+        check(odh::inspect_property_disposition(actor_member,10,2,16).reason==R::retained_flag,
+            "retained flag precedes own actor type");
+        const odh::DefinitionIndex actor_without_master({part});
+        check(odh::inspect_property_disposition(actor_without_master,10,2,0).reason==R::actor,
+            "actor predicate does not require an unused master definition");
         std::cout<<"property disposition predicate, precedence and resource identity checks passed\n";
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

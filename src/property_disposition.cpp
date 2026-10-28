@@ -13,20 +13,19 @@ PropertyDispositionInspection inspect_property_disposition(const DefinitionIndex
         return {D::unresolved,R::invalid_definition,{},{}};
     if(selected->definition.object_type!=instance_type)return {D::unresolved,R::type_mismatch,{},{}};
     if(!flags)return {D::unresolved,R::missing_flags,{},{}};
+    if((*flags&0x10U)!=0)return {D::retain,R::retained_flag,{},{}};
+    // The comparison assembly reads own OBJD+0x12 for this branch. It does
+    // not resolve the master first, even if a group's master has another type.
+    // This diagnostic result is never permission to retire unrelated actors.
+    if(instance_type==2)return {D::remove,R::actor,{},{}};
     const auto* effective=selected;
     if(selected->definition.is_multitile) {
         effective=index.unique_master(*selected);
         if(!effective)return {D::unresolved,R::missing_master,{},{}};
         if(!effective->definition.is_multitile)
             return {D::unresolved,R::invalid_definition,{},{}};
-        if(effective->definition.object_type!=instance_type)
-            return {D::unresolved,R::type_mismatch,{},{}};
     }
     const auto& definition=effective->definition;
-    if((*flags&0x10U)!=0)return {D::retain,R::retained_flag,definition.guid,definition.build_mode_type};
-    // Type2 is broader than the departing household. This diagnostic result is
-    // never permission to remove visitors/NPCs or mutate neighborhood records.
-    if(instance_type==2)return {D::remove,R::actor,definition.guid,definition.build_mode_type};
     if(!definition.build_mode_type)return {D::unresolved,R::missing_build_mode,definition.guid,{}};
     const auto build=*definition.build_mode_type;
     return {build?D::retain:D::remove,build?R::build_mode:R::buy_mode,definition.guid,build};

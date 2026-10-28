@@ -2,13 +2,14 @@
 #include "odh/saved_thread_plan.hpp"
 #include "saved_thread_plan_audit.hpp"
 #include "saved_tail_json.hpp"
+#include "odh/property_value.hpp"
 #include <iostream>
 #include <utility>
 
 int main(int argc,char** argv){try{
-    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
+    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--property-values] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
     const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false;
+    std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false,property_values=false;
     std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
         if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
@@ -20,6 +21,7 @@ int main(int argc,char** argv){try{
         else if(option=="--verify-saved-threads"&&!verify_saved_threads)verify_saved_threads=true;
         else if(option=="--import-saved-threads-dormant"&&!import_saved_threads_dormant)import_saved_threads_dormant=true;
         else if(option=="--include-object-threads"&&!include_object_threads)include_object_threads=true;
+        else if(option=="--property-values"&&!property_values)property_values=true;
         else if(option=="--saved-thread-entity"&&!saved_thread_entity&&n+1<argc){
             const std::string value=argv[++n];std::size_t consumed=0;
             const auto parsed=std::stoul(value,&consumed);
@@ -145,7 +147,20 @@ int main(int argc,char** argv){try{
     std::cout<<"],\"multitile_groups\":[";
     for(std::size_t n=0;n<loaded->multitile_groups.size();++n){if(n)std::cout<<',';const auto& g=loaded->multitile_groups[n];
         std::cout<<"{\"leader\":"<<g.leader<<",\"master_guid\":"<<(g.master_guid?std::to_string(*g.master_guid):"null")<<",\"members\":";
-        odh_tools::saved_bank(std::cout,g.members);std::cout<<'}';
+        odh_tools::saved_bank(std::cout,g.members);
+        if(property_values) {
+            // make_saved_world validated the complete imported group inventory.
+            // This World remains dormant; no current running game is inspected.
+            const auto value=odh::inspect_property_group_value(*loaded->world,g,true);
+            std::cout<<",\"property_value\":{\"inspection_only\":true,\"refund_authorized\":false"
+                <<",\"source\":\"imported_dormant_World_current_words\",\"status\":"
+                <<json_bytes(odh::property_value_status_name(value.status))
+                <<",\"reason\":"<<json_bytes(odh::property_value_reason_name(value.reason))
+                <<",\"leader_current_value\":"<<(value.leader_current_value?std::to_string(*value.leader_current_value):"null")
+                <<",\"repair_discount\":"<<(value.repair_discount?"true":"false")
+                <<",\"value\":"<<(value.value?std::to_string(*value.value):"null")<<'}';
+        }
+        std::cout<<'}';
     }
     std::cout<<"]}\n";return 0;
 }catch(const std::exception& e){std::cerr<<"saved World error: "<<e.what()<<'\n';return 2;}}

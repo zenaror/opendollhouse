@@ -8,6 +8,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Inspeção opcional do valor atual de grupos de objetos importados, incluindo
+  desconto por estado de conserto, sem alterar o dinheiro da família.
+  [Uso e limites](docs/property-values.md).
+
 - Inspetor somente leitura da destinação candidata dos objetos ao desocupar
   uma casa, com distinção entre móveis, construção e recursos não resolvidos.
   Não remove objetos nem confirma um despejo. [Limites](docs/property-disposition.md).
