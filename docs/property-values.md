@@ -18,6 +18,30 @@ IDs inválidos ou repetidos, líder ausente, identidades incompatíveis, entidad
 ou palavras necessárias ausentes e mais de 4096 membros. Um grupo incompleto
 permanece não resolvido, sem estimar seu valor.
 
+## Correspondência com o estado salvo
+
+Na mesma imagem de comparação, a rotina comum `00434353` transfere 72 palavras
+de 16 bits a partir de `objeto+0x4a` no ramo de versão 11 ou superior; o auxiliar
+`00464973` avança duas posições de memória por palavra. A transferência vem
+após os atributos e os oito temporários. Uma palavra separada segue esse banco.
+Isso explica a divisão do leitor em 68 palavras ObjectData e cinco extras:
+os quatro primeiros extras completam o banco de 72; o quinto é o campo seguinte.
+Essa divisão não desloca os índices usados pela inspeção.
+
+| Índice ObjectData | Deslocamento no objeto | Uso observado |
+| --- | --- | --- |
+| 11 | `0x60` | ID salvo da instância |
+| 15 | `0x68` | Estado consultado para desconto por conserto |
+| 41 | `0x9c` | Valor atual consultado pela rotina de avaliação |
+| 43 | `0xa0` | Flags consultadas pelo predicado de retenção |
+
+A relação é `0x4a + 2 × índice`. Os ramos antigos transferem quantidades
+menores e diferem também em atributos e temporários; esta constatação não
+amplia automaticamente o suporte do leitor para versões antigas. Os cabeçalhos
+inspecionados da Casa01/Casa07 eram versão 62 e da Casa91, versão 73.
+Trata-se de evidência estática do layout, sem teste executando o original e
+sem comprovação das regras completas de saída da família.
+
 ## Uso
 
 ```sh

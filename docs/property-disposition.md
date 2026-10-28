@@ -68,8 +68,11 @@ A inspeção não comprova a transformação completa de uma propriedade. Ainda 
 necessário validar grupos inteiros e flags divergentes entre peças, objetos
 carregados/contidos, limpeza de referências, definição efetiva e ordem de remoção.
 A análise estática do predicado `0043557a` confirmou a ordem flag → tipo da
-própria peça → categoria efetiva. O mapeamento completo dos campos serializados
-ainda precisa ser fechado antes da integração que altera a propriedade.
+própria peça → categoria efetiva. A transferência do banco em `00434353` e o passo de duas posições por palavra
+em `00464973` confirmam a correspondência entre `objeto+0xa0` e ObjectData43
+no ramo moderno. A [correspondência dos campos](property-values.md) também
+explica a divisão entre ObjectData e extras feita pelo leitor. Isso confirma o
+layout; a transformação completa da propriedade ainda precisa ser implementada.
 
 A rotina de remoção `00440f2b` também pode alcançar o grupo inteiro e remover
 objetos contidos, sem repetir a decisão de retenção para cada peça. Portanto,
