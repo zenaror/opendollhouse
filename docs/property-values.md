@@ -91,3 +91,10 @@ subtotal das paredes. O ramo legado anterior à versão interna 37 usa um valor
 inicial 4500; isso não autoriza fixar 4500 para casas modernas. A correspondência
 com os campos SIMI existentes não substitui a validação do ciclo de carga e
 salvamento nem resolve a precisão do multiplicador.
+
+## Soma dos objetos e precisão
+
+A [soma dos bens](property-object-assets.md) acrescenta a classificação completa
+de grupos e objetos simples, consultando o World atual. Também documenta o
+perfil explícito de arredondamento em inteiros; nenhum desses diagnósticos
+publica dinheiro ou habilita o despejo.

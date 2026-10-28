@@ -3,13 +3,17 @@
 #include "saved_thread_plan_audit.hpp"
 #include "saved_tail_json.hpp"
 #include "odh/property_value.hpp"
+#include "odh/property_object_assets.hpp"
+#include "saved_architecture_resources.hpp"
+#include <set>
 #include <iostream>
 #include <utility>
 
 int main(int argc,char** argv){try{
-    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--property-values] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
+    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--property-values] [--property-assets] [--import-word-budget WORDS] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
     const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
-    std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false,property_values=false;
+    std::optional<std::uint64_t> import_word_budget;
+    std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false,property_values=false,property_assets=false;
     std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
         if((option=="--object-definitions"||option=="--object-definition-file")&&n+1<argc){
@@ -22,6 +26,15 @@ int main(int argc,char** argv){try{
         else if(option=="--import-saved-threads-dormant"&&!import_saved_threads_dormant)import_saved_threads_dormant=true;
         else if(option=="--include-object-threads"&&!include_object_threads)include_object_threads=true;
         else if(option=="--property-values"&&!property_values)property_values=true;
+        else if(option=="--property-assets"&&!property_assets)property_assets=true;
+        else if(option=="--import-word-budget"&&!import_word_budget&&n+1<argc) {
+            const std::string value=argv[++n];
+            if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos)
+                throw odh::FormatError("import word budget must be unsigned decimal");
+            const auto parsed=std::stoull(value);
+            if(!parsed || parsed>1048576)throw odh::FormatError("import word budget must be1..1048576 logical words");
+            import_word_budget=parsed;
+        }
         else if(option=="--saved-thread-entity"&&!saved_thread_entity&&n+1<argc){
             const std::string value=argv[++n];std::size_t consumed=0;
             const auto parsed=std::stoul(value,&consumed);
@@ -39,7 +52,12 @@ int main(int argc,char** argv){try{
         throw odh::FormatError("saved-thread resource path exceeds limit");
     auto index=saved_definition_index(sources);odh::Objt object_types;auto records=saved_world_records(house,*index,&object_types);
     std::optional<odh::NeighborContext> neighbors;if(neighborhood)neighbors.emplace(saved_neighbors(*neighborhood));
-    odh::SavedWorldSession session(odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr));
+    odh::SavedWorldLimits import_limits;
+    if(import_word_budget) {
+        import_limits.retained_words=*import_word_budget;
+        import_limits.world.words=static_cast<std::size_t>(*import_word_budget);
+    }
+    odh::SavedWorldSession session(odh::make_saved_world(records,*index,neighbors?&*neighbors:nullptr,import_limits));
     auto* loaded=&session.saved_world();
     std::vector<std::optional<odh::SimitoneSavedThreadPlan>> thread_plans(records.size());
     std::vector<std::vector<SavedThreadCodeCheck>> thread_checks(records.size());
@@ -65,6 +83,23 @@ int main(int argc,char** argv){try{
         throw odh::FormatError("selected saved thread is absent, has no stack, or needs --include-object-threads");
     if(!session.all_dormant_bindings_valid())
         throw odh::FormatError("saved World session lost a dormant thread entity binding");
+    std::optional<odh::PropertyObjectAssets> assets;
+    unsigned asset_dimension=0;
+    if(property_assets) {
+        const auto architecture=saved_architecture_resource(house);
+        if(architecture.architecture.width!=architecture.architecture.height)
+            throw odh::FormatError("property asset valuation requires a square saved architecture");
+        asset_dimension=architecture.architecture.width;
+        // The imported World has not ticked; its validated saved group registry
+        // is complete for this diagnostic. Runtime callers need their live registry.
+        auto partition=loaded->multitile_groups;std::set<std::int16_t> grouped;
+        for(const auto& group:partition)for(const auto id:group.members)grouped.insert(id);
+        for(auto id=loaded->world->next_entity(0);id;id=loaded->world->next_entity(*id))if(!grouped.count(*id)) {
+            const auto* entity=loaded->world->find(*id);
+            partition.push_back({*id,entity->definition?entity->definition->master_guid:std::nullopt,{*id}});
+        }
+        assets=odh::inspect_property_object_assets(*loaded->world,*index,partition,true,asset_dimension);
+    }
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
         <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"rendered\":false"
         <<",\"saved_thread_vm_import\":{\"requested\":"<<(import_saved_threads_dormant?"true":"false")
@@ -162,5 +197,24 @@ int main(int argc,char** argv){try{
         }
         std::cout<<'}';
     }
-    std::cout<<"]}\n";return 0;
+    std::cout<<']';
+    if(assets) {
+        const bool resolved=assets->status==odh::PropertyObjectAssetsStatus::resolved;
+        std::cout<<",\"property_assets\":{\"inspection_only\":true,\"refund_authorized\":false,\"source\":\"imported_dormant_World_current_words\",\"dimension\":"<<asset_dimension
+            <<",\"retained_word_limit\":"<<import_limits.retained_words
+            <<",\"status\":"<<json_bytes(resolved?"resolved":"unresolved")
+            <<",\"reason\":"<<json_bytes(odh::property_object_assets_reason_name(assets->reason))
+            <<",\"primary\":"<<(assets->primary?std::to_string(*assets->primary):"null")
+            <<",\"architecture_objects\":"<<(assets->architecture_objects?std::to_string(*assets->architecture_objects):"null")<<",\"groups\":[";
+        for(std::size_t n=0;n<assets->groups.size();++n){if(n)std::cout<<',';const auto& row=assets->groups[n];
+            std::cout<<"{\"leader\":"<<row.leader<<",\"bucket\":"<<json_bytes(odh::property_object_asset_bucket_name(row.bucket))
+                <<",\"reason\":"<<json_bytes(odh::property_object_assets_reason_name(row.reason))
+                <<",\"in_world\":"<<(row.in_world?(*row.in_world?"true":"false"):"null")
+                <<",\"value\":"<<(row.value?std::to_string(*row.value):"null")
+                <<",\"value_reason\":"<<json_bytes(odh::property_value_reason_name(row.value_reason))<<'}';
+        }
+        std::cout<<"]}";
+    }
+    std::cout<<"}\n";
+    return assets && assets->status!=odh::PropertyObjectAssetsStatus::resolved?3:0;
 }catch(const std::exception& e){std::cerr<<"saved World error: "<<e.what()<<'\n';return 2;}}

@@ -8,6 +8,11 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Inspeção da soma dos bens por objeto completo, com separação dos objetos
+  de construção e recusa de inventários incompletos. Perfil explícito de
+  arredondamento em inteiros para a futura avaliação financeira.
+  [Alcance](docs/property-object-assets.md).
+
 - Cálculo em C++ dos componentes de construção a partir da geometria bruta,
   incluindo paredes, revestimentos, pisos diagonais e piscinas. A inspeção lê
   preços dos recursos selecionados e preserva materiais não resolvidos; o
