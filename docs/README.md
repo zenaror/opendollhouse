@@ -14,6 +14,7 @@ distintas. Consulte sempre os limites do cenário e a revisão indicada.
 
 ## Documentação
 
+- [Ação de carregamento dos objetos salvos](saved-entity-load.md)
 - [Formato estrutural da propriedade desocupada](neutral-property-format.md)
 - [Revisão dos vínculos duráveis dos objetos](property-reference-audit.md)
 - [Histórico dos objetos criados e retirados](native-object-history.md)

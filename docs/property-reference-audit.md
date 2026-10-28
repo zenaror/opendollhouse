@@ -39,3 +39,9 @@ reserva os números retirados. A futura ativação precisa de uma regra comprova
 de reconstrução ou reinicialização para os vínculos relevantes. Não se deve
 apagar palavras, atributos ou dados de jogo apenas porque seu valor numérico
 coincide com o de um objeto retirado.
+
+O [caminho de carregamento](saved-entity-load.md) foi revisado separadamente:
+a referência conserva execuções de objetos e chama a entrada de carregamento
+no caminho IFF. Isso não autoriza substituir todas elas por uma reinicialização
+nem tratar qualquer palavra numérica não nula como inválida. A validação precisa
+ocorrer no vínculo ou na operação que realmente usa a referência.

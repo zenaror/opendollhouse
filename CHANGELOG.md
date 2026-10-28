@@ -14,6 +14,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Ação de carregamento em C++ que preserva a execução salva do objeto durante
+  o callback. A integração com a próxima ocupação da casa permanece pendente.
+  [Contrato](docs/saved-entity-load.md).
+
 - Formato separado para guardar a preparação estrutural de uma casa desocupada,
   preservando objetos, relações, grupos e histórico. Ainda não permite ativar
   a casa nem confirmar reembolso. [Formato](docs/neutral-property-format.md).

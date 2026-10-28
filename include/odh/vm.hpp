@@ -265,6 +265,9 @@ public:
     // call with the same VM state will pass push's deterministic checks.
     bool can_accept_call(const VmCall&) const;
     VmStatus status() const { return status_; }
+    // External load/check operations must not observe a register owner in the
+    // middle of its instruction dispatch. This does not imply a VM status.
+    bool dispatch_active() const noexcept { return executing_; }
     const std::string& diagnostic() const { return diagnostic_; }
     const std::vector<VmFrame>& stack() const { return stack_; }
     // A removal service must retain object data used by another execution

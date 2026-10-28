@@ -190,11 +190,22 @@ activation data.
 Retire only the exact departing household identities authorized by the source
 lease. NPCs and visitors are not household members merely because they are
 avatars. Their retained state and activation policy must be explicit and audited.
-Do not replay old VM stacks, queues, scheduler state or opaque execution suffixes
-as property continuations in a different occupancy. Use the existing supported
-fresh-execution path for retained objects; unsupported actors or reference
-cleanup must fail preparation before any financial commit. This boundary does
-not claim that the original game resets every object's stack.
+Do not carry departing avatars' execution or queues into another occupancy.
+The pinned reference restores retained object threads on its IFF load path and
+then invokes EP2 Load; it does not replace them all with Init or Reset/Main.
+The [saved-entity Load operation](saved-entity-load.md) implements that bounded
+callback without changing the restored Main. The reference's preferred local
+FSOV path has a different cleanup sequence and must not be conflated with it.
+
+The executable property profile must retain or explicitly bind the necessary
+object continuations from the authenticated immutable checkpoint, reconstruct
+their exact resources and supported waits, and validate their typed references
+against the survivor World and retirement policy. Filter out removed objects
+and all departing-avatar continuations; do not infer safety from raw numeric
+equality or silently reset surviving objects. Prove Load/global/family ordering
+for the selected profile. Unsupported actors, opaque continuations or resource
+bindings must fail preparation before any financial commit. The current
+structural profile deliberately has no execution payload and remains inactive.
 
 Architecture editing is not serialized by this design's current implementation
 baseline. Binding unchanged installed architecture by SHA is sufficient only

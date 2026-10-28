@@ -51,7 +51,8 @@ antes da preparação. Ainda não publicam uma casa desocupada no jogo. O arquiv
 não contém filas, pilhas de execução, serviços ou callbacks da família anterior.
 Números arbitrários nos dados dos objetos são preservados.
 
-Faltam a [política de vínculos](property-reference-audit.md) e execução nova,
+Faltam a [política de vínculos](property-reference-audit.md) e reconstrução de
+[execução e carregamento](saved-entity-load.md),
 a arquitetura editada, o armazenamento imutável e a confirmação conjunta da
 propriedade, saída da família e dinheiro. Consulte o
 [projeto de persistência](native-property-persistence-design.md).
