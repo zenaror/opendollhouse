@@ -27,6 +27,7 @@ constexpr std::array<char,4> route_id{{'R','O','U','T'}};
 constexpr std::array<char,4> object_vm_id{{'O','B','V','M'}};
 constexpr std::array<char,4> dynamic_owner_id{{'D','Y','N','O'}};
 constexpr std::array<char,4> generic_execution_id{{'G','E','X','P'}};
+constexpr std::array<char,4> object_history_id{{'O','H','S','T'}};
 constexpr std::array<char,4> family_lease_id{{'F','A','M','L'}};
 constexpr std::array<char,4> ui_state_id{{'U','I','S','T'}};
 constexpr std::array<std::uint8_t,8> host_magic{{'O','D','H','H','S','T','\r','\n'}};
@@ -650,6 +651,33 @@ void decode_generic_execution(const std::vector<std::uint8_t>& bytes,SessionBund
     bundle.generic_execution=true;
 }
 
+std::vector<std::uint8_t> encode_object_history(const SessionObjectHistory& history,const SessionBundleLimits& limits) {
+    Writer w(limits.archive.max_section_bytes);w.u16(1);w.u8(history.complete?1:0);
+    w.u32(static_cast<std::uint32_t>(history.retired_created_objects.size()));
+    for(const auto& object:history.retired_created_objects) {
+        w.i16(object.id);w.u64(object.generation);w.u32(object.guid);
+        w.string(object.source);w.string(object.asset);w.u16(object.definition_chunk_id);
+    }
+    w.u32(static_cast<std::uint32_t>(history.reserved_entity_ids.size()));
+    for(const auto id:history.reserved_entity_ids)w.i16(id);
+    return w.take();
+}
+SessionObjectHistory decode_object_history(const std::vector<std::uint8_t>& bytes) {
+    Reader r(bytes);if(r.u16()!=1)throw FormatError("unsupported object history version");
+    const auto complete=r.u8();if(complete>1)throw FormatError("invalid object history completeness marker");
+    SessionObjectHistory result;result.complete=complete!=0;
+    const auto count=r.u32();if(count>4096)throw FormatError("retired creation history exceeds limit");
+    for(std::uint32_t n=0;n<count;++n) {
+        SessionCreatedObject object;object.id=r.i16();object.generation=r.u64();object.guid=r.u32();
+        object.source=r.string();object.asset=r.string();object.definition_chunk_id=r.u16();
+        result.retired_created_objects.push_back(std::move(object));
+    }
+    const auto reservations=r.u32();if(reservations>4096)throw FormatError("object history reservations exceed limit");
+    for(std::uint32_t n=0;n<reservations;++n)result.reserved_entity_ids.push_back(r.i16());
+    if(!r.done())throw FormatError("object history has trailing data");
+    return result;
+}
+
 std::vector<std::uint8_t> encode_dynamic_owners(const std::vector<SessionRuntimeEntity>& entities,
                                                 const SessionBundleLimits& limits) {
     return encode_roster(entities,limits,[&](const auto& entity){
@@ -1142,10 +1170,43 @@ void validate_generic_execution(const SessionBundle& bundle,const SessionBundleL
     }
 }
 
+void validate_object_history(const SessionBundle& bundle) {
+    if(!bundle.object_history)return;
+    if(!bundle.generic_execution)throw FormatError("object history requires GEXP profile");
+    const auto& history=*bundle.object_history;
+    if(history.retired_created_objects.size()>4096||history.reserved_entity_ids.size()>4096)
+        throw FormatError("object history exceeds identity limits");
+    std::set<std::int16_t> live,removed,created;
+    std::set<std::uint64_t> generations;
+    for(const auto& entity:bundle.world.entities){live.insert(entity.id);generations.insert(entity.generation);}
+    std::int16_t previous=0;
+    for(const auto id:history.reserved_entity_ids) {
+        if(id<=previous||live.count(id))throw FormatError("object history reservation is invalid, duplicated or live");
+        previous=id;
+    }
+    const auto reserved=[&](std::int16_t id){return std::binary_search(history.reserved_entity_ids.begin(),history.reserved_entity_ids.end(),id);};
+    for(const auto& origin:bundle.created_objects)created.insert(origin.id);
+    for(const auto& origin:bundle.removed_original_objects) {
+        if(!reserved(origin.id)||!generations.insert(origin.generation).second)
+            throw FormatError("removed original history lacks reservation or has a reused generation");
+        removed.insert(origin.id);
+    }
+    previous=0;
+    for(const auto& origin:history.retired_created_objects) {
+        if(origin.id<=previous||!origin.generation||origin.generation>bundle.world.generation_sequence||
+           !origin.guid||!origin.definition_chunk_id||!valid_resource_text(origin.source)||
+           !valid_resource_text(origin.asset,true)||live.count(origin.id)||created.count(origin.id)||
+           removed.count(origin.id)||!reserved(origin.id)||!generations.insert(origin.generation).second)
+            throw FormatError("retired creation history identity is invalid, duplicated, live or unreserved");
+        previous=origin.id;
+    }
+}
+
 void validate_links(const SessionBundle& bundle,const SessionBundleLimits& limits) {
     validate_host(bundle.host,limits);
     validate_household(bundle);
     validate_generic_execution(bundle,limits);
+    validate_object_history(bundle);
     validate_seated_session_continuations(bundle);
     if(bundle.runtime_entities.empty()||bundle.runtime_entities.size()>limits.max_runtime_entities||
        bundle.object_threads.size()>limits.max_object_threads||
@@ -1398,7 +1459,7 @@ void decode_routes(const std::vector<std::uint8_t>& bytes,std::vector<SessionRun
 bool recognized(const std::array<char,4>& id) {
     return id==simulation_id||id==meta_id||id==host_id||id==world_id||id==relation_id||
            id==household_id||id==vm_id||id==scheduler_id||id==controller_id||id==playback_id||
-           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==family_lease_id||id==ui_state_id;
+           id==seated_id||id==route_id||id==object_vm_id||id==dynamic_owner_id||id==generic_execution_id||id==object_history_id||id==family_lease_id||id==ui_state_id;
 }
 
 void write_sleep_snapshot(Writer& w,const SleepSnapshot& state) {
@@ -1517,6 +1578,7 @@ std::vector<std::uint8_t> encode_session_bundle(const SessionBundle& bundle,
     if(!bundle.household_seated_continuations.empty())archive.sections.push_back({seated_id,true,encode_household_seated(bundle,limits)});
     if(bundle.simulation)archive.sections.push_back({simulation_id,true,encode_simulation(*bundle.simulation,limits.archive.max_section_bytes)});
     if(bundle.generic_execution)archive.sections.push_back({generic_execution_id,true,encode_generic_execution(bundle,limits)});
+    if(bundle.object_history)archive.sections.push_back({object_history_id,true,encode_object_history(*bundle.object_history,limits)});
     if(bundle.family_lease)archive.sections.push_back({family_lease_id,true,encode_family_lease(*bundle.family_lease,limits.archive.max_section_bytes)});
     if(bundle.ui_state)archive.sections.push_back({ui_state_id,false,encode_ui_state(*bundle.ui_state,limits.archive.max_section_bytes)});
     return encode_session_archive(archive,limits.archive);
@@ -1576,6 +1638,10 @@ SessionBundle decode_session_bundle(const std::vector<std::uint8_t>& bytes,
     for(const auto& section:archive.sections)if(section.id==generic_execution_id){
         if(!section.required)throw FormatError("generic execution profile must be required");
         decode_generic_execution(section.data,result,limits);
+    }
+    for(const auto& section:archive.sections)if(section.id==object_history_id){
+        if(!section.required)throw FormatError("object history profile must be required");
+        result.object_history=decode_object_history(section.data);
     }
     for(const auto& section:archive.sections)if(section.id==family_lease_id){
         if(!section.required)throw FormatError("family lease section must be required");

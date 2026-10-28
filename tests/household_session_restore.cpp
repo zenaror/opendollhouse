@@ -175,6 +175,30 @@ void resume(odh::HouseholdSessionRestore& candidate,const odh::SessionBundle& ex
 }
 void generic_execution_tests(){
     Fixture f;f.start();f.step();auto b=f.snapshot();b.generic_execution=true;
+    {
+        auto lifetime=b;
+        odh::World tracked;require(tracked.restore_snapshot(lifetime.world),"history current World");
+        require(tracked.create_runtime_object(3,0x4567,{},{}),"create transient object before save");
+        const auto generation=tracked.find(3)->generation;
+        require(tracked.retire(3),"retire transient object before save");
+        lifetime.world=tracked.snapshot();
+        lifetime.object_history=odh::SessionObjectHistory{true,
+            {{3,generation,0x4567,"GameData/Objects/Objects.far","Transient.iff",128}},tracked.reserved_entity_ids()};
+        const auto encoded=odh::encode_session_bundle(lifetime);
+        auto reopened=prepare(encoded,f);
+        require(reopened->object_history() && reopened->object_history()->complete &&
+            reopened->object_history()->retired_created_objects.size()==1 &&
+            reopened->object_history()->retired_created_objects[0].generation==generation &&
+            !reopened->world().entity_id_available(3) && !reopened->world().create(3,odh::EntityKind::object),
+            "created-then-deleted origin and reserved ID survive normal session restore");
+        require(reopened->world().create_runtime_object(4,0x4567,{}, {}) &&
+            reopened->world().find(4)->generation>generation,"reopened creation uses a fresh ID and generation");
+        lifetime.object_history->complete=false;
+        auto incomplete=prepare(odh::encode_session_bundle(lifetime),f);
+        require(incomplete->object_history() && !incomplete->object_history()->complete &&
+            !incomplete->world().entity_id_available(3),"incomplete history remains incomplete but preserves known reservations");
+        require(!prepare(odh::encode_session_bundle(b),f)->object_history(),"legacy restore does not invent complete history");
+    }
     constexpr odh::CodeOwner owner=0x80000000U;b.next_code_owner=owner+9;
     auto& state=b.runtime_entities.front();
     for(auto& frame:state.vm.stack)frame.context.code_owner=owner;

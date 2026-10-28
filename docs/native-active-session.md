@@ -35,6 +35,13 @@ intents. Entity IDs always retain their generations. Removing an original
 object and creating another with the same ID must not revive its old identity.
 World values, slots and containment continue through the existing World codec.
 
+Newly tracked household sessions also use required
+[OHST object history](native-object-history.md) for created-then-deleted origins
+and numeric-ID reservations. The runtime prevents those retired IDs from being
+reused. Legacy sessions remain explicitly incomplete rather than fabricating
+missing history; their earlier numeric-reuse compatibility does not authorize
+neutral-property preparation.
+
 Each resident and object thread records every resource bank installed in its VM,
 including a bank that is idle at the save tick. This matters when
 CreateObjectInstance gives the caller the new object's private code so a later

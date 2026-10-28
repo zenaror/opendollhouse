@@ -149,6 +149,11 @@ public:
         const std::array<std::int16_t,5>& extras, std::size_t slots,
         std::optional<std::uint32_t> master_guid={});
     bool remove(std::int16_t id);
+    // Remove one entity with ordinary detach semantics, and permanently reserve
+    // its numeric ID. Validate capacity and allocate reservation storage BEFORE
+    // removal. False/allocation failure leaves World unchanged. Not recursive;
+    // host still owns execution cleanup and creation-origin retirement.
+    bool retire(std::int16_t id);
     const Entity* find(std::int16_t id) const;
     // Live positive-ID enumeration, including entities with unknown definitions.
     std::optional<std::int16_t> next_entity(std::int16_t current,std::optional<EntityKind> kind={}) const;

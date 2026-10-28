@@ -30,8 +30,10 @@ baseline and exact creation/removal records, validates immutable metadata and
 resource reconstruction for created singletons, and preserves separate surviving
 creation, retired creation, original-object removal and actor retirement records.
 Known prior removals join ID reservations. Baseline numeric-ID reuse rejects.
-The old session format still omits created-then-deleted history; complete lifetime
-ID retirement and neutral-artifact activation are not established by this step.
+The required [OHST object history](native-object-history.md) now preserves
+created-then-deleted origins and reservations for newly tracked sessions.
+Old archives remain explicitly incomplete; neutral-property preparation rejects
+missing/incomplete history. This does not establish neutral-artifact activation.
 
 Use the existing C++ World, resource loaders, session validation, immutable archive
 store and neighborhood overlay transaction. Do not introduce a parallel simulation

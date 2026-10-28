@@ -604,7 +604,81 @@ void ui_state_cases() {
     require(!absent.ui_state&&absent.household_roster.size()==2,"older household archive without UIST accepted");
 }
 
+void object_history_cases() {
+    using namespace odh;
+    const std::array<char,4> id{{'O','H','S','T'}};
+    auto source=fixture();source.generic_execution=true;source.world.generation_sequence=6;
+    source.removed_original_objects={{3,3,99}};
+    SessionObjectHistory history;history.complete=true;
+    history.retired_created_objects={{4,4,100,"objects.far","objects.iff",128}};
+    history.reserved_entity_ids={3,4,8};source.object_history=history;
+    const auto bytes=encode_session_bundle(source);
+    const auto decoded=decode_session_bundle(bytes);
+    require(decoded.object_history && decoded.object_history->complete &&
+        decoded.object_history->retired_created_objects.size()==1 &&
+        decoded.object_history->retired_created_objects[0].source=="objects.far" &&
+        decoded.object_history->reserved_entity_ids==history.reserved_entity_ids &&
+        encode_session_bundle(decoded)==bytes,"complete object history byte-stable roundtrip");
+    auto incomplete=source;incomplete.object_history->complete=false;
+    const auto incomplete_bytes=encode_session_bundle(incomplete);
+    const auto incomplete_decoded=decode_session_bundle(incomplete_bytes);
+    require(incomplete_decoded.object_history && !incomplete_decoded.object_history->complete &&
+        encode_session_bundle(incomplete_decoded)==incomplete_bytes,"incomplete object history never promoted");
+    auto legacy=source;legacy.object_history.reset();
+    require(!decode_session_bundle(encode_session_bundle(legacy)).object_history,"old GEXP archive has unknown history");
+    require(!decode_session_bundle(encode_session_bundle(fixture())).object_history,"legacy non-GEXP has no invented history");
+    const auto reject_value=[&](auto mutate,const char* text){auto bad=source;mutate(bad);rejects([&]{encode_session_bundle(bad);},text);};
+    reject_value([](auto& b){b.generic_execution=false;},"object history without GEXP accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={0,3,4};},"zero reserved ID accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={3,3,4};},"duplicate reserved ID accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={4,3};},"reordered reservations accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={1,3,4};},"live reserved ID accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={4};},"unreserved original removal accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids={3};},"unreserved retired creation accepted");
+    reject_value([](auto& b){b.object_history->reserved_entity_ids.assign(4097,9);},"reservation count overflow accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.push_back(b.object_history->retired_created_objects.front());},"duplicate retired ID accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().generation=1;},"retired generation aliases live World");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().generation=3;},"retired generation aliases removed original");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().generation=7;},"retired future generation accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().guid=0;},"zero retired GUID accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().definition_chunk_id=0;},"zero retired definition accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().source.clear();},"empty retired source accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().asset.assign(4097,'x');},"oversized retired asset accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().source=std::string("bad\0source",10);},"NUL retired source accepted");
+    reject_value([](auto& b){b.object_history->retired_created_objects.front().id=3;},"retired ID aliases removed original");
+    auto two=source;two.object_history->retired_created_objects.push_back({5,4,101,"objects.far","objects.iff",129});
+    two.object_history->reserved_entity_ids={3,4,5,8};
+    rejects([&]{encode_session_bundle(two);},"duplicate retired generation accepted");
+    const auto mutate_section=[&](auto mutate){auto archive=decode_session_archive(bytes);
+        for(auto& section:archive.sections)if(section.id==id)mutate(section);
+        return encode_session_archive(archive);};
+    const auto reject_wire=[&](auto mutate,const char* text){rejects([&]{decode_session_bundle(mutate_section(mutate));},text);};
+    reject_wire([](auto& s){s.required=false;},"optional OHST accepted");
+    reject_wire([](auto& s){s.data[0]=2;},"unknown OHST version accepted");
+    reject_wire([](auto& s){s.data[2]=2;},"nonboolean OHST completeness accepted");
+    reject_wire([](auto& s){s.data.push_back(0);},"OHST trailing bytes accepted");
+    reject_wire([](auto& s){s.data.pop_back();},"truncated OHST accepted");
+    reject_wire([](auto& s){s.data[3]=1;s.data[4]=0x10;},"oversized retired count accepted");
+    reject_wire([](auto& s){s.data[7]=0;s.data[8]=0;},"wire zero retired ID accepted");
+    reject_wire([](auto& s){s.data[7]=1;},"wire live retired ID accepted");
+    reject_wire([](auto& s){s.data[21]=1;s.data[22]=0x10;},"oversized wire history text accepted");
+    reject_wire([](auto& s){s.data[23]=0;},"wire NUL history text accepted");
+    const auto reservation_count=std::size_t{7+2+8+4+2+11+2+11+2};
+    reject_wire([&](auto& s){s.data[reservation_count]=1;s.data[reservation_count+1]=0x10;},"oversized wire reservation count accepted");
+    reject_wire([&](auto& s){s.data[reservation_count+6]=3;},"wire duplicate reservations accepted");
+    reject_wire([&](auto& s){s.data[reservation_count+6]=5;},"wire missing retired reservation accepted");
+    auto archive=decode_session_archive(bytes);
+    archive.sections.erase(std::remove_if(archive.sections.begin(),archive.sections.end(),[](const auto& s){
+        return s.id==std::array<char,4>{{'G','E','X','P'}};}),archive.sections.end());
+    rejects([&]{decode_session_bundle(encode_session_archive(archive));},"wire OHST without GEXP accepted");
+    archive=decode_session_archive(bytes);
+    const auto section=*std::find_if(archive.sections.begin(),archive.sections.end(),[&](const auto& s){return s.id==id;});
+    require(section.required,"OHST must be encoded required");archive.sections.push_back(section);
+    rejects([&]{decode_session_bundle(encode_session_archive(archive));},"duplicate OHST section accepted");
+}
+
 int main() {
+    object_history_cases();
     ui_state_cases();
     generic_execution_cases();
     {

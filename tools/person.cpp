@@ -2147,6 +2147,23 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::map<std::int16_t,std::unique_ptr<RuntimeObjectThread>> runtime_object_threads;
     std::map<odh::CodeOwner,odh::SessionResourceCodeOwner> resource_owner_provenance;
     std::map<std::int16_t,odh::SessionCreatedObject> created_object_origins;
+    std::map<std::int16_t,odh::SessionCreatedObject> retired_created_origins;
+    bool object_history_complete=!restoring_session;
+    if(household_restore && household_restore->object_history()) {
+        const auto& history=*household_restore->object_history();
+        object_history_complete=history.complete;
+        for(const auto& origin:history.retired_created_objects)retired_created_origins.emplace(origin.id,origin);
+    }
+    // Node transfer preserves the complete origin without allocating after the
+    // World has retired the object. Ordinary ghosts use their separate UI path.
+    const auto retire_runtime_object=[&](std::int16_t id) {
+        const auto origin=created_object_origins.find(id);
+        if(origin!=created_object_origins.end() && retired_created_origins.count(id))
+            throw odh::FormatError("runtime object retirement identity was already used");
+        if(!world.retire(id))return false;
+        if(origin!=created_object_origins.end())retired_created_origins.insert(created_object_origins.extract(origin));
+        return true;
+    };
     // CreateObjectInstance installs the created object's private bank into
     // the caller VM as well as the new object's own VM. Preserve that binding
     // even before a later PushInteraction references it.
@@ -6044,6 +6061,7 @@ struct PlacementCandidateProbe {
     };
     const auto save_live_session=[&](bool validate_only=false)->std::string {
 #ifdef __linux__
+        if(host_failed)throw odh::FormatError("saving is disabled after an unrecoverable host failure");
         if(!session_context||session_context->game_root.empty()||session_context->resource_paths.empty())
             throw odh::FormatError("saving requires a selected game installation");
         if(second_main_vm)throw odh::FormatError("diagnostic second-Main sessions cannot be saved");
@@ -6182,6 +6200,14 @@ struct PlacementCandidateProbe {
         if(generic_execution){
             bundle.next_code_owner=next_saved_code_owner;
             bundle.code_owner_ids_exhausted=saved_owner_ids_exhausted;
+            bundle.object_history=odh::SessionObjectHistory{};
+            bundle.object_history->complete=object_history_complete;
+            for(const auto& [id,origin]:retired_created_origins){
+                (void)id;auto record=origin;
+                record.source=odh_host::generic_session_source_key(session_context->game_root,record.source);
+                bundle.object_history->retired_created_objects.push_back(std::move(record));
+            }
+            bundle.object_history->reserved_entity_ids=world.reserved_entity_ids();
             for(const auto& [id,origin]:created_object_origins){
                 const auto* object=world.find(id);
                 if(object&&object->generation==origin.generation){
@@ -6196,6 +6222,13 @@ struct PlacementCandidateProbe {
                     throw odh::FormatError("a baseline resident disappeared before session capture");
                 bundle.removed_original_objects.push_back({original.id,original.generation,original.definition->guid});
             }
+            // Legacy archives can lack the history section. Preserve the known
+            // old removals too; a reused live ID makes encoding fail explicitly.
+            for(const auto& removed:bundle.removed_original_objects)
+                bundle.object_history->reserved_entity_ids.push_back(removed.id);
+            auto& retired_ids=bundle.object_history->reserved_entity_ids;
+            std::sort(retired_ids.begin(),retired_ids.end());
+            retired_ids.erase(std::unique(retired_ids.begin(),retired_ids.end()),retired_ids.end());
             std::set<std::pair<std::int16_t,std::uint64_t>> removals;
             for(const auto& pending:pending_remove_objects){
                 if(!removals.emplace(pending.object,pending.generation).second)
@@ -6853,6 +6886,7 @@ struct PlacementCandidateProbe {
             std::optional<std::int16_t> created_id;
             std::optional<odh::CodeOwner> resource_owner;
             bool scheduler_added=false;
+            bool materialization_uncertain=false;
             try{
                 if(!definition_index)throw odh::FormatError("object definition index is unavailable");
                 const auto* candidate=definition_index->unique(pending.request.guid);
@@ -6888,13 +6922,26 @@ struct PlacementCandidateProbe {
                 while(candidate_id<=32767&&!world.entity_id_available(static_cast<std::int16_t>(candidate_id)))++candidate_id;
                 if(candidate_id>32767)throw odh::FormatError("runtime object ID range exhausted");
                 const auto object_id=static_cast<std::int16_t>(candidate_id);
+                if(created_object_origins.count(object_id)||retired_created_origins.count(object_id))
+                    throw odh::FormatError("runtime object ID conflicts with existing creation history");
+                // Allocate provenance BEFORE materialization, so a later
+                // startup rollback cannot lose a created-then-deleted origin.
+                std::map<std::int16_t,odh::SessionCreatedObject> staged_origin;
+                staged_origin.emplace(object_id,odh::SessionCreatedObject{object_id,0,
+                    candidate->definition.guid,candidate->source,candidate->asset,candidate->chunk_id});
+                materialization_uncertain=true;
                 const auto materialized=pending.request.position()==odh::CreateObjectPosition::out_of_world?
                     odh::create_object_instance_out_of_world(world,object_id,pending.request,*object_resources):
                     odh::create_object_instance_in_slot0(
                         world,object_id,pending.stack_object,pending.request,*object_resources);
+                if(materialized.status!=odh::CreateObjectInstanceStatus::world_rejected)
+                    materialization_uncertain=false;
                 if(materialized.status!=odh::CreateObjectInstanceStatus::created||!materialized.object_id)
                     throw odh::FormatError("CreateObjectInstance placement was rejected by the World");
                 created_id=*materialized.object_id;
+                staged_origin.at(object_id).generation=world.find(object_id)->generation;
+                if(!created_object_origins.insert(staged_origin.extract(object_id)).inserted)
+                    throw odh::FormatError("runtime object creation origin conflicts with prior identity");
 
                 const auto owner=next_saved_code_owner;
                 resource_owner=owner;
@@ -6908,10 +6955,6 @@ struct PlacementCandidateProbe {
                     resource_owner_provenance.emplace(owner,session_resource_owner(owner,*candidate,root,
                         odh::SessionCodeBankKind::complete_private,caller_object_routines));
                 }
-                const auto* created=world.find(object_id);
-                created_object_origins.emplace(object_id,odh::SessionCreatedObject{object_id,created->generation,
-                    candidate->definition.guid,candidate->source,candidate->asset,candidate->chunk_id});
-
                 const auto entry_points=object_resources->entry_points;
                 auto runtime=std::make_unique<RuntimeObjectThread>();
                 runtime->owner=owner;
@@ -6964,13 +7007,26 @@ struct PlacementCandidateProbe {
                 last_create_object_diagnostic="created object "+std::to_string(object_id)+
                     " for GUID "+std::to_string(pending.request.guid);
             }catch(const std::exception& error){
+                // Placement may throw after materialization, before the helper
+                // returns its ID. An uncertain outcome must never be captured
+                // as a successful complete-history checkpoint.
+                if(materialization_uncertain){
+                    host_failed=true;host_diagnostic="object placement failed with an unconfirmed creation outcome";
+                }
                 const bool scheduler_detached=!scheduler_added||!created_id||entity_scheduler.remove(*created_id);
                 if(!scheduler_detached){
                     host_failed=true;
                     host_diagnostic="runtime object failed to leave the scheduler after creation rollback";
                 }
                 if(created_id&&scheduler_detached){
-                    forget_runtime_object_thread(*created_id);created_object_origins.erase(*created_id);world.remove(*created_id);
+                    forget_runtime_object_thread(*created_id);
+                    try {
+                        if(!retire_runtime_object(*created_id)){
+                            host_failed=true;host_diagnostic="creation rollback could not reserve the retired object ID";
+                        }
+                    }catch(const std::exception&){
+                        host_failed=true;host_diagnostic="creation rollback could not allocate object retirement state";
+                    }
                 }
                 if(resource_owner){
                     const auto provenance=resource_owner_provenance.find(*resource_owner);
@@ -7017,6 +7073,9 @@ struct PlacementCandidateProbe {
             const auto* object=world.find(pending.object);
             bool removed=object&&object->kind==odh::EntityKind::object&&
                 object->generation==pending.generation;
+            if(removed && world.reserved_entity_ids().size()>=4096){
+                removed=false;last_remove_object_diagnostic="object retirement reservation budget exhausted";
+            }
             const auto runtime=runtime_object_threads.find(pending.object);
             if(removed&&runtime!=runtime_object_threads.end()){
                 if(!entity_scheduler.remove(pending.object)){
@@ -7024,7 +7083,10 @@ struct PlacementCandidateProbe {
                     last_remove_object_diagnostic="object VM could not leave the scheduler at its safe point";
                 }else forget_runtime_object_thread(pending.object);
             }
-            if(removed)removed=world.remove(pending.object);
+            try {if(removed)removed=retire_runtime_object(pending.object);}
+            catch(const std::exception&){
+                host_failed=true;host_diagnostic="object retirement failed after execution cleanup; saving disabled";return;
+            }
             if(!removed&&last_remove_object_diagnostic.empty())
                 last_remove_object_diagnostic="RemoveObjectInstance target identity became stale";
             if(pending.vm&&!pending.vm->complete(pending.ticket,removed)){
@@ -7033,7 +7095,6 @@ struct PlacementCandidateProbe {
                 return;
             }
             if(removed){
-                created_object_origins.erase(pending.object);
                 private_animation_tables.erase(static_cast<odh::CodeOwner>(pending.object));
                 animation_table_ids.erase(static_cast<odh::CodeOwner>(pending.object));
             }

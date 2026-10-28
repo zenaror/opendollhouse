@@ -16,6 +16,25 @@ odh::VmFrame frame(std::int16_t caller=1,std::int16_t object=2) {
 int main() {
     try {
         {
+            odh::World retired;
+            require(retired.create(1,odh::EntityKind::object,{0,0,1,0}) &&
+                retired.create(2,odh::EntityKind::object) && retired.attach(1,0,2),"retirement fixture");
+            const auto generation=retired.snapshot().generation_sequence;
+            require(retired.retire(2) && !retired.find(2) && retired.find(1)->slots[0]==0 &&
+                !retired.entity_id_available(2) && !retired.create(2,odh::EntityKind::object) &&
+                retired.snapshot().generation_sequence==generation,"retirement detaches and permanently reserves ID");
+            require(!retired.retire(2) && !retired.retire(0) && !retired.retire(-1) &&
+                retired.reserved_entity_ids()==std::vector<std::int16_t>({2}),"invalid retirement has no effect");
+            std::vector<std::int16_t> reservations;
+            for(std::int16_t id=2;id<=4097;++id)reservations.push_back(id);
+            odh::WorldLimits capacity;capacity.reserved_entity_ids=reservations;
+            odh::World full(capacity);require(full.create(1,odh::EntityKind::object),"full reservation fixture");
+            const auto before=full.snapshot();
+            require(!full.retire(1) && full.find(1) && full.snapshot().word_count==before.word_count &&
+                full.snapshot().spatial_revision==before.spatial_revision && full.reserved_entity_ids()==reservations,
+                "reservation exhaustion leaves original entity and counters intact");
+        }
+        {
             odh::WorldLimits policy;
             policy.reserved_entity_ids = {3, 1, 2};
             odh::World guarded(policy);

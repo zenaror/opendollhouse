@@ -113,8 +113,8 @@ A identidade dos recursos no arquivo não autentica um índice arbitrário criad
 em memória. A camada nova não dispensa essa proveniência, o vínculo com a revisão
 persistente da propriedade ou a validação de execução nova.
 
-O formato atual da sessão não registra todo o histórico dos objetos criados
-e depois apagados antes de salvar. Portanto, preservar as origens conhecidas
-não comprova que todos os números usados anteriormente ficaram reservados.
-Esse histórico ainda precisa de um formato próprio e da integração com a
-criação e exclusão durante o jogo, antes de habilitar a nova propriedade.
+O [histórico OHST](native-object-history.md) agora registra criações retiradas
+e reservas durante as novas partidas. A preparação exige a marca de histórico
+completo e preserva as origens retiradas herdadas do salvamento. Arquivos antigos
+sem esse histórico, ou com a marca de incompleto, são recusados para preparar
+a nova propriedade; as lacunas antigas não são preenchidas por suposição.

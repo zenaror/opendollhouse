@@ -34,6 +34,8 @@ struct BaselineDerivation {
 };
 BaselineDerivation derive_baseline(const PropertyCheckpointBaseline& baseline,const SessionBundle& bundle,
     const DefinitionIndex& index,const SavedWorldLimits& limits,const SessionCreatedObjectResolver& resolve) {
+    require(bundle.object_history && bundle.object_history->complete,
+        "neutral property requires complete native object history; legacy gaps cannot be inferred");
     require(std::any_of(baseline.installed_house_sha256.begin(),baseline.installed_house_sha256.end(),
         [](auto byte){return byte!=0;}),"property baseline lacks installed house identity");
     require(baseline.world.entities.size()<=4096 && baseline.groups.size()<=4096 &&
@@ -117,6 +119,18 @@ BaselineDerivation derive_baseline(const PropertyCheckpointBaseline& baseline,co
     require(seen.size()==original.size(),"incomplete baseline property group coverage");
     for(const auto& [id,origin]:created){(void)origin;result.groups.push_back({id,{}, {id}});}
     result.reservations=baseline.reserved_ids;
+    for(const auto id:baseline.reserved_ids)
+        require(std::binary_search(bundle.object_history->reserved_entity_ids.begin(),bundle.object_history->reserved_entity_ids.end(),id),
+            "complete object history lost baseline reservations");
+    for(const auto& origin:bundle.object_history->retired_created_objects) {
+        require(!original.count(origin.id) && origin.generation>baseline.world.generation_sequence,
+            "retired creation is not fresh outside property baseline");
+        const auto* definition=index.unique(origin.guid);
+        require(definition && definition->source==origin.source && definition->asset==origin.asset &&
+            definition->chunk_id==origin.definition_chunk_id && !definition->definition.is_multitile &&
+            !definition->definition.master_id,"retired creation resource provenance differs from property resources");
+    }
+    result.reservations.insert(result.reservations.end(),bundle.object_history->reserved_entity_ids.begin(),bundle.object_history->reserved_entity_ids.end());
     result.reservations.insert(result.reservations.end(),limits.world.reserved_entity_ids.begin(),limits.world.reserved_entity_ids.end());
     for(const auto& [id,origin]:removed){(void)origin;result.reservations.push_back(id);}
     std::sort(result.reservations.begin(),result.reservations.end());
@@ -190,11 +204,14 @@ PreparedPropertyCheckpoint prepare_property_checkpoint(const NeighborhoodFamilyS
     result.lease_=lease;result.resources_=bundle.resources;result.checkpoint_sha256_=*state->checkpoint_sha256;
     result.house_number_=state->house_number;result.budget_=state->budget;
     result.installed_house_sha256_=baseline.installed_house_sha256;
+    result.retired_created_objects_=bundle.object_history->retired_created_objects;
     const std::set<std::int16_t> retired(result.survivors_.removed_ids.begin(),result.survivors_.removed_ids.end());
     for(const auto& origin:bundle.created_objects) {
         if(retired.count(origin.id))result.retired_created_objects_.push_back(origin);
         else result.created_objects_.push_back(origin);
     }
+    std::sort(result.retired_created_objects_.begin(),result.retired_created_objects_.end(),
+        [](const auto& a,const auto& b){return a.id<b.id;});
     result.removed_original_objects_=bundle.removed_original_objects;
     for(const auto& entity:baseline.world.entities)if(entity.kind==EntityKind::object && retired.count(entity.id))
         result.removed_original_objects_.push_back({entity.id,entity.generation,entity.definition->guid});

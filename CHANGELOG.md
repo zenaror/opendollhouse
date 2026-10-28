@@ -8,6 +8,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Histórico persistente de objetos criados e depois apagados, com reserva dos
+  seus números ao salvar e reabrir. Saves antigos permanecem identificados como
+  incompletos. [Formato e limites](docs/native-object-history.md).
+
 - Conferência dos objetos da casa contra a base inicial da ocupação e suas
   origens de criação ou retirada. A preparação preserva essas origens e reserva
   os números das retiradas conhecidas. [Limites](docs/property-survivors.md).

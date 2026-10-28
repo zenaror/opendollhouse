@@ -66,6 +66,7 @@ public:
     CodeOwner next_code_owner() const {return bundle_.next_code_owner;}
     bool code_owner_ids_exhausted() const {return bundle_.code_owner_ids_exhausted;}
     const std::vector<SessionCreatedObject>& created_objects() const {return bundle_.created_objects;}
+    const std::optional<SessionObjectHistory>& object_history() const {return bundle_.object_history;}
     const std::vector<SessionDeferredRemoval>& deferred_removals() const {return bundle_.deferred_removals;}
     const SessionSeatedContinuation* seated_continuation(std::int16_t id) const {
         return find_seated_session_continuation(bundle_,id);

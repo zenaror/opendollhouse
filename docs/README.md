@@ -14,6 +14,7 @@ distintas. Consulte sempre os limites do cenário e a revisão indicada.
 
 ## Documentação
 
+- [Histórico dos objetos criados e retirados](native-object-history.md)
 - [Preparação estrutural da casa após a saída](property-survivors.md)
 - [Arquitetura e próximos experimentos](architecture.md)
 - [Perfil dos formatos suportados e lacunas](formats.md)

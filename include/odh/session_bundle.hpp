@@ -86,6 +86,13 @@ struct SessionRemovedOriginalObject {
     std::uint64_t generation = 0;
     std::uint32_t guid = 0;
 };
+// Required OHST v1 when present. Absence means unknown historical coverage;
+// an incomplete history must never be promoted merely by loading/saving it.
+struct SessionObjectHistory {
+    bool complete = false;
+    std::vector<SessionCreatedObject> retired_created_objects;
+    std::vector<std::int16_t> reserved_entity_ids;
+};
 struct SessionDeferredRemoval {
     std::int16_t id = 0;
     std::uint64_t generation = 0;
@@ -203,6 +210,7 @@ struct SessionBundle {
     bool code_owner_ids_exhausted = false;
     std::vector<SessionCreatedObject> created_objects; // Ascending live IDs.
     std::vector<SessionRemovedOriginalObject> removed_original_objects; // Ascending baseline IDs.
+    std::optional<SessionObjectHistory> object_history;
     std::vector<SessionDeferredRemoval> deferred_removals; // Ordered host intents, unique identities.
     // Required FAML v1 when present. The overlay owns the checkpoint head;
     // this identifies the occupancy, not permission to overwrite a newer save.

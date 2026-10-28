@@ -66,6 +66,8 @@ private:
 // whole groups and contained children. Current groups are derived from the
 // trusted baseline plus exact created/removed provenance. Baseline groups and
 // DefinitionIndex must come from the pinned house/resource manifest.
+// Required OHST history must be explicitly complete; old/incomplete sessions
+// cannot establish retirement safety and are rejected for this operation.
 // This does not prove provenance by trusting arbitrary caller-built objects.
 // No artifact, activation, refund or overlay write is authorized by the result.
 PreparedPropertyCheckpoint prepare_property_checkpoint(

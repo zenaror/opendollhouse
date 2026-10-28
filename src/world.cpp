@@ -727,6 +727,15 @@ bool World::detach(std::int16_t container, std::size_t slot) {
     if(occupant)mark_spatial_change();
     return true;
 }
+bool World::retire(std::int16_t id) {
+    if(id<=0 || !entities_.count(id) || limits_.reserved_entity_ids.size()>=4096)return false;
+    auto reserved=limits_.reserved_entity_ids;
+    reserved.insert(std::lower_bound(reserved.begin(),reserved.end(),id),id);
+    // World containment is reciprocal and validated by every public mutation;
+    // remove/detach perform no allocation once the reservation is prepared.
+    if(!remove(id))return false;
+    limits_.reserved_entity_ids.swap(reserved);return true;
+}
 bool World::remove(std::int16_t id) {
     const auto found = entities_.find(id);
     if (found == entities_.end()) return false;

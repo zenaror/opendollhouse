@@ -304,6 +304,19 @@ std::unique_ptr<HouseholdSessionRestore> HouseholdSessionRestore::prepare(
         [](const auto& entry){return entry.index==10;});
     if(saved_lot==host.global_values.end()||saved_lot->value!=*globals.read(10))
         throw FormatError("session lot global differs from selected house");
+    {
+        auto& reserved=limits.world.world.reserved_entity_ids;
+        // Preserve known old removals even in legacy profiles. A live reused
+        // numeric ID remains a legacy compatibility case, never a new claim of
+        // complete history or permission for neutral-property preparation.
+        for(const auto& removed:bundle.removed_original_objects)
+            if(std::none_of(bundle.world.entities.begin(),bundle.world.entities.end(),
+                [&](const auto& entity){return entity.id==removed.id;}))reserved.push_back(removed.id);
+        if(bundle.object_history)
+        reserved.insert(reserved.end(),bundle.object_history->reserved_entity_ids.begin(),bundle.object_history->reserved_entity_ids.end());
+        std::sort(reserved.begin(),reserved.end());reserved.erase(std::unique(reserved.begin(),reserved.end()),reserved.end());
+        if(reserved.size()>4096)throw FormatError("restored object-history reservation union exceeds limit");
+    }
     auto result=std::unique_ptr<HouseholdSessionRestore>(new HouseholdSessionRestore(
         std::move(bundle),globals,bootstrap,family,limits.world.world,limits.relationships.relationships));
     if(!result->world_->restore_snapshot(result->bundle_.world)||

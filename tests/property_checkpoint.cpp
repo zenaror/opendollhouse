@@ -37,6 +37,7 @@ odh::SessionBundle fixture() {
     check(scheduler.add(1,vm,[](std::uint64_t){return true;},[]{return true;},[]{return true;}),"fixture scheduler");
     odh::SessionBundle result;
     result.generic_execution=true;
+    result.object_history=odh::SessionObjectHistory{true,{}, {100}};
     result.resources.resource_fingerprint.fill(0x5a);result.host.neighborhood_mode=1;
     result.host.house_number=7;result.host.family_chunk_id=21;result.host.family_number=900;
     result.host.resident_guid=30;result.host.resident_neighbor_id=11;result.host.runtime_avatar_id=1;
@@ -132,6 +133,7 @@ int main(){try {
     auto gone_bytes=encode(disappeared);auto gone_overlay=commit(initial,gone_bytes);
     rejects([&]{prepare(gone_overlay,gone_bytes);},"unrecorded original removal accepted");
     disappeared.removed_original_objects={{4,bundle.world.entities[3].generation,40}};
+    disappeared.object_history->reserved_entity_ids={4,100};
     gone_bytes=encode(disappeared);gone_overlay=commit(initial,gone_bytes);
     const auto gone=prepare(gone_overlay,gone_bytes);
     check(gone.world().snapshot().entities.empty() && gone.removed_original_objects().size()==3 &&
@@ -142,6 +144,7 @@ int main(){try {
     rejects([&]{prepare(forged_overlay,forged_bytes);},"forged prior-removal identity accepted");
     World split;check(split.restore_snapshot(bundle.world) && split.remove(3),"fixture split group");
     auto partial=bundle;partial.world=split.snapshot();partial.removed_original_objects={{3,bundle.world.entities[2].generation,11}};
+    partial.object_history->reserved_entity_ids={3,100};
     const auto partial_bytes=encode(partial);const auto partial_overlay=commit(initial,partial_bytes);
     rejects([&]{prepare(partial_overlay,partial_bytes);},"checkpoint split a baseline group");
     auto altered=bundle;altered.world.entities[3].saved_object_banks->object_data[12]=99;
@@ -178,6 +181,7 @@ int main(){try {
     check(reuse.declare_object_word(4,43,16),"fixture reused flags");
     auto reused=bundle;reused.world=reuse.snapshot();reused.created_objects={{4,reuse.find(4)->generation,40,"objects.far","objects.iff",40}};
     reused.removed_original_objects={{4,bundle.world.entities[3].generation,40}};
+    reused.object_history.reset(); // Old GEXP allowed numeric reuse, OHST does not.
     const auto reused_bytes=encode(reused);const auto reused_overlay=commit(initial,reused_bytes);
     rejects([&]{prepare_property_checkpoint(baseline,reused_overlay,21,reused_bytes,bundle.resources,
         definitions,property_base,{}, {},resolver);},"reused numeric baseline ID silently lost old-reference protection");
@@ -195,10 +199,24 @@ int main(){try {
         "fixture entire group already removed");
     auto already_removed=bundle;already_removed.world=removed_group.snapshot();
     already_removed.removed_original_objects={{2,bundle.world.entities[1].generation,10},{3,bundle.world.entities[2].generation,11}};
+    already_removed.object_history->reserved_entity_ids={2,3,100};
     const auto group_bytes=encode(already_removed);const auto group_overlay=commit(initial,group_bytes);
     const DefinitionIndex missing_old_definition({definition(30,2,0),definition(11,4,0,7,1),definition(12,4,0,7,-1),definition(40,4,3)});
     rejects([&]{prepare_property_checkpoint(baseline,group_overlay,21,group_bytes,bundle.resources,
         missing_old_definition,property_base);},"fully removed baseline group hid missing definition");
+    auto legacy=bundle;legacy.object_history.reset();
+    const auto legacy_bytes=encode(legacy);const auto legacy_overlay=commit(initial,legacy_bytes);
+    rejects([&]{prepare(legacy_overlay,legacy_bytes);},"legacy missing lifetime history silently promoted to complete");
+    legacy.object_history=SessionObjectHistory{false,{}, {100}};
+    const auto incomplete_bytes=encode(legacy);const auto incomplete_overlay=commit(initial,incomplete_bytes);
+    rejects([&]{prepare(incomplete_overlay,incomplete_bytes);},"explicit incomplete history accepted for neutral property");
+    auto history=bundle;history.world.generation_sequence+=1;
+    history.object_history->retired_created_objects={{5,history.world.generation_sequence,40,"objects.far","objects.iff",40}};
+    history.object_history->reserved_entity_ids={5,100};
+    const auto history_bytes=encode(history);const auto history_overlay=commit(initial,history_bytes);
+    const auto historical=prepare(history_overlay,history_bytes);
+    check(historical.retired_created_objects().size()==1 && historical.retired_created_objects()[0].id==5 &&
+        !historical.world().entity_id_available(5),"created-then-deleted history preserved across checkpoint preparation");
     check(encode(bundle)==bytes && encode_family_overlay(overlay)==encode_family_overlay(commit(initial,bytes)),
         "checkpoint and expected overlay untouched");
     std::cout<<"property checkpoint tests passed\n";return 0;
