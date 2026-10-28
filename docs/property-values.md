@@ -98,3 +98,6 @@ A [soma dos bens](property-object-assets.md) acrescenta a classificação comple
 de grupos e objetos simples, consultando o World atual. Também documenta o
 perfil explícito de arredondamento em inteiros; nenhum desses diagnósticos
 publica dinheiro ou habilita o despejo.
+
+A [composição da avaliação](property-valuation.md) recalcula esses componentes
+a partir do estado nativo e não reutiliza totais antigos do SIMI.

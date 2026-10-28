@@ -106,3 +106,6 @@ conservaram seus SHA-256.
 
 Esses resultados não demonstram despejo completo, remoção segura de referências,
 valor final de revenda ou publicação conjunta de propriedade e dinheiro.
+
+A [avaliação completa](property-valuation.md) combina esses grupos com terreno
+e construção sob um perfil explícito, ainda sem efetuar a saída da família.

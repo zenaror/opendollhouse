@@ -8,6 +8,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Avaliação completa da propriedade em modo de inspeção, com terreno, bens e
+  construção recalculados; valores antigos do save não substituem dados ausentes.
+  A operação ainda não aplica reembolso. [Alcance](docs/property-valuation.md).
+
 - Inspeção da soma dos bens por objeto completo, com separação dos objetos
   de construção e recusa de inventários incompletos. Perfil explícito de
   arredondamento em inteiros para a futura avaliação financeira.

@@ -4,15 +4,20 @@
 #include "saved_tail_json.hpp"
 #include "odh/property_value.hpp"
 #include "odh/property_object_assets.hpp"
-#include "saved_architecture_resources.hpp"
+#include "property_architecture_price_resources.hpp"
+#include "odh/property_valuation.hpp"
+#include "odh/lot.hpp"
 #include <set>
 #include <iostream>
 #include <utility>
 
 int main(int argc,char** argv){try{
-    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--property-values] [--property-assets] [--import-word-budget WORDS] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
+    if(argc<2)throw odh::FormatError("usage: HOUSE_IFF --object-definitions FAR [--object-definition-file IFF] [--neighborhood IFF] [--property-values] [--property-assets] [--property-valuation-pc24 --architecture-multiplier-bits HEX8 --build-iff FILE --floor-globals FILE --wall-globals FILE [--resource-file FILE | --resource-far FAR]...] [--import-word-budget WORDS] [--verify-saved-threads [--import-saved-threads-dormant] [--include-object-threads --saved-thread-entity ID] [--semiglobal FAR ENTRY] [--global FAR ENTRY]]");
     const std::string house=argv[1];std::vector<SavedDefinitionSource> sources;std::optional<std::string> neighborhood;
     std::optional<std::uint64_t> import_word_budget;
+    bool property_valuation=false;std::optional<std::uint32_t> multiplier_bits;
+    std::string build_iff,floor_globals,wall_globals;
+    std::vector<odh::ArchitectureResourceSource> price_sources;
     std::optional<std::uint16_t> saved_thread_entity;bool include_object_threads=false,property_values=false,property_assets=false;
     std::optional<SavedThreadCodeResource> semiglobal,global;bool verify_saved_threads=false,import_saved_threads_dormant=false;
     for(int n=2;n<argc;++n){const std::string option=argv[n];
@@ -27,6 +32,22 @@ int main(int argc,char** argv){try{
         else if(option=="--include-object-threads"&&!include_object_threads)include_object_threads=true;
         else if(option=="--property-values"&&!property_values)property_values=true;
         else if(option=="--property-assets"&&!property_assets)property_assets=true;
+        else if(option=="--property-valuation-pc24"&&!property_valuation)property_valuation=true;
+        else if(option=="--architecture-multiplier-bits"&&!multiplier_bits&&n+1<argc) {
+            const std::string bits=argv[++n];
+            if(bits.size()!=8 || bits.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos)
+                throw odh::FormatError("architecture multiplier must be exactly eight hexadecimal digits");
+            multiplier_bits=static_cast<std::uint32_t>(std::stoul(bits,nullptr,16));
+        }
+        else if(n+1<argc && (option=="--build-iff" || option=="--floor-globals" || option=="--wall-globals")) {
+            auto& destination=option=="--build-iff"?build_iff:option=="--floor-globals"?floor_globals:wall_globals;
+            if(!destination.empty())throw odh::FormatError("duplicate property valuation resource");
+            destination=argv[++n];
+        }
+        else if(n+1<argc && (option=="--resource-file" || option=="--resource-far")) {
+            if(price_sources.size()>=256)throw odh::FormatError("price source count exceeds limit");
+            price_sources.push_back({argv[++n],option=="--resource-file"?odh::ArchitectureResourceSourceKind::loose_file:odh::ArchitectureResourceSourceKind::far1_archive});
+        }
         else if(option=="--import-word-budget"&&!import_word_budget&&n+1<argc) {
             const std::string value=argv[++n];
             if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos)
@@ -45,6 +66,11 @@ int main(int argc,char** argv){try{
         else throw odh::FormatError("invalid saved World option");
     }
     if(sources.empty())throw odh::FormatError("explicit definition source required");
+    if(property_valuation) {
+        if(!multiplier_bits || build_iff.empty() || floor_globals.empty() || wall_globals.empty())
+            throw odh::FormatError("PC24 valuation requires explicit multiplier bits and build/floor/wall global files");
+    } else if(multiplier_bits || !build_iff.empty() || !floor_globals.empty() || !wall_globals.empty() || !price_sources.empty())
+        throw odh::FormatError("valuation resources require --property-valuation-pc24");
     if(import_saved_threads_dormant&&!verify_saved_threads)
         throw odh::FormatError("dormant saved-thread import requires --verify-saved-threads");
     if((semiglobal&&(semiglobal->archive.size()>4096||semiglobal->entry.size()>4096))||
@@ -84,21 +110,40 @@ int main(int argc,char** argv){try{
     if(!session.all_dormant_bindings_valid())
         throw odh::FormatError("saved World session lost a dormant thread entity binding");
     std::optional<odh::PropertyObjectAssets> assets;
+    std::optional<odh::PropertyValuation> valuation;
+    std::optional<odh::Simi> valuation_simi;
+    std::optional<odh_tools::PropertyArchitecturePriceResources> valuation_resources;
     unsigned asset_dimension=0;
-    if(property_assets) {
-        const auto architecture=saved_architecture_resource(house);
-        if(architecture.architecture.width!=architecture.architecture.height)
-            throw odh::FormatError("property asset valuation requires a square saved architecture");
-        asset_dimension=architecture.architecture.width;
-        // The imported World has not ticked; its validated saved group registry
-        // is complete for this diagnostic. Runtime callers need their live registry.
+    if(property_assets || property_valuation) {
+        std::optional<SavedArchitectureResource> assets_architecture;
+        if(property_valuation) {
+            valuation_resources=odh_tools::load_property_architecture_prices(house,build_iff,floor_globals,wall_globals,price_sources);
+            with_iff_file(house,[&](const auto& view){odh::Limits limits;limits.iff_chunks=4096;
+                odh::iff_chunks(view,[&](const auto& chunk){
+                    if(chunk.type!="SIMI" || chunk.id!=1)return;
+                    if(valuation_simi)throw odh::FormatError("ambiguous valuation SIMI1");
+                    valuation_simi=odh::read_simi(chunk.payload);
+                },limits);
+            });
+            if(!valuation_simi)throw odh::FormatError("property valuation requires explicit saved SIMI1 lot base");
+        } else assets_architecture=saved_architecture_resource(house);
+        const auto& architecture=valuation_resources?valuation_resources->saved.architecture:assets_architecture->architecture;
+        if(architecture.width!=architecture.height)
+            throw odh::FormatError("property valuation requires a square saved architecture");
+        asset_dimension=architecture.width;
+        // This World has not ticked. Its validated group inventory is complete;
+        // a running caller must supply its current authoritative group registry.
         auto partition=loaded->multitile_groups;std::set<std::int16_t> grouped;
         for(const auto& group:partition)for(const auto id:group.members)grouped.insert(id);
         for(auto id=loaded->world->next_entity(0);id;id=loaded->world->next_entity(*id))if(!grouped.count(*id)) {
             const auto* entity=loaded->world->find(*id);
             partition.push_back({*id,entity->definition?entity->definition->master_guid:std::nullopt,{*id}});
         }
-        assets=odh::inspect_property_object_assets(*loaded->world,*index,partition,true,asset_dimension);
+        if(property_valuation) {
+            valuation=odh::inspect_property_valuation({*loaded->world,*index,partition,true,architecture,
+                valuation_resources->prices,valuation_simi->lot_value,*multiplier_bits,odh::PropertyValuationProfile::comparison_pc24});
+            if(property_assets)assets=valuation->objects;
+        } else assets=odh::inspect_property_object_assets(*loaded->world,*index,partition,true,asset_dimension);
     }
     std::cout<<"{\"evidence\":\"ODH_saved_dormant_World_import\",\"house\":"<<json_bytes(house)
         <<",\"world_entities_restored\":true,\"saved_threads_restored\":false,\"architecture_loaded\":false,\"rendered\":false"
@@ -215,6 +260,22 @@ int main(int argc,char** argv){try{
         }
         std::cout<<"]}";
     }
+    if(valuation) {
+        const auto number=[](const auto& value){return value?std::to_string(*value):"null";};
+        std::cout<<",\"property_valuation\":{\"inspection_only\":true,\"refund_authorized\":false,\"original_runtime_verified\":false,\"profile\":\"comparison_pc24\""
+            <<",\"structural_profile\":\"comparison_stock_catalog_initialization\",\"multiplier_bits\":"<<*multiplier_bits
+            <<",\"lot_base\":"<<valuation_simi->lot_value<<",\"status\":"<<json_bytes(odh::property_valuation_status_name(valuation->status))
+            <<",\"reason\":"<<json_bytes(odh::property_valuation_reason_name(valuation->reason))
+            <<",\"object_reason\":"<<json_bytes(odh::property_object_assets_reason_name(valuation->objects.reason))
+            <<",\"geometry_reason\":"<<json_bytes(odh::property_architecture_value_reason_name(valuation->geometry.reason))
+            <<",\"scale_reason\":"<<(valuation->scale_reason?json_bytes(odh::property_value_scale_reason_name(*valuation->scale_reason)):"null")
+            <<",\"primary_objects\":"<<number(valuation->objects.primary)<<",\"architecture_objects\":"<<number(valuation->objects.architecture_objects)
+            <<",\"geometry_total\":"<<(valuation->geometry.status==odh::PropertyArchitectureValueStatus::resolved?std::to_string(valuation->geometry.total):"null")
+            <<",\"combined_architecture\":"<<number(valuation->combined_architecture)<<",\"scaled_architecture\":"<<number(valuation->scaled_architecture)
+            <<",\"property_value\":"<<number(valuation->property_value)
+            <<",\"dynamic_price_resources_loaded\":"<<valuation_resources->loaded<<'}';
+    }
     std::cout<<"}\n";
-    return assets && assets->status!=odh::PropertyObjectAssetsStatus::resolved?3:0;
+    return (assets && assets->status!=odh::PropertyObjectAssetsStatus::resolved) ||
+        (valuation && valuation->status!=odh::PropertyValuationStatus::resolved)?3:0;
 }catch(const std::exception& e){std::cerr<<"saved World error: "<<e.what()<<'\n';return 2;}}
