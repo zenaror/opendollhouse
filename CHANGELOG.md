@@ -8,6 +8,9 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Inspetor somente leitura da destinação candidata dos objetos ao desocupar
+  uma casa, com distinção entre móveis, construção e recursos não resolvidos.
+  Não remove objetos nem confirma um despejo. [Limites](docs/property-disposition.md).
 - Motor C/C++ com leitores de recursos, execução parcial das ações dos Sims,
   rotas e interpretação dos dados de lotes. A cobertura do jogo permanece incompleta.
 - Interface experimental Linux com vizinhança, seleção de moradores, criação

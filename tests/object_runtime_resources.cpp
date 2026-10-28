@@ -92,6 +92,12 @@ odh::ObjectRuntimeResources read(const std::string& bytes,
 int main() {
     try {
         const auto resources = read(iff());
+        {
+            const auto bytes=iff();std::istringstream stream(bytes,std::ios::binary);
+            auto changed=resources.definition;changed.build_mode_type=7;
+            rejects([&]{odh::read_object_runtime_resources(odh::View(stream,bytes.size()),
+                {"Objects.far","Food.iff",16808,changed});},"changed BuildModeType rejects stale definition identity");
+        }
         require(resources.definition.guid == 0xf301e375 &&
                     resources.definition.slot_table_id == 128,
                 "definition identity and SlotID come from the selected OBJD");

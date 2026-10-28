@@ -16,7 +16,7 @@ ObjectDefinition read_object_definition(const View& payload) {
                     : static_cast<std::int32_t>(sub) - 65536);
     const auto master = prefix.le16(20);
     ObjectDefinition result{version, prefix.le32(28), prefix.le16(18), master, signed_sub,
-            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}, {}, {}, {}};
+            master != 0, extent, payload.size() - extent, prefix.le16(14), {}, {}, {}, {}, {}, {}};
     if (payload.size() >= 42) {
         result.slot_table_id = payload.le16(40);
         result.header_extent = 42;
@@ -43,6 +43,12 @@ ObjectDefinition read_object_definition(const View& payload) {
     // FootprintMask at field 75 (byte offsets 134/154 after the version word).
     // Only expose the pair when both are present; shorter metadata views remain
     // valid for callers that need only the stable 32-byte prefix.
+    constexpr std::uint64_t build_mode_extent=140;
+    if(payload.size()>=build_mode_extent) {
+        result.build_mode_type=payload.le16(138);
+        result.header_extent=build_mode_extent;
+        result.remaining_bytes=payload.size()-build_mode_extent;
+    }
     constexpr std::uint64_t collision_extent=156;
     if(payload.size()>=collision_extent) {
         result.tile_width=payload.le16(134);

@@ -13,7 +13,7 @@ bool same_definition(const ObjectDefinition& a,const ObjectDefinition& b) {
     return a.version==b.version && a.guid==b.guid && a.object_type==b.object_type &&
         a.master_id==b.master_id && a.sub_index==b.sub_index && a.is_multitile==b.is_multitile &&
         a.header_extent==b.header_extent && a.remaining_bytes==b.remaining_bytes &&
-        a.level_offset==b.level_offset;
+        a.level_offset==b.level_offset && a.build_mode_type==b.build_mode_type;
 }
 template<class T> void count_matches(std::int64_t count,const std::vector<T>& values) {
     check(count>=0 && static_cast<std::uint64_t>(count)==values.size(),"saved world serialized count mismatch");

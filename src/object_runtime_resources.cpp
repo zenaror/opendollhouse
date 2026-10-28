@@ -33,7 +33,8 @@ ObjectRuntimeResources read_object_runtime_resources(
     auto definition = read_object_definition(*selected.objd);
     const auto& indexed = candidate.definition;
     if (definition.version != indexed.version || definition.guid != indexed.guid ||
-        definition.master_id != indexed.master_id || definition.sub_index != indexed.sub_index)
+        definition.master_id != indexed.master_id || definition.sub_index != indexed.sub_index ||
+        definition.build_mode_type != indexed.build_mode_type)
         throw FormatError("selected OBJD identity differs from the definition index");
     if (!definition.slot_table_id)
         throw FormatError("selected OBJD has no complete SlotID field");

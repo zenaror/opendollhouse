@@ -21,6 +21,9 @@ struct ObjectDefinition {
     // Runtime construction inputs. Exposed only when each complete field is present.
     std::optional<std::uint16_t> slot_table_id;
     std::optional<std::uint16_t> num_attributes;
+    // Raw BuildModeType at byte0x8a in supported layouts. Missing differs
+    // from zero (ordinary buy-mode); do not guess it from object type.
+    std::optional<std::uint16_t> build_mode_type;
 };
 
 // Explicit OBJD136/138 metadata profiles through TreeTableID/GUID (32 bytes),

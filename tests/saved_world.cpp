@@ -228,6 +228,7 @@ int main() {
         reject_change([](auto& v){v[1].tail.person->motive_data_bits[4]=0x7fc01234U;},"current NaN motive rejected");
         reject_change([](auto& v){v[1].tail.person->person_data.resize(81);},"person extent rejected");
         reject_change([](auto& v){v[1].tail.person->interaction_queue[0].target_id=55;},"dormant queue dangling target rejected");
+        reject_change([](auto& v){v[2].definition.build_mode_type=3;},"changed BuildModeType cannot replace pinned definition");
         reject_change([](auto& v){v[2].common.stack[0].local_count=2;},"frame count mismatch rejected");
         reject_change([](auto& v){v[2].common.relationships[0].target_id=55;},"relationship dangling target rejected");
         reject_change([](auto& v){v[2].common.relationships[0].value_count=4;},"relationship count mismatch rejected");

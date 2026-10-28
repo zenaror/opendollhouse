@@ -45,7 +45,7 @@ int main() {
         check(metadata.sub_index == -1 && metadata.is_multitile);
         check(metadata.header_extent == 32 && metadata.remaining_bytes == 0);
         check(!metadata.level_offset&&!metadata.tile_width&&!metadata.footprint_mask&&
-              !metadata.slot_table_id&&!metadata.num_attributes);
+              !metadata.slot_table_id&&!metadata.num_attributes&&!metadata.build_mode_type);
         // read() destroys its stream: metadata remains independently owned.
         check(metadata.guid == 0xfedcba98);
 
@@ -92,7 +92,18 @@ int main() {
                   parsed.num_attributes==0&&parsed.header_extent==156&&parsed.remaining_bytes==4);
             collision.resize(155);
             const auto partial=read(collision);
-            check(partial.level_offset==0x1234&&!partial.tile_width&&!partial.footprint_mask&&partial.header_extent==118);
+            check(partial.level_offset==0x1234&&!partial.tile_width&&!partial.footprint_mask&&
+                  partial.build_mode_type==0&&partial.header_extent==140);
+        }
+        for (auto version : {136u,138u}) {
+            std::string definition(142,'\x5a');put32(definition,0,version);
+            put16(definition,138,0x8123);
+            const auto complete=read(definition);
+            check(complete.build_mode_type==0x8123&&complete.header_extent==140&&complete.remaining_bytes==2);
+            definition.resize(139);
+            check(!read(definition).build_mode_type);
+            definition.resize(140);put16(definition,138,0);
+            check(read(definition).build_mode_type==0);
         }
         for (std::uint32_t version : {0u, 137u, 139u, 140u, 141u, 142u, 0xffffffffu}) {
             auto unsupported = bytes;

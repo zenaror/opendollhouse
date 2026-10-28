@@ -86,7 +86,7 @@ the other entire package to be complete before work begins.
 
 | ID / state | Source family → native owner | Delivery and acceptance gate | Depends on |
 | --- | --- | --- | --- |
-| P01 Open | SAVE/VM/DATA → occupancy_projection, object resources | Verify retention flag, effective master/build type, actors/NPCs and groups. Classify representative installed objects with source-backed per-case results; no indiscriminate delete/retain rule. | Existing source audit |
+| P01 Partial | SAVE/VM/DATA → occupancy_projection, object resources | [Non-mutating legacy-object inspector](../property-disposition.md) reads optional build category and candidate retention/master rules. Complete group, actor authority, flag mapping and containment behavior remain unproven; no eviction is enabled. | Existing source audit |
 | P02 Open | BUILD/SAVE → lot values, family_overlay | Compute current asset value, configurable architecture factor and rounding; compare values before/after object changes, save and eviction. No use of original purchase price as an invented refund. | P01 |
 | P03 Open | SAVE → session_archive/bundle, family journal | Immutable property payload, baseline pin/revision and ONE overlay CAS for property/vacancy/refund. Exercise conflict, failed preparation, missing/corrupt head and recovery without resurrecting stale property. | P01/P02; design document |
 | P04 Open | SAVE/UI → game entry, transfer, renderer | Play/change lot → save → evict → enter with family → reopen. Retain proper building state, dispose/refund correct goods, preserve personal progress, never restore prior family VMs. | P03 |
