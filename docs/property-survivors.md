@@ -10,6 +10,26 @@ deve obtê-la pela política de destinação auditada e manter fixos o salvament
 os recursos e a autorização da família. Esta função ainda não faz essa ligação
 com o salvamento da família nem decide o reembolso.
 
+`prepare_property_checkpoint` faz a ligação com os bytes exatos do último
+salvamento confirmado da ocupação atual. Reproduz o histórico da vizinhança,
+confere o SHA-256, a família, a casa, o período de ocupação, o dinheiro e a
+identidade dos recursos. Salvamentos antigos preservados para transferência
+de moradores são recusados como fonte da casa atual.
+
+Essa camada compara os moradores do salvamento com os GUIDs da família e só
+então produz as aprovações de retirada com número, geração e GUID. A seleção
+usa os dados atuais de permanência de **cada parte** dos objetos. Uma parte
+qualificada pode retirar o grupo inteiro, mesmo quando sua parte principal
+tem a marca de permanência. Isso segue o laço de exclusão identificado na
+análise estática; a regra que examina somente a parte principal pertence ao
+cálculo de valor, não a esse laço.
+
+O resultado tem acesso somente de leitura ao candidato e guarda a identidade
+do salvamento e da ocupação. `verify_overlay` compara o histórico completo
+esperado com o observado; até uma alteração em outra família exige nova
+preparação. Essa comparação em memória ainda não substitui a confirmação
+atômica no armazenamento.
+
 ## Regras implementadas
 
 - Retirar uma parte retira seu grupo completo. Retirar um objeto retira também
@@ -43,6 +63,13 @@ grupos, proteção de atores, preservação de vizinhos e dados arbitrários,
 referências inválidas, origem grande demais, esgotamento das reservas e
 retirada de todos os objetos sem reiniciar a sequência de gerações.
 
+O teste `property_checkpoint` usa arquivos de sessão sintéticos codificados
+pelo formato normal para verificar a ligação ao salvamento atual. Cobre
+alterações nos valores e marcas atuais sem mudar seus bancos antigos,
+qualificação de uma parte secundária, recursos incorretos, dinheiro e ocupação
+incompatíveis, moradores diferentes, corrupção, salvamento anterior, saída e
+reentrada, além de alterações em outra família.
+
 Esta é uma preparação **estrutural**, ainda sem autorização para ativar a casa.
 Não copia filas, pilhas de execução ou serviços externos da sessão anterior.
 Os campos duráveis que ainda podem conter referências precisam de auditoria;
@@ -51,3 +78,9 @@ do original. Ainda faltam a proveniência de objetos criados/removidos, a
 arquitetura, a reconstrução de execução nova, o formato persistente e a
 publicação conjunta com a saída e o dinheiro da família. Consulte o
 [projeto de persistência](native-property-persistence-design.md).
+
+Os grupos completos, as reservas de números e as definições ainda precisam ser
+reconstruídos pelo chamador a partir da casa e do conjunto de recursos fixados.
+A identidade dos recursos no arquivo não autentica um índice arbitrário criado
+em memória. A camada nova não dispensa essa proveniência, o vínculo com a revisão
+persistente da propriedade ou a validação de execução nova.

@@ -8,6 +8,11 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Ligação da preparação da casa ao salvamento confirmado da família atual,
+  com recusa de arquivos antigos e de alterações posteriores na vizinhança.
+  A retirada considera cada parte dos móveis, conforme a análise estática
+  do perfil original. [Alcance](docs/property-survivors.md).
+
 - Preparação em C++ de uma cópia estrutural da casa após a retirada de objetos,
   com grupos completos, conteúdo dos móveis e proteção de Sims não autorizados.
   Ainda não confirma a mudança nem aplica reembolso.

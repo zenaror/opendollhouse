@@ -16,6 +16,15 @@ is not yet the required executable neutral artifact or prepared release receipt;
 checkpoint/resource pinning, typed-reference/activation coverage, architecture,
 provenance and compound publication remain open.
 
+`prepare_property_checkpoint` now checks that the supplied session bytes are
+the current committed checkpoint of the effective managed occupancy, derives
+actor approvals from its authenticated family roster, and applies the audited
+disposition to every current part before structural preparation. Its read-only
+result pins the complete expected overlay for later comparison. This is not an
+atomic commit or proof that caller-provided group, definition and reservation
+provenance matches the resource manifest; the remaining boundaries above still
+apply.
+
 Use the existing C++ World, resource loaders, session validation, immutable archive
 store and neighborhood overlay transaction. Do not introduce a parallel simulation
 engine or overwrite installed commercial houses. See
