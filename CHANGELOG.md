@@ -8,6 +8,10 @@ Ainda não há uma versão completa jogável publicada.
 
 ### Adicionado
 
+- Conferência dos objetos da casa contra a base inicial da ocupação e suas
+  origens de criação ou retirada. A preparação preserva essas origens e reserva
+  os números das retiradas conhecidas. [Limites](docs/property-survivors.md).
+
 - Ligação da preparação da casa ao salvamento confirmado da família atual,
   com recusa de arquivos antigos e de alterações posteriores na vizinhança.
   A retirada considera cada parte dos móveis, conforme a análise estática

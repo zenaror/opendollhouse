@@ -25,6 +25,14 @@ atomic commit or proof that caller-provided group, definition and reservation
 provenance matches the resource manifest; the remaining boundaries above still
 apply.
 
+The checkpoint preparation now derives current groups from a trusted occupied
+baseline and exact creation/removal records, validates immutable metadata and
+resource reconstruction for created singletons, and preserves separate surviving
+creation, retired creation, original-object removal and actor retirement records.
+Known prior removals join ID reservations. Baseline numeric-ID reuse rejects.
+The old session format still omits created-then-deleted history; complete lifetime
+ID retirement and neutral-artifact activation are not established by this step.
+
 Use the existing C++ World, resource loaders, session validation, immutable archive
 store and neighborhood overlay transaction. Do not introduce a parallel simulation
 engine or overwrite installed commercial houses. See

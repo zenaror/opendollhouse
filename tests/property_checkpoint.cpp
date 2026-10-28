@@ -56,13 +56,14 @@ int main(){try {
     const DefinitionIndex definitions({definition(30,2,0),definition(10,4,0,7,0),definition(11,4,0,7,1),
         definition(12,4,0,7,-1),definition(40,4,3)});
     const std::vector<SavedMultitileGroup> groups{{1,{}, {1}}, {2,12,{2,3}}, {4,{}, {4}}};
+    PropertyCheckpointBaseline property_base{bundle.world,groups,{100},{}};property_base.installed_house_sha256.fill(0x61);
     const auto initial=plan_family_managed_move_in_overlay(baseline.families,baseline.identity,nullptr,21,7,0);
     const auto encode=[&](const SessionBundle& value){return encode_session_bundle(value);};
     const auto commit=[&](const FamilyOverlay& prior,const std::vector<std::uint8_t>& bytes,std::int32_t budget=20000){
         return plan_family_checkpoint_overlay(baseline.families,baseline.identity,&prior,21,7,1,budget,sha256(bytes.data(),bytes.size()));};
     auto bytes=encode(bundle);auto overlay=commit(initial,bytes);
     const auto prepare=[&](const FamilyOverlay& expected,const std::vector<std::uint8_t>& encoded){
-        return prepare_property_checkpoint(baseline,expected,21,encoded,bundle.resources,definitions,groups,true);};
+        return prepare_property_checkpoint(baseline,expected,21,encoded,bundle.resources,definitions,property_base);};
     auto result=prepare(overlay,bytes);
     check(result.removed_ids()==std::vector<std::int16_t>({1,2,3}),"per-part predicate removes complete group despite root retention");
     check(result.world().snapshot().entities.size()==1 && result.world().find(4)->object_words.at(41)==456 &&
@@ -81,7 +82,7 @@ int main(){try {
     auto corrupt=bytes;corrupt.back()^=1;
     rejects([&]{prepare(overlay,corrupt);},"corrupt checkpoint accepted");
     auto resources=bundle.resources;resources.resource_fingerprint[0]^=1;
-    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,resources,definitions,groups,true);},"wrong resources accepted");
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,resources,definitions,property_base);},"wrong resources accepted");
     rejects([&]{prepare(initial,bytes);},"uncommitted archive accepted");
     const auto released=plan_family_managed_move_out_overlay(baseline.families,baseline.identity,&overlay,21);
     rejects([&]{prepare(released,bytes);},"released historical checkpoint accepted");
@@ -106,11 +107,98 @@ int main(){try {
         "current retention flags replace stale source saved-bank flags");
     const DefinitionIndex wrong_policy({definition(30,2,0),definition(10,4,0,7,0),definition(11,4,0,7,1),
         definition(12,4,0,7,-1),definition(40,2,3)});
-    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,wrong_policy,groups,true);},
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,wrong_policy,property_base);},
         "nonresident OBJD actor silently authorized");
     SavedWorldLimits small;small.world.entities=1;
-    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,definitions,groups,true,small);},
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,definitions,property_base,small);},
         "oversized current checkpoint hidden by eviction");
+    check(result.removed_original_objects().size()==2 && result.removed_original_objects()[0].id==2 &&
+        result.removed_original_objects()[1].id==3 && result.retired_entities().size()==3,
+        "avatar retirement is separate from original object removal provenance");
+    check(result.world().reserved_entity_ids()==std::vector<std::int16_t>({1,2,3,100}) &&
+        result.installed_house_sha256()==property_base.installed_house_sha256,"baseline reserves and house identity pinned");
+    auto bad_base=property_base;bad_base.groups.pop_back();
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,definitions,bad_base);},
+        "incomplete baseline group inventory accepted");
+    bad_base=property_base;bad_base.installed_house_sha256.fill(0);
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,definitions,bad_base);},
+        "missing installed house identity accepted");
+    bad_base=property_base;bad_base.reserved_ids={100,100};
+    rejects([&]{prepare_property_checkpoint(baseline,overlay,21,bytes,bundle.resources,definitions,bad_base);},
+        "duplicate baseline reservations accepted");
+    auto disappeared=bundle;
+    World changed;check(changed.restore_snapshot(bundle.world) && changed.remove(4),"fixture prior removal");
+    disappeared.world=changed.snapshot();
+    auto gone_bytes=encode(disappeared);auto gone_overlay=commit(initial,gone_bytes);
+    rejects([&]{prepare(gone_overlay,gone_bytes);},"unrecorded original removal accepted");
+    disappeared.removed_original_objects={{4,bundle.world.entities[3].generation,40}};
+    gone_bytes=encode(disappeared);gone_overlay=commit(initial,gone_bytes);
+    const auto gone=prepare(gone_overlay,gone_bytes);
+    check(gone.world().snapshot().entities.empty() && gone.removed_original_objects().size()==3 &&
+        gone.world().reserved_entity_ids()==std::vector<std::int16_t>({1,2,3,4,100}),
+        "prior object removal combined with eviction and reserved");
+    auto forged=disappeared;forged.removed_original_objects[0].guid=999;
+    auto forged_bytes=encode(forged);auto forged_overlay=commit(initial,forged_bytes);
+    rejects([&]{prepare(forged_overlay,forged_bytes);},"forged prior-removal identity accepted");
+    World split;check(split.restore_snapshot(bundle.world) && split.remove(3),"fixture split group");
+    auto partial=bundle;partial.world=split.snapshot();partial.removed_original_objects={{3,bundle.world.entities[2].generation,11}};
+    const auto partial_bytes=encode(partial);const auto partial_overlay=commit(initial,partial_bytes);
+    rejects([&]{prepare(partial_overlay,partial_bytes);},"checkpoint split a baseline group");
+    auto altered=bundle;altered.world.entities[3].saved_object_banks->object_data[12]=99;
+    auto altered_bytes=encode(altered);auto altered_overlay=commit(initial,altered_bytes);
+    rejects([&]{prepare(altered_overlay,altered_bytes);},"immutable original banks changed");
+    altered=bundle;altered.world.entities[3].unattached_slot=99;
+    altered_bytes=encode(altered);altered_overlay=commit(initial,altered_bytes);
+    rejects([&]{prepare(altered_overlay,altered_bytes);},"unattached slot baseline changed");
+    World creation;check(creation.restore_snapshot(bundle.world) && creation.create_runtime_object(5,40,{},{}),"fixture runtime creation");
+    check(creation.declare_object_word(5,43,16) && creation.declare_object_word(5,41,888),"fixture created durable words");
+    auto added=bundle;added.world=creation.snapshot();
+    const SessionCreatedObject origin{5,creation.find(5)->generation,40,"objects.far","objects.iff",40};
+    added.created_objects={origin};const auto added_bytes=encode(added);const auto added_overlay=commit(initial,added_bytes);
+    const auto resolver=[](const SessionCreatedObject& value){
+        World metadata;check(metadata.create_runtime_object(value.id,value.guid,{},{}),"fixture resource reconstruction");
+        auto entity=*metadata.find(value.id);entity.generation=value.generation;return entity;};
+    rejects([&]{prepare(added_overlay,added_bytes);},"created origin accepted without resource reconstruction");
+    const auto added_result=prepare_property_checkpoint(baseline,added_overlay,21,added_bytes,bundle.resources,
+        definitions,property_base,{}, {},resolver);
+    check(added_result.created_objects().size()==1 && added_result.created_objects()[0].id==5 &&
+        added_result.groups().size()==2 && added_result.world().find(5)->object_words.at(41)==888,
+        "created singleton resource origin and current state survive");
+    const auto wrong_constructor=[&](const SessionCreatedObject& value){auto entity=resolver(value);entity.slots.push_back(0);return entity;};
+    rejects([&]{prepare_property_checkpoint(baseline,added_overlay,21,added_bytes,bundle.resources,definitions,
+        property_base,{}, {},wrong_constructor);},"created resource layout mismatch accepted");
+    auto no_origin=added;no_origin.created_objects.clear();
+    auto no_origin_bytes=encode(no_origin);auto no_origin_overlay=commit(initial,no_origin_bytes);
+    rejects([&]{prepare(no_origin_overlay,no_origin_bytes);},"new object without creation provenance accepted");
+    auto wrong_origin=added;wrong_origin.created_objects[0].asset="other.iff";
+    const auto wrong_origin_bytes=encode(wrong_origin);const auto wrong_origin_overlay=commit(initial,wrong_origin_bytes);
+    rejects([&]{prepare_property_checkpoint(baseline,wrong_origin_overlay,21,wrong_origin_bytes,bundle.resources,
+        definitions,property_base,{}, {},resolver);},"wrong created resource source accepted");
+    World reuse;check(reuse.restore_snapshot(bundle.world) && reuse.remove(4) && reuse.create_runtime_object(4,40,{},{}),"fixture reused baseline ID");
+    check(reuse.declare_object_word(4,43,16),"fixture reused flags");
+    auto reused=bundle;reused.world=reuse.snapshot();reused.created_objects={{4,reuse.find(4)->generation,40,"objects.far","objects.iff",40}};
+    reused.removed_original_objects={{4,bundle.world.entities[3].generation,40}};
+    const auto reused_bytes=encode(reused);const auto reused_overlay=commit(initial,reused_bytes);
+    rejects([&]{prepare_property_checkpoint(baseline,reused_overlay,21,reused_bytes,bundle.resources,
+        definitions,property_base,{}, {},resolver);},"reused numeric baseline ID silently lost old-reference protection");
+    auto sell_created=added;sell_created.world.entities.back().object_words[43]=0;
+    const auto sell_bytes=encode(sell_created);const auto sell_overlay=commit(initial,sell_bytes);
+    const DefinitionIndex buy_created({definition(30,2,0),definition(10,4,0,7,0),definition(11,4,0,7,1),
+        definition(12,4,0,7,-1),definition(40,4,0)});
+    const auto sold=prepare_property_checkpoint(baseline,sell_overlay,21,sell_bytes,bundle.resources,
+        buy_created,property_base,{}, {},resolver);
+    check(sold.created_objects().empty() && sold.retired_created_objects().size()==1 &&
+        sold.retired_created_objects()[0].id==5 && sold.retired_created_objects()[0].asset=="objects.iff" &&
+        sold.retired_entities().size()==4 && !sold.world().entity_id_available(5),
+        "newly removed creation retains its exact origin and reserves numeric ID");
+    World removed_group;check(removed_group.restore_snapshot(bundle.world) && removed_group.remove(2) && removed_group.remove(3),
+        "fixture entire group already removed");
+    auto already_removed=bundle;already_removed.world=removed_group.snapshot();
+    already_removed.removed_original_objects={{2,bundle.world.entities[1].generation,10},{3,bundle.world.entities[2].generation,11}};
+    const auto group_bytes=encode(already_removed);const auto group_overlay=commit(initial,group_bytes);
+    const DefinitionIndex missing_old_definition({definition(30,2,0),definition(11,4,0,7,1),definition(12,4,0,7,-1),definition(40,4,3)});
+    rejects([&]{prepare_property_checkpoint(baseline,group_overlay,21,group_bytes,bundle.resources,
+        missing_old_definition,property_base);},"fully removed baseline group hid missing definition");
     check(encode(bundle)==bytes && encode_family_overlay(overlay)==encode_family_overlay(commit(initial,bytes)),
         "checkpoint and expected overlay untouched");
     std::cout<<"property checkpoint tests passed\n";return 0;
