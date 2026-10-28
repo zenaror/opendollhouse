@@ -9,8 +9,9 @@ Ainda não há uma versão completa jogável publicada.
 ### Adicionado
 
 - Cálculo em C++ dos componentes de construção a partir da geometria bruta,
-  incluindo paredes, revestimentos, pisos diagonais e piscinas. A ligação aos
-  preços comerciais e o reembolso completo continuam pendentes.
+  incluindo paredes, revestimentos, pisos diagonais e piscinas. A inspeção lê
+  preços dos recursos selecionados e preserva materiais não resolvidos; o
+  reembolso completo continua pendente.
   [Alcance](docs/property-architecture-value.md).
 
 - Inspeção opcional do valor atual de grupos de objetos importados, incluindo

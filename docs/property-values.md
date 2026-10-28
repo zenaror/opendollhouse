@@ -75,8 +75,9 @@ resolvidos; fora do campo opcional, a saída foi idêntica à saída padrão. Os
 quatro arquivos de entrada conservaram seus hashes.
 
 A avaliação da construção tem uma [regra própria](property-architecture-value.md),
-separada desta inspeção de objetos. Ainda faltam os provedores completos de
-preços, o total dos bens, a precisão do multiplicador e a publicação conjunta
+separada desta inspeção de objetos. A leitura dos preços dos recursos está disponível como inspeção; ainda
+faltam a cobertura completa dos estados de catálogo, o total dos bens, a
+precisão do multiplicador e a publicação conjunta
 da casa e do dinheiro. A inspeção
 não habilita venda, despejo ou alteração do patrimônio da família.
 
