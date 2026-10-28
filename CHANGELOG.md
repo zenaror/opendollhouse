@@ -6,6 +6,12 @@ Ainda não há uma versão completa jogável publicada.
 
 ## A publicar
 
+### Corrigido
+
+- A leitura do recipiente de um objeto agora acompanha sua contenção atual,
+  inclusive após trocar de recipiente ou reabrir a partida. Os valores brutos
+  antigos do save continuam preservados.
+
 ### Adicionado
 
 - Formato separado para guardar a preparação estrutural de uma casa desocupada,

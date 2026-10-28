@@ -9,7 +9,7 @@ As revisões e atribuições estão em [referências](references.md).
 | Palavra ObjectData | Evidência na referência | Consequência para a propriedade |
 | --- | --- | --- |
 | 12, `TargetId` | Nome em `Model/VMStackObjectVariable.cs`; sem uso pelo nome encontrado na busca delimitada | Preservar; destino, sentinela e limpeza ainda não estabelecidos |
-| 26, `ParentId` | `Entities/VMEntity.cs`, `GetValue`, linhas 797–801, lê o contêiner atual como a palavra 2 | Exige política explícita no nativo, que ainda trata a palavra 26 armazenada como dado comum |
+| 26, `ParentId` | `Entities/VMEntity.cs`, `GetValue`, linhas 797–801, lê o contêiner atual como a palavra 2 | Leitura nativa corrigida; o valor bruto continua preservado e gravável, como em `SetValue` |
 | 54, `PrimitiveResultID` | `Primitives/VMSnap.cs`, linhas 99 e 127, grava o bloqueador ou zero; `Engine/VMRoutingFrame.cs`, linhas 573–574, procura esse objeto | Zero significa ausência; isso não autoriza apagar qualquer valor não nulo ao desocupar |
 | 6, `RouteId` | Enumeração marca sem uso e TODO; sem uso pelo nome encontrado | Não assumir referência só pelo nome |
 | 72, `GroupID` | `Utils/VMWorldActivator.cs`, linhas 135–139, atribui número de grupo | Não confundir com número de objeto |
@@ -18,6 +18,14 @@ As revisões e atribuições estão em [referências](references.md).
 As palavras derivadas de contenção, lugar ocupado e identidade própria já
 têm tratamento estrutural nas palavras 2, 3, 11 e 67 do World. Isso não resolve
 os outros campos nem transforma bancos salvos antigos em estado atual.
+
+A leitura nativa da palavra 26 agora retorna o recipiente atual ou zero,
+mesmo que o valor bruto seja antigo ou não tenha sido declarado. A referência
+`SetValue`, linhas 818–867, não tem tratamento especial para essa palavra:
+permite gravar o valor bruto sem mudar o recipiente. O nativo conserva essa
+distinção. O armazenamento e os bancos importados não são apagados; os limites,
+contagens e formato do World permanecem iguais. A correspondência com o
+executável original continua separada dessa correção da referência fixada.
 
 `VMEntity.Reset`, linhas 525–550, limpa execução e chama ações de reinicialização;
 não faz uma limpeza geral das palavras acima. `VMEntity.Delete`, linhas

@@ -786,7 +786,10 @@ std::optional<std::int16_t> World::read(const VmFrame& frame, std::uint8_t scope
     }
     if (index == 11) return entity->id;
     if (index == 67) return static_cast<std::int16_t>(entity->slots.size());
-    if (index == 2) return entity->attachment ? entity->attachment->container : static_cast<std::int16_t>(0);
+    // Pinned VMEntity.GetValue aliases ParentId26 to current ContainerId2.
+    // SetValue still stores raw26: retain that shadow and saved banks for exact
+    // old checkpoint compatibility, but never use them as the live parent.
+    if (index == 2 || index == 26) return entity->attachment ? entity->attachment->container : static_cast<std::int16_t>(0);
     if (index == 3) return entity->attachment ? static_cast<std::int16_t>(entity->attachment->slot) : entity->unattached_slot;
     // Simitone's VMEntity.GetValue(Room) reports OUT_OF_WORLD (-5) until the
     // entity has a position, regardless of the stored ObjectData[29] word.

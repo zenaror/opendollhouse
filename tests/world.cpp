@@ -16,6 +16,23 @@ odh::VmFrame frame(std::int16_t caller=1,std::int16_t object=2) {
 int main() {
     try {
         {
+            odh::World parents;
+            require(parents.create(1,odh::EntityKind::object,{0,0,1}) &&
+                parents.create(2,odh::EntityKind::object) && parents.create(3,odh::EntityKind::object,{0,0,1}) &&
+                parents.declare_object_word(2,26,777) && parents.declare_object_word(3,26,888),"ParentId fixture");
+            const auto f=frame(3,2);
+            require(parents.read(f,3,26)==0 && parents.read(f,4,26)==0,"ParentId uncontained ignores raw shadow for both scopes");
+            require(parents.attach(1,0,2) && parents.read(f,4,26)==1 && parents.read(f,4,2)==1 &&
+                parents.read(f,3,26)==0,"ParentId follows actual stack-object containment, not caller's raw word");
+            require(parents.write(f,4,26,999) && parents.find(2)->object_words.at(26)==999 &&
+                parents.read(f,4,26)==1 && parents.find(1)->slots[0]==2,"ParentId raw setter preserves shadow without moving object");
+            require(parents.detach(1,0) && parents.attach(3,0,2) && parents.read(f,4,26)==3 &&
+                parents.read(f,3,26)==0,"ParentId follows reparenting immediately");
+            require(parents.retire(3) && parents.read(f,4,26)==0 && parents.find(2)->object_words.at(26)==999,
+                "retired parent cannot remain authoritative through stale raw ParentId");
+            require(!parents.read(frame(3,99),4,26),"missing ParentId entity stays unsupported");
+        }
+        {
             odh::World retired;
             require(retired.create(1,odh::EntityKind::object,{0,0,1,0}) &&
                 retired.create(2,odh::EntityKind::object) && retired.attach(1,0,2),"retirement fixture");

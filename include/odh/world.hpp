@@ -216,6 +216,8 @@ public:
     // Preserves child orientations and leaves invalid placements unchanged.
     bool place_on_floor(std::int16_t id,EntityPosition);
     bool detach(std::int16_t container, std::size_t slot);
+    // ObjectData26 reads current containment like2; its raw writable shadow and
+    // immutable imported bank remain serialized (pinned GetValue/SetValue).
     std::optional<std::int16_t> read(const VmFrame&, std::uint8_t scope, std::int16_t index) const;
     // Attribute growth validates budget and allocates before publication.
     // Allocation exceptions propagate without changing state or word accounting.

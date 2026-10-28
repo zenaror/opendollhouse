@@ -18,6 +18,19 @@ ObjectId (11), ContainerId (2), SlotNumber (3) e SlotCount (67) são derivados
 e recusam escritas diretas. Sem recipiente, ContainerId=0 e SlotNumber=-1,
 conforme o perfil FreeSO; comparação com o original permanece pendente.
 
+`ParentId` (26) também lê o recipiente atual ou zero nos scopes 3/4. Seu valor
+bruto permanece gravável sem mover o objeto, conforme `GetValue`/`SetValue`
+da referência fixada. Esse valor e o banco importado são preservados nos saves;
+não foi acrescentada exclusão de armazenamento nem alterado o formato do World.
+Os testes cobrem troca e retirada do recipiente, escrita bruta e reabertura.
+
+Como regressão após essa correção, a Casa 07 completou a ação da geladeira
+com o Sim 105 e o Sim 47 selecionado: salvar no passo 256, reabrir e continuar
+até 4096 conservou as mesmas 14 seções do save que a execução contínua. Os
+25 arquivos originais conferidos mantiveram seus hashes. A comprovação
+específica da palavra 26 está nos testes diretos; esse cenário verifica que
+a ação e o salvamento nativos continuam funcionando.
+
 Um slot existente e vazio retorna 0. Slot inexistente, entidade ausente e person
 data em um objeto não avatar retornam unsupported. Attach/detach mantém ambos
 os lados da relação, rejeita slot ocupado, vínculo duplicado, autorreferência

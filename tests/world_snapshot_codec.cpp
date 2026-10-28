@@ -51,10 +51,57 @@ odh::WorldSnapshot fixture() {
     require(world.set_dynamic_sprite_flag(1,5,true),"fixture dynamic sprite flag");
     return world.snapshot();
 }
+void parent_alias_shadow_roundtrip() {
+    odh::World world;
+    std::array<std::int16_t,68> raw{};
+    raw[3]=-1;raw[26]=31337;
+    require(world.create_saved_entity(1,odh::EntityKind::object,123,{},{},{},raw,{},0) &&
+            world.create(2,odh::EntityKind::object,{0,0,1}),"parent alias imported shadow fixture");
+    const odh::VmFrame child{odh::routine_key(4096),0,{1,1,1},{},{}};
+    require(world.find(1)->object_words.at(26)==31337 &&
+            world.find(1)->saved_object_banks->object_data[26]==31337 &&
+            world.read(child,3,26)==0 && world.read(child,4,26)==0,
+            "uncontained imported ParentId shadow is preserved but reads null");
+    require(world.attach(2,0,1),"attach imported shadow fixture");
+    const auto before=odh::encode_world_snapshot(world.snapshot());
+    const auto words=world.word_count();
+    require(world.read(child,3,26)==2 && world.read(child,4,26)==2 &&
+            world.write(child,3,26,-123) && world.read(child,3,26)==2 &&
+            world.find(1)->object_words.at(26)==-123 &&
+            world.write(child,4,26,22222) && world.read(child,4,26)==2,
+            "both ObjectData scopes read actual parent while shadow writes remain permitted");
+    require(world.word_count()==words && world.find(1)->object_words.at(26)==22222 &&
+            world.find(1)->saved_object_banks->object_data[26]==31337,
+            "ParentId live shadow write keeps word accounting and immutable imported bank");
+    const auto encoded=odh::encode_world_snapshot(world.snapshot());
+    require(encoded.size()==before.size() && encoded[0]==before[0] && encoded[1]==before[1],
+            "ParentId read alias leaves codec version and serialized extent unchanged");
+    const auto decoded=odh::decode_world_snapshot(encoded);
+    require(odh::encode_world_snapshot(decoded)==encoded,"ParentId raw/source banks reencode byte-stably");
+    odh::World restored;
+    require(restored.restore_snapshot(decoded) && restored.read(child,3,26)==2 && restored.read(child,4,26)==2 &&
+            restored.find(1)->object_words.at(26)==22222 &&
+            restored.find(1)->saved_object_banks->object_data[26]==31337 && restored.word_count()==words &&
+            odh::encode_world_snapshot(restored.snapshot())==encoded,
+            "fresh restored World reads real parent and preserves live shadow plus source bank");
+    require(restored.detach(2,0) && restored.read(child,3,26)==0 && restored.read(child,4,26)==0 &&
+            restored.find(1)->object_words.at(26)==22222 &&
+            restored.find(1)->saved_object_banks->object_data[26]==31337,
+            "detach reads null parent without clearing either stored shadow");
+    const auto detached=odh::encode_world_snapshot(restored.snapshot());
+    odh::World detached_restored;
+    require(detached_restored.restore_snapshot(odh::decode_world_snapshot(detached)) &&
+            detached_restored.read(child,3,26)==0 && detached_restored.read(child,4,26)==0 &&
+            detached_restored.find(1)->object_words.at(26)==22222 &&
+            detached_restored.find(1)->saved_object_banks->object_data[26]==31337 &&
+            odh::encode_world_snapshot(detached_restored.snapshot())==detached,
+            "detached roundtrip preserves nonzero raw shadow while ParentId remains null");
+}
 }
 
 int main() {
     try {
+        parent_alias_shadow_roundtrip();
         const auto snapshot = fixture();
         const auto encoded = odh::encode_world_snapshot(snapshot);
         const auto decoded = odh::decode_world_snapshot(encoded);
