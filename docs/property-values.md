@@ -74,6 +74,19 @@ original. Ambos passaram. Na importação da Casa07, os 29 grupos foram
 resolvidos; fora do campo opcional, a saída foi idêntica à saída padrão. Os
 quatro arquivos de entrada conservaram seus hashes.
 
-Ainda faltam o total completo dos bens, a avaliação da construção, a precisão
-do multiplicador e a publicação conjunta da casa e do dinheiro. A inspeção
+A avaliação da construção tem uma [regra própria](property-architecture-value.md),
+separada desta inspeção de objetos. Ainda faltam os provedores completos de
+preços, o total dos bens, a precisão do multiplicador e a publicação conjunta
+da casa e do dinheiro. A inspeção
 não habilita venda, despejo ou alteração do patrimônio da família.
+
+## Valor base do terreno
+
+A rotina `0046d0cf` transfere três valores de 32 bits consecutivos para os
+campos de estado `+0x9c`, `+0xa0` e `+0xa4`; a atualização `0041607b` recalcula
+somente os dois últimos. O primeiro componente da soma financeira é, portanto,
+um valor armazenado separadamente, compatível com `Simi::lot_value`, e não o
+subtotal das paredes. O ramo legado anterior à versão interna 37 usa um valor
+inicial 4500; isso não autoriza fixar 4500 para casas modernas. A correspondência
+com os campos SIMI existentes não substitui a validação do ciclo de carga e
+salvamento nem resolve a precisão do multiplicador.
