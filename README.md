@@ -1,5 +1,7 @@
 # OpenDollhouse
 
+<a href="https://www.buymeacoffee.com/zenaro147" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 Reimplementação em **C/C++** do The Sims 1 para PC, orientada pela experiência
 original, pelas sete expansões e pelo conteúdo personalizado clássico.
 Simitone e FreeSO são referências de comportamento e código.
