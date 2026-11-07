@@ -40,6 +40,16 @@ class Gates(unittest.TestCase):
         for name,sections,new,ids,deleted in cases:
             with self.subTest(name=name),self.assertRaises(ValueError):
                 driver.compare_reopen(self.sections,sections,self.old,new,ids,deleted)
+    def test_picker_source_keyboard_steps_and_reconstruction(self):
+        self.assertEqual(driver.picker_forward_steps([4,3,2,8],8),[(1,1),(2,2),(3,3)])
+        self.assertEqual(driver.picker_forward_steps([4,3,2,8],4),[])
+        self.assertEqual(driver.picker_forward_steps(list(range(10)),8),[(i,i%6) for i in range(1,9)])
+        # Calling again means a new source picker initialized at0, not an
+        # invented carry-over of the old selected family after a rename modal.
+        self.assertEqual(driver.picker_forward_steps([4,3,2,8],8),[(1,1),(2,2),(3,3)])
+        for order,target in (([],8),([4,4],4),([4,3],8)):
+            with self.subTest(order=order),self.assertRaises(ValueError):driver.picker_forward_steps(order,target)
+
     def test_generic_render_hover_barrier(self):
         state={'value':b'normal'};moves=[];acks=[]
         def move(point):

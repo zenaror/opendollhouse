@@ -1,4 +1,5 @@
 #include "odh/world_snapshot_codec.hpp"
+#include "odh/installed_lot_limits.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -440,6 +441,22 @@ int main() {
                 "contained OOW refresh copies authenticated parent scalar level");
             require(native.place_out_of_world(1,0)&&native.native_position(parent)->level==2&&native.native_position(child)->level==2,
                 "generic repeated OOW keeps existing proven levels without inventing new data");
+        }
+        {
+            const odh::WorldSnapshotCodecLimits admitted{odh::installed_lot_world_limits()};
+            odh::World large(admitted.world);
+            for(std::int16_t id=1;id<=129;++id)
+                require(large.create(id,odh::EntityKind::object,{512,0,0,0}),"installed-lot World owns more than the generic codec word budget");
+            const auto snapshot=large.snapshot();require(snapshot.word_count>odh::WorldLimits{}.words,
+                "large menu-guard fixture actually crosses the generic admission policy");
+            rejects([&]{(void)odh::encode_world_snapshot(snapshot);},"generic default remains strict for a large installed-lot World");
+            const auto before=odh::encode_world_snapshot(snapshot,admitted);
+            require(odh::encode_world_snapshot(odh::decode_world_snapshot(before,admitted),admitted)==before,
+                "same admitted installed-lot policy roundtrips full immutable World state without field projection");
+            odh::VmFrame frame{odh::routine_key(4096),0,{1,1,1}};
+            require(large.write(frame,1,0,7),"real attributed World mutation after the initial read-only guard");
+            require(odh::encode_world_snapshot(large.snapshot(),admitted)!=before,
+                "using the owner's admission limit still detects an actual World mutation");
         }
         std::cout << "World snapshot codec checks passed\n";
     } catch (const std::exception& error) {

@@ -19367,9 +19367,13 @@ struct PlacementCandidateProbe {
         const auto* definition=target&&target->definition&&definition_index?definition_index->unique(target->definition->guid):nullptr;
         if(actor_id!=active_household_actor||!actor||!actor_services_for(actor_id)||!supported_menu_target(target)||!definition)
             throw odh::FormatError("menu query requires the actual selected admitted actor and a verified target");
-        const auto before=odh::encode_world_snapshot(world.snapshot());const auto seed=random.seed();
+        // This query is admitted only for a restored installed-lot session.
+        // Use that owner's existing serialization policy, exactly as canonical
+        // session capture does; generic library defaults bound smaller worlds.
+        const auto query_world_limits=odh::SessionBundleLimits{}.world;
+        const auto before=odh::encode_world_snapshot(world.snapshot(),query_world_limits);const auto seed=random.seed();
         prepare_selected_object(SavedObjectSelection{target_id,target->definition->guid,target->generation,definition->definition.tree_table_id});
-        if(before!=odh::encode_world_snapshot(world.snapshot())||seed!=random.seed())
+        if(before!=odh::encode_world_snapshot(world.snapshot(),query_world_limits)||seed!=random.seed())
             throw odh::FormatError("read-only menu query mutated World or source RNG");
         const auto name_hex=[](const std::string& name){std::string hex;hex.reserve(name.size()*2);constexpr char digits[]="0123456789abcdef";
             for(const unsigned char byte:name){hex.push_back(digits[byte>>4]);hex.push_back(digits[byte&15]);}return hex;};

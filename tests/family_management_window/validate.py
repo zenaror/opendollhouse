@@ -169,6 +169,13 @@ def hover_roundtrip(observe, move, wait_for, target, park, label):
     return normal,hover
 
 
+def picker_forward_steps(order, target):
+    """Actual vacant-lot picker starts at index0; Tab advances one with wrap."""
+    need(bool(order) and len(set(order))==len(order), 'picker order is empty or ambiguous')
+    need(target in order, 'target family is absent from actual picker order')
+    return [(index,index%6) for index in range(1,order.index(target)+1)]
+
+
 def isolated_output(output, roots):
     output = Path(output).resolve()
     need(not output.exists(), 'output must be new')
@@ -270,6 +277,7 @@ def main():
             source_profile=str(resume_profile),source_profile_before=resume_files,validation=resume_validation)
     report['observed_header_references']=OBSERVED_HEADERS
     process = xvfb = window = None
+    confirmed_focus_owner = None
     opened = []
 
     def save():
@@ -365,25 +373,26 @@ def main():
                                       expected=expected.copy(),frame_sha256=frame_hash))
 
     def ui_ready(kind, initial_family=False):
-        # A visible title precedes its full render. First require the observed
-        # real header; then prove the app polls pointer motion and redraws its
-        # own non-mutating button hover. No timed sleep proves readiness.
-        if xdo('getwindowfocus','-f')!=str(window):xdo('windowfocus','--sync',window)
-        need(xdo('getwindowfocus','-f')==str(window), 'private window did not obtain focus')
-        # No synthetic release here: readiness sends only focus/motion, never
-        # a release that could finish a previously pending business gesture.
+        nonlocal confirmed_focus_owner
+        owner=(process.pid,str(window))
+        # Only the MAP control has observed, distinct normal/hover frames.
+        # NbhdTileBtn's0/2 frames are identical: never require nonexistent
+        # feedback on the picker or CAS. Their actual action ACKs stay below.
+        if kind=='map':
+            if xdo('getwindowfocus','-f')!=str(window):xdo('windowfocus','--sync',window)
+        else:
+            need(confirmed_focus_owner==owner, 'nested screen has no map-confirmed input owner')
+        need(xdo('getwindowfocus','-f')==str(window), 'private window did not retain actual input focus')
         xdo('mousemove','--window',window,750,25)
         wait(kind+'-presented-header',lambda:header_matches(observed_rgb(),OBSERVED_HEADERS[kind]['header_sha256']),timeout=30)
-        probes={'map':((200,0,50,52),(225,26)),
-                'picker':((130,529,140,62),(200,560)),
-                'cas_family':((593,103,139,103),(660,150)),
-                'cas_character':((530,529,140,62),(595,560))}
-        box,target=probes[kind]
-        if kind=='cas_family' and initial_family:
-            box,target=(530,529,140,62),(595,560) # Add is disabled until surname exists.
+        if kind!='map':
+            report['actions'].append(dict(input_boundary=kind,proof='actual header and same map-confirmed focused window; action ACK required'))
+            return
+        box,target=(200,0,50,52),(225,26)
         normal,hover=hover_roundtrip(lambda:observed_region(box),
             lambda point:xdo('mousemove','--window',window,*point),
             lambda label,predicate:wait(label,predicate,timeout=25),target,(750,25),kind)
+        confirmed_focus_owner=owner
         report['actions'].append(dict(input_barrier=kind,normal_sha256=hashlib.sha256(normal).hexdigest(),hover_sha256=hashlib.sha256(hover).hexdigest()))
 
     modal_box=(180,150,440,300)
@@ -392,7 +401,7 @@ def main():
         action()
         if expected_title is not None:wait(label+'-title',lambda:title()==expected_title)
         wait(label+'-presented-panel',lambda:observed_region(modal_box)!=before,timeout=30)
-        need(xdo('getwindowfocus')==str(window), 'focus changed while opening modal')
+        need(xdo('getwindowfocus','-f')==str(window), 'focus changed while opening modal')
         report['actions'].append(dict(modal_ready=label,before_sha256=hashlib.sha256(before).hexdigest(),after_sha256=hashlib.sha256(observed_region(modal_box)).hexdigest()))
 
     def rename_text(value):
@@ -412,7 +421,8 @@ def main():
         report['actions'].append(dict(screenshot=path.name, sha256=sha(path), title=title()))
 
     def launch(label):
-        nonlocal process, window
+        nonlocal process, window, confirmed_focus_owner
+        confirmed_focus_owner=None
         need(process is None, 'previous window process still exists')
         out = (args.output/(label+'-stdout.txt')).open('w')
         err = (args.output/(label+'-stderr.txt')).open('w')
@@ -494,26 +504,26 @@ def main():
         # selection only with the pointer outside rows and buttons, after release.
         xdo('mousemove','--window',window,780,510)
 
+    def keyboard_select_aux(aux_id):
+        # show_move_in_family_picker is called anew after each Rename modal
+        # and initializes selected=0 for an actual vacant house. Do not assume
+        # that a prior selection survives this source-defined reconstruction.
+        ui_ready('picker')
+        park_pointer()
+        selected_picker_row('picker-initial-real-selection',0)
+        order=state()['unhoused_order']
+        for global_index,visible_row in picker_forward_steps(order,aux_id):
+            key('Tab')
+            selected_picker_row('picker-keyboard-step-'+str(global_index),visible_row)
+            report['actions'].append(dict(picker_global_index=global_index,
+                family_id=order[global_index],input='Tab',visible_row=visible_row))
+        selected_picker_row('auxiliary-row-selected',order.index(aux_id)%6)
+
     def select_aux(aux_id, layout):
         ui_ready('map')
         click(layout['vacant_click']['x'],layout['vacant_click']['y'])
         wait('vacant-lot-picker',lambda:title()==baseline['ui_titles']['picker'])
-        ui_ready('picker')
-        park_pointer()
-        # Title is assigned before expensive portrait rendering. A title alone
-        # does not prove that its initial input loop/frame is ready.
-        selected_picker_row('picker-initial-real-selection',0)
-        current=state()
-        index=current['unhoused_order'].index(aux_id)
-        for page in range(index//6):
-            def next_page():
-                click(726,504)
-                park_pointer()
-            await_visual_action('picker-page-'+str(page+1),(41,76,690,408),next_page)
-            selected_picker_row('picker-new-page-selection',0)
-        click(240,76+(index%6)*68+30)
-        park_pointer()
-        selected_picker_row('auxiliary-row-selected',index%6)
+        keyboard_select_aux(aux_id)
         return title()
 
     try:
@@ -622,8 +632,7 @@ def main():
         rename_text('ODH Discard Rename');key('Escape')
         wait('rename-cancelled',lambda:title()==picker_title)
         need(important()==before_cancel, 'cancelled rename changed durable family data')
-        ui_ready('picker')
-        selected_picker_row('aux-still-selected-before-rename',state()['unhoused_order'].index(aux_id)%6)
+        keyboard_select_aux(aux_id)
         open_modal('rename-dialog-accepted',lambda:key('r'))
         rename_text('ODH UI Renamed');key('Return')
         wait('rename-persisted',lambda:next(f for f in state()['families'] if f['id']==aux_id)['name']=='ODH UI Renamed')
