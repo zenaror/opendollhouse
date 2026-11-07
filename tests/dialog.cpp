@@ -24,7 +24,7 @@ struct Fixture {
 }
 int main(){try{
     for(auto opcode:{36,38,39})for(unsigned type:{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}){
-        Fixture f;f.choices={{"first",40000}};Bytes bytes{};bytes[5]=static_cast<std::uint8_t>(type);bytes[7]=32;
+        Fixture f;f.choices={{"first",type==10?34:40000}};Bytes bytes{};bytes[5]=static_cast<std::uint8_t>(type);bytes[7]=32;
         odh::Vm vm{program(static_cast<std::uint16_t>(opcode),bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
         vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting&&f.dialogs.pending(),"all common kinds establish genuine wait");
         const auto ticket=f.dialogs.pending()->ticket;
@@ -36,11 +36,12 @@ int main(){try{
         require(!f.dialogs.respond(ticket+1,{0,""},diagnostic)&&vm.status()==odh::VmStatus::waiting,"stale ticket has no effects");
         odh::DialogResponse response{0,""};if(type==1||type==2)response.code=2;
         if(type==3)response.text=std::string(40,'x');
-        if(odh::dialog_selector_type(static_cast<std::uint8_t>(type))){response.text="40000";response.code=1;}
+        if(odh::dialog_selector_type(static_cast<std::uint8_t>(type))){response.text=type==10?"34":"40000";response.code=1;}
         require(f.dialogs.respond(ticket,response,diagnostic),"actual response consumes its pending instruction");
         require(vm.status()==((type==1||type==2)?odh::VmStatus::returned_false:odh::VmStatus::returned_true),"source response selects authored branch");
         if(type==2)require(vm.temps()[1]==1,"cancel differs from no via selectedTemp");
-        if(odh::dialog_selector_type(static_cast<std::uint8_t>(type)))require(vm.temps()[1]==-25536,"numeric source signedshort casts wrap");
+        if(type==10)require(vm.temps()[0]==34&&vm.temps()[1]==0,"PhoneBook always publishes offered positive NID into Temp0");
+        else if(odh::dialog_selector_type(static_cast<std::uint8_t>(type)))require(vm.temps()[1]==-25536,"numeric source signedshort casts wrap");
         if(type==3)require(f.world.find(2)->name_override==std::string(32,'x'),"text entry writes truncated actual object name");
         require(!f.dialogs.respond(ticket,response,diagnostic),"duplicate response rejected");
     }
@@ -141,22 +142,38 @@ int main(){try{
             return "resolved";
         })=="resolved:0007","native career parser preserves unconsumed suffix bytes");
     }
-    for(const unsigned flags:{0U,16U,32U,48U}){
-        Fixture f;f.choices={{"Actual contact",34}};Bytes bytes{};bytes[5]=10;bytes[7]=flags;
+    for(const unsigned flags:{0U,16U,32U,48U})for(const bool cancel:{false,true}){
+        Fixture f;f.choices={{"Actual contact",34},{"Boundary contact",32767},{"Malformed out-of-range offer",40000}};
+        Bytes bytes{};bytes[5]=10;bytes[7]=flags;
         odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
         vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting,"phonebook genuinely blocks its actual source thread");
-        const auto pending=odh::decode_dialog_state(odh::encode_dialog_state(*f.dialogs.pending()));
-        require(pending.prompt.choices.size()==1&&pending.prompt.choices[0].value==34,"offered contacts persist without invented identity");
+        for(std::size_t i=0;i<vm.temps().size();++i)vm.temps()[i]=static_cast<std::int16_t>(101+i);
+        vm.temp_xl()[0]=123456;vm.temp_xl()[1]=-654321;
+        const auto before=vm.snapshot();const auto encoded=odh::encode_dialog_state(*f.dialogs.pending());
+        const auto pending=odh::decode_dialog_state(encoded);
+        require(pending.prompt.choices.size()==3&&pending.prompt.choices[0].value==34,"offered contacts persist without invented identity");
         std::string why;const auto ticket=f.dialogs.pending()->ticket;
-        require(!f.dialogs.respond(ticket,{1,"35"},why)&&vm.status()==odh::VmStatus::waiting,"unoffered phonebook contact never becomes a selected neighbor");
-        require(f.dialogs.respond(ticket,{0,"-1"},why)&&vm.status()==odh::VmStatus::returned_true,"authored phonebook Cancel returns TRUE with sentinel rather than source false");
-        const auto index=(flags&32)?1U:0U;
-        require((flags&16)?vm.temp_xl()[index]==-1:vm.temps()[index]==-1,"phonebook Cancel writes actual selected Temp or TempXL");
+        for(const auto& response:std::vector<odh::DialogResponse>{{1,"35"},{0,"0"},{0,""},{0,"+-1"},{0,"-32769"},{1,"32768"},{1,"40000"},{1,"-1"}}){
+            require(!f.dialogs.respond(ticket,response,why)&&!why.empty()&&vm.status()==odh::VmStatus::waiting,
+                "invalid/unoffered PhoneBook results refuse while retaining the original wait");
+            const auto after=vm.snapshot();require(after.temps==before.temps&&after.temp_xl==before.temp_xl&&
+                odh::encode_dialog_state(*f.dialogs.pending())==encoded,"refused PhoneBook results preserve all registers and complete pending state");
+        }
+        require(!f.dialogs.respond(ticket+1,{0,"-1"},why)&&vm.status()==odh::VmStatus::waiting,"PhoneBook cancel cannot bypass ticket authority");
+        require(f.dialogs.respond(ticket,{static_cast<std::uint8_t>(cancel?0:1),cancel?"-1":"34"},why)&&
+            vm.status()==(cancel?odh::VmStatus::returned_false:odh::VmStatus::returned_true),
+            "native PhoneBook negative returns FALSE and offered positive returns TRUE");
+        auto expected=before.temps;if(!cancel)expected[0]=34;
+        require(vm.temps()==expected&&vm.temp_xl()==before.temp_xl,
+            "all four flags preserve every Temp/XL on cancel and publish only positive Temp0 independent of NumericEntry flags");
+        require(!f.dialogs.pending()&&!f.dialogs.respond(ticket,{0,"-1"},why),"PhoneBook response consumes its pending instruction exactly once");
     }
     {
         Fixture f;Bytes bytes{};bytes[5]=10;odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
         vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting,"known empty phonebook still blocks for a real decision");
-        std::string why;require(f.dialogs.respond(f.dialogs.pending()->ticket,{0,"-1"},why)&&vm.temps()[0]==-1,"empty phonebook can cancel without an invented catalog entry");
+        vm.temps()[0]=77;vm.temp_xl()[0]=123456;std::string why;
+        require(f.dialogs.respond(f.dialogs.pending()->ticket,{0,"-1"},why)&&vm.status()==odh::VmStatus::returned_false&&
+            vm.temps()[0]==77&&vm.temp_xl()[0]==123456,"empty PhoneBook cancellation returns FALSE without inventing a contact or changing registers");
     }
     {
         Fixture f;Bytes bytes{};bytes[5]=5;odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;

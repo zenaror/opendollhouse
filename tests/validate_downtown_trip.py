@@ -41,6 +41,32 @@ class DriverGuards(unittest.TestCase):
             v.validate_acknowledgement({**prompt,'choices':None},
                 {**cancel,'expected_prompt':{**prompt,'choices':None}})
 
+    def test_explicit_menu_variant_is_lossless_and_never_falls_back(self):
+        step={'actor':21,'target':10,'row':7}
+        self.assertEqual(v.interaction_arguments(step),['--headless-resident-interaction-row','21','10','7','1'])
+        variant={'param0':268,'language':14,'name_hex':'4368616d61722054e178692e2e2e'}
+        self.assertEqual(v.interaction_arguments({**step,'variant':variant}),
+            ['--headless-resident-interaction-variant-hex','21','10','7','268','14',variant['name_hex'],'1'])
+        # Exact byte spelling/case is retained; no UTF-8 re-encoding or label
+        # translation is introduced between the observed query and native guard.
+        self.assertEqual(v.interaction_arguments({**step,'variant':{**variant,'name_hex':'E1FF'}})[-2],'E1FF')
+        for param in (-32768,0,32767):
+            self.assertEqual(v.interaction_arguments({**step,'variant':{**variant,'param0':param}})[4],str(param))
+        self.assertEqual(len(v.interaction_arguments({**step,'variant':{**variant,'name_hex':'61'*4096}})[-2]),8192)
+        malformed=[None,{}, {'param0':268,'language':14,'name':'raw'},
+            {**variant,'extra':1}]+[{**variant,**change} for change in (
+                {'param0':-32769},{'param0':32768},{'param0':True},{'param0':'268'},
+                {'language':0},{'language':21},{'language':True},{'language':'14'},
+                {'name_hex':''},{'name_hex':'a'},{'name_hex':'gg'},{'name_hex':'61 62'},
+                {'name_hex':'00'},{'name_hex':'61'*4097},{'name_hex':b'61'})]
+        for variant in malformed:
+            with self.subTest(variant=str(variant)[:80]),self.assertRaises(ValueError):
+                v.interaction_arguments({**step,'variant':variant})
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'recipe.json'
+            path.write_text(json.dumps({'steps':[{'id':'bad-variant','kind':'interaction','ticks':512,**step,'variant':None}]}))
+            with self.assertRaises(ValueError):v.read_plan(path)
+
     def test_launcher_stream_is_complete_and_strict(self):
         self.assertEqual(v.documents('{"ticks":1}\n {"ticks":2}\n'),[{'ticks':1},{'ticks':2}])
         for text in ('','log prefix\n{}','{} trailing','[]','{"x":NaN}'):

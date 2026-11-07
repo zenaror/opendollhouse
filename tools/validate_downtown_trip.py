@@ -81,6 +81,25 @@ def live_requests(rows):
     return sorted(result,key=key)
 
 
+def interaction_arguments(step):
+    """Use an explicitly observed dynamic menu variant without a row fallback.
+
+    The existing native submission re-evaluates the actual row and verifies the
+    exact Param0/language/name bytes again. This does not synthesize a menu.
+    """
+    if 'variant' not in step:
+        return ['--headless-resident-interaction-row',str(step['actor']),str(step['target']),str(step['row']),'1']
+    variant=step['variant']
+    require(isinstance(variant,dict) and set(variant)=={'param0','language','name_hex'},'explicit variant needs exact Param0/language/name_hex fields')
+    require(type(variant['param0']) is int and -32768<=variant['param0']<=32767,'variant Param0 must be a signed short')
+    require(type(variant['language']) is int and 1<=variant['language']<=20,'variant language must be an observed code1..20')
+    name=variant['name_hex']
+    require(isinstance(name,str) and 0<len(name)<=8192 and len(name)%2==0 and re.fullmatch(r'[0-9a-fA-F]+',name),'variant name_hex must encode1..4096 exact source bytes')
+    require(b'\0' not in bytes.fromhex(name),'variant name bytes cannot contain NUL')
+    return ['--headless-resident-interaction-variant-hex',str(step['actor']),str(step['target']),str(step['row']),
+            str(variant['param0']),str(variant['language']),name,'1']
+
+
 def read_plan(path):
     plan=json.loads(path.read_text());seen=set()
     for step in plan['steps']:
@@ -89,6 +108,7 @@ def read_plan(path):
         require(isinstance(step['ticks'],int) and 0<=step['ticks']<=4096,'step exceeds4096 ticks')
         if step['kind']=='reopen':require(step['ticks']==0,'reopen must not advance time')
         if step['kind']=='interaction':require(step['ticks']>0 and all(isinstance(step[k],int) and step[k]>0 for k in ('actor','target')) and isinstance(step['row'],int) and step['row']>=0,'invalid player request')
+        if step['kind']=='interaction':interaction_arguments(step)
         if step['kind']=='ack':require(step['ticks']>0 and isinstance(step['expected_prompt'],dict) and isinstance(step['code'],int) and isinstance(step.get('text',''),str),'ack needs the exact previously observed prompt and response')
     require(0<len(seen)<=24,'recipe exceeds24 steps');return plan
 
@@ -211,7 +231,7 @@ def main():
             for key in ('DISPLAY','WAYLAND_DISPLAY','ODH_STATE_DIR','ODH_TRACE_MOTIVE_CHANGES'):env.pop(key,None)
             for key,suffix in (('XDG_CONFIG_HOME','config'),('XDG_DATA_HOME','data'),('XDG_STATE_HOME','state'),('XDG_CACHE_HOME','cache')):env[key]=str(profile/suffix)
             cmd=[str(args.binary),'--game-root',str(args.game_root),'--load-session',str(copied),'--mode','1','--language',str(plan.get('language',14)),'--no-audio','--headless-ticks',str(step['ticks']),'--save-session-on-exit']
-            if step['kind']=='interaction':cmd+=['--headless-resident-interaction-row',str(step['actor']),str(step['target']),str(step['row']),'1']
+            if step['kind']=='interaction':cmd+=interaction_arguments(step)
             if step['kind']=='ack':cmd+=['--headless-dialog-response',str(step['code']),step.get('text','')]
             row={'step':step,'command':cmd,'input':str(load),'input_sha256':before_hash,'profile':str(profile)};r['runs'].append(row);record()
             with (directory/'stdout.json').open('w') as stdout,(directory/'stderr.log').open('w') as stderr:

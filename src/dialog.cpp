@@ -157,18 +157,34 @@ bool DialogController::respond(std::uint64_t ticket,const DialogResponse& respon
     if(response.code>2||!text_valid(response.text,4096)){diagnostic="dialog response exceeds its bounded input contract";return false;}
     const auto clipped=utf16_prefix(response.text,1024);if(!clipped){diagnostic="dialog response is not valid UTF8";return false;}
     const auto op=parse_dialog_operands(pending_->instruction.operands);bool result=true;
-    std::optional<std::int32_t> number;std::optional<std::int16_t> temp;
+    std::optional<std::int32_t> number;std::optional<std::int16_t> temp,phonebook_contact;
     const bool numeric=dialog_selector_type(op.type);
     if(op.type==1)result=response.code==0;
     else if(op.type==2&&response.code>0){result=false;temp=static_cast<std::int16_t>((response.code-1)%2);}
+    else if(op.type==10){
+        // TS1 analyzed program6e598: 004517da/00451843-5a. PhoneBook is
+        // a signed-short result channel, not NumericEntry. Negative cancels
+        // via FALSE without register writes; positive publishes only Temp0.
+        // Zero is its internal pending state, never an invented contact.
+        const auto selected=integer(*clipped);
+        if(!selected||*selected==0||*selected< -32768||*selected>32767){
+            diagnostic="phonebook response requires a nonzero signed-short result";return false;
+        }
+        if(*selected<0){
+            if(response.code!=0){diagnostic="phonebook cancellation requires its cancel response code";return false;}
+            result=false;
+        }else{
+            if(std::none_of(pending_->prompt.choices.begin(),pending_->prompt.choices.end(),[&](const auto& c){return c.value==*selected;})){
+                diagnostic="dialog selection is not an offered catalog choice";return false;
+            }
+            phonebook_contact=static_cast<std::int16_t>(*selected);
+        }
+    }
     else if(numeric){
         if((op.type==6||op.type==9)&&response.code==0)result=false;
         else {
             number=integer(*clipped);result=number.has_value();
-            // Simitone PhoneBook Cancel is ResponseText=-1. The pinned
-            // primitive returns TRUE with Temp/TempXL=-1; no neighbor is chosen.
-            const bool phonebook_cancel=op.type==10&&number==std::optional<std::int32_t>{-1};
-            if(number&&!phonebook_cancel&&std::none_of(pending_->prompt.choices.begin(),pending_->prompt.choices.end(),[&](const auto& c){return c.value==*number;})){
+            if(number&&std::none_of(pending_->prompt.choices.begin(),pending_->prompt.choices.end(),[&](const auto& c){return c.value==*number;})){
                 diagnostic="dialog selection is not an offered catalog choice";return false;
             }
         }
@@ -182,6 +198,7 @@ bool DialogController::respond(std::uint64_t ticket,const DialogResponse& respon
     if(!vm_->complete(ticket,result)){diagnostic="dialog completion rejected its pending ticket";return false;}
     const auto index=(op.flags&32)?1U:0U;
     if(temp)vm_->temps()[index]=*temp;
+    if(phonebook_contact)vm_->temps()[0]=*phonebook_contact;
     if(number){if(op.flags&16)vm_->temp_xl()[index]=*number;else {
         const auto raw=static_cast<std::uint16_t>(*number);vm_->temps()[index]=static_cast<std::int16_t>(raw<32768?static_cast<int>(raw):static_cast<int>(raw)-65536);
     }}
