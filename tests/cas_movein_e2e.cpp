@@ -295,6 +295,23 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
         std::cout<<R"({"row_count":)"<<active.type_attributes->by_guid.size()<<R"(,"canonical_codec_bytes":)"<<bytes.size()
             <<R"(,"canonical_codec_sha256":)"<<json_string(text)<<'}';
     }
+    std::cout<<R"(,"personal_state":)";
+    if(!active.personal_state)std::cout<<"null";
+    else{const auto& personal=*active.personal_state;std::size_t shown=0;
+        std::cout<<R"({"version":)"<<personal.version<<R"(,"record_count":)"<<personal.records.size()
+            <<R"(,"truncated":)"<<(personal.records.size()>64?"true":"false")<<R"(,"entries":[)";
+        for(const auto& record:personal.records){if(shown==64)break;if(shown++)std::cout<<',';
+            std::cout<<R"({"neighbor_id":)"<<record.identity.neighbor_id<<R"(,"guid":)"<<record.identity.guid
+                <<R"(,"character_asset":)"<<json_string(record.identity.character_asset)
+                <<R"(,"character_fingerprint":)"<<json_string(hex_digest(record.identity.character_fingerprint))
+                <<R"(,"revision":)"<<record.revision<<R"(,"writer":)"<<static_cast<unsigned>(record.writer)
+                <<R"(,"schema_version":)"<<unsigned(record.projection.schema_version)<<R"(,"fields":{)";
+            bool field_comma=false;for(std::size_t index=0;index<record.projection.present.size();++index){
+                if(!record.projection.present[index])continue;if(field_comma)std::cout<<',';field_comma=true;
+                std::cout<<json_string(std::to_string(index))<<':'<<record.projection.values[index];
+            }std::cout<<"}}";
+        }std::cout<<"]}";
+    }
     std::cout<<R"(,"blocking_dialog":)";
     if(active.dialog){
         const auto& dialog=*active.dialog;
