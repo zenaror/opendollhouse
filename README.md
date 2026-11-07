@@ -56,6 +56,7 @@ Consulte [ferramentas e exemplos](docs/tools.md) e a
 - `tools/`: programas de inspeção, interface e validação.
 - `tests/`: testes e dados sintéticos.
 - [Documentação](docs/README.md): arquitetura, formatos, planos e validações.
+- [Mods e expansões](docs/modding.md): guia do suporte futuro; ainda sem API pública estável.
 - [Changelog](CHANGELOG.md): mudanças relevantes ainda não lançadas.
 - [Referências e atribuições](docs/references.md): Simitone, FreeSO e dependências.
 

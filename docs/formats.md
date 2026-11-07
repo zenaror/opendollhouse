@@ -1,82 +1,81 @@
-# Perfil inicial dos leitores
+# Formatos de dados
 
-O protótipo verifica a estrutura de um corpus Complete Collection local. As
-variantes abaixo são um perfil explícito, não cobertura geral de TS1 ou TSO.
+O OpenDollhouse lê os recursos clássicos do The Sims 1 para reconstruir o jogo
+em C/C++. Os leitores são experimentais e trabalham com variantes explícitas.
+Um formato reconhecido não significa compatibilidade com todas as suas versões,
+nem execução completa dos comportamentos descritos por ele.
 
-| Leitor | Implementado | Ainda não interpretado |
-|---|---|---|
-| FAR | Assinatura `FAR!byAZ`, versão 1, nomes com comprimento uint32, duas extensões de tamanho iguais; índices e entradas dentro dos limites | Variante de nomes uint16, comprimentos diferentes, precedência de arquivos |
-| IFF | Identificador 2.0/2.5, cabeçalho de 64 bytes, chunks com cabeçalho de 76 bytes, tamanhos e campos externos big endian | Semântica dos chunks desconhecidos e validade do mapa de recursos |
-| GLOB | Layout explícito Pascal-u8 ou C-string limitado, nome bruto e extensão restante; CLI valida vínculo Pascal128 ao semiglobal selecionado | Heurística de formatos, busca/precedência e resolução por múltiplos code owners |
-| BHAV | Versões 8000/8001/8002, instruções de 12 bytes, opcode little endian, oito operandos e oito bytes de header preservados; metadata 8002 de argumentos/locais/type/tree version | Execução legada limitada (4 argumentos/0 locais), cobertura funcional completa e scheduler; execução parcial descrita em vm-validation.md |
-| SPR2/PALT | SPR2 1000, frame RLE, RGBA/index/Z; PALT RGB e version/raw; limites/seleção explícitos | SPR2 outras versões, palette fallback, FloorCopy/ZAsAlpha e composição |
-| TTAB | Campos das versões 4..8 e versão 9 com coding 0/1; action/test, flags, índices e motivos; estados distintos para vazio, ausente e legado 2/3 | Semântica das flags/motivos, execução das interações, versões 2/3 e significado dos bits restantes |
-| SLOT | Assinatura TOLS, layouts 4..10, campos brutos, extensões opcionais por versão, seleção por tipo/índice e bytes restantes | Normalização de unidades/defaults, destinos geométricos, flags e roteamento |
-| STR# | Formatos 0..-3, bytes de texto/comentário, idioma e seleção explícita; estados ausente/header-only/decoded | Parsers preservam bytes; lookup exato não aplica fallback; helper Linux converte texto visível e oferece fallback inglês; formato -4 |
-| BCF | Leitores separados para animações, skeletons ou appearances, exigindo demais seções vazias; campos brutos, propriedades, ranges e extensões | BCF misto e formatos textuais SKN/ANIM |
-| CMX/SKN | CMX de appearances e SKN textual para meshes TS1; leitor SKN converte dados para a estrutura BMF comum | Outros segmentos CMX, seleção completa de roupas/censura e formatos TSO |
-| BMF | Nomes, bones, faces, bindings, UVs, pesos, transforms floatbits e vertex_count2 bruto | Materiais/roupas completos e semântica geral de vertex_count2 |
-| BMP | DIB40/BI_RGB8 ou24bpp, paleta/BGR, padding/orientação e RGBA opaco | DIBs/compressões/bpp restantes, alpha e color key genérico; os mapas UI aplicam somente as três cores-chave documentadas em [neighborhood-map-validation.md](neighborhood-map-validation.md) |
-| CFP | Sete planos float32, literal FF, repetição FE e deltas 00..FC; limite total e rejeição de FD/não finitos | Transformação de coordenadas, interpolação, aplicação ao skeleton e playback |
-| FWAV | Nome bruto terminado em NUL, limite de texto, bytes restantes | HIT/eventos/amostras, mixing e reprodução de áudio |
-| BCON | Contagem byte, flags brutas, constantes LE16 e extensão restante; máximo estrutural de255 palavras | TRCN, semiglobal/global/OTF e precedência geral de tuning |
-| DGRP | Versões20000..20004, seleção direction/zoom/rotation, sprite refs/flags/offsets/raw floatbits | Composição geométrica, interpretação geral de flags e Z |
-| OBJD/SPR# | OBJD prefixos de identidade/funções/graphics; SPR# só versões no inspector | OBJD inteiro/OBJf e SPR# pixels |
+## Recursos e alcance dos leitores
 
-`read_objd_binding` lê somente o prefixo estável de 42 bytes nas versões
-136/138/139/140/141/142, retornando GUID, AnimationTableID, SlotID, MasterID e
-SubIndex assinado. Não valida
-o restante do OBJD nem implementa uma fábrica completa de objetos.
+| Formato | Uso e leitura disponível | Limites importantes |
+| --- | --- | --- |
+| FAR | Arquivos de recursos; versão 1, assinatura `FAR!byAZ`, nomes com comprimento de 32 bits e comprimentos de dados iguais | Outras variantes precisam de tratamento próprio; nomes repetidos não podem determinar precedência por acaso |
+| IFF | Contêiner de recursos 2.0/2.5; cabeçalho de 64 bytes e cabeçalhos de bloco de 76 bytes | Ler a estrutura não interpreta automaticamente blocos desconhecidos ou seu mapa de recursos |
+| GLOB | Nome do conjunto de comportamentos compartilhados; variantes Pascal e texto terminado em zero | A ligação depende do contexto e da identidade dos recursos, não de uma busca aproximada por nome |
+| BHAV | Comportamentos nas versões `0x8000`/`0x8001`/`0x8002`; instruções de 12 bytes, oito operandos e metadados de argumentos e variáveis locais | A execução depende dos comandos e serviços já implementados; outras versões não são presumidas equivalentes |
+| TTAB | Interações, condições, textos, permissões e valores anunciados; versões 4–8 e versão 9 com codificação 0/1 | As versões antigas 2/3 têm tratamento limitado; ler os campos não comprova a execução de uma interação |
+| SLOT | Lugares de uso e apoio; layouts 4–10, tipos, índices e extensões conhecidas | A colocação exige interpretar unidades, orientação, regras e geometria; registros desconhecidos não viram posições padrão |
+| STR# e textos relacionados | Nomes, descrições e traduções; formatos 0 a−3, com texto, comentário e código de idioma | Os leitores conservam bytes originais; conversão de caracteres e escolha de idioma são etapas separadas; formato −4 não é coberto por esse perfil |
+| BCON | Constantes dos comportamentos; contagem, indicadores e palavras de 16 bits | A constante depende da tabela local, compartilhada ou global selecionada pelo script |
+| OBJD / OBJf | Definições de objetos e pontos de entrada dos comportamentos; campos conhecidos de identidade, funcionamento, aparência e colocação | Os campos interpretados variam por versão; uma definição reconhecida não torna todo objeto executável |
+| SPR2 / PALT | Imagens com paleta, cor, transparência e profundidade; SPR2 versão 1000 e seus comandos de compressão | Variantes adicionais e indicadores não interpretados exigem suporte explícito; a composição visual é outro serviço |
+| SPR# | Imagens clássicas com paleta; cabeçalhos e decodificação por quadro nas versões 502/504/505/1000 | Paleta, dimensões, comandos e posição dos quadros são verificados; outras variantes exigem suporte explícito |
+| DGRP | Conjuntos de imagens; versões 20000–20004, direção, zoom, rotação e deslocamentos | Seleção de imagem e leitura dos indicadores não comprovam composição correta em todos os casos |
+| BMP | Imagens com cabeçalho DIB40, sem compressão, de 8 ou 24 bits; paleta, alinhamento e orientação | Outros cabeçalhos, compressões e profundidades de cor precisam de leitores próprios; transparência depende do uso do recurso |
+| BCF | Aparências, estruturas corporais e animações em perfis de leitura separados | Arquivos misturando seções e variantes adicionais não têm cobertura geral |
+| CMX / SKN | Descrições de aparência e malhas textuais clássicas; conversão de malha para uma representação comum | Outros segmentos e regras completas de seleção de roupas continuam sujeitos ao alcance do motor |
+| BMF | Malhas, ossos, faces, coordenadas de textura, pesos e transformações | Materiais e alguns campos brutos ainda exigem interpretação conforme o consumidor |
+| CFP | Amostras de posição e rotação comprimidas; valores literais, repetições e diferenças | Leitura das amostras não substitui transformação de coordenadas, interpolação e aplicação à estrutura corporal |
+| FWAV | Nome do evento de áudio e extensão do recurso | O nome sozinho não contém a amostra nem comprova reprodução; áudio também depende dos eventos, bancos e decodificadores |
+| CARR | Carreiras, níveis, salários, horários, requisitos e efeitos nas necessidades | Textos traduzidos e variantes também usam tabelas de texto; nomes internos não substituem essas traduções |
+| FAMI / NBRS | Famílias, vizinhos, dados pessoais e relações nos perfis conhecidos | Ler os registros não cria personagens nem resolve sozinho ocupação, identidade e vínculos |
+| SIMI e recursos do lote | Globais, dados financeiros e partes da descrição da casa | Arquitetura, objetos e personagens exigem os recursos associados e preparação compatível |
+| OBJM / OBJT | Estado e referências de objetos de partidas clássicas | Recuperar uma partida exige reconciliar definições, comportamentos e vínculos; dados desconhecidos não recebem valores inventados |
 
-`read_objd_functions` estende a leitura estável até68 bytes para Main/Sit/Stand
-e UsesFnTable. Preserva a seleção legada versus OBJf; não interpreta a tabela
-OBJf nem implementa despacho funcional genérico.
+## Estrutura, identidade e texto
 
-O leitor FAR deste perfil exige dados antes do manifesto e que o manifesto termine
-no fim do arquivo. Uma variante diferente produz diagnóstico explícito, sem
-supor automaticamente que todo arquivo comercial com outro layout está corrompido.
-Nomes não são usados para escrever ou extrair arquivos.
+Os blocos IFF são identificados por quatro caracteres, preservando maiúsculas e
+minúsculas. Os tamanhos e campos externos usam a ordem de bytes do formato;
+os leitores não aplicam uma única ordem a todos os dados. Cada bloco é lido
+dentro de sua própria extensão, sem ultrapassar o recurso seguinte.
 
-Os FourCC são preservados, inclusive maiúsculas/minúsculas. Cada chunk entrega uma
-view limitada à sua extensão, de forma que um leitor não ultrapasse o próximo
-recurso. Os campos não interpretados permanecem no stream de origem.
+No perfil FAR atual, os dados precedem o índice e o índice termina no fim do
+arquivo. Uma variante diferente recebe uma mensagem de formato não suportado;
+isso não significa, por si só, que o arquivo esteja danificado. Nomes de entradas
+não autorizam escrita ou extração em caminhos arbitrários.
 
-Limites iniciais configuráveis na API: 200.000 entradas por FAR, 100.000 chunks por
-IFF, 1.000.000 de frames por SPR2, 4.096 interações por TTAB e 256 motivos por
-interação e 4.096 registros por SLOT. São limites de proteção deste protótipo, não
-limites atribuídos ao original. O índice FAR e os BHAVs são alocados somente após
-validação de tamanho; o inspector não expande sprites. O decoder separado
-SPR2 expande somente o frame selecionado com budgets próprios; composição CPU
-com depth/alpha em [composition-validation.md](composition-validation.md). Ver
-[sprite-validation.md](sprite-validation.md).
+A leitura estrutural conserva campos brutos e extensões não interpretadas quando
+o contrato do leitor permite. Conhecido, ausente, vazio e desconhecido são estados
+diferentes. Um trecho incompleto não deve ser preenchido silenciosamente com zeros.
 
-Views compartilham um stream seekable e não são thread-safe. O inspector é uma
-ferramenta Linux host, usando filesystem/iostream e mapas para relatórios. O
-desenho final de I/O e orçamento dos consoles permanece por medir.
+Nos textos, a escolha do grupo de idioma e a conversão para texto visível têm
+regras próprias. O serviço de seleção clássico pode usar inglês quando o grupo
+pedido está ausente; um grupo existente conserva seus índices, inclusive entradas
+vazias. Um consumidor que ofereça outro tipo de fallback deve declará-lo.
 
-Animações usam limites próprios: 4.096 clipes, 4.096 motions cumulativas,
-65.536 unidades de propriedades/grupos/eventos cumulativas e 4 MiB de texto por
-leitura. STR# limita 65.536 entradas. CFP limita o total `3*T + 4*R` a 1.048.576
-amostras float32; não implica que esses sejam limites do original.
+## Limites de leitura
 
-## Lacunas relevantes encontradas no corpus
+Os limites abaixo protegem o leitor contra tamanhos inválidos ou consumo excessivo.
+São padrões configuráveis do projeto, não limites atribuídos ao jogo original.
 
-NBRS do bairro tem leitor estrutural bounded, preservando placeholders,80/256
-palavras de pessoa e relações int32. Runtime/limites em
-[neighborhood-validation.md](neighborhood-validation.md); não instancia avatares.
+| Recurso | Padrão de proteção |
+| --- | --- |
+| Índice FAR | 200.000 entradas; nome individual até 4.096 bytes; total de nomes até1 MiB |
+| IFF | 100.000 blocos |
+| TTAB | 4.096 interações e 256 registros de necessidades por interação |
+| SLOT | 4.096 registros |
+| Texto e animação | 65.536 entradas de texto; 4.096 clipes e 4.096 movimentos acumulados; limites próprios de propriedades e 4 MiB de texto por leitura |
+| CFP | 1.048.576 amostras de ponto flutuante no conjunto de posições e rotações |
+| Decodificação de imagens SPR2 | Limites próprios de quadros, dimensões, pixels e comandos; a leitura do índice não autoriza expandir todas as imagens |
 
-SIMI de casas externas preserva32/64 globais, campos fixos, seis registros de
-orçamento e extensão desconhecida. Versões e cobertura estão em
-[lot-validation.md](lot-validation.md); isso não carrega arquitetura ou entidades.
+Os leitores verificam tamanhos antes de alocar memória e rejeitam truncamento,
+referências fora dos limites e valores inválidos conforme cada formato. Imagens
+podem ser decodificadas por quadro, evitando carregar um arquivo inteiro sem
+necessidade. O acesso de baixo nível compartilha um fluxo de leitura e não deve
+ser usado simultaneamente por várias tarefas sem coordenação.
 
-- TTAB versão 9 comprimida aparece em 1.398 ocorrências internas aos FAR,
-  incluindo cadeiras comuns; seus campos agora são lidos. O codec usa bits MSB-first,
-  campo zero ou seletor de largura com payload assinado. Truncamento causa erro;
-  não inventar valores zero quando acaba a entrada. O float de atenuação é
-  preservado como bits uint32, sem interpretação numérica nesta etapa.
-- Existem TTAB versões 2/3 e dois payloads vazios. O tratamento original não
-  foi estabelecido; não eliminar esses recursos silenciosamente.
-- Há 115 nomes normalizados repetidos em FARs. Identidade, precedência e
-  substituição de recursos ainda exigem investigação.
-- A cadeia de chamadas diretas de `DiningChairs.iff` é um candidato para a VM
-  inicial; dependências por nome, função, animação e áudio não estão fechadas.
+Os saves nativos do OpenDollhouse têm contrato próprio; ler um save clássico
+não implica gravá-lo de volta no mesmo formato. Compatibilidade de conteúdo,
+execução e salvamento precisam ser avaliadas em conjunto. Consulte o
+[escopo jogável](linux-playable-scope.md), a [arquitetura](architecture.md) e as
+[ferramentas](tools.md) para entender esses usos.

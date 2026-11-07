@@ -1,138 +1,45 @@
-# Escopo da primeira build jogável Linux
+# Requisitos da primeira versão jogável
 
-Este documento define o que significa “primeira build jogável” para o
-OpenDollhouse. Um lote de demonstração que abre e permite uma interação é um
-marco de desenvolvimento, mas não satisfaz esse objetivo.
+A primeira versão deve permitir jogar e continuar a partida em C/C++, com
+paridade funcional com o Simitone fixado como primeiro marco. O projeto mantém
+a experiência original do The Sims 1, suas sete expansões e conteúdo clássico
+como destino. Bugs conhecidos podem ser descritos; sistemas centrais ausentes
+não podem ser apresentados como concluídos.
 
-O retrato atual por recurso e a ordem proposta para ligar as peças estão em
-[playable-feature-matrix.md](playable-feature-matrix.md). A matriz é um mapa
-de trabalho, não reduz os critérios de conclusão deste documento.
+## O que o jogador precisa conseguir fazer
 
-Direção autorizada em 2026-10-25: obter a base funcional Linux a partir de
-Simitone e sua revisão FreeSO, corrigindo diferenças rumo à experiência original.
-O [plano vigente](architecture.md#direção-vigente--base-simitone-experiência-original-2026-10-25)
-substitui a estratégia de reescrita independente como caminho principal.
-Paridade Simitone é um marco intermediário; interface, controles e comportamento
-do original continuam sendo o destino. Limitações herdadas não removem os
-requisitos abaixo. A base já executa fluxos limitados, mas não satisfaz este escopo completo.
-A direção posterior exige port integral para C/C++, sem C#/.NET no produto
-final; ver [plano do port](native-port-plan.md). O executável gerenciado é
-somente referência e ferramenta temporária de comparação.
+- Abrir a vizinhança, ver famílias e informações dos lotes e entrar na casa.
+- Criar adultos e crianças, editar, renomear e excluir famílias elegíveis;
+  mudar de casa preservando pessoas, progresso e dinheiro.
+- Controlar Sims, escolher/cancelar ações, alterar velocidade e deixar a autonomia
+  funcionar com necessidades, relações, habilidades, escola, carreira e serviços.
+- Comprar, mover, girar e vender objetos; construir com custo e restrições reais,
+  incluindo paredes, pisos, portas/janelas, escadas, telhados e alterações do terreno.
+- Usar animais e atividades das expansões; viajar ao Centro, Férias, Cidade Velha,
+  Cidade Estúdio e Cidade Mágica, permanecer e retornar mantendo casa e progresso.
+- Salvar, sair e continuar, inclusive ações em andamento e estadias admitidas.
+- Escolher idioma e usar conteúdo personalizado clássico com dependências claras.
+- Obter logs úteis quando ocorrer uma falha, sem depender de ferramentas internas.
 
-## Definição
+## Interface e dados
 
-A build candidata deve oferecer, no Linux, o ciclo principal de The Sims 1 com
-os dados externos fornecidos pelo jogador e incluir os sistemas e destinos das
-sete expansões. A referência prática mínima é a cobertura funcional do
-Simitone para The Sims Coleção Completa. A equivalência precisa ser avaliada por
-uma lista de recursos e fluxos de jogo; abrir um lote ou executar alguns BHAVs
-não basta.
+Usar a interface original em todo o jogo: mapa, criação de família, simulação,
+compra/construção, menus de ações e diálogos. Preservar proporção dos elementos,
+retratos, navegação, comportamento dos submenus e informações ao passar o mouse.
+O modo de diagnóstico não substitui a apresentação da versão jogável.
 
-O objetivo admite bugs conhecidos e limitações documentadas. Não admite que
-uma expansão ou uma parte central do ciclo de jogo esteja ausente e ainda assim
-seja chamada de build jogável equivalente. Não exige que todos os textos sejam
-auditados: uma seleção curta de textos reais, incluindo caracteres acentuados
-e um caso de tradução ausente, é suficiente para o primeiro gate de idioma.
+Os dados são fornecidos pelo jogador; não se exige executável original nem CD
+inserido. A entrada implementada é uma pasta extraída. Compatibilidade com Legacy
+Collection é interesse adicional, sem equivalência presumida com Complete Collection.
 
-## Recursos e fluxos que precisam estar presentes
+## Aceitação
 
-- **Dados e configuração:** localizar os dados instalados, detectar as
-  expansões presentes, escolher um idioma disponível na primeira execução e
-  guardar a escolha. O jogador pode alterar idioma e pasta de dados depois.
-- **Vizinhança e famílias:** mostrar o overworld/vizinhança com seus lotes;
-  criar, escolher, renomear e excluir famílias; mudar uma família para outro
-  lote; entrar em um lote e voltar à vizinhança sem perder o estado salvo.
-  Excluir uma família inteira significa remover a família escolhida e seus
-  vínculos com confirmação, mantendo as demais famílias. Apagar um Sim durante
-  a edição ou desocupar uma casa não conta como excluir a família. Esse fluxo
-  continua obrigatório para o OpenDollhouse mesmo que o caminho de exclusão
-  esteja incompleto na referência Simitone consultada.
-- **Lotes residenciais e comunidade:** abrir, jogar e salvar lotes da edição
-  base e das expansões. House Party (“Fazendo a Festa”) e Unleashed
-  (“O Bicho Vai Pegar”) entram nesta cobertura de lotes e objetos; nomes em
-  português na [lista oficial da EA](https://www.ea.com/pt-br/games/the-sims/the-sims-25th-anniv-edition).
-- **Destinos das expansões:** oferecer acesso jogável ao Centro (Hot Date),
-  às Férias (Vacation), à Cidade Mágica (Makin' Magic) e à Cidade Estúdio
-  (Superstar), incluindo ida, permanência e retorno ao lote residencial.
-- **Demais expansões:** incluir os recursos de Livin' Large e Unleashed no
-  fluxo de jogo e nos dados disponíveis, sem presumir que ler seus arquivos
-  equivale a implementar suas regras.
-- **Ciclo de vida do Sim:** simulação contínua, necessidades, relações,
-  autonomia e interações de objetos suficientes para jogar os cenários
-  correspondentes. Construir/comprar, pausar, salvar, sair e continuar também
-  precisam estar ligados ao fluxo, dentro do escopo observado no Simitone.
-- **Conteúdo:** resolver e usar dados da edição base e das expansões presentes,
-  mantendo a instalação comercial fora do repositório. A ausência de uma
-  expansão deve ser explicada, não convertida silenciosamente em um destino
-  vazio.
+Exercitar os percursos completos no aplicativo e conferir resultados observáveis:
+necessidades, dinheiro, relações, personagens e alterações do lote. Conferir
+cancelamento/falha sem perda ou cobrança indevida. Salvar e reabrir em processo
+novo, preservando estado e pedidos ativos. Conferir apresentação e controles
+em janela e uma sessão prolongada com limitações explícitas.
 
-Esta lista define áreas obrigatórias, não afirma que elas já estejam
-implementadas. Para cada item, o plano de validação deve indicar o caminho de
-uso, as referências Simitone consultadas, os dados de teste e o que ainda não
-foi comparado com o jogo original.
-
-## Critérios de validação
-
-1. Fazer uma matriz de recursos do Simitone por expansão e ligar cada linha a
-   uma demonstração reproduzível ou marcar explicitamente a lacuna.
-2. Percorrer os fluxos de vizinhança, gestão de família, mudança, entrada e
-   saída de lote, salvar e retomar.
-3. Entrar e voltar de cada destino: Centro, Férias, Cidade Mágica e Cidade
-   Estúdio. Conferir regras específicas de cada expansão, não só a troca de
-   cenário.
-4. Exercitar conteúdo representativo de House Party, Livin' Large e Unleashed,
-   além da edição base.
-5. Confirmar a escolha de idioma, persistência após reiniciar, textos de
-   interface reais e fallback inglês sem corromper bytes acentuados.
-6. Registrar bugs conhecidos com passos para reproduzir e anexar o log local da
-   sessão. O fato de a build ainda ter bugs não dispensa esses registros.
-
-Testes sintéticos continuam úteis para formatos e regras. Eles não substituem
-uma execução integrada com os dados comerciais externos nem a passagem manual
-pelos fluxos acima. Um cenário pequeno como House07 continua sendo uma boa
-prova rápida de regressão, não o critério de conclusão do objetivo.
-
-## Logs e diagnóstico
-
-A build jogável deve gravar logs locais automaticamente e indicar ao jogador
-onde encontrá-los. No Linux, o caminho padrão será
-`$XDG_STATE_HOME/opendollhouse/logs/odh-person.log`, ou
-`~/.local/state/opendollhouse/logs/odh-person.log` quando `XDG_STATE_HOME` não
-estiver definido. Cada sessão deve registrar versão/commit, horário, idioma,
-expansões detectadas, etapas de inicialização, avisos, erros e contexto útil de
-VM/interação. Uma falha fatal deve deixar ao menos um registro da última etapa
-conhecida e indicar encerramento inesperado na próxima inicialização.
-
-Os logs devem ter rotação com até três cópias anteriores e limite de 1 MiB por
-sessão, para não crescerem sem controle. Não devem incluir conteúdo bruto dos
-arquivos comerciais nem enviar dados pela rede. Um modo de diagnóstico pode acrescentar traces mais
-detalhados quando o jogador quiser reproduzir um problema. Captura de stack ou
-core dump nativo pode ser opcional, pois precisa de limites e consentimento
-explícitos de armazenamento.
-
-A prévia Linux já liga um logger à entrada do launcher e ao runtime, com caminho
-local, rotação, limite de tamanho, identificação de build, idioma, expansões
-detectadas, etapas, exceções e falhas por sinal. Se a sessão termina sem
-encerramento normal, a próxima execução registra isso e a última etapa conhecida.
-Testes verificam também permissões privadas, sessões concorrentes e o limite de
-tamanho. Ainda falta mostrar o caminho do log em todos os erros da interface e
-confirmar que as mensagens dão contexto suficiente para os bugs que surgirem
-durante o jogo. Isso não significa que exista um jogo completo nem captura de
-stack nativa.
-
-A identificação Git do logger é atualizada em cada build, sem exigir nova
-configuração do CMake. Ela usa o SHA completo e acrescenta `-dirty` quando há
-alterações em arquivos versionados; arquivos não rastreados não mudam esse
-rótulo. O cabeçalho só muda quando a identificação muda, evitando recompilar o
-logger numa compilação idêntica. Checkouts com `.git` em arquivo (worktrees)
-são aceitos; um pacote de fontes sem seu próprio `.git` usa `unknown`, mesmo
-que esteja dentro de outro repositório. Variáveis Git herdadas de hooks não
-podem redirecionar o repositório, índice ou regras de detecção das mudanças.
-
-O CTest `build_revision` usa um repositório sintético e configura sua aplicação
-mínima somente uma vez. Confere SHA limpo, mudanças versionadas preparadas ou
-não, novo commit, preservação dos timestamps no build sem mudanças, diretórios
-com espaços, worktree, arquivo de fontes sem Git e overrides Git de ambiente.
-Git ausente marca esse teste como ignorado. O teste do logger e uma inicialização
-real curta em perfil temporário também conferem o registro da identificação.
-Esses checks verificam o diagnóstico da build; não ampliam a cobertura de jogo.
+Testes sintéticos, execução sem janela e compilação apoiam a verificação, mas
+não substituem o uso real. A aceitação Linux não estabelece suporte nos demais
+alvos; cada um tem seus [próprios critérios](portability.md).

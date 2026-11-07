@@ -1,220 +1,114 @@
 # Referências e atribuição
 
-FreeSO, Simitone e seus autores/contribuidores oferecem investigação e
-implementações importantes de formatos, SimAntics e integração TS1. ODH usa esses
-trabalhos como conhecimento e inspiração. Até o checkpoint desta decisão, o
-código versionado do ODH não inclui nem depende do runtime C# desses projetos.
-Em 2026-10-25, o usuário autorizou mudar o caminho principal para uma base
-derivada do Simitone/FreeSO, com o original como destino de fidelidade.
-A entrada Linux do fork alexjyong será avaliada primeiro em checkout de trabalho
-separado. Adoção, revisões e licenças ainda precisam ser verificadas na prática;
-os clones abaixo continuam sendo referências preservadas, não dependências
-automaticamente incorporadas. Ver [plano vigente](architecture.md).
+O OpenDollhouse reimplementa em C/C++ a experiência de The Sims 1 para PC.
+Simitone e FreeSO fornecem referências de formatos e comportamento; o jogo
+original continua sendo a referência de fidelidade. Os fontes C# consultados
+não tornam C# ou .NET uma dependência do motor nativo.
 
-## Prioridade para The Sims Complete Collection
+Simitone é a referência funcional prioritária porque ativa os caminhos de The
+Sims 1. FreeSO também contém regras próprias de The Sims Online: encontrar uma
+rotina compartilhada não significa que seu comportamento se aplique ao TS1.
+Uma implementação ausente ou incompleta na referência também não define o
+limite do OpenDollhouse. Consulte a [arquitetura](architecture.md) e o
+[escopo jogável](linux-playable-scope.md) para distinguir objetivo e cobertura.
 
-Por orientação humana de 2026-10-14, consultar primeiro o frontend Simitone
-e seu submódulo FreeSO na revisão fixada. Identificar como o Simitone ativa
-os caminhos TS1 antes de interpretar o código compartilhado. O FreeSO principal
-serve como referência secundária para comparação, formatos comuns e correções;
-comportamentos exclusivos de The Sims Online não definem o comportamento alvo.
-A referência de fidelidade continua sendo o jogo original.
+## Fontes fixadas
 
-Esta prioridade vale para novas investigações e revisões de contratos quando
-necessárias. Os documentos anteriores preservam a origem realmente consultada;
-não se troca sua atribuição apenas porque um arquivo tem equivalente no
-submódulo. A [verificação inicial desta decisão](reference-priority-2026-10-14.md)
-registra os caminhos TS1 e a comparação do interpretador HIT.
+Estas revisões identificam fontes públicas consultadas. São identificadores de
+código upstream, não resultados de testes do OpenDollhouse. Cada adaptação deve
+conservar a revisão efetivamente usada, inclusive quando existe um arquivo de
+mesmo nome em outra versão.
 
-Revisões de referência identificadas em 2026-10-13:
+| Projeto e autores | Revisão | Uso |
+|---|---|---|
+| [Simitone, de riperiperi e colaboradores](https://github.com/riperiperi/Simitone/tree/4906db3156616bfaffc10ce0963cf08062975fef) | `4906db3156616bfaffc10ce0963cf08062975fef` | Frontend e integração do TS1. |
+| [FreeSO fixado por esse Simitone](https://github.com/riperiperi/FreeSO/tree/f86bbd34b2112296ed786741f640a0535886d180) | `f86bbd34b2112296ed786741f640a0535886d180` | Submódulo correspondente; distinto do FreeSO principal. |
+| [Fork Simitone de alexjyong e colaboradores](https://github.com/alexjyong/Simitone/tree/e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab) | `e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab` | Referência da integração desktop usada na migração nativa. |
+| [FreeSO fixado pelo fork](https://github.com/riperiperi/FreeSO/tree/7e76c1960252ddd033d8937d5edb47d326f5b69c) | `7e76c1960252ddd033d8937d5edb47d326f5b69c` | Contratos TS1 de simulação e serviços adaptados. |
+| [FreeSO principal, de riperiperi e colaboradores](https://github.com/riperiperi/FreeSO/tree/4c6b3e8f5835b228723caea3c9f683c62f244f73) | `4c6b3e8f5835b228723caea3c9f683c62f244f73` | Consulta inicial de formatos, VM, áudio e comparação de implementações. |
+| [FSOMonoGame e colaboradores](https://github.com/riperiperi/FSOMonoGame/tree/74f7ef558111e62a7d0a2228b6f9714980e000fa) | `74f7ef558111e62a7d0a2228b6f9714980e000fa` | Semântica de operações gráficas e matemáticas consultadas. |
 
-- [FreeSO — 4c6b3e8f5835b228723caea3c9f683c62f244f73](https://github.com/riperiperi/FreeSO/tree/4c6b3e8f5835b228723caea3c9f683c62f244f73).
-- [Simitone — 4906db3156616bfaffc10ce0963cf08062975fef](https://github.com/riperiperi/Simitone/tree/4906db3156616bfaffc10ce0963cf08062975fef).
-- O submódulo FreeSO desse Simitone aponta para
-  `f86bbd34b2112296ed786741f640a0535886d180`. Essas referências são distintas.
+A [discussão de limitações do Simitone](https://github.com/riperiperi/Simitone/issues/8)
+ajuda a identificar perguntas de compatibilidade. Ela não substitui a leitura
+do código fixado nem a observação do jogo original. As referências não são
+baixadas ou executadas automaticamente para compilar o motor nativo.
 
-## Checkouts locais de consulta
+## Origem dos contratos técnicos
 
-### Checkout de avaliação separado
+Os nomes abaixo são caminhos dentro dos repositórios públicos da tabela.
+Eles permitem localizar a origem de uma regra sem depender de uma instalação
+particular do projeto.
 
-A avaliação de 2026-10-25 usa
-`refs/work/Simitone-linux`, com frontend alexjyong
-`e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab` e FreeSO
-`7e76c1960252ddd033d8937d5edb47d326f5b69c`. Essa cópia pode receber patches
-de desenvolvimento; não altera as revisões ou arquivos dos clones de consulta
-abaixo. Patches reproduzíveis ficam em `tools/simitone/`. A avaliação e os
-limites de atribuição por componente estão em
-[simitone-linux-evaluation.md](simitone-linux-evaluation.md).
-
-### Referência comercial adicional: Legacy Collection
-
-Em 2026-10-15, o usuário adicionou `../referencias/The Sims Legacy Collection`
-e identificou sua origem como a edição Steam lançada em 2025. Essa origem é
-relato do usuário; ainda não foi verificada por manifesto ou versão de produto.
-A primeira inspeção ocorreu durante a cópia. Após o usuário informar sua
-conclusão, um novo inventário encontrou metadados estáveis antes/depois da
-comparação. Isso registra a árvore fornecida, sem verificar um manifesto Steam.
-
-Uma comparação SHA256 limitada encontrou identidade byte a byte nos três
-arquivos `Downloads/BirthdayCake/` presentes nas duas instalações:
-
-| Arquivo | SHA256 em ambas |
+| Área | Fontes consultadas no FreeSO |
 |---|---|
-| `bcakesnd.HIT` | `1acbbcdbd62207b82d91de4b9c7606c18d83e3121b27d11a50e6970df10257a4` |
-| `bcakesnd.hot` | `eacae1faac6b3c1edffbe59e43b9dc5d3bdb4da2688dd9a6f9818f147ccd1d00` |
-| `bcakesnd.hsm` | `082b4e97bef77612fbc264c236710326952262bdb1212a10d6152aab91e43a61` |
+| Arquivos e objetos | `TSOClient/tso.files/FAR1/FAR1Archive.cs`; `Formats/IFF/IffFile.cs`; chunks `BHAV`, `OBJD`, `TTAB`, `OBJf`, `GLOB`, `SPR`, `SPR2`, `DGRP`, `STR` e `SLOT`. |
+| Tabelas compactadas | `TSOClient/tso.files/Formats/IFF/Chunks/TTAB.cs` e `IffFieldEncode.cs`. |
+| Execução dos scripts | `TSOClient/tso.simantics/Engine/VMThread.cs`, `VMStackFrame.cs`, `VMMemory.cs`, `Scopes/VMVariableScope.cs`; primitivas `VMExpression.cs` e `VMSubRoutine.cs`. |
+| Entidades e posições | `Entities/VMEntity.cs`, `VMGameObject.cs`, `Model/VMStackObjectVariable.cs`, `VMPersonDataVariable.cs`, `VMContext.cs`, `Engine/Scopes/VMSlotScope.cs` e `Engine/VMSlotParser.cs`. |
+| Caminhada e interações | `Engine/VMRoutingFrame.cs`; primitivas `VMGotoRoutingSlot.cs`, `VMSnap.cs` e `VMNotifyOutOfIdle.cs`. |
+| Animação e personagens | Leitores `BCF.cs`, `CFP.cs`, `BCFReadProxy.cs`, `Animation.cs`; `TS1BCFProvider.cs`, `VMAnimateSim.cs`, `VMAvatar.cs`, `VMAnimationState.cs`, `VMAnimationScope.cs` e `Animator.cs`. |
+| Áudio | Implementação HIT, `FWAV.cs` e primitivas de reprodução de som. |
+| Seleção dos dados TS1 | Provedores `TSOClient/tso.content/TS1/` e `VMTS1Activator.cs`. |
+| Famílias e viagens | `VMGenericTS1Call.cs`, inventário TS1 e `Model/TS1Platform/VMTS1LotState.cs`, em conjunto com o frontend Simitone. |
 
-Isso permite reutilizar esses recursos em comparações futuras, mas não comprova
-equivalência das demais tabelas, do motor ou das instalações completas.
+Os leitores e serviços nativos acrescentam limites de memória, validação de
+entradas e erros explícitos. Um formato lido corretamente não comprova todas as
+regras do jogo que o utilizam. Diferenças entre regras TS1, regras TSO e edições
+do jogo devem continuar identificáveis; não devem virar alternativas silenciosas.
+O [guia de formatos](formats.md) explica as estruturas tratadas pelo projeto.
 
-O inventário posterior está em
-[legacy-reference-validation.md](legacy-reference-validation.md): os 81 arquivos
-HIT/HOT/HSM comuns são idênticos; quatro dos cinco FAR amostrados diferem.
+## Dados comerciais e edições do jogo
 
-Usar essa edição como referência comparativa de formatos, recursos e rotinas.
-A instalação `../referencias/The Sims` continua sendo a base das evidências
-anteriores. Endereços, hashes e contratos obtidos de uma edição não se aplicam
-automaticamente à outra: registrar o arquivo e sua identidade em cada análise.
-Preservar ambas as instalações externas, sem executar ou modificar seus
-binários durante consultas estáticas. Nenhum recurso comercial entra no Git.
+The Sims e suas expansões são obras da Maxis e da Electronic Arts. Seus
+executáveis, textos, imagens, músicas e demais recursos não fazem parte da
+distribuição do OpenDollhouse. O jogador fornece seus próprios dados do jogo.
 
-### Fontes de terceiros
+The Sims Complete Collection é a referência principal de conteúdo. A Legacy
+Collection pode servir para comparação adicional de recursos e interface.
+Edições diferentes não são presumidas idênticas: um endereço de executável,
+layout ou comportamento observado em uma delas precisa ser confirmado antes
+de ser aplicado à outra. Recursos modificados pelo jogador também devem ser
+distinguidos dos recursos originais.
 
-As referências externas abaixo não são dependências de build e não acompanham
-o clone. Para consultar as mesmas fontes, obtenha os repositórios upstream
-indicados acima e selecione as revisões correspondentes. Os caminhos na tabela
-são uma organização opcional a partir da raiz do checkout.
+## Licenças e créditos
 
-| Checkout local | Revisão |
-|---|---|
-| `refs/upstream/FreeSO` | `4c6b3e8f5835b228723caea3c9f683c62f244f73` |
-| `refs/upstream/Simitone` | `4906db3156616bfaffc10ce0963cf08062975fef` |
-| `refs/upstream/FSOMonoGame` | `74f7ef558111e62a7d0a2228b6f9714980e000fa` |
-| `refs/upstream/Simitone/FreeSO` | `f86bbd34b2112296ed786741f640a0535886d180` (submódulo) |
+- **FreeSO:** a revisão consultada declara
+  [Mozilla Public License 2.0](https://github.com/riperiperi/FreeSO/blob/7e76c1960252ddd033d8937d5edb47d326f5b69c/LICENSE.md).
+  Adaptações devem conservar os avisos, a origem e as obrigações aplicáveis aos
+  arquivos derivados. O crédito pertence aos autores e colaboradores upstream.
+- **Simitone e o fork alexjyong:** conservar os créditos próprios dos frontends.
+  A licença do submódulo FreeSO não estabelece, por si só, a licença de todos os
+  arquivos do frontend. Conferir os avisos do componente antes de incorporá-lo.
+- **FSOMonoGame:** a revisão consultada declara
+  [Microsoft Public License, Ms-PL](https://github.com/riperiperi/FSOMonoGame/blob/74f7ef558111e62a7d0a2228b6f9714980e000fa/LICENSE.txt),
+  com crédito à equipe MonoGame. Consultar suas operações de interpolação não
+  torna esse runtime gerenciado uma dependência do renderizador nativo.
+- **Demais bibliotecas e ferramentas:** suas licenças continuam próprias.
+  Reutilização de código, shaders ou recursos deve registrar autor, licença e
+  revisão; uma licença de código não concede direitos sobre os dados comerciais.
 
-Os clones usam histórico raso e as duas raízes estão em HEAD destacado. O
-submódulo FreeSO específico do Simitone é materializado na revisão própria;
-outros submódulos não são inicializados. Nenhum build, setup ou runtime de
-terceiros é executado para consulta. Os diretórios não são dependências de
-compilação do ODH e não são publicados junto com seu código. Licenças e créditos
-originais permanecem nos respectivos checkouts.
+O projeto não afirma uma metodologia clean-room nem equivalência com o jogo
+completo apenas por ter consultado essas fontes.
 
-Uma pesquisa focada, sem percorrer arquivos de runtime/binários:
+## Outras referências públicas
 
-```sh
-rg --no-ignore-vcs -n 'GetTuningVariable' refs/upstream/Simitone/FreeSO/TSOClient/tso.simantics --glob '*.cs'
-```
-
-## Proveniência anterior
-
-Consulta adicional de 2026-10-17: a issue8 e o fork comunitário alexjyong foram
-avaliados em [auditoria de referências](reference-audit-2026-10-17.md).
-O fork está isolado em `refs/upstream/Simitone-alexjyong`, revisão
-`e36e83f95d44b9f4b378e7665c4e2ecbaa88b4ab`; seu gitlink FreeSO
-`7e76c1960252ddd033d8937d5edb47d326f5b69c` não foi materializado.
-Lacunas de Simitone/forks devem ser investigadas nos recursos e no executável
-original identificado, sem transformar ausências de terceiros em limites ODH.
-
-A pesquisa inicial também consultou links `master`; esse conjunto não foi
-arquivado como snapshot integral. As revisões acima permitem consultas futuras
-fixas, mas não provam que cada excerpt anterior veio dessas mesmas revisões.
-
-Leituras relevantes no FreeSO:
-
-- `TSOClient/tso.files/FAR1/FAR1Archive.cs`.
-- `TSOClient/tso.files/Formats/IFF/IffFile.cs` e chunks `BHAV`, `SPR2`, `DGRP`,
-  `SPR`, `OBJD`, `TTAB`, `OBJf`, `GLOB`.
-- `TSOClient/tso.simantics/Engine/VMThread.cs`, `VMStackFrame.cs` e `VMContext.cs`.
-- Provedores `TSOClient/tso.content/TS1/` e `VMTS1Activator.cs`.
-
-O leitor TTAB usa como referência de formato `TTAB.cs` e `IffFieldEncode.cs`
-de `TSOClient/tso.files/Formats/IFF/Chunks/` no FreeSO, revisão fixa
-`4c6b3e8f5835b228723caea3c9f683c62f244f73`. A implementação C++ inclui
-limites próprios, diagnóstico de truncamento e estados para layouts não lidos.
-Ler campos conforme essa referência não comprova o tratamento do original.
-
-O núcleo inicial da VM consultou, na mesma revisão fixa FreeSO, `VMThread.cs`,
-`VMStackFrame.cs`, `VMMemory.cs`, `Scopes/VMVariableScope.cs` em
-`TSOClient/tso.simantics/Engine/`, e `VMExpression.cs`/`VMSubRoutine.cs` em
-`TSOClient/tso.simantics/Primitives/`. O layout 8002 usa também `BHAV.cs`.
-Retornos, FD e convenção de argumentos são um perfil de referência que ainda
-requer comparação com o original. Diferenças e falhas explícitas estão em
-`vm-validation.md`; não se reproduzem silenciosamente fallback de primitivas
-ausentes ou hacks de mundo da referência.
-
-O primeiro bridge de entidades consultou `Entities/VMEntity.cs`,
-`Model/VMStackObjectVariable.cs`, `Model/VMPersonDataVariable.cs`, `VMContext.cs`,
-`Engine/Scopes/VMSlotScope.cs`
-e `Primitives/VMGotoRoutingSlot.cs`, sob `TSOClient/tso.simantics/`, na mesma
-revisão fixa. O campo de slot sem recipiente é -1 nessa referência. Layouts
-de entidades no probe são construídos explicitamente; inicialização pelo
-original ainda não foi estabelecida.
-
-O leitor SLOT consulta `TSOClient/tso.files/Formats/IFF/Chunks/SLOT.cs` na
-revisão FreeSO acima. Preserva floats como bits e extensões ausentes como opcionais,
-sem aplicar defaults ou escalas do runtime. `Engine/VMSlotParser.cs` do
-submódulo FreeSO fixado do Simitone foi consultado para enumeração, scoring,
-direção e `FaceAnywhere`. O ODH implementa um perfil de faixa delimitado para
-House07 Global SLOT100 tipo 3 índice 8; o host fornece a validação do destino e
-outros perfis continuam fora do escopo. Evidência e limites em
-[route-slot-range-lattice-validation.md](route-slot-range-lattice-validation.md).
-
-Para a ligação inicial de roteamento foram também consultados `VMRoutingFrame.cs`
-(`Engine/`) e `VMSnap.cs` (`Primitives/`) no mesmo FreeSO fixo. A referência
-escreve person data RouteEntryFlags na chegada; snap Mode3 é Literal. O backend
-ODH ainda tem regras provisórias descritas em `routing-validation.md`.
-
-O perfil de contenção consultou `Entities/VMGameObject.cs` (`PlaceInSlot`) no
-mesmo FreeSO fixo: posição física acompanha a do recipiente, com dados SLOT
-de offset/altura disponíveis para representação. O prefixo OBJD foi conferido
-em `TSOClient/tso.files/Formats/IFF/Chunks/OBJD.cs`. A aplicação visual da
-altura ainda não está implementada.
-
-Os leitores STR#/BCF/CFP consultaram `STR.cs`, `BCF.cs`, `Animation.cs`, `CFP.cs`,
-`BCFReadProxy.cs` e `TS1BCFProvider.cs` na mesma revisão fixa. A pesquisa da
-primitiva44 consultou também `VMAnimateSim.cs`, `VMAvatar.cs`, `VMAnimationState.cs`
-e `Animator.cs`. As identidades dos recursos e o contrato ainda não implementado
-estão em [animation-validation.md](animation-validation.md), com links fixos.
-
-O controlador silencioso de animação consulta também `VMAnimationScope.cs`, na
-mesma revisão: StackObject é65536, distinto de Misc3. Limites, scheduler parcial,
-eventos e cancelamento ODH estão em [playback-validation.md](playback-validation.md).
-Reset de postura e loops, incluindo STR150/151 global e HeadSeekState42, estão
-em [reset-validation.md](reset-validation.md), com limites de carry/gestos.
-SnapToDirection e a notificação49 foram conferidos em VMSnap/VMSlotParser/SLOT
-e `VMNotifyOutOfIdle.cs`; ver [facing-validation.md](facing-validation.md).
-Função Stand/saídas no chão e o host de duas fases estão em
-[stand-validation.md](stand-validation.md); OBJf/dispatcher/scheduler completo
-ainda não são inferidos a partir dos testes legados.
-
-O registro `VMContext.cs` foi conferido para distinguir opcodes decimais de
-hexadecimais. TestObjectType32 e PlaySound23 consultam seus handlers e `FWAV.cs`;
-evidência/correção em [object-sound-validation.md](object-sound-validation.md).
-
-Os leitores do protótipo ODH foram escritos para o perfil do corpus observado,
-com verificações próprias de limites e fixtures sintéticas. A referência de
-comportamento final continua sendo o executável original identificado.
-Não se afirma metodologia clean-room, equivalência de implementação ou
-compatibilidade funcional apenas a partir dessas leituras.
-
-Outras fontes:
-
-- [Don Hopkins: material do sistema original e ferramentas de personagens](https://www.donhopkins.com/home/movies/).
+- [Don Hopkins: sistema original e ferramentas de personagens](https://www.donhopkins.com/home/movies/).
 - [3dbrew: mapa de memória](https://www.3dbrew.org/wiki/Memory_map) e
-  [pipeline PICA200](https://3dbrew.org/wiki/Nintendo_OpenGL).
-- [libctru](https://github.com/devkitPro/libctru),
+  [pipeline PICA200](https://www.3dbrew.org/wiki/Nintendo_OpenGL).
+- devkitPro: [libctru](https://github.com/devkitPro/libctru),
   [Citro2D](https://github.com/devkitPro/citro2d),
-  [Citro3D](https://github.com/devkitPro/citro3d).
-- [libvita2d](https://github.com/xerpi/libvita2d) e [VitaSDK](https://vitasdk.org/).
-- [Android NDK: C++](https://developer.android.com/ndk/guides/cpp-support).
-- [SDL3 no 3DS](https://wiki.libsdl.org/SDL3/README-n3ds).
+  [Citro3D](https://github.com/devkitPro/citro3d),
+  [libnx](https://github.com/switchbrew/libnx) e
+  [wut](https://github.com/devkitPro/wut).
+- [VitaSDK](https://vitasdk.org/) e [libvita2d, de xerpi e colaboradores](https://github.com/xerpi/libvita2d).
+- [Android NDK: suporte a C++](https://developer.android.com/ndk/guides/cpp-support).
+- [SDL3: notas para Nintendo 3DS](https://wiki.libsdl.org/SDL3/README-n3ds).
+- [OSXCross](https://github.com/tpoechtrager/osxcross) e
+  [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw), ferramentas de compilação cruzada.
 
-FreeSO declara MPL 2.0. Qualquer reutilização futura de código, shaders ou assets
-de terceiros deve registrar licença, origem e revisão. A licença do frontend
-Simitone não deve ser presumida a partir da licença de seu submódulo.
-
-Em 2026-10-14, foi clonado o [FSOMonoGame fixado pelo FreeSO](https://github.com/riperiperi/FSOMonoGame/tree/74f7ef558111e62a7d0a2228b6f9714980e000fa)
-para conferir `Color.Lerp`/`MathHelper.Lerp`: operações float e conversão int por
-truncamento antes de `ToVector4`. A licença declarada nessa revisão é Ms-PL.
-Checkout shallow e destacado, apenas consulta; nenhum build/setup executado.
-A implementação CPU própria não liga nem incorpora o runtime C# dessa biblioteca.
+A pesquisa de alternativas gerenciadas também consultou
+[ReSharp3DS](https://github.com/saiitanaa/ReSharp3DS/tree/9ddfe53fc0900a0b561aebeec5ff1e66527edef6),
+[VitaMonoLoader](https://github.com/GrapheneCt/VitaMonoLoader) e a documentação de
+[plataformas MonoGame](https://docs.monogame.net/articles/getting_started/platforms.html).
+Essas consultas não definem o motor atual, que é C/C++, nem constituem prova de
+execução do jogo nesses aparelhos. Veja a [portabilidade](portability.md).

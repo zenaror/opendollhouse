@@ -1,24 +1,28 @@
 # OpenDollhouse
 
-Reimplementação experimental do The Sims 1 em C/C++, com Simitone/FreeSO como
-referências. O produto final não deve exigir C#/.NET/CLR. As fontes gerenciadas
-preservadas servem como referência histórica; não ampliar essa implementação.
+Motor experimental do The Sims 1 em C/C++. Simitone/FreeSO são referências;
+o produto não deve exigir C#/.NET/CLR nem manter outro motor em paralelo.
 
-## Orientação local
+## Orientação
 
-- Leia [README.md](README.md), [arquitetura](docs/architecture.md) e o
-  [plano nativo](docs/native-port-plan.md). O índice está em [docs/README.md](docs/README.md).
-- Motor: `src/`, `include/odh/`, `native/`; programas: `tools/`; testes: `tests/`.
-- Não distribuir ou modificar dados comerciais nem saves originais. Use cópias
-  e perfis isolados para validações que gravam estado.
-- Referências externas são de terceiros: preserve revisão, licença e créditos;
-  não editar submódulos/clones de consulta como se fossem fontes do projeto.
-- Mantenha simulação e dados separados de gráficos, áudio, entrada e arquivos.
-  Sucesso no desktop não comprova funcionamento em consoles.
-- Preserve alterações preexistentes. Relate o escopo e os limites da validação;
-  não declare paridade com o jogo completo a partir de um cenário limitado.
+- Comece pelo [README](README.md), [documentação](docs/README.md),
+  [arquitetura](docs/architecture.md) e [plano](docs/native-port-plan.md).
+- Motor: `src/`, `include/odh/`, `native/`; programas/adaptadores: `tools/`;
+  testes sintéticos: `tests/`; configuração: `CMakeLists.txt`.
+- Preserve alterações existentes, origens, licenças e créditos. Não modifique
+  dados comerciais ou saves originais; valide com cópias e perfis isolados.
+- Separe simulação/dados de gráficos, áudio, entrada, arquivos e serviços do SO.
+- Integre serviços completos e seus consumidores. Não crie exceções por objeto
+  nem declare sistema concluído a partir de um teste isolado.
+- Divida frentes independentes com dono de arquivos e revisão; pontos compartilhados
+  e builds têm um responsável. Respeite o estado de execução definido pelo usuário.
+- Confira aparência e comportamento da interface no original antes de implementá-los.
+- Documentação pública deve ser legível e autossuficiente. Não incluir caminhos
+  pessoais, diários de execução, resultados gerados ou continuidade entre agentes.
+  Ferramentas reproduzíveis ficam versionadas; suas saídas permanecem ignoradas.
+- Explique interfaces de extensão, exemplos e limites em [mods](docs/modding.md).
 
-## Comandos essenciais
+## Compilar e conferir
 
 ```sh
 cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug
@@ -26,6 +30,6 @@ cmake --build build/native --parallel 2
 ctest --test-dir build/native --output-on-failure
 ```
 
-Dependências e modo sem janela: [README.md](README.md). Para mudanças de código,
-execute os testes pertinentes; não repetir cenários sem uma alteração ou falha
-que justifique a repetição. Mudanças documentais não exigem compilar o jogo.
+Requisitos e uso: [ferramentas](docs/tools.md). Execute verificações pertinentes
+à mudança; documentação não exige build. Compilação e emulação não comprovam
+funcionamento ou desempenho em outro aparelho.
