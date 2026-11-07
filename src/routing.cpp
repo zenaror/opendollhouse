@@ -2976,9 +2976,14 @@ PrimitiveOutcome Routing::request(const VmFrame& frame,const Instruction& i,cons
     // that source destination: other avatars still consult it during failure398.
     std::optional<SourceSlotChoicesSnapshot> last_attempted_choice;
     const auto remember_attempt=[&](const SourceSlotChoiceGoal& goal){
-        if(!slot||!selected_slots||selected_slots->version<4||selected_slots->version>10||slot->type!=3)return;
+        // Exact source27 intentionally has no selection `slot` so it follows
+        // its direct-point branch. Its already-generated canonical transient
+        // SLOT still authenticates CurRoute; do not change branch selection.
+        const auto* retained_slot=slot?slot:(goto_relative&&selected_slots?
+            slot_of_type(*selected_slots,3,slot_index):nullptr);
+        if(!retained_slot||!selected_slots||selected_slots->version<4||selected_slots->version>10||retained_slot->type!=3)return;
         SourceSlotChoicesSnapshot choice;choice.slot_version=selected_slots->version;
-        choice.slot_index=slot_index;choice.slot=*slot;choice.target_radian_direction=source_slot_object_radians(*target);
+        choice.slot_index=slot_index;choice.slot=*retained_slot;choice.target_radian_direction=source_slot_object_radians(*target);
         choice.selected=goal;last_attempted_choice=std::move(choice);
     };
     const auto fail_route=[&](std::int16_t code,const std::string& reason,std::int16_t blocker=0) -> PrimitiveOutcome {

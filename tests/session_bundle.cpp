@@ -666,6 +666,45 @@ void source_slot_chair_choices_archive_tests(){
     reject([](auto& r){r.source_choices->chair_attempted=true;r.frame.state=odh::RouteFrameState::room_portal;},"chair attempt cannot survive without real external call");
     reject([](auto& r){r.source_choices->remaining.resize(4096);},"remaining choices bounded before allocation");
     reject([](auto& r){r.source_choices->target_radian_direction=std::numeric_limits<float>::quiet_NaN();},"typed SLOT frozen transform must be finite");
+    // A genuine selected NoPath has no successful same-room/motion proof.
+    // Only the full stack's authenticated pre398 failure authority admits it.
+    for(const bool relative:{false,true}){
+        auto pending_failure=bundle;auto& pending_actor=pending_failure.runtime_entities.front();
+        auto& pending_route=*pending_actor.route;
+        pending_route.same_room_verified=false;pending_route.source_choices->selected.chair.reset();
+        pending_route.source_choices->remaining.clear();
+        if(relative){
+            const odh::Instruction instruction{27,254,255,{0,0,0,254,0,0,0,0}};
+            pending_actor.vm.pending->instruction.instruction=instruction;
+            const auto transient=odh::make_source_goto_relative_slot(instruction);
+            require(transient&&transient->records.size()==1,"exact source27 canonical temporary SLOT for failure archive");
+            pending_route.source_choices->slot_version=transient->version;
+            pending_route.source_choices->slot_index=0;pending_route.source_choices->slot=transient->records.front();
+            pending_route.facing=4;pending_route.arrival_radian_direction=3.14159274f;
+            pending_route.source_choices->selected.facing=4;pending_route.source_choices->selected.radian_direction=3.14159274f;
+        }
+        odh::RouteJobSnapshot failed_choice;static_cast<odh::LocalRouteSnapshot&>(failed_choice)=pending_route;
+        failed_choice.pending=*pending_actor.vm.pending;failed_choice.route_frame=pending_actor.vm.stack.back();
+        failed_choice.failure_pending=true;failed_choice.failure_code=3;failed_choice.failure_reason="source AttemptWalk found no reachable goal";
+        pending_actor.route.reset();pending_actor.route_stack=odh::RouteStackSnapshot{{failed_choice},pending_failure.host.tick,{}};
+        const auto pending_bytes=odh::encode_session_bundle(pending_failure);
+        const auto pending_opened=odh::decode_session_bundle(pending_bytes);
+        const auto& restored=pending_opened.runtime_entities.front().route_stack->jobs.front();
+        require(restored.failure_pending&&!restored.same_room_verified&&!restored.source_sparse&&
+            restored.path==std::vector<odh::RoutePoint>{{5,12}}&&restored.source_choices&&
+            odh::encode_session_bundle(pending_opened)==pending_bytes,
+            "full selected INITIAL NoPath roundtrips without fabricated successful room/motion proof");
+        auto forged=pending_failure;forged.runtime_entities.front().route_stack->jobs.front().failure_pending=false;
+        rejects([&]{(void)odh::encode_session_bundle(forged);},"failed room-proof exception cannot be borrowed without pending source failure authority");
+        forged=pending_failure;forged.runtime_entities.front().route_stack->jobs.front().failure_code=0;
+        rejects([&]{(void)odh::encode_session_bundle(forged);},"failed room-proof exception requires positive source failure code");
+        forged=pending_failure;forged.runtime_entities.front().route_stack->jobs.front().pending.ticket++;
+        rejects([&]{(void)odh::encode_session_bundle(forged);},"failed room-proof exception never relaxes exact pending ticket");
+        forged=pending_failure;forged.runtime_entities.front().route_stack->jobs.front().source_choices.reset();
+        rejects([&]{(void)odh::encode_session_bundle(forged);},"old failed archive without selected manifest does not obtain room-proof exception");
+        forged=pending_failure;forged.runtime_entities.front().route_stack->jobs.front().target_position.level=2;
+        rejects([&]{(void)odh::encode_session_bundle(forged);},"selected failed same-floor profile does not invent cross-floor placement support");
+    }
     auto child=bundle;auto& state=child.runtime_entities.front();auto& vm=state.vm;
     odh::RouteJobSnapshot job;static_cast<odh::LocalRouteSnapshot&>(job)=*state.route;
     job.pending=*vm.pending;job.route_frame=vm.stack.back();job.selected_sitting_object=3;

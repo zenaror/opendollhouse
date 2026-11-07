@@ -621,6 +621,11 @@ void failed_attempt_retains_curroute(){
         odh::RandomState random(81);
         if(mode==2||mode==3)live.route.set_authenticated_range_slot_goal_provider(
             [&](const auto& table,auto index,const auto& actor,const auto& target,float radians,const auto&){
+                // Circle and standing-range have separate source-authenticated
+                // scorers. The circle helper deliberately rejects general range.
+                if(mode==3)return odh::AuthenticatedRangeSlotGoals{odh::rank_source_standing_range_slot(
+                    table,index,actor,target,radians,random,[](auto){return odh::SourceSlotRoomResult::same_room;},
+                    [](auto){return odh::ReferenceSlotVerification::eligible;}),0,0,0};
                 return odh::AuthenticatedRangeSlotGoals{odh::rank_reference_range_slot(table,index,actor,target,random,
                     false,[](auto){return true;},{},{},{},radians,[](auto){return odh::ReferenceSlotVerification::eligible;}),0,0,0};});
         if(mode==4)live.route.set_authenticated_slot_goal_provider([](const auto&,auto,const auto&,const auto&,float,const auto&){
@@ -631,7 +636,7 @@ void failed_attempt_retains_curroute(){
         require(!live.planned_goals.empty(),"NoPath comes from actual source planner attempts");
         const auto last=live.planned_goals.back();
         const auto saved=live.route.capture_session_route_stack(owner,&why);
-        if(!saved)throw std::runtime_error("capture failed selected source destination: "+why);
+        if(!saved)throw std::runtime_error("capture failed selected source destination mode="+std::to_string(mode)+": "+why);
         const auto& job=saved->jobs.back();
         require(job.failure_pending&&job.source_choices&&job.source_choices->selected.position==last&&
             job.source_choices->remaining.empty()&&!job.source_sparse&&job.path==std::vector<odh::RoutePoint>{{4,12}}&&

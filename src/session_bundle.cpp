@@ -1602,7 +1602,7 @@ void validate_local_route_links(const SessionRuntimeEntity& entity,const Entity&
     if(vm.status!=VmStatus::waiting||!vm.pending||vm.pending->ticket!=route.ticket||
        !route.ticket||route.ticket>vm.ticket_sequence||route.actor!=entity.id||
        route.actor_generation!=actor.generation||
-       route.run_generation!=vm.run_generation||(!deferred&&!source_sparse&&!route.same_room_verified)||
+       route.run_generation!=vm.run_generation||(!deferred&&!source_sparse&&!route.same_room_verified&&!failed_selected_attempt)||
        (!deferred&&route.expected.level!=route.target_position.level))
         throw FormatError("session local Route45 ticket or identity is inconsistent");
     const bool verified_destination_owner=std::any_of(entity.dynamic_action_owners.begin(),
