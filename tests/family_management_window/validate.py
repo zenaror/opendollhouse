@@ -111,6 +111,64 @@ def picker_selected_row(frame):
     return active[0] if len(active)==1 else None
 
 
+# Dataset-specific visual references from already observed UI frames. Hashes
+# identify the displayed header, never META/resources/save authority.
+OBSERVED_HEADERS = {'map': {'header_sha256': '30428f9b34d41d3bea226cd3892d79c8abbc8f329546d3386cdd4f2d540d0ad8', 'observed_png_sha256': 'f2e7dba5dfb50557118e001cee88af67acf3b4c41f1daa5d4c0226a1fdf2f8d1'}, 'picker': {'header_sha256': 'f59118a23c61c094cdb5d53243eb9184becf25fa202531aef6d5d8f418ba969f', 'observed_png_sha256': '28ba431eb022aaba276795c95c2025ce1fe2c7c4af919beefb0a809b235e1a1b'}, 'cas_family': {'header_sha256': '3c419efd40d7e7069e07971cd895ee2c1ed8408eb16054e4f3d99944cc906de7', 'observed_png_sha256': 'f01a7be75ef1bde3e2be76f968c63b767081cd9ef5c5bf27ac131dd7e8cbd949'}, 'cas_character': {'header_sha256': '8c3c0c5d4a4bdbec0c8a83c0e439597e2d5788478bf2bd625807e398792f6f72', 'observed_png_sha256': '224f2576aaf41a3154bde8c968cc67b5dd90365cdcf099be3296f742fb59e615'}}
+
+
+def header_matches(frame, expected):
+    need(len(frame)==800*600*3, 'window RGB extent differs from actual geometry')
+    return hashlib.sha256(frame[:800*40*3]).hexdigest()==expected
+
+
+def validate_after_create_resume(prior, current_files, source_receipt_sha, checkpoint_sha):
+    need(prior.get('passed') is False and str(prior.get('error','')).startswith('vacant-lot-picker;'),
+         'resume is only for the observed stopped AFTER_CREATE before map-to-picker action')
+    required_guards={'source_profile_unchanged','source_checkpoint_unchanged','source_receipt_unchanged','binary_unchanged','reader_unchanged','commercial_sources_unchanged'}
+    need(required_guards<=set(prior.get('guards',{})) and all(value is True for value in prior['guards'].values()), 'prior input/source guards did not pass')
+    need(prior.get('source_receipt_sha256')==source_receipt_sha and prior.get('checkpoint_sha256')==checkpoint_sha,
+         'resume does not refer to the same authenticated source receipt/checkpoint')
+    need(all(prior.get(name,{}).get('pid_absent') is True for name in ('window_cleanup','xvfb_cleanup')),
+         'prior window/Xvfb are not recorded stopped')
+    probes=prior.get('probes',[])
+    need(len(probes)==1 and probes[0].get('stage')=='after-create', 'resume must have exactly the proved after-create probe')
+    probe=probes[0]['process']
+    need(probe.get('ok') is True and probe.get('proofs') and all(v is True for v in probe['proofs'].values()),
+         'after-create cold reopen proof did not pass')
+    old=probe['source_profile_before']
+    need(probe.get('source_profile_after')==old, 'after-create probe changed the management profile')
+    # Only the known non-authoritative log directory changed during the failed
+    # second launch. Everything else, including all blobs/settings, is exact.
+    changed=[name for name in old.keys()|current_files.keys() if old.get(name)!=current_files.get(name)]
+    need(all(name.startswith('state/opendollhouse/logs/') for name in changed), 'resume profile data differs outside actual session logs')
+    aux=prior['auxiliary_created']
+    need(aux['house']==0 and aux['budget']==20000 and aux['name']=='ODH UI Management', 'resume auxiliary is not the known unhoused normal family')
+    need(sorted((m['age'],m['given_name'],m['catalog_strings_id']) for m in aux['members'])==[(9,'Ben Child',2000),(27,'Ava Edited',2000)],
+         'resume did not prove actual adult/child/draft edit through character resources')
+    need(probes[0]['comparison']=={'changed_sections':['RELA'],'new_empty_neighbor_sources':sorted(m['nid'] for m in aux['members'])},
+         'resume after-create comparison differs')
+    return dict(allowed_log_differences=sorted(changed),auxiliary=aux)
+
+
+def hover_roundtrip(observe, move, wait_for, target, park, label):
+    """A non-mutating, reversible application-render acknowledgement."""
+    normal=observe()
+    move(target)
+    hover=None
+    def hovered():
+        nonlocal hover
+        hover=observe()
+        return hover!=normal
+    wait_for(label+'-nonmutating-hover',hovered)
+    move(park)
+    wait_for(label+'-nonmutating-normal',lambda:observe()==normal)
+    move(target)
+    wait_for(label+'-hover-reproduced',lambda:observe()==hover)
+    move(park)
+    wait_for(label+'-normal-reproduced',lambda:observe()==normal)
+    return normal,hover
+
+
 def isolated_output(output, roots):
     output = Path(output).resolve()
     need(not output.exists(), 'output must be new')
@@ -160,6 +218,7 @@ def main():
     p.add_argument('--cash', type=int, default=9497)
     p.add_argument('--checkpoint-sha256', default='b7409c4d9e61dacab7eb12ff19d1ae254ae36f0cb5fdd361a5ea54b5ffc49533')
     p.add_argument('--timeout-seconds', type=float, default=120)
+    p.add_argument('--resume-after-create', type=Path)
     args = p.parse_args()
     args.checkout = args.checkout.resolve()
     for name in ('binary', 'reader', 'game_root', 'source_receipt', 'protected_manifest'):
@@ -174,15 +233,26 @@ def main():
     need(sha(checkpoint) == args.checkpoint_sha256, 'source checkpoint is not the explicitly accepted input')
     need(inventory(source_profile) == expected_files, 'source producer inventory changed')
     need(smoke_mod.profile_checkpoint(source_profile, expected_files, args.checkpoint_sha256) == checkpoint, 'receipt checkpoint/profile are not the same context')
+    resume_prior=resume_receipt=resume_profile=resume_files=resume_validation=None
+    copy_source,copy_files=source_profile,expected_files
+    if args.resume_after_create:
+        resume_receipt=args.resume_after_create.resolve()
+        resume_prior=json.loads(resume_receipt.read_text())
+        resume_profile=resume_receipt.parent/'profile'
+        resume_files=inventory(resume_profile)
+        resume_validation=validate_after_create_resume(resume_prior,resume_files,sha(args.source_receipt),args.checkpoint_sha256)
+        need(Path(resume_prior['probes'][0]['process']['source_profile']).resolve()==resume_profile.resolve(), 'resume profile is not next to its own receipt')
+        smoke_mod.profile_checkpoint(resume_profile,resume_files,args.checkpoint_sha256)
+        copy_source,copy_files=resume_profile,resume_files
     protected = smoke_mod.protected_files(args.protected_manifest, args.game_root)
     original_before = {name: sha(args.game_root/name) for name in protected}
     need(original_before == protected, 'protected source manifest differs before execution')
-    args.output = isolated_output(args.output, [args.game_root, source_profile, checkpoint.parent, args.checkout, args.source_receipt.parent])
+    args.output = isolated_output(args.output, [args.game_root, source_profile, checkpoint.parent, args.checkout, args.source_receipt.parent]+([resume_receipt.parent] if resume_receipt else []))
     args.output.mkdir(parents=True)
     profile = args.output/'profile'
-    shutil.copytree(source_profile, profile, symlinks=True)
-    need(inventory(profile) == expected_files, 'complete profile copy differs')
-    copied_checkpoint = profile/checkpoint.relative_to(source_profile)
+    shutil.copytree(copy_source, profile, symlinks=True)
+    need(inventory(profile) == copy_files, 'complete profile copy differs')
+    copied_checkpoint = smoke_mod.profile_checkpoint(profile,copy_files,args.checkpoint_sha256)
     env = os.environ.copy()
     for name in ('DISPLAY', 'WAYLAND_DISPLAY', 'ODH_STATE_DIR'):
         env.pop(name, None)
@@ -191,9 +261,14 @@ def main():
     report = dict(schema='family_management_window/v1', passed=False, evidence='actual native X11 UI plus separate cold process probes',
                   limits=['Private Xvfb/XTest, not physical display or original appearance comparison.',
                           'Draft editing only; no post-creation Sim editing is claimed.',
-                          'No gameplay ticks/day coverage in the management window.'],
+                          'No gameplay ticks/day coverage in the management window.',
+                          'Acknowledged input does not resolve product FIFO/coalescing limitations.'],
                   source_receipt_sha256=sha(args.source_receipt), checkpoint_sha256=args.checkpoint_sha256,
                   binary_sha256=sha(args.binary), reader_sha256=sha(args.reader), actions=[], runs=[], probes=[])
+    if resume_prior:
+        report['resume_after_create']=dict(receipt=str(resume_receipt),receipt_sha256=sha(resume_receipt),
+            source_profile=str(resume_profile),source_profile_before=resume_files,validation=resume_validation)
+    report['observed_header_references']=OBSERVED_HEADERS
     process = xvfb = window = None
     opened = []
 
@@ -234,22 +309,20 @@ def main():
         raise TimeoutError(label+'; title='+title())
 
     def key(value):
+        need(xdo('getwindowfocus','-f')==str(window), 'input focus changed before isolated key')
         xdo('key','--window',window,'--clearmodifiers',value)
-        time.sleep(.16)
 
     def click(x,y):
         need(0 <= x < 800 and 0 <= y < 600, 'click outside actual 800x600 layout')
-        xdo('windowfocus','--sync',window)
+        need(xdo('getwindowfocus','-f')==str(window), 'input focus changed before isolated pointer gesture')
         xdo('mousemove','--window',window,x,y)
         xdo('mousedown','1')
-        time.sleep(.06)
         xdo('mouseup','1')
-        time.sleep(.16)
 
     def text(value):
+        need(xdo('getwindowfocus','-f')==str(window), 'input focus changed before text')
         need(value.isascii(), 'gate text must be ASCII to avoid synthesizing input method state')
         xdo('type','--window',window,'--clearmodifiers','--delay','35','--',value)
-        time.sleep(.16)
 
     def observed_rgb():
         raw = subprocess.run(['xwd','-display',env['DISPLAY'],'-id',window,'-silent'],
@@ -291,6 +364,41 @@ def main():
         report['actions'].append(dict(personality_ack=label,before=before,after=actual,
                                       expected=expected.copy(),frame_sha256=frame_hash))
 
+    def ui_ready(kind, initial_family=False):
+        # A visible title precedes its full render. First require the observed
+        # real header; then prove the app polls pointer motion and redraws its
+        # own non-mutating button hover. No timed sleep proves readiness.
+        if xdo('getwindowfocus','-f')!=str(window):xdo('windowfocus','--sync',window)
+        need(xdo('getwindowfocus','-f')==str(window), 'private window did not obtain focus')
+        # No synthetic release here: readiness sends only focus/motion, never
+        # a release that could finish a previously pending business gesture.
+        xdo('mousemove','--window',window,750,25)
+        wait(kind+'-presented-header',lambda:header_matches(observed_rgb(),OBSERVED_HEADERS[kind]['header_sha256']),timeout=30)
+        probes={'map':((200,0,50,52),(225,26)),
+                'picker':((130,529,140,62),(200,560)),
+                'cas_family':((593,103,139,103),(660,150)),
+                'cas_character':((530,529,140,62),(595,560))}
+        box,target=probes[kind]
+        if kind=='cas_family' and initial_family:
+            box,target=(530,529,140,62),(595,560) # Add is disabled until surname exists.
+        normal,hover=hover_roundtrip(lambda:observed_region(box),
+            lambda point:xdo('mousemove','--window',window,*point),
+            lambda label,predicate:wait(label,predicate,timeout=25),target,(750,25),kind)
+        report['actions'].append(dict(input_barrier=kind,normal_sha256=hashlib.sha256(normal).hexdigest(),hover_sha256=hashlib.sha256(hover).hexdigest()))
+
+    modal_box=(180,150,440,300)
+    def open_modal(label, action, expected_title=None):
+        before=observed_region(modal_box)
+        action()
+        if expected_title is not None:wait(label+'-title',lambda:title()==expected_title)
+        wait(label+'-presented-panel',lambda:observed_region(modal_box)!=before,timeout=30)
+        need(xdo('getwindowfocus')==str(window), 'focus changed while opening modal')
+        report['actions'].append(dict(modal_ready=label,before_sha256=hashlib.sha256(before).hexdigest(),after_sha256=hashlib.sha256(observed_region(modal_box)).hexdigest()))
+
+    def rename_text(value):
+        # Production name prompt starts with its field focused/select-all.
+        await_visual_action('rename-text-visible',(272,297,255,25),lambda:text(value))
+
     def erase_visible_name(value):
         # WindowInput.text_backspace is a boolean per poll; never enqueue a
         # burst and assume every Backspace was consumed by the UI.
@@ -325,12 +433,14 @@ def main():
         # The actual source sets the map title before polling. Keep it as an
         # observed state, rather than hardcoding a translated title.
         wait(label+'-actual-map',lambda:title()==baseline['ui_titles']['map'])
+        ui_ready('map')
         geometry=xdo('getwindowgeometry','--shell',window)
         need('WIDTH=800' in geometry and 'HEIGHT=600' in geometry, 'actual UI geometry changed; no scaled coordinate guesses')
         return title()
 
     def close_map():
         nonlocal process,window
+        ui_ready('map')
         key('Escape')
         try:
             process.wait(timeout=15)
@@ -385,8 +495,10 @@ def main():
         xdo('mousemove','--window',window,780,510)
 
     def select_aux(aux_id, layout):
+        ui_ready('map')
         click(layout['vacant_click']['x'],layout['vacant_click']['y'])
         wait('vacant-lot-picker',lambda:title()==baseline['ui_titles']['picker'])
+        ui_ready('picker')
         park_pointer()
         # Title is assigned before expensive portrait rendering. A title alone
         # does not prove that its initial input loop/frame is ready.
@@ -405,7 +517,15 @@ def main():
         return title()
 
     try:
-        baseline=state(True)
+        current_start=state(True)
+        baseline=resume_prior['baseline'] if resume_prior else current_start
+        if resume_prior:
+            aux=resume_validation['auxiliary']
+            actual_aux=[f for f in current_start['families'] if f['id']==aux['id']]
+            need(actual_aux==[aux], 'resumed auxiliary no longer matches exact reader/character proof')
+            need([f for f in current_start['families'] if f['id']!=aux['id']]==baseline['families'], 'resumed profile changed another effective family')
+            need(current_start['assignment_count']==baseline['assignment_count'] and current_start['archive_count']==baseline['archive_count'] and current_start['creation_count']==baseline['creation_count']+1, 'resumed management has extra durable actions')
+            stable_family(baseline,current_start,args.family)
         baseline_session=inspect('--inspect-session-head',args.game_root,args.house,args.family)
         need(baseline_session['authenticated_journal_head'], 'source head not authenticated')
         need(Path(baseline_session['archive_path']).resolve()==copied_checkpoint.resolve(), 'source head differs from accepted copied input')
@@ -423,73 +543,105 @@ def main():
         xvfb.stdout.close()
         env['DISPLAY']=':'+number
         report['xvfb']=dict(pid=xvfb.pid,display=env['DISPLAY'])
-        map_title=launch('create-draft')
-        key('c');wait('family-list',lambda:title()==baseline['ui_titles']['picker'])
-        picker_title=title();key('c');wait('cas-family',lambda:title()==baseline['ui_titles']['cas_family'])
-        family_title=title()
-        click(350,62);text('ODH UI Management')
-        def new_member(name,child=False):
-            click(660,150);wait('cas-member-editor',lambda:title()==baseline['ui_titles']['cas_character'])
-            await_personality('fresh-member-zero-points',[0]*5)
-            click(350,64);text(name)
-            if child:
-                await_visual_action('child-selected',(406,101,150,101),lambda:click(450,155))
-            expected=[0]*5
-            for row in range(5):
-                for point in range(5):
-                    expected[row]=point+1
-                    await_personality('trait-'+str(row)+'-point-'+str(point+1),expected,
-                                      lambda row=row:click(284,143+row*32))
-            click(200,560);wait('cas-member-accepted',lambda:title()==family_title)
-        new_member('Ava Original')
-        click(145,160);click(655,355);wait('edit-draft-member',lambda:title()==baseline['ui_titles']['cas_character'])
-        await_personality('existing-draft-points',[5]*5)
-        click(350,64)
-        erase_visible_name('Ava Original')
-        text('Ava Edited');click(200,560);wait('draft-edit-accepted',lambda:title()==family_title)
-        click(145,160);click(655,355);wait('edit-draft-cancel',lambda:title()==baseline['ui_titles']['cas_character'])
-        await_personality('existing-draft-points-before-cancel',[5]*5)
-        click(350,64)
-        erase_visible_name('Ava Edited')
-        text('Ava Discarded');key('Escape');wait('draft-edit-cancelled',lambda:title()==family_title)
-        new_member('Ben Child',True)
-        screenshot('draft-adult-child')
-        click(595,560);key('Return')  # Actual CAS question defaults to No.
-        need(title()==family_title, 'cancel-family No unexpectedly left the draft')
-        need(important()==baseline_important, 'draft/edit cancellations published player data')
-        click(200,560);screenshot('finish-family-question');key('Tab');key('Return')
-        wait('family-created',lambda:state()['creation_count']==baseline['creation_count']+1)
-        created=state()
-        aux_candidates=[x for x in created['families'] if x['id'] not in {f['id'] for f in baseline['families']}]
-        need(len(aux_candidates)==1, 'actual UI did not create exactly one auxiliary family')
-        aux=aux_candidates[0];aux_id=aux['id'];admitted_nids=[x['nid'] for x in aux['members']]
-        need(aux['house']==0 and aux['budget']==20000 and aux['name']=='ODH UI Management', 'auxiliary family is not a normal unhoused creation')
-        need(sorted((m['age'],m['given_name'],m['catalog_strings_id']) for m in aux['members'])==[(9,'Ben Child',2000),(27,'Ava Edited',2000)], 'actual character reader did not confirm accepted adult/child and cancelled edit')
-        stable_family(baseline,created,args.family)
-        report['auxiliary_created']=aux
-        screenshot('created-family-in-list')
-        key('Escape');wait('back-to-map',lambda:title()==map_title);close_map()
-        reopen_probe('after-create',admitted_nids)
+        if resume_prior:
+            aux=resume_validation['auxiliary'];aux_id=aux['id'];admitted_nids=[m['nid'] for m in aux['members']]
+            created=current_start
+            report['auxiliary_created']=aux
+            inherited=dict(resume_prior['probes'][0]);inherited['inherited_from_receipt_sha256']=sha(resume_receipt)
+            report['probes'].append(inherited)
+        else:
+            map_title=launch('create-draft')
+            key('c');wait('family-list',lambda:title()==baseline['ui_titles']['picker'])
+            ui_ready('picker')
+            picker_title=title();key('c');wait('cas-family',lambda:title()==baseline['ui_titles']['cas_family'])
+            family_title=title()
+            ui_ready('cas_family',initial_family=True)
+            text('ODH UI Management')
+            key('Return') # Existing name-field behavior advances focus without creating a Sim.
+            ui_ready('cas_family') # Add's hover is enabled only after the name was consumed.
+            def new_member(name,child=False):
+                click(660,150);wait('cas-member-editor',lambda:title()==baseline['ui_titles']['cas_character'])
+                ui_ready('cas_character')
+                await_personality('fresh-member-zero-points',[0]*5)
+                text(name)
+                key('Return') # Name -> biography; no member acceptance.
+                ui_ready('cas_character')
+                if child:
+                    await_visual_action('child-selected',(406,101,150,101),lambda:click(450,155))
+                expected=[0]*5
+                for row in range(5):
+                    for point in range(5):
+                        expected[row]=point+1
+                        await_personality('trait-'+str(row)+'-point-'+str(point+1),expected,
+                                          lambda row=row:click(284,143+row*32))
+                click(200,560);wait('cas-member-accepted',lambda:title()==family_title)
+                ui_ready('cas_family')
+            new_member('Ava Original')
+            await_visual_action('draft-member-selected',(111,121,85,105),lambda:click(145,160))
+            click(655,355);wait('edit-draft-member',lambda:title()==baseline['ui_titles']['cas_character'])
+            ui_ready('cas_character')
+            await_personality('existing-draft-points',[5]*5)
+            erase_visible_name('Ava Original')
+            text('Ava Edited');key('Return');ui_ready('cas_character');click(200,560);wait('draft-edit-accepted',lambda:title()==family_title)
+            ui_ready('cas_family')
+            await_visual_action('draft-member-selected',(111,121,85,105),lambda:click(145,160))
+            click(655,355);wait('edit-draft-cancel',lambda:title()==baseline['ui_titles']['cas_character'])
+            ui_ready('cas_character')
+            await_personality('existing-draft-points-before-cancel',[5]*5)
+            erase_visible_name('Ava Edited')
+            text('Ava Discarded');key('Escape');wait('draft-edit-cancelled',lambda:title()==family_title)
+            ui_ready('cas_family')
+            new_member('Ben Child',True)
+            screenshot('draft-adult-child')
+            open_modal('discard-family',lambda:click(595,560))
+            key('Return')  # Actual CAS question defaults to No.
+            need(title()==family_title, 'cancel-family No unexpectedly left the draft')
+            need(important()==baseline_important, 'draft/edit cancellations published player data')
+            ui_ready('cas_family')
+            open_modal('finish-family',lambda:click(200,560))
+            screenshot('finish-family-question')
+            await_visual_action('finish-yes-selected',modal_box,lambda:key('Tab'))
+            key('Return')
+            wait('family-created',lambda:state()['creation_count']==baseline['creation_count']+1)
+            created=state()
+            aux_candidates=[x for x in created['families'] if x['id'] not in {f['id'] for f in baseline['families']}]
+            need(len(aux_candidates)==1, 'actual UI did not create exactly one auxiliary family')
+            aux=aux_candidates[0];aux_id=aux['id'];admitted_nids=[x['nid'] for x in aux['members']]
+            need(aux['house']==0 and aux['budget']==20000 and aux['name']=='ODH UI Management', 'auxiliary family is not a normal unhoused creation')
+            need(sorted((m['age'],m['given_name'],m['catalog_strings_id']) for m in aux['members'])==[(9,'Ben Child',2000),(27,'Ava Edited',2000)], 'actual character reader did not confirm accepted adult/child and cancelled edit')
+            stable_family(baseline,created,args.family)
+            report['auxiliary_created']=aux
+            ui_ready('picker')
+            screenshot('created-family-in-list')
+            key('Escape');wait('back-to-map',lambda:title()==map_title);close_map()
+            reopen_probe('after-create',admitted_nids)
         map_title=launch('rename')
         picker_title=select_aux(aux_id,baseline)
         before_cancel=important()
-        key('r');wait('rename-dialog',lambda:title()!=picker_title);text('ODH Discard Rename');key('Escape')
+        open_modal('rename-dialog',lambda:key('r'))
+        rename_text('ODH Discard Rename');key('Escape')
         wait('rename-cancelled',lambda:title()==picker_title)
         need(important()==before_cancel, 'cancelled rename changed durable family data')
-        key('r');wait('rename-dialog-accepted',lambda:title()!=picker_title);text('ODH UI Renamed');key('Return')
+        ui_ready('picker')
+        selected_picker_row('aux-still-selected-before-rename',state()['unhoused_order'].index(aux_id)%6)
+        open_modal('rename-dialog-accepted',lambda:key('r'))
+        rename_text('ODH UI Renamed');key('Return')
         wait('rename-persisted',lambda:next(f for f in state()['families'] if f['id']==aux_id)['name']=='ODH UI Renamed')
         renamed=state();stable_family(baseline,renamed,args.family)
         renamed_aux=next(f for f in renamed['families'] if f['id']==aux_id)
         need(renamed_aux['members']==aux['members'] and renamed_aux['guids']==aux['guids'], 'rename changed immutable character identity/content')
+        ui_ready('picker')
         screenshot('renamed-family');key('Escape');wait('rename-back-map',lambda:title()==map_title);close_map()
         reopen_probe('after-rename',admitted_nids)
         map_title=launch('archive')
         select_aux(aux_id,baseline)
         before_cancel=important();picker_title=title()
-        click(458,560);wait('archive-question',lambda:title()!=picker_title);screenshot('archive-cancel-question');key('Escape')
+        open_modal('archive-question',lambda:click(458,560),baseline['ui_titles']['archive'])
+        screenshot('archive-cancel-question');key('Escape')
         wait('archive-cancel-map',lambda:title()==map_title)
         need(important()==before_cancel, 'cancelled archive changed durable family data')
-        select_aux(aux_id,baseline);picker_title=title();click(458,560);wait('archive-confirm',lambda:title()!=picker_title)
+        select_aux(aux_id,baseline);picker_title=title()
+        open_modal('archive-confirm',lambda:click(458,560),baseline['ui_titles']['archive'])
         key('Return')  # Management confirmation explicitly maps Enter to Yes.
         wait('archive-persisted',lambda:all(f['id']!=aux_id for f in state()['families']))
         archived=state();stable_family(baseline,archived,args.family)
@@ -502,7 +654,8 @@ def main():
         wait('archive-back-map',lambda:title()==map_title);close_map()
         reopen_probe('after-delete',admitted_nids,deleted=True)
         map_title=launch('reopen-management')
-        key('c');wait('reopened-family-list',lambda:title()!=map_title)
+        key('c');wait('reopened-family-list',lambda:title()==baseline['ui_titles']['picker'])
+        ui_ready('picker')
         need(aux_id not in state()['unhoused_order'], 'archived family reappeared after reopening management')
         screenshot('reopened-list-without-auxiliary');key('Escape');wait('final-map',lambda:title()==map_title);close_map()
         report['final']=state()
@@ -532,6 +685,9 @@ def main():
             source_receipt_unchanged=sha(args.source_receipt)==report['source_receipt_sha256'],
             binary_unchanged=sha(args.binary)==report['binary_sha256'],reader_unchanged=sha(args.reader)==report['reader_sha256'],
             commercial_sources_unchanged={name:sha(args.game_root/name) for name in protected}==original_before)
+        if resume_prior:
+            report['guards']['resume_profile_unchanged']=inventory(resume_profile)==resume_files
+            report['guards']['resume_receipt_unchanged']=sha(resume_receipt)==report['resume_after_create']['receipt_sha256']
         report['passed']=report['passed'] and all(report['guards'].values())
         save()
     print(json.dumps(dict(passed=report['passed'],result=str(args.output/'result.json'),error=report.get('error'))))

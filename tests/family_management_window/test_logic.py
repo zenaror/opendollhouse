@@ -40,6 +40,55 @@ class Gates(unittest.TestCase):
         for name,sections,new,ids,deleted in cases:
             with self.subTest(name=name),self.assertRaises(ValueError):
                 driver.compare_reopen(self.sections,sections,self.old,new,ids,deleted)
+    def test_generic_render_hover_barrier(self):
+        state={'value':b'normal'};moves=[];acks=[]
+        def move(point):
+            moves.append(point)
+            state['value']=b'hover' if point==(1,1) else b'normal'
+        def wait(label,predicate):
+            self.assertTrue(predicate(),label);acks.append(label)
+        normal,hover=driver.hover_roundtrip(lambda:state['value'],move,wait,(1,1),(2,2),'screen')
+        self.assertEqual((normal,hover),(b'normal',b'hover'))
+        self.assertEqual(moves,[(1,1),(2,2),(1,1),(2,2)])
+        self.assertEqual(len(acks),4)
+        with self.assertRaises(AssertionError):
+            driver.hover_roundtrip(lambda:b'stale',lambda point:None,wait,(1,1),(2,2),'stale-title')
+    def test_header_is_presented_not_just_title(self):
+        frame=bytearray(800*600*3)
+        import hashlib
+        expected=hashlib.sha256(frame[:800*40*3]).hexdigest()
+        self.assertTrue(driver.header_matches(frame,expected))
+        frame[0]=1
+        self.assertFalse(driver.header_matches(frame,expected))
+        with self.assertRaises(ValueError):driver.header_matches(frame[:-1],expected)
+    def test_after_create_resume_only_proven_profile(self):
+        aux=dict(id=8,house=0,budget=20000,name='ODH UI Management',members=[
+            dict(age=27,given_name='Ava Edited',catalog_strings_id=2000,nid=5),
+            dict(age=9,given_name='Ben Child',catalog_strings_id=2000,nid=6)])
+        files={'config/authority.odhp':'a','data/character.iff':'b','state/opendollhouse/logs/odh-person.log':'old'}
+        guards={k:True for k in ('source_profile_unchanged','source_checkpoint_unchanged','source_receipt_unchanged','binary_unchanged','reader_unchanged','commercial_sources_unchanged')}
+        prior=dict(passed=False,error='vacant-lot-picker; title=map',guards=guards,
+            source_receipt_sha256='receipt',checkpoint_sha256='b740',auxiliary_created=aux,
+            window_cleanup={'pid_absent':True},xvfb_cleanup={'pid_absent':True},
+            probes=[dict(stage='after-create',process=dict(ok=True,proofs={'exact':True},source_profile_before=files,source_profile_after=files),
+                comparison={'changed_sections':['RELA'],'new_empty_neighbor_sources':[5,6]})])
+        current={**files,'state/opendollhouse/logs/odh-person.log':'new'}
+        driver.validate_after_create_resume(prior,current,'receipt','b740')
+        variants=[]
+        wrong=copy.deepcopy(prior);wrong['error']='rename-persisted';variants.append(('later-side-effects',wrong,current))
+        wrong=copy.deepcopy(prior);wrong['guards'].pop('reader_unchanged');variants.append(('missing-guard',wrong,current))
+        wrong=copy.deepcopy(prior);wrong['guards']['binary_unchanged']=False;variants.append(('bad-guard',wrong,current))
+        wrong=copy.deepcopy(prior);wrong['probes'][0]['process']['ok']=False;variants.append(('failed-probe',wrong,current))
+        wrong=copy.deepcopy(prior);wrong['auxiliary_created']['members'][1]['age']=27;variants.append(('wrong-age',wrong,current))
+        wrong=copy.deepcopy(prior);wrong['probes'][0]['comparison']['changed_sections'].append('META');variants.append(('changed-meta',wrong,current))
+        variants.append(('changed-overlay',prior,{**current,'config/authority.odhp':'changed'}))
+        variants.append(('new-blob',prior,{**current,'data/newblob.bin':'new'}))
+        variants.append(('missing-character',prior,{k:v for k,v in current.items() if k!='data/character.iff'}))
+        for label,receipt,inventory in variants:
+            with self.subTest(case=label),self.assertRaises(ValueError):driver.validate_after_create_resume(receipt,inventory,'receipt','b740')
+        with self.assertRaises(ValueError):driver.validate_after_create_resume(prior,current,'another-receipt','b740')
+        with self.assertRaises(ValueError):driver.validate_after_create_resume(prior,current,'receipt','another-save')
+
     def test_picker_selected_row_is_not_hover_or_pressed(self):
         frame=bytearray(800*600*3)
         normal=((117,121,149),)*3
