@@ -1,4 +1,5 @@
 #include "linux_cas_catalog.hpp"
+#include "community_lot_store.hpp"
 #include "linux_family_overlay_store.hpp"
 #include "linux_family_session_journal.hpp"
 #include "linux_travel_session.hpp"
@@ -14,6 +15,7 @@
 #include "odh/animation.hpp"
 #include "odh/sha256.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <cstdlib>
 #include <charconv>
@@ -92,6 +94,60 @@ std::string json_string(const std::string& input) {
     }
     return out+'"';
 }
+std::string hex_digest(const std::array<std::uint8_t,32>& bytes){
+    static constexpr char h[]="0123456789abcdef";std::string out;
+    for(auto b:bytes){out+=h[b>>4];out+=h[b&15];}return out;
+}
+std::pair<odh_host::StoredCommunityLot,odh::FamilyPropertyRelease> current_property(
+        const fs::path& game,const odh::FamilyOverlay& overlay,std::uint16_t house){
+    const auto neighborhood=game/"UserData/Neighborhood.iff";
+    const auto identity=odh_host::linux_neighborhood_identity(neighborhood);
+    const auto replay=odh::replay_family_overlay(source_families(neighborhood),identity,overlay);
+    const auto head=std::find_if(replay.properties.begin(),replay.properties.end(),[&](const auto& v){return v.house==house;});
+    if(head==replay.properties.end())throw std::runtime_error("house has no committed property head");
+    const auto release=std::find_if(overlay.property_releases.begin(),overlay.property_releases.end(),[&](const auto& v){
+        return v.house==house&&v.head==head->head&&v.expected_revision+1==head->revision&&
+            v.installed_lot_sha256==head->installed_lot_sha256&&v.policy==head->policy&&
+            v.neighborhood==head->neighborhood&&v.mode==head->mode&&v.vacant_purchase_value==head->vacant_purchase_value;});
+    if(release==overlay.property_releases.end())throw std::runtime_error("property head lacks its exact current release");
+    const char* data=std::getenv("XDG_DATA_HOME");if(!data||!*data||!fs::path(data).is_absolute())
+        throw std::runtime_error("property inspector requires an absolute private XDG_DATA_HOME");
+    odh_host::CommunityLotStoreOptions options;options.game_root=game;options.user_data=game/"UserData";
+    options.house=house;options.mode=release->mode;options.neighborhood_number=release->neighborhood;
+    std::ostringstream file;file<<"House";if(house<10)file<<'0';file<<house<<".iff";
+    options.lot_path=options.user_data/"Houses"/file.str();
+    options.private_directory=odh_host::NeighborhoodStorage(release->neighborhood).qualify(fs::path(data)/"opendollhouse/saves")/
+        ("neighborhood-"+hex_digest(identity))/"community-lots"/("mode-"+std::to_string(release->mode)+"-house-"+std::to_string(house));
+    auto stored=odh_host::load_community_lot_blob(options,head->head);
+    if(!stored.document.objects)throw std::runtime_error("property lacks an actual object lifetime");
+    return {std::move(stored),*release};
+}
+int inspect_property(const fs::path& game,std::uint16_t house){
+    const auto overlay=odh_host::read_linux_family_overlay_for_neighborhood(game/"UserData/Neighborhood.iff");
+    if(!overlay)throw std::runtime_error("property inspector requires its committed overlay");
+    const auto property=current_property(game,*overlay,house);const auto& doc=property.first.document;
+    const auto& release=property.second;const auto& objects=*doc.objects;
+    const auto replay=odh::replay_family_overlay(source_families(game/"UserData/Neighborhood.iff"),
+        odh_host::linux_neighborhood_identity(game/"UserData/Neighborhood.iff"),*overlay);
+    std::cout<<R"({"authenticated_property_head":true,"house":)"<<house<<R"(,"head":)"<<json_string(hex_digest(release.head))
+        <<R"(,"source_checkpoint_sha256":)"<<json_string(hex_digest(release.source_checkpoint_sha256))
+        <<R"(,"released_family":)"<<release.family_chunk_id<<R"(,"vacant_purchase_value":)"<<release.vacant_purchase_value
+        <<R"(,"revision":)"<<release.expected_revision+1<<R"(,"occupied_by":[)";bool comma=false;
+    for(const auto& state:replay.states)if(state.house_number==house){if(comma)std::cout<<',';comma=true;std::cout<<state.family_chunk_id;}
+    const auto architecture_bytes=odh::encode_architecture_snapshot(doc.architecture);
+    std::cout<<R"(],"tick":)"<<objects.tick<<R"(,"architecture":{"canonical_sha256":)"
+        <<json_string(hex_digest(odh::sha256(architecture_bytes.data(),architecture_bytes.size())))
+        <<R"(,"width":)"<<doc.architecture.prepared.width
+        <<R"(,"height":)"<<doc.architecture.prepared.height<<R"(,"floors":[)";
+    for(unsigned level=0;level<2;++level){if(level)std::cout<<',';std::cout<<'[';
+        const auto& floors=doc.architecture.prepared.levels[level].floors;
+        for(std::size_t i=0;i<floors.size();++i){if(i)std::cout<<',';std::cout<<floors[i];}std::cout<<']';}
+    std::cout<<R"(]},"active_objects":[)";comma=false;
+    for(const auto& entity:objects.world.entities){if(comma)std::cout<<',';comma=true;
+        std::cout<<R"({"id":)"<<entity.id<<R"(,"generation":)"<<entity.generation<<R"(,"guid":)"<<(entity.definition?entity.definition->guid:0)
+            <<R"(,"avatar":)"<<(entity.kind==odh::EntityKind::avatar?"true":"false")<<'}';}
+    std::cout<<"]}\n";return 0;
+}
 int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authenticated=nullptr){
     std::ifstream input(path,std::ios::binary);if(!input)throw std::runtime_error("cannot inspect session");
     const auto size=fs::file_size(path);if(size>256u*1024u*1024u)throw std::runtime_error("session inspector input exceeds limit");
@@ -134,10 +190,30 @@ int inspect_session(const fs::path& path,const std::vector<std::uint8_t>* authen
             std::cout<<'}';
         }std::cout<<"]}";
     }
+    std::cout<<R"(],"world_generation_sequence":)"<<bundle.world.generation_sequence;
+    const auto created_origins=[&](const auto& origins){std::cout<<'[';bool comma=false;
+        for(const auto& origin:origins){if(comma)std::cout<<',';comma=true;
+            std::cout<<R"({"id":)"<<origin.id<<R"(,"generation":)"<<origin.generation<<R"(,"guid":)"<<origin.guid
+                <<R"(,"source":)"<<json_string(origin.source)<<R"(,"asset":)"<<json_string(origin.asset)
+                <<R"(,"definition_chunk_id":)"<<origin.definition_chunk_id<<'}';}std::cout<<']';};
+    std::cout<<R"(,"created_object_origins":)";created_origins(bundle.created_objects);
+    std::cout<<R"(,"retired_created_origins":)";
+    if(bundle.object_history)created_origins(bundle.object_history->retired_created_objects);else std::cout<<"[]";
+    std::cout<<R"(,"retired_household_origins":[)";comma=false;
+    if(bundle.object_history)for(const auto& origin:bundle.object_history->retired_household_avatars){
+        if(comma)std::cout<<',';comma=true;const auto& m=origin.member;
+        std::cout<<R"({"id":)"<<m.id<<R"(,"generation":)"<<m.generation<<R"(,"guid":)"<<m.guid
+            <<R"(,"family_chunk_id":)"<<origin.source_lease.family_chunk_id<<R"(,"occupancy_epoch":)"<<origin.source_lease.occupancy_epoch
+            <<R"(,"source_checkpoint_sha256":)"<<json_string(hex_digest(origin.source_checkpoint_sha256))<<'}';}
+    std::cout<<R"(],"retained_entities":[)";comma=false;
+    for(const auto& body:bundle.world.retained_entities){if(comma)std::cout<<',';comma=true;
+        std::cout<<R"({"id":)"<<body.id<<R"(,"generation":)"<<body.generation<<R"(,"guid":)"<<(body.definition?body.definition->guid:0)<<'}';}
     std::cout<<R"(],"architecture":)";
     if(bundle.architecture){
         const auto& prepared=bundle.architecture->prepared;
-        std::cout<<R"({"width":)"<<prepared.width<<R"(,"height":)"<<prepared.height<<R"(,"floors":[)";
+        const auto architecture_bytes=odh::encode_architecture_snapshot(*bundle.architecture);
+        std::cout<<R"({"canonical_sha256":)"<<json_string(hex_digest(odh::sha256(architecture_bytes.data(),architecture_bytes.size())))
+            <<R"(,"width":)"<<prepared.width<<R"(,"height":)"<<prepared.height<<R"(,"floors":[)";
         for(unsigned level=0;level<2;++level){
             if(level)std::cout<<',';std::cout<<'[';
             for(std::size_t i=0;i<prepared.levels[level].floors.size();++i){if(i)std::cout<<',';std::cout<<prepared.levels[level].floors[i];}
@@ -459,14 +535,20 @@ int main(int argc, char** argv) try {
         if(bundle.travel)odh_host::reopen_travel_session_checkpoint(journal,bytes);
         return inspect_session(*path,&bytes);
     }
-    const bool integrated=argc==4&&std::string(argv[3])=="--family-lot-flow";
+    if(argc==4&&std::string(argv[1])=="--inspect-property-head"){
+        unsigned value=0;const std::string text=argv[3];const auto parsed=std::from_chars(text.data(),text.data()+text.size(),value);
+        if(parsed.ec!=std::errc{}||parsed.ptr!=text.data()+text.size()||!value||value>98)throw std::runtime_error("invalid released house");
+        return inspect_property(fs::canonical(argv[2]),static_cast<std::uint16_t>(value));
+    }
+    const bool reoccupation=argc==5&&std::string(argv[3])=="--create-reoccupation-family";
+    const bool integrated=(argc==4&&std::string(argv[3])=="--family-lot-flow")||reoccupation;
     const bool source_occupied = argc == 5 && std::string(argv[3]) == "--create-only-occupied-house";
-    if ((argc != 3 && argc != 4 && !source_occupied) ||
+    if ((argc != 3 && argc != 4 && !source_occupied&&!reoccupation) ||
         (argc == 4 && std::string(argv[3]) != "--create-only"&&!integrated))
         throw std::runtime_error("usage: odh-cas-movein-e2e GAME_ROOT PRIVATE_PROFILE_ROOT [--create-only | --create-only-occupied-house HOUSE | --family-lot-flow]; or --inspect-session ARCHIVE");
     const bool create_only = argc >= 4;
     unsigned selected_source_house = 0;
-    if (source_occupied) {
+    if (source_occupied||reoccupation) {
         const std::string text = argv[4];
         const auto parsed = std::from_chars(text.data(), text.data() + text.size(), selected_source_house);
         if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || selected_source_house < 1 || selected_source_house > 98)
@@ -490,6 +572,17 @@ int main(int argc, char** argv) try {
     const odh::FamilyEntry* source_family = nullptr;
     std::optional<odh::SessionEntry> source_session;
     const auto lot_locations = locations(user / "LotLocations.iff");
+    if(reoccupation){
+        house=static_cast<std::uint16_t>(selected_source_house);
+        const auto existing=odh_host::read_linux_family_overlay_for_neighborhood(user/"Neighborhood.iff");
+        if(!existing)throw std::runtime_error("reoccupation CAS requires an existing overlay");
+        const auto property=current_property(game,*existing,house);
+        const auto replay=odh::replay_family_overlay(families,odh_host::linux_neighborhood_identity(user/"Neighborhood.iff"),*existing);
+        for(const auto& state:replay.states)if(state.house_number==house)throw std::runtime_error("released house is already occupied");
+        price=property.second.vacant_purchase_value;
+        if(price<0||price>=20000)throw std::runtime_error("released house is not affordable at normal CAS budget");
+        std::ostringstream file;file<<"House";if(house<10)file<<'0';file<<house<<".iff";house_path=user/"Houses"/file.str();
+    }
     if (source_occupied) {
         house = static_cast<std::uint16_t>(selected_source_house);
         source_family = family_context.by_house(static_cast<std::int16_t>(house));
@@ -504,7 +597,7 @@ int main(int argc, char** argv) try {
         if (price < 0) throw std::runtime_error("selected source house has negative purchase price");
         source_session = odh::load_session_entry(user, 1, house, 1);
     }
-    for (const auto& lot : lot_locations.lots) {
+    if(!reoccupation)for (const auto& lot : lot_locations.lots) {
         if (lot.house < 1 || lot.house > 98 || family_context.by_house(static_cast<std::int16_t>(lot.house))) continue;
         std::ostringstream name;
         name << "House" << (lot.house < 10 ? "0" : "") << lot.house << ".iff";
@@ -565,11 +658,11 @@ int main(int argc, char** argv) try {
     const auto neighborhood = user / "Neighborhood.iff";
     const auto identity = odh_host::linux_neighborhood_identity(neighborhood);
     const auto overlay_path = odh_host::linux_family_overlay_path(identity);
-    if (fs::exists(overlay_path)) throw std::runtime_error("temporary profile unexpectedly already has a family overlay");
+    if (!reoccupation&&fs::exists(overlay_path)) throw std::runtime_error("temporary profile unexpectedly already has a family overlay");
     const auto characters = profile / "data/opendollhouse/Characters";
     const auto created = odh_host::create_linux_private_family(template_person(game),
         user / "Characters", characters, neighborhood, overlay_path,
-        "ODH CAS Gate", {first_draft, second_draft}, initial_budget);
+        reoccupation?"ODH New Residents":"ODH CAS Gate", {first_draft, second_draft}, initial_budget);
     auto overlay = odh_host::read_linux_family_overlay(overlay_path);
     if (!overlay) throw std::runtime_error("CAS creation did not persist a player overlay");
     if (source_occupied) {

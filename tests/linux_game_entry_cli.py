@@ -446,6 +446,33 @@ with tempfile.TemporaryDirectory(prefix="odh-linux-go-here-resume-") as director
     check(len(submissions) == 1 and not submissions[0]["accepted"] and
           "requested TTAB row 65535 is absent" in submissions[0]["diagnostic"],
           "integrated saved-session input forwards the exact explicit row to the regular menu without fallback")
+    variant = subprocess.run(resume + ["--headless-resident-interaction-variant", "1", "2", "65535", "-1", "14", "Nome observado", "1"],
+        capture_output=True, text=True, env=env, timeout=30)
+    check(variant.returncode == 3 and "requested TTAB row 65535 is absent" in
+          json.loads(variant.stdout)["player_submissions"][0]["diagnostic"],
+          "observed variant forwards exact authored row without falling back to another menu choice")
+    query = subprocess.run(launch + ["--load-session", str(path), "--headless-ticks", "0", "--headless-menu-query", "1", "2", "--save-session-on-exit"],
+        capture_output=True, text=True, env=env, timeout=30)
+    check(query.returncode == 0, (query.returncode, query.stderr))
+    query_report=json.loads(query.stdout)
+    check(query_report["menu_query"]["world_unchanged"] and query_report["menu_query"]["random_unchanged"] and
+          query_report["ticks"] == query_report["resumed_tick"] and not query_report["player_submissions"] and
+          Path(query_report["saved_session_path"]).read_bytes() == original,
+          "zero-tick menu discovery submits no action and preserves actual whole-session bytes")
+    hex_variant = subprocess.run(resume + ["--headless-resident-interaction-variant-hex", "1", "2", "65535", "-1", "14", "4e6f6d6520e1", "1"],
+        capture_output=True, text=True, env=env, timeout=30)
+    check(hex_variant.returncode == 3 and "requested TTAB row 65535 is absent" in
+          json.loads(hex_variant.stdout)["player_submissions"][0]["diagnostic"],
+          "lossless hex variant accepts real non-UTF8 source bytes without replacing the authored row")
+    for malformed in ("0", "xx", "00", "aa"*4097):
+        rejected = subprocess.run(resume + ["--headless-resident-interaction-variant-hex", "1", "2", "0", "-1", "14", malformed, "1"],
+            capture_output=True, text=True, env=env, timeout=30)
+        check(rejected.returncode == 2 and "hex" in rejected.stderr,
+              "hex menu names reject odd/nonhex/NUL/oversized source bytes")
+    fresh_query = subprocess.run(launch + ["--mode", "1", "--house", "7", "--headless-ticks", "0", "--headless-menu-query", "1", "2"],
+        capture_output=True, text=True, env=env, timeout=30)
+    check(fresh_query.returncode == 2 and "zero-tick resumed" in fresh_query.stderr,
+          "query refuses fresh bootstrap before simulation/resource preparation")
     for actor in ("1", "2"):
         action = ["--headless-resident-go-here", actor, "2046", "2046", "1", "3"]
         for other_action in ([], ["--headless-resident-interaction",

@@ -165,7 +165,10 @@ bool DialogController::respond(std::uint64_t ticket,const DialogResponse& respon
         if((op.type==6||op.type==9)&&response.code==0)result=false;
         else {
             number=integer(*clipped);result=number.has_value();
-            if(number&&std::none_of(pending_->prompt.choices.begin(),pending_->prompt.choices.end(),[&](const auto& c){return c.value==*number;})){
+            // Simitone PhoneBook Cancel is ResponseText=-1. The pinned
+            // primitive returns TRUE with Temp/TempXL=-1; no neighbor is chosen.
+            const bool phonebook_cancel=op.type==10&&number==std::optional<std::int32_t>{-1};
+            if(number&&!phonebook_cancel&&std::none_of(pending_->prompt.choices.begin(),pending_->prompt.choices.end(),[&](const auto& c){return c.value==*number;})){
                 diagnostic="dialog selection is not an offered catalog choice";return false;
             }
         }

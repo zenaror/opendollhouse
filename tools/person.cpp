@@ -1,4 +1,5 @@
 #include "odh/interaction.hpp"
+#include "odh/world_snapshot_codec.hpp"
 #include "saved_code_import.hpp"
 #include "saved_recovery_execution.hpp"
 #include "original_avatar_position.hpp"
@@ -43,6 +44,7 @@
 #include "original_tooltip_view.hpp"
 #include "neighborhood_portraits.hpp"
 #include "character_display_names.hpp"
+#include "phonebook_choices.hpp"
 #include "linux_cas_layout.hpp"
 #include "odh/resident_action_control.hpp"
 #include "session_generic_resource_path.hpp"
@@ -629,6 +631,23 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // ordinary HOME preparation transfers World. This is archive data, never
     // an execution root or a second live World.
     std::vector<std::uint8_t> private_property_source_archive;
+    const bool residential_property_arrival=session_context&&static_cast<bool>(session_context->property_lot);
+    std::optional<odh::SessionBundle> residential_components;
+    bool residential_lifetime_restored=false,residential_household_activated=false;
+    if(residential_property_arrival){
+        if(!session_context->property_lot->objects||!session_context->property_lot_reference||
+           !session_context->property_release_source||session_context->property_lot_source_archive.empty()||
+           !session_context->restore_archive.empty()||session_context->prepare_property_release||
+           session_context->single_resident_session||session_context->travel_state||session_context->temporary_travel_arrival||
+           session_context->occupancy_retirement)
+            throw odh::FormatError("vacant property activation requires its exact isolated document/reference/source profile");
+        odh::validate_actorless_object_trade_state(*session_context->property_lot->objects);
+        if(!session_context->property_lot->objects->clock||!session_context->property_lot->objects->object_state||
+           !session_context->property_lot->objects->object_state->position_registry||
+           !session_context->property_lot->objects->object_state->position_registry->complete)
+            throw odh::FormatError("playable vacant property requires its actual saved clock and complete position owner");
+        residential_components=odh::actorless_object_trade_components(*session_context->property_lot->objects);
+    }
     const auto property_source_bytes=[&]()->const std::vector<std::uint8_t>&{
         return !private_property_source_archive.empty()?private_property_source_archive:
             session_context?session_context->restore_archive:private_property_source_archive;
@@ -754,7 +773,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     bool headless_interaction_applied=false;
     struct ScheduledPlayerInteraction {
         std::int16_t actor,target;std::uint64_t tick;std::optional<std::size_t> row;
+        std::optional<SavedMenuVariant> variant;
     };
+    std::optional<std::pair<std::int16_t,std::int16_t>> headless_menu_query;
+    std::optional<std::string> headless_menu_query_json;
     std::vector<ScheduledPlayerInteraction> headless_player_interactions;
     std::size_t headless_player_interaction_index=0;
     std::optional<std::uint64_t> headless_cancel_interaction_tick;
@@ -957,13 +979,32 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
         }
         else if((option=="--headless-resident-interaction"&&n+3<argc)||
-                (option=="--headless-resident-interaction-row"&&n+4<argc)){
+                (option=="--headless-resident-interaction-row"&&n+4<argc)||
+                ((option=="--headless-resident-interaction-variant"||option=="--headless-resident-interaction-variant-hex")&&n+7<argc)){
+            const bool explicit_variant=option=="--headless-resident-interaction-variant"||option=="--headless-resident-interaction-variant-hex";
             const auto actor=selector(argv[++n]),id=selector(argv[++n]);
             std::optional<std::size_t> row;
-            if(option=="--headless-resident-interaction-row"){
+            if(option=="--headless-resident-interaction-row"||explicit_variant){
                 const auto requested=selector(argv[++n]);
                 if(requested>65535)throw odh::FormatError("headless interaction row is outside the supported TTAB range");
                 row=static_cast<std::size_t>(requested);
+            }
+            std::optional<SavedMenuVariant> variant;
+            if(explicit_variant){
+                const auto param=coordinate_selector(argv[++n]);const auto language=selector(argv[++n]);
+                std::string name=argv[++n];
+                if(option=="--headless-resident-interaction-variant-hex"){
+                    if(name.empty()||name.size()>8192||(name.size()%2))throw odh::FormatError("invalid menu name hex extent");
+                    const auto digit=[](char c)->int{return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:-1;};
+                    std::string decoded;decoded.reserve(name.size()/2);
+                    for(std::size_t at=0;at<name.size();at+=2){const auto hi=digit(name[at]),lo=digit(name[at+1]);
+                        if(hi<0||lo<0||!(hi||lo))throw odh::FormatError("invalid menu name hex byte");
+                        decoded.push_back(static_cast<char>((hi<<4)|lo));}
+                    name=std::move(decoded);
+                }
+                if(param<INT16_MIN||param>INT16_MAX||language<1||language>20||name.empty()||name.size()>4096)
+                    throw odh::FormatError("observed menu variant is outside its bounded name/Param0/language profile");
+                variant=SavedMenuVariant{name,static_cast<std::int16_t>(param),static_cast<std::uint8_t>(language),{}};
             }
             const auto tick=selector(argv[++n]);
             if(actor==0||actor>32767||id==0||id>32767||tick==0)
@@ -976,7 +1017,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 headless_interaction=HeadlessInteraction{static_cast<std::int16_t>(id),tick};
             }else if(headless_player_interactions.empty())
                 throw odh::FormatError("cannot mix a single interaction schedule with resident sequence requests");
-            headless_player_interactions.push_back({static_cast<std::int16_t>(actor),static_cast<std::int16_t>(id),tick,row});
+            headless_player_interactions.push_back({static_cast<std::int16_t>(actor),static_cast<std::int16_t>(id),tick,row,std::move(variant)});
+        }
+        else if(option=="--headless-menu-query"&&!headless_menu_query&&n+2<argc){
+            const auto actor=selector(argv[++n]),target=selector(argv[++n]);
+            if(!actor||actor>32767||!target||target>32767)throw odh::FormatError("menu query identities outside World range");
+            headless_menu_query=std::make_pair(static_cast<std::int16_t>(actor),static_cast<std::int16_t>(target));
         }
         else if(option=="--headless-cancel-interaction"&&!headless_cancel_interaction_tick&&n+1<argc){
             const auto tick=selector(argv[++n]);
@@ -1235,7 +1281,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
        (headless_entity_move&&(!headless_main||headless_entity_move->tick>ticks_limit))||
        (placement_candidate&&(!saved_world_main||!render_saved_selector||!render_floors))||
        (render_animation_far&&std::find(animation_sources.begin(),animation_sources.end(),*render_animation_far)==animation_sources.end()))
-        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--character-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
+        throw odh::FormatError("usage: (--avatar FAR ENTRY OBJD | --avatar-file IFF OBJD) --semiglobal FAR ENTRY --global FAR ENTRY [--instruction-budget 1..1000000 for bounded headless runs] [--language 1..20] [--initialize | --routine ID] [--headless-second-main ID X Y LEVEL DIRECTION ROUTINE [--headless-second-main-arg0 VALUE] [--headless-second-avatar-file IFF OBJD]] [--headless-second-saved-main OBJECT_ID ROUTINE --headless-second-avatar-file IFF OBJD] [--action FAR ENTRY OBJD ROUTINE] [--lot HOUSE_IFF LOT_ID] [--zoning IFF] [--neighborhood IFF] [--activate-family] [--object-definitions FAR | --object-definition-file IFF | --object-definition-entry FAR ENTRY] [--character-definition-file IFF] [--animation-source FAR] [--seed UINT64] [--flags WORD] [--age YEARS] [--ticks 0..4096] [--render-frame NEW.ppm [--render-size WIDTH HEIGHT] --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME [--render-tick 0..TICKS] [--render-saved-avatar OBJECT_ID | --render-saved-guid GUID] | --render-window [--render-size WIDTH HEIGHT] --render-saved-avatar OBJECT_ID|GUID --render-animation-far FAR --render-textures FAR --render-skeleton ENTRY NAME | --headless-main (--render-saved-avatar OBJECT_ID | --headless-fixture-avatar ID X Y LEVEL DIRECTION [--headless-fixture-main-arg0 VALUE]) --render-floors IFF [--headless-stack-object ID] [--headless-menu-query ACTOR TARGET (zero ticks, current selection)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK] [--headless-interaction ID TICK | --headless-window-interaction OBJECT_ID [--headless-window-stand-tick TICK [--headless-window-go-here TILE_X TILE_Y LEVEL TICK]] | --headless-go-here TILE_X TILE_Y LEVEL TICK [--headless-go-here-interrupt TICK] | --headless-portal ID TICK] [--headless-stand ID TICK] [--headless-move-entity ID X Y LEVEL DIRECTION TICK]] [--saved-world-main --render-floors IFF [--placement-candidate X Y LEVEL DIRECTION] [--attempt-walk-destination X Y] [--architecture-resource FILE ...] [--render-walls IFF] [--render-hide-lot-objects for diagnostic captures] [--render-level 1..2] [--render-wall-mode up|down] [--render-terrain-theme 0..7]]");
     if(probe_instruction_limit&&(!ticks_set||render_window))
         throw odh::FormatError("--instruction-budget requires a bounded headless run with --ticks");
     std::optional<odh::BitmapImage> pie_menu_background;
@@ -1332,6 +1378,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // An explicit diagnostic budget retains the bounded total-probe contract.
     const auto work_policy=session_context&&!probe_instruction_limit?
         std::optional<odh_host::PersonWorkBudgetPolicy>{odh_host::PersonWorkBudgetPolicy::per_tick_gameplay}:std::nullopt;
+    if(headless_menu_query&&(!session_context||session_context->restore_archive.empty()||session_context->single_resident_session||
+        session_context->prepare_property_release||session_context->property_lot||!ticks_set||ticks_limit!=0||recover_saved_code||place_recovery_position||
+        (session_context&&(session_context->object_command||session_context->architecture_command||session_context->start_buy_mode||session_context->start_build_mode))))
+        throw odh::FormatError("menu query requires a zero-tick restore without recovery or property commands");
     const odh_host::PersonSessionPolicy session_policy{render_window,ticks_set,ticks_limit,
         probe_instruction_limit.value_or(odh_host::PersonSessionPolicy::instructions),work_policy};
     odh_host::PersonDiagnosticRetention diagnostics;
@@ -1371,8 +1421,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(!pinned_characters.emplace(path,PinnedCharacter{bytes,digest}).second)
                 throw odh::FormatError("duplicate household character resource");
         }
-        if(!session_context->restore_archive.empty()){
-            const auto archive=odh::decode_session_bundle(session_context->restore_archive);
+        if(!session_context->restore_archive.empty()||residential_components){
+            const auto archive=residential_components?*residential_components:odh::decode_session_bundle(session_context->restore_archive);
             if(archive.object_history)for(const auto& origin:archive.object_history->retired_household_avatars){
                 const auto& member=origin.member;const std::filesystem::path logical(member.character_asset);
                 const auto parent=logical.parent_path().generic_string();std::filesystem::path root;
@@ -1453,7 +1503,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     };
     const bool actorless_arrival=session_context&&session_context->temporary_travel_arrival;
     bool pending_household_activation=false,pending_primary_activation=false;
-    const auto actorless_bootstrap=[&]{return actorless_arrival||pending_primary_activation;};
+    const auto actorless_bootstrap=[&]{return actorless_arrival||residential_property_arrival||pending_primary_activation;};
     if(actorless_arrival&&(!session_context->travel_state||session_context->travel_departure_archive.empty()||
        !session_context->restore_archive.empty()||session_context->family_transfer||session_context->occupancy_retirement||
        session_context->single_resident_session||session_context->start_buy_mode||session_context->start_build_mode||session_context->object_command||session_context->architecture_command))
@@ -1476,6 +1526,14 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::LotZoning> explicit_family_spell_zoning;
     bool family_spells_was_saved=false;
     std::uint64_t family_spells_capture_changes=0,family_spells_return_sync_changes=0;
+    if(residential_components){
+        if(!render_materials)render_materials.emplace();
+        render_materials->restored_architecture=session_context->property_lot->architecture;
+        architecture_object_state=residential_components->architecture_object_state;
+        architecture_object_support=residential_components->architecture_object_support;
+        if(residential_components->build_buy_permission){build_buy_permission.restore(*residential_components->build_buy_permission);
+            build_buy_permission_was_saved=true;}
+    }
     std::optional<odh::NeighborInventorySnapshot> restored_neighbor_inventory;
     std::optional<odh::TypeAttributesSnapshot> restored_type_attributes;
     std::optional<odh::TypeAttributes> type_attributes;
@@ -2003,7 +2061,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         restored_records=saved_world_records(*objm,*objt,std::move(*saved_prefixes),std::move(*saved_common),
             std::move(*saved_tails),*definition_index);
         const bool projecting_occupancy=session_context&&session_context->occupancy_retirement;
-        if(render_saved_guid&&!projecting_occupancy&&!actorless_arrival&&!restored_household_present){
+        if(render_saved_guid&&!projecting_occupancy&&!actorless_arrival&&!residential_property_arrival&&!restored_household_present){
             const auto matches=std::count_if(restored_records.begin(),restored_records.end(),[&](const auto& record){
                 return record.saved.guid==*render_saved_guid&&record.tail.person&&record.serialized_object_type==2;
             });
@@ -2018,7 +2076,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 render_saved_id=selected->saved.object_id;
             }
         }
-        if(render_saved_id&&!projecting_occupancy&&!restored_household_present){
+        if(render_saved_id&&!projecting_occupancy&&!residential_property_arrival&&!restored_household_present){
             const auto saved=std::find_if(restored_records.begin(),restored_records.end(),[&](const auto& record){return record.saved.object_id==*render_saved_id;});
             if(saved==restored_records.end()||!saved->tail.person||saved->serialized_object_type!=2||saved->saved.guid!=person.binding->guid)
                 throw odh::FormatError("selected saved World entity is not the matching person resource");
@@ -2050,7 +2108,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             throw odh::FormatError("occupancy host provenance is unavailable on this platform");
 #endif
         }
-        if(runtime_globals&&!projecting_occupancy){
+        if(runtime_globals&&!projecting_occupancy&&!residential_property_arrival){
             const auto state=runtime_globals->snapshot();
             if(!state.selected_sim_is_runtime_id&&state.words[3]){
                 const auto source_id=*state.words[3];
@@ -2071,7 +2129,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             const auto id=static_cast<std::int16_t>(record.saved.object_id);
             const auto* entity=restored_world->world->find(id);
             if(entity&&entity->kind==odh::EntityKind::avatar&&entity->definition&&
-               retired_neighbor_guids.count(entity->definition->guid))
+               retired_neighbor_guids.count(entity->definition->guid)&&!residential_property_arrival)
                 throw odh::FormatError("installed house retains a visitor from a deleted family");
             if(!entity||!entity->definition||entity->definition->guid!=record.saved.guid)
                 throw odh::FormatError("saved World EntryPoint entity identity unavailable");
@@ -2112,6 +2170,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(render_saved_guid)pending_primary_activation=std::none_of(reconciliation.begin(),reconciliation.end(),[&](const auto& member){
                 return member.guid==*render_saved_guid&&member.presence!=odh::HouseholdMemberPresence::absent;});
         }
+        if(residential_property_arrival)render_saved_id.reset();
         if(actorless_arrival||restored_travel_present){
             const auto bootstrap_world=restored_world->world->snapshot();
             if(std::any_of(bootstrap_world.entities.begin(),bootstrap_world.entities.end(),[](const auto& entity){return entity.kind==odh::EntityKind::avatar;}))
@@ -2176,6 +2235,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             // prepared geometry as the reconstruction even in that case.
             if(!render_materials)render_materials.emplace();
             odh::Ts1Clock construction_clock;
+            if(residential_property_arrival){
+                if(!simulation_clock)throw odh::FormatError("vacant property constructor needs its actual restored clock");
+                construction_clock=*simulation_clock;
+            }else{
             const auto& construction_globals=simi->global_data;
             if(construction_globals.size()<=8||construction_globals[0]<0||construction_globals[1]<0||
                construction_globals[5]<0||construction_globals[6]<0||construction_globals[7]<0||
@@ -2184,6 +2247,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                    static_cast<unsigned>(construction_globals[6]),static_cast<unsigned>(construction_globals[7]),
                    construction_globals[8]))
                 throw odh::FormatError("missing household resident requires a supported SIMI clock");
+            }
             const auto architecture=saved_architecture_resource(*lot_path);
             const odh::ArchitectureMap empty;
             const auto* floor_map=selected_architecture_map(architecture,"FLRm");
@@ -2412,11 +2476,16 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             if(member!=roster.end()&&!materialized_main_states.count(actor.id))
                 throw odh::FormatError("family transfer destination contains a resident from an earlier occupancy; fresh reconstruction is required");
         }
-        odh::Ts1Clock clock;const auto& g=simi->global_data;
+        odh::Ts1Clock clock;
+        if(residential_property_arrival){
+            if(!simulation_clock)throw odh::FormatError("vacant family transfer needs its actual restored clock");clock=*simulation_clock;
+        }else{
+            const auto& g=simi->global_data;
         if(g[0]<0||g[1]<0||g[5]<0||g[6]<0||g[7]<0||
            !clock.initialize_simi(static_cast<unsigned>(g[0]),static_cast<unsigned>(g[1]),
                static_cast<unsigned>(g[5]),static_cast<unsigned>(g[6]),static_cast<unsigned>(g[7]),g[8]))
             throw odh::FormatError("portable family transfer destination has an unsupported clock");
+        }
         odh::RelationshipState base(*neighbors);
         const auto relations=restored_world->relationships?restored_world->relationships->snapshot():base.snapshot();
         family_carry_applied=odh::apply_household_transfer(*session_context->family_transfer,
@@ -2541,6 +2610,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
             authenticate_object_group_resources(saved.object_groups,saved.world,*definition_index,session_context->game_root,session_baseline?&*session_baseline:nullptr);
             initial_group_restore=saved.object_groups;
         }
+    }
+    if(residential_components){
+        initial_group_restore=residential_components->object_groups;
+        if(residential_components->object_history)initial_retired_origins=residential_components->object_history->retired_created_objects;
     }
     const odh::ObjectGroupSnapshot* resolving_object_groups=initial_group_restore?&*initial_group_restore:nullptr;
     const std::vector<odh::SessionCreatedObject>* resolving_retired_origins=&initial_retired_origins;
@@ -2677,6 +2750,39 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         (void)origin;throw odh::FormatError("historical household storage provider is unavailable on this host");
 #endif
     };
+    if(residential_components){
+#ifdef __linux__
+        if(!saved_world_main||!restored_world||!definition_index||!globals||globals->standalone||!lot_path||
+           !session_context->family_journal||!session_context->family_journal->pending_purchase()||
+           !session_context->family_journal->expected_overlay()||!session_context->resources||
+           session_context->property_lot->identity.house!=session_context->house_number||
+           session_context->property_lot_reference->house!=session_context->house_number||
+           session_context->property_lot->identity.lot_sha256!=odh_host::fingerprint_transfer_resource(*lot_path)||
+           odh::encode_session_resource_identity(residential_components->resources)!=odh::encode_session_resource_identity(*session_context->resources))
+            throw odh::FormatError("vacant property input differs from its selected installed lot/resources/pending occupancy");
+        session_context->family_journal->verify_current();
+        const auto proof=odh_host::restore_residential_property_retirement(*session_context->property_release_source,
+            *session_context->family_journal->expected_overlay(),*session_context->property_lot_reference,
+            session_context->property_lot_source_archive,*session_context->property_lot,*definition_index,
+            resolve_npc_avatar,resolve_retired_household_avatar);
+        odh_host::ObjectTradeResourceLibrary resources(session_context->game_root,*definition_index,globals->archive,globals->entry);
+        auto scene=odh_host::prepare_community_object_scene(*restored_world,*session_context->property_lot->objects,
+            *definition_index,resources,proof);
+        // session_baseline remains the immutable installed cohort for future
+        // HHRD/retirement verification; no aliases have bound the candidate yet.
+        restored_world=std::move(scene.saved_world);render_saved_id.reset();
+        pending_household_activation=true;pending_primary_activation=true;
+        if(!runtime_globals||!runtime_globals->restore(*residential_components->runtime_globals))
+            throw odh::FormatError("vacant property global owner could not restore its actual bank");
+        if(!family_global||!runtime_globals->write(9,*family_global)||!runtime_globals->write(32,0))
+            throw odh::FormatError("vacant property cannot bind the incoming family context");
+        // Pin7e76 chooses Simless from ActiveFamily, not from current avatar
+        // count. The actual residents are still constructed below, once.
+        runtime_globals_was_saved=true;runtime_globals_dirty=true;
+#else
+        throw odh::FormatError("residential property storage provider is unavailable on this host");
+#endif
+    }
     std::unique_ptr<odh::SingleResidentSessionRestore> session_restore;
     std::unique_ptr<odh::HouseholdSessionRestore> household_restore;
     if(session_context&&!session_context->restore_archive.empty()){
@@ -2761,7 +2867,8 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         std::vector<std::uint8_t>{}.swap(session_context->restore_archive); // Release encoded input.
     }
     const bool restoring_session=bool(session_restore)||bool(household_restore);
-    if(recover_saved_code&&(!saved_world_main||restoring_session||!session_context||session_context->single_resident_session||occupancy_saved_execution_invalidated))
+    const bool restoring_object_lifetime=restoring_session||residential_property_arrival;
+    if(recover_saved_code&&(!saved_world_main||restoring_object_lifetime||!session_context||session_context->single_resident_session||occupancy_saved_execution_invalidated))
         throw odh::FormatError("complete class recovery requires fresh original whole-household import");
     if((check_recovery_position||place_recovery_position)&&(!saved_world_main||!headless_main||ticks_limit!=0||restoring_session||
        !session_context||session_context->single_resident_session||session_context->save_on_exit||occupancy_saved_execution_invalidated))
@@ -2792,7 +2899,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::vector<odh::WorldEntityReference> original_load_order_executed;
     std::vector<odh::WorldEntityReference> original_person_notification_order;
     std::function<std::optional<odh::SavedRecoveryPersonTraversal>(std::string&)> begin_original_person_notifications;
-    if(saved_world_main&&!restoring_session&&session_context&&!session_context->single_resident_session&&
+    if(saved_world_main&&!restoring_object_lifetime&&session_context&&!session_context->single_resident_session&&
        !occupancy_saved_execution_invalidated){
         // Native objects are allocated in the serialized MAP order. Body
         // block order and numeric IDs are separate identities, not ordering.
@@ -2850,15 +2957,15 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     // refine their Thread identity, preserving an unknown historical stamp.
     if(saved_world_main&&session_context){
         const auto loaded_tick=session_restore?session_restore->host().tick:
-            household_restore?household_restore->host().tick:std::uint64_t{0};
+            household_restore?household_restore->host().tick:residential_components?residential_components->host.tick:std::uint64_t{0};
         const auto tick32=static_cast<std::uint32_t>(loaded_tick);
-        if(restoring_session&&world.lockout_count_clock()&&*world.lockout_count_clock()!=tick32)
+        if(restoring_object_lifetime&&world.lockout_count_clock()&&*world.lockout_count_clock()!=tick32)
             throw odh::FormatError("saved World lockout clock differs from the session scheduler tick");
         if(!world.set_lockout_count_clock(tick32))throw odh::FormatError("TS1 lockout clock admission failed");
         for(auto cursor=std::int16_t{0};;){
             const auto id=world.next_entity(cursor);if(!id)break;cursor=*id;
             const auto* entity=world.find(cursor);
-            const auto initial_stamp=!restoring_session&&!entity->lockout_count?
+            const auto initial_stamp=!restoring_object_lifetime&&!entity->lockout_count?
                 std::optional<std::uint32_t>{0}:std::nullopt;
             if(!world.admit_lockout_count_state(cursor,entity->generation,true,initial_stamp))
                 throw odh::FormatError("TS1 source Thread lockout identity is inconsistent");
@@ -2947,7 +3054,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 simulation_profile="Simitone_default_TS1_reference";
             }else {simulation_clock.reset();simulation_profile="legacy_session_without_simulation_state";}
         }
-        if(simulation_clock){
+        if(residential_components&&residential_components->simulation){
+            if(!simulation_clock)simulation_clock.emplace();
+            if(!simulation_clock->restore(residential_components->simulation->clock))throw odh::FormatError("vacant property clock is invalid");
+        }
+    if(simulation_clock){
             if(!actorless_bootstrap())simulation_motives.try_emplace(runtime_avatar_id);
         }
     }
@@ -3646,6 +3757,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     auto& dynamic_object_groups=live_object_group_state.groups;
     if(household_restore&&household_restore->object_groups())
         live_object_group_state=*household_restore->object_groups();
+    else if(residential_components&&residential_components->object_groups)live_object_group_state=*residential_components->object_groups;
     const auto dynamic_group_for=[&](std::int16_t id)->const odh::ObjectGroup*{
         const auto* entity=world.find(id);if(!entity)return nullptr;
         for(const auto& group:dynamic_object_groups)for(const auto& member:group.members)
@@ -3744,10 +3856,11 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<odh::SessionObjectTradeLedger> runtime_object_trade;
     if(household_restore)runtime_object_trade=household_restore->object_trade();
     else if(session_restore)runtime_object_trade=session_restore->object_trade();
+    else if(residential_components)runtime_object_trade=residential_components->object_trade;
     // One value owner, coupled to the actual World before startup scripts.
     // Original-IFF policy applies only to a fresh import; old native archives
     // never gain guessed prices or ObjectState from their raw OD41 caches.
-    if(session_context&&!session_context->single_resident_session&&!restoring_session&&restored_world&&definition_index)
+    if(session_context&&!session_context->single_resident_session&&!restoring_object_lifetime&&restored_world&&definition_index)
         runtime_object_trade=odh_host::prepare_imported_object_values(*restored_world,*definition_index,
             [&](const std::string& source){return odh_host::generic_session_source_key(session_context->game_root,source);});
     std::unique_ptr<odh::ObjectValueRegistry> object_values;
@@ -3819,6 +3932,13 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         for(const auto& origin:history.retired_npc_avatars)retired_npc_origins.emplace(std::make_pair(origin.id,origin.generation),origin);
         for(const auto& origin:history.retired_household_avatars)retired_household_origins.emplace(
             std::make_pair(origin.member.id,origin.member.generation),origin);
+    }
+    if(residential_components){
+        const auto& history=*residential_components->object_history;object_history_complete=history.complete;
+        for(const auto& origin:history.retired_created_objects)retired_created_origins.emplace(std::make_pair(origin.id,origin.generation),origin);
+        for(const auto& origin:history.retired_npc_avatars)retired_npc_origins.emplace(std::make_pair(origin.id,origin.generation),origin);
+        for(const auto& origin:history.retired_household_avatars)retired_household_origins.emplace(std::make_pair(origin.member.id,origin.member.generation),origin);
+        if(!world.install_reserved_entity_ids(history.reserved_entity_ids))throw odh::FormatError("vacant property reservations differ from World");
     }
     const auto unschedule_execution=[&](std::int16_t id){
         if(entity_scheduler.running())return false;
@@ -4126,7 +4246,9 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         object_thread_restore_admissions.erase(id);
         runtime_object_threads.erase(found);
     };
-    if(household_restore)for(const auto& origin:household_restore->created_objects()){
+    const auto restored_created_objects=household_restore?household_restore->created_objects():
+        residential_components?residential_components->created_objects:std::vector<odh::SessionCreatedObject>{};
+    for(const auto& origin:restored_created_objects){
         auto admitted=origin;
         // Promote the first native OGRP profile, whose GEXP origins predate
         // permanent master provenance, using its already-authenticated group.
@@ -4174,6 +4296,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         };
         if(session_restore)if(const auto* thread=find(session_restore->object_threads()))return thread;
         if(household_restore)if(const auto* thread=find(household_restore->object_threads()))return thread;
+        if(residential_components)if(const auto* thread=find(residential_components->object_threads))return thread;
         return nullptr;
     };
     struct HeadlessHeadlineEvent {
@@ -5292,6 +5415,24 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         (void)type;reason="destination selector requires the native resource catalog adapter";return {};
 #endif
     };
+    std::unique_ptr<odh_host::CharacterDisplayNames> phonebook_display_names;
+    const auto selector_dialog_choices=[&](std::uint8_t type,const odh::VmFrame& source,std::string& reason)
+            ->std::optional<std::vector<odh::DialogChoice>>{
+        if(type!=10)return travel_dialog_choices(type,reason);
+        const auto* caller=world.frame_entity(source,odh::VmEntityRole::caller);
+        if(!caller||!neighbors||!relationships||!session_context||session_context->installed_user_data.empty()){
+            reason="phonebook requires an actual caller and current neighborhood/relationship resources";return {};
+        }
+        if(!phonebook_display_names)phonebook_display_names=std::make_unique<odh_host::CharacterDisplayNames>(
+            session_context->installed_user_data/"Characters",session_context->player_character_root,game_language);
+        const auto names=[&](std::int16_t nid,std::uint32_t guid)->std::optional<std::string>{
+            if(retired_neighbor_ids.count(nid)||retired_neighbor_guids.count(guid))return {};
+            const auto& name=phonebook_display_names->name(guid);if(name.empty())return {};return name;
+        };
+        auto result=odh_host::phonebook_choices(world,{caller->id,caller->generation},*neighbors,*relationships,names);
+        if(!result.ready){reason=result.diagnostic;return {};}
+        return std::move(result.choices);
+    };
     const auto dialog_resource_for=[&](odh::DialogStringScope scope,const odh::VmFrame& source)->Resource{
             auto resource=scope==odh::DialogStringScope::global_resource?globals:
                 code_owner_resource(source.context.code_owner);
@@ -5324,7 +5465,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         try{
             std::optional<std::vector<odh::DialogChoice>> travel_choices;
             if(odh::dialog_selector_type(operand.type)){
-                travel_choices=travel_dialog_choices(operand.type,reason);
+                travel_choices=selector_dialog_choices(operand.type,source,reason);
                 if(!travel_choices)return {};
             }
             const auto resource=dialog_resource_for(scope,source);
@@ -5432,12 +5573,12 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     const auto revalidate_travel_dialog=[&](const odh::DialogState& state,std::string& reason){
         const auto type=state.instruction.operands[5];
         if(!odh::dialog_selector_type(type))return true;
-        const auto current=travel_dialog_choices(type,reason);
+        const auto current=selector_dialog_choices(type,state.source,reason);
         if(!current)return false;
         if(current->size()!=state.prompt.choices.size()){reason="destination selector catalog changed";return false;}
         for(std::size_t n=0;n<current->size();++n)if((*current)[n].value!=state.prompt.choices[n].value||
             (*current)[n].label!=state.prompt.choices[n].label){reason="destination selector resource choices changed";return false;}
-        if(!state.input.empty()&&std::none_of(current->begin(),current->end(),[&](const auto& choice){
+        if(!state.input.empty()&&!(type==10&&state.input=="-1")&&std::none_of(current->begin(),current->end(),[&](const auto& choice){
             return state.input==std::to_string(choice.value);
         })){reason="saved destination selection is outside the offered catalog";return false;}
         return true;
@@ -5694,10 +5835,21 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
            !active_family||session_context->single_resident_session||headless_second_main)return nullptr;
         ActorRuntime* actor=primary_runtime&&primary_runtime->id==id?primary_runtime.get():nullptr;
         if(!actor)for(const auto& member:household_runtime)if(member->id==id)actor=member.get();
-        if(!actor||actor->npc_origin||!actor->vm||!actor->data.binding)return nullptr;
+        if(!actor||actor->npc_origin||!actor->vm||!property_release_source_lease||
+           !session_context->family_journal)return nullptr;
+        // The primary's existing Loaded owner is person; only auxiliary actor
+        // constructors store their metadata in ActorRuntime::data. Never infer
+        // an unowned body from a missing auxiliary metadata field.
+        const auto& actor_data=actor==primary_runtime.get()?person:actor->data;
+        if(!actor_data.binding)return nullptr;
+        const auto lease=session_context->family_journal->lease();
+        if(lease.family_chunk_id!=property_release_source_lease->family_chunk_id||
+           lease.occupancy_epoch!=property_release_source_lease->occupancy_epoch||
+           lease.family_identity!=property_release_source_lease->family_identity||
+           lease.neighborhood_identity!=property_release_source_lease->neighborhood_identity)return nullptr;
         const auto* entity=world.find(id);const auto* services=actor_services_for_vm(actor->vm.get());
         if(!entity||entity->generation!=generation||entity->kind!=odh::EntityKind::avatar||entity->ui_ghost||
-           !entity->definition||entity->definition->guid!=actor->data.binding->guid||entity->person_data.size()<=31||
+           !entity->definition||entity->definition->guid!=actor_data.binding->guid||entity->person_data.size()<=31||
            !services||services->actor!=actor||services->identity!=odh::WorldEntityReference{id,generation})return nullptr;
         const auto member=std::find_if(session_context->household_members.begin(),session_context->household_members.end(),
             [&](const auto& m){return m.guid==entity->definition->guid&&m.neighbor_id==entity->person_data[31]&&
@@ -5705,6 +5857,10 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
                 m.object_definition_id==definition_index->unique(m.guid)->chunk_id;});
         if(member==session_context->household_members.end()||std::find(active_family->family.member_guids.begin(),
             active_family->family.member_guids.end(),member->guid)==active_family->family.member_guids.end())return nullptr;
+        const auto source=std::find_if(property_release_source_roster.begin(),property_release_source_roster.end(),
+            [&](const auto& value){return value.id==id&&value.generation==generation&&value.guid==member->guid&&
+                value.neighbor_id==member->neighbor_id&&value.object_definition_id==member->object_definition_id;});
+        if(source==property_release_source_roster.end())return nullptr;
         return actor;
     };
     // A menu target can be an object or an avatar whose runtime identity is
@@ -6941,15 +7097,24 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         session_log.event("session resumed saved_tick="+std::to_string(ticks));
 #endif
     }
-    if(household_restore){
-        if(!primary_animation())throw odh::FormatError("household restore needs the matching animation catalog");
-        for(const auto& object:household_restore->object_threads()){
+    if(household_restore||residential_components){
+        for(const auto& object:household_restore?household_restore->object_threads():residential_components->object_threads){
             if(object.resource_owners.empty()){
                 ensure_saved_phone_thread();
                 if(!saved_phone_main_scheduled||saved_phone_id!=object.id)
                     throw odh::FormatError("legacy object thread has no matching host adapter");
             }else restore_runtime_object(object);
         }
+    }
+    if(residential_components){
+        if(!entity_scheduler.restore_snapshot(residential_components->scheduler))
+            throw odh::FormatError("vacant object scheduler does not match actual restored Thread bindings");
+        ticks=residential_components->host.tick;random.reset(residential_components->host.random_seed);
+        next_saved_code_owner=residential_components->next_code_owner;saved_owner_ids_exhausted=residential_components->code_owner_ids_exhausted;
+        residential_lifetime_restored=true;
+    }
+    if(household_restore){
+        if(!primary_animation())throw odh::FormatError("household restore needs the matching animation catalog");
         random.reset(household_restore->host().random_seed);
         primary_body()=odh::derive_avatar_body_descriptor(world,runtime_avatar_id,random,body,*body_walk,*body_swim,private_walk);
         prepare_household_bodies();
@@ -7060,7 +7225,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
         }
         profile_mark("household-session-restored-before-main");
     }
-    if(simulation_clock && restoring_session && simulation_clock->snapshot().ticks!=ticks)
+    if(simulation_clock && restoring_object_lifetime && simulation_clock->snapshot().ticks!=ticks)
         throw odh::FormatError("simulation clock differs from restored host tick");
     if(simulation_clock)for(const auto& member:household_runtime)simulation_motives.try_emplace(member->id);
     const auto resumed_tick=ticks;
@@ -7078,30 +7243,30 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     std::optional<std::uint64_t> scheduled_interaction_tick;
     std::optional<std::uint64_t> scheduled_cancel_interaction_tick;
     if(headless_interaction){
-        if(restoring_session&&headless_interaction->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
+        if(restoring_object_lifetime&&headless_interaction->tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed interaction tick overflows the session clock");
-        scheduled_interaction_tick=headless_interaction->tick+(restoring_session?resumed_tick:0);
+        scheduled_interaction_tick=headless_interaction->tick+(restoring_object_lifetime?resumed_tick:0);
     }
-    if(restoring_session)for(auto& request:headless_player_interactions){
+    if(restoring_object_lifetime)for(auto& request:headless_player_interactions){
         if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed player request tick overflows the session clock");
         request.tick+=resumed_tick;
     }
-    if(restoring_session)for(auto& request:headless_resident_go_here){
+    if(restoring_object_lifetime)for(auto& request:headless_resident_go_here){
         if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed resident Go Here tick overflows the session clock");
         request.tick+=resumed_tick;
     }
-    if(restoring_session)for(auto& request:headless_resident_stands){
+    if(restoring_object_lifetime)for(auto& request:headless_resident_stands){
         if(request.tick>std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed Stand tick overflows the session clock");
         request.tick+=resumed_tick;
     }
     if(headless_cancel_interaction_tick){
-        if(restoring_session&&*headless_cancel_interaction_tick>
+        if(restoring_object_lifetime&&*headless_cancel_interaction_tick>
            std::numeric_limits<std::uint64_t>::max()-resumed_tick)
             throw odh::FormatError("resumed interaction cancel tick overflows the session clock");
-        scheduled_cancel_interaction_tick=*headless_cancel_interaction_tick+(restoring_session?resumed_tick:0);
+        scheduled_cancel_interaction_tick=*headless_cancel_interaction_tick+(restoring_object_lifetime?resumed_tick:0);
     }
     std::optional<std::uint64_t> scheduled_stand_tick;
     if(headless_stand){
@@ -7111,7 +7276,7 @@ odh_host::PersonRunResult odh_person_run(int argc,char** argv,odh_host::LinuxWin
     }
     const auto resumed_steps=restoring_session&&primary_runtime?primary_vm().steps():0;
     std::uint64_t resumed_object_steps=0;
-    if(restoring_session)for(const auto& [id,runtime]:runtime_object_threads){(void)id;resumed_object_steps+=runtime->vm->steps();}
+    if(restoring_object_lifetime)for(const auto& [id,runtime]:runtime_object_threads){(void)id;resumed_object_steps+=runtime->vm->steps();}
     std::uint64_t resumed_household_steps=0;
     if(household_restore)for(const auto& member:household_runtime)resumed_household_steps+=member->vm->steps();
     std::uint64_t resumed_npc_steps=0;
@@ -14565,11 +14730,24 @@ struct PlacementCandidateProbe {
         // avatars absent from the original lot. Never guess all live bodies
         // are independent singleton groups.
         if(property_release_active){
-            const auto add=[&](const auto& actor){const auto* live=world.find(actor.id);
-                if(live&&owned_property_actor_for_removal(actor.id,live->generation))standalone.push_back({live->id,live->generation});};
-            if(primary_runtime)add(*primary_runtime);for(const auto& actor:household_runtime)add(*actor);
+            if(!property_release_source_lease||property_release_source_roster.empty())
+                throw odh::FormatError("household valuation has no authenticated source HHRD/lease");
+            for(const auto& member:property_release_source_roster){
+                const auto* live=world.find(member.id);
+                // Retired generations do not contribute to the post-filter
+                // valuation. A newly created replacement requires its OWN
+                // creation/resource origin above, never the old HHRD receipt.
+                if(!live||live->generation!=member.generation)continue;
+                const auto* own=definition_index?definition_index->unique(member.guid):nullptr;
+                if(!owned_property_actor_for_removal(member.id,member.generation)||!live->definition||
+                   live->definition->guid!=member.guid||live->definition->master_guid||!own||own->definition.is_multitile)
+                    throw odh::FormatError("household valuation source member lacks its exact live resource/service owner: id="+
+                        std::to_string(member.id)+" generation="+std::to_string(member.generation));
+                standalone.push_back({live->id,live->generation});
+            }
         }
-        if(session_context&&!session_context->single_resident_session&&!property_release_active)
+        if(session_context&&!session_context->single_resident_session&&!property_release_active&&
+           !(residential_property_arrival&&pending_household_activation))
             for(const auto& member:capture_household_roster(true)){
                 const auto* e=world.find(member.id);const auto* own=definition_index?definition_index->unique(member.guid):nullptr;
                 if(!e||e->generation!=member.generation||!e->definition||e->definition->guid!=member.guid||
@@ -17463,7 +17641,7 @@ struct PlacementCandidateProbe {
         return services;
     };
     const auto bootstrap_global_controllers=[&]{
-        if(!saved_world_main||restoring_session||!session_context||session_context->single_resident_session)return;
+        if(!saved_world_main||restoring_object_lifetime||!session_context||session_context->single_resident_session)return;
         if(entity_scheduler.running()||active_object_constructions||!pending_create_objects.empty()||!pending_npc_avatars.empty())
             throw odh::FormatError("global-controller bootstrap requires the actual fresh lot safe boundary");
         global_controller_startup_ran=true;
@@ -18114,7 +18292,7 @@ struct PlacementCandidateProbe {
     };
     profile_mark("host-runtime-ready");
     bool fresh_lot_positions_certified=false;
-    if(saved_world_main && !restoring_session && session_context && !session_context->single_resident_session &&
+    if(saved_world_main && !restoring_object_lifetime && session_context && !session_context->single_resident_session &&
        !occupancy_saved_execution_invalidated){
         import_saved_object_mains();
         imported_code_plan=odh_host::prepare_saved_code_import(*objt,*definition_index,shared_program,
@@ -18293,6 +18471,17 @@ struct PlacementCandidateProbe {
             " resource_files="+std::to_string(session_context->resource_paths.size()));
     }
 #endif
+    if(residential_property_arrival){
+        // Verify the source-priced document against the SAME actual valuation
+        // owner before incoming family constructors can change lot contents.
+        ensure_house_financial_resources();const auto standalone=house_financial_standalones();
+        const auto quote=odh_host::inspect_house_property({world,*restored_world,*definition_index,dynamic_object_groups,
+            standalone,render_lot->architecture_resource().architecture,render_lot->runtime_architecture_resource().architecture,
+            *house_original_underlay,*house_financial_prices,*house_property_policy});
+        if(quote.status!=odh::PropertyValuationStatus::resolved||!quote.property_value||
+           *quote.property_value!=session_context->property_lot_reference->vacant_purchase_value)
+            throw odh::FormatError("vacant property current valuation differs before move-in effects");
+    }
     if(!restoring_session&&session_context&&saved_world_main&&!session_context->single_resident_session){
         if(!global_controller_startup_ran)bootstrap_global_controllers();
         if(check_recovery_position||place_recovery_position){
@@ -18408,7 +18597,7 @@ struct PlacementCandidateProbe {
                 }
             }
         }
-        run_imported_lot_load_entries();
+        if(!residential_property_arrival)run_imported_lot_load_entries();
     }
     if(pending_household_activation){
         if(original_load_traversal||entity_scheduler.running()||host_failed)
@@ -18520,6 +18709,7 @@ struct PlacementCandidateProbe {
         active_household_actor=runtime_avatar_id;selected_actor_reference=odh::WorldEntityReference{runtime_avatar_id,world.find(runtime_avatar_id)->generation};
         render_saved_id=static_cast<std::uint16_t>(runtime_avatar_id);
         pending_primary_activation=false;pending_household_activation=false;
+        if(residential_property_arrival)residential_household_activated=true;
         ensure_primary_presentation();
     }
     if(session_context&&session_context->travel_return){
@@ -18537,7 +18727,7 @@ struct PlacementCandidateProbe {
         (void)save_live_session();
         session_context->travel_return.reset();
     }
-    if(!restoring_session)execute(false); // Restored Main resumes only at saved tick + 1.
+    if(!restoring_object_lifetime)execute(false); // Restored object lifetime resumes only at saved tick + 1.
     // After fresh import and startup, publish all visual rooms before the
     // first frame. Temporary arrivals finish loading when their family enters.
     if(fresh_lot_positions_certified&&!actorless_arrival&&!host_failed&&room_lighting_controller)
@@ -18575,11 +18765,37 @@ struct PlacementCandidateProbe {
         if(!session_context->family_journal||!session_context->property_release_source||
            !session_context->property_release_identity||!session_context->resources||
            session_context->single_resident_session||!session_context->family_journal->expected_overlay()||
-           session_context->family_journal->pending_purchase()||travel_state||
-           session_context->temporary_travel_arrival||second_main_vm||host_failed||entity_scheduler.running()||
+           session_context->family_journal->pending_purchase()||
+           session_context->temporary_travel_arrival||session_context->travel_return||
+           !session_context->suspended_home.empty()||!session_context->travel_departure_archive.empty()||
+           temporary_travel||pending_travel_activation||second_main_vm||host_failed||entity_scheduler.running()||
            !definition_index||!restored_world||!globals||globals->standalone||!render_lot||!render_materials||
-           !runtime_globals||!relationships||!runtime_object_trade||!object_history_complete)
-            throw odh::FormatError("property release requires an authenticated whole residential runtime at a stopped source boundary");
+           !runtime_globals||!relationships||!runtime_object_trade||!object_history_complete){
+            std::string reasons;
+            const auto missing=[&](bool failed,const char* name){if(failed){if(!reasons.empty())reasons+=",";reasons+=name;}};
+            missing(!session_context->family_journal,"journal_missing");
+            missing(!session_context->property_release_source,"neighborhood_source_missing");
+            missing(!session_context->property_release_identity,"lot_identity_missing");
+            missing(!session_context->resources,"resource_identity_missing");
+            missing(session_context->single_resident_session,"single_resident");
+            if(session_context->family_journal){
+                missing(!session_context->family_journal->expected_overlay(),"expected_overlay_missing");
+                missing(session_context->family_journal->pending_purchase(),"purchase_pending");
+            }
+            missing(session_context->temporary_travel_arrival,"travel_arrival");
+            missing(bool(session_context->travel_return),"travel_return");
+            missing(!session_context->suspended_home.empty(),"suspended_home");
+            missing(!session_context->travel_departure_archive.empty(),"departure_archive");
+            missing(bool(temporary_travel),"transition_result");missing(bool(pending_travel_activation),"activation_pending");
+            missing(bool(second_main_vm),"second_main");missing(host_failed,"host_failed");
+            missing(entity_scheduler.running(),"scheduler_running");missing(!definition_index,"definitions_missing");
+            missing(!restored_world,"saved_world_missing");missing(!globals,"globals_missing");
+            missing(globals&&globals->standalone,"globals_standalone");missing(!render_lot,"lot_missing");
+            missing(!render_materials,"materials_missing");missing(!runtime_globals,"global_bank_missing");
+            missing(!relationships,"relationships_missing");missing(!runtime_object_trade,"trade_missing");
+            missing(!object_history_complete,"object_history_incomplete");
+            throw odh::FormatError("property release stopped-source prerequisites: "+reasons);
+        }
         const auto source_path=session_context->family_journal->checkpoint_path();
         if(!source_path||source_bytes.empty())
             throw odh::FormatError("property release must restore its exact occupied archive before cleanup");
@@ -18590,6 +18806,41 @@ struct PlacementCandidateProbe {
         const auto initial_roster=capture_household_roster(true);
         property_release_source_roster=initial_roster;
         const auto source_capture=odh::decode_session_bundle(source_bytes,*session_context->resources);
+        // HOME has a travel-capability origin even when no trip ever started:
+        // the launcher creates it with identify_travel_origin, while HOME save
+        // omits TRIP until pending/departure/visit. Preserve that origin; it is
+        // not authority to evict a visited, returning or transitioning runtime.
+        if(source_capture.travel||source_capture.travel_visited_session||source_capture.travel_home_session||!source_capture.family_lease||
+           !odh::same_session_household_roster(initial_roster,source_capture.household_roster))
+            throw odh::FormatError("property release source is not an exact permanent HOME without TRIP/TVIS/THOM");
+        if(travel_state){
+            odh::validate_ts1_travel_state(*travel_state);
+            const auto& origin=*travel_state;const auto& lease=*source_capture.family_lease;
+            if(origin.pending||origin.family_activated||origin.transit_info!=0||
+               origin.home_house!=source_capture.host.house_number||origin.current_house!=origin.home_house||
+               origin.home_mode!=session_context->neighborhood_mode||origin.current_mode!=origin.home_mode||
+               origin.family_chunk_id!=source_capture.host.family_chunk_id||
+               origin.family_number!=source_capture.host.family_number||
+               origin.occupancy_epoch!=lease.occupancy_epoch||origin.neighborhood_identity!=lease.neighborhood_identity||
+               origin.family_identity!=lease.family_identity||origin.caller_guid!=session_context->resident_guid||
+               origin.caller_neighbor_id!=session_context->resident_neighbor_id||
+               origin.permanent_roster.size()!=initial_roster.size()||origin.travelers.size()!=initial_roster.size())
+                throw odh::FormatError("property release travel origin is not its stopped permanent HOME identity");
+            for(const auto& member:initial_roster){
+                const auto permanent=std::find_if(origin.permanent_roster.begin(),origin.permanent_roster.end(),
+                    [&](const auto& value){return value.guid==member.guid;});
+                const auto traveling=std::find_if(origin.travelers.begin(),origin.travelers.end(),
+                    [&](const auto& value){return value.guid==member.guid;});
+                const auto configured=std::find_if(session_context->household_members.begin(),session_context->household_members.end(),
+                    [&](const auto& value){return value.guid==member.guid;});
+                if(permanent==origin.permanent_roster.end()||traveling==origin.travelers.end()||
+                   configured==session_context->household_members.end()||
+                   !odh::same_ts1_travel_member(*permanent,*traveling)||permanent->neighbor_id!=member.neighbor_id||
+                   permanent->definition_chunk_id!=member.object_definition_id||
+                   permanent->character_asset!=configured->character_asset||permanent->character_fingerprint!=member.character_fingerprint)
+                    throw odh::FormatError("property release HOME origin party differs from its authenticated permanent household");
+            }
+        }
         property_release_source_lease=source_capture.family_lease;
         property_release_source_head=odh::sha256(source_bytes.data(),source_bytes.size());
         const auto start_tick=ticks;
@@ -18789,6 +19040,37 @@ struct PlacementCandidateProbe {
         headless_window_inputs.push_back(click);
         ++headless_window_menu_click_count;
     };
+    if(headless_menu_query){
+        if(!restoring_session||session_policy.tick_limit()!=0||headless_interaction||!headless_dialog_responses.empty()||headless_dialog_ok||render_window||headless_window_interaction)
+            throw odh::FormatError("menu query requires an otherwise read-only zero-tick headless run");
+        const auto [actor_id,target_id]=*headless_menu_query;
+        const auto* actor=world.find(actor_id);const auto* target=world.find(target_id);
+        const auto* definition=target&&target->definition&&definition_index?definition_index->unique(target->definition->guid):nullptr;
+        if(actor_id!=active_household_actor||!actor||!actor_services_for(actor_id)||!supported_menu_target(target)||!definition)
+            throw odh::FormatError("menu query requires the actual selected admitted actor and a verified target");
+        const auto before=odh::encode_world_snapshot(world.snapshot());const auto seed=random.seed();
+        prepare_selected_object(SavedObjectSelection{target_id,target->definition->guid,target->generation,definition->definition.tree_table_id});
+        if(before!=odh::encode_world_snapshot(world.snapshot())||seed!=random.seed())
+            throw odh::FormatError("read-only menu query mutated World or source RNG");
+        const auto name_hex=[](const std::string& name){std::string hex;hex.reserve(name.size()*2);constexpr char digits[]="0123456789abcdef";
+            for(const unsigned char byte:name){hex.push_back(digits[byte>>4]);hex.push_back(digits[byte&15]);}return hex;};
+        std::ostringstream out;out<<"{\"actor\":"<<actor_id<<",\"actor_generation\":"<<actor->generation
+            <<",\"target\":"<<target_id<<",\"target_generation\":"<<target->generation
+            <<",\"world_unchanged\":true,\"random_unchanged\":true,\"rows\":[";
+        if(render_interactions&&render_interactions->table)for(std::size_t i=0;i<render_interactions->table->interactions.size();++i){
+            if(i)out<<',';const auto& row=render_interactions->table->interactions[i];
+            const auto* test=i<render_test_results.size()?&render_test_results[i]:nullptr;
+            out<<"{\"row\":"<<i<<",\"action\":"<<row.action<<",\"test\":"<<row.test
+                <<",\"eligibility\":"<<json_bytes(!test?"unsupported":test->state==SavedTestFunctionResult::State::eligible?"eligible":test->state==SavedTestFunctionResult::State::ineligible?"ineligible":"unsupported")
+                <<",\"diagnostic\":"<<json_bytes(test?test->diagnostic:"TestFunction not evaluated")<<",\"variants\":[";
+            if(test)for(std::size_t j=0;j<test->variants.size();++j){
+                if(j)out<<',';const auto& variant=test->variants[j];
+                out<<"{\"param0\":"<<variant.param0<<",\"language\":"<<unsigned(variant.language)
+                    <<",\"name\":"<<(variant.name?json_bytes(*variant.name):"null")
+                    <<",\"name_bytes_hex\":"<<(variant.name?json_bytes(name_hex(*variant.name)):"null")<<'}';
+            }out<<"]}";
+        }out<<"]}";headless_menu_query_json=out.str();
+    }
     queue_headless_window_interaction();
     const auto vm_active=[](odh::VmStatus state){return state!=odh::VmStatus::returned_true&&
         state!=odh::VmStatus::returned_false&&state!=odh::VmStatus::fault;};
@@ -19308,7 +19590,7 @@ struct PlacementCandidateProbe {
                 std::optional<std::string> answer_text;
                 if(input.quit&&input.quit_reason==odh_host::WindowQuitReason::escape_key){
                     if(type==2)answer=2;
-                    if(odh::dialog_selector_type(type)){answer=0;answer_text=std::string{};}
+                    if(odh::dialog_selector_type(type)){answer=0;answer_text=type==10?std::string{"-1"}:std::string{};}
                     if(render_window_host)render_window_host->clear_escape_quit_reason();
                     input.quit=false;input.quit_reason=odh_host::WindowQuitReason::none;
                 }
@@ -20209,7 +20491,8 @@ struct PlacementCandidateProbe {
                 }else{
                     if(request.row){
                         render_selected_interaction_row=*request.row;render_selected_interaction_variant.reset();
-                        if(*request.row<render_test_results.size()&&!render_test_results[*request.row].variants.empty())
+                        if(request.variant)render_selected_interaction_variant=request.variant;
+                        else if(*request.row<render_test_results.size()&&!render_test_results[*request.row].variants.empty())
                             render_selected_interaction_variant=render_test_results[*request.row].variants.front();
                     }
 #ifdef ODH_HAVE_LINUX_SESSION_LOG
@@ -21294,6 +21577,12 @@ struct PlacementCandidateProbe {
         std::cout<<",\"self_deleted_id\":";if(record.self_deleted)std::cout<<record.self_deleted->id;else std::cout<<"null";std::cout<<'}';
     }
     std::cout<<"]}";
+    std::cout<<",\"residential_property_restore\":{\"requested\":"<<(residential_property_arrival?"true":"false")
+        <<",\"object_lifetime_restored\":"<<(residential_lifetime_restored?"true":"false")
+        <<",\"household_activated\":"<<(residential_household_activated?"true":"false")<<",\"head\":";
+    if(session_context&&session_context->property_lot_reference){const auto& head=session_context->property_lot_reference->head;
+        std::cout<<json_bytes(bytes_hex(std::vector<std::uint8_t>(head.begin(),head.end())));}else std::cout<<"null";
+    std::cout<<'}';
     std::cout<<",\"runtime_property_valuation\":{\"status\":"
         <<json_bytes(measured_house_property_value?"resolved":"unresolved")<<",\"property_value\":";
     if(measured_house_property_value)std::cout<<*measured_house_property_value;else std::cout<<"null";
@@ -22602,6 +22891,7 @@ struct PlacementCandidateProbe {
         std::cout<<",\"room_score\":"<<(hud.room_score?std::to_string(*hud.room_score):"null");
         std::cout<<'}';
     }else std::cout<<"null";
+    std::cout<<",\"menu_query\":"<<(headless_menu_query_json?*headless_menu_query_json:"null");
     std::cout<<",\"render\":";
     if(render_evidence){const auto& v=*render_evidence;
         std::cout<<"{\"kind\":"<<json_bytes(v.animation_sample?(render_window?"windowed_Main_Playback_preview":"headless_Main_Playback_sample"):(render_window?"windowed_World_base_pose":"headless_World_base_pose"))<<",\"output\":"<<(render_output?json_bytes(*render_output):"null")

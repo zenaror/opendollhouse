@@ -141,5 +141,27 @@ int main(){try{
             return "resolved";
         })=="resolved:0007","native career parser preserves unconsumed suffix bytes");
     }
+    for(const unsigned flags:{0U,16U,32U,48U}){
+        Fixture f;f.choices={{"Actual contact",34}};Bytes bytes{};bytes[5]=10;bytes[7]=flags;
+        odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
+        vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting,"phonebook genuinely blocks its actual source thread");
+        const auto pending=odh::decode_dialog_state(odh::encode_dialog_state(*f.dialogs.pending()));
+        require(pending.prompt.choices.size()==1&&pending.prompt.choices[0].value==34,"offered contacts persist without invented identity");
+        std::string why;const auto ticket=f.dialogs.pending()->ticket;
+        require(!f.dialogs.respond(ticket,{1,"35"},why)&&vm.status()==odh::VmStatus::waiting,"unoffered phonebook contact never becomes a selected neighbor");
+        require(f.dialogs.respond(ticket,{0,"-1"},why)&&vm.status()==odh::VmStatus::returned_true,"authored phonebook Cancel returns TRUE with sentinel rather than source false");
+        const auto index=(flags&32)?1U:0U;
+        require((flags&16)?vm.temp_xl()[index]==-1:vm.temps()[index]==-1,"phonebook Cancel writes actual selected Temp or TempXL");
+    }
+    {
+        Fixture f;Bytes bytes{};bytes[5]=10;odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
+        vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting,"known empty phonebook still blocks for a real decision");
+        std::string why;require(f.dialogs.respond(f.dialogs.pending()->ticket,{0,"-1"},why)&&vm.temps()[0]==-1,"empty phonebook can cancel without an invented catalog entry");
+    }
+    {
+        Fixture f;Bytes bytes{};bytes[5]=5;odh::Vm vm{program(36,bytes),f.world.vm_memory(),{},odh::dialog_primitive(f.dialogs)};f.owner=&vm;
+        vm.start(odh::routine_key(4096),f.context());require(vm.run(1)==odh::VmStatus::waiting,"ordinary destination selector genuine wait");
+        std::string why;require(!f.dialogs.respond(f.dialogs.pending()->ticket,{0,"-1"},why)&&vm.status()==odh::VmStatus::waiting,"phonebook sentinel never bypasses other selector catalogs");
+    }
     std::cout<<checks<<" dialog checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"dialog: "<<e.what()<<'\n';return 1;}}

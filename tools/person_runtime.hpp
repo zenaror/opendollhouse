@@ -21,6 +21,7 @@ class PreparedHouseholdTransfer;
 class InstalledOccupancyRetirement;
 class PreparedTs1TravelReturn;
 struct NeighborhoodFamilySource;
+struct FamilyPropertyRelease;
 struct ArchitectureSnapshot;
 }
 
@@ -31,6 +32,7 @@ class LinuxSessionLog;
 class FamilySessionJournal;
 class PreparedPropertyRelease;
 struct CommunityLotIdentity;
+struct CommunityLotDocument;
 using NeighborhoodResumeCallback = std::function<std::optional<NeighborhoodMapRequest>()>;
 
 struct NeighborhoodTransitionRequest {
@@ -92,6 +94,11 @@ struct IntegratedSessionContext {
     bool prepare_property_release=false;
     std::shared_ptr<const odh::NeighborhoodFamilySource> property_release_source;
     std::shared_ptr<const CommunityLotIdentity> property_release_identity;
+    // Current vacant property head, loaded by the launcher and independently
+    // authenticated/reconstructed before this runtime exposes a World.
+    std::shared_ptr<const CommunityLotDocument> property_lot;
+    std::shared_ptr<const odh::FamilyPropertyRelease> property_lot_reference;
+    std::vector<std::uint8_t> property_lot_source_archive;
     // Separate from residence/transfer: a visit retains the permanent family
     // and exact suspended home while the active session describes another lot.
     std::optional<odh::Ts1TravelState> travel_state;

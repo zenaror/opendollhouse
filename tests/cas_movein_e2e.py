@@ -73,6 +73,8 @@ def integrated_family_lot(args, game, runner, person):
         raise ValueError('choose --resume-run or --resume-setup')
     if args.respond_observed_notice is not None and args.resume_run is None:
         raise ValueError('--respond-observed-notice requires --resume-run')
+    if args.reoccupy_released_house and (args.resume_run is None or args.second_move):
+        raise ValueError('--reoccupy-released-house requires --resume-run and is separate from --second-move')
     if args.second_move and args.resume_run is None:
         raise ValueError('--second-move requires a guarded completed family/lot --resume-run')
     if args.revise_pending_purchase and args.resume_run is None:
@@ -144,7 +146,7 @@ def integrated_family_lot(args, game, runner, person):
                 raise ValueError('resume checkpoint did not stop at a clean product boundary')
             alias=resume_step.get('reused_observation')
             if alias:
-                if (not args.second_move or not checkpoint or
+                if (not (args.second_move or args.reoccupy_released_house) or not checkpoint or
                         checkpoint.get('relative_path')!=alias.get('archive_relative_path') or
                         checkpoint.get('sha256')!=alias.get('archive_sha256') or
                         Path(resume_document['saved_session_path']).stem!=alias.get('archive_sha256')):
@@ -309,11 +311,140 @@ def integrated_family_lot(args, game, runner, person):
         publish()
         private_files = {str(p.relative_to(profile)):digest(p) for p in
                          (profile/'data/opendollhouse/Characters').glob('*.iff')}
-        checked(len(private_files) == 2, 'CAS did not publish exactly two private character files')
+        checked(len(private_files) == 2 or (args.reoccupy_released_house and resumed.get('reoccupation') and len(private_files)==4), 'private character file count differs from the recorded family operations')
         if args.setup_only:
             report.update(status='setup_ready', passed=True, setup_only=True,
                 evidence_scope='real_CAS_creation_only_runtime_and_transactions_not_executed',
                 gui_verified=False, private_character_count=len(private_files))
+        elif args.reoccupy_released_house:
+            checked(resumed.get('second_move_completed') is True or resumed.get('reoccupation'),
+                    'reoccupation requires an accepted second move or its own guarded continuation')
+            checked(not resumed.get('reoccupation_completed'), 'reoccupation already completed; do not charge it again')
+            history=json.loads(json.dumps(resumed.get('second_move',{})))
+            checked(history.get('source') and history.get('move_out_receipt',{}).get('status')=='moved_out' and
+                    isinstance(history['move_out_receipt'].get('vacant_purchase_value'),int),
+                    'reoccupation needs the real post-filter release receipt, not a legacy overlay-only move-out')
+            report.update(second_move=history,second_move_completed=True)
+            occupation=json.loads(json.dumps(resumed.get('reoccupation',{})))
+            report['reoccupation']=occupation
+            house=history['source']['house']
+            old_guids={m['guid'] for m in history['source']['members']}
+            # Carry the exact last product observation without executing the old
+            # family again; failures after CAS keep an authenticated anchor.
+            anchor='reoccupation-continuation-anchor'
+            shutil.copyfile(source_stdout,output/(anchor+'-stdout.json'))
+            relative=str(resume_saved.relative_to(resume_profile))
+            report['steps'].append({'stage':anchor,'command':resume_step['command'],'exit':0,
+                'binary_provenance_path':str(person),'stdout_sha256':digest(output/(anchor+'-stdout.json')),
+                'reused_observation':{'source_receipt_sha256':resume_result_hash,
+                    'source_stage':resume_step['stage'],'archive_relative_path':relative,
+                    'archive_sha256':digest(profile/relative),
+                    'person_sha256':(resume_step.get('reused_observation') or {}).get('person_sha256',resumed['binaries'][source_person])}})
+            report['last_checkpoint']={'logical_stage':(resumed.get('last_checkpoint') or {})['logical_stage'],
+                'source_stage':anchor,'relative_path':relative,'sha256':digest(profile/relative),
+                'tick':resume_document['ticks'],'blocking_dialog':resume_notice}
+            publish()
+            property_state=run('reoccupation-property-head',[runner,'--inspect-property-head',game,str(house)])
+            checked(property_state.get('authenticated_property_head') is True and property_state['house']==house and
+                    property_state['released_family']==created['family_chunk_id'] and
+                    property_state['vacant_purchase_value']==history['move_out_receipt']['vacant_purchase_value'],
+                    'property head/value is not the exact previous family release')
+            _,source_save,_=previous('edit')
+            checked(property_state['source_checkpoint_sha256']==digest(source_save),
+                    'property was not filtered from the protected first-house checkpoint')
+            source_current=run('reoccupation-source-inspect',[runner,'--inspect-session',source_save])
+            checked(property_state['architecture'].get('canonical_sha256') is not None and
+                    property_state['architecture']['canonical_sha256']==source_current['architecture'].get('canonical_sha256') and
+                    property_state['architecture']==source_current['architecture'],
+                    'filtering lost the saved edited architecture')
+            checked(not any(e['avatar'] for e in property_state['active_objects']),
+                    'released document still contains a live resident')
+            removed_purchase_refs={(m['id'],m['generation']) for g in source_current['purchase_groups'] for m in g['members']}
+            checked(removed_purchase_refs and not any((e['id'],e['generation']) in removed_purchase_refs
+                    for e in property_state['active_objects']), 'released document retained the requested purchasable furniture')
+            old_family_state=run('reoccupation-old-family-before',[runner,'--inspect-family-state',game,str(created['family_chunk_id'])])
+            checked(old_family_state['house']==history['destination'], 'former residents are not at their accepted second house')
+            if not occupation:
+                checked(property_state['occupied_by']==[], 'released house is no longer vacant before CAS')
+                new_family=run('reoccupation-create',[runner,game,profile,'--create-reoccupation-family',str(house)])
+                checked(new_family.get('integrated_family_lot') is True and new_family['initial_budget']==20000 and
+                        new_family['house']==house and new_family['purchase_price']==property_state['vacant_purchase_value'] and
+                        new_family['family_chunk_id']!=created['family_chunk_id'] and
+                        sorted(m['age'] for m in new_family['members'])==[9,27] and
+                        not old_guids.intersection(m['guid'] for m in new_family['members']),
+                        'second real CAS family is not new, normal-budget and adult/child')
+                occupation.update(created_family=new_family,property_before=property_state,
+                    first_chain_replayed=False,old_family_reused=False)
+                publish()
+            else:
+                new_family=occupation['created_family']
+                checked(property_state==occupation['property_before'] or
+                        (property_state['head']==occupation['property_before']['head'] and
+                         property_state['vacant_purchase_value']==occupation['property_before']['vacant_purchase_value'] and
+                         property_state['occupied_by']==[new_family['family_chunk_id']]),
+                        'released property changed since the recorded new-family operation')
+            state=run('reoccupation-family-state',[runner,'--inspect-family-state',game,str(new_family['family_chunk_id'])])
+            checked(sorted(state['member_guids'])==sorted(m['guid'] for m in new_family['members']),
+                    'new family roster changed before reoccupation')
+            selection=['--house',str(house),'--resident-id',str(new_family['neighbor_id'])]
+            if state['house']==0:
+                checked(state['budget']==20000 and property_state['occupied_by']==[],
+                        'unhoused new family was already charged or house no longer vacant')
+                document,saved,arrived=product('reoccupation-move-in',selection,0,
+                    ['--headless-move-in-family',str(new_family['family_chunk_id'])],logical_stage='reoccupation-move-in')
+                marker=document.get('residential_property_restore',{})
+                checked(marker.get('requested') is True and marker.get('object_lifetime_restored') is True and
+                        marker.get('household_activated') is True and marker.get('head')==property_state['head'],
+                        'product did not restore the exact actorless lifetime before activating its new residents')
+                occupation['activation_receipt']=marker;publish()
+            else:
+                checked(state['house']==house and (resumed.get('last_checkpoint') or {}).get('logical_stage') in
+                        ('reoccupation-move-in','reoccupation-return'),
+                        'already-housed new family lacks an exact reoccupation product checkpoint')
+                path=profile/resume_saved.relative_to(resume_profile)
+                head=run('reoccupation-current-head',[runner,'--inspect-session-head',game,str(house),str(new_family['family_chunk_id'])])
+                checked(head.get('authenticated_journal_head') is True and Path(head['archive_path']).resolve()==path.resolve() and
+                        head.get('blocking_dialog')==resume_notice, 'new occupancy head/modal differs from its observed checkpoint')
+                marker=resume_document.get('residential_property_restore',{})
+                if marker.get('requested') is True:
+                    checked(marker.get('object_lifetime_restored') is True and marker.get('household_activated') is True and
+                            marker.get('head')==property_state['head'], 'original activation observation is inconsistent')
+                    occupation['activation_receipt']=marker;publish()
+                if resume_notice:
+                    code=0 if args.observed_response_code is None else args.observed_response_code
+                    document,saved,arrived=product('reoccupation-observed-notice',['--load-session',str(path)],1,
+                        ['--headless-dialog-response',str(code),''],logical_stage='reoccupation-move-in',expected_answers=1)
+                else:
+                    document,saved,arrived=resume_document,path,head
+                    arrived=run('reoccupation-existing-inspect',[runner,'--inspect-session',saved])
+            checked(occupation.get('activation_receipt',{}).get('object_lifetime_restored') is True,
+                    'no original product observation proves actorless lifetime restoration')
+            checked(arrived['family_chunk_id']==new_family['family_chunk_id'] and arrived['house']==house and
+                    {m['guid'] for m in arrived['members']}=={m['guid'] for m in new_family['members']} and
+                    sorted(m['age'] for m in arrived['members'])==[9,27] and
+                    not old_guids.intersection(e['guid'] for e in arrived['active_objects']) and
+                    arrived['budget']==20000-property_state['vacant_purchase_value'],
+                    'new occupancy lost identities, retained ex-residents or charged an incorrect purchase')
+            checked(arrived['architecture'].get('canonical_sha256')==property_state['architecture']['canonical_sha256'] and
+                    arrived['architecture']==property_state['architecture'] and
+                    not any((e['id'],e['generation']) in removed_purchase_refs for e in arrived['active_objects']),
+                    'new occupancy reintroduced removed furniture or lost edited architecture')
+            retained={(e['id'],e['generation'],e['guid']) for e in property_state['active_objects']}
+            checked(retained.issubset({(e['id'],e['generation'],e['guid']) for e in arrived['active_objects']}),
+                    'new occupancy failed to preserve the released object cohort')
+            remember('reoccupation-move-in',(document,saved,arrived))
+            returned_doc,returned_save,returned=product('reoccupation-return',selection,0,logical_stage='reoccupation-return')
+            checked(returned_doc.get('session_loaded') is True and returned==arrived and digest(returned_save)==digest(saved),
+                    'new-process return changed the complete reoccupied home checkpoint')
+            checked({name:digest(profile/name) for name in private_files}==private_files,
+                    'reoccupation modified the original family character resources')
+            old_family_after=run('reoccupation-old-family-after',[runner,'--inspect-family-state',game,str(created['family_chunk_id'])])
+            checked(old_family_after==old_family_state, 'new occupancy altered the former family finances or household')
+            occupation.update(arrived=arrived,returned=returned,old_family_before=old_family_state,old_family_after=old_family_after)
+            report.update(status='passed',passed=True,reoccupation_completed=True,same_file_after_return=True,
+                final_checkpoint={'path':str(returned_save),'sha256':digest(returned_save)},gui_verified=False,
+                limits=['Real CAS writer and product CLI; no GUI acceptance',
+                        'Reoccupation proves this released property/profile, not all lots or first-playable parity'])
         elif args.second_move:
             checked(not resumed.get('second_move_completed'), 'second move was already completed; do not perform it again')
             phase=(resumed.get('last_checkpoint') or {}).get('logical_stage')
@@ -632,6 +763,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--integrated-family-lot', action='store_true')
     parser.add_argument('--resume-run', type=Path, help='continue a guarded full-profile integrated result without replaying completed transactions')
+    parser.add_argument('--reoccupy-released-house', action='store_true', help='continue a guarded second-move receipt with a new real CAS family entering its authenticated released house')
     parser.add_argument('--second-move', action='store_true', help='continue a completed integrated family/lot receipt through real eviction, second-house purchase and new-process return')
     parser.add_argument('--revise-pending-purchase', action='store_true', help='explicitly revise only an uncommitted furniture placement from an authenticated pre-purchase resume receipt')
     parser.add_argument('--respond-observed-notice', type=Path, help='respond once to the exact serialized modal observed in this previous product stdout')
@@ -649,7 +781,7 @@ def main():
         if args.output is None:
             parser.error('--integrated-family-lot requires --output')
         return integrated_family_lot(args, game, runner, person)
-    if args.output is not None or args.purchase is not None or args.floor is not None or args.recover_saved_code or args.setup_only or args.resume_setup is not None or args.resume_run is not None or args.respond_observed_notice is not None or args.observed_response_code is not None or args.revise_pending_purchase or args.second_move:
+    if args.output is not None or args.purchase is not None or args.floor is not None or args.recover_saved_code or args.setup_only or args.resume_setup is not None or args.resume_run is not None or args.respond_observed_notice is not None or args.observed_response_code is not None or args.revise_pending_purchase or args.second_move or args.reoccupy_released_house:
         parser.error('integrated options require --integrated-family-lot')
     inputs = source_paths(game)
     before = {p: digest(p) for p in inputs}

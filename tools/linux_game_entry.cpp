@@ -129,7 +129,8 @@ struct Options {
     struct ResidentGoHere {unsigned entity_id,x,y,level,tick;};
     struct SingleResidentGoHere {unsigned actor_id,x,y,level,tick;};
     struct ResidentSit {unsigned actor_id,object_id,stand_tick;};
-    struct ResidentInteraction {unsigned actor_id,object_id,tick;std::optional<unsigned> row;};
+    struct ResidentInteraction {unsigned actor_id,object_id,tick;std::optional<unsigned> row;
+        std::optional<std::int16_t> variant_param0;unsigned variant_language=0;std::string variant_name;bool variant_hex=false;};
     struct ResidentStand {unsigned actor_id,tick;};
     struct EntityMove {unsigned id,x,y,level,direction,tick;};
     std::filesystem::path game_root;
@@ -172,6 +173,7 @@ struct Options {
     std::optional<unsigned> headless_stand_tick;
     std::optional<ResidentSit> headless_resident_sit;
     std::optional<ResidentInteraction> headless_resident_interaction;
+    std::optional<std::pair<unsigned,unsigned>> headless_menu_query;
     // Retain the first request for existing launch-profile guards; later
     // requests keep CLI order, including requests at the same relative tick.
     std::vector<ResidentInteraction> headless_resident_interactions;
@@ -430,19 +432,40 @@ Options parse_options(int argc, char** argv) {
             result.headless_entity_move=Options::EntityMove{id,x,y,level,direction,tick};
             continue;
         }
-        if (key == "--headless-resident-interaction" || key == "--headless-resident-interaction-row") {
-            const bool explicit_row=key=="--headless-resident-interaction-row";
-            if (i + (explicit_row?4:3) >= argc) throw odh::FormatError("missing resident interaction values");
+        if(key=="--headless-menu-query"){
+            if(result.headless_menu_query||i+2>=argc)throw odh::FormatError("menu query needs one actor and target pair");
+            const auto actor=parse_number(argv[++i],32767,"menu query actor");
+            const auto target=parse_number(argv[++i],32767,"menu query target");
+            if(!actor||!target)throw odh::FormatError("menu query identities must be nonzero");
+            result.headless_menu_query=std::make_pair(actor,target);continue;
+        }
+        if (key == "--headless-resident-interaction" || key == "--headless-resident-interaction-row" || key=="--headless-resident-interaction-variant" || key=="--headless-resident-interaction-variant-hex") {
+            const bool variant_hex=key=="--headless-resident-interaction-variant-hex";
+            const bool explicit_variant=key=="--headless-resident-interaction-variant"||variant_hex;
+            const bool explicit_row=key!="--headless-resident-interaction";
+            if (i + (explicit_variant?7:explicit_row?4:3) >= argc) throw odh::FormatError("missing resident interaction values");
             if(result.headless_resident_interaction&&result.headless_resident_interactions.size()>=31)
                 throw odh::FormatError("resident interaction sequence exceeds thirty-two requests");
             const auto actor_id=parse_number(argv[++i],32767,"resident interaction actor ID");
             const auto object_id=parse_number(argv[++i],32767,"resident interaction object ID");
             std::optional<unsigned> row;
             if(explicit_row)row=parse_number(argv[++i],65535,"resident interaction row");
+            std::optional<std::int16_t> variant_param;unsigned variant_language=0;std::string variant_name;
+            if(explicit_variant){
+                const std::string raw=argv[++i];int param=0;const auto parsed=std::from_chars(raw.data(),raw.data()+raw.size(),param);
+                if(raw.empty()||parsed.ec!=std::errc{}||parsed.ptr!=raw.data()+raw.size()||param<INT16_MIN||param>INT16_MAX)
+                    throw odh::FormatError("invalid menu variant Param0");
+                variant_param=static_cast<std::int16_t>(param);variant_language=parse_number(argv[++i],20,"menu variant language");
+                variant_name=argv[++i];
+                if(variant_hex&&(variant_name.empty()||variant_name.size()>8192||(variant_name.size()%2)||
+                    std::any_of(variant_name.begin(),variant_name.end(),[](char c){return !((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'));})))
+                    throw odh::FormatError("invalid menu variant name hex");
+                if(!variant_language||variant_name.empty()||variant_name.size()>(variant_hex?8192U:4096U))throw odh::FormatError("invalid observed menu variant language/name");
+            }
             const auto tick=parse_number(argv[++i],4096,"resident interaction tick");
             if(!actor_id||!object_id||!tick)
                 throw odh::FormatError("resident interaction actor, object, or tick is outside the supported profile");
-            const Options::ResidentInteraction request{actor_id,object_id,tick,row};
+            const Options::ResidentInteraction request{actor_id,object_id,tick,row,variant_param,variant_language,std::move(variant_name),variant_hex};
             if(!result.headless_resident_interaction)result.headless_resident_interaction=request;
             else{
                 const auto previous_tick=result.headless_resident_interactions.empty()?
@@ -566,6 +589,11 @@ Options parse_options(int argc, char** argv) {
         result.headless_resident_interaction ||
         result.headless_resident_sit->stand_tick > *result.headless_ticks))
         throw odh::FormatError("--headless-resident-sit requires a new whole-household bounded lot session and an in-range Stand tick");
+    if(result.headless_menu_query&&(!result.load_session||!result.headless_ticks||*result.headless_ticks!=0||result.plan_only||
+        result.single_resident_session||result.headless_resident_interaction||result.headless_dialog_ok||!result.headless_dialog_responses.empty()||
+        result.object_command||result.architecture_command||result.recover_saved_code||result.place_recovery_position||
+        result.resume_buy_mode||result.resume_build_mode||result.headless_move_out_family||result.headless_move_in_family))
+        throw odh::FormatError("menu query requires an otherwise read-only zero-tick resumed household session");
     if (result.headless_resident_interaction && (!result.headless_ticks || result.plan_only ||
         result.single_resident_session || result.headless_stand || result.headless_sit_object || result.headless_resident_sit))
         throw odh::FormatError("--headless-resident-interaction requires a bounded whole-household lot session");
@@ -678,7 +706,7 @@ Options parse_options(int argc, char** argv) {
             "[--headless-single-resident-go-here X Y LEVEL TICK] "
             "[--headless-resident-go-here ACTOR X Y LEVEL RELATIVE_TICK] "
             "[--headless-resident-interaction ACTOR TARGET TICK (repeat up to 32, nondecreasing ticks)] "
-            "[--headless-resident-interaction-row ACTOR TARGET ROW TICK (authored zero-based TTAB row)] "
+            "[--headless-menu-query ACTOR TARGET (zero ticks, actual selected actor)] [--headless-resident-interaction-variant ACTOR TARGET ROW PARAM0 LANGUAGE NAME TICK (exact observed dynamic choice)] [--headless-resident-interaction-variant-hex ACTOR TARGET ROW PARAM0 LANGUAGE NAME_HEX TICK (lossless observed source bytes)] [--headless-resident-interaction-row ACTOR TARGET ROW TICK (authored zero-based TTAB row)] "
             "[--headless-resident-stand ACTOR TICK (saved household seats only; repeat up to 8, nondecreasing ticks 1..N)] "
             "[--headless-stand (legacy saved single-resident seat)] "
             "[--audio | --no-audio] [--audio-drain-ms 1..5000] "
@@ -1245,11 +1273,13 @@ RuntimePlan build_runtime_arguments(const Options& options,
             std::to_string(options.headless_resident_sit->stand_tick)});
     }
     const auto append_resident_interaction=[&](const Options::ResidentInteraction& request){
-        append(args,{request.row?"--headless-resident-interaction-row":"--headless-resident-interaction",
+        append(args,{request.variant_param0?(request.variant_hex?"--headless-resident-interaction-variant-hex":"--headless-resident-interaction-variant"):request.row?"--headless-resident-interaction-row":"--headless-resident-interaction",
             std::to_string(request.actor_id),std::to_string(request.object_id)});
         if(request.row)args.push_back(std::to_string(*request.row));
+        if(request.variant_param0)append(args,{std::to_string(*request.variant_param0),std::to_string(request.variant_language),request.variant_name});
         args.push_back(std::to_string(request.tick));
     };
+    if(options.headless_menu_query)append(args,{"--headless-menu-query",std::to_string(options.headless_menu_query->first),std::to_string(options.headless_menu_query->second)});
     if (options.headless_resident_interaction)
         append_resident_interaction(*options.headless_resident_interaction);
     for(const auto& request:options.headless_resident_interactions)
@@ -1356,6 +1386,34 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
 #endif
         std::shared_ptr<odh_host::FamilySessionJournal> pending_move_in;
 #ifdef __linux__
+        using CurrentProperty=std::pair<odh_host::StoredCommunityLot,odh::FamilyPropertyRelease>;
+        const auto load_current_property=[&](std::uint16_t house,const std::optional<odh::FamilyOverlay>& overlay)->std::optional<CurrentProperty>{
+            if(!overlay)return {};
+            const auto source=odh::load_neighborhood_family_source(userdata/"Neighborhood.iff");
+            const auto replay=odh::replay_family_overlay(source.families,source.identity,*overlay);
+            const auto head=std::find_if(replay.properties.begin(),replay.properties.end(),[&](const auto& value){return value.house==house;});
+            if(head==replay.properties.end())return {};
+            const auto release=std::find_if(overlay->property_releases.begin(),overlay->property_releases.end(),[&](const auto& value){
+                return value.house==house&&value.head==head->head&&value.expected_revision+1==head->revision&&
+                    value.installed_lot_sha256==head->installed_lot_sha256&&value.policy==head->policy&&
+                    value.neighborhood==head->neighborhood&&value.mode==head->mode&&value.vacant_purchase_value==head->vacant_purchase_value;});
+            if(release==overlay->property_releases.end())throw odh::FormatError("current residential property has no exact committed release");
+            // One HOUSE authority across modes1/4. Mode here locates the blob's
+            // provenance directory; it never selects another property HEAD.
+            auto stored=odh_host::load_community_lot_blob(community_lot_store_options(game,userdata,storage,release->mode,house),head->head);
+            if(!stored.document.objects)throw odh::FormatError("released residence lacks its actual object lifetime");
+            return CurrentProperty{std::move(stored),*release};
+        };
+#endif
+        const auto current_house_purchase_price=[&](std::uint16_t house,const std::optional<odh::FamilyOverlay>& overlay){
+#ifdef __linux__
+            if(auto property=load_current_property(house,overlay))return property->second.vacant_purchase_value;
+#else
+            (void)overlay;
+#endif
+            return house_purchase_price(game,userdata,house);
+        };
+#ifdef __linux__
         const auto prepare_lot_transfer = [&](const odh::NeighborhoodFamilySource& source,
                 const odh::FamilyOverlay& overlay, std::uint16_t family_id, std::uint16_t destination, unsigned entry_mode=0) {
             const auto entry = odh::load_session_entry(userdata, entry_mode?entry_mode:options.mode, destination,
@@ -1381,7 +1439,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
             const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
             const auto id = static_cast<std::uint16_t>(*options.headless_move_in_family);
             const auto destination = static_cast<std::uint16_t>(*options.house);
-            const auto price = house_purchase_price(game, userdata, destination);
+            const auto price = current_house_purchase_price(destination,family_overlay);
             const auto next = odh::plan_family_managed_move_in_overlay(source.families, source.identity,
                 family_overlay ? &*family_overlay : nullptr, id, destination, price);
             (void)prepare_lot_transfer(source, next, id, destination);
@@ -1801,7 +1859,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 options.mode=selected_home_mode;break;
             }
             const std::int32_t selected_lot_price=family_screen?0:occupied?-1:
-                house_purchase_price(game,userdata,static_cast<std::uint16_t>(house));
+                current_house_purchase_price(static_cast<std::uint16_t>(house),family_overlay);
             if (occupied) {
                 const odh::FamilyContext family_context(map->effective_families);
                 const auto* current_family = family_context.by_house(static_cast<std::int16_t>(house));
@@ -2083,8 +2141,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 const auto latest_map = odh_host::prepare_neighborhood_map(userdata, graphics,
                     options.mode, latest_overlay ? &*latest_overlay : nullptr,
                     static_cast<std::uint8_t>(options.language));
-                const auto latest_price = house_purchase_price(game, userdata,
-                    static_cast<std::uint16_t>(house));
+                const auto latest_price = current_house_purchase_price(static_cast<std::uint16_t>(house),latest_overlay);
                 if(selected_home_mode==1||selected_home_mode==4){
                     std::optional<odh::LotZoning> zoning;
                     with_iff_file(require_file(game,userdata/"LotZoning.iff"),[&](const odh::View& view){
@@ -2428,6 +2485,10 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 }();
                 std::shared_ptr<const odh::InstalledOccupancyRetirement> occupancy_retirement;
 #ifdef __linux__
+                auto property_lot=family_journal&&family_journal->pending_purchase()&&options.restore_archive.empty()?
+                    load_current_property(static_cast<std::uint16_t>(house),family_journal->expected_overlay()):std::optional<CurrentProperty>{};
+#endif
+#ifdef __linux__
                 std::filesystem::path private_home_path;
                 std::optional<odh_host::TravelCheckpointDigest> private_home_head;
                 std::optional<std::filesystem::path> legacy_home;
@@ -2473,7 +2534,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                         if(options.restore_bundle->travel)continue;
                     }
                 }
-                if (family_journal&&(!temporary_trip||temporary_trip->returning)) {
+                if (family_journal&&!property_lot&&(!temporary_trip||temporary_trip->returning)) {
                     const auto source = odh::load_neighborhood_family_source(userdata / "Neighborhood.iff");
                     auto plan = odh::prepare_installed_occupancy_retirement(source, *family_overlay,
                         family_journal->lease(), static_cast<std::uint16_t>(house),
@@ -2599,6 +2660,19 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 };
 #endif
                 session_context.family_journal = std::move(family_journal);
+#ifdef __linux__
+                if(property_lot){
+                    if(!session_context.family_journal||!session_context.family_journal->pending_purchase())
+                        throw odh::FormatError("vacant property activation lost its pending occupancy authority");
+                    session_context.property_lot=std::make_shared<const odh_host::CommunityLotDocument>(std::move(property_lot->first.document));
+                    session_context.property_lot_reference=std::make_shared<const odh::FamilyPropertyRelease>(property_lot->second);
+                    session_context.property_release_source=std::make_shared<const odh::NeighborhoodFamilySource>(
+                        odh::load_neighborhood_family_source(userdata/"Neighborhood.iff"));
+                    const auto source_path=session_context.family_journal->archive_directory()/
+                        (digest_hex(property_lot->second.source_checkpoint_sha256)+".odhs");
+                    session_context.property_lot_source_archive=odh::encode_session_archive(odh_host::read_session_archive(source_path));
+                }
+#endif
                 if(options.headless_move_out_family){
                     if(!session_context.family_journal||session.family_chunk_id!=*options.headless_move_out_family||
                        temporary_trip||options.single_resident_session)
@@ -2647,7 +2721,7 @@ int odh_linux_game_entry(int argc, char** argv, odh_host::LinuxSessionLog* sessi
                 session_context.game_root = game;
                 session_context.neighborhood_number=storage.number();
                 session_context.installed_user_data=userdata;
-                if(auto architecture=odh_host::load_private_community_architecture(
+                if(!session_context.property_lot)if(auto architecture=odh_host::load_private_community_architecture(
                         community_lot_store_options(game,userdata,storage,options.mode,house)))
                     session_context.community_architecture=std::make_shared<const odh::ArchitectureSnapshot>(std::move(*architecture));
                 session_context.player_character_root = player_character_directory;
